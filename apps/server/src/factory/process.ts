@@ -140,142 +140,140 @@ const buildEnv = (extra: Readonly<Record<string, string>> | undefined): Record<s
   return { ...env, ...extra };
 };
 
-const run = (input: RunInput): Effect.Effect<RunResult, RunSpawnError> =>
-  Effect.gen(function* () {
-    const args = input.args ?? [];
-    const separate = input.separateStderr === true;
-    const tail = new Tail(input.tailBytes ?? DEFAULT_TAIL_BYTES);
-    const stderrTail = new Tail(input.tailBytes ?? DEFAULT_TAIL_BYTES);
+const run = Effect.fn("FactoryProcess.run")(function* (input: RunInput) {
+  const args = input.args ?? [];
+  const separate = input.separateStderr === true;
+  const tail = new Tail(input.tailBytes ?? DEFAULT_TAIL_BYTES);
+  const stderrTail = new Tail(input.tailBytes ?? DEFAULT_TAIL_BYTES);
 
-    // By default one pipe for both streams: Node cannot hand one pipe to two
-    // fds, so the wrapper shell merges stderr into stdout. With separateStderr
-    // there are two pipes and no merge. /bin/sh is absolute because the caller
-    // may override PATH.
-    const merge = separate ? "" : "exec 2>&1\n";
-    const script = input.shell
-      ? ["-c", `${merge}${input.command}`, ...args]
-      : ["-c", `${merge}exec "$0" "$@"`, input.command, ...args];
+  // By default one pipe for both streams: Node cannot hand one pipe to two
+  // fds, so the wrapper shell merges stderr into stdout. With separateStderr
+  // there are two pipes and no merge. /bin/sh is absolute because the caller
+  // may override PATH.
+  const merge = separate ? "" : "exec 2>&1\n";
+  const script = input.shell
+    ? ["-c", `${merge}${input.command}`, ...args]
+    : ["-c", `${merge}exec "$0" "$@"`, input.command, ...args];
 
-    const exited = Deferred.makeUnsafe<
-      readonly [number | null, NodeJS.Signals | null],
-      RunSpawnError
-    >();
-    const closed = Deferred.makeUnsafe<void>();
-    const stderrClosed = Deferred.makeUnsafe<void>();
+  const exited = Deferred.makeUnsafe<
+    readonly [number | null, NodeJS.Signals | null],
+    RunSpawnError
+  >();
+  const closed = Deferred.makeUnsafe<void>();
+  const stderrClosed = Deferred.makeUnsafe<void>();
 
-    const spawnError = (cause: unknown) =>
-      new RunSpawnError({ shell: input.shell === true, cwd: input.cwd, cause });
+  const spawnError = (cause: unknown) =>
+    new RunSpawnError({ shell: input.shell === true, cwd: input.cwd, cause });
 
-    // Acquire is uninterruptible, so an interrupt can never land between the
-    // spawn and the cleanup that kills the group. Spawn reports some failures
-    // by throwing (a NUL byte in env or args) and others by an 'error' event.
-    const acquire = Effect.try({
-      try: () => {
-        const child = NodeChildProcess.spawn("/bin/sh", script, {
-          cwd: input.cwd,
-          env: buildEnv(input.env),
-          stdio: ["ignore", "pipe", separate ? "pipe" : "ignore"],
-          detached: true,
-        });
-        child.once("error", (cause) => Deferred.doneUnsafe(exited, Exit.fail(spawnError(cause))));
-        child.once("exit", (code, signal) =>
-          Deferred.doneUnsafe(exited, Exit.succeed([code, signal] as const)),
-        );
-        child.stdout?.on("data", (chunk: Buffer) => tail.push(chunk));
-        child.stdout?.once("close", () => Deferred.doneUnsafe(closed, Exit.void));
-        // No stdout (spawn failed): nothing to drain.
-        if (!child.stdout) Deferred.doneUnsafe(closed, Exit.void);
-        child.stderr?.on("data", (chunk: Buffer) => stderrTail.push(chunk));
-        child.stderr?.once("close", () => Deferred.doneUnsafe(stderrClosed, Exit.void));
-        if (!child.stderr) Deferred.doneUnsafe(stderrClosed, Exit.void);
-        return child;
-      },
-      catch: spawnError,
+  // Acquire is uninterruptible, so an interrupt can never land between the
+  // spawn and the cleanup that kills the group. Spawn reports some failures
+  // by throwing (a NUL byte in env or args) and others by an 'error' event.
+  const acquire = Effect.try({
+    try: () => {
+      const child = NodeChildProcess.spawn("/bin/sh", script, {
+        cwd: input.cwd,
+        env: buildEnv(input.env),
+        stdio: ["ignore", "pipe", separate ? "pipe" : "ignore"],
+        detached: true,
+      });
+      child.once("error", (cause) => Deferred.doneUnsafe(exited, Exit.fail(spawnError(cause))));
+      child.once("exit", (code, signal) =>
+        Deferred.doneUnsafe(exited, Exit.succeed([code, signal] as const)),
+      );
+      child.stdout?.on("data", (chunk: Buffer) => tail.push(chunk));
+      child.stdout?.once("close", () => Deferred.doneUnsafe(closed, Exit.void));
+      // No stdout (spawn failed): nothing to drain.
+      if (!child.stdout) Deferred.doneUnsafe(closed, Exit.void);
+      child.stderr?.on("data", (chunk: Buffer) => stderrTail.push(chunk));
+      child.stderr?.once("close", () => Deferred.doneUnsafe(stderrClosed, Exit.void));
+      if (!child.stderr) Deferred.doneUnsafe(stderrClosed, Exit.void);
+      return child;
+    },
+    catch: spawnError,
+  });
+
+  // Signals the group, and the leader too in case it left the group (softfac's kill_all).
+  const killGroup = (child: NodeChildProcess.ChildProcess, signal: NodeJS.Signals): void => {
+    const pid = child.pid;
+    if (pid === undefined) return;
+    try {
+      globalThis.process.kill(-pid, signal);
+    } catch {
+      // ESRCH: the group is already gone.
+    }
+    try {
+      child.kill(signal);
+    } catch {
+      // The leader is already gone.
+    }
+  };
+
+  // Runs on every exit path; after a normal run both calls are no-ops.
+  const release = (child: NodeChildProcess.ChildProcess) =>
+    Effect.sync(() => {
+      killGroup(child, "SIGKILL");
+      child.stdout?.destroy();
+      child.stderr?.destroy();
     });
 
-    // Signals the group, and the leader too in case it left the group (softfac's kill_all).
-    const killGroup = (child: NodeChildProcess.ChildProcess, signal: NodeJS.Signals): void => {
-      const pid = child.pid;
-      if (pid === undefined) return;
+  const use = Effect.fn("FactoryProcess.use")(function* (child: NodeChildProcess.ChildProcess) {
+    const pid = child.pid;
+    // Like softfac's group_exists: signal 0 throws ESRCH once the group is empty.
+    const groupExists = (): boolean => {
+      if (pid === undefined) return false;
       try {
-        globalThis.process.kill(-pid, signal);
+        globalThis.process.kill(-pid, 0);
+        return true;
       } catch {
-        // ESRCH: the group is already gone.
-      }
-      try {
-        child.kill(signal);
-      } catch {
-        // The leader is already gone.
+        return false;
       }
     };
+    // In shell mode the leader is the wrapper sh, which dies on SIGTERM
+    // before the real command; the grace lasts until the group is empty.
+    const groupGone = Effect.gen(function* () {
+      while (!(yield* Deferred.isDone(exited)) || groupExists()) {
+        yield* Effect.sleep("50 millis");
+      }
+    });
 
-    // Runs on every exit path; after a normal run both calls are no-ops.
-    const release = (child: NodeChildProcess.ChildProcess) =>
-      Effect.sync(() => {
-        killGroup(child, "SIGKILL");
-        child.stdout?.destroy();
-        child.stderr?.destroy();
-      });
+    let timedOut = false;
+    const outcome = yield* Deferred.await(exited).pipe(
+      Effect.timeoutOption(input.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+    );
+    if (outcome._tag === "None") {
+      timedOut = true;
+      killGroup(child, "SIGTERM");
+      yield* groupGone.pipe(Effect.timeoutOption(input.termGraceMs ?? DEFAULT_TERM_GRACE_MS));
+      killGroup(child, "SIGKILL");
+    }
+    const [exitCode] = yield* Deferred.await(exited);
 
-    const use = (child: NodeChildProcess.ChildProcess) =>
-      Effect.gen(function* () {
-        const pid = child.pid;
-        // Like softfac's group_exists: signal 0 throws ESRCH once the group is empty.
-        const groupExists = (): boolean => {
-          if (pid === undefined) return false;
-          try {
-            globalThis.process.kill(-pid, 0);
-            return true;
-          } catch {
-            return false;
-          }
-        };
-        // In shell mode the leader is the wrapper sh, which dies on SIGTERM
-        // before the real command; the grace lasts until the group is empty.
-        const groupGone = Effect.gen(function* () {
-          while (!(yield* Deferred.isDone(exited)) || groupExists()) {
-            yield* Effect.sleep("50 millis");
-          }
-        });
+    // Kill whatever the command left in its group. This also closes pipe
+    // ends a stray in the group still held; a process that left the group
+    // (setsid, setpgid) escapes, and the drain wait below bounds it.
+    killGroup(child, "SIGKILL");
+    const drained = yield* Deferred.await(closed).pipe(
+      Effect.andThen(Deferred.await(stderrClosed)),
+      Effect.timeoutOption(DRAIN_WAIT_MS),
+    );
+    if (drained._tag === "None") {
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+    }
 
-        let timedOut = false;
-        const outcome = yield* Deferred.await(exited).pipe(
-          Effect.timeoutOption(input.timeoutMs ?? DEFAULT_TIMEOUT_MS),
-        );
-        if (outcome._tag === "None") {
-          timedOut = true;
-          killGroup(child, "SIGTERM");
-          yield* groupGone.pipe(Effect.timeoutOption(input.termGraceMs ?? DEFAULT_TERM_GRACE_MS));
-          killGroup(child, "SIGKILL");
-        }
-        const [exitCode] = yield* Deferred.await(exited);
-
-        // Kill whatever the command left in its group. This also closes pipe
-        // ends a stray in the group still held; a process that left the group
-        // (setsid, setpgid) escapes, and the drain wait below bounds it.
-        killGroup(child, "SIGKILL");
-        const drained = yield* Deferred.await(closed).pipe(
-          Effect.andThen(Deferred.await(stderrClosed)),
-          Effect.timeoutOption(DRAIN_WAIT_MS),
-        );
-        if (drained._tag === "None") {
-          child.stdout?.destroy();
-          child.stderr?.destroy();
-        }
-
-        const out = tail.finish();
-        const err = stderrTail.finish();
-        return {
-          exitCode,
-          timedOut,
-          tail: out,
-          stderrTail: err,
-          truncated: tail.truncated || stderrTail.truncated,
-        } satisfies RunResult;
-      });
-
-    return yield* Effect.acquireUseRelease(acquire, use, release);
+    const out = tail.finish();
+    const err = stderrTail.finish();
+    return {
+      exitCode,
+      timedOut,
+      tail: out,
+      stderrTail: err,
+      truncated: tail.truncated || stderrTail.truncated,
+    } satisfies RunResult;
   });
+
+  return yield* Effect.acquireUseRelease(acquire, use, release);
+});
 
 /** Callers depend on this tag, so their tests can swap in a fake that starts no process. */
 export class FactoryProcess extends Context.Service<

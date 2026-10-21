@@ -12,6 +12,7 @@ import {
   AuthSettingsWriteScope,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -35,7 +36,7 @@ import { makeCause, type RunEvent } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
 import { runIdToString, runPath, type RunId } from "../ledger/runId.ts";
 import { T0, useTempDirs } from "../ledger/testSupport.ts";
-import { formatTs, parseTs } from "../ledger/time.ts";
+import { formatTs } from "../ledger/time.ts";
 import { stopRequestPath } from "../runner/stop.ts";
 import type { FactoryStatus } from "../status.ts";
 import { saveMachineConfig } from "../settings.ts";
@@ -174,6 +175,8 @@ interface World {
   readonly unresolved?: ReadonlyArray<string>;
   /** Listing the T3 projects fails with this cause instead. */
   readonly watchFails?: string;
+  /** The clock the routes read; the live one when unset. */
+  readonly clock?: Clock.Clock;
 }
 
 /** What the loop was asked to do: `count` wakes, `reloads` config reloads. */
@@ -254,6 +257,8 @@ const worldContext = (
       factoryDir: dir,
       machineConfigPath: NodePath.join(dir, "config.yml"),
     }),
+    (context) =>
+      world.clock === undefined ? context : Context.add(context, Clock.Clock, world.clock),
   );
 };
 
@@ -613,17 +618,17 @@ describe("GET /api/factory/runs", () => {
     }),
   );
 
+  const LONG_AGO_S = 1_577_836_800; // 2020-01-01
+
   it.effect("leaves out finished runs older than a week unless asked for all", () =>
     serving({}, async (call, { tokens, dir }) => {
       seed(dir, run10, [...BUILDING, FINISHED], T0);
       seed(dir, run11, BUILDING, T0 + 10_000);
       seed(dir, run12, [...BUILDING, FINISHED], T0 + 20_000);
-      const monthOld = (id: RunId) => {
-        const seconds = (Date.now() - 30 * 86_400_000) / 1000;
-        NodeFS.utimesSync(runPath(dir, id), seconds, seconds);
-      };
-      monthOld(run10);
-      monthOld(run11);
+      // Years before the live clock the routes read here.
+      const longAgo = (id: RunId) => NodeFS.utimesSync(runPath(dir, id), LONG_AGO_S, LONG_AGO_S);
+      longAgo(run10);
+      longAgo(run11);
       const ids = async (path: string) =>
         (
           (await json(await call("GET", path, tokens.read))) as { runs: Array<{ id: string }> }
@@ -889,31 +894,31 @@ describe("claims pause and resume", () => {
   const pauseFile = (dir: string) => NodePath.join(dir, "claims-paused");
 
   it.effect("pause writes the time privately, and again keeps the first", () =>
-    serving({}, async (call, { tokens, dir }) => {
-      const before = Date.now();
-      const response = await call("POST", "/api/factory/claims/pause", tokens.operate);
-      const after = Date.now();
-      assert.strictEqual(response.status, 200);
-      const body = await json(response);
-      assert.deepStrictEqual(body, {
-        paused: true,
-        already: false,
-        since: body.since,
-        message: "claims paused",
-      });
-      const since = parseTs(body.since as string)!;
-      assert.isTrue(since >= before && since <= after, "stamped with the handler's clock");
-      assert.strictEqual(NodeFS.readFileSync(pauseFile(dir), "utf8"), `${body.since}\n`);
-      assert.strictEqual(NodeFS.statSync(pauseFile(dir)).mode & 0o777, 0o600);
+    Effect.gen(function* () {
+      // Before the live clock the sessions are issued on, so they have not expired by it.
+      yield* TestClock.setTime(T0);
+      return yield* serving({ clock: yield* Clock.Clock }, async (call, { tokens, dir }) => {
+        const response = await call("POST", "/api/factory/claims/pause", tokens.operate);
+        assert.strictEqual(response.status, 200);
+        const body = await json(response);
+        assert.deepStrictEqual(body, {
+          paused: true,
+          already: false,
+          since: formatTs(T0),
+          message: "claims paused",
+        });
+        assert.strictEqual(NodeFS.readFileSync(pauseFile(dir), "utf8"), `${body.since}\n`);
+        assert.strictEqual(NodeFS.statSync(pauseFile(dir)).mode & 0o777, 0o600);
 
-      const again = await json(await call("POST", "/api/factory/claims/pause", tokens.operate));
-      assert.deepStrictEqual(again, {
-        paused: true,
-        already: true,
-        since: body.since,
-        message: `claims already paused since ${String(body.since)}`,
+        const again = await json(await call("POST", "/api/factory/claims/pause", tokens.operate));
+        assert.deepStrictEqual(again, {
+          paused: true,
+          already: true,
+          since: body.since,
+          message: `claims already paused since ${String(body.since)}`,
+        });
+        assert.strictEqual(NodeFS.readFileSync(pauseFile(dir), "utf8"), `${body.since}\n`);
       });
-      assert.strictEqual(NodeFS.readFileSync(pauseFile(dir), "utf8"), `${body.since}\n`);
     }),
   );
 

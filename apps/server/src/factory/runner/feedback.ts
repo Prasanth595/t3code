@@ -216,44 +216,43 @@ export const feedback = (
  * tracks the new thread, which archives it. A failing T3 call is an error with nothing written.
  * `null` when the ledger holds no such relaunch.
  */
-const finishDecided = (
+const finishDecided = Effect.fn("RunnerFeedback.finishDecided")(function* (
   ctx: FeedbackContext,
   out: Out,
   run: RunId,
   seen: Seen,
   at: Progress,
   last: { readonly pr: number; readonly url: string },
-): Effect.Effect<FeedbackStep | null, FeedbackError> =>
-  Effect.gen(function* () {
-    const issue = Number(run.issue);
-    const relaunched = {
-      kind: "relaunched",
-      pr: last.pr,
-      items: seen.feedbackLastItems,
-    } as const;
-    const pending = pendingRelaunch(seen);
-    if (pending !== null && pending.fixes.kind === "feedback") {
-      const opened = yield* out.open;
-      const detail = yield* ctx.tracker.issue(issue);
-      const launched = yield* relaunchSession(
-        ctx,
-        opened,
-        at,
-        run,
-        { prUrl: last.url, earlierCall: true },
-        detail,
-        pending,
-      );
-      if (launched.kind === "stuck") return { kind: "stuck", reason: launched.reason } as const;
-      yield* commit(ctx, opened, issue, at, last.pr);
-      return relaunched;
-    }
-    if (committingFeedback(seen) !== null) {
-      yield* commit(ctx, yield* out.open, issue, at, last.pr);
-      return relaunched;
-    }
-    return null;
-  });
+) {
+  const issue = Number(run.issue);
+  const relaunched = {
+    kind: "relaunched",
+    pr: last.pr,
+    items: seen.feedbackLastItems,
+  } as const;
+  const pending = pendingRelaunch(seen);
+  if (pending !== null && pending.fixes.kind === "feedback") {
+    const opened = yield* out.open;
+    const detail = yield* ctx.tracker.issue(issue);
+    const launched = yield* relaunchSession(
+      ctx,
+      opened,
+      at,
+      run,
+      { prUrl: last.url, earlierCall: true },
+      detail,
+      pending,
+    );
+    if (launched.kind === "stuck") return { kind: "stuck", reason: launched.reason } as const;
+    yield* commit(ctx, opened, issue, at, last.pr);
+    return relaunched;
+  }
+  if (committingFeedback(seen) !== null) {
+    yield* commit(ctx, yield* out.open, issue, at, last.pr);
+    return relaunched;
+  }
+  return null;
+});
 
 /** One line of the read-time file as a time, or `null` when it is not a canonical non-negative integer. */
 const parseTime = (line: string | undefined): number | null => {
@@ -333,36 +332,35 @@ const secondBefore = (ms: number): string => `${formatTs(Math.max(0, ms - 1_000)
  * the next one need only page back to that start less a margin, however many reviews arrived
  * since the run reached `pr-open`. A clean read from an earlier `pr-open` period is no help.
  */
-const newFeedback = (
+const newFeedback = Effect.fn("RunnerFeedback.newFeedback")(function* (
   ctx: FeedbackContext,
   run: RunId,
   seen: Seen,
   pr: number,
   sinceMs: number,
-): Effect.Effect<ReadonlyArray<Feedback>, FeedbackError> =>
-  Effect.gen(function* () {
-    const since = secondBefore(sinceMs);
-    const { clean } = readTimes(ctx, run);
-    const cleanFloor = Math.max(0, (clean ?? 0) - CLEAN_READ_MARGIN_MS);
-    const floor = secondBefore(Math.max(sinceMs, cleanFloor));
-    const instructors = ctx.project.instructors;
-    const reviewed = yield* ctx.tracker.prFeedback(pr, since, floor, instructors);
-    const activity = yield* ctx.tracker.activitySince(Number(run.issue), since, instructors);
-    const fromIssue = activity.comments
-      .filter((c) => !seen.forwarded.has(c.id) && !seen.dropped.has(c.id))
-      .map((c): Feedback => ({
-        id: issueCommentFeedbackId(c.id),
-        author: c.author,
-        kind: { kind: "issue-comment" },
-        createdAt: c.createdAt,
-        body: c.body,
-        inline: [],
-        inlineUnread: 0,
-      }));
-    return [...reviewed, ...fromIssue]
-      .filter((item) => !seen.feedbackSent.has(item.id))
-      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
-  });
+) {
+  const since = secondBefore(sinceMs);
+  const { clean } = readTimes(ctx, run);
+  const cleanFloor = Math.max(0, (clean ?? 0) - CLEAN_READ_MARGIN_MS);
+  const floor = secondBefore(Math.max(sinceMs, cleanFloor));
+  const instructors = ctx.project.instructors;
+  const reviewed = yield* ctx.tracker.prFeedback(pr, since, floor, instructors);
+  const activity = yield* ctx.tracker.activitySince(Number(run.issue), since, instructors);
+  const fromIssue = activity.comments
+    .filter((c) => !seen.forwarded.has(c.id) && !seen.dropped.has(c.id))
+    .map((c): Feedback => ({
+      id: issueCommentFeedbackId(c.id),
+      author: c.author,
+      kind: { kind: "issue-comment" },
+      createdAt: c.createdAt,
+      body: c.body,
+      inline: [],
+      inlineUnread: 0,
+    }));
+  return [...reviewed, ...fromIssue]
+    .filter((item) => !seen.feedbackSent.has(item.id))
+    .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
+});
 
 /**
  * The rest of the transition once the new session is recorded: the pull request goes back to
@@ -370,37 +368,35 @@ const newFeedback = (
  * the new session, and the `state_changed` line, which commits it, comes last. Each call can be
  * made again after a crash.
  */
-const commit = (
+const commit = Effect.fn("RunnerFeedback.commit")(function* (
   ctx: FeedbackContext,
   opened: Ledger,
   issue: number,
   at: Progress,
   pr: number,
-): Effect.Effect<void, FeedbackError> =>
-  Effect.gen(function* () {
-    const moved = yield* Effect.fromResult(
-      transition("pr-open", { kind: "instructor-feedback", pr }),
-    );
-    yield* applyActions(
-      ctx,
-      issue,
-      opened,
-      at,
-      moved.actions,
-      makeCause(at.step, "instructor-feedback"),
-    );
-  });
+) {
+  const moved = yield* Effect.fromResult(
+    transition("pr-open", { kind: "instructor-feedback", pr }),
+  );
+  yield* applyActions(
+    ctx,
+    issue,
+    opened,
+    at,
+    moved.actions,
+    makeCause(at.step, "instructor-feedback"),
+  );
+});
 
 /** The issue goes `stuck` for `stop`, and nothing is sent. */
-const stuck = (
+const stuck = Effect.fn("RunnerFeedback.stuck")(function* (
   ctx: FeedbackContext,
   out: Out,
   issue: number,
   at: Progress,
   code: string,
   stop: Stop,
-): Effect.Effect<FeedbackStep, FeedbackError> =>
-  Effect.gen(function* () {
-    yield* goStuck(ctx, issue, yield* out.open, at, code, stop);
-    return { kind: "stuck", reason: recordedReason(stop) } as const;
-  });
+) {
+  yield* goStuck(ctx, issue, yield* out.open, at, code, stop);
+  return { kind: "stuck", reason: recordedReason(stop) } as const;
+});

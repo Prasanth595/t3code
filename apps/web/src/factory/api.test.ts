@@ -267,25 +267,21 @@ describe("factoryApi on the connected environment", () => {
     vi.useFakeTimers();
     __setFactoryTimeoutForTests(2000);
     __setFactoryConnectionForTests(null);
-    fetchMock.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          setTimeout(
-            () =>
-              resolve(
-                new Response('{"state":"idle"}', {
-                  status: 200,
-                  headers: { "content-type": "application/json" },
-                }),
-              ),
-            500,
-          );
-        }),
-    );
+    let answer!: (response: Response) => void;
+    const response = new Promise<Response>((resolve) => {
+      answer = resolve;
+    });
+    fetchMock.mockImplementationOnce(() => response);
     const pending = factoryApi.status(ENV_1);
     await vi.advanceTimersByTimeAsync(1200);
     __setFactoryConnectionForTests(bearerConnection);
     await vi.advanceTimersByTimeAsync(500);
+    answer(
+      new Response('{"state":"idle"}', {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
     expect(await pending).toEqual({ state: "idle" });
   });
 });

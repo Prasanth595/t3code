@@ -21,31 +21,30 @@ import * as AuthHttp from "../../auth/http.ts";
  * session fails 401 and one without the scope fails 403. The handler may read
  * `EnvironmentAuthenticatedPrincipal`.
  */
-export const withScope = <E, R>(
+export const withScope = Effect.fn("FactoryAuth.withScope")(function* <E, R>(
   scope: AuthEnvironmentScope,
   handler: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
-) =>
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    const session = yield* serverAuth.authenticateHttpRequest(request).pipe(
-      Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-        AuthHttp.failEnvironmentAuthInvalid(
-          EnvironmentAuth.serverAuthCredentialReason(error),
-          EnvironmentAuth.serverAuthDpopFailureReason(error),
-        ),
+) {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  const session = yield* serverAuth.authenticateHttpRequest(request).pipe(
+    Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+      AuthHttp.failEnvironmentAuthInvalid(
+        EnvironmentAuth.serverAuthCredentialReason(error),
+        EnvironmentAuth.serverAuthDpopFailureReason(error),
       ),
-      Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-        AuthHttp.failEnvironmentInternal("internal_error", error),
-      ),
-    );
-    return yield* Effect.andThen(AuthHttp.requireEnvironmentScope(scope), handler).pipe(
-      Effect.provideService(EnvironmentAuthenticatedPrincipal, {
-        ...session,
-        scopes: new Set(session.scopes),
-      }),
-    );
-  });
+    ),
+    Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+      AuthHttp.failEnvironmentInternal("internal_error", error),
+    ),
+  );
+  return yield* Effect.andThen(AuthHttp.requireEnvironmentScope(scope), handler).pipe(
+    Effect.provideService(EnvironmentAuthenticatedPrincipal, {
+      ...session,
+      scopes: new Set(session.scopes),
+    }),
+  );
+});
 
 /** A route on T3's router that needs a session holding `scope`. */
 export const route = <E, R>(

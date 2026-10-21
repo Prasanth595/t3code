@@ -641,12 +641,11 @@ export const advance = (
         return { kind: "ended" } as const;
       }
       const at = progressFrom("advance", seen, "triage");
-      const stuck = (code: string, stop: Stop) =>
-        Effect.gen(function* () {
-          const opened = yield* out.open;
-          yield* goStuck(ctx, issue, opened, at, code, stop);
-          return stuckOutcome(stop);
-        });
+      const stuck = Effect.fn("RunnerBuilding.stuck")(function* (code: string, stop: Stop) {
+        const opened = yield* out.open;
+        yield* goStuck(ctx, issue, opened, at, code, stop);
+        return stuckOutcome(stop);
+      });
       // A stuck decision an older version recorded for a run it left in `needs-info` is not
       // carried out: that run is ended below and the issue stays `needs-info`.
       if (seen.stuck !== null && at.state !== "needs-info") {
@@ -738,15 +737,14 @@ export const advance = (
         if (!arrived) return { kind: "running" } as const;
       }
       // Sends the reminder for run `k`; a thread T3 no longer has, or a refusal, ends the run.
-      const remind = (k: number) =>
-        Effect.gen(function* () {
-          const sent = yield* sendReminder(ctx, out, run, threadId, k);
-          if (sent === "gone") return yield* stuck("thread-gone", stopOf(THREAD_GONE, null));
-          if (sent !== "sent") {
-            return yield* stuck("session-stuck", refusedStop(result, message, sent));
-          }
-          return { kind: "reminded" } as const;
-        });
+      const remind = Effect.fn("RunnerBuilding.remind")(function* (k: number) {
+        const sent = yield* sendReminder(ctx, out, run, threadId, k);
+        if (sent === "gone") return yield* stuck("thread-gone", stopOf(THREAD_GONE, null));
+        if (sent !== "sent") {
+          return yield* stuck("session-stuck", refusedStop(result, message, sent));
+        }
+        return { kind: "reminded" } as const;
+      });
 
       // A `result-line-reminding <k>` step with no `result-line-reminded` is a reminder cut short
       // before its send or its step. If a run newer than `k` exists the send reached the session
@@ -896,17 +894,20 @@ const remindedStep: RunEvent = { event: "step_changed", data: { step: RESULT_LIN
  * machine's user is the only assignee. Any other label or assignee is a person's, and is left
  * alone. Both calls are safe to repeat. `read` is the issue as this step already read it, if it did.
  */
-const releaseOldClaim = (ctx: BuildingContext, issue: number, read: IssueDetail | null) =>
-  Effect.gen(function* () {
-    const detail = read ?? (yield* ctx.tracker.issue(issue));
-    const ours =
-      detail.assignees.length === 1 &&
-      asciiLower(detail.assignees[0]!) === asciiLower(ctx.trackerUser);
-    if (detail.state === "building" && ours) {
-      yield* ctx.tracker.setState(issue, "needs-info");
-      yield* ctx.tracker.unassign(issue, ctx.trackerUser);
-    }
-  });
+const releaseOldClaim = Effect.fn("RunnerBuilding.releaseOldClaim")(function* (
+  ctx: BuildingContext,
+  issue: number,
+  read: IssueDetail | null,
+) {
+  const detail = read ?? (yield* ctx.tracker.issue(issue));
+  const ours =
+    detail.assignees.length === 1 &&
+    asciiLower(detail.assignees[0]!) === asciiLower(ctx.trackerUser);
+  if (detail.state === "building" && ours) {
+    yield* ctx.tracker.setState(issue, "needs-info");
+    yield* ctx.tracker.unassign(issue, ctx.trackerUser);
+  }
+});
 
 /**
  * Ends a run whose questions are on the issue: the thread is archived, its worktree is removed,
@@ -914,14 +915,17 @@ const releaseOldClaim = (ctx: BuildingContext, issue: number, read: IssueDetail 
  * label and the release were done before `state_changed`, which is what says so. An archive that
  * fails is an error with nothing written, so the next call ends the run.
  */
-const endNeedsInfo = (ctx: BuildingContext, out: Out, at: Progress) =>
-  Effect.gen(function* () {
-    const opened = yield* out.open;
-    yield* stopSession(ctx, opened, at);
-    yield* ledger(() =>
-      opened.finish("needs-info", null, null, makeCause("advance", "questions-asked")),
-    );
-  });
+const endNeedsInfo = Effect.fn("RunnerBuilding.endNeedsInfo")(function* (
+  ctx: BuildingContext,
+  out: Out,
+  at: Progress,
+) {
+  const opened = yield* out.open;
+  yield* stopSession(ctx, opened, at);
+  yield* ledger(() =>
+    opened.finish("needs-info", null, null, makeCause("advance", "questions-asked")),
+  );
+});
 
 /**
  * Sends the session its one reminder to end with a result line, and records that it was sent.
@@ -933,25 +937,24 @@ const endNeedsInfo = (ctx: BuildingContext, out: Out, at: Progress) =>
  * `"gone"`. A refusal is final, since T3 keeps it under the command id and a resend would fail
  * the same way: it is returned for the caller to end the run with.
  */
-const sendReminder = (
+const sendReminder = Effect.fn("RunnerBuilding.sendReminder")(function* (
   ctx: BuildingContext,
   out: Out,
   run: RunId,
   threadId: string,
   k: number,
-): Effect.Effect<"sent" | "gone" | MessageRejectedError, BuildingError> =>
-  Effect.gen(function* () {
-    const sent = yield* ctx.sessions
-      .send(threadId, `softfac:${runIdToString(run)}:remind:${k}`, RESULT_LINE_REMINDER)
-      .pipe(
-        Effect.as("sent" as const),
-        Effect.catchIf(isThreadNotFound, () => Effect.succeed("gone" as const)),
-        Effect.catchIf(isMessageRejected, (refused) => Effect.succeed(refused)),
-      );
-    if (sent !== "sent") return sent;
-    yield* append(out, remindedStep, "advance", "result-line-reminded");
-    return sent;
-  });
+) {
+  const sent = yield* ctx.sessions
+    .send(threadId, `softfac:${runIdToString(run)}:remind:${k}`, RESULT_LINE_REMINDER)
+    .pipe(
+      Effect.as("sent" as const),
+      Effect.catchIf(isThreadNotFound, () => Effect.succeed("gone" as const)),
+      Effect.catchIf(isMessageRejected, (refused) => Effect.succeed(refused)),
+    );
+  if (sent !== "sent") return sent;
+  yield* append(out, remindedStep, "advance", "result-line-reminded");
+  return sent;
+});
 
 const isMessageRejected = Schema.is(MessageRejectedError);
 
@@ -978,23 +981,22 @@ const refusedStop = (
  * A history that cannot be judged counts as changed. A read that fails is an error, never an
  * answer.
  */
-export const textStop = (
+export const textStop = Effect.fn("RunnerBuilding.textStop")(function* (
   ctx: BuildingContext,
   issue: number,
   seen: Seen,
-): Effect.Effect<{ readonly code: string; readonly reason: string } | null, BuildingError> =>
-  Effect.gen(function* () {
-    if (seen.approvedAt === null) return { code: "approval-unconfirmed", reason: CANNOT_CONFIRM };
-    const check = yield* ctx.tracker.textCheck(issue, seen.approvedAt, ctx.project.instructors);
-    switch (check) {
-      case "unchanged":
-        return null;
-      case "changed":
-        return { code: "text-changed-during-build", reason: CHANGED_DURING_BUILD };
-      case "unjudged":
-        return { code: "edits-unverifiable", reason: CANNOT_VERIFY_DURING_BUILD };
-    }
-  });
+) {
+  if (seen.approvedAt === null) return { code: "approval-unconfirmed", reason: CANNOT_CONFIRM };
+  const check = yield* ctx.tracker.textCheck(issue, seen.approvedAt, ctx.project.instructors);
+  switch (check) {
+    case "unchanged":
+      return null;
+    case "changed":
+      return { code: "text-changed-during-build", reason: CHANGED_DURING_BUILD };
+    case "unjudged":
+      return { code: "edits-unverifiable", reason: CANNOT_VERIFY_DURING_BUILD };
+  }
+});
 
 /**
  * Stops a building run whose issue text was changed by someone who is not an instructor, or whose
@@ -1011,42 +1013,41 @@ export const textStop = (
  * another repo is an error. There is no loop or timer: the caller decides how often to call it,
  * and it should call `watch` before `advance` on a `building` run.
  */
-export const watch = (
+export const watch = Effect.fn("RunnerBuilding.watch")(function* (
   ctx: BuildingContext,
   run: RunId,
-): Effect.Effect<WatchOutcome, BuildingError> =>
-  Effect.gen(function* () {
-    yield* checkRepo(ctx, run);
-    const seen = yield* readSeen(ctx, run);
-    if (seen.finished) return { kind: "skipped", why: "finished" } as const;
-    if (relaunchDecided(seen)) return { kind: "skipped", why: "relaunching" } as const;
-    if (seen.threadId === null) return { kind: "skipped", why: "no-session" } as const;
-    if (
-      seen.state !== "building" ||
-      seen.stuck !== null ||
-      seen.stopRequested ||
-      seen.questionsPosted
-    ) {
-      return { kind: "skipped", why: "not-building" } as const;
-    }
-    // The gate checks the text itself before it records a pass, and after one the session is done.
-    if (seen.pass !== null) return { kind: "skipped", why: "gate-passed" } as const;
-    const issue = issueOf(run);
-    const why = yield* textStop(ctx, issue, seen);
-    if (why === null) return { kind: "unchanged" } as const;
-    // Only a run that has reported a pull request can have been closed by its own merge: no read
-    // for any other. `advance` ends that run; a closed issue otherwise changes nothing here.
-    if (seen.opened.length > 0) {
-      const { closing } = yield* closedIssue(ctx, run, seen);
-      if (closing.kind === "own-merge") return { kind: "skipped", why: "pr-merged" } as const;
-    }
-    const at = progressFrom("watch", seen, "building");
-    const stop: Stop = { reason: why.reason };
-    yield* withLedger(ctx, run, (out) =>
-      Effect.flatMap(out.open, (opened) => goStuck(ctx, issue, opened, at, why.code, stop)),
-    );
-    return { kind: "stopped", reason: recordedReason(stop) } as const;
-  });
+) {
+  yield* checkRepo(ctx, run);
+  const seen = yield* readSeen(ctx, run);
+  if (seen.finished) return { kind: "skipped", why: "finished" } as const;
+  if (relaunchDecided(seen)) return { kind: "skipped", why: "relaunching" } as const;
+  if (seen.threadId === null) return { kind: "skipped", why: "no-session" } as const;
+  if (
+    seen.state !== "building" ||
+    seen.stuck !== null ||
+    seen.stopRequested ||
+    seen.questionsPosted
+  ) {
+    return { kind: "skipped", why: "not-building" } as const;
+  }
+  // The gate checks the text itself before it records a pass, and after one the session is done.
+  if (seen.pass !== null) return { kind: "skipped", why: "gate-passed" } as const;
+  const issue = issueOf(run);
+  const why = yield* textStop(ctx, issue, seen);
+  if (why === null) return { kind: "unchanged" } as const;
+  // Only a run that has reported a pull request can have been closed by its own merge: no read
+  // for any other. `advance` ends that run; a closed issue otherwise changes nothing here.
+  if (seen.opened.length > 0) {
+    const { closing } = yield* closedIssue(ctx, run, seen);
+    if (closing.kind === "own-merge") return { kind: "skipped", why: "pr-merged" } as const;
+  }
+  const at = progressFrom("watch", seen, "building");
+  const stop: Stop = { reason: why.reason };
+  yield* withLedger(ctx, run, (out) =>
+    Effect.flatMap(out.open, (opened) => goStuck(ctx, issue, opened, at, why.code, stop)),
+  );
+  return { kind: "stopped", reason: recordedReason(stop) } as const;
+});
 
 /**
  * A gate attempt was being sent into the session (a `gate-sending` step with no matching
@@ -1071,28 +1072,27 @@ const sinceRunStart = (firstMs: number): string => `${formatTs(firstMs).slice(0,
  * time that is not GitHub's form is refused before anything is sent or written: it ends up in the
  * ledger and in a command id.
  */
-const unsent = (seen: Seen, activity: Activity) =>
-  Effect.gen(function* () {
-    const edit = activity.bodyEdit;
-    if (edit !== null && !isUtcSecond(edit.editedAt)) {
-      return yield* new GitHubParse({
-        args: ["api", "graphql"],
-        expected: `the body edit time as YYYY-MM-DDTHH:MM:SSZ, got "${Array.from(edit.editedAt).slice(0, 40).join("").replaceAll("\n", "\\n")}"`,
-      });
-    }
-    const told = new Set([...seen.forwarded, ...seen.dropped]);
-    const comments = activity.comments.filter((comment) => {
-      // Nor one that went into the session as instructor feedback, when the run was waiting for review.
-      if (told.has(comment.id) || seen.feedbackSent.has(issueCommentFeedbackId(comment.id)))
-        return false;
-      told.add(comment.id);
-      return true;
+const unsent = Effect.fn("RunnerBuilding.unsent")(function* (seen: Seen, activity: Activity) {
+  const edit = activity.bodyEdit;
+  if (edit !== null && !isUtcSecond(edit.editedAt)) {
+    return yield* new GitHubParse({
+      args: ["api", "graphql"],
+      expected: `the body edit time as YYYY-MM-DDTHH:MM:SSZ, got "${Array.from(edit.editedAt).slice(0, 40).join("").replaceAll("\n", "\\n")}"`,
     });
-    return {
-      comments,
-      bodyEdit: edit !== null && !seen.bodyEdits.has(edit.editedAt) ? edit : null,
-    };
+  }
+  const told = new Set([...seen.forwarded, ...seen.dropped]);
+  const comments = activity.comments.filter((comment) => {
+    // Nor one that went into the session as instructor feedback, when the run was waiting for review.
+    if (told.has(comment.id) || seen.feedbackSent.has(issueCommentFeedbackId(comment.id)))
+      return false;
+    told.add(comment.id);
+    return true;
   });
+  return {
+    comments,
+    bodyEdit: edit !== null && !seen.bodyEdits.has(edit.editedAt) ? edit : null,
+  };
+});
 
 /**
  * The dropped comments the issue was not told about yet, in the order read, each id once. A
@@ -1410,53 +1410,51 @@ const branchOf = (ctx: BuildingContext, threadId: string): Effect.Effect<string 
  * timer: the caller decides how often to call it, and it should call it first for a run in
  * `triage` or `building`, and skip the run's other steps when it stops.
  */
-export const timeLimit = (
+export const timeLimit = Effect.fn("RunnerBuilding.timeLimit")(function* (
   ctx: BuildingContext,
   run: RunId,
-): Effect.Effect<LimitOutcome, BuildingError> =>
-  Effect.gen(function* () {
-    yield* checkRepo(ctx, run);
-    const seen = yield* readSeen(ctx, run);
-    if (seen.finished) return { kind: "skipped", why: "finished" } as const;
-    if (relaunchDecided(seen)) return { kind: "skipped", why: "relaunching" } as const;
-    const working =
-      seen.state === null ||
-      seen.state === "ready" ||
-      seen.state === "triage" ||
-      seen.state === "building";
-    if (!working || seen.stuck !== null || seen.stopRequested || seen.questionsPosted) {
-      return { kind: "skipped", why: "not-running" } as const;
-    }
-    if (seen.prReported) return { kind: "skipped", why: "pr-reported" } as const;
-    if (seen.threadId === null && seen.launchSent) {
-      return { kind: "skipped", why: "launch-unrecorded" } as const;
-    }
-    const worked =
-      seen.workedMs +
-      (seen.workingSince === null ? 0 : Math.max(0, ctx.clock() - seen.workingSince));
-    if (worked <= ctx.project.limits.minutes * MINUTE_MS) return { kind: "within" } as const;
-    // Only a run that has reported a pull request can have been closed by its own merge: no read
-    // for any other.
-    if (seen.opened.length > 0) {
-      const { closing } = yield* closedIssue(ctx, run, seen);
-      if (closing.kind === "own-merge") return { kind: "skipped", why: "pr-merged" } as const;
-    }
-    // Read before the archive: the next attempt is told where the work is.
-    const branch = seen.threadId === null ? undefined : yield* branchOf(ctx, seen.threadId);
-    const prepared = branch === undefined ? "" : prepareSessionText(branch);
-    const stop: Stop = {
-      reason: TIME_LIMIT,
-      ...(prepared !== "" && { branch: prepared, commitsAhead: null }),
-    };
-    // Called by the pass before any step, so the pass is what decided.
-    const at = progressFrom("pass", seen, "triage");
-    yield* withLedger(ctx, run, (out) =>
-      Effect.flatMap(out.open, (opened) =>
-        goStuck(ctx, issueOf(run), opened, at, "time-limit", stop),
-      ),
-    );
-    return { kind: "stopped", reason: recordedReason(stop) } as const;
-  });
+) {
+  yield* checkRepo(ctx, run);
+  const seen = yield* readSeen(ctx, run);
+  if (seen.finished) return { kind: "skipped", why: "finished" } as const;
+  if (relaunchDecided(seen)) return { kind: "skipped", why: "relaunching" } as const;
+  const working =
+    seen.state === null ||
+    seen.state === "ready" ||
+    seen.state === "triage" ||
+    seen.state === "building";
+  if (!working || seen.stuck !== null || seen.stopRequested || seen.questionsPosted) {
+    return { kind: "skipped", why: "not-running" } as const;
+  }
+  if (seen.prReported) return { kind: "skipped", why: "pr-reported" } as const;
+  if (seen.threadId === null && seen.launchSent) {
+    return { kind: "skipped", why: "launch-unrecorded" } as const;
+  }
+  const worked =
+    seen.workedMs + (seen.workingSince === null ? 0 : Math.max(0, ctx.clock() - seen.workingSince));
+  if (worked <= ctx.project.limits.minutes * MINUTE_MS) return { kind: "within" } as const;
+  // Only a run that has reported a pull request can have been closed by its own merge: no read
+  // for any other.
+  if (seen.opened.length > 0) {
+    const { closing } = yield* closedIssue(ctx, run, seen);
+    if (closing.kind === "own-merge") return { kind: "skipped", why: "pr-merged" } as const;
+  }
+  // Read before the archive: the next attempt is told where the work is.
+  const branch = seen.threadId === null ? undefined : yield* branchOf(ctx, seen.threadId);
+  const prepared = branch === undefined ? "" : prepareSessionText(branch);
+  const stop: Stop = {
+    reason: TIME_LIMIT,
+    ...(prepared !== "" && { branch: prepared, commitsAhead: null }),
+  };
+  // Called by the pass before any step, so the pass is what decided.
+  const at = progressFrom("pass", seen, "triage");
+  yield* withLedger(ctx, run, (out) =>
+    Effect.flatMap(out.open, (opened) =>
+      goStuck(ctx, issueOf(run), opened, at, "time-limit", stop),
+    ),
+  );
+  return { kind: "stopped", reason: recordedReason(stop) } as const;
+});
 
 /**
  * Sends the session its resume message under `softfac:<run>:interrupted:<n>`: a send repeated
@@ -1505,18 +1503,17 @@ const stuckEnded = (
  * into this one (its newest `session_interrupted` line is a relaunch). Any other previous attempt,
  * a person's retry, starts again from zero.
  */
-const resumesUsed = (
+const resumesUsed = Effect.fn("RunnerBuilding.resumesUsed")(function* (
   ctx: InterruptContext,
   run: RunId,
   seen: Seen,
-): Effect.Effect<number, BuildingError> =>
-  Effect.gen(function* () {
-    if (seen.interruption !== null) return seen.interruption.resumes;
-    const previous = yield* previousRun(ctx, run);
-    if (previous === null) return 0;
-    const earlier = readProgress(previous.entries).interruption;
-    return earlier !== null && earlier.relaunch ? earlier.resumes : 0;
-  });
+) {
+  if (seen.interruption !== null) return seen.interruption.resumes;
+  const previous = yield* previousRun(ctx, run);
+  if (previous === null) return 0;
+  const earlier = readProgress(previous.entries).interruption;
+  return earlier !== null && earlier.relaunch ? earlier.resumes : 0;
+});
 
 /**
  * Decides what a session that ended badly (`advance` said `ended-badly`) is: an interruption or a
@@ -1545,103 +1542,44 @@ const resumesUsed = (
  * next attempt from the run's branch. A run with no recorded approval cannot be relaunched, since
  * the new attempt could not confirm the issue text, and goes `stuck`.
  */
-export const interrupted = (
+export const interrupted = Effect.fn("RunnerBuilding.interrupted")(function* (
   ctx: InterruptContext,
   run: RunId,
   evidence: Evidence,
-): Effect.Effect<InterruptOutcome, BuildingError> =>
-  Effect.gen(function* () {
-    yield* checkRepo(ctx, run);
-    const seen = yield* readSeen(ctx, run);
-    if (seen.finished) return yield* new NotBuildingError({ run });
-    const threadId = seen.threadId;
-    if (threadId === null) return yield* new NoSessionError({ run });
-    // The operator stopped the run after `advance` looked: a stop by hand, not an interruption,
-    // whatever the evidence says.
-    const byHand = (from: Seen) =>
-      stuckEnded(ctx, run, from, "stop-requested", stopOf(STOPPED_BY_HAND, null));
-    if (seen.stopRequested) return yield* byHand(seen);
-    if (relaunchDecided(seen)) {
-      return { kind: "unchanged", why: "a relaunch is already decided" } as const;
-    }
-    const limit = ctx.project.limits.interruptionResumes;
-    // A restart counts only against the run's own times, so never for a thread that is gone.
-    const may = (used: number, cutAt: number | null = null) =>
-      (evidence.t3Error !== null || evidence.endedInPass >= 2 || cutAt !== null) && used < limit;
-    const t3Error = evidence.t3Error === null ? null : prepareSessionText(evidence.t3Error);
-    const goneStuck = (from: Seen) =>
-      stuckEnded(ctx, run, from, "thread-gone", stopOf(THREAD_GONE, null));
-    const relaunch = (from: Seen, resumes: number) =>
-      Effect.gen(function* () {
-        const branch = yield* relaunchBranchOf(ctx, run, from);
-        yield* withLedger(ctx, run, (out) =>
-          append(
-            out,
-            {
-              event: "session_interrupted",
-              data: {
-                resumes,
-                relaunch: true,
-                run_ordinal: null,
-                branch,
-                t3_error: t3Error,
-                ended_in_pass: evidence.endedInPass,
-              },
-            },
-            "advance",
-            "session-interrupted",
-          ),
-        );
-        const decided = yield* readSeen(ctx, run);
-        const start = yield* carryOutRelaunch(ctx, run, decided);
-        return { kind: "relaunched", resumes, limit, start } as const;
-      });
-    const gone = Effect.gen(function* () {
-      // The operator may have stopped the run since the ledger was read: the stop writes its line
-      // before it archives, so a thread that stop took away always comes with the line, and a stop
-      // by hand is never a relaunch.
-      const latest = yield* readSeen(ctx, run);
-      if (latest.stopRequested) return yield* byHand(latest);
-      // A resume cut short before its send was never made, so it is not charged to a relaunch.
-      const used =
-        seen.interruption !== null && !seen.interruption.sent
-          ? Math.max(0, seen.interruption.resumes - 1)
-          : yield* resumesUsed(ctx, run, seen);
-      if (may(used) && seen.approvedAt !== null) return yield* relaunch(seen, used + 1);
-      return yield* goneStuck(seen);
-    });
-
-    const status = yield* threadStatus(ctx, threadId);
-    if (status === null) return yield* gone;
-    const message = status.lastAssistantMessage;
-    const result = parseSessionResult(ctx.repo, message ?? undefined);
-    const ended = endedBadlyNow(seen, status, result);
-    if (ended === null || ended.what === null) {
-      return { kind: "unchanged", why: "its thread has moved on since" } as const;
-    }
-    const used = yield* resumesUsed(ctx, run, seen);
-    const cutAt = cutByRestart(status, evidence.t3Starts, evidence.t3Stops);
-    if (!may(used, cutAt)) {
-      return yield* stuckEnded(
-        ctx,
-        run,
-        seen,
-        "session-ended-badly",
-        stopOf(`the session run ended as ${ended.name}`, message),
-      );
-    }
-    const n = used + 1;
+) {
+  yield* checkRepo(ctx, run);
+  const seen = yield* readSeen(ctx, run);
+  if (seen.finished) return yield* new NotBuildingError({ run });
+  const threadId = seen.threadId;
+  if (threadId === null) return yield* new NoSessionError({ run });
+  // The operator stopped the run after `advance` looked: a stop by hand, not an interruption,
+  // whatever the evidence says.
+  const byHand = (from: Seen) =>
+    stuckEnded(ctx, run, from, "stop-requested", stopOf(STOPPED_BY_HAND, null));
+  if (seen.stopRequested) return yield* byHand(seen);
+  if (relaunchDecided(seen)) {
+    return { kind: "unchanged", why: "a relaunch is already decided" } as const;
+  }
+  const limit = ctx.project.limits.interruptionResumes;
+  // A restart counts only against the run's own times, so never for a thread that is gone.
+  const may = (used: number, cutAt: number | null = null) =>
+    (evidence.t3Error !== null || evidence.endedInPass >= 2 || cutAt !== null) && used < limit;
+  const t3Error = evidence.t3Error === null ? null : prepareSessionText(evidence.t3Error);
+  const goneStuck = (from: Seen) =>
+    stuckEnded(ctx, run, from, "thread-gone", stopOf(THREAD_GONE, null));
+  const relaunch = Effect.fn("RunnerBuilding.relaunch")(function* (from: Seen, resumes: number) {
+    const branch = yield* relaunchBranchOf(ctx, run, from);
     yield* withLedger(ctx, run, (out) =>
       append(
         out,
         {
           event: "session_interrupted",
           data: {
-            resumes: n,
-            relaunch: false,
-            run_ordinal: status.runOrdinal,
-            branch: status.branch,
-            t3_error: t3Error ?? (cutAt === null ? null : t3Started(cutAt)),
+            resumes,
+            relaunch: true,
+            run_ordinal: null,
+            branch,
+            t3_error: t3Error,
             ended_in_pass: evidence.endedInPass,
           },
         },
@@ -1649,25 +1587,82 @@ export const interrupted = (
         "session-interrupted",
       ),
     );
-    const sent = yield* sendInterruption(ctx, run, threadId, n);
-    if (sent === "gone") {
-      // The attempt to resume did not happen, so it is one interruption and not two. A stop by
-      // hand that landed meanwhile wins, as above.
-      const latest = yield* readSeen(ctx, run);
-      if (latest.stopRequested) return yield* byHand(latest);
-      if (latest.approvedAt !== null) return yield* relaunch(latest, n);
-      return yield* goneStuck(latest);
-    }
-    yield* withLedger(ctx, run, (out) =>
-      append(
-        out,
-        { event: "step_changed", data: { step: `${INTERRUPTION_SENT} ${n}` } },
-        "advance",
-        "interruption-sent",
-      ),
-    );
-    return { kind: "resumed", resumes: n, limit, status: ended.what } as const;
+    const decided = yield* readSeen(ctx, run);
+    const start = yield* carryOutRelaunch(ctx, run, decided);
+    return { kind: "relaunched", resumes, limit, start } as const;
   });
+  const gone = Effect.gen(function* () {
+    // The operator may have stopped the run since the ledger was read: the stop writes its line
+    // before it archives, so a thread that stop took away always comes with the line, and a stop
+    // by hand is never a relaunch.
+    const latest = yield* readSeen(ctx, run);
+    if (latest.stopRequested) return yield* byHand(latest);
+    // A resume cut short before its send was never made, so it is not charged to a relaunch.
+    const used =
+      seen.interruption !== null && !seen.interruption.sent
+        ? Math.max(0, seen.interruption.resumes - 1)
+        : yield* resumesUsed(ctx, run, seen);
+    if (may(used) && seen.approvedAt !== null) return yield* relaunch(seen, used + 1);
+    return yield* goneStuck(seen);
+  });
+
+  const status = yield* threadStatus(ctx, threadId);
+  if (status === null) return yield* gone;
+  const message = status.lastAssistantMessage;
+  const result = parseSessionResult(ctx.repo, message ?? undefined);
+  const ended = endedBadlyNow(seen, status, result);
+  if (ended === null || ended.what === null) {
+    return { kind: "unchanged", why: "its thread has moved on since" } as const;
+  }
+  const used = yield* resumesUsed(ctx, run, seen);
+  const cutAt = cutByRestart(status, evidence.t3Starts, evidence.t3Stops);
+  if (!may(used, cutAt)) {
+    return yield* stuckEnded(
+      ctx,
+      run,
+      seen,
+      "session-ended-badly",
+      stopOf(`the session run ended as ${ended.name}`, message),
+    );
+  }
+  const n = used + 1;
+  yield* withLedger(ctx, run, (out) =>
+    append(
+      out,
+      {
+        event: "session_interrupted",
+        data: {
+          resumes: n,
+          relaunch: false,
+          run_ordinal: status.runOrdinal,
+          branch: status.branch,
+          t3_error: t3Error ?? (cutAt === null ? null : t3Started(cutAt)),
+          ended_in_pass: evidence.endedInPass,
+        },
+      },
+      "advance",
+      "session-interrupted",
+    ),
+  );
+  const sent = yield* sendInterruption(ctx, run, threadId, n);
+  if (sent === "gone") {
+    // The attempt to resume did not happen, so it is one interruption and not two. A stop by
+    // hand that landed meanwhile wins, as above.
+    const latest = yield* readSeen(ctx, run);
+    if (latest.stopRequested) return yield* byHand(latest);
+    if (latest.approvedAt !== null) return yield* relaunch(latest, n);
+    return yield* goneStuck(latest);
+  }
+  yield* withLedger(ctx, run, (out) =>
+    append(
+      out,
+      { event: "step_changed", data: { step: `${INTERRUPTION_SENT} ${n}` } },
+      "advance",
+      "interruption-sent",
+    ),
+  );
+  return { kind: "resumed", resumes: n, limit, status: ended.what } as const;
+});
 
 /**
  * The branch the work of a run whose thread is lost is on, for the relaunch to continue from, read
@@ -1680,29 +1675,28 @@ export const interrupted = (
  * fails, other than T3 not knowing the thread, is an error with nothing written, and the next pass
  * reads again.
  */
-const relaunchBranchOf = (
+const relaunchBranchOf = Effect.fn("RunnerBuilding.relaunchBranchOf")(function* (
   ctx: BuildingContext,
   run: RunId,
   seen: Seen,
-): Effect.Effect<string | null, BuildingError> =>
-  Effect.gen(function* () {
-    const regate = regateBranch(seen, run);
-    if (regate !== null) return regate;
-    if (seen.lastBranch !== null) return seen.lastBranch;
-    if (seen.threadId !== null) {
-      const thread = yield* ctx.sessions
-        .thread(seen.threadId)
-        .pipe(Effect.catchIf(isThreadNotFound, () => Effect.succeed(null)));
-      if (thread !== null && thread.branch !== null) return thread.branch;
+) {
+  const regate = regateBranch(seen, run);
+  if (regate !== null) return regate;
+  if (seen.lastBranch !== null) return seen.lastBranch;
+  if (seen.threadId !== null) {
+    const thread = yield* ctx.sessions
+      .thread(seen.threadId)
+      .pipe(Effect.catchIf(isThreadNotFound, () => Effect.succeed(null)));
+    if (thread !== null && thread.branch !== null) return thread.branch;
+  }
+  if (seen.lastPr !== null) {
+    const pull = yield* ctx.tracker.pullRequest(seen.lastPr.pr);
+    if (pull !== null && !pull.crossRepository && isPlainRefName(pull.headRef)) {
+      return pull.headRef;
     }
-    if (seen.lastPr !== null) {
-      const pull = yield* ctx.tracker.pullRequest(seen.lastPr.pr);
-      if (pull !== null && !pull.crossRepository && isPlainRefName(pull.headRef)) {
-        return pull.headRef;
-      }
-    }
-    return null;
-  });
+  }
+  return null;
+});
 
 /**
  * A relaunch was decided and cut short after the next attempt's ledger was made, and then the
@@ -1712,50 +1706,51 @@ const relaunchBranchOf = (
  * alone: that is answered `true`, and the issue is its from then on. Safe to repeat: this run
  * stays `building` until its own end has run.
  */
-const endUnbegunRelaunch = (
+const endUnbegunRelaunch = Effect.fn("RunnerBuilding.endUnbegunRelaunch")(function* (
   ctx: InterruptContext,
   run: RunId,
-): Effect.Effect<boolean, BuildingError> =>
-  Effect.gen(function* () {
-    const next: RunId = { ...run, attempt: run.attempt + 1 };
-    const existing = yield* ledger(() => readRun(ctx.dataDir, next)).pipe(
-      Effect.catchTags({ LedgerNotFoundError: () => Effect.succeed(null) }),
-    );
-    if (existing === null) return false;
-    const seen = readProgress(existing.entries);
-    if (seen.claimed || seen.state !== null) return true;
-    if (seen.finished) return false;
-    const out = yield* ledger(() => Ledger.open(ctx.dataDir, next, { clock: ctx.clock }));
-    try {
-      yield* ledger(() => out.finish("stuck", null, null, makeCause("advance", "stop-requested")));
-    } finally {
-      out.close();
-    }
-    return false;
-  });
+) {
+  const next: RunId = { ...run, attempt: run.attempt + 1 };
+  const existing = yield* ledger(() => readRun(ctx.dataDir, next)).pipe(
+    Effect.catchTags({ LedgerNotFoundError: () => Effect.succeed(null) }),
+  );
+  if (existing === null) return false;
+  const seen = readProgress(existing.entries);
+  if (seen.claimed || seen.state !== null) return true;
+  if (seen.finished) return false;
+  const out = yield* ledger(() => Ledger.open(ctx.dataDir, next, { clock: ctx.clock }));
+  try {
+    yield* ledger(() => out.finish("stuck", null, null, makeCause("advance", "stop-requested")));
+  } finally {
+    out.close();
+  }
+  return false;
+});
 
 /**
  * Writes the operator's `stop_requested` into the next attempt's ledger, once: the stop of a run
  * whose relaunch already started that attempt is meant for the issue's work, which is there now.
  */
-const carryStopToNext = (ctx: InterruptContext, run: RunId): Effect.Effect<void, BuildingError> =>
-  Effect.gen(function* () {
-    const next: RunId = { ...run, attempt: run.attempt + 1 };
-    const record = yield* ledger(() => readRun(ctx.dataDir, next));
-    const seen = readProgress(record.entries);
-    if (seen.finished || seen.stopRequested) return;
-    const out = yield* ledger(() => Ledger.open(ctx.dataDir, next, { clock: ctx.clock }));
-    try {
-      yield* ledger(() =>
-        out.append(
-          { event: "stop_requested", data: { by: "operator" } },
-          makeCause("advance", "stop-requested"),
-        ),
-      );
-    } finally {
-      out.close();
-    }
-  });
+const carryStopToNext = Effect.fn("RunnerBuilding.carryStopToNext")(function* (
+  ctx: InterruptContext,
+  run: RunId,
+) {
+  const next: RunId = { ...run, attempt: run.attempt + 1 };
+  const record = yield* ledger(() => readRun(ctx.dataDir, next));
+  const seen = readProgress(record.entries);
+  if (seen.finished || seen.stopRequested) return;
+  const out = yield* ledger(() => Ledger.open(ctx.dataDir, next, { clock: ctx.clock }));
+  try {
+    yield* ledger(() =>
+      out.append(
+        { event: "stop_requested", data: { by: "operator" } },
+        makeCause("advance", "stop-requested"),
+      ),
+    );
+  } finally {
+    out.close();
+  }
+});
 
 /**
  * Carries out a relaunch the ledger holds the decision for, in an order a crash can be picked up
@@ -1766,45 +1761,44 @@ const carryStopToNext = (ctx: InterruptContext, run: RunId): Effect.Effect<void,
  * without a stuck label or comment, and last `resume` for the issue. Every part is safe to
  * repeat, so `advance` calls it again for a run that has the decision and is not finished.
  */
-const carryOutRelaunch = (
+const carryOutRelaunch = Effect.fn("RunnerBuilding.carryOutRelaunch")(function* (
   ctx: InterruptContext,
   run: RunId,
   seen: Seen,
-): Effect.Effect<StartOutcome, BuildingError> =>
-  Effect.gen(function* () {
-    if (seen.approvedAt === null) {
-      return yield* new RelaunchUnsupportedError({ run });
+) {
+  if (seen.approvedAt === null) {
+    return yield* new RelaunchUnsupportedError({ run });
+  }
+  const labeledAt = seen.approvedAt;
+  const next: RunId = { ...run, attempt: run.attempt + 1 };
+  const existing = yield* ledger(() => readRun(ctx.dataDir, next)).pipe(
+    Effect.catchTags({ LedgerNotFoundError: () => Effect.succeed(null) }),
+  );
+  const nextSeen = existing === null ? null : readProgress(existing.entries);
+  // The label goes back to `triage` only for an attempt `resume` has not begun: once the next
+  // attempt is claimed, or has any state, the issue's label is its own.
+  const begun = nextSeen !== null && (nextSeen.claimed || nextSeen.state !== null);
+  const fresh = yield* ledger(() =>
+    existing === null
+      ? Ledger.create(ctx.dataDir, next, { clock: ctx.clock })
+      : Ledger.open(ctx.dataDir, next, { clock: ctx.clock }),
+  );
+  try {
+    if (nextSeen?.approvedAt == null) {
+      yield* recordApproval(fresh, labeledAt, seen.approvedBy, "advance");
     }
-    const labeledAt = seen.approvedAt;
-    const next: RunId = { ...run, attempt: run.attempt + 1 };
-    const existing = yield* ledger(() => readRun(ctx.dataDir, next)).pipe(
-      Effect.catchTags({ LedgerNotFoundError: () => Effect.succeed(null) }),
-    );
-    const nextSeen = existing === null ? null : readProgress(existing.entries);
-    // The label goes back to `triage` only for an attempt `resume` has not begun: once the next
-    // attempt is claimed, or has any state, the issue's label is its own.
-    const begun = nextSeen !== null && (nextSeen.claimed || nextSeen.state !== null);
-    const fresh = yield* ledger(() =>
-      existing === null
-        ? Ledger.create(ctx.dataDir, next, { clock: ctx.clock })
-        : Ledger.open(ctx.dataDir, next, { clock: ctx.clock }),
-    );
-    try {
-      if (nextSeen?.approvedAt == null) {
-        yield* recordApproval(fresh, labeledAt, seen.approvedBy, "advance");
-      }
-    } finally {
-      fresh.close();
-    }
-    if (!begun) yield* ctx.tracker.setState(issueOf(run), "triage");
-    yield* withLedger(ctx, run, (out) =>
-      Effect.gen(function* () {
-        const opened = yield* out.open;
-        yield* stopSession(ctx, opened, progressFrom("advance", seen, "building"));
-        yield* ledger(() =>
-          opened.finish("stuck", null, null, makeCause("advance", "session-interrupted")),
-        );
-      }),
-    );
-    return yield* resume({ ...ctx, project: ctx.repoProject }, issueOf(run));
-  });
+  } finally {
+    fresh.close();
+  }
+  if (!begun) yield* ctx.tracker.setState(issueOf(run), "triage");
+  yield* withLedger(ctx, run, (out) =>
+    Effect.gen(function* () {
+      const opened = yield* out.open;
+      yield* stopSession(ctx, opened, progressFrom("advance", seen, "building"));
+      yield* ledger(() =>
+        opened.finish("stuck", null, null, makeCause("advance", "session-interrupted")),
+      );
+    }),
+  );
+  return yield* resume({ ...ctx, project: ctx.repoProject }, issueOf(run));
+});

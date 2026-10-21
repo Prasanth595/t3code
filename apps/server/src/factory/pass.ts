@@ -535,67 +535,66 @@ class Pass {
 }
 
 /** One pass. Calls `out` with each line as it is decided. */
-export const runPass = (
+export const runPass = Effect.fn("Pass.runPass")(function* (
   world: PassWorld,
   machine: MachineConfig,
   out: (line: string) => void,
-): Effect.Effect<Report> =>
-  Effect.gen(function* () {
-    const pass = new Pass(world, out);
-    yield* pass.record({ event: "pass_started", data: {} });
-    const listed = yield* Effect.result(world.watchedRepos);
-    if (listed._tag === "Failure") {
-      // Without the list nothing is worked, and nothing is cleared: a repo that is missing from
-      // an unread list has not left it.
-      yield* pass.fail(null, passError(listed.failure.kind, "", listed.failure.message));
-    }
-    const listing =
-      listed._tag === "Success" ? listed.success : { repos: [], departed: [], unresolved: [] };
-    const watched = listing.repos;
-    // A repo whose T3 project was deleted has nothing the factory still needs a person for. Only
-    // the reader's `departed` says so: a repo whose project stays (a branch without the opt-in,
-    // an unreadable checkout) keeps its items, since `stuck` and `needs-info` are raised once.
-    if (listed._tag === "Success") {
-      yield* world.attention.clear(
-        (item) => item.repo !== null && listing.departed.some((repo) => sameRepo(repo, item.repo!)),
-      );
-      if (listing.unresolved.length > 0) {
-        pass.line(
-          `watched: ${listing.unresolved.length} project(s) could not be settled this pass (${listing.unresolved.map(plain).join(", ")})`,
-        );
-      }
-    }
-    const repos = yield* loadRepos(world, watched, pass);
-    // Without the ledger there is no telling how many runs are active, so nothing is claimed.
-    const infos = yield* runs(world, pass);
-    if (infos !== null) {
-      const known = new Known(infos);
-      yield* workRuns(world, repos, known, pass);
-      yield* untrackedClaims(world, repos, known, pass);
-      yield* unassignedClaims(world, repos, known, pass);
-      yield* claim(world, repos, known, machine, pass);
-      // Last: a claim of an issue put back to `ready` ends its older pr-open run, and a re-gate
-      // takes a gate slot.
-      yield* prOpenRuns(world, repos, known, pass);
-      // A run-bound attention item whose run is no longer unfinished (stopped, abandoned, timed
-      // out, claimed on) is over. `stuck` and `needs-info` items are about finished runs and stay.
-      if (!known.lost) {
-        yield* world.attention.clear(
-          (item) =>
-            item.kind === "attention" &&
-            item.run !== null &&
-            !known.infos.some((info) => runIdToString(info.id) === item.run),
-        );
-      }
-    }
-    yield* closedStuck(world, repos, pass);
-    const report = pass.report;
-    pass.line(
-      `pass done: ${report.runs} runs, ${report.claimed} claimed, ${report.errors} errors, ${report.attention} need attention`,
+) {
+  const pass = new Pass(world, out);
+  yield* pass.record({ event: "pass_started", data: {} });
+  const listed = yield* Effect.result(world.watchedRepos);
+  if (listed._tag === "Failure") {
+    // Without the list nothing is worked, and nothing is cleared: a repo that is missing from
+    // an unread list has not left it.
+    yield* pass.fail(null, passError(listed.failure.kind, "", listed.failure.message));
+  }
+  const listing =
+    listed._tag === "Success" ? listed.success : { repos: [], departed: [], unresolved: [] };
+  const watched = listing.repos;
+  // A repo whose T3 project was deleted has nothing the factory still needs a person for. Only
+  // the reader's `departed` says so: a repo whose project stays (a branch without the opt-in,
+  // an unreadable checkout) keeps its items, since `stuck` and `needs-info` are raised once.
+  if (listed._tag === "Success") {
+    yield* world.attention.clear(
+      (item) => item.repo !== null && listing.departed.some((repo) => sameRepo(repo, item.repo!)),
     );
-    yield* pass.record({ event: "pass_finished", data: { ...report } });
-    return report;
-  });
+    if (listing.unresolved.length > 0) {
+      pass.line(
+        `watched: ${listing.unresolved.length} project(s) could not be settled this pass (${listing.unresolved.map(plain).join(", ")})`,
+      );
+    }
+  }
+  const repos = yield* loadRepos(world, watched, pass);
+  // Without the ledger there is no telling how many runs are active, so nothing is claimed.
+  const infos = yield* runs(world, pass);
+  if (infos !== null) {
+    const known = new Known(infos);
+    yield* workRuns(world, repos, known, pass);
+    yield* untrackedClaims(world, repos, known, pass);
+    yield* unassignedClaims(world, repos, known, pass);
+    yield* claim(world, repos, known, machine, pass);
+    // Last: a claim of an issue put back to `ready` ends its older pr-open run, and a re-gate
+    // takes a gate slot.
+    yield* prOpenRuns(world, repos, known, pass);
+    // A run-bound attention item whose run is no longer unfinished (stopped, abandoned, timed
+    // out, claimed on) is over. `stuck` and `needs-info` items are about finished runs and stay.
+    if (!known.lost) {
+      yield* world.attention.clear(
+        (item) =>
+          item.kind === "attention" &&
+          item.run !== null &&
+          !known.infos.some((info) => runIdToString(info.id) === item.run),
+      );
+    }
+  }
+  yield* closedStuck(world, repos, pass);
+  const report = pass.report;
+  pass.line(
+    `pass done: ${report.runs} runs, ${report.claimed} claimed, ${report.errors} errors, ${report.attention} need attention`,
+  );
+  yield* pass.record({ event: "pass_finished", data: { ...report } });
+  return report;
+});
 
 /**
  * How often the issue of one stuck item is read at most. Stuck items stay until a person or the
@@ -611,138 +610,135 @@ export const STUCK_READ_EVERY_MS = 10 * 60 * 1000;
  * with a line that is not an error: an issue that can never be read again (deleted, transferred)
  * must not fail every pass.
  */
-const closedStuck = (
+const closedStuck = Effect.fn("Pass.closedStuck")(function* (
   world: PassWorld,
   repos: ReadonlyArray<Loaded>,
   pass: Pass,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    const items = yield* world.attention.list();
-    for (const id of world.stuckReads.keys()) {
-      if (!items.some((item) => item.id === id)) world.stuckReads.delete(id);
+) {
+  const items = yield* world.attention.list();
+  for (const id of world.stuckReads.keys()) {
+    if (!items.some((item) => item.id === id)) world.stuckReads.delete(id);
+  }
+  const now = world.nowMs();
+  for (const item of items) {
+    const { repo: name, issue } = item;
+    if (item.kind !== "stuck" || name === null || issue === null) continue;
+    const loaded = repos.find((l) => l.kind === "ready" && sameRepo(l.repo.watched.repo, name));
+    if (loaded === undefined || loaded.kind !== "ready") continue;
+    const last = world.stuckReads.get(item.id);
+    if (last !== undefined && now >= last && now - last < STUCK_READ_EVERY_MS) continue;
+    world.stuckReads.set(item.id, now);
+    const closed = yield* Effect.result(world.issueClosed(loaded.repo, issue));
+    if (closed._tag === "Failure") {
+      pass.line(
+        plain(
+          `${name}${mention(issue)}: cannot read whether the issue is closed: ${closed.failure.message}`,
+        ),
+      );
+    } else if (closed.success) {
+      yield* world.attention.clear((open) => open.id === item.id);
+      world.stuckReads.delete(item.id);
     }
-    const now = world.nowMs();
-    for (const item of items) {
-      const { repo: name, issue } = item;
-      if (item.kind !== "stuck" || name === null || issue === null) continue;
-      const loaded = repos.find((l) => l.kind === "ready" && sameRepo(l.repo.watched.repo, name));
-      if (loaded === undefined || loaded.kind !== "ready") continue;
-      const last = world.stuckReads.get(item.id);
-      if (last !== undefined && now >= last && now - last < STUCK_READ_EVERY_MS) continue;
-      world.stuckReads.set(item.id, now);
-      const closed = yield* Effect.result(world.issueClosed(loaded.repo, issue));
-      if (closed._tag === "Failure") {
-        pass.line(
-          plain(
-            `${name}${mention(issue)}: cannot read whether the issue is closed: ${closed.failure.message}`,
-          ),
-        );
-      } else if (closed.success) {
-        yield* world.attention.clear((open) => open.id === item.id);
-        world.stuckReads.delete(item.id);
-      }
-    }
-  });
+  }
+});
 
 /**
  * The project config and tracker login of every watched repo. A repo whose config cannot be
  * loaded is reported and its issues are left alone; so is one whose tracker login cannot be read,
  * and one that two T3 projects name (`ambiguousRepos`).
  */
-const loadRepos = (
+const loadRepos = Effect.fn("Pass.loadRepos")(function* (
   world: PassWorld,
   watchedRepos: ReadonlyArray<WatchedRepo>,
   pass: Pass,
-): Effect.Effect<Array<Loaded>> =>
-  Effect.gen(function* () {
-    const repos: Array<Loaded> = [];
-    const ambiguous = ambiguousRepos(watchedRepos);
-    const said = new Set<string>();
-    for (const watched of watchedRepos) {
-      const key = asciiLower(watched.repo);
-      const paths = ambiguous.get(key);
-      if (paths !== undefined) {
-        // Said once per repo, not per project: the repo is skipped whole.
-        if (!said.has(key)) {
-          said.add(key);
-          const message = `${watched.repo}: ${ambiguousMessage(paths)}`;
-          pass.error(plain(message));
-          yield* pass.record({
-            event: "repo_skipped",
-            data: {
-              repo: watched.repo,
-              reason: "ambiguous-project",
-              message: prepareText(message),
-            },
-          });
-          repos.push({ kind: "broken", name: watched.repo });
-        }
-        continue;
-      }
-      const project = yield* Effect.result(world.project(watched));
-      if (project._tag === "Failure") {
-        const message = project.failure.message;
-        pass.error(
-          `${plain(watched.repo)}: project config not loaded, repo skipped: ${plain(message)}`,
-        );
+) {
+  const repos: Array<Loaded> = [];
+  const ambiguous = ambiguousRepos(watchedRepos);
+  const said = new Set<string>();
+  for (const watched of watchedRepos) {
+    const key = asciiLower(watched.repo);
+    const paths = ambiguous.get(key);
+    if (paths !== undefined) {
+      // Said once per repo, not per project: the repo is skipped whole.
+      if (!said.has(key)) {
+        said.add(key);
+        const message = `${watched.repo}: ${ambiguousMessage(paths)}`;
+        pass.error(plain(message));
         yield* pass.record({
           event: "repo_skipped",
-          data: { repo: watched.repo, reason: "config-not-loaded", message: prepareText(message) },
+          data: {
+            repo: watched.repo,
+            reason: "ambiguous-project",
+            message: prepareText(message),
+          },
         });
         repos.push({ kind: "broken", name: watched.repo });
-        continue;
       }
-      const user = yield* Effect.result(world.trackerUser(watched));
-      if (user._tag === "Failure") {
-        yield* pass.fail(
-          null,
-          passError(
-            user.failure.kind,
-            `${watched.repo}: cannot read the tracker's login: `,
-            user.failure.message,
-          ),
-        );
-        repos.push({ kind: "broken", name: watched.repo });
-        continue;
-      }
-      repos.push({
-        kind: "ready",
-        repo: { watched, project: project.success, trackerUser: user.success },
-      });
+      continue;
     }
-    return repos;
-  });
-
-/** Every unfinished run, counted; a run whose file cannot be read is an error line and counts as active. */
-const runs = (world: PassWorld, pass: Pass): Effect.Effect<ReadonlyArray<RunInfo> | null> =>
-  Effect.gen(function* () {
-    const listed = yield* Effect.result(world.unfinishedRuns());
-    if (listed._tag === "Failure") {
+    const project = yield* Effect.result(world.project(watched));
+    if (project._tag === "Failure") {
+      const message = project.failure.message;
+      pass.error(
+        `${plain(watched.repo)}: project config not loaded, repo skipped: ${plain(message)}`,
+      );
+      yield* pass.record({
+        event: "repo_skipped",
+        data: { repo: watched.repo, reason: "config-not-loaded", message: prepareText(message) },
+      });
+      repos.push({ kind: "broken", name: watched.repo });
+      continue;
+    }
+    const user = yield* Effect.result(world.trackerUser(watched));
+    if (user._tag === "Failure") {
       yield* pass.fail(
         null,
-        passError("ledger", "cannot read the run ledger: ", listed.failure.message),
+        passError(
+          user.failure.kind,
+          `${watched.repo}: cannot read the tracker's login: `,
+          user.failure.message,
+        ),
       );
-      return null;
+      repos.push({ kind: "broken", name: watched.repo });
+      continue;
     }
-    for (const info of listed.success) {
-      pass.report.runs += 1;
-      if (info.unreadable) {
-        const id = runIdToString(info.id);
-        // Its own ledger is what cannot be read, so the machine log takes the error.
-        yield* pass.fail(
-          info.id,
-          passError(
-            "ledger",
-            `run ${id}: its ledger file cannot be read, so nothing was done for it and it counts as active`,
-            "",
-          ),
-          true,
-        );
-        continue;
-      }
+    repos.push({
+      kind: "ready",
+      repo: { watched, project: project.success, trackerUser: user.success },
+    });
+  }
+  return repos;
+});
+
+/** Every unfinished run, counted; a run whose file cannot be read is an error line and counts as active. */
+const runs = Effect.fn("Pass.runs")(function* (world: PassWorld, pass: Pass) {
+  const listed = yield* Effect.result(world.unfinishedRuns());
+  if (listed._tag === "Failure") {
+    yield* pass.fail(
+      null,
+      passError("ledger", "cannot read the run ledger: ", listed.failure.message),
+    );
+    return null;
+  }
+  for (const info of listed.success) {
+    pass.report.runs += 1;
+    if (info.unreadable) {
+      const id = runIdToString(info.id);
+      // Its own ledger is what cannot be read, so the machine log takes the error.
+      yield* pass.fail(
+        info.id,
+        passError(
+          "ledger",
+          `run ${id}: its ledger file cannot be read, so nothing was done for it and it counts as active`,
+          "",
+        ),
+        true,
+      );
+      continue;
     }
-    return listed.success;
-  });
+  }
+  return listed.success;
+});
 
 /**
  * Works each confirmed run: a stop request an operator left for it is taken into its ledger, then
@@ -758,45 +754,44 @@ const runs = (world: PassWorld, pass: Pass): Effect.Effect<ReadonlyArray<RunInfo
  * claim, so none is counted as one. An issue put back to `ready` is left to the claim step, which
  * finishes its run when it claims the issue.
  */
-const workRuns = (
+const workRuns = Effect.fn("Pass.workRuns")(function* (
   world: PassWorld,
   repos: ReadonlyArray<Loaded>,
   known: Known,
   pass: Pass,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    // The runs whose session `advance` found ended badly: they are decided together below.
-    const ended: Array<EndedBadly> = [];
-    for (const info of [...known.infos]) {
-      if (info.unreadable || !info.confirmed) continue;
-      // A pull request that waits for a person is gated again after the others (`prOpenRuns`).
-      if (info.state === "pr-open") continue;
-      const loaded = repos.find(
-        (l) => l.kind === "ready" && sameRepo(l.repo.watched.repo, info.id.repo),
-      );
-      if (loaded === undefined || loaded.kind !== "ready") continue;
-      const repo = loaded.repo;
-      const name = repo.watched.repo;
-      const issue = Number(info.id.issue);
-      const notes = pass.notes(name, issue, info.state);
-      if (world.gateRunning(info.id)) {
-        // The gate has the run: nothing else is done for it (softfac's `work_runs`). A stop
-        // request waits, so the gate's own result decides the state first.
-        notes.parts.push(GATE_RUNNING);
-      } else if (yield* takeStopRequestThenWithin(world, repo, info, notes, pass)) {
-        if (inTriage(info)) yield* resumeRun(world, repo, info, notes, pass);
-        else if (info.state === "building") yield* followBuilding(world, repo, info, notes, pass);
-        // A run left in `needs-info` or `stuck` has its end done by `advance` (softfac's `finishing`).
-        else if (info.state === "needs-info" || info.state === "stuck") {
-          yield* advanceRun(world, repo, info, notes, pass);
-        }
+) {
+  // The runs whose session `advance` found ended badly: they are decided together below.
+  const ended: Array<EndedBadly> = [];
+  for (const info of [...known.infos]) {
+    if (info.unreadable || !info.confirmed) continue;
+    // A pull request that waits for a person is gated again after the others (`prOpenRuns`).
+    if (info.state === "pr-open") continue;
+    const loaded = repos.find(
+      (l) => l.kind === "ready" && sameRepo(l.repo.watched.repo, info.id.repo),
+    );
+    if (loaded === undefined || loaded.kind !== "ready") continue;
+    const repo = loaded.repo;
+    const name = repo.watched.repo;
+    const issue = Number(info.id.issue);
+    const notes = pass.notes(name, issue, info.state);
+    if (world.gateRunning(info.id)) {
+      // The gate has the run: nothing else is done for it (softfac's `work_runs`). A stop
+      // request waits, so the gate's own result decides the state first.
+      notes.parts.push(GATE_RUNNING);
+    } else if (yield* takeStopRequestThenWithin(world, repo, info, notes, pass)) {
+      if (inTriage(info)) yield* resumeRun(world, repo, info, notes, pass);
+      else if (info.state === "building") yield* followBuilding(world, repo, info, notes, pass);
+      // A run left in `needs-info` or `stuck` has its end done by `advance` (softfac's `finishing`).
+      else if (info.state === "needs-info" || info.state === "stuck") {
+        yield* advanceRun(world, repo, info, notes, pass);
       }
-      if (notes.endedBadly !== null) ended.push({ info, repo, what: notes.endedBadly });
-      yield* known.refresh(world, pass, name, issue);
-      yield* pass.flush(notes, info.id);
     }
-    yield* decideInterruptions(world, ended, pass);
-  });
+    if (notes.endedBadly !== null) ended.push({ info, repo, what: notes.endedBadly });
+    yield* known.refresh(world, pass, name, issue);
+    yield* pass.flush(notes, info.id);
+  }
+  yield* decideInterruptions(world, ended, pass);
+});
 
 /** A run `advance` found ended badly, with the repo it is in. */
 interface EndedBadly {
@@ -816,105 +811,99 @@ const endedAs = (what: BadEnd): string =>
  * is read once, and not at all when none did. A log that cannot be read is an error line, and then
  * only two or more sessions that ended badly are decided; a lone one waits for the next pass.
  */
-const decideInterruptions = (
+const decideInterruptions = Effect.fn("Pass.decideInterruptions")(function* (
   world: PassWorld,
   ended: ReadonlyArray<EndedBadly>,
   pass: Pass,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    if (ended.length === 0) return;
-    const trouble = yield* Effect.result(
-      Effect.all([world.t3Trouble(), world.t3Starts(), world.t3Stops()], { concurrency: 1 }),
+) {
+  if (ended.length === 0) return;
+  const trouble = yield* Effect.result(
+    Effect.all([world.t3Trouble(), world.t3Starts(), world.t3Stops()], { concurrency: 1 }),
+  );
+  let t3Error: string | null = null;
+  let t3Starts: ReadonlyArray<number> = [];
+  let t3Stops: ReadonlyArray<number> = [];
+  if (trouble._tag === "Failure") {
+    yield* pass.fail(
+      null,
+      passError("ledger", "cannot read the machine log for T3 trouble: ", trouble.failure.message),
     );
-    let t3Error: string | null = null;
-    let t3Starts: ReadonlyArray<number> = [];
-    let t3Stops: ReadonlyArray<number> = [];
-    if (trouble._tag === "Failure") {
-      yield* pass.fail(
-        null,
-        passError(
-          "ledger",
-          "cannot read the machine log for T3 trouble: ",
-          trouble.failure.message,
-        ),
-      );
-      // Without the log a lone session cannot be told from a stop, and a stop cannot be undone:
-      // those runs stay as they are and `advance` reports them again next pass. Two or more need
-      // no log.
-      if (ended.length < 2) return;
+    // Without the log a lone session cannot be told from a stop, and a stop cannot be undone:
+    // those runs stay as they are and `advance` reports them again next pass. Two or more need
+    // no log.
+    if (ended.length < 2) return;
+  } else {
+    [t3Error, t3Starts, t3Stops] = trouble.success;
+  }
+  const evidence: Evidence = { t3Error, endedInPass: ended.length, t3Starts, t3Stops };
+  for (const { info, repo, what } of ended) {
+    const notes = pass.notes(repo.watched.repo, Number(info.id.issue), info.state);
+    const why = endedAs(what);
+    const decided = yield* Effect.result(world.interrupted(repo, info.id, info.base, evidence));
+    if (decided._tag === "Failure") {
+      pass.failed(notes, "interrupted", "advance", decided.failure);
     } else {
-      [t3Error, t3Starts, t3Stops] = trouble.success;
-    }
-    const evidence: Evidence = { t3Error, endedInPass: ended.length, t3Starts, t3Stops };
-    for (const { info, repo, what } of ended) {
-      const notes = pass.notes(repo.watched.repo, Number(info.id.issue), info.state);
-      const why = endedAs(what);
-      const decided = yield* Effect.result(world.interrupted(repo, info.id, info.base, evidence));
-      if (decided._tag === "Failure") {
-        pass.failed(notes, "interrupted", "advance", decided.failure);
-      } else {
-        const outcome = decided.success;
-        switch (outcome.kind) {
-          case "resumed":
-            notes.parts.push(
-              `${why}; interrupted, sent it a resume (${outcome.resumes} of ${outcome.limit})`,
-            );
-            break;
-          case "relaunched":
-            yield* relaunched(
-              pass,
-              notes,
-              why,
-              ` (${outcome.resumes} of ${outcome.limit})`,
-              outcome.start,
-            );
-            break;
-          case "unchanged":
-            notes.parts.push(`${why}, but ${outcome.why}; left alone`);
-            break;
-          case "stuck":
-            pass.stuck(notes, runIdToString(info.id));
-            break;
-        }
+      const outcome = decided.success;
+      switch (outcome.kind) {
+        case "resumed":
+          notes.parts.push(
+            `${why}; interrupted, sent it a resume (${outcome.resumes} of ${outcome.limit})`,
+          );
+          break;
+        case "relaunched":
+          yield* relaunched(
+            pass,
+            notes,
+            why,
+            ` (${outcome.resumes} of ${outcome.limit})`,
+            outcome.start,
+          );
+          break;
+        case "unchanged":
+          notes.parts.push(`${why}, but ${outcome.why}; left alone`);
+          break;
+        case "stuck":
+          pass.stuck(notes, runIdToString(info.id));
+          break;
       }
-      yield* pass.flush(notes, info.id);
     }
-  });
+    yield* pass.flush(notes, info.id);
+  }
+});
 
 /**
  * What a pass says of the next attempt that a relaunch started: `counted` is the resume count,
  * when there is one to say.
  */
-const relaunched = (
+const relaunched = Effect.fn("Pass.relaunched")(function* (
   pass: Pass,
   notes: Notes,
   why: string,
   counted: string,
   start: StartOutcome,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    switch (start.kind) {
-      case "started":
-        notes.parts.push(
-          `${why}; interrupted, relaunched as run ${runIdToString(start.run)}${counted}`,
-        );
-        break;
-      case "stuck":
-        notes.parts.push(`${why}; interrupted, relaunched${counted}`);
-        pass.stuck(notes, runIdToString(start.run));
-        break;
-      case "abandoned":
-        notes.parts.push(`${why}; interrupted, relaunching${counted}`);
-        yield* abandoned(pass, notes, null, start.mayHaveSession, start.error);
-        break;
-      case "skipped":
-      case "refused":
-        notes.parts.push(
-          `${why}; interrupted, relaunching${counted}, the new attempt starts on the next pass`,
-        );
-        break;
-    }
-  });
+) {
+  switch (start.kind) {
+    case "started":
+      notes.parts.push(
+        `${why}; interrupted, relaunched as run ${runIdToString(start.run)}${counted}`,
+      );
+      break;
+    case "stuck":
+      notes.parts.push(`${why}; interrupted, relaunched${counted}`);
+      pass.stuck(notes, runIdToString(start.run));
+      break;
+    case "abandoned":
+      notes.parts.push(`${why}; interrupted, relaunching${counted}`);
+      yield* abandoned(pass, notes, null, start.mayHaveSession, start.error);
+      break;
+    case "skipped":
+    case "refused":
+      notes.parts.push(
+        `${why}; interrupted, relaunching${counted}, the new attempt starts on the next pass`,
+      );
+      break;
+  }
+});
 
 /**
  * The gate started for every run whose issue is `pr-open`, once each, after the claims (softfac's
@@ -925,40 +914,39 @@ const relaunched = (
  * earlier gate left on disk, and a read that fails. A run of a repo that is not loaded is left
  * alone.
  */
-const prOpenRuns = (
+const prOpenRuns = Effect.fn("Pass.prOpenRuns")(function* (
   world: PassWorld,
   repos: ReadonlyArray<Loaded>,
   known: Known,
   pass: Pass,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    const tips = new Map<string, string | null>();
-    for (const info of [...known.infos]) {
-      if (info.unreadable || info.state !== "pr-open") continue;
-      const loaded = repos.find(
-        (l) => l.kind === "ready" && sameRepo(l.repo.watched.repo, info.id.repo),
-      );
-      if (loaded === undefined || loaded.kind !== "ready") continue;
-      const repo = loaded.repo;
-      const notes = pass.notes(repo.watched.repo, Number(info.id.issue), info.state);
-      if (world.gateRunning(info.id)) {
-        notes.parts.push(GATE_RUNNING);
-      } else {
-        // A stop asked for while the run was building waits for its gate (see `workRuns`). Once
-        // the gate passed it is dropped here, before a failed re-gate relaunches a session.
-        yield* takeStopRequest(world, pass, info, notes);
-        // Instructor feedback comes before all of that: a run it acted on is not gated this
-        // pass, whatever its head and its base did, because the gate runs when the new
-        // session's first run ends.
-        if (yield* actedOnFeedback(world, repo, info, notes, pass)) {
-          // Said.
-        } else if (!(yield* unchanged(world, repo, info.id, tips))) {
-          yield* startGate(world, repo, info, notes);
-        }
+) {
+  const tips = new Map<string, string | null>();
+  for (const info of [...known.infos]) {
+    if (info.unreadable || info.state !== "pr-open") continue;
+    const loaded = repos.find(
+      (l) => l.kind === "ready" && sameRepo(l.repo.watched.repo, info.id.repo),
+    );
+    if (loaded === undefined || loaded.kind !== "ready") continue;
+    const repo = loaded.repo;
+    const notes = pass.notes(repo.watched.repo, Number(info.id.issue), info.state);
+    if (world.gateRunning(info.id)) {
+      notes.parts.push(GATE_RUNNING);
+    } else {
+      // A stop asked for while the run was building waits for its gate (see `workRuns`). Once
+      // the gate passed it is dropped here, before a failed re-gate relaunches a session.
+      yield* takeStopRequest(world, pass, info, notes);
+      // Instructor feedback comes before all of that: a run it acted on is not gated this
+      // pass, whatever its head and its base did, because the gate runs when the new
+      // session's first run ends.
+      if (yield* actedOnFeedback(world, repo, info, notes, pass)) {
+        // Said.
+      } else if (!(yield* unchanged(world, repo, info.id, tips))) {
+        yield* startGate(world, repo, info, notes);
       }
-      yield* pass.flush(notes, info.id);
     }
-  });
+    yield* pass.flush(notes, info.id);
+  }
+});
 
 /**
  * Calls the feedback step for a `pr-open` run and says what it did. True when it did anything,
@@ -968,41 +956,40 @@ const prOpenRuns = (
  * being gated, or a merged pull request from being ended. The step does not take a gate lock:
  * gates run as fibers of this process and `gateRunning` was asked first.
  */
-const actedOnFeedback = (
+const actedOnFeedback = Effect.fn("Pass.actedOnFeedback")(function* (
   world: PassWorld,
   repo: Repo,
   info: RunInfo,
   notes: Notes,
   pass: Pass,
-): Effect.Effect<boolean> =>
-  Effect.gen(function* () {
-    const run = runIdToString(info.id);
-    const stepped = yield* Effect.result(world.feedback(repo, info.id, info.base));
-    if (stepped._tag === "Failure") {
-      pass.failed(notes, "feedback", "forward", stepped.failure);
+) {
+  const run = runIdToString(info.id);
+  const stepped = yield* Effect.result(world.feedback(repo, info.id, info.base));
+  if (stepped._tag === "Failure") {
+    pass.failed(notes, "feedback", "forward", stepped.failure);
+    return false;
+  }
+  const outcome = stepped.success;
+  switch (outcome.kind) {
+    case "none":
       return false;
-    }
-    const outcome = stepped.success;
-    switch (outcome.kind) {
-      case "none":
-        return false;
-      case "relaunched":
-        notes.parts.push(
-          `instructor feedback (${outcome.items} ${plural(outcome.items, "item")}) on PR https://github.com/${info.id.repo}/pull/${outcome.pr}: a new session was launched on its branch, the PR is a draft again`,
-        );
-        break;
-      case "stuck":
-        pass.stuck(notes, run);
-        break;
-      case "ended":
-        notes.parts.push(PULL_REQUEST_ENDED);
-        break;
-      case "abandoned":
-        yield* abandoned(pass, notes, run, []);
-        break;
-    }
-    return true;
-  });
+    case "relaunched":
+      notes.parts.push(
+        `instructor feedback (${outcome.items} ${plural(outcome.items, "item")}) on PR https://github.com/${info.id.repo}/pull/${outcome.pr}: a new session was launched on its branch, the PR is a draft again`,
+      );
+      break;
+    case "stuck":
+      pass.stuck(notes, run);
+      break;
+    case "ended":
+      notes.parts.push(PULL_REQUEST_ENDED);
+      break;
+    case "abandoned":
+      yield* abandoned(pass, notes, run, []);
+      break;
+  }
+  return true;
+});
 
 /**
  * Whether `regate` would find the run's pull request and its base tip where its last pass left
@@ -1013,131 +1000,126 @@ const actedOnFeedback = (
  * the pull request, and `null` once a read for that repo and base failed: the other runs on it
  * then go to the gate without a read that could wait for its timeout again.
  */
-const unchanged = (
+const unchanged = Effect.fn("Pass.unchanged")(function* (
   world: PassWorld,
   repo: Repo,
   run: RunId,
   tips: Map<string, string | null>,
-): Effect.Effect<boolean> =>
-  Effect.gen(function* () {
-    const last = yield* Effect.result(world.lastPass(run));
-    if (last._tag === "Failure" || last.success === null) return false;
-    const base = last.success.baseBranch ?? repo.project.base;
-    const key = `${asciiLower(repo.watched.repo)} ${base}`;
-    if (!tips.has(key)) {
-      const read = yield* Effect.result(world.baseTip(repo, base));
-      tips.set(key, read._tag === "Success" ? read.success : null);
-    }
-    const tip = tips.get(key) ?? null;
-    if (tip === null) return false;
-    const head = yield* Effect.result(world.openHead(repo, last.success.pr));
-    if (head._tag === "Failure") {
-      tips.set(key, null);
-      return false;
-    }
-    if (head.success === null) return false;
-    return unchangedSince(last.success.head, last.success.base, head.success, tip);
-  });
+) {
+  const last = yield* Effect.result(world.lastPass(run));
+  if (last._tag === "Failure" || last.success === null) return false;
+  const base = last.success.baseBranch ?? repo.project.base;
+  const key = `${asciiLower(repo.watched.repo)} ${base}`;
+  if (!tips.has(key)) {
+    const read = yield* Effect.result(world.baseTip(repo, base));
+    tips.set(key, read._tag === "Success" ? read.success : null);
+  }
+  const tip = tips.get(key) ?? null;
+  if (tip === null) return false;
+  const head = yield* Effect.result(world.openHead(repo, last.success.pr));
+  if (head._tag === "Failure") {
+    tips.set(key, null);
+    return false;
+  }
+  if (head.success === null) return false;
+  return unchangedSince(last.success.head, last.success.base, head.success, tip);
+});
 
 /**
  * Takes the run's stop request into its ledger, and says so. A request that cannot be taken is an
  * error line and the file stays for the next pass; the run is worked all the same.
  */
-const takeStopRequest = (
+const takeStopRequest = Effect.fn("Pass.takeStopRequest")(function* (
   world: PassWorld,
   pass: Pass,
   info: RunInfo,
   notes: Notes,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    const taken = yield* Effect.result(world.takeStopRequest(info.id));
-    if (taken._tag === "Failure") {
-      pass.failed(notes, "stop request", "pass", taken.failure);
-    } else if (taken.success === "recorded") {
-      notes.parts.push("stop requested by hand");
-    } else if (taken.success === "not-building") {
-      notes.parts.push("stop request dropped: the run is not building");
-    }
-  });
+) {
+  const taken = yield* Effect.result(world.takeStopRequest(info.id));
+  if (taken._tag === "Failure") {
+    pass.failed(notes, "stop request", "pass", taken.failure);
+  } else if (taken.success === "recorded") {
+    notes.parts.push("stop requested by hand");
+  } else if (taken.success === "not-building") {
+    notes.parts.push("stop request dropped: the run is not building");
+  }
+});
 
 /** Takes the stop request, then checks the time limit: true when the run is still to be worked. */
-const takeStopRequestThenWithin = (
+const takeStopRequestThenWithin = Effect.fn("Pass.takeStopRequestThenWithin")(function* (
   world: PassWorld,
   repo: Repo,
   info: RunInfo,
   notes: Notes,
   pass: Pass,
-): Effect.Effect<boolean> =>
-  Effect.gen(function* () {
-    yield* takeStopRequest(world, pass, info, notes);
-    return yield* withinLimit(world, repo, info, notes, pass);
-  });
+) {
+  yield* takeStopRequest(world, pass, info, notes);
+  return yield* withinLimit(world, repo, info, notes, pass);
+});
 
 /** The time limit for the run. False when the run was stopped or the call failed: it is done for this pass. */
-const withinLimit = (
+const withinLimit = Effect.fn("Pass.withinLimit")(function* (
   world: PassWorld,
   repo: Repo,
   info: RunInfo,
   notes: Notes,
   pass: Pass,
-): Effect.Effect<boolean> =>
-  Effect.gen(function* () {
-    const outcome = yield* Effect.result(world.timeLimit(repo, info.id, info.base));
-    if (outcome._tag === "Failure") {
-      pass.failed(notes, "time limit", "pass", outcome.failure);
-      return false;
-    }
-    if (outcome.success.kind === "stopped") {
-      pass.stuck(notes, runIdToString(info.id));
-      return false;
-    }
-    return true;
-  });
+) {
+  const outcome = yield* Effect.result(world.timeLimit(repo, info.id, info.base));
+  if (outcome._tag === "Failure") {
+    pass.failed(notes, "time limit", "pass", outcome.failure);
+    return false;
+  }
+  if (outcome.success.kind === "stopped") {
+    pass.stuck(notes, runIdToString(info.id));
+    return false;
+  }
+  return true;
+});
 
 /** `resume` for a run in `triage`. */
-const resumeRun = (
+const resumeRun = Effect.fn("Pass.resumeRun")(function* (
   world: PassWorld,
   repo: Repo,
   info: RunInfo,
   notes: Notes,
   pass: Pass,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    const issue = Number(info.id.issue);
-    const outcome = yield* Effect.result(world.resume(repo, issue));
-    if (outcome._tag === "Failure") {
-      if (outcome.failure._tag === "GateRunningError") notes.parts.push(GATE_RUNNING);
-      else pass.failed(notes, "start", "start", outcome.failure);
-      return;
-    }
-    switch (outcome.success.kind) {
-      case "started":
-        notes.parts.push("session started, the issue is building");
-        break;
-      case "stuck":
-        pass.stuck(notes, runIdToString(outcome.success.run));
-        break;
-      case "abandoned":
-        yield* abandoned(
-          pass,
-          notes,
-          runIdToString(info.id),
-          outcome.success.mayHaveSession,
-          outcome.success.error,
-        );
-        break;
-      case "skipped":
-      case "refused": {
-        const moved = outcome.success.kind === "skipped" ? outcome.success.moved : undefined;
-        if (moved === "ready") notes.parts.push(READY_AGAIN);
-        else {
-          const run = runIdToString(info.id);
-          yield* stalled(pass, notes, run, outcome.success.reason, moved === "closed");
-        }
-        break;
+) {
+  const issue = Number(info.id.issue);
+  const outcome = yield* Effect.result(world.resume(repo, issue));
+  if (outcome._tag === "Failure") {
+    if (outcome.failure._tag === "GateRunningError") notes.parts.push(GATE_RUNNING);
+    else pass.failed(notes, "start", "start", outcome.failure);
+    return;
+  }
+  switch (outcome.success.kind) {
+    case "started":
+      notes.parts.push("session started, the issue is building");
+      break;
+    case "stuck":
+      pass.stuck(notes, runIdToString(outcome.success.run));
+      break;
+    case "abandoned":
+      yield* abandoned(
+        pass,
+        notes,
+        runIdToString(info.id),
+        outcome.success.mayHaveSession,
+        outcome.success.error,
+      );
+      break;
+    case "skipped":
+    case "refused": {
+      const moved = outcome.success.kind === "skipped" ? outcome.success.moved : undefined;
+      if (moved === "ready") notes.parts.push(READY_AGAIN);
+      else {
+        const run = runIdToString(info.id);
+        yield* stalled(pass, notes, run, outcome.success.reason, moved === "closed");
       }
+      break;
     }
-  });
+  }
+});
 
 /** The line of a run whose gate was held back because something was sent to its session. */
 const GATE_WAITS = "the gate waits for the next pass because a comment was sent";
@@ -1149,34 +1131,33 @@ const GATE_WAITS = "the gate waits for the next pass because a comment was sent"
  * that the gate would judge too early. A forward that cannot write the ledger leaves the run
  * alone for the pass.
  */
-const followBuilding = (
+const followBuilding = Effect.fn("Pass.followBuilding")(function* (
   world: PassWorld,
   repo: Repo,
   info: RunInfo,
   notes: Notes,
   pass: Pass,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    const watched = yield* Effect.result(world.watch(repo, info.id, info.base));
-    if (watched._tag === "Failure") return pass.failed(notes, "watch", "watch", watched.failure);
-    if (watched.success.kind === "stopped") return pass.stuck(notes, runIdToString(info.id));
-    let sent = false;
-    const forwarded = yield* Effect.result(world.forward(repo, info.id, info.base));
-    if (forwarded._tag === "Failure") {
-      pass.failed(notes, "forward", "forward", forwarded.failure);
-      if (errorKind(forwarded.failure) === "ledger") return;
-      sent = true;
-    } else {
-      const { comments, bodyEdit, skipped } = forwarded.success;
-      if (skipped === "abandoned") {
-        return yield* abandoned(pass, notes, runIdToString(info.id), []);
-      }
-      if (comments > 0) notes.parts.push(`forwarded ${comments} ${plural(comments, "comment")}`);
-      if (bodyEdit) notes.parts.push("forwarded the edited issue body");
-      sent = comments > 0 || bodyEdit;
+) {
+  const watched = yield* Effect.result(world.watch(repo, info.id, info.base));
+  if (watched._tag === "Failure") return pass.failed(notes, "watch", "watch", watched.failure);
+  if (watched.success.kind === "stopped") return pass.stuck(notes, runIdToString(info.id));
+  let sent = false;
+  const forwarded = yield* Effect.result(world.forward(repo, info.id, info.base));
+  if (forwarded._tag === "Failure") {
+    pass.failed(notes, "forward", "forward", forwarded.failure);
+    if (errorKind(forwarded.failure) === "ledger") return;
+    sent = true;
+  } else {
+    const { comments, bodyEdit, skipped } = forwarded.success;
+    if (skipped === "abandoned") {
+      return yield* abandoned(pass, notes, runIdToString(info.id), []);
     }
-    yield* advanceRun(world, repo, info, notes, pass, sent);
-  });
+    if (comments > 0) notes.parts.push(`forwarded ${comments} ${plural(comments, "comment")}`);
+    if (bodyEdit) notes.parts.push("forwarded the edited issue body");
+    sent = comments > 0 || bodyEdit;
+  }
+  yield* advanceRun(world, repo, info, notes, pass, sent);
+});
 
 /** Starts the run's gate in the background, and says so, or that it is queued. */
 const startGate = (
@@ -1193,86 +1174,85 @@ const startGate = (
  * `advance` for a run, and what it did in a line. The gate is not started when `sent` says
  * something was sent into the session this pass.
  */
-const advanceRun = (
+const advanceRun = Effect.fn("Pass.advanceRun")(function* (
   world: PassWorld,
   repo: Repo,
   info: RunInfo,
   notes: Notes,
   pass: Pass,
   sent = false,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    const run = runIdToString(info.id);
-    const advanced = yield* Effect.result(world.advance(repo, info.id, info.base));
-    // A `NotBuildingError` is a run that finished meanwhile: softfac prints it as an error too.
-    if (advanced._tag === "Failure")
-      return pass.failed(notes, "advance", "advance", advanced.failure);
-    // softfac's `advance_and_gate`: the gate starts for a session that finished, and for a run with
-    // a gate send pending while the session still lives, which only the gate can settle.
-    let wantsGate = false;
-    switch (advanced.success.kind) {
-      case "running":
-        notes.parts.push("session still running");
-        break;
-      case "reminded":
-        notes.parts.push("session ended without a result line, sent it a reminder");
-        break;
-      case "paused":
-        notes.parts.push(
-          "session stopped by hand, waiting for an instructor's comment on the pull request or the issue",
-        );
-        break;
-      case "ready-for-gate":
-        notes.parts.push("session finished");
-        wantsGate = true;
-        break;
-      case "passed":
-        notes.parts.push(GATE_PASSED_LINE);
-        break;
-      case "needs-info":
-        notes.parts.push(
-          "session asked questions, the issue is now needs-info and the run is finished",
-        );
-        notes.raises.push({
-          id: `run:${run}:needs-info`,
-          kind: "needs-info",
-          repo: notes.repo,
-          issue: notes.issue,
-          run,
-          message: `${notes.label} needs-info, the session asked questions on the issue`,
-        });
-        break;
-      case "stuck":
-        pass.stuck(notes, run);
-        break;
-      case "ended":
-        notes.parts.push(PULL_REQUEST_ENDED);
-        break;
-      case "abandoned":
-        yield* abandoned(pass, notes, run, []);
-        break;
-      case "ended-badly":
-        // Said at the decision, after every run has been through the pass.
-        notes.endedBadly = advanced.success.what;
-        break;
-      case "relaunched":
-        yield* relaunched(pass, notes, endedAs("thread-gone"), "", advanced.success.start);
-        break;
+) {
+  const run = runIdToString(info.id);
+  const advanced = yield* Effect.result(world.advance(repo, info.id, info.base));
+  // A `NotBuildingError` is a run that finished meanwhile: softfac prints it as an error too.
+  if (advanced._tag === "Failure")
+    return pass.failed(notes, "advance", "advance", advanced.failure);
+  // softfac's `advance_and_gate`: the gate starts for a session that finished, and for a run with
+  // a gate send pending while the session still lives, which only the gate can settle.
+  let wantsGate = false;
+  switch (advanced.success.kind) {
+    case "running":
+      notes.parts.push("session still running");
+      break;
+    case "reminded":
+      notes.parts.push("session ended without a result line, sent it a reminder");
+      break;
+    case "paused":
+      notes.parts.push(
+        "session stopped by hand, waiting for an instructor's comment on the pull request or the issue",
+      );
+      break;
+    case "ready-for-gate":
+      notes.parts.push("session finished");
+      wantsGate = true;
+      break;
+    case "passed":
+      notes.parts.push(GATE_PASSED_LINE);
+      break;
+    case "needs-info":
+      notes.parts.push(
+        "session asked questions, the issue is now needs-info and the run is finished",
+      );
+      notes.raises.push({
+        id: `run:${run}:needs-info`,
+        kind: "needs-info",
+        repo: notes.repo,
+        issue: notes.issue,
+        run,
+        message: `${notes.label} needs-info, the session asked questions on the issue`,
+      });
+      break;
+    case "stuck":
+      pass.stuck(notes, run);
+      break;
+    case "ended":
+      notes.parts.push(PULL_REQUEST_ENDED);
+      break;
+    case "abandoned":
+      yield* abandoned(pass, notes, run, []);
+      break;
+    case "ended-badly":
+      // Said at the decision, after every run has been through the pass.
+      notes.endedBadly = advanced.success.what;
+      break;
+    case "relaunched":
+      yield* relaunched(pass, notes, endedAs("thread-gone"), "", advanced.success.start);
+      break;
+  }
+  const kind = advanced.success.kind;
+  const mayGatePending =
+    kind === "running" || kind === "reminded" || kind === "paused" || kind === "ready-for-gate";
+  let pending = false;
+  if (mayGatePending) {
+    const read = yield* Effect.result(world.hasPendingGateSend(info.id));
+    if (read._tag === "Failure") {
+      return pass.trouble(notes, "ledger", "gate send check", read.failure.message);
     }
-    const kind = advanced.success.kind;
-    const mayGatePending =
-      kind === "running" || kind === "reminded" || kind === "paused" || kind === "ready-for-gate";
-    let pending = false;
-    if (mayGatePending) {
-      const read = yield* Effect.result(world.hasPendingGateSend(info.id));
-      if (read._tag === "Failure") {
-        return pass.trouble(notes, "ledger", "gate send check", read.failure.message);
-      }
-      pending = read.success;
-    }
-    if (wantsGate && sent && !pending) notes.parts.push(GATE_WAITS);
-    else if (wantsGate || pending) yield* startGate(world, repo, info, notes);
-  });
+    pending = read.success;
+  }
+  if (wantsGate && sent && !pending) notes.parts.push(GATE_WAITS);
+  else if (wantsGate || pending) yield* startGate(world, repo, info, notes);
+});
 
 /**
  * The run's issue was closed by a person, so the run is over and its session stopped. Says so,
@@ -1281,29 +1261,28 @@ const advanceRun = (
  * could not archive; each is raised with the command id to look for. `error` is why `start` could
  * not end a later run of the issue, which the next pass tries again.
  */
-const abandoned = (
+const abandoned = Effect.fn("Pass.abandoned")(function* (
   pass: Pass,
   notes: Notes,
   run: string | null,
   mayHaveSession: ReadonlyArray<RunId>,
   error?: StartError,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    notes.parts.push("the issue is closed, the run is closed");
-    if (error !== undefined) pass.failed(notes, "start", "start", error);
-    if (run !== null) {
-      yield* pass.attention(notes, abandonedText(notes.label), run, "abandoned");
-    }
-    for (const id of mayHaveSession) {
-      const name = runIdToString(id);
-      yield* pass.attention(
-        notes,
-        `${notes.label} the issue was closed, and a session may exist for ${name}: look for launch command id softfac:${name}:launch in T3 Code and archive that thread by hand`,
-        name,
-        "session-may-exist",
-      );
-    }
-  });
+) {
+  notes.parts.push("the issue is closed, the run is closed");
+  if (error !== undefined) pass.failed(notes, "start", "start", error);
+  if (run !== null) {
+    yield* pass.attention(notes, abandonedText(notes.label), run, "abandoned");
+  }
+  for (const id of mayHaveSession) {
+    const name = runIdToString(id);
+    yield* pass.attention(
+      notes,
+      `${notes.label} the issue was closed, and a session may exist for ${name}: look for launch command id softfac:${name}:launch in T3 Code and archive that thread by hand`,
+      name,
+      "session-may-exist",
+    );
+  }
+});
 
 /**
  * A ready issue the limit holds back only because of its own triage run whose session may be
@@ -1399,94 +1378,88 @@ class Known {
  * is one, so a stuck path cut short is tried again on every pass. They are claims already made,
  * so the limit on new claims does not apply to them.
  */
-const untrackedClaims = (
+const untrackedClaims = Effect.fn("Pass.untrackedClaims")(function* (
   world: PassWorld,
   repos: ReadonlyArray<Loaded>,
   known: Known,
   pass: Pass,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    for (const loaded of repos) {
-      if (loaded.kind !== "ready") continue;
-      const repo = loaded.repo;
-      const name = repo.watched.repo;
-      const listing = yield* Effect.result(world.triageIssues(repo));
-      if (listing._tag === "Failure") {
-        yield* pass.fail(
-          null,
-          passError("tracker", `${name}: cannot list the triage issues: `, listing.failure.message),
-        );
-        continue;
-      }
-      pass.sayIfCut(name, "triage", listing.success.cut);
-      for (const issue of listing.success.items) {
-        if (known.of(name, issue).some((i) => i.unreadable || i.confirmed)) continue;
-        const notes = pass.notes(name, issue, "triage");
-        const run = yield* noteStart(world, pass, known, notes, repo, issue, "resume", {
-          claimed: (run) => `no run on record, claimed in run ${run}`,
-          notTaken: "no run on record, not ours to resume",
-          stuck: "no run on record",
-        });
-        yield* pass.flush(notes, run);
-      }
+) {
+  for (const loaded of repos) {
+    if (loaded.kind !== "ready") continue;
+    const repo = loaded.repo;
+    const name = repo.watched.repo;
+    const listing = yield* Effect.result(world.triageIssues(repo));
+    if (listing._tag === "Failure") {
+      yield* pass.fail(
+        null,
+        passError("tracker", `${name}: cannot list the triage issues: `, listing.failure.message),
+      );
+      continue;
     }
-  });
+    pass.sayIfCut(name, "triage", listing.success.cut);
+    for (const issue of listing.success.items) {
+      if (known.of(name, issue).some((i) => i.unreadable || i.confirmed)) continue;
+      const notes = pass.notes(name, issue, "triage");
+      const run = yield* noteStart(world, pass, known, notes, repo, issue, "resume", {
+        claimed: (run) => `no run on record, claimed in run ${run}`,
+        notTaken: "no run on record, not ours to resume",
+        stuck: "no run on record",
+      });
+      yield* pass.flush(notes, run);
+    }
+  }
+});
 
 /**
  * Moves claims that were cut short to `factory:proposed`: the issue is `factory:triage` or
  * `factory:building`, nobody is assigned, no unfinished run is for it, and it has not changed for
  * the grace period the tracker applies. An issue that someone is assigned to is not looked at.
  */
-const unassignedClaims = (
+const unassignedClaims = Effect.fn("Pass.unassignedClaims")(function* (
   world: PassWorld,
   repos: ReadonlyArray<Loaded>,
   known: Known,
   pass: Pass,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    for (const loaded of repos) {
-      if (loaded.kind !== "ready") continue;
-      const repo = loaded.repo;
-      const name = repo.watched.repo;
-      const issues = yield* Effect.result(world.unassignedClaims(repo, known.issues(name)));
-      if (issues._tag === "Failure") {
-        yield* pass.fail(
-          null,
-          passError(
-            "tracker",
-            `${name}: cannot list the unassigned claims: `,
-            issues.failure.message,
-          ),
-        );
-        continue;
-      }
-      for (const { issue, message } of issues.success.unread) {
-        yield* pass.fail(
-          null,
-          passError(
-            "tracker",
-            `${name}${mention(issue)}: cannot read its label history: `,
-            message,
-          ),
-        );
-      }
-      for (const { issue, state } of issues.success.claims) {
-        if (known.of(name, issue).length > 0) continue;
-        const notes = pass.notes(name, issue, state);
-        const released = yield* Effect.result(world.releaseClaim(repo, issue, state));
-        if (released._tag === "Success") {
-          notes.parts.push("no run on record and no assignee, moved to proposed");
-          yield* pass.record({
-            event: "claim_repaired",
-            data: { repo: name, issue: String(issue), outcome: "reconciled" },
-          });
-        } else {
-          pass.trouble(notes, "tracker", "cannot move it to proposed: ", released.failure.message);
-        }
-        yield* pass.flush(notes, null);
-      }
+) {
+  for (const loaded of repos) {
+    if (loaded.kind !== "ready") continue;
+    const repo = loaded.repo;
+    const name = repo.watched.repo;
+    const issues = yield* Effect.result(world.unassignedClaims(repo, known.issues(name)));
+    if (issues._tag === "Failure") {
+      yield* pass.fail(
+        null,
+        passError(
+          "tracker",
+          `${name}: cannot list the unassigned claims: `,
+          issues.failure.message,
+        ),
+      );
+      continue;
     }
-  });
+    for (const { issue, message } of issues.success.unread) {
+      yield* pass.fail(
+        null,
+        passError("tracker", `${name}${mention(issue)}: cannot read its label history: `, message),
+      );
+    }
+    for (const { issue, state } of issues.success.claims) {
+      if (known.of(name, issue).length > 0) continue;
+      const notes = pass.notes(name, issue, state);
+      const released = yield* Effect.result(world.releaseClaim(repo, issue, state));
+      if (released._tag === "Success") {
+        notes.parts.push("no run on record and no assignee, moved to proposed");
+        yield* pass.record({
+          event: "claim_repaired",
+          data: { repo: name, issue: String(issue), outcome: "reconciled" },
+        });
+      } else {
+        pass.trouble(notes, "tracker", "cannot move it to proposed: ", released.failure.message);
+      }
+      yield* pass.flush(notes, null);
+    }
+  }
+});
 
 /** The newest of the issue's unfinished runs, or null when there is none. */
 const newestRun = (runs: ReadonlyArray<RunInfo>): RunId | null =>
@@ -1518,7 +1491,7 @@ interface StartWords {
  * The issue's runs are read again into `known` after the call. A refused claim is a
  * `claim_skipped`; a claim counts only when the issue was `ready`.
  */
-const noteStart = (
+const noteStart = Effect.fn("Pass.noteStart")(function* (
   world: PassWorld,
   pass: Pass,
   known: Known,
@@ -1527,61 +1500,60 @@ const noteStart = (
   issue: number,
   call: "start" | "resume",
   words: StartWords,
-): Effect.Effect<RunId | null> =>
-  Effect.gen(function* () {
-    const name = repo.watched.repo;
-    const before = newestRun(known.of(name, issue));
-    // The issue was claimed again, so what was open about its earlier runs is over.
-    const clearEarlier = world.attention.clear(
-      (item) => item.repo !== null && sameRepo(item.repo, name) && item.issue === issue,
-    );
-    const outcome = yield* Effect.result(world[call](repo, issue));
-    if (outcome._tag === "Failure" && outcome.failure._tag === "GateRunningError") {
-      // Nothing was called or written.
-      notes.parts.push(GATE_RUNNING);
+) {
+  const name = repo.watched.repo;
+  const before = newestRun(known.of(name, issue));
+  // The issue was claimed again, so what was open about its earlier runs is over.
+  const clearEarlier = world.attention.clear(
+    (item) => item.repo !== null && sameRepo(item.repo, name) && item.issue === issue,
+  );
+  const outcome = yield* Effect.result(world[call](repo, issue));
+  if (outcome._tag === "Failure" && outcome.failure._tag === "GateRunningError") {
+    // Nothing was called or written.
+    notes.parts.push(GATE_RUNNING);
+    return null;
+  }
+  yield* known.refresh(world, pass, name, issue);
+  if (outcome._tag === "Failure") {
+    pass.failed(notes, "start", "start", outcome.failure);
+    return madeSince(newestRun(known.of(name, issue)), before);
+  }
+  switch (outcome.success.kind) {
+    case "started": {
+      const run = runIdToString(outcome.success.run);
+      notes.parts.push(words.claimed(run));
+      if (notes.state === "ready") pass.report.claimed += 1;
+      yield* clearEarlier;
+      return outcome.success.run;
+    }
+    case "abandoned": {
+      // The runs the call ended are not told apart; the newest one known before it stands for them.
+      const run = before === null ? null : runIdToString(before);
+      yield* abandoned(pass, notes, run, outcome.success.mayHaveSession, outcome.success.error);
       return null;
     }
-    yield* known.refresh(world, pass, name, issue);
-    if (outcome._tag === "Failure") {
-      pass.failed(notes, "start", "start", outcome.failure);
-      return madeSince(newestRun(known.of(name, issue)), before);
+    case "skipped":
+      notes.parts.push(words.notTaken);
+      return null;
+    case "refused":
+      notes.parts.push(words.notTaken);
+      if (notes.state === "ready") {
+        yield* pass.record({
+          event: "claim_skipped",
+          data: { repo: name, issue: String(issue), reason: "unapproved" },
+        });
+      }
+      return null;
+    case "stuck": {
+      const run = runIdToString(outcome.success.run);
+      notes.parts.push(words.stuck);
+      // The new run's item is raised when the pass flushes, so it outlives this clear.
+      yield* clearEarlier;
+      pass.stuck(notes, run);
+      return outcome.success.run;
     }
-    switch (outcome.success.kind) {
-      case "started": {
-        const run = runIdToString(outcome.success.run);
-        notes.parts.push(words.claimed(run));
-        if (notes.state === "ready") pass.report.claimed += 1;
-        yield* clearEarlier;
-        return outcome.success.run;
-      }
-      case "abandoned": {
-        // The runs the call ended are not told apart; the newest one known before it stands for them.
-        const run = before === null ? null : runIdToString(before);
-        yield* abandoned(pass, notes, run, outcome.success.mayHaveSession, outcome.success.error);
-        return null;
-      }
-      case "skipped":
-        notes.parts.push(words.notTaken);
-        return null;
-      case "refused":
-        notes.parts.push(words.notTaken);
-        if (notes.state === "ready") {
-          yield* pass.record({
-            event: "claim_skipped",
-            data: { repo: name, issue: String(issue), reason: "unapproved" },
-          });
-        }
-        return null;
-      case "stuck": {
-        const run = runIdToString(outcome.success.run);
-        notes.parts.push(words.stuck);
-        // The new run's item is raised when the pass flushes, so it outlives this clear.
-        yield* clearEarlier;
-        pass.stuck(notes, run);
-        return outcome.success.run;
-      }
-    }
-  });
+  }
+});
 
 /** A watched repo's ready issues still to try this pass, oldest first, and how many of its runs hold a slot. */
 interface Queue {
@@ -1606,141 +1578,140 @@ const count = (known: Known, queues: ReadonlyArray<Queue>): number => {
  * a tie, and the runs are counted again after every claim, so free slots spread across the
  * repos. Within a repo the issues go by number, which is the order they were opened in.
  */
-const claim = (
+const claim = Effect.fn("Pass.claim")(function* (
   world: PassWorld,
   repos: ReadonlyArray<Loaded>,
   known: Known,
   machine: MachineConfig,
   pass: Pass,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    // A start before this step left runs that could not be read again.
-    if (known.lost) return;
-    const paused = world.handPause();
-    // Ready issues that were not tried because the limit was reached. Every repo is still
-    // listed, so the count is the whole machine's.
-    let left = 0;
-    const queues: Array<Queue> = [];
-    for (const loaded of repos) {
-      if (loaded.kind !== "ready") continue;
-      const repo = loaded.repo;
-      const name = repo.watched.repo;
-      const listing = yield* Effect.result(world.readyIssues(repo));
-      if (listing._tag === "Failure") {
-        yield* pass.fail(
-          null,
-          passError("tracker", `${name}: cannot list the ready issues: `, listing.failure.message),
-        );
-        continue;
-      }
-      pass.sayIfCut(name, "ready", listing.success.cut);
-      // GitHub numbers go by number, which is the order they were opened in.
-      const issues = [...new Set(listing.success.items)].sort((a, b) => a - b);
-      queues.push({ repo, issues, held: 0 });
+) {
+  // A start before this step left runs that could not be read again.
+  if (known.lost) return;
+  const paused = world.handPause();
+  // Ready issues that were not tried because the limit was reached. Every repo is still
+  // listed, so the count is the whole machine's.
+  let left = 0;
+  const queues: Array<Queue> = [];
+  for (const loaded of repos) {
+    if (loaded.kind !== "ready") continue;
+    const repo = loaded.repo;
+    const name = repo.watched.repo;
+    const listing = yield* Effect.result(world.readyIssues(repo));
+    if (listing._tag === "Failure") {
+      yield* pass.fail(
+        null,
+        passError("tracker", `${name}: cannot list the ready issues: `, listing.failure.message),
+      );
+      continue;
     }
-    let active = count(known, queues);
-    // A blocked issue takes no slot, so its repo stays the one with the fewest and its next
-    // issue is tried.
-    for (;;) {
-      const queue = queues
-        .filter((q) => q.issues.length > 0)
-        .reduce<Queue | null>((best, q) => (best === null || q.held < best.held ? q : best), null);
-      if (queue === null) break;
-      const repo = queue.repo;
-      const name = repo.watched.repo;
-      const issue = queue.issues.shift()!;
-      const notes = pass.notes(name, issue, "ready");
-      // An issue with a run whose gate is running waits: `start` would finish that run under
-      // its gate. It takes no slot, no blocker read, and is not counted as left over.
-      const gating = known.of(name, issue).some((info) => world.gateRunning(info.id));
-      if (gating) {
-        notes.parts.push(GATE_RUNNING);
-        yield* pass.flush(notes, null);
-        continue;
+    pass.sayIfCut(name, "ready", listing.success.cut);
+    // GitHub numbers go by number, which is the order they were opened in.
+    const issues = [...new Set(listing.success.items)].sort((a, b) => a - b);
+    queues.push({ repo, issues, held: 0 });
+  }
+  let active = count(known, queues);
+  // A blocked issue takes no slot, so its repo stays the one with the fewest and its next
+  // issue is tried.
+  for (;;) {
+    const queue = queues
+      .filter((q) => q.issues.length > 0)
+      .reduce<Queue | null>((best, q) => (best === null || q.held < best.held ? q : best), null);
+    if (queue === null) break;
+    const repo = queue.repo;
+    const name = repo.watched.repo;
+    const issue = queue.issues.shift()!;
+    const notes = pass.notes(name, issue, "ready");
+    // An issue with a run whose gate is running waits: `start` would finish that run under
+    // its gate. It takes no slot, no blocker read, and is not counted as left over.
+    const gating = known.of(name, issue).some((info) => world.gateRunning(info.id));
+    if (gating) {
+      notes.parts.push(GATE_RUNNING);
+      yield* pass.flush(notes, null);
+      continue;
+    }
+    // Checked before the blockers: a person paused claims, so no claim is started. The pause is
+    // the machine's, said once after the loop.
+    if (paused !== null) continue;
+    // Before the blockers: with no slot free nothing is claimed, so they are not read. Every
+    // issue left is counted as left over, blocked or not. The issue's own triage runs end with
+    // this claim (`finishOlderRuns`). One with no session leaves nothing running, so its slot is
+    // the claim's; one whose session may be running keeps its slot, so no second session
+    // starts past the limit.
+    const own = known.of(name, issue).filter(inTriage);
+    const freed = own.filter((run) => !run.session).length;
+    if (active - freed >= machine.maxConcurrentRuns) {
+      left += 1;
+      yield* pass.record({
+        event: "claim_skipped",
+        data: { repo: name, issue: String(issue), reason: "limit" },
+      });
+      // Its own running sessions fill the limit alone: when every other run frees its slot,
+      // the claim still waits, and only the claim would end them.
+      const running = own.filter((run) => run.session);
+      if (running.length > 0 && running.length >= machine.maxConcurrentRuns) {
+        yield* waitsOnItself(pass, notes, runIdToString(running[0]!.id));
       }
-      // Checked before the blockers: a person paused claims, so no claim is started. The pause is
-      // the machine's, said once after the loop.
-      if (paused !== null) continue;
-      // Before the blockers: with no slot free nothing is claimed, so they are not read. Every
-      // issue left is counted as left over, blocked or not. The issue's own triage runs end with
-      // this claim (`finishOlderRuns`). One with no session leaves nothing running, so its slot is
-      // the claim's; one whose session may be running keeps its slot, so no second session
-      // starts past the limit.
-      const own = known.of(name, issue).filter(inTriage);
-      const freed = own.filter((run) => !run.session).length;
-      if (active - freed >= machine.maxConcurrentRuns) {
-        left += 1;
-        yield* pass.record({
-          event: "claim_skipped",
-          data: { repo: name, issue: String(issue), reason: "limit" },
-        });
-        // Its own running sessions fill the limit alone: when every other run frees its slot,
-        // the claim still waits, and only the claim would end them.
-        const running = own.filter((run) => run.session);
-        if (running.length > 0 && running.length >= machine.maxConcurrentRuns) {
-          yield* waitsOnItself(pass, notes, runIdToString(running[0]!.id));
-        }
-        continue;
-      }
-      // A blocked issue takes no slot. Nothing is written for it, and a read that fails holds it
-      // back too. The `## Depends on` text is read only when no linked blocker is open.
-      const linked = yield* Effect.result(world.openBlockers(repo, issue));
-      if (linked._tag === "Failure") {
+      continue;
+    }
+    // A blocked issue takes no slot. Nothing is written for it, and a read that fails holds it
+    // back too. The `## Depends on` text is read only when no linked blocker is open.
+    const linked = yield* Effect.result(world.openBlockers(repo, issue));
+    if (linked._tag === "Failure") {
+      pass.trouble(
+        notes,
+        "tracker",
+        "cannot read the issue's dependencies: ",
+        linked.failure.message,
+      );
+      yield* pass.flush(notes, null);
+      continue;
+    }
+    let blocked: string | null = null;
+    if (linked.success.length > 0) {
+      blocked = blockedBy(name, linked.success, "");
+    } else {
+      const text = yield* Effect.result(world.dependsOnBlockers(repo, issue));
+      if (text._tag === "Failure") {
         pass.trouble(
           notes,
           "tracker",
-          "cannot read the issue's dependencies: ",
-          linked.failure.message,
+          "cannot read the issue's Depends on: ",
+          text.failure.message,
         );
         yield* pass.flush(notes, null);
         continue;
       }
-      let blocked: string | null = null;
-      if (linked.success.length > 0) {
-        blocked = blockedBy(name, linked.success, "");
-      } else {
-        const text = yield* Effect.result(world.dependsOnBlockers(repo, issue));
-        if (text._tag === "Failure") {
-          pass.trouble(
-            notes,
-            "tracker",
-            "cannot read the issue's Depends on: ",
-            text.failure.message,
-          );
-          yield* pass.flush(notes, null);
-          continue;
-        }
-        if (text.success.length > 0) blocked = blockedBy(name, text.success, FROM_TEXT);
-      }
-      if (blocked !== null) {
-        notes.parts.push(blocked);
-        yield* pass.flush(notes, null);
-        yield* pass.record({
-          event: "claim_skipped",
-          data: { repo: name, issue: String(issue), reason: "blocked" },
-        });
-        continue;
-      }
-      const run = yield* noteStart(world, pass, known, notes, repo, issue, "start", {
-        claimed: (run) => `claimed, session started in run ${run}`,
-        notTaken: "not claimed",
-        stuck: "claimed, but the launch failed",
+      if (text.success.length > 0) blocked = blockedBy(name, text.success, FROM_TEXT);
+    }
+    if (blocked !== null) {
+      notes.parts.push(blocked);
+      yield* pass.flush(notes, null);
+      yield* pass.record({
+        event: "claim_skipped",
+        data: { repo: name, issue: String(issue), reason: "blocked" },
       });
-      yield* pass.flush(notes, run);
-      if (known.lost) return;
-      // Count again: a claim that ended in `stuck`, or in an error that left the issue in
-      // `triage`, changes how many runs are active, and which repo has the fewest.
-      active = count(known, queues);
+      continue;
     }
-    if (paused !== null) {
-      pass.line(
-        `claims paused: by hand since ${formatTs(paused.sinceMs)}, for ${duration(Math.max(0, world.nowMs() - paused.sinceMs))}; no ready issue claimed`,
-      );
-      yield* pass.record({ event: "claim_skipped", data: { reason: "paused" } });
-    }
-    if (left > 0) {
-      pass.line(
-        `limit reached: ${left} ready ${plural(left, "issue")} ${left === 1 ? "was" : "were"} not claimed, max_concurrent_runs is ${machine.maxConcurrentRuns}`,
-      );
-    }
-  });
+    const run = yield* noteStart(world, pass, known, notes, repo, issue, "start", {
+      claimed: (run) => `claimed, session started in run ${run}`,
+      notTaken: "not claimed",
+      stuck: "claimed, but the launch failed",
+    });
+    yield* pass.flush(notes, run);
+    if (known.lost) return;
+    // Count again: a claim that ended in `stuck`, or in an error that left the issue in
+    // `triage`, changes how many runs are active, and which repo has the fewest.
+    active = count(known, queues);
+  }
+  if (paused !== null) {
+    pass.line(
+      `claims paused: by hand since ${formatTs(paused.sinceMs)}, for ${duration(Math.max(0, world.nowMs() - paused.sinceMs))}; no ready issue claimed`,
+    );
+    yield* pass.record({ event: "claim_skipped", data: { reason: "paused" } });
+  }
+  if (left > 0) {
+    pass.line(
+      `limit reached: ${left} ready ${plural(left, "issue")} ${left === 1 ? "was" : "were"} not claimed, max_concurrent_runs is ${machine.maxConcurrentRuns}`,
+    );
+  }
+});

@@ -4,7 +4,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import { LedgerUnknownEventError, LedgerIoError } from "./errors.ts";
 import type { AppendIo } from "./appendFile.ts";
@@ -572,14 +572,18 @@ describe("append", () => {
 
   it("open without a clock stamps events with the system clock", () => {
     const dataDir = tempDir();
-    const before = Date.now();
+    // Not T0, so a stamp from any clock but the system's would not match.
+    const systemNow = 1_800_000_123_456;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    vi.setSystemTime(systemNow);
     const log = MachineLog.open(dataDir);
     handles.push(log);
     log.append(passStarted);
-    const after = Date.now();
     const line = JSON.parse(readText(logFile(dataDir))) as { ms: number };
-    expect(line.ms).toBeGreaterThanOrEqual(before);
-    expect(line.ms).toBeLessThanOrEqual(after);
+    expect(line.ms).toBe(systemNow);
   });
 });
 

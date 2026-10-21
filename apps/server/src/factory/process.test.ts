@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Tests write pid files to a temp dir and probe process liveness with kill(pid, 0).
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -56,17 +56,17 @@ const withTempDir = <A, E, R>(body: (dir: string) => Effect.Effect<A, E, R>) =>
 const readPids = (file: string): ReadonlyArray<number> =>
   NodeFS.readFileSync(file, "utf8").trim().split(/\s+/).map(Number);
 
+// Nothing signals a file a subprocess writes, or the death of a pid that is not our child, so
+// these retry the check itself.
 const waitForFile = (file: string) =>
-  Effect.gen(function* () {
-    for (let i = 0; i < 100 && !NodeFS.existsSync(file); i++) yield* Effect.sleep("20 millis");
-    assert.isTrue(NodeFS.existsSync(file));
-  });
+  Effect.promise(() =>
+    vi.waitFor(() => assert.isTrue(NodeFS.existsSync(file)), { timeout: 2_000, interval: 20 }),
+  );
 
 const waitForDeath = (pid: number) =>
-  Effect.gen(function* () {
-    for (let i = 0; i < 40 && isAlive(pid); i++) yield* Effect.sleep("50 millis");
-    assert.strictEqual(isAlive(pid), false);
-  });
+  Effect.promise(() =>
+    vi.waitFor(() => assert.strictEqual(isAlive(pid), false), { timeout: 2_000, interval: 50 }),
+  );
 
 // 16384 lines of 65 bytes each, about 1 MiB, with a counter so the tail is checkable.
 const COUNTER_SCRIPT = `i=0; while [ $i -lt 16384 ]; do printf '%064d\\n' $i; i=$((i+1)); done`;

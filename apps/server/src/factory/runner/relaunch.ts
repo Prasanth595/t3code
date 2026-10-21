@@ -33,7 +33,6 @@ import {
   recordedReason,
   type Progress,
   type RunContext,
-  type RunError,
   type Stop,
 } from "./run.ts";
 
@@ -75,7 +74,7 @@ export const branchRefused = (branch: string): Stop | null =>
  * went out, and a session may exist), sends the issue `stuck` with the note and the command id.
  * So does a project with no default model (`launchable`).
  */
-export const relaunchSession = (
+export const relaunchSession = Effect.fn("RunnerRelaunch.relaunchSession")(function* (
   ctx: RelaunchContext,
   out: Ledger,
   at: Progress,
@@ -83,63 +82,61 @@ export const relaunchSession = (
   from: { readonly prUrl: string; readonly earlierCall: boolean },
   detail: IssueDetail,
   relaunch: Relaunch,
-): Effect.Effect<Relaunched, RunError> =>
-  Effect.gen(function* () {
-    const issue = Number(run.issue);
-    const commandId = relaunchCommandId(relaunch, run);
-    const refuse = (note: string) =>
-      Effect.gen(function* () {
-        const stop: Stop = { reason: LAUNCH_FAILED, detail: note };
-        yield* goStuck(ctx, issue, out, at, "launch-failed", stop);
-        return { kind: "stuck", reason: recordedReason(stop) } as const;
-      });
-    const target = launchable(yield* ctx.sessions.findProject(ctx.repoPath));
-    if (Result.isFailure(target)) {
-      const missing = target.failure;
-      return yield* refuse(from.earlierCall ? sessionMayExistNote(missing, commandId) : missing);
-    }
-    const project = target.success;
-    const resumed: ResumeFrom = {
-      branch: relaunch.branch,
-      prUrl: from.prUrl,
-      after: relaunch.fixes.kind === "feedback" ? "feedback" : "failed-regate",
-    };
-    const message = `${launchMessage(ctx.repo, issue, ctx.trackerUser, ctx.ghConfigDir, resumed)}\n\n${END_WITH_DONE}\n\n${relaunch.message}`;
-    const launched = yield* Effect.result(
-      ctx.sessions.launch({
-        commandId,
-        projectId: project.id,
-        title: `${ctx.repo}#${issue} ${detail.title}`,
-        baseRef: relaunch.branch,
-        startFromOrigin: true,
-        message,
-        model: project.model,
-      }),
-    );
-    if (launched._tag === "Failure") {
-      return yield* refuse(sessionMayExistNote(describe(launched.failure.cause), commandId));
-    }
-    const { threadId, worktreePath, branch } = launched.success;
-    yield* ledger(() =>
-      out.append(
-        {
-          event: "session_launched",
-          data: {
-            thread_id: threadId,
-            worktree: worktreePath,
-            branch,
-            model_instance: project.model.instanceId,
-            model: project.model.model,
-            model_options: project.model.options ?? null,
-            resumed_from: { run: runIdToString(run), branch: relaunch.branch },
-            base: ctx.project.base,
-          },
-        },
-        makeCause(at.step, "resumed-from-branch"),
-      ),
-    );
-    at.threadId = threadId;
-    at.worktree = worktreePath;
-    at.worktreeDone = false;
-    return { kind: "recorded" } as const;
+) {
+  const issue = Number(run.issue);
+  const commandId = relaunchCommandId(relaunch, run);
+  const refuse = Effect.fn("RunnerRelaunch.refuse")(function* (note: string) {
+    const stop: Stop = { reason: LAUNCH_FAILED, detail: note };
+    yield* goStuck(ctx, issue, out, at, "launch-failed", stop);
+    return { kind: "stuck", reason: recordedReason(stop) } as const;
   });
+  const target = launchable(yield* ctx.sessions.findProject(ctx.repoPath));
+  if (Result.isFailure(target)) {
+    const missing = target.failure;
+    return yield* refuse(from.earlierCall ? sessionMayExistNote(missing, commandId) : missing);
+  }
+  const project = target.success;
+  const resumed: ResumeFrom = {
+    branch: relaunch.branch,
+    prUrl: from.prUrl,
+    after: relaunch.fixes.kind === "feedback" ? "feedback" : "failed-regate",
+  };
+  const message = `${launchMessage(ctx.repo, issue, ctx.trackerUser, ctx.ghConfigDir, resumed)}\n\n${END_WITH_DONE}\n\n${relaunch.message}`;
+  const launched = yield* Effect.result(
+    ctx.sessions.launch({
+      commandId,
+      projectId: project.id,
+      title: `${ctx.repo}#${issue} ${detail.title}`,
+      baseRef: relaunch.branch,
+      startFromOrigin: true,
+      message,
+      model: project.model,
+    }),
+  );
+  if (launched._tag === "Failure") {
+    return yield* refuse(sessionMayExistNote(describe(launched.failure.cause), commandId));
+  }
+  const { threadId, worktreePath, branch } = launched.success;
+  yield* ledger(() =>
+    out.append(
+      {
+        event: "session_launched",
+        data: {
+          thread_id: threadId,
+          worktree: worktreePath,
+          branch,
+          model_instance: project.model.instanceId,
+          model: project.model.model,
+          model_options: project.model.options ?? null,
+          resumed_from: { run: runIdToString(run), branch: relaunch.branch },
+          base: ctx.project.base,
+        },
+      },
+      makeCause(at.step, "resumed-from-branch"),
+    ),
+  );
+  at.threadId = threadId;
+  at.worktree = worktreePath;
+  at.worktreeDone = false;
+  return { kind: "recorded" } as const;
+});

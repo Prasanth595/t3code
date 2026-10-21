@@ -4,9 +4,10 @@ import {
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { act, type ReactElement, type ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import type { ReactElement, ReactNode } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 
+import { act } from "../../../test/render";
 import { renderAt } from "../testing";
 import type { FactoryConfigResult, MachineConfigReport } from "./api";
 
@@ -151,16 +152,14 @@ const textOf = (node: Node): string =>
     .join(" ");
 
 describe("FactorySettingsPanel", () => {
-  beforeEach(() => {
+  const resetMocks = () => {
     mocks.canWrite = true;
     mocks.environmentId = "env-1";
     mocks.fetchFactoryConfig.mockReset();
     mocks.saveFactoryConfig.mockReset();
-  });
+  };
 
-  async function open(widthPx = 1280) {
-    return (await renderAt(widthPx, <FactorySettingsPanel />)).container;
-  }
+  const open = (widthPx = 1280) => renderAt(widthPx, <FactorySettingsPanel />);
 
   const input = (root: HTMLElement, label: string) => {
     const found = Array.from(root.querySelectorAll("input")).filter(
@@ -200,9 +199,11 @@ describe("FactorySettingsPanel", () => {
 
   // #93: the model is picked in T3 (the project's default, else Settings), not on this page.
   it("has no model rows: the page edits no model_instance or model", async () => {
+    resetMocks();
     mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
     mocks.saveFactoryConfig.mockResolvedValue(ok(populated));
-    const root = await open();
+    await using panel = await open();
+    const root = panel.container;
 
     expect(root.querySelectorAll('[aria-label="Model instance"]')).toHaveLength(0);
     expect(root.querySelectorAll('[aria-label="Model"]')).toHaveLength(0);
@@ -219,9 +220,11 @@ describe("FactorySettingsPanel", () => {
   });
 
   it("shows the defaults when there is no file yet, and saving creates it", async () => {
+    resetMocks();
     mocks.fetchFactoryConfig.mockResolvedValue(ok(report({ exists: false })));
     mocks.saveFactoryConfig.mockResolvedValue(ok(report({ exists: true })));
-    const root = await open();
+    await using panel = await open();
+    const root = panel.container;
 
     expect(textOf(root)).toContain("No config file exists at");
     expect(textOf(root)).toContain(FILE);
@@ -236,18 +239,22 @@ describe("FactorySettingsPanel", () => {
   });
 
   it("shows a loading state while the config is in flight", async () => {
+    resetMocks();
     mocks.fetchFactoryConfig.mockReturnValue(new Promise(() => {}));
-    const root = await open();
+    await using panel = await open();
+    const root = panel.container;
 
     expect(textOf(root)).toContain("Loading");
     expect(root.querySelectorAll("input")).toHaveLength(0);
   });
 
   it("shows a load error with a Retry that loads again", async () => {
+    resetMocks();
     mocks.fetchFactoryConfig
       .mockResolvedValueOnce({ kind: "error", message: "the factory is unreachable" })
       .mockResolvedValueOnce(ok(populated));
-    const root = await open();
+    await using panel = await open();
+    const root = panel.container;
 
     expect(textOf(root)).toContain("the factory is unreachable");
     expect(root.querySelectorAll("input")).toHaveLength(0);
@@ -260,6 +267,7 @@ describe("FactorySettingsPanel", () => {
   });
 
   it("lists the errors of an invalid file and still lets the form be fixed", async () => {
+    resetMocks();
     mocks.fetchFactoryConfig.mockResolvedValue(
       ok(
         report({
@@ -272,7 +280,8 @@ describe("FactorySettingsPanel", () => {
       ),
     );
     mocks.saveFactoryConfig.mockResolvedValue(ok(report()));
-    const root = await open();
+    await using panel = await open();
+    const root = panel.container;
 
     expect(textOf(root)).toContain("not valid YAML: unexpected end of stream");
     expect(textOf(root)).toContain("must be a positive integer");
@@ -289,6 +298,7 @@ describe("FactorySettingsPanel", () => {
   });
 
   it("fills the form of an invalid file from its draft so only the bad field is fixed", async () => {
+    resetMocks();
     mocks.fetchFactoryConfig.mockResolvedValue(
       ok(
         report({
@@ -303,7 +313,8 @@ describe("FactorySettingsPanel", () => {
       ),
     );
     mocks.saveFactoryConfig.mockResolvedValue(ok(report()));
-    const root = await open();
+    await using panel = await open();
+    const root = panel.container;
 
     expect(input(root, "GitHub config directory").value).toBe("/home/t3/gh");
     expect(input(root, "Poll seconds").value).toBe("45");
@@ -322,6 +333,7 @@ describe("FactorySettingsPanel", () => {
   });
 
   it("lists every save error that names no input at the top", async () => {
+    resetMocks();
     mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
     mocks.saveFactoryConfig.mockResolvedValue({
       kind: "invalid",
@@ -331,7 +343,8 @@ describe("FactorySettingsPanel", () => {
         { file: FILE, message: "file level" },
       ],
     });
-    const root = await open();
+    await using panel = await open();
+    const root = panel.container;
 
     await click(button(root, "Save"));
 
@@ -343,8 +356,10 @@ describe("FactorySettingsPanel", () => {
   });
 
   it("fills the form from the file", async () => {
+    resetMocks();
     mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
-    const root = await open();
+    await using panel = await open();
+    const root = panel.container;
 
     expect(input(root, "GitHub config directory").value).toBe("/home/t3/gh");
     expect(input(root, "Poll seconds").value).toBe("45");
@@ -353,6 +368,7 @@ describe("FactorySettingsPanel", () => {
   });
 
   it("lists two projects that name one repo as two blocks, with no duplicate key", async () => {
+    resetMocks();
     const message =
       "2 T3 projects have this repo as their origin (/a, /b); the factory watches none";
     const twice = report({
@@ -376,7 +392,8 @@ describe("FactorySettingsPanel", () => {
     mocks.fetchFactoryConfig.mockResolvedValue(ok(twice));
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      const root = await open();
+      await using panel = await open();
+      const root = panel.container;
       const text = textOf(root);
       expect(text).toContain("Watched repo: Alpha");
       expect(text).toContain("Watched repo: Alpha copy");
@@ -391,8 +408,10 @@ describe("FactorySettingsPanel", () => {
   });
 
   it("lists the watched projects the API returns, read-only", async () => {
+    resetMocks();
     mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
-    const root = await open();
+    await using panel = await open();
+    const root = panel.container;
 
     const text = textOf(root);
     expect(text).toContain("Watched repo: Alpha");
@@ -427,8 +446,10 @@ describe("FactorySettingsPanel", () => {
   });
 
   it("shows the one-line hint when no T3 project is watched", async () => {
+    resetMocks();
     mocks.fetchFactoryConfig.mockResolvedValue(ok(report()));
-    const root = await open();
+    await using panel = await open();
+    const root = panel.container;
 
     const text = textOf(root);
     expect(text).toContain("Repos are added as T3 projects");
@@ -437,8 +458,10 @@ describe("FactorySettingsPanel", () => {
   });
 
   it("names the checkouts the factory could not settle instead of saying none is watched", async () => {
+    resetMocks();
     mocks.fetchFactoryConfig.mockResolvedValue(ok(report({ unresolved: ["/work/slow"] })));
-    const root = await open();
+    await using panel = await open();
+    const root = panel.container;
 
     const text = textOf(root);
     expect(text).toContain("Not settled on the last read");
@@ -449,10 +472,12 @@ describe("FactorySettingsPanel", () => {
   });
 
   it("shows why the T3 projects could not be listed instead of saying none is watched", async () => {
+    resetMocks();
     mocks.fetchFactoryConfig.mockResolvedValue(
       ok(report({ watch_error: "cannot list the T3 projects: store down" })),
     );
-    const root = await open();
+    await using panel = await open();
+    const root = panel.container;
 
     const text = textOf(root);
     expect(text).toContain("T3 projects not listed");
@@ -462,6 +487,7 @@ describe("FactorySettingsPanel", () => {
   });
 
   it("shows save errors next to the field they name and file errors at the top", async () => {
+    resetMocks();
     mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
     mocks.saveFactoryConfig.mockResolvedValue({
       kind: "invalid",
@@ -471,7 +497,8 @@ describe("FactorySettingsPanel", () => {
         { file: FILE, field: "poll_seconds", message: "must be at least 10" },
       ],
     });
-    const root = await open();
+    await using panel = await open();
+    const root = panel.container;
 
     await click(button(root, "Save"));
 
@@ -485,16 +512,20 @@ describe("FactorySettingsPanel", () => {
   });
 
   it("disables Save for a session that cannot write settings", async () => {
+    resetMocks();
     mocks.canWrite = false;
     mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
-    const root = await open();
+    await using panel = await open();
+    const root = panel.container;
 
     expect(button(root, "Save").disabled).toBe(true);
     expect(textOf(root)).toContain("read-only");
   });
   it("gives machine config fields twice the old width", async () => {
+    resetMocks();
     mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
-    const root = await open();
+    await using panel = await open();
+    const root = panel.container;
 
     for (const name of ["gh_config_dir", "poll_seconds"]) {
       const className = field(root, name)!.className;
@@ -506,9 +537,11 @@ describe("FactorySettingsPanel", () => {
 
   describe.each([375, 1280])("at %i px", (width) => {
     it("lets a long config path break instead of overflowing", async () => {
+      resetMocks();
       const long = `/Users/someone/${"deeply/".repeat(12)}.t3/factory/config.yml`;
       mocks.fetchFactoryConfig.mockResolvedValue(ok(report({ exists: false, file: long })));
-      const root = await open(width);
+      await using panel = await open(width);
+      const root = panel.container;
       const holder = Array.from(root.querySelectorAll("*")).filter((node) =>
         Array.from(node.childNodes).some(
           (child) => child.nodeType === Node.TEXT_NODE && child.textContent === long,
@@ -519,8 +552,10 @@ describe("FactorySettingsPanel", () => {
     });
 
     it("asks for touch-sized inputs, with Save present", async () => {
+      resetMocks();
       mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
-      const root = await open(width);
+      await using panel = await open(width);
+      const root = panel.container;
       const inputs = Array.from(root.querySelectorAll("input"));
       // The four machine fields: the watched projects have no inputs.
       expect(inputs).toHaveLength(4);

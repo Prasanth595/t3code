@@ -123,12 +123,12 @@ export const make = Effect.gen(function* () {
    * repo departs when none is left. With `remember`, the memory is written for the next pass;
    * only the pass remembers, so the settings page's read changes nothing.
    */
-  const departures = (
-    watchedFrom: ReadonlyMap<string, ReadonlyArray<string>>,
-    active: ReadonlySet<string>,
-    remember: boolean,
-  ): Effect.Effect<Array<string>> =>
-    Effect.gen(function* () {
+  const departures = Effect.fn("WatchedRepos.departures")(
+    function* (
+      watchedFrom: ReadonlyMap<string, ReadonlyArray<string>>,
+      active: ReadonlySet<string>,
+      remember: boolean,
+    ) {
       const remembered = yield* readMemory;
       if (Option.isNone(remembered)) return [];
       const next: Record<string, ReadonlyArray<string>> = {};
@@ -147,10 +147,10 @@ export const make = Effect.gen(function* () {
         );
       }
       return departed;
-    }).pipe(
-      Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provideService(Path.Path, path),
-    );
+    },
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
+  );
 
   const isCheckout = (root: string): Effect.Effect<boolean> =>
     fs.exists(path.join(root, ".git")).pipe(Effect.orElseSucceed(() => false));
@@ -158,21 +158,22 @@ export const make = Effect.gen(function* () {
   // The copy committed on origin's default branch, for a checkout whose working tree has none.
   // `git show` fails for a directory that is no clone, a clone with no `origin/HEAD` and a branch
   // with no such file, all of which are "not opted in"; a git that times out did not finish.
-  const committed = (root: string): Effect.Effect<Read> =>
-    Effect.gen(function* () {
-      if (!(yield* isCheckout(root))) return ABSENT;
-      const shown = yield* runner
-        .run({
-          command: "git",
-          args: ["-C", root, "show", `origin/HEAD:${PROJECT_CONFIG_PATH}`],
-          timeout: "10 seconds",
-          timeoutBehavior: "timedOutResult",
-        })
-        .pipe(Effect.option);
-      // A git that cannot run (not on PATH, or refused) has read nothing.
-      if (Option.isNone(shown) || shown.value.timedOut) return UNRESOLVED;
-      return shown.value.code === 0 ? { kind: "text", text: shown.value.stdout } : ABSENT;
-    });
+  const committed = Effect.fn("WatchedRepos.committed")(function* (
+    root: string,
+  ): Effect.fn.Return<Read> {
+    if (!(yield* isCheckout(root))) return ABSENT;
+    const shown = yield* runner
+      .run({
+        command: "git",
+        args: ["-C", root, "show", `origin/HEAD:${PROJECT_CONFIG_PATH}`],
+        timeout: "10 seconds",
+        timeoutBehavior: "timedOutResult",
+      })
+      .pipe(Effect.option);
+    // A git that cannot run (not on PATH, or refused) has read nothing.
+    if (Option.isNone(shown) || shown.value.timedOut) return UNRESOLVED;
+    return shown.value.code === 0 ? { kind: "text", text: shown.value.stdout } : ABSENT;
+  });
 
   // No file is "not opted in", once the committed copy says so too. Any other failure (EACCES,
   // EIO, a timeout) is a read that did not finish, which is not the same as the project leaving.
@@ -184,55 +185,54 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const listing = (remember: boolean) =>
-    Effect.gen(function* () {
-      const rows = yield* projects
-        .list()
-        .pipe(Effect.mapError((cause) => new WatchedReposError({ cause })));
-      const scratch = yield* folders.scratchRoot;
-      const scratchRoot = Option.map(scratch, (root) => path.resolve(root));
-      const repos: Array<WatchedProject> = [];
-      const watchedFrom = new Map<string, Array<string>>();
-      const unresolved: Array<string> = [];
-      for (const row of rows) {
-        const root = row.workspaceRoot;
-        if (Option.isSome(scratchRoot) && path.resolve(root) === scratchRoot.value) continue;
-        const file = yield* read(root);
-        if (file.kind === "unresolved") {
-          unresolved.push(root);
-          continue;
-        }
-        if (file.kind === "absent") continue;
-        const optIn = factoryOptIn(file.text);
-        if (optIn === "unparsed") {
-          // A conflicted or half-saved file is a read that did not finish.
-          unresolved.push(root);
-          continue;
-        }
-        if (optIn === "no") continue;
-        const identity = yield* identities.resolve(root);
-        if (identity === null) {
-          // Git failed or timed out, and T3 caches the null for a minute.
-          unresolved.push(root);
-          continue;
-        }
-        // T3 names a clone by its `upstream` remote when it has one, so only `origin` is the repo
-        // the person cloned and works in.
-        if (identity.provider !== "github" || identity.locator.remoteName !== "origin") continue;
-        const { owner, name } = identity;
-        if (owner === undefined || name === undefined) {
-          unresolved.push(root);
-          continue;
-        }
-        const repo = `${owner}/${name}`;
-        repos.push({ repo, path: root, title: row.title });
-        const key = asciiLower(repo);
-        watchedFrom.set(key, [...(watchedFrom.get(key) ?? []), row.projectId]);
+  const listing = Effect.fn("WatchedRepos.listing")(function* (remember: boolean) {
+    const rows = yield* projects
+      .list()
+      .pipe(Effect.mapError((cause) => new WatchedReposError({ cause })));
+    const scratch = yield* folders.scratchRoot;
+    const scratchRoot = Option.map(scratch, (root) => path.resolve(root));
+    const repos: Array<WatchedProject> = [];
+    const watchedFrom = new Map<string, Array<string>>();
+    const unresolved: Array<string> = [];
+    for (const row of rows) {
+      const root = row.workspaceRoot;
+      if (Option.isSome(scratchRoot) && path.resolve(root) === scratchRoot.value) continue;
+      const file = yield* read(root);
+      if (file.kind === "unresolved") {
+        unresolved.push(root);
+        continue;
       }
-      const active = new Set<string>(rows.map((row) => row.projectId));
-      const departed = yield* departures(watchedFrom, active, remember);
-      return { repos, departed, unresolved } satisfies WatchedListing;
-    });
+      if (file.kind === "absent") continue;
+      const optIn = factoryOptIn(file.text);
+      if (optIn === "unparsed") {
+        // A conflicted or half-saved file is a read that did not finish.
+        unresolved.push(root);
+        continue;
+      }
+      if (optIn === "no") continue;
+      const identity = yield* identities.resolve(root);
+      if (identity === null) {
+        // Git failed or timed out, and T3 caches the null for a minute.
+        unresolved.push(root);
+        continue;
+      }
+      // T3 names a clone by its `upstream` remote when it has one, so only `origin` is the repo
+      // the person cloned and works in.
+      if (identity.provider !== "github" || identity.locator.remoteName !== "origin") continue;
+      const { owner, name } = identity;
+      if (owner === undefined || name === undefined) {
+        unresolved.push(root);
+        continue;
+      }
+      const repo = `${owner}/${name}`;
+      repos.push({ repo, path: root, title: row.title });
+      const key = asciiLower(repo);
+      watchedFrom.set(key, [...(watchedFrom.get(key) ?? []), row.projectId]);
+    }
+    const active = new Set<string>(rows.map((row) => row.projectId));
+    const departed = yield* departures(watchedFrom, active, remember);
+    return { repos, departed, unresolved } satisfies WatchedListing;
+  });
 
   return FactoryWatchedRepos.of({ list: listing(false), listAndRemember: listing(true) });
 });

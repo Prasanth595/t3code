@@ -1,4 +1,4 @@
-// @effect-diagnostics globalDate:off - the fake GitHub stamps comments and label events with the wall clock, as GitHub does.
+// @effect-diagnostics globalDate:off - the fake GitHub formats its stamps as GitHub does.
 /**
  * One issue through the whole loop, with nothing faked but GitHub and the provider: the real
  * factory runtime (pass, claim, start, building, gate, ledger), the real orchestration layers
@@ -13,6 +13,7 @@
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -52,7 +53,6 @@ const LOGIN = "rawphp";
 const INSTRUCTOR = "tomkaczocha";
 const READY_AT = "2026-10-16T00:00:00Z";
 
-const utcNow = () => `${new Date().toISOString().slice(0, 19)}Z`;
 const json = (value: unknown) => JSON.stringify(value);
 
 const ok = (stdout: string): RunResult => ({
@@ -93,7 +93,17 @@ interface LabelEvent {
 }
 
 /** One issue (labels, assignee, comments, label timeline) and its one draft pull request. */
-const makeGitHub = (input: { readonly baseSha: string; readonly projectConfig: string }) => {
+const makeGitHub = (input: {
+  readonly baseSha: string;
+  readonly projectConfig: string;
+  /**
+   * The factory compares these stamps with its own clock (comments after a run's start, claims
+   * past their grace), and that clock is the live one, so GitHub reads the same clock.
+   */
+  readonly clock: Clock.Clock;
+}) => {
+  const utcNow = () =>
+    `${new Date(input.clock.currentTimeMillisUnsafe()).toISOString().slice(0, 19)}Z`;
   const labels = new Set<string>(["factory:ready"]);
   const assignees: Array<string> = [];
   const comments: Array<Comment> = [];
@@ -466,7 +476,7 @@ const scenario = (spec: Spec) =>
         spec.prompts(gateCommand, launchMessage(REPO, ISSUE, LOGIN, ghDir)),
         spec.replies,
       );
-      const github = makeGitHub({ baseSha, projectConfig });
+      const github = makeGitHub({ baseSha, projectConfig, clock: yield* Clock.Clock });
       const logs: Array<string> = [];
       const capture = Logger.make(({ message }) => {
         logs.push(Array.isArray(message) ? message.map(String).join(" ") : String(message));

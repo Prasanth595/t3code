@@ -5,7 +5,16 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 
 const scripts = NodePath.resolve(import.meta.dirname, "../../../../factory/scripts");
 const label = "io.github.rawphp.t3fac";
@@ -751,21 +760,34 @@ describe("install.sh and rollback.sh health check", () => {
     const port = (late.address() as NodeNet.AddressInfo).port;
     await new Promise<void>((resolve) => late.close(() => resolve()));
     NodeFS.writeFileSync(launchctlLog, "");
+    // wait_healthy sleeps 0.5 s only after a check fails (wait_unloaded's polls sleep 0.2 s), so
+    // a logged 0.5 is the first health check finding the port closed.
+    const shims = NodePath.join(tmp, "sleep-shim");
+    const sleeps = NodePath.join(tmp, "sleeps.log");
+    NodeFS.mkdirSync(shims, { recursive: true });
+    NodeFS.writeFileSync(sleeps, "");
+    NodeFS.writeFileSync(
+      NodePath.join(shims, "sleep"),
+      `#!/bin/sh\necho "$@" >> '${sleeps}'\nexec /bin/sleep "$@"\n`,
+      { mode: 0o755 },
+    );
     const child = NodeChildProcess.spawn(
       "bash",
       [NodePath.join(scripts, "install.sh"), archives[v2]!],
       {
-        env: scriptEnv({ T3FAC_PORT: String(port), T3FAC_HEALTH_WAIT: "5" }),
+        env: scriptEnv({
+          PATH: `${shims}:${bin}:/usr/bin:/bin`,
+          T3FAC_PORT: String(port),
+          T3FAC_HEALTH_WAIT: "5",
+        }),
         stdio: "ignore",
       },
     );
     const exited = new Promise<number | null>((resolve) => child.on("exit", resolve));
-    // Open the port a poll after the bootstrap, so the first check finds it closed and only a
-    // later one can pass.
-    while (!NodeFS.readFileSync(launchctlLog, "utf8").includes("bootstrap")) {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    await vi.waitFor(() => expect(NodeFS.readFileSync(sleeps, "utf8")).toMatch(/^0\.5$/m), {
+      timeout: 10_000,
+      interval: 20,
+    });
     await new Promise<void>((resolve) => late.listen(port, "127.0.0.1", resolve));
     try {
       expect(await exited).toBe(0);
@@ -1124,7 +1146,7 @@ describe("build.sh smoke test", () => {
     expect(result.stdout.split("\n").at(-1)).toBe(NodePath.join(repo, "release", archive));
     expect(result.tmpLeft).toEqual([]);
     expect(serverAlive()).toBe(false);
-  }, 20_000);
+  });
 
   it.each([
     [
@@ -1187,6 +1209,5 @@ describe("build.sh smoke test", () => {
       expect(result.tmpLeft).toEqual([]);
       expect(serverAlive()).toBe(false);
     },
-    20_000,
   );
 });

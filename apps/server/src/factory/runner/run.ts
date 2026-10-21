@@ -13,7 +13,7 @@ import { ledgerCall as ledger, type LedgerError } from "../ledger/errors.ts";
 import { makeCause, type Cause, type CauseStep } from "../ledger/events.ts";
 import type { Ledger } from "../ledger/ledger.ts";
 import type { RunId } from "../ledger/runId.ts";
-import type { BoundGitHub, GitHubError, IssueDetail, PullRequest } from "../tracker/github.ts";
+import type { BoundGitHub, GitHubError, PullRequest } from "../tracker/github.ts";
 import { ThreadNotFoundError } from "../t3/sessions.ts";
 import type { FactorySessions, MessageRejectedError, SessionsError } from "../t3/sessions.ts";
 import { questionsComment, statusBody, stuckComment, type WorkLeft } from "./messages.ts";
@@ -137,23 +137,15 @@ export const describe = (cause: unknown): string =>
     : String(cause);
 
 /** The label, the status comment and the ledger line that follow a launch. Safe to repeat. */
-export const finishBuilding = (
+export const finishBuilding = Effect.fn("RunnerRun.finishBuilding")(function* (
   ctx: RunContext,
   issue: number,
   out: Ledger,
   at: Progress,
-): Effect.Effect<void, RunError> =>
-  Effect.gen(function* () {
-    const building = yield* Effect.fromResult(transition(at.state, { kind: "session-starting" }));
-    yield* applyActions(
-      ctx,
-      issue,
-      out,
-      at,
-      building.actions,
-      makeCause(at.step, "session-started"),
-    );
-  });
+) {
+  const building = yield* Effect.fromResult(transition(at.state, { kind: "session-starting" }));
+  yield* applyActions(ctx, issue, out, at, building.actions, makeCause(at.step, "session-started"));
+});
 
 /**
  * Carries out the actions a transition asks for, in order, as softfac's `apply` does. The label,
@@ -169,7 +161,7 @@ export const finishBuilding = (
  * `payload.forward.step`). Actions that belong to later steps, and gate or forward actions with no
  * payload, are an `InvalidTransition`.
  */
-export const applyActions = (
+export const applyActions = Effect.fn("RunnerRun.applyActions")(function* (
   ctx: RunContext,
   issue: number,
   out: Ledger,
@@ -177,155 +169,144 @@ export const applyActions = (
   actions: ReadonlyArray<Action>,
   cause: Cause,
   payload: ActionPayload = {},
-): Effect.Effect<void, RunError> =>
-  Effect.gen(function* () {
-    let movedTo: State | undefined;
-    for (const action of actions) {
-      switch (action.kind) {
-        case "launch-session":
-          // Launched already.
-          break;
-        case "post-questions":
-          if (!at.seen.questionsPosted) {
-            yield* ctx.tracker.postComment(issue, questionsComment(action.questions));
-            yield* ledger(() =>
-              out.append(
-                { event: "questions_posted", data: { questions: action.questions } },
-                cause,
-              ),
-            );
-          }
-          break;
-        case "post-stuck-comment":
-          if (at.seen.stuck === null) {
-            // The lifecycle's reason is the recorded one and may hold detail the public must not
-            // read, so without a stop the comment says only this.
-            const stop = at.stop;
-            const work: WorkLeft | undefined =
-              stop?.branch === undefined
-                ? undefined
-                : {
-                    branch: stop.branch,
-                    commitsAhead: stop.commitsAhead ?? null,
-                    base: ctx.project.base,
-                  };
-            yield* ctx.tracker.postComment(
-              issue,
-              stop === null
-                ? stuckComment("the factory stopped this run")
-                : stuckComment(stop.reason, stop.sessionText, work),
-            );
-            yield* ledger(() =>
-              out.append(
-                {
-                  event: "stuck",
-                  data: {
-                    reason: action.reason,
-                    ...(work !== undefined && { branch: work.branch }),
-                    ...(work?.commitsAhead != null && { commits_ahead: work.commitsAhead }),
-                  },
-                },
-                cause,
-              ),
-            );
-          }
-          break;
-        case "set-label":
-          yield* ctx.tracker.setState(issue, action.state);
-          movedTo = action.state;
-          break;
-        case "assign-to-machine":
-          yield* ctx.tracker.assign(issue, ctx.trackerUser);
-          break;
-        case "unassign":
-          yield* ctx.tracker.unassign(issue, ctx.trackerUser);
-          break;
-        case "mark-pr-draft":
-          yield* ctx.tracker.markPrDraft(action.pr);
-          break;
-        case "mark-pr-ready":
-          yield* ctx.tracker.markPrReady(action.pr);
-          break;
-        case "post-gate-results": {
-          if (at.gateResultsPosted) break;
-          const body = payload.comment;
-          if (body === undefined) {
-            return yield* new InvalidTransition({ state: at.state, event: action.kind });
-          }
-          yield* ctx.tracker.commentOnPr(action.pr, body);
+) {
+  let movedTo: State | undefined;
+  for (const action of actions) {
+    switch (action.kind) {
+      case "launch-session":
+        // Launched already.
+        break;
+      case "post-questions":
+        if (!at.seen.questionsPosted) {
+          yield* ctx.tracker.postComment(issue, questionsComment(action.questions));
           yield* ledger(() =>
-            out.append(
-              { event: "step_changed", data: { step: GATE_RESULTS_POSTED } },
-              makeCause(at.step, "gate-results-posted"),
-            ),
+            out.append({ event: "questions_posted", data: { questions: action.questions } }, cause),
           );
-          at.gateResultsPosted = true;
-          break;
         }
-        case "send-gate-failure": {
-          const send = payload.send;
-          if (at.threadId === null || send === undefined) {
-            return yield* new InvalidTransition({ state: at.state, event: action.kind });
-          }
-          // The command id is the run's and the attempt's, so a send repeated after a crash is
-          // the same command.
-          yield* ctx.sessions.send(at.threadId, send.commandId, action.output);
+        break;
+      case "post-stuck-comment":
+        if (at.seen.stuck === null) {
+          // The lifecycle's reason is the recorded one and may hold detail the public must not
+          // read, so without a stop the comment says only this.
+          const stop = at.stop;
+          const work: WorkLeft | undefined =
+            stop?.branch === undefined
+              ? undefined
+              : {
+                  branch: stop.branch,
+                  commitsAhead: stop.commitsAhead ?? null,
+                  base: ctx.project.base,
+                };
+          yield* ctx.tracker.postComment(
+            issue,
+            stop === null
+              ? stuckComment("the factory stopped this run")
+              : stuckComment(stop.reason, stop.sessionText, work),
+          );
           yield* ledger(() =>
             out.append(
               {
-                event: "gate_sent_back",
-                data: { attempt: send.attempt, run_ordinal: send.runOrdinal },
+                event: "stuck",
+                data: {
+                  reason: action.reason,
+                  ...(work !== undefined && { branch: work.branch }),
+                  ...(work?.commitsAhead != null && { commits_ahead: work.commitsAhead }),
+                },
               },
-              makeCause(at.step, cause.reason, { attempt: send.attempt }),
-            ),
-          );
-          break;
-        }
-        case "forward-comment": {
-          const send = payload.forward;
-          if (at.threadId === null || send === undefined) {
-            return yield* new InvalidTransition({ state: at.state, event: action.kind });
-          }
-          yield* ctx.sessions.send(at.threadId, send.commandId, send.text);
-          yield* ledger(() =>
-            out.append(
-              { event: "comment_forwarded", data: { comment_id: action.commentId } },
               cause,
             ),
           );
-          break;
         }
-        case "forward-body-edit": {
-          const send = payload.forward;
-          if (at.threadId === null || send?.step === undefined) {
-            return yield* new InvalidTransition({ state: at.state, event: action.kind });
-          }
-          const recorded = send.step;
-          yield* ctx.sessions.send(at.threadId, send.commandId, send.text);
-          yield* ledger(() =>
-            out.append({ event: "step_changed", data: { step: recorded } }, cause),
-          );
-          break;
-        }
-        case "update-status-comment":
-          yield* ctx.tracker.upsertStatusComment(
-            issue,
-            ctx.trackerUser,
-            statusBody(movedTo ?? at.state, ctx.machine, at.threadId, at.pr),
-          );
-          break;
-        default:
+        break;
+      case "set-label":
+        yield* ctx.tracker.setState(issue, action.state);
+        movedTo = action.state;
+        break;
+      case "assign-to-machine":
+        yield* ctx.tracker.assign(issue, ctx.trackerUser);
+        break;
+      case "unassign":
+        yield* ctx.tracker.unassign(issue, ctx.trackerUser);
+        break;
+      case "mark-pr-draft":
+        yield* ctx.tracker.markPrDraft(action.pr);
+        break;
+      case "mark-pr-ready":
+        yield* ctx.tracker.markPrReady(action.pr);
+        break;
+      case "post-gate-results": {
+        if (at.gateResultsPosted) break;
+        const body = payload.comment;
+        if (body === undefined) {
           return yield* new InvalidTransition({ state: at.state, event: action.kind });
+        }
+        yield* ctx.tracker.commentOnPr(action.pr, body);
+        yield* ledger(() =>
+          out.append(
+            { event: "step_changed", data: { step: GATE_RESULTS_POSTED } },
+            makeCause(at.step, "gate-results-posted"),
+          ),
+        );
+        at.gateResultsPosted = true;
+        break;
       }
+      case "send-gate-failure": {
+        const send = payload.send;
+        if (at.threadId === null || send === undefined) {
+          return yield* new InvalidTransition({ state: at.state, event: action.kind });
+        }
+        // The command id is the run's and the attempt's, so a send repeated after a crash is
+        // the same command.
+        yield* ctx.sessions.send(at.threadId, send.commandId, action.output);
+        yield* ledger(() =>
+          out.append(
+            {
+              event: "gate_sent_back",
+              data: { attempt: send.attempt, run_ordinal: send.runOrdinal },
+            },
+            makeCause(at.step, cause.reason, { attempt: send.attempt }),
+          ),
+        );
+        break;
+      }
+      case "forward-comment": {
+        const send = payload.forward;
+        if (at.threadId === null || send === undefined) {
+          return yield* new InvalidTransition({ state: at.state, event: action.kind });
+        }
+        yield* ctx.sessions.send(at.threadId, send.commandId, send.text);
+        yield* ledger(() =>
+          out.append({ event: "comment_forwarded", data: { comment_id: action.commentId } }, cause),
+        );
+        break;
+      }
+      case "forward-body-edit": {
+        const send = payload.forward;
+        if (at.threadId === null || send?.step === undefined) {
+          return yield* new InvalidTransition({ state: at.state, event: action.kind });
+        }
+        const recorded = send.step;
+        yield* ctx.sessions.send(at.threadId, send.commandId, send.text);
+        yield* ledger(() => out.append({ event: "step_changed", data: { step: recorded } }, cause));
+        break;
+      }
+      case "update-status-comment":
+        yield* ctx.tracker.upsertStatusComment(
+          issue,
+          ctx.trackerUser,
+          statusBody(movedTo ?? at.state, ctx.machine, at.threadId, at.pr),
+        );
+        break;
+      default:
+        return yield* new InvalidTransition({ state: at.state, event: action.kind });
     }
-    if (movedTo !== undefined && movedTo !== at.state) {
-      const from = at.state;
-      yield* ledger(() =>
-        out.append({ event: "state_changed", data: { from, to: movedTo } }, cause),
-      );
-      at.state = movedTo;
-    }
-  });
+  }
+  if (movedTo !== undefined && movedTo !== at.state) {
+    const from = at.state;
+    yield* ledger(() => out.append({ event: "state_changed", data: { from, to: movedTo } }, cause));
+    at.state = movedTo;
+  }
+});
 
 /**
  * Stops the session before the run goes stuck: archives the thread, then removes its worktree
@@ -333,43 +314,42 @@ export const applyActions = (
  * start with nothing written, and the next pass archives again. A worktree that cannot be
  * removed is written down and does not stop the run.
  */
-export const stopSession = (
+export const stopSession = Effect.fn("RunnerRun.stopSession")(function* (
   ctx: RunContext,
   out: Ledger,
   at: Progress,
-): Effect.Effect<void, RunError> =>
-  Effect.gen(function* () {
-    if (at.threadId === null) return;
-    yield* ctx.sessions.archive(at.threadId);
-    if (at.worktreeDone) return;
-    const reported = yield* ctx.sessions.thread(at.threadId).pipe(
-      Effect.map((thread) => thread.worktreePath),
-      Effect.catchIf(isThreadNotFound, () => Effect.succeed(null)),
-    );
-    const path = reported ?? at.worktree;
-    if (path !== null) {
-      const removed = yield* Effect.result(ctx.sessions.removeWorktree(path));
-      if (removed._tag === "Success") {
-        yield* ledger(() =>
-          out.append(
-            { event: "worktree_removed", data: { path } },
-            makeCause(at.step, "worktree-removed"),
-          ),
-        );
-      } else {
-        yield* ledger(() =>
-          out.append(
-            {
-              event: "worktree_remove_failed",
-              data: { path, error: describe(removed.failure.cause) },
-            },
-            makeCause(at.step, "worktree-remove-failed"),
-          ),
-        );
-      }
+) {
+  if (at.threadId === null) return;
+  yield* ctx.sessions.archive(at.threadId);
+  if (at.worktreeDone) return;
+  const reported = yield* ctx.sessions.thread(at.threadId).pipe(
+    Effect.map((thread) => thread.worktreePath),
+    Effect.catchIf(isThreadNotFound, () => Effect.succeed(null)),
+  );
+  const path = reported ?? at.worktree;
+  if (path !== null) {
+    const removed = yield* Effect.result(ctx.sessions.removeWorktree(path));
+    if (removed._tag === "Success") {
+      yield* ledger(() =>
+        out.append(
+          { event: "worktree_removed", data: { path } },
+          makeCause(at.step, "worktree-removed"),
+        ),
+      );
+    } else {
+      yield* ledger(() =>
+        out.append(
+          {
+            event: "worktree_remove_failed",
+            data: { path, error: describe(removed.failure.cause) },
+          },
+          makeCause(at.step, "worktree-remove-failed"),
+        ),
+      );
     }
-    at.worktreeDone = true;
-  });
+  }
+  at.worktreeDone = true;
+});
 
 const isThreadNotFound = Schema.is(ThreadNotFoundError);
 
@@ -402,31 +382,30 @@ export const recordedReason = (stop: Stop): string =>
  * comment are repeated safely. A pull request that was ready (the issue is `pr-open`) goes back to
  * draft first. `code` is the reason of every line it writes.
  */
-export const goStuck = (
+export const goStuck = Effect.fn("RunnerRun.goStuck")(function* (
   ctx: RunContext,
   issue: number,
   out: Ledger,
   at: Progress,
   code: string,
   stop: Stop,
-): Effect.Effect<void, RunError> =>
-  Effect.gen(function* () {
-    const cause = makeCause(at.step, code);
-    if (at.state === "stuck") {
-      yield* ledger(() => out.finish("stuck", null, null, cause));
-      return;
-    }
-    yield* stopSession(ctx, out, at);
-    // A pull request that was ready for review is not left looking ready: the factory no longer
-    // vouches for it. Safe to repeat.
-    if (at.state === "pr-open" && at.pr !== null) yield* ctx.tracker.markPrDraft(at.pr);
-    const failed = yield* Effect.fromResult(
-      transition(at.state, { kind: "failed", reason: recordedReason(stop) }),
-    );
-    at.stop = stop;
-    yield* applyActions(ctx, issue, out, at, failed.actions, cause);
+) {
+  const cause = makeCause(at.step, code);
+  if (at.state === "stuck") {
     yield* ledger(() => out.finish("stuck", null, null, cause));
-  });
+    return;
+  }
+  yield* stopSession(ctx, out, at);
+  // A pull request that was ready for review is not left looking ready: the factory no longer
+  // vouches for it. Safe to repeat.
+  if (at.state === "pr-open" && at.pr !== null) yield* ctx.tracker.markPrDraft(at.pr);
+  const failed = yield* Effect.fromResult(
+    transition(at.state, { kind: "failed", reason: recordedReason(stop) }),
+  );
+  at.stop = stop;
+  yield* applyActions(ctx, issue, out, at, failed.actions, cause);
+  yield* ledger(() => out.finish("stuck", null, null, cause));
+});
 
 /**
  * Ends a run whose pull request was merged or closed, from `pr-open` or, for the session's own
@@ -437,21 +416,20 @@ export const goStuck = (
  * caused by `step`. Nothing is posted on GitHub. A pull request that is gone, or closed without a
  * merge, was closed.
  */
-export const endRun = (
+export const endRun = Effect.fn("RunnerRun.endRun")(function* (
   ctx: RunContext,
   out: Ledger,
   at: Progress,
   prUrl: string,
   pull: PullRequest | null,
   step: CauseStep,
-): Effect.Effect<void, RunError> =>
-  Effect.gen(function* () {
-    yield* stopSession(ctx, out, at);
-    const prEnd = pull !== null && pull.merged ? "merged" : "closed";
-    yield* ledger(() =>
-      out.finish("pr-open", null, prUrl, makeCause(step, "pull-request-ended"), prEnd),
-    );
-  });
+) {
+  yield* stopSession(ctx, out, at);
+  const prEnd = pull !== null && pull.merged ? "merged" : "closed";
+  yield* ledger(() =>
+    out.finish("pr-open", null, prUrl, makeCause(step, "pull-request-ended"), prEnd),
+  );
+});
 
 /** What a closed issue means for a run. */
 export type Closing =
@@ -473,19 +451,18 @@ const OPEN: Closing = { kind: "open" };
  * the session's report still reads as a person's move. `closed` is what GitHub says about the
  * issue. A read that fails is an error, never an answer.
  */
-export const movedOnByClosing = (
+export const movedOnByClosing = Effect.fn("RunnerRun.movedOnByClosing")(function* (
   ctx: RunContext,
   seen: Seen,
   closed: boolean,
-): Effect.Effect<Closing, RunError> =>
-  Effect.gen(function* () {
-    if (!closed) return OPEN;
-    for (const pr of seen.opened) {
-      const pull = yield* ctx.tracker.pullRequest(pr);
-      if (pull !== null && pull.merged) return { kind: "own-merge", pull } as const;
-    }
-    return { kind: "persons-move" } as const;
-  });
+) {
+  if (!closed) return OPEN;
+  for (const pr of seen.opened) {
+    const pull = yield* ctx.tracker.pullRequest(pr);
+    if (pull !== null && pull.merged) return { kind: "own-merge", pull } as const;
+  }
+  return { kind: "persons-move" } as const;
+});
 
 /**
  * What the run's issue being closed means for it, with the issue as read for that (`detail`, null
@@ -493,16 +470,15 @@ export const movedOnByClosing = (
  * has nothing left to write (`pr-open`, `stuck`) asks nothing of GitHub, and neither does a step
  * that would skip the run (the caller checks that first).
  */
-export const closedIssue = (
+export const closedIssue = Effect.fn("RunnerRun.closedIssue")(function* (
   ctx: RunContext,
   run: RunId,
   seen: Seen,
-): Effect.Effect<{ readonly closing: Closing; readonly detail: IssueDetail | null }, RunError> =>
-  Effect.gen(function* () {
-    if (seen.state === "pr-open" || seen.state === "stuck") return { closing: OPEN, detail: null };
-    const detail = yield* ctx.tracker.issue(Number(run.issue));
-    return { closing: yield* movedOnByClosing(ctx, seen, detail.closed), detail };
-  });
+) {
+  if (seen.state === "pr-open" || seen.state === "stuck") return { closing: OPEN, detail: null };
+  const detail = yield* ctx.tracker.issue(Number(run.issue));
+  return { closing: yield* movedOnByClosing(ctx, seen, detail.closed), detail };
+});
 
 /**
  * Finishes a run whose issue a person closed: the session's thread is archived first (an archive
@@ -516,23 +492,22 @@ export const closedIssue = (
  * True when a session may exist that this could not archive: a launch was sent and the ledger
  * never got its thread, so the caller says so (the launch command id is `softfac:<run>:launch`).
  */
-export const abandon = (
+export const abandon = Effect.fn("RunnerRun.abandon")(function* (
   ctx: RunContext,
   out: Ledger,
   run: RunId,
   seen: Seen,
   step: CauseStep,
-): Effect.Effect<boolean, RunError> =>
-  Effect.gen(function* () {
-    yield* stopSession(ctx, out, progressFrom(step, seen, "triage"));
-    const actor = yield* ctx.tracker
-      .closedBy(Number(run.issue))
-      .pipe(Effect.orElseSucceed(() => null));
-    const cause = makeCause(step, "issue-closed", actor === null ? {} : { actor });
-    const outcome = seen.state === "needs-info" ? "needs-info" : "stuck";
-    yield* ledger(() => out.finish(outcome, null, null, cause));
-    return seen.launchSent && seen.threadId === null;
-  });
+) {
+  yield* stopSession(ctx, out, progressFrom(step, seen, "triage"));
+  const actor = yield* ctx.tracker
+    .closedBy(Number(run.issue))
+    .pipe(Effect.orElseSucceed(() => null));
+  const cause = makeCause(step, "issue-closed", actor === null ? {} : { actor });
+  const outcome = seen.state === "needs-info" ? "needs-info" : "stuck";
+  yield* ledger(() => out.finish(outcome, null, null, cause));
+  return seen.launchSent && seen.threadId === null;
+});
 
 /**
  * Ends a run whose own merged pull request closed its issue before a gate pass was recorded:

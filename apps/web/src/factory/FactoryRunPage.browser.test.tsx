@@ -1,13 +1,15 @@
-import { createElement, act, type ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { createElement, type ReactNode } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 
+import { act } from "../../test/render";
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
 import type { FactoryResource } from "./useFactoryData";
 import { render, renderAt } from "./testing";
 
 const state = vi.hoisted(() => ({ run: null as unknown, environmentId: "env-1" as string }));
 
-vi.mock("@tanstack/react-router", () => ({
+vi.mock("@tanstack/react-router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-router")>()),
   Link: ({
     to,
     params,
@@ -84,48 +86,49 @@ const runPage = () =>
   createElement(FactoryRunPage, { environmentId: state.environmentId as never, runId: RUN_ID });
 const mount = () => render(runPage());
 
-beforeEach(() => {
+function setup(): Disposable {
   state.environmentId = "env-1";
   state.run = resource({ data: detail() });
-});
-
-afterEach(() => {
-  __setFactoryApiForTests();
-});
+  return { [Symbol.dispose]: () => __setFactoryApiForTests() };
+}
 
 describe("FactoryRunPage", () => {
   it("shows a loading state", async () => {
+    using _state = setup();
     state.run = resource({ status: "loading" });
-    const page = await mount();
+    await using page = await mount();
     expect(page.all('[aria-label="Loading run"]')).not.toHaveLength(0);
     expect(page.text()).not.toContain("Ledger");
   });
 
   it("says there is no such run for a 404", async () => {
+    using _state = setup();
     state.run = resource({
       status: "error",
       error: new FactoryApiError(404, "run_not_found", "no such run"),
     });
-    const page = await mount();
+    await using page = await mount();
     expect(page.text()).toContain(`No run ${RUN_ID}`);
   });
 
   it("shows any other error with its message and retries", async () => {
+    using _state = setup();
     const refresh = vi.fn();
     state.run = resource({
       status: "error",
       error: new FactoryApiError(500, "factory_error", "ledger exploded"),
       refresh,
     });
-    const page = await mount();
+    await using page = await mount();
     expect(page.text()).toContain("ledger exploded");
     await page.click(page.button("Retry")!);
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
   it("shows an empty ledger without a thread or a gate", async () => {
+    using _state = setup();
     state.run = resource({ data: detail([]) });
-    const page = await mount();
+    await using page = await mount();
     expect(page.text()).toContain("no thread yet");
     expect(page.text()).toContain("No gate has run");
     expect(page.text()).toContain("No ledger entries");
@@ -133,7 +136,8 @@ describe("FactoryRunPage", () => {
   });
 
   it("shows the run, its state and step, its thread link, gate output and ledger", async () => {
-    const page = await mount();
+    using _state = setup();
+    await using page = await mount();
     const text = page.text();
     expect(text).toContain(RUN_ID);
     expect(text).toContain("building");
@@ -155,8 +159,9 @@ describe("FactoryRunPage", () => {
   });
 
   it("links the thread on the factory environment", async () => {
+    using _state = setup();
     state.environmentId = "env-2";
-    const page = await mount();
+    await using page = await mount();
     const thread = page
       .all("a")
       .find((a) => a.getAttribute("data-to") === "/$environmentId/$threadId");
@@ -167,8 +172,9 @@ describe("FactoryRunPage", () => {
   });
 
   it("names the environment after the run id", async () => {
+    using _state = setup();
     state.environmentId = "env-2";
-    const page = await mount();
+    await using page = await mount();
     const header = page.all("h1")[0]!.parentElement!;
     expect(header.textContent).toContain(RUN_ID);
     expect(header.textContent).toContain("Mac Studio");
@@ -178,7 +184,8 @@ describe("FactoryRunPage", () => {
   });
 
   it("renders the relaunch message as plain text", async () => {
-    const page = await mount();
+    using _state = setup();
+    await using page = await mount();
     const pre = page.all("pre")[0]!;
     expect(pre.textContent).toBe("<b>tests failed</b> fix them");
     expect(pre.children).toHaveLength(0);
@@ -186,14 +193,17 @@ describe("FactoryRunPage", () => {
   });
 
   it("notes a dropped last line and skipped lines", async () => {
+    using _state = setup();
     state.run = resource({ data: detail(BUILDING, { truncated: true, skipped: 4 }) });
-    const text = (await mount()).text();
+    await using page = await mount();
+    const text = page.text();
     expect(text).toContain("The last line of the ledger was unreadable and was dropped.");
     expect(text).not.toContain("older entries");
     expect(text).toContain("4 unreadable lines skipped");
   });
 
   it("stops a building run, shows the answer and refreshes", async () => {
+    using _state = setup();
     const refresh = vi.fn();
     state.run = resource({ data: detail(), refresh });
     const stopRun = vi.fn(async () => ({
@@ -202,7 +212,7 @@ describe("FactoryRunPage", () => {
       message: "stop requested: the issue goes to factory:stuck",
     }));
     __setFactoryApiForTests(api({ stopRun }));
-    const page = await mount();
+    await using page = await mount();
     expect(page.button("Stop")!.disabled).toBeFalsy();
     await page.click(page.button("Stop")!);
     expect(stopRun).toHaveBeenCalledWith("env-1", RUN_ID);
@@ -211,12 +221,13 @@ describe("FactoryRunPage", () => {
   });
 
   it("disables Stop while a stop request is in flight, and enables it again after", async () => {
+    using _state = setup();
     let resolve!: (value: Awaited<ReturnType<FactoryApi["stopRun"]>>) => void;
     const stopRun = vi.fn(
       () => new Promise<Awaited<ReturnType<FactoryApi["stopRun"]>>>((r) => (resolve = r)),
     );
     __setFactoryApiForTests(api({ stopRun }));
-    const page = await mount();
+    await using page = await mount();
     await page.click(page.button("Stop")!);
     expect(page.button("Stop")!.disabled).toBe(true);
     await act(async () =>
@@ -226,6 +237,7 @@ describe("FactoryRunPage", () => {
   });
 
   it("shows the message of a run that is not building", async () => {
+    using _state = setup();
     __setFactoryApiForTests(
       api({
         stopRun: async () => {
@@ -233,18 +245,21 @@ describe("FactoryRunPage", () => {
         },
       }),
     );
-    const page = await mount();
+    await using page = await mount();
     await page.click(page.button("Stop")!);
     expect(page.text()).toContain("run is not building");
   });
 
   it("disables Stop for a run that is not building or is finished", async () => {
+    using _state = setup();
     state.run = resource({
       data: detail([...BUILDING, entry("state_changed", { from: "building", to: "pr-open" })]),
     });
-    expect((await mount()).button("Stop")!.disabled).toBe(true);
+    await using prOpen = await mount();
+    expect(prOpen.button("Stop")!.disabled).toBe(true);
     state.run = resource({ data: detail([...BUILDING, entry("finished", { outcome: "stuck" })]) });
-    expect((await mount()).button("Stop")!.disabled).toBe(true);
+    await using finished = await mount();
+    expect(finished.button("Stop")!.disabled).toBe(true);
   });
 });
 
@@ -253,7 +268,8 @@ describe.each([375, 1280])("FactoryRunPage at %i px", (width) => {
   const mountAt = () => renderAt(width, runPage());
 
   it(narrow ? "lists the gate commands and ledger, not tables" : "keeps the tables", async () => {
-    const page = await mountAt();
+    using _state = setup();
+    await using page = await mountAt();
     expect(page.all("table")).toHaveLength(narrow ? 0 : 2);
     const lists = page.all("ul").filter((ul) => ul.getAttribute("data-layout") === "list");
     expect(lists).toHaveLength(narrow ? 2 : 0);
@@ -267,7 +283,8 @@ describe.each([375, 1280])("FactoryRunPage at %i px", (width) => {
 
 describe("FactoryRunPage lists at 375 px", () => {
   it("makes a list item of each gate command and each ledger entry", async () => {
-    const page = await renderAt(375, runPage());
+    using _state = setup();
+    await using page = await renderAt(375, runPage());
     const items = page.all("li");
     // 2 gate commands, then one item per ledger entry.
     expect(items).toHaveLength(2 + BUILDING.length);
@@ -281,7 +298,8 @@ describe.each([
   [640, false],
 ])("FactoryRunPage at the 640 px breakpoint, %i px", (width, narrow) => {
   it(narrow ? "lists just below 640" : "keeps the tables from 640", async () => {
-    const page = await renderAt(width, runPage());
+    using _state = setup();
+    await using page = await renderAt(width, runPage());
     expect(page.all("table")).toHaveLength(narrow ? 0 : 2);
     const lists = page.all("ul").filter((ul) => ul.getAttribute("data-layout") === "list");
     expect(lists).toHaveLength(narrow ? 2 : 0);

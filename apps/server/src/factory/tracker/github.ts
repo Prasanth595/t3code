@@ -899,54 +899,54 @@ export interface GitHubOptions {
 }
 
 type GitHubEffect<A> = Effect.Effect<A, GitHubError, FactoryProcess>;
+type GitHubGen<A> = Effect.fn.Return<A, GitHubError, FactoryProcess>;
 
 export const makeGitHub = (options: GitHubOptions) => {
   const { repo } = options;
 
   /** Runs `gh` and returns stdout, or the typed error. */
-  const gh = (args: ReadonlyArray<string>): GitHubEffect<string> =>
-    Effect.gen(function* () {
-      // Node's own spawn error quotes the offending argument, which could be a hidden comment body.
-      if (args.some((arg) => arg.includes("\u0000"))) {
-        return yield* new GitHubSpawnError({
-          args,
-          cause: new Error("argument contains a NUL byte"),
-        });
+  const gh = Effect.fn("GitHub.gh")(function* (args: ReadonlyArray<string>): GitHubGen<string> {
+    // Node's own spawn error quotes the offending argument, which could be a hidden comment body.
+    if (args.some((arg) => arg.includes("\u0000"))) {
+      return yield* new GitHubSpawnError({
+        args,
+        cause: new Error("argument contains a NUL byte"),
+      });
+    }
+    const factoryProcess = yield* FactoryProcess;
+    const result = yield* factoryProcess
+      .run({
+        command: "gh",
+        args,
+        env: { GH_CONFIG_DIR: options.ghConfigDir },
+        timeoutMs: GH_TIMEOUT_MS,
+        tailBytes: GH_OUTPUT_LIMIT,
+        separateStderr: true,
+      })
+      .pipe(Effect.mapError((error) => new GitHubSpawnError({ args, cause: error.cause })));
+    if (result.timedOut) {
+      return yield* new GitHubTimedOut({ args, seconds: GH_TIMEOUT_MS / 1000 });
+    }
+    if (result.truncated) {
+      return yield* new GitHubOutputTooLarge({ args, limit: GH_OUTPUT_LIMIT });
+    }
+    // The wrapper shell's "command not found" and "not executable"; gh itself never exits so.
+    if (result.exitCode === 127 || result.exitCode === 126) {
+      const why = result.stderrTail.trim() || `the shell exited with status ${result.exitCode}`;
+      return yield* new GitHubSpawnError({ args, cause: new Error(why) });
+    }
+    if (result.exitCode !== 0) {
+      if (RATE_LIMITED.test(result.stderrTail)) {
+        return yield* new GitHubRateLimited({ args, stderr: result.stderrTail });
       }
-      const factoryProcess = yield* FactoryProcess;
-      const result = yield* factoryProcess
-        .run({
-          command: "gh",
-          args,
-          env: { GH_CONFIG_DIR: options.ghConfigDir },
-          timeoutMs: GH_TIMEOUT_MS,
-          tailBytes: GH_OUTPUT_LIMIT,
-          separateStderr: true,
-        })
-        .pipe(Effect.mapError((error) => new GitHubSpawnError({ args, cause: error.cause })));
-      if (result.timedOut) {
-        return yield* new GitHubTimedOut({ args, seconds: GH_TIMEOUT_MS / 1000 });
-      }
-      if (result.truncated) {
-        return yield* new GitHubOutputTooLarge({ args, limit: GH_OUTPUT_LIMIT });
-      }
-      // The wrapper shell's "command not found" and "not executable"; gh itself never exits so.
-      if (result.exitCode === 127 || result.exitCode === 126) {
-        const why = result.stderrTail.trim() || `the shell exited with status ${result.exitCode}`;
-        return yield* new GitHubSpawnError({ args, cause: new Error(why) });
-      }
-      if (result.exitCode !== 0) {
-        if (RATE_LIMITED.test(result.stderrTail)) {
-          return yield* new GitHubRateLimited({ args, stderr: result.stderrTail });
-        }
-        return yield* new GitHubFailed({
-          args,
-          status: result.exitCode ?? -1,
-          stderr: result.stderrTail,
-        });
-      }
-      return result.tail;
-    });
+      return yield* new GitHubFailed({
+        args,
+        status: result.exitCode ?? -1,
+        stderr: result.stderrTail,
+      });
+    }
+    return result.tail;
+  });
 
   const parseError = (args: ReadonlyArray<string>, expected: string) =>
     new GitHubParse({ args, expected });
@@ -976,84 +976,85 @@ export const makeGitHub = (options: GitHubOptions) => {
    * Runs `gh api --paginate` and collects the rows of every JSON array in stdout:
    * gh prints either one merged array or one array per page.
    */
-  const ghPages = <T, E>(
+  const ghPages = Effect.fn("GitHub.ghPages")(function* <T, E>(
     args: ReadonlyArray<string>,
     schema: Schema.Codec<ReadonlyArray<T>, E>,
     expected: string,
-  ): GitHubEffect<Array<T>> =>
-    Effect.gen(function* () {
-      const pages = splitJsonValues(yield* gh(args));
-      if (pages.length === 0) {
-        return yield* parseError(args, `${expected} (output was empty)`);
-      }
-      const rows: Array<T> = [];
-      for (const page of pages) rows.push(...(yield* decode(schema, args, expected, page)));
-      return rows;
-    });
+  ): GitHubGen<Array<T>> {
+    const pages = splitJsonValues(yield* gh(args));
+    if (pages.length === 0) {
+      return yield* parseError(args, `${expected} (output was empty)`);
+    }
+    const rows: Array<T> = [];
+    for (const page of pages) rows.push(...(yield* decode(schema, args, expected, page)));
+    return rows;
+  });
 
   const repoArgs = (parts: ReadonlyArray<string>): Array<string> => [...parts, "--repo", repo];
 
-  const listIssues = (state: State): GitHubEffect<Listing<IssueSummary>> =>
-    Effect.gen(function* () {
-      const args = [
-        ...repoArgs(["issue", "list"]),
-        "--state",
-        "open",
-        "--label",
-        stateLabel(state),
-        "--limit",
-        String(LIST_LIMIT + 1),
-        "--json",
-        "number,title,assignees",
-      ];
-      const raw = yield* ghJson(args, IssueSummaries, "a JSON array of issues");
-      return {
-        items: raw.slice(0, LIST_LIMIT).map((item) => ({
-          number: item.number,
-          title: item.title,
-          assignees: item.assignees.map((assignee) => assignee.login),
-        })),
-        cut: raw.length > LIST_LIMIT,
-      };
-    });
+  const listIssues = Effect.fn("GitHub.listIssues")(function* (
+    state: State,
+  ): GitHubGen<Listing<IssueSummary>> {
+    const args = [
+      ...repoArgs(["issue", "list"]),
+      "--state",
+      "open",
+      "--label",
+      stateLabel(state),
+      "--limit",
+      String(LIST_LIMIT + 1),
+      "--json",
+      "number,title,assignees",
+    ];
+    const raw = yield* ghJson(args, IssueSummaries, "a JSON array of issues");
+    return {
+      items: raw.slice(0, LIST_LIMIT).map((item) => ({
+        number: item.number,
+        title: item.title,
+        assignees: item.assignees.map((assignee) => assignee.login),
+      })),
+      cut: raw.length > LIST_LIMIT,
+    };
+  });
 
-  const issue = (number: number): GitHubEffect<IssueDetail> =>
-    Effect.gen(function* () {
-      const args = [
-        ...repoArgs(["issue", "view", String(number)]),
-        "--json",
-        "number,title,body,labels,assignees,state,author",
-      ];
-      const raw = yield* ghJson(args, IssueView, "an object describing an issue");
-      const labels = raw.labels.map((label) => label.name);
-      const factory = labels.filter((name) => name.startsWith("factory:"));
-      return {
-        number: raw.number,
-        title: raw.title,
-        body: raw.body ?? "",
-        labels,
-        assignees: raw.assignees.map((assignee) => assignee.login),
-        author: raw.author?.login ?? null,
-        state: factory.length === 1 ? (stateFromLabel(factory[0]!) ?? null) : null,
-        closed: raw.state === "CLOSED",
-      };
-    });
+  const issue = Effect.fn("GitHub.issue")(function* (number: number): GitHubGen<IssueDetail> {
+    const args = [
+      ...repoArgs(["issue", "view", String(number)]),
+      "--json",
+      "number,title,body,labels,assignees,state,author",
+    ];
+    const raw = yield* ghJson(args, IssueView, "an object describing an issue");
+    const labels = raw.labels.map((label) => label.name);
+    const factory = labels.filter((name) => name.startsWith("factory:"));
+    return {
+      number: raw.number,
+      title: raw.title,
+      body: raw.body ?? "",
+      labels,
+      assignees: raw.assignees.map((assignee) => assignee.login),
+      author: raw.author?.login ?? null,
+      state: factory.length === 1 ? (stateFromLabel(factory[0]!) ?? null) : null,
+      closed: raw.state === "CLOSED",
+    };
+  });
 
   /** Moves the issue to `state`: adds its label, removes every other `factory:*` label, touches nothing else. */
-  const setState = (number: number, state: State): GitHubEffect<void> =>
-    Effect.gen(function* () {
-      const label = stateLabel(state);
-      const view = [...repoArgs(["issue", "view", String(number)]), "--json", "labels"];
-      const current = yield* ghJson(view, LabelsView, "an object with `labels`");
-      const names = current.labels.map((l) => l.name);
-      const present = names.includes(label);
-      const stale = names.filter((name) => name.startsWith("factory:") && name !== label);
-      if (present && stale.length === 0) return;
-      const edit = repoArgs(["issue", "edit", String(number)]);
-      if (!present) edit.push("--add-label", label);
-      for (const name of stale) edit.push("--remove-label", name);
-      yield* gh(edit);
-    });
+  const setState = Effect.fn("GitHub.setState")(function* (
+    number: number,
+    state: State,
+  ): GitHubGen<void> {
+    const label = stateLabel(state);
+    const view = [...repoArgs(["issue", "view", String(number)]), "--json", "labels"];
+    const current = yield* ghJson(view, LabelsView, "an object with `labels`");
+    const names = current.labels.map((l) => l.name);
+    const present = names.includes(label);
+    const stale = names.filter((name) => name.startsWith("factory:") && name !== label);
+    if (present && stale.length === 0) return;
+    const edit = repoArgs(["issue", "edit", String(number)]);
+    if (!present) edit.push("--add-label", label);
+    for (const name of stale) edit.push("--remove-label", name);
+    yield* gh(edit);
+  });
 
   const assign = (number: number, user: string): GitHubEffect<void> =>
     gh([...repoArgs(["issue", "edit", String(number)]), "--add-assignee", user]).pipe(
@@ -1079,29 +1080,32 @@ export const makeGitHub = (options: GitHubOptions) => {
    * nobody else can take it over. A list-then-write, so concurrent callers could
    * still create two.
    */
-  const upsertStatusComment = (number: number, user: string, body: string): GitHubEffect<void> =>
-    Effect.gen(function* () {
-      const list = ["api", `repos/${repo}/issues/${number}/comments`, "--paginate"];
-      const existing = yield* ghPages(list, CommentRows, "JSON arrays of comments");
-      const status = existing.find(
-        (comment) =>
-          comment.user?.login.toLowerCase() === user.toLowerCase() &&
-          (comment.body ?? "").trimEnd().endsWith(STATUS_MARKER),
-      );
-      const text = withMarker(body, STATUS_MARKER);
-      if (status === undefined) {
-        yield* gh([...repoArgs(["issue", "comment", String(number)]), "--body", text]);
-      } else {
-        yield* gh([
-          "api",
-          "-X",
-          "PATCH",
-          `repos/${repo}/issues/comments/${status.id}`,
-          "-f",
-          `body=${text}`,
-        ]);
-      }
-    });
+  const upsertStatusComment = Effect.fn("GitHub.upsertStatusComment")(function* (
+    number: number,
+    user: string,
+    body: string,
+  ): GitHubGen<void> {
+    const list = ["api", `repos/${repo}/issues/${number}/comments`, "--paginate"];
+    const existing = yield* ghPages(list, CommentRows, "JSON arrays of comments");
+    const status = existing.find(
+      (comment) =>
+        comment.user?.login.toLowerCase() === user.toLowerCase() &&
+        (comment.body ?? "").trimEnd().endsWith(STATUS_MARKER),
+    );
+    const text = withMarker(body, STATUS_MARKER);
+    if (status === undefined) {
+      yield* gh([...repoArgs(["issue", "comment", String(number)]), "--body", text]);
+    } else {
+      yield* gh([
+        "api",
+        "-X",
+        "PATCH",
+        `repos/${repo}/issues/comments/${status.id}`,
+        "-f",
+        `body=${text}`,
+      ]);
+    }
+  });
 
   const labelNames = (): GitHubEffect<Array<string>> =>
     ghPages(
@@ -1121,49 +1125,46 @@ export const makeGitHub = (options: GitHubOptions) => {
     ]).pipe(Effect.asVoid);
 
   /** Creates the factory labels the repo lacks, in lifecycle order; returns their states. */
-  const ensureLabels = (): GitHubEffect<Array<State>> =>
-    Effect.gen(function* () {
-      const existing = new Set(yield* labelNames());
-      const created: Array<State> = [];
-      for (const state of STATES) {
-        if (existing.has(stateLabel(state))) continue;
-        yield* createLabel(stateLabel(state), stateColor(state), stateDescription(state));
-        created.push(state);
-      }
-      return created;
-    });
+  const ensureLabels = Effect.fn("GitHub.ensureLabels")(function* (): GitHubGen<Array<State>> {
+    const existing = new Set(yield* labelNames());
+    const created: Array<State> = [];
+    for (const state of STATES) {
+      if (existing.has(stateLabel(state))) continue;
+      yield* createLabel(stateLabel(state), stateColor(state), stateDescription(state));
+      created.push(state);
+    }
+    return created;
+  });
 
-  const defaultBranch = (): GitHubEffect<string> =>
-    Effect.gen(function* () {
-      const args = ["api", `repos/${repo}`];
-      const view = yield* ghJson(args, RepoView, "an object with the repo's default branch");
-      if (
-        view.default_branch === undefined ||
-        view.default_branch === null ||
-        view.default_branch === ""
-      ) {
-        return yield* parseError(args, "an object with the repo's default branch (it had none)");
-      }
-      return view.default_branch;
-    });
+  const defaultBranch = Effect.fn("GitHub.defaultBranch")(function* (): GitHubGen<string> {
+    const args = ["api", `repos/${repo}`];
+    const view = yield* ghJson(args, RepoView, "an object with the repo's default branch");
+    if (
+      view.default_branch === undefined ||
+      view.default_branch === null ||
+      view.default_branch === ""
+    ) {
+      return yield* parseError(args, "an object with the repo's default branch (it had none)");
+    }
+    return view.default_branch;
+  });
 
   /** The full commit id at the tip of `branch`. */
-  const branchTip = (branch: string): GitHubEffect<string> =>
-    Effect.gen(function* () {
-      const encoded = encodeBranch(branch);
-      if (encoded === null) {
-        return yield* new GitHubInvalidArgument({
-          argument: branch,
-          expected: "a branch name without empty or dot segments",
-        });
-      }
-      const args = ["api", `repos/${repo}/git/ref/heads/${encoded}`];
-      const view = yield* ghJson(args, RefView, "an object with the commit the ref points at");
-      if (view.object.type !== "commit" || !isCommitId(view.object.sha)) {
-        return yield* parseError(args, "a commit and its full 40 or 64 digit id");
-      }
-      return view.object.sha;
-    });
+  const branchTip = Effect.fn("GitHub.branchTip")(function* (branch: string): GitHubGen<string> {
+    const encoded = encodeBranch(branch);
+    if (encoded === null) {
+      return yield* new GitHubInvalidArgument({
+        argument: branch,
+        expected: "a branch name without empty or dot segments",
+      });
+    }
+    const args = ["api", `repos/${repo}/git/ref/heads/${encoded}`];
+    const view = yield* ghJson(args, RefView, "an object with the commit the ref points at");
+    if (view.object.type !== "commit" || !isCommitId(view.object.sha)) {
+      return yield* parseError(args, "a commit and its full 40 or 64 digit id");
+    }
+    return view.object.sha;
+  });
 
   /**
    * The text of the file at `path` in the commit `sha` (a full 40 or 64 digit id, never
@@ -1172,79 +1173,76 @@ export const makeGitHub = (options: GitHubOptions) => {
    * plain `/`-separated segments of letters, digits, `.`, `_` and `-`; anything else, or a
    * `sha` that is not a full id, is refused before the call.
    */
-  const fileAt = (path: string, sha: string): GitHubEffect<string> =>
-    Effect.gen(function* () {
-      if (!path.split("/").every(isPlainSegment)) {
-        return yield* new GitHubInvalidArgument({ argument: path, expected: "a plain file path" });
-      }
-      if (!isCommitId(sha)) {
-        return yield* new GitHubInvalidArgument({ argument: sha, expected: "a full commit id" });
-      }
-      const args = ["api", `repos/${repo}/contents/${path}?ref=${sha}`];
-      const file = yield* ghJson(args, FileView, "an object describing a file");
-      const bad = (why: string) => parseError(args, `a regular file read whole (${why})`);
-      if (file.type !== "file") return yield* bad("it is not a regular file");
-      if (file.size > MAX_FILE_BYTES) return yield* bad("it is too big");
-      if (file.encoding !== "base64") return yield* bad("its content did not come as base64");
-      const bytes = decodeBase64(file.content ?? "");
-      if (bytes === null) return yield* bad("its content is not valid base64");
-      if (bytes.length !== file.size)
-        return yield* bad("its content is not as long as its size says");
-      const text = decodeUtf8(bytes);
-      if (text === null) return yield* bad("it is not UTF-8");
-      return text;
-    });
+  const fileAt = Effect.fn("GitHub.fileAt")(function* (
+    path: string,
+    sha: string,
+  ): GitHubGen<string> {
+    if (!path.split("/").every(isPlainSegment)) {
+      return yield* new GitHubInvalidArgument({ argument: path, expected: "a plain file path" });
+    }
+    if (!isCommitId(sha)) {
+      return yield* new GitHubInvalidArgument({ argument: sha, expected: "a full commit id" });
+    }
+    const args = ["api", `repos/${repo}/contents/${path}?ref=${sha}`];
+    const file = yield* ghJson(args, FileView, "an object describing a file");
+    const bad = (why: string) => parseError(args, `a regular file read whole (${why})`);
+    if (file.type !== "file") return yield* bad("it is not a regular file");
+    if (file.size > MAX_FILE_BYTES) return yield* bad("it is too big");
+    if (file.encoding !== "base64") return yield* bad("its content did not come as base64");
+    const bytes = decodeBase64(file.content ?? "");
+    if (bytes === null) return yield* bad("its content is not valid base64");
+    if (bytes.length !== file.size)
+      return yield* bad("its content is not as long as its size says");
+    const text = decodeUtf8(bytes);
+    if (text === null) return yield* bad("it is not UTF-8");
+    return text;
+  });
 
   /**
    * The project config on the default branch: the branch, its tip and the file. The
    * file is read at that tip, so the three agree. A missing file has a null `text`; a 404
    * on the branch or its tip is still a failure.
    */
-  const baseConfig = (): GitHubEffect<BaseConfig> =>
-    Effect.gen(function* () {
-      const branch = yield* defaultBranch();
-      const tip = yield* branchTip(branch);
-      const text = yield* fileAt(PROJECT_CONFIG_PATH, tip).pipe(
-        Effect.catchIf(isNotFound, () => Effect.succeed(null)),
-      );
-      return { branch, tip, text };
-    });
+  const baseConfig = Effect.fn("GitHub.baseConfig")(function* (): GitHubGen<BaseConfig> {
+    const branch = yield* defaultBranch();
+    const tip = yield* branchTip(branch);
+    const text = yield* fileAt(PROJECT_CONFIG_PATH, tip).pipe(
+      Effect.catchIf(isNotFound, () => Effect.succeed(null)),
+    );
+    return { branch, tip, text };
+  });
 
   /** The pull request as `gh pr view` reads it; null for a number the repo does not have. */
-  const pullRequest = (number: number): GitHubEffect<PullRequest | null> =>
-    Effect.gen(function* () {
-      const args = [
-        ...repoArgs(["pr", "view", String(number)]),
-        "--json",
-        "number,isDraft,state,headRefName,isCrossRepository,baseRefName,headRefOid",
-      ];
-      const stdout = yield* gh(args).pipe(
-        Effect.catchTags({
-          GitHubFailed: (error) =>
-            PULL_REQUEST_GONE.test(error.stderr) ? Effect.succeed(null) : Effect.fail(error),
-        }),
-      );
-      if (stdout === null) return null;
-      const raw = yield* decode(
-        PullRequestView,
-        args,
-        "an object describing a pull request",
-        stdout,
-      );
-      if (!isCommitId(raw.headRefOid)) {
-        return yield* parseError(args, "a pull request and its full head commit id");
-      }
-      return {
-        number: raw.number,
-        isDraft: raw.isDraft,
-        open: raw.state === "OPEN",
-        merged: raw.state === "MERGED",
-        headRef: raw.headRefName,
-        crossRepository: raw.isCrossRepository,
-        baseRef: raw.baseRefName,
-        headSha: raw.headRefOid,
-      };
-    });
+  const pullRequest = Effect.fn("GitHub.pullRequest")(function* (
+    number: number,
+  ): GitHubGen<PullRequest | null> {
+    const args = [
+      ...repoArgs(["pr", "view", String(number)]),
+      "--json",
+      "number,isDraft,state,headRefName,isCrossRepository,baseRefName,headRefOid",
+    ];
+    const stdout = yield* gh(args).pipe(
+      Effect.catchTags({
+        GitHubFailed: (error) =>
+          PULL_REQUEST_GONE.test(error.stderr) ? Effect.succeed(null) : Effect.fail(error),
+      }),
+    );
+    if (stdout === null) return null;
+    const raw = yield* decode(PullRequestView, args, "an object describing a pull request", stdout);
+    if (!isCommitId(raw.headRefOid)) {
+      return yield* parseError(args, "a pull request and its full head commit id");
+    }
+    return {
+      number: raw.number,
+      isDraft: raw.isDraft,
+      open: raw.state === "OPEN",
+      merged: raw.state === "MERGED",
+      headRef: raw.headRefName,
+      crossRepository: raw.isCrossRepository,
+      baseRef: raw.baseRefName,
+      headSha: raw.headRefOid,
+    };
+  });
 
   /**
    * Takes the pull request out of draft. One that is already ready counts as done: `gh`
@@ -1295,33 +1293,33 @@ export const makeGitHub = (options: GitHubOptions) => {
    * The login of whoever took pull request `pr` out of draft last. `null` when it never was or
    * GitHub names no actor (a deleted account). One GraphQL call.
    */
-  const readyBy = (pr: number): GitHubEffect<string | null> =>
-    Effect.gen(function* () {
-      const args = yield* issueQueryArgs(READY_BY_QUERY, pr);
-      const answer = yield* ghJson(
-        args,
-        ReadyByAnswer,
-        "a GraphQL response with the pull request's timeline",
-      );
-      const last = answer.data.repository.pullRequest.timelineItems.nodes.at(-1);
-      return last?.actor?.login ?? null;
-    });
+  const readyBy = Effect.fn("GitHub.readyBy")(function* (pr: number): GitHubGen<string | null> {
+    const args = yield* issueQueryArgs(READY_BY_QUERY, pr);
+    const answer = yield* ghJson(
+      args,
+      ReadyByAnswer,
+      "a GraphQL response with the pull request's timeline",
+    );
+    const last = answer.data.repository.pullRequest.timelineItems.nodes.at(-1);
+    return last?.actor?.login ?? null;
+  });
 
   /**
    * The login of whoever closed issue `issue` last. `null` when it was never closed or GitHub
    * names no actor (a deleted account). One GraphQL call.
    */
-  const closedBy = (issue: number): GitHubEffect<string | null> =>
-    Effect.gen(function* () {
-      const args = yield* issueQueryArgs(CLOSED_BY_QUERY, issue);
-      const answer = yield* ghJson(
-        args,
-        ClosedByAnswer,
-        "a GraphQL response with the issue's timeline",
-      );
-      const last = answer.data.repository.issue.timelineItems.nodes.at(-1);
-      return last?.actor?.login ?? null;
-    });
+  const closedBy = Effect.fn("GitHub.closedBy")(function* (
+    issue: number,
+  ): GitHubGen<string | null> {
+    const args = yield* issueQueryArgs(CLOSED_BY_QUERY, issue);
+    const answer = yield* ghJson(
+      args,
+      ClosedByAnswer,
+      "a GraphQL response with the issue's timeline",
+    );
+    const last = answer.data.repository.issue.timelineItems.nodes.at(-1);
+    return last?.actor?.login ?? null;
+  });
 
   /**
    * How `head` stands against `base`, by GitHub's compare API (`status` of `base...head`).
@@ -1330,37 +1328,39 @@ export const makeGitHub = (options: GitHubOptions) => {
    * places a branch, and a ref with an empty or dot segment, or `..` anywhere, is refused
    * before the call so that it cannot leave the compare path or name a second range.
    */
-  const compare = (base: string, head: string): GitHubEffect<Relation | null> =>
-    Effect.gen(function* () {
-      const encoded: Array<string> = [];
-      for (const name of [base, head]) {
-        const part = name.includes("..") ? null : encodeBranch(name);
-        if (part === null) {
-          return yield* new GitHubInvalidArgument({
-            argument: name,
-            expected: "a ref without `..`, empty or dot segments",
-          });
-        }
-        encoded.push(part);
+  const compare = Effect.fn("GitHub.compare")(function* (
+    base: string,
+    head: string,
+  ): GitHubGen<Relation | null> {
+    const encoded: Array<string> = [];
+    for (const name of [base, head]) {
+      const part = name.includes("..") ? null : encodeBranch(name);
+      if (part === null) {
+        return yield* new GitHubInvalidArgument({
+          argument: name,
+          expected: "a ref without `..`, empty or dot segments",
+        });
       }
-      const args = [
-        "api",
-        `repos/${repo}/compare/${encoded[0]}...${encoded[1]}?per_page=1`,
-        "--jq",
-        ".status",
-      ];
-      const stdout = yield* gh(args).pipe(Effect.catchIf(isNotFound, () => Effect.succeed(null)));
-      if (stdout === null) return null;
-      switch (stdout.trim()) {
-        case "ahead":
-        case "behind":
-        case "identical":
-        case "diverged":
-          return stdout.trim() as Relation;
-        default:
-          return yield* parseError(args, "ahead, behind, identical or diverged");
-      }
-    });
+      encoded.push(part);
+    }
+    const args = [
+      "api",
+      `repos/${repo}/compare/${encoded[0]}...${encoded[1]}?per_page=1`,
+      "--jq",
+      ".status",
+    ];
+    const stdout = yield* gh(args).pipe(Effect.catchIf(isNotFound, () => Effect.succeed(null)));
+    if (stdout === null) return null;
+    switch (stdout.trim()) {
+      case "ahead":
+      case "behind":
+      case "identical":
+      case "diverged":
+        return stdout.trim() as Relation;
+      default:
+        return yield* parseError(args, "ahead, behind, identical or diverged");
+    }
+  });
 
   /**
    * How each of the check `names` stands on the commit `sha` (a full 40 or 64 digit id,
@@ -1370,61 +1370,64 @@ export const makeGitHub = (options: GitHubOptions) => {
    * no result. When one name has several runs, a failed one decides, then a pending one,
    * then a skipped one, and it passes only when all passed.
    */
-  const checks = (sha: string, names: ReadonlyArray<string>): GitHubEffect<Array<CheckStatus>> =>
-    Effect.gen(function* () {
-      if (!isCommitId(sha)) {
-        return yield* new GitHubInvalidArgument({ argument: sha, expected: "a full commit id" });
-      }
-      const args = [
-        "api",
-        `repos/${repo}/commits/${sha}/check-runs?per_page=100&filter=latest`,
-        "--paginate",
-        "--jq",
-        "[.check_runs[] | {name, status, conclusion, html_url}]",
-      ];
-      const runs = yield* ghPages(args, CheckRunRows, "JSON arrays of check runs");
-      return names.map((name) => {
-        let found: CheckStatus | null = null;
-        for (const run of runs) {
-          if (run.name !== name) continue;
-          const [state, conclusion] = checkOutcome(run.status, run.conclusion ?? null);
-          if (found === null || CHECK_RANK[state] > CHECK_RANK[found.state]) {
-            // A link that does not point at GitHub is not passed on.
-            const url = run.html_url?.startsWith("https://github.com/") ? run.html_url : null;
-            found = { name, state, conclusion, url };
-          }
+  const checks = Effect.fn("GitHub.checks")(function* (
+    sha: string,
+    names: ReadonlyArray<string>,
+  ): GitHubGen<Array<CheckStatus>> {
+    if (!isCommitId(sha)) {
+      return yield* new GitHubInvalidArgument({ argument: sha, expected: "a full commit id" });
+    }
+    const args = [
+      "api",
+      `repos/${repo}/commits/${sha}/check-runs?per_page=100&filter=latest`,
+      "--paginate",
+      "--jq",
+      "[.check_runs[] | {name, status, conclusion, html_url}]",
+    ];
+    const runs = yield* ghPages(args, CheckRunRows, "JSON arrays of check runs");
+    return names.map((name) => {
+      let found: CheckStatus | null = null;
+      for (const run of runs) {
+        if (run.name !== name) continue;
+        const [state, conclusion] = checkOutcome(run.status, run.conclusion ?? null);
+        if (found === null || CHECK_RANK[state] > CHECK_RANK[found.state]) {
+          // A link that does not point at GitHub is not passed on.
+          const url = run.html_url?.startsWith("https://github.com/") ? run.html_url : null;
+          found = { name, state, conclusion, url };
         }
-        return found ?? { name, state: "missing", conclusion: "", url: null };
-      });
+      }
+      return found ?? { name, state: "missing", conclusion: "", url: null };
     });
+  });
 
   /**
    * The issues that GitHub marks as blocking `issue` (Relationships, "Mark as blocked by") and
    * that are not closed, in the order GitHub lists them. An issue is resolved once it is closed,
    * for any reason, in any repo. The `## Depends on` text is not read here; see `textBlockers`.
    */
-  const openBlockers = (issue: number): GitHubEffect<Array<Blocker>> =>
-    Effect.gen(function* () {
-      const args = ["api", `repos/${repo}/issues/${issue}/dependencies/blocked_by`, "--paginate"];
-      const listed = yield* ghPages(args, BlockerRows, "JSON arrays of issues");
-      const open: Array<Blocker> = [];
-      for (const raw of listed.filter((row) => row.state !== "closed")) {
-        // The blocker's repo is named in `repository_url`. Without it the caller would have to
-        // guess, so the answer is an error and the issue is not claimed.
-        const url = raw.repository_url ?? "";
-        const cut = url.indexOf("/repos/");
-        const named = cut < 0 ? "" : url.slice(cut + "/repos/".length);
-        const parts = named.split("/");
-        if (parts.length !== 2 || parts[0] === "" || parts[1] === "") {
-          return yield* parseError(
-            args,
-            `issues that each name their repo in repository_url (#${raw.number} did not)`,
-          );
-        }
-        open.push({ repo: named, number: raw.number });
+  const openBlockers = Effect.fn("GitHub.openBlockers")(function* (
+    issue: number,
+  ): GitHubGen<Array<Blocker>> {
+    const args = ["api", `repos/${repo}/issues/${issue}/dependencies/blocked_by`, "--paginate"];
+    const listed = yield* ghPages(args, BlockerRows, "JSON arrays of issues");
+    const open: Array<Blocker> = [];
+    for (const raw of listed.filter((row) => row.state !== "closed")) {
+      // The blocker's repo is named in `repository_url`. Without it the caller would have to
+      // guess, so the answer is an error and the issue is not claimed.
+      const url = raw.repository_url ?? "";
+      const cut = url.indexOf("/repos/");
+      const named = cut < 0 ? "" : url.slice(cut + "/repos/".length);
+      const parts = named.split("/");
+      if (parts.length !== 2 || parts[0] === "" || parts[1] === "") {
+        return yield* parseError(
+          args,
+          `issues that each name their repo in repository_url (#${raw.number} did not)`,
+        );
       }
-      return open;
-    });
+      open.push({ repo: named, number: raw.number });
+    }
+    return open;
+  });
 
   /**
    * The issues named in the `## Depends on` section of `issue` that are not closed, in the order
@@ -1433,73 +1436,74 @@ export const makeGitHub = (options: GitHubOptions) => {
    * that cannot be read is not taken as resolved. A section naming more than `MAX_DEPENDS_ON`
    * issues is an error before any of them is read.
    */
-  const textBlockers = (issue: number): GitHubEffect<Array<Blocker>> =>
-    Effect.gen(function* () {
-      const bodyArgs = [...repoArgs(["issue", "view", String(issue)]), "--json", "body"];
-      const raw = yield* ghJson(bodyArgs, IssueBody, "an object with the issue's body");
-      const named = dependsOn(raw.body ?? "");
-      if (named.length > MAX_DEPENDS_ON) {
-        return yield* parseError(
-          bodyArgs,
-          `a Depends on section naming at most ${MAX_DEPENDS_ON} issues, got ${named.length}`,
-        );
+  const textBlockers = Effect.fn("GitHub.textBlockers")(function* (
+    issue: number,
+  ): GitHubGen<Array<Blocker>> {
+    const bodyArgs = [...repoArgs(["issue", "view", String(issue)]), "--json", "body"];
+    const raw = yield* ghJson(bodyArgs, IssueBody, "an object with the issue's body");
+    const named = dependsOn(raw.body ?? "");
+    if (named.length > MAX_DEPENDS_ON) {
+      return yield* parseError(
+        bodyArgs,
+        `a Depends on section naming at most ${MAX_DEPENDS_ON} issues, got ${named.length}`,
+      );
+    }
+    const open: Array<Blocker> = [];
+    for (const ref of named) {
+      const namedRepo = ref.repo ?? repo;
+      const args = ["api", `repos/${namedRepo}/issues/${ref.number}`];
+      const read = yield* ghJson(args, IssueRestState, "an object with the issue's state");
+      if (read.state !== "closed") {
+        open.push({ repo: namedRepo, number: ref.number });
       }
-      const open: Array<Blocker> = [];
-      for (const ref of named) {
-        const namedRepo = ref.repo ?? repo;
-        const args = ["api", `repos/${namedRepo}/issues/${ref.number}`];
-        const read = yield* ghJson(args, IssueRestState, "an object with the issue's state");
-        if (read.state !== "closed") {
-          open.push({ repo: namedRepo, number: ref.number });
-        }
-      }
-      return open;
-    });
+    }
+    return open;
+  });
 
   /** `gh api graphql` arguments for a query over one issue; a repo that is not `owner/name` is refused before any call. */
-  const issueQueryArgs = (query: string, issue: number): GitHubEffect<Array<string>> =>
-    Effect.gen(function* () {
-      const slash = repo.indexOf("/");
-      if (slash < 0) {
-        return yield* parseError(
-          ["api", "graphql"],
-          `a repo written as owner/name, got \`${repo}\``,
-        );
-      }
-      return [
-        "api",
-        "graphql",
-        "-f",
-        `query=${query}`,
-        "-f",
-        `owner=${repo.slice(0, slash)}`,
-        "-f",
-        `name=${repo.slice(slash + 1)}`,
-        "-F",
-        `number=${issue}`,
-      ];
-    });
+  const issueQueryArgs = Effect.fn("GitHub.issueQueryArgs")(function* (
+    query: string,
+    issue: number,
+  ): GitHubGen<Array<string>> {
+    const slash = repo.indexOf("/");
+    if (slash < 0) {
+      return yield* parseError(["api", "graphql"], `a repo written as owner/name, got \`${repo}\``);
+    }
+    return [
+      "api",
+      "graphql",
+      "-f",
+      `query=${query}`,
+      "-f",
+      `owner=${repo.slice(0, slash)}`,
+      "-f",
+      `name=${repo.slice(slash + 1)}`,
+      "-F",
+      `number=${issue}`,
+    ];
+  });
 
   /** Runs the approval query for the issue and checks every timestamp in the answer. */
-  const readHistory = (issue: number): GitHubEffect<ApprovalIssue> =>
-    Effect.gen(function* () {
-      const args = yield* issueQueryArgs(APPROVAL_QUERY, issue);
-      const answer = yield* ghJson(args, ApprovalAnswer, "a GraphQL response with the issue");
-      const found = answer.data.repository.issue;
-      const times = [
-        ...found.timelineItems.nodes.map((event) => event.createdAt),
-        ...found.userContentEdits.nodes.map((edit) => edit.editedAt),
-        ...(found.lastEditedAt === null || found.lastEditedAt === undefined
-          ? []
-          : [found.lastEditedAt]),
-      ];
-      for (const at of times) {
-        if (!isUtcSecond(at)) {
-          return yield* parseError(args, `a timestamp as YYYY-MM-DDTHH:MM:SSZ, got ${quoted(at)}`);
-        }
+  const readHistory = Effect.fn("GitHub.readHistory")(function* (
+    issue: number,
+  ): GitHubGen<ApprovalIssue> {
+    const args = yield* issueQueryArgs(APPROVAL_QUERY, issue);
+    const answer = yield* ghJson(args, ApprovalAnswer, "a GraphQL response with the issue");
+    const found = answer.data.repository.issue;
+    const times = [
+      ...found.timelineItems.nodes.map((event) => event.createdAt),
+      ...found.userContentEdits.nodes.map((edit) => edit.editedAt),
+      ...(found.lastEditedAt === null || found.lastEditedAt === undefined
+        ? []
+        : [found.lastEditedAt]),
+    ];
+    for (const at of times) {
+      if (!isUtcSecond(at)) {
+        return yield* parseError(args, `a timestamp as YYYY-MM-DDTHH:MM:SSZ, got ${quoted(at)}`);
       }
-      return found;
-    });
+    }
+    return found;
+  });
 
   /** `since` as the one call's argument check: only GitHub's `YYYY-MM-DDTHH:MM:SSZ`, before any call. */
   const requireUtcSecond = (since: string): GitHubEffect<void> =>
@@ -1527,16 +1531,15 @@ export const makeGitHub = (options: GitHubOptions) => {
    * over a history that is also too long. One call, with the approval's own query and rules.
    * Labels are not text and are not looked at.
    */
-  const textCheck = (
+  const textCheck = Effect.fn("GitHub.textCheck")(function* (
     issue: number,
     since: string,
     instructors: ReadonlyArray<string>,
-  ): GitHubEffect<TextCheck> =>
-    Effect.gen(function* () {
-      yield* requireUtcSecond(since);
-      const found = yield* readHistory(issue);
-      return textChangesSince(found, since, instructors, timelineReaches(found, since));
-    });
+  ): GitHubGen<TextCheck> {
+    yield* requireUtcSecond(since);
+    const found = yield* readHistory(issue);
+    return textChangesSince(found, since, instructors, timelineReaches(found, since));
+  });
 
   /**
    * Whether anyone, an instructor included, edited the body or renamed the title at or after
@@ -1544,37 +1547,40 @@ export const makeGitHub = (options: GitHubOptions) => {
    * work only on the text that work was approved on. A timeline page that may hide a rename at
    * or after the moment counts as a change. One call, the approval's own query.
    */
-  const textEditedSince = (issue: number, since: string): GitHubEffect<boolean> =>
-    Effect.gen(function* () {
-      yield* requireUtcSecond(since);
-      return editedSince(yield* readHistory(issue), since);
-    });
+  const textEditedSince = Effect.fn("GitHub.textEditedSince")(function* (
+    issue: number,
+    since: string,
+  ): GitHubGen<boolean> {
+    yield* requireUtcSecond(since);
+    return editedSince(yield* readHistory(issue), since);
+  });
 
   /**
    * The last editor and the last 100 edits of the comments with these node ids, keyed by id: one
    * call for each 100 ids, and none for no ids. A comment that is gone is not in the map. A call
    * that fails fails the read.
    */
-  const commentEditors = (ids: ReadonlyArray<string>): GitHubEffect<Map<string, CommentEditors>> =>
-    Effect.gen(function* () {
-      const found = new Map<string, CommentEditors>();
-      for (let start = 0; start < ids.length; start += COMMENT_EDITOR_IDS) {
-        const args = [
-          "api",
-          "graphql",
-          "-f",
-          `query=${COMMENT_EDITOR_QUERY}`,
-          ...ids.slice(start, start + COMMENT_EDITOR_IDS).flatMap((id) => ["-f", `ids[]=${id}`]),
-        ];
-        const answer = yield* ghJson(
-          args,
-          CommentEditorsAnswer,
-          "a GraphQL response with the comments",
-        );
-        for (const node of answer.data.nodes) if (node !== null) found.set(node.id, node);
-      }
-      return found;
-    });
+  const commentEditors = Effect.fn("GitHub.commentEditors")(function* (
+    ids: ReadonlyArray<string>,
+  ): GitHubGen<Map<string, CommentEditors>> {
+    const found = new Map<string, CommentEditors>();
+    for (let start = 0; start < ids.length; start += COMMENT_EDITOR_IDS) {
+      const args = [
+        "api",
+        "graphql",
+        "-f",
+        `query=${COMMENT_EDITOR_QUERY}`,
+        ...ids.slice(start, start + COMMENT_EDITOR_IDS).flatMap((id) => ["-f", `ids[]=${id}`]),
+      ];
+      const answer = yield* ghJson(
+        args,
+        CommentEditorsAnswer,
+        "a GraphQL response with the comments",
+      );
+      for (const node of answer.data.nodes) if (node !== null) found.set(node.id, node);
+    }
+    return found;
+  });
 
   /**
    * Whether a comment that was updated after it was written may be trusted, from its entry in
@@ -1621,89 +1627,88 @@ export const makeGitHub = (options: GitHubOptions) => {
    * after `since` must be a person's who is an instructor (not an App), not only the last, and the history must be whole:
    * anything else leaves `bodyEdit` empty.
    */
-  const activitySince = (
+  const activitySince = Effect.fn("GitHub.activitySince")(function* (
     issue: number,
     since: string,
     instructors: ReadonlyArray<string>,
-  ): GitHubEffect<Activity> =>
-    Effect.gen(function* () {
-      const commentsPath = `repos/${repo}/issues/${issue}/comments`;
-      const query = yield* issueQueryArgs(ACTIVITY_QUERY, issue);
-      if (!isUtcSecond(since)) {
-        return yield* parseError(
-          ["api", commentsPath],
-          `\`since\` as YYYY-MM-DDTHH:MM:SSZ, got ${quoted(since)}`,
-        );
-      }
-      const listed = yield* ghPages(
-        ["api", `${commentsPath}?since=${since}&per_page=100`, "--paginate"],
-        ActivityCommentRows,
-        "JSON arrays of comments",
+  ): GitHubGen<Activity> {
+    const commentsPath = `repos/${repo}/issues/${issue}/comments`;
+    const query = yield* issueQueryArgs(ACTIVITY_QUERY, issue);
+    if (!isUtcSecond(since)) {
+      return yield* parseError(
+        ["api", commentsPath],
+        `\`since\` as YYYY-MM-DDTHH:MM:SSZ, got ${quoted(since)}`,
       );
-      const written = listed
-        .filter((c) => c.created_at !== null && c.created_at !== undefined && c.created_at > since)
-        .filter((c) => isInstructor(c.user, instructors))
-        .filter((c) => !(c.body ?? "").includes(MARKER_PREFIX))
-        .toSorted((a, b) =>
-          a.created_at! < b.created_at! ? -1 : a.created_at! > b.created_at! ? 1 : 0,
-        );
-      const edited = (c: (typeof written)[number]) =>
-        (c.updated_at ?? null) !== (c.created_at ?? null);
-      // Who edited the edited ones, in one call for each 100 of them.
-      const editors = yield* commentEditors(
-        written.flatMap((c) =>
-          edited(c) && c.node_id !== null && c.node_id !== undefined ? [c.node_id] : [],
-        ),
+    }
+    const listed = yield* ghPages(
+      ["api", `${commentsPath}?since=${since}&per_page=100`, "--paginate"],
+      ActivityCommentRows,
+      "JSON arrays of comments",
+    );
+    const written = listed
+      .filter((c) => c.created_at !== null && c.created_at !== undefined && c.created_at > since)
+      .filter((c) => isInstructor(c.user, instructors))
+      .filter((c) => !(c.body ?? "").includes(MARKER_PREFIX))
+      .toSorted((a, b) =>
+        a.created_at! < b.created_at! ? -1 : a.created_at! > b.created_at! ? 1 : 0,
       );
-      const comments: Array<Comment> = [];
-      const dropped: Array<Dropped> = [];
-      for (const c of written) {
-        if (edited(c)) {
-          const verdict = checkEdits(
-            c.node_id === null || c.node_id === undefined ? undefined : editors.get(c.node_id),
-            instructors,
-          );
-          if (verdict === "other" || verdict === "unverifiable") {
-            dropped.push({
-              id: String(c.id),
-              reason: verdict === "other" ? "edited-by-other" : "unverifiable",
-            });
-            continue;
-          }
-          // Not forwardable and not reported: there is nothing to point a notice at.
-          if (verdict === "gone") continue;
+    const edited = (c: (typeof written)[number]) =>
+      (c.updated_at ?? null) !== (c.created_at ?? null);
+    // Who edited the edited ones, in one call for each 100 of them.
+    const editors = yield* commentEditors(
+      written.flatMap((c) =>
+        edited(c) && c.node_id !== null && c.node_id !== undefined ? [c.node_id] : [],
+      ),
+    );
+    const comments: Array<Comment> = [];
+    const dropped: Array<Dropped> = [];
+    for (const c of written) {
+      if (edited(c)) {
+        const verdict = checkEdits(
+          c.node_id === null || c.node_id === undefined ? undefined : editors.get(c.node_id),
+          instructors,
+        );
+        if (verdict === "other" || verdict === "unverifiable") {
+          dropped.push({
+            id: String(c.id),
+            reason: verdict === "other" ? "edited-by-other" : "unverifiable",
+          });
+          continue;
         }
-        comments.push({
-          id: String(c.id),
-          author: c.user?.login ?? "",
-          createdAt: c.created_at ?? "",
-          body: c.body ?? "",
-        });
+        // Not forwardable and not reported: there is nothing to point a notice at.
+        if (verdict === "gone") continue;
       }
+      comments.push({
+        id: String(c.id),
+        author: c.user?.login ?? "",
+        createdAt: c.created_at ?? "",
+        body: c.body ?? "",
+      });
+    }
 
-      const answer = yield* ghJson(query, ActivityAnswer, "a GraphQL response with the issue");
-      const found = answer.data.repository.issue;
-      // The history comes newest first, so a page that is full or short of the total may be
-      // missing the latest edits, and a newest entry that is not the latest edit means the same:
-      // fail closed. The creation entry is before `since` for an issue that existed before the run.
-      const onlyInstructors =
-        editsWhole(found.userContentEdits, found.lastEditedAt, found.editor) &&
-        found.userContentEdits.nodes
-          .filter((edit) => edit.editedAt > since)
-          .every((edit) => isHumanInstructor(edit.editor, instructors));
-      const lastEditedAt = found.lastEditedAt;
-      const bodyEdit: BodyEdit | null =
-        onlyInstructors &&
-        lastEditedAt !== null &&
-        lastEditedAt !== undefined &&
-        lastEditedAt > since &&
-        found.editor !== null &&
-        found.editor !== undefined &&
-        isHumanInstructor(found.editor, instructors)
-          ? { editedAt: lastEditedAt, editor: found.editor.login, body: found.body ?? "" }
-          : null;
-      return { comments, bodyEdit, dropped };
-    });
+    const answer = yield* ghJson(query, ActivityAnswer, "a GraphQL response with the issue");
+    const found = answer.data.repository.issue;
+    // The history comes newest first, so a page that is full or short of the total may be
+    // missing the latest edits, and a newest entry that is not the latest edit means the same:
+    // fail closed. The creation entry is before `since` for an issue that existed before the run.
+    const onlyInstructors =
+      editsWhole(found.userContentEdits, found.lastEditedAt, found.editor) &&
+      found.userContentEdits.nodes
+        .filter((edit) => edit.editedAt > since)
+        .every((edit) => isHumanInstructor(edit.editor, instructors));
+    const lastEditedAt = found.lastEditedAt;
+    const bodyEdit: BodyEdit | null =
+      onlyInstructors &&
+      lastEditedAt !== null &&
+      lastEditedAt !== undefined &&
+      lastEditedAt > since &&
+      found.editor !== null &&
+      found.editor !== undefined &&
+      isHumanInstructor(found.editor, instructors)
+        ? { editedAt: lastEditedAt, editor: found.editor.login, body: found.body ?? "" }
+        : null;
+    return { comments, bodyEdit, dropped };
+  });
 
   /**
    * Every review of pull request `pr` that may be new, oldest first: the newest page `first` and
@@ -1714,72 +1719,71 @@ export const makeGitHub = (options: GitHubOptions) => {
    * later page are errors: a read that stopped short of `floor` must not count as one that found
    * nothing. An empty page ends the paging, as the start of the list.
    */
-  const reviewsSince = (
+  const reviewsSince = Effect.fn("GitHub.reviewsSince")(function* (
     pr: number,
     floor: string,
     args: ReadonlyArray<string>,
     first: typeof FeedbackReviews.Type,
-  ): GitHubEffect<Array<FeedbackReviewNode>> =>
-    Effect.gen(function* () {
-      const total = first.totalCount ?? 0;
-      let cursor: string | null = first.pageInfo?.startCursor ?? null;
-      let reviews = [...first.nodes];
-      let pages = 1;
-      while (total > reviews.length) {
-        // The oldest review read is proven old only by a submission time at or before `floor`.
-        const at = reviews[0]?.submittedAt;
-        if (at !== null && at !== undefined) {
-          if (!isUtcSecond(at)) {
-            return yield* parseError(
-              args,
-              `a review time as YYYY-MM-DDTHH:MM:SSZ, got ${quoted(at)}`,
-            );
-          }
-          if (at <= floor) break;
-        }
-        const before = cursor;
-        cursor = null;
-        if (before === null) {
+  ): GitHubGen<Array<FeedbackReviewNode>> {
+    const total = first.totalCount ?? 0;
+    let cursor: string | null = first.pageInfo?.startCursor ?? null;
+    let reviews = [...first.nodes];
+    let pages = 1;
+    while (total > reviews.length) {
+      // The oldest review read is proven old only by a submission time at or before `floor`.
+      const at = reviews[0]?.submittedAt;
+      if (at !== null && at !== undefined) {
+        if (!isUtcSecond(at)) {
           return yield* parseError(
             args,
-            `a cursor for the reviews before the oldest one read, since there are ${total} and ${reviews.length} were read`,
+            `a review time as YYYY-MM-DDTHH:MM:SSZ, got ${quoted(at)}`,
           );
         }
-        if (pages >= REVIEW_PAGE_LIMIT) {
-          return yield* parseError(
-            args,
-            `the reviews since ${floor} within ${REVIEW_PAGE_LIMIT} pages of 50`,
-          );
-        }
-        const pageArgs = [
-          ...(yield* issueQueryArgs(REVIEWS_BEFORE_QUERY, pr)),
-          "-f",
-          `before=${before}`,
-        ];
-        const answer = yield* ghJson(
-          pageArgs,
-          ReviewsBeforeAnswer,
-          "a GraphQL response with the earlier reviews",
-        );
-        pages += 1;
-        const pull = answer.data.repository.pullRequest;
-        if (pull === null || pull === undefined) {
-          return yield* parseError(pageArgs, "the pull request on every page of its reviews");
-        }
-        // GitHub answers `before:` the oldest cursor with an empty page: the start of the list was
-        // reached, and everything was read even if `totalCount` counted more.
-        if (pull.reviews.nodes.length === 0) break;
-        cursor = pull.reviews.pageInfo?.startCursor ?? null;
-        if (cursor === before) {
-          return yield* parseError(
-            pageArgs,
-            `a new cursor for the reviews before ${before}, got the same one again`,
-          );
-        }
-        reviews = [...pull.reviews.nodes, ...reviews];
+        if (at <= floor) break;
       }
-      return reviews;
-    });
+      const before = cursor;
+      cursor = null;
+      if (before === null) {
+        return yield* parseError(
+          args,
+          `a cursor for the reviews before the oldest one read, since there are ${total} and ${reviews.length} were read`,
+        );
+      }
+      if (pages >= REVIEW_PAGE_LIMIT) {
+        return yield* parseError(
+          args,
+          `the reviews since ${floor} within ${REVIEW_PAGE_LIMIT} pages of 50`,
+        );
+      }
+      const pageArgs = [
+        ...(yield* issueQueryArgs(REVIEWS_BEFORE_QUERY, pr)),
+        "-f",
+        `before=${before}`,
+      ];
+      const answer = yield* ghJson(
+        pageArgs,
+        ReviewsBeforeAnswer,
+        "a GraphQL response with the earlier reviews",
+      );
+      pages += 1;
+      const pull = answer.data.repository.pullRequest;
+      if (pull === null || pull === undefined) {
+        return yield* parseError(pageArgs, "the pull request on every page of its reviews");
+      }
+      // GitHub answers `before:` the oldest cursor with an empty page: the start of the list was
+      // reached, and everything was read even if `totalCount` counted more.
+      if (pull.reviews.nodes.length === 0) break;
+      cursor = pull.reviews.pageInfo?.startCursor ?? null;
+      if (cursor === before) {
+        return yield* parseError(
+          pageArgs,
+          `a new cursor for the reviews before ${before}, got the same one again`,
+        );
+      }
+      reviews = [...pull.reviews.nodes, ...reviews];
+    }
+    return reviews;
+  });
 
   /**
    * The instructors' feedback on pull request `pr` written after `since`, oldest first. One
@@ -1806,178 +1810,167 @@ export const makeGitHub = (options: GitHubOptions) => {
    * an inline comment is the one it is on, or the one it was on. A time or id GitHub gives that
    * this cannot read is an error and not a guess; a pull request that is gone has no feedback.
    */
-  const prFeedback = (
+  const prFeedback = Effect.fn("GitHub.prFeedback")(function* (
     pr: number,
     since: string,
     floor: string,
     instructors: ReadonlyArray<string>,
-  ): GitHubEffect<ReadonlyArray<Feedback>> =>
-    Effect.gen(function* () {
-      for (const [name, time] of [
-        ["since", since],
-        ["floor", floor],
-      ] as const) {
-        if (!isUtcSecond(time)) {
-          return yield* parseError(
-            ["api", "graphql"],
-            `\`${name}\` as YYYY-MM-DDTHH:MM:SSZ, got ${quoted(time)}`,
-          );
-        }
-      }
-      const args = yield* issueQueryArgs(PR_FEEDBACK_QUERY, pr);
-      const answer = yield* ghJson(
-        args,
-        FeedbackAnswer,
-        "a GraphQL response with the pull request",
-      );
-      const pull = answer.data.repository.pullRequest;
-      if (pull === null || pull === undefined) return [];
-      const unreadable = (what: string, got: string) =>
-        parseError(args, `${what}, got ${quoted(got)}`);
-      // Written by an instructor who is a person, and not by the factory.
-      const theirs = (author: Actor | null | undefined, body: string | null | undefined) =>
-        isHumanInstructor(author, instructors) && !(body ?? "").includes(MARKER_PREFIX);
-
-      const reviews = yield* reviewsSince(pr, floor, args, pull.reviews);
-      // The reviews to judge, with the time each was submitted.
-      const judged: Array<{ readonly review: FeedbackReviewNode; readonly at: string }> = [];
-      for (const review of reviews) {
-        if (
-          !theirs(review.author, review.body) ||
-          !textIsInstructors(
-            review.lastEditedAt,
-            review.editor,
-            review.userContentEdits,
-            instructors,
-          )
-        ) {
-          continue;
-        }
-        const at = review.submittedAt;
-        if (at === null || at === undefined) continue;
-        if (!isUtcSecond(at)) {
-          return yield* unreadable("a review time as YYYY-MM-DDTHH:MM:SSZ", at);
-        }
-        if (at <= since) continue;
-        judged.push({ review, at });
-      }
-
-      // The edit history of every edited inline comment of those reviews, read together.
-      const editedIds = new Set<string>();
-      for (const { review } of judged) {
-        if (!FEEDBACK_STATES.includes(review.state)) continue;
-        for (const c of review.comments.nodes) {
-          if (
-            c.id !== null &&
-            c.id !== undefined &&
-            c.lastEditedAt !== null &&
-            c.lastEditedAt !== undefined &&
-            theirs(c.author, c.body)
-          ) {
-            editedIds.add(c.id);
-          }
-        }
-      }
-      const histories = yield* commentEditors([...editedIds]);
-
-      const found: Array<Feedback> = [];
-      for (const { review, at } of judged) {
-        const body = review.body ?? "";
-        const inlineUnread = Math.max(
-          0,
-          (review.comments.totalCount ?? 0) - review.comments.nodes.length,
+  ): GitHubGen<ReadonlyArray<Feedback>> {
+    for (const [name, time] of [
+      ["since", since],
+      ["floor", floor],
+    ] as const) {
+      if (!isUtcSecond(time)) {
+        return yield* parseError(
+          ["api", "graphql"],
+          `\`${name}\` as YYYY-MM-DDTHH:MM:SSZ, got ${quoted(time)}`,
         );
-        const inline: Array<InlineComment> = [];
-        for (const c of review.comments.nodes) {
-          if (!theirs(c.author, c.body)) continue;
-          // One that was never edited needs no history; an edited one with no node id, or whose
-          // history the answer does not have (it is gone), is not trusted.
-          if (c.lastEditedAt !== null && c.lastEditedAt !== undefined) {
-            const node = c.id === null || c.id === undefined ? undefined : histories.get(c.id);
-            if (
-              node === undefined ||
-              !textIsInstructors(node.lastEditedAt, node.editor, node.userContentEdits, instructors)
-            ) {
-              continue;
-            }
-          }
-          inline.push({
-            path: c.path ?? "",
-            line: c.line ?? c.originalLine ?? null,
-            body: c.body ?? "",
-          });
-        }
-        // Only an approval's body is not read: softfac also counts it, so approving with "LGTM!"
-        // would send the pull request back to draft and the issue back to building. A comment and
-        // a `COMMENTED` review always count, whatever they say: the factory's login opens the pull
-        // requests, so an instructor acting as it cannot approve or request changes, and its
-        // comments are its only way to ask (softfac `docs/lifecycle.md`, "Instructor feedback").
-        const counts =
-          review.state === "CHANGES_REQUESTED" || review.state === "COMMENTED"
-            ? true
-            : review.state === "APPROVED"
-              ? inline.length > 0
-              : review.state === "DISMISSED"
-                ? body.trim() !== "" || inline.length > 0
-                : false;
-        if (!counts) continue;
-        const id = databaseId(review.fullDatabaseId);
-        if (id === null) return yield* unreadable("a review with an id", review.state);
-        found.push({
-          id: `review:${id}`,
-          author: review.author?.login ?? "",
-          kind: { kind: "review", state: review.state },
-          createdAt: at,
-          body,
-          inline,
-          inlineUnread,
-        });
       }
+    }
+    const args = yield* issueQueryArgs(PR_FEEDBACK_QUERY, pr);
+    const answer = yield* ghJson(args, FeedbackAnswer, "a GraphQL response with the pull request");
+    const pull = answer.data.repository.pullRequest;
+    if (pull === null || pull === undefined) return [];
+    const unreadable = (what: string, got: string) =>
+      parseError(args, `${what}, got ${quoted(got)}`);
+    // Written by an instructor who is a person, and not by the factory.
+    const theirs = (author: Actor | null | undefined, body: string | null | undefined) =>
+      isHumanInstructor(author, instructors) && !(body ?? "").includes(MARKER_PREFIX);
 
-      for (const comment of pull.comments.nodes) {
+    const reviews = yield* reviewsSince(pr, floor, args, pull.reviews);
+    // The reviews to judge, with the time each was submitted.
+    const judged: Array<{ readonly review: FeedbackReviewNode; readonly at: string }> = [];
+    for (const review of reviews) {
+      if (
+        !theirs(review.author, review.body) ||
+        !textIsInstructors(review.lastEditedAt, review.editor, review.userContentEdits, instructors)
+      ) {
+        continue;
+      }
+      const at = review.submittedAt;
+      if (at === null || at === undefined) continue;
+      if (!isUtcSecond(at)) {
+        return yield* unreadable("a review time as YYYY-MM-DDTHH:MM:SSZ", at);
+      }
+      if (at <= since) continue;
+      judged.push({ review, at });
+    }
+
+    // The edit history of every edited inline comment of those reviews, read together.
+    const editedIds = new Set<string>();
+    for (const { review } of judged) {
+      if (!FEEDBACK_STATES.includes(review.state)) continue;
+      for (const c of review.comments.nodes) {
         if (
-          !theirs(comment.author, comment.body) ||
-          !textIsInstructors(
-            comment.lastEditedAt,
-            comment.editor,
-            comment.userContentEdits,
-            instructors,
-          )
+          c.id !== null &&
+          c.id !== undefined &&
+          c.lastEditedAt !== null &&
+          c.lastEditedAt !== undefined &&
+          theirs(c.author, c.body)
         ) {
-          continue;
+          editedIds.add(c.id);
         }
-        if (!isUtcSecond(comment.createdAt)) {
-          return yield* unreadable("a comment time as YYYY-MM-DDTHH:MM:SSZ", comment.createdAt);
+      }
+    }
+    const histories = yield* commentEditors([...editedIds]);
+
+    const found: Array<Feedback> = [];
+    for (const { review, at } of judged) {
+      const body = review.body ?? "";
+      const inlineUnread = Math.max(
+        0,
+        (review.comments.totalCount ?? 0) - review.comments.nodes.length,
+      );
+      const inline: Array<InlineComment> = [];
+      for (const c of review.comments.nodes) {
+        if (!theirs(c.author, c.body)) continue;
+        // One that was never edited needs no history; an edited one with no node id, or whose
+        // history the answer does not have (it is gone), is not trusted.
+        if (c.lastEditedAt !== null && c.lastEditedAt !== undefined) {
+          const node = c.id === null || c.id === undefined ? undefined : histories.get(c.id);
+          if (
+            node === undefined ||
+            !textIsInstructors(node.lastEditedAt, node.editor, node.userContentEdits, instructors)
+          ) {
+            continue;
+          }
         }
-        if (comment.createdAt <= since) continue;
-        const id = databaseId(comment.fullDatabaseId);
-        if (id === null) return yield* unreadable("a comment with an id", comment.createdAt);
-        found.push({
-          id: `pr-comment:${id}`,
-          author: comment.author?.login ?? "",
-          kind: { kind: "pr-comment" },
-          createdAt: comment.createdAt,
-          body: comment.body ?? "",
-          inline: [],
-          inlineUnread: 0,
+        inline.push({
+          path: c.path ?? "",
+          line: c.line ?? c.originalLine ?? null,
+          body: c.body ?? "",
         });
       }
-      // Stable, so a review and a comment of the same second keep the order they were read in.
-      return found.toSorted((a, b) =>
-        a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0,
-      );
-    });
+      // Only an approval's body is not read: softfac also counts it, so approving with "LGTM!"
+      // would send the pull request back to draft and the issue back to building. A comment and
+      // a `COMMENTED` review always count, whatever they say: the factory's login opens the pull
+      // requests, so an instructor acting as it cannot approve or request changes, and its
+      // comments are its only way to ask (softfac `docs/lifecycle.md`, "Instructor feedback").
+      const counts =
+        review.state === "CHANGES_REQUESTED" || review.state === "COMMENTED"
+          ? true
+          : review.state === "APPROVED"
+            ? inline.length > 0
+            : review.state === "DISMISSED"
+              ? body.trim() !== "" || inline.length > 0
+              : false;
+      if (!counts) continue;
+      const id = databaseId(review.fullDatabaseId);
+      if (id === null) return yield* unreadable("a review with an id", review.state);
+      found.push({
+        id: `review:${id}`,
+        author: review.author?.login ?? "",
+        kind: { kind: "review", state: review.state },
+        createdAt: at,
+        body,
+        inline,
+        inlineUnread,
+      });
+    }
+
+    for (const comment of pull.comments.nodes) {
+      if (
+        !theirs(comment.author, comment.body) ||
+        !textIsInstructors(
+          comment.lastEditedAt,
+          comment.editor,
+          comment.userContentEdits,
+          instructors,
+        )
+      ) {
+        continue;
+      }
+      if (!isUtcSecond(comment.createdAt)) {
+        return yield* unreadable("a comment time as YYYY-MM-DDTHH:MM:SSZ", comment.createdAt);
+      }
+      if (comment.createdAt <= since) continue;
+      const id = databaseId(comment.fullDatabaseId);
+      if (id === null) return yield* unreadable("a comment with an id", comment.createdAt);
+      found.push({
+        id: `pr-comment:${id}`,
+        author: comment.author?.login ?? "",
+        kind: { kind: "pr-comment" },
+        createdAt: comment.createdAt,
+        body: comment.body ?? "",
+        inline: [],
+        inlineUnread: 0,
+      });
+    }
+    // Stable, so a review and a comment of the same second keep the order they were read in.
+    return found.toSorted((a, b) =>
+      a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0,
+    );
+  });
 
   /** The login `gh` is authenticated as, from the API. */
-  const login = (): GitHubEffect<string> =>
-    Effect.gen(function* () {
-      const args = ["api", "user"];
-      const me = yield* ghJson(args, UserView, "an object with the user's login");
-      if (me.login === undefined || me.login === null || me.login === "") {
-        return yield* parseError(args, "an object with the user's login (it was empty)");
-      }
-      return me.login;
-    });
+  const login = Effect.fn("GitHub.login")(function* (): GitHubGen<string> {
+    const args = ["api", "user"];
+    const me = yield* ghJson(args, UserView, "an object with the user's login");
+    if (me.login === undefined || me.login === null || me.login === "") {
+      return yield* parseError(args, "an object with the user's login (it was empty)");
+    }
+    return me.login;
+  });
 
   /**
    * Assigns the issue to `user` and swaps `from` for `to`, in one `gh issue edit`. An issue that
@@ -1985,29 +1978,28 @@ export const makeGitHub = (options: GitHubOptions) => {
    * machines claiming at the same instant can both win. An error does not mean nothing
    * changed: GitHub has applied the labels and failed to answer.
    */
-  const claim = (
+  const claim = Effect.fn("GitHub.claim")(function* (
     number: number,
     user: string,
     from: State,
     to: State,
-  ): GitHubEffect<ClaimOutcome> =>
-    Effect.gen(function* () {
-      const view = [...repoArgs(["issue", "view", String(number)]), "--json", "assignees"];
-      const current = yield* ghJson(view, AssigneesView, "an object with `assignees`");
-      if (current.assignees.length > 0) {
-        return { kind: "skipped-assigned", assignees: current.assignees.map((a) => a.login) };
-      }
-      yield* gh([
-        ...repoArgs(["issue", "edit", String(number)]),
-        "--add-assignee",
-        user,
-        "--remove-label",
-        stateLabel(from),
-        "--add-label",
-        stateLabel(to),
-      ]);
-      return { kind: "claimed" };
-    });
+  ): GitHubGen<ClaimOutcome> {
+    const view = [...repoArgs(["issue", "view", String(number)]), "--json", "assignees"];
+    const current = yield* ghJson(view, AssigneesView, "an object with `assignees`");
+    if (current.assignees.length > 0) {
+      return { kind: "skipped-assigned", assignees: current.assignees.map((a) => a.login) };
+    }
+    yield* gh([
+      ...repoArgs(["issue", "edit", String(number)]),
+      "--add-assignee",
+      user,
+      "--remove-label",
+      stateLabel(from),
+      "--add-label",
+      stateLabel(to),
+    ]);
+    return { kind: "claimed" };
+  });
 
   /**
    * The newest event that added the label for `state`: the one that began the claim the issue is
@@ -2032,53 +2024,51 @@ export const makeGitHub = (options: GitHubOptions) => {
    * parsed or was too large) is reported in `unread` and the scan goes on with the rest. A
    * rate limit, a timeout, or `gh` not starting would fail every call, so it ends the scan.
    */
-  const unassignedClaims = (
+  const unassignedClaims = Effect.fn("GitHub.unassignedClaims")(function* (
     before: string,
     user: string,
     known: ReadonlySet<number>,
     memo: ClaimMemo,
-  ): GitHubEffect<ClaimScan> =>
-    Effect.gen(function* () {
-      yield* requireUtcSecond(before);
-      const found: Array<UnassignedClaim> = [];
-      const unread: ClaimScan["unread"] = [];
-      for (const state of ["triage", "building"] as const) {
-        const args = [
-          ...repoArgs(["issue", "list"]),
-          "--state",
-          "open",
-          "--label",
-          stateLabel(state),
-          "--limit",
-          "200",
-          "--json",
-          "number,assignees,updatedAt",
-        ];
-        const raw = yield* ghJson(args, ClaimedRows, "a JSON array of issues");
-        const rows = raw
-          .filter((i) => i.assignees.length === 0)
-          .filter((i) => isUtcSecond(i.updatedAt) && i.updatedAt < before)
-          .toSorted((a, b) => a.number - b.number);
-        for (const { number, updatedAt } of rows) {
-          if (known.has(number) || memo.judgedNotOurs(user, repo, number, state, updatedAt))
-            continue;
-          const read = yield* Effect.result(readHistory(number));
-          if (read._tag === "Failure") {
-            if (!isCallSpecific(read.failure)) return yield* read.failure;
-            unread.push({ issue: number, error: read.failure });
-            continue;
-          }
-          const labelledBy = newestLabelEvent(read.success, state);
-          const actor = labelledBy?.actor ?? null;
-          if (actor !== null && actor.login.toLowerCase() === user.toLowerCase()) {
-            found.push({ issue: number, state });
-          } else {
-            memo.rememberNotOurs(user, repo, number, state, updatedAt);
-          }
+  ): GitHubGen<ClaimScan> {
+    yield* requireUtcSecond(before);
+    const found: Array<UnassignedClaim> = [];
+    const unread: ClaimScan["unread"] = [];
+    for (const state of ["triage", "building"] as const) {
+      const args = [
+        ...repoArgs(["issue", "list"]),
+        "--state",
+        "open",
+        "--label",
+        stateLabel(state),
+        "--limit",
+        "200",
+        "--json",
+        "number,assignees,updatedAt",
+      ];
+      const raw = yield* ghJson(args, ClaimedRows, "a JSON array of issues");
+      const rows = raw
+        .filter((i) => i.assignees.length === 0)
+        .filter((i) => isUtcSecond(i.updatedAt) && i.updatedAt < before)
+        .toSorted((a, b) => a.number - b.number);
+      for (const { number, updatedAt } of rows) {
+        if (known.has(number) || memo.judgedNotOurs(user, repo, number, state, updatedAt)) continue;
+        const read = yield* Effect.result(readHistory(number));
+        if (read._tag === "Failure") {
+          if (!isCallSpecific(read.failure)) return yield* read.failure;
+          unread.push({ issue: number, error: read.failure });
+          continue;
+        }
+        const labelledBy = newestLabelEvent(read.success, state);
+        const actor = labelledBy?.actor ?? null;
+        if (actor !== null && actor.login.toLowerCase() === user.toLowerCase()) {
+          found.push({ issue: number, state });
+        } else {
+          memo.rememberNotOurs(user, repo, number, state, updatedAt);
         }
       }
-      return { claims: found, unread };
-    });
+    }
+    return { claims: found, unread };
+  });
 
   /**
    * When the label for `state` was last added to the issue, or null when its history has no such
@@ -2100,20 +2090,21 @@ export const makeGitHub = (options: GitHubOptions) => {
    * the comment was created. Anyone can paste the marker, so this says what the newest marked
    * comment reads, not who wrote it.
    */
-  const newestFactoryComment = (number: number): GitHubEffect<FactoryComment | null> =>
-    Effect.gen(function* () {
-      const list = ["api", `repos/${repo}/issues/${number}/comments`, "--paginate"];
-      const comments = yield* ghPages(list, CommentRows, "JSON arrays of comments");
-      for (const comment of comments.toReversed()) {
-        const body = (comment.body ?? "").replaceAll("\r\n", "\n").trimEnd();
-        if (!body.endsWith(MARKER)) continue;
-        return {
-          body: body.slice(0, -MARKER.length).trimEnd(),
-          createdAt: comment.created_at ?? "",
-        };
-      }
-      return null;
-    });
+  const newestFactoryComment = Effect.fn("GitHub.newestFactoryComment")(function* (
+    number: number,
+  ): GitHubGen<FactoryComment | null> {
+    const list = ["api", `repos/${repo}/issues/${number}/comments`, "--paginate"];
+    const comments = yield* ghPages(list, CommentRows, "JSON arrays of comments");
+    for (const comment of comments.toReversed()) {
+      const body = (comment.body ?? "").replaceAll("\r\n", "\n").trimEnd();
+      if (!body.endsWith(MARKER)) continue;
+      return {
+        body: body.slice(0, -MARKER.length).trimEnd(),
+        createdAt: comment.created_at ?? "",
+      };
+    }
+    return null;
+  });
 
   return {
     listIssues,
