@@ -5,7 +5,7 @@ import { XIcon } from "lucide-react";
 import type { CSSProperties } from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
-import { ControlledOpenContext, renderRetainedPopup } from "~/components/ui/retained-popup";
+import { ControlledOpenContext, renderRetainedPopup } from "~/components/ui/dialog";
 
 function Sheet<Payload>(props: SheetPrimitive.Root.Props<Payload>) {
   return (

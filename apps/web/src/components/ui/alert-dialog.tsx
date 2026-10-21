@@ -8,7 +8,7 @@ import {
   DIALOG_MOBILE_SHEET_CLASS,
   DIALOG_POPUP_CLASS,
 } from "~/components/ui/dialog-styles";
-import { ControlledOpenContext, renderRetainedPopup } from "~/components/ui/retained-popup";
+import { ControlledOpenContext, renderRetainedPopup } from "~/components/ui/dialog";
 
 function AlertDialog<Payload>(props: AlertDialogPrimitive.Root.Props<Payload>) {
   return (

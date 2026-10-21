@@ -2,6 +2,7 @@
 
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
+import { type ComponentProps, createContext, type ReactNode, use, useState } from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import {
@@ -12,7 +13,26 @@ import {
   DIALOG_POPUP_CLASS,
 } from "~/components/ui/dialog-styles";
 import { ScrollArea } from "~/components/ui/scroll-area";
-import { ControlledOpenContext, renderRetainedPopup } from "~/components/ui/retained-popup";
+
+const ControlledOpenContext = createContext<boolean | undefined>(undefined);
+
+function RetainedWhileClosed({ open, children }: { open: boolean; children: ReactNode }) {
+  const controlledOpen = use(ControlledOpenContext);
+  const isOpen = open && controlledOpen !== false;
+  const [retained, setRetained] = useState(children);
+  if (isOpen && retained !== children) {
+    setRetained(children);
+  }
+  return isOpen ? children : retained;
+}
+
+function renderRetainedPopup(props: ComponentProps<"div">, state: { open: boolean }) {
+  return (
+    <div {...props}>
+      <RetainedWhileClosed open={state.open}>{props.children}</RetainedWhileClosed>
+    </div>
+  );
+}
 
 function Dialog<Payload>(props: DialogPrimitive.Root.Props<Payload>) {
   return (
@@ -188,6 +208,8 @@ function DialogPanel({
 }
 
 export {
+  ControlledOpenContext,
+  renderRetainedPopup,
   Dialog,
   DialogTrigger,
   DialogPortal,
