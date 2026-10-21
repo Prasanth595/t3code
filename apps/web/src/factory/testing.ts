@@ -1,8 +1,6 @@
-import { act, type ReactElement } from "react";
-import { createRoot } from "react-dom/client";
-import { onTestFinished } from "vite-plus/test";
+import type { ReactElement } from "react";
 
-(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+import { act, render as renderScreen } from "../../test/render";
 
 /** Whether one media query, `(min-width: Npx)` and `(max-width: Npx)` joined by `and`, holds. */
 const matchesWidth = (query: string, widthPx: number): boolean =>
@@ -16,11 +14,11 @@ const matchesWidth = (query: string, widthPx: number): boolean =>
 let restoreViewport: (() => void) | null = null;
 
 /**
- * Makes `window.matchMedia` answer for a viewport `widthPx` wide, until `restore` (or the next
+ * Makes `window.matchMedia` answer for a viewport `widthPx` wide, until disposed (or the next
  * `viewport`, which restores first). The code under test asks `matchMedia` for its breakpoints, and
  * the browser's own window is whatever size the runner gave it.
  */
-export function viewport(widthPx: number): () => void {
+export function viewport(widthPx: number): Disposable {
   restoreViewport?.();
   const own = Object.getOwnPropertyDescriptor(window, "matchMedia");
   Object.defineProperty(window, "matchMedia", {
@@ -40,22 +38,19 @@ export function viewport(widthPx: number): () => void {
     else Object.defineProperty(window, "matchMedia", own);
   };
   restoreViewport = restore;
-  return restore;
+  return { [Symbol.dispose]: restore };
 }
 
 /**
  * Sets what `document.visibilityState` says, for the live-refresh policy, which polls only while the
- * window shows. Undo it with `resetDocumentVisible`.
+ * window shows. Disposing it gives the document its own answer back.
  */
-export function setDocumentVisible(visible: boolean): void {
+export function setDocumentVisible(visible: boolean): Disposable {
   Object.defineProperty(document, "visibilityState", {
     configurable: true,
     get: () => (visible ? "visible" : "hidden"),
   });
-}
-
-export function resetDocumentVisible(): void {
-  Reflect.deleteProperty(document, "visibilityState");
+  return { [Symbol.dispose]: () => void Reflect.deleteProperty(document, "visibilityState") };
 }
 
 /** Renders `element` at 1280 px wide. */
@@ -63,28 +58,28 @@ export const render = (element: ReactElement) => renderAt(1280, element);
 
 /**
  * Renders `element` into the document in a viewport `widthPx` wide and returns helpers to read the
- * DOM it made. The viewport stays until `unmount`, the next render, or the end of the test, since a
- * later update still asks it.
+ * DOM it made. Acquire it with `await using`: the viewport stays until `unmount`, the next render,
+ * or dispose, since a later update still asks it.
  */
 export async function renderAt(widthPx: number, element: ReactElement) {
-  const restore = viewport(widthPx);
-  const container = document.createElement("div");
-  document.body.append(container);
-  const root = createRoot(container);
-  let mounted = true;
-  const unmount = async () => {
-    if (!mounted) return;
-    mounted = false;
-    await act(async () => root.unmount());
-    container.remove();
-    restore();
-  };
-  onTestFinished(unmount);
-  await act(async () => root.render(element));
+  const size = viewport(widthPx);
+  // The factory pages mock the router module themselves, so a test router would fight those mocks.
+  const screen = await renderScreen(element, { router: false }).catch((error: unknown) => {
+    size[Symbol.dispose]();
+    throw error;
+  });
+  const { container } = screen;
   const all: {
     <K extends keyof HTMLElementTagNameMap>(selector: K): Array<HTMLElementTagNameMap[K]>;
     (selector: string): Array<HTMLElement>;
   } = (selector: string) => Array.from(container.querySelectorAll<HTMLElement>(selector));
+  const dispose = async () => {
+    try {
+      await screen[Symbol.asyncDispose]();
+    } finally {
+      size[Symbol.dispose]();
+    }
+  };
   return {
     container,
     /** All rendered text, concatenated. */
@@ -95,12 +90,11 @@ export async function renderAt(widthPx: number, element: ReactElement) {
     button: (label: string): HTMLButtonElement | undefined =>
       Array.from(container.querySelectorAll("button")).find((b) => b.textContent === label),
     /** Clicks `element`, as the user would, and lets React settle. */
-    click: (element: HTMLElement) =>
-      act(async () => {
-        element.click();
-      }),
+    click: (element: HTMLElement) => act(() => element.click()),
     /** Renders `next` in place of the element, keeping the root and its state. */
-    rerender: (next: ReactElement) => act(async () => root.render(next)),
-    unmount,
+    rerender: (next: ReactElement) => screen.rerender(next),
+    /** Unmounts and removes the container early; dispose then does nothing more. */
+    unmount: dispose,
+    [Symbol.asyncDispose]: dispose,
   };
 }

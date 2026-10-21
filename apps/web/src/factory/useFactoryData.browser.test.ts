@@ -1,8 +1,8 @@
-import { createElement, act, useEffect, type ReactElement } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { createElement, useEffect, type ReactElement } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
+import { act, fakeTimers, render, type Screen } from "../../test/render";
 import {
   __setFactoryApiForTests,
   FactoryApiError,
@@ -21,7 +21,7 @@ import {
   useFactorySupported,
   type FactoryResource,
 } from "./useFactoryData";
-import { resetDocumentVisible, setDocumentVisible } from "./testing";
+import { setDocumentVisible } from "./testing";
 
 // Which environments exist is the catalog's business; a test sets who is primary and connected.
 const environments = vi.hoisted(() => ({
@@ -102,25 +102,19 @@ const deferred = <T>() => {
   return { promise, resolve, reject };
 };
 
-let mounted: Array<{ readonly root: Root; readonly container: HTMLElement }> = [];
-const unmountAll = () => {
-  act(() =>
-    mounted.forEach(({ root, container }) => {
-      root.unmount();
-      container.remove();
-    }),
-  );
+// What a test mounted; its `setup()` unmounts what is left when the test ends.
+let mounted: Array<Screen> = [];
+const unmountAll = async () => {
+  const screens = mounted;
   mounted = [];
+  for (const screen of screens) await screen[Symbol.asyncDispose]();
 };
 
 /** Renders `element` into a fresh container of the document. */
 const mountElement = async (element: ReactElement) => {
-  const container = document.createElement("div");
-  document.body.append(container);
-  const root = createRoot(container);
-  mounted.push({ root, container });
-  await act(async () => root.render(element));
-  return root;
+  const screen = await render(element, { router: false });
+  mounted.push(screen);
+  return screen;
 };
 
 /** Renders a component that reads `useHook` and keeps what it returned last. */
@@ -150,26 +144,26 @@ const show = (visible: boolean) =>
 // after the one before it: a stale stamp would otherwise swallow the first tick.
 let day = Date.parse("2026-10-17T00:00:00.000Z");
 
-beforeEach(() => {
-  vi.useFakeTimers();
+function setup(): AsyncDisposable {
+  const stack = new AsyncDisposableStack();
+  stack.use(fakeTimers());
   day += 86_400_000;
   vi.setSystemTime(day);
-  setDocumentVisible(true);
+  stack.use(setDocumentVisible(true));
   environments.primary = ENV_1;
   environments.connected = [];
   environments.labels = new Map();
-});
-
-afterEach(() => {
-  unmountAll();
-  __setFactoryApiForTests();
-  __resetFactoryStoresForTests();
-  resetDocumentVisible();
-  vi.useRealTimers();
-});
+  stack.defer(() => {
+    __setFactoryApiForTests();
+    __resetFactoryStoresForTests();
+  });
+  stack.defer(unmountAll);
+  return stack;
+}
 
 describe("useFactoryStatus", () => {
   it("is loading, then ready with the fetched status", async () => {
+    await using _state = setup();
     const pending = deferred<ReturnType<typeof status>>();
     __setFactoryApiForTests(api({ status: () => pending.promise }));
     const result = await mount(() => useFactoryStatus(ENV_1));
@@ -181,6 +175,7 @@ describe("useFactoryStatus", () => {
   });
 
   it("is an error with the thrown error when the fetch fails", async () => {
+    await using _state = setup();
     __setFactoryApiForTests(
       api({
         status: async () => {
@@ -194,6 +189,7 @@ describe("useFactoryStatus", () => {
   });
 
   it("keeps the last data when a later fetch fails", async () => {
+    await using _state = setup();
     let fail = false;
     __setFactoryApiForTests(
       api({
@@ -211,6 +207,7 @@ describe("useFactoryStatus", () => {
   });
 
   it("stamps when each answer landed, failed or not, and not in between", async () => {
+    await using _state = setup();
     let fail = false;
     __setFactoryApiForTests(
       api({
@@ -230,6 +227,7 @@ describe("useFactoryStatus", () => {
   });
 
   it("fetches again every 30 seconds and on refresh, and not in between", async () => {
+    await using _state = setup();
     const fetchStatus = vi.fn(async () => status(0));
     __setFactoryApiForTests(api({ status: fetchStatus }));
     const result = await mount(() => useFactoryStatus(ENV_1));
@@ -243,12 +241,13 @@ describe("useFactoryStatus", () => {
   });
 
   it("stops polling when unmounted, and ignores an answer that arrives after", async () => {
+    await using _state = setup();
     const pending = deferred<ReturnType<typeof status>>();
     const fetchStatus = vi.fn(() => pending.promise);
     __setFactoryApiForTests(api({ status: fetchStatus }));
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     await mount(() => useFactoryStatus(ENV_1));
-    unmountAll();
+    await unmountAll();
     await act(async () => pending.resolve(status(1)));
     await settle(120_000);
     expect(fetchStatus).toHaveBeenCalledTimes(1);
@@ -258,11 +257,12 @@ describe("useFactoryStatus", () => {
   });
 
   it("drops the store once its last reader is gone, so the next reader starts over", async () => {
+    await using _state = setup();
     const fetchStatus = vi.fn(async () => status(2));
     __setFactoryApiForTests(api({ status: fetchStatus }));
     const first = await mount(() => useFactoryStatus(ENV_1));
     expect(first.current.data?.attention).toHaveLength(2);
-    unmountAll();
+    await unmountAll();
     // The drop waits a microtask (see `subscribe`), so an unmount that is not followed by a
     // resubscribe in the same flush must still let it go.
     await settle();
@@ -274,6 +274,7 @@ describe("useFactoryStatus", () => {
 
 describe("the poll follows the window", () => {
   it("does not tick while the window is hidden, and reads on coming back to it", async () => {
+    await using _state = setup();
     const fetchStatus = vi.fn(async () => status(0));
     __setFactoryApiForTests(api({ status: fetchStatus }));
     await mount(() => useFactoryStatus(ENV_1));
@@ -285,6 +286,7 @@ describe("the poll follows the window", () => {
   });
 
   it("a tick during a slow answer joins it instead of starting another read", async () => {
+    await using _state = setup();
     const pending = deferred<ReturnType<typeof status>>();
     const fetchStatus = vi.fn(() => pending.promise);
     __setFactoryApiForTests(api({ status: fetchStatus }));
@@ -298,6 +300,7 @@ describe("the poll follows the window", () => {
   });
 
   it("a refresh during a slow answer reads again, and the answer in flight is dropped", async () => {
+    await using _state = setup();
     const before = deferred<ReturnType<typeof status>>();
     const after = deferred<ReturnType<typeof status>>();
     const calls = [before, after];
@@ -313,6 +316,7 @@ describe("the poll follows the window", () => {
   });
 
   it("reads no more after a 404, which says the server has no factory", async () => {
+    await using _state = setup();
     const fetchStatus = vi.fn(notFound);
     __setFactoryApiForTests(api({ status: fetchStatus }));
     const result = await mount(() => useFactoryStatus(ENV_1));
@@ -326,6 +330,7 @@ describe("the poll follows the window", () => {
 
 describe("useFactoryStatus shared by several readers", () => {
   it("polls once for two readers, on mount and on every tick", async () => {
+    await using _state = setup();
     const fetchStatus = vi.fn(async () => status(0));
     __setFactoryApiForTests(api({ status: fetchStatus }));
     await mount(() => useFactoryStatus(ENV_1));
@@ -336,6 +341,7 @@ describe("useFactoryStatus shared by several readers", () => {
   });
 
   it("still reads when the timer fires a few milliseconds before 30 seconds have passed", async () => {
+    await using _state = setup();
     const fetchStatus = vi.fn(async () => status(0));
     __setFactoryApiForTests(api({ status: fetchStatus }));
     const result = await mount(() => useFactoryStatus(ENV_1));
@@ -349,6 +355,7 @@ describe("useFactoryStatus shared by several readers", () => {
   });
 
   it("reads once per 30 seconds for two readers whose timers are out of step", async () => {
+    await using _state = setup();
     const fetchStatus = vi.fn(async () => status(0));
     __setFactoryApiForTests(api({ status: fetchStatus }));
     await mount(() => useFactoryStatus(ENV_1));
@@ -365,6 +372,7 @@ describe("useFactoryStatus shared by several readers", () => {
   });
 
   it("shows a refresh from one reader to the other", async () => {
+    await using _state = setup();
     let attention = 0;
     __setFactoryApiForTests(api({ status: async () => status(attention) }));
     const page = await mount(() => useFactoryStatus(ENV_1));
@@ -376,17 +384,19 @@ describe("useFactoryStatus shared by several readers", () => {
   });
 
   it("stops every timer once both readers are gone", async () => {
+    await using _state = setup();
     __setFactoryApiForTests(api({}));
     await mount(() => useFactoryStatus(ENV_1));
     await mount(() => useFactoryStatus(ENV_1));
     expect(vi.getTimerCount()).toBeGreaterThan(0);
-    unmountAll();
+    await unmountAll();
     expect(vi.getTimerCount()).toBe(0);
   });
 });
 
 describe("useFactoryRuns and useFactoryRun", () => {
   it("fetch the run list and one run's ledger", async () => {
+    await using _state = setup();
     const run = vi.fn(async (_env: EnvironmentId, id: string) => ({
       id,
       entries: [],
@@ -422,6 +432,7 @@ describe("useFactoryRuns and useFactoryRun", () => {
   });
 
   it("asks the server for every run only with all, and reads that list once, not on the poll", async () => {
+    await using _state = setup();
     const fetchRuns = vi.fn<FactoryApi["runs"]>(async () => ({ runs: [] }));
     __setFactoryApiForTests(api({ runs: fetchRuns }));
     await mount(() => useFactoryRuns(ENV_1));
@@ -435,6 +446,7 @@ describe("useFactoryRuns and useFactoryRun", () => {
   });
 
   it("reads a run no more after a 404", async () => {
+    await using _state = setup();
     const run = vi.fn(notFound);
     __setFactoryApiForTests(api({ run }));
     const one = await mount(() => useFactoryRun(ENV_1, "o__r__9__1"));
@@ -446,24 +458,28 @@ describe("useFactoryRuns and useFactoryRun", () => {
 
 describe("useFactoryAttentionCount", () => {
   it("is 0 while loading", async () => {
+    await using _state = setup();
     __setFactoryApiForTests(api({ status: () => new Promise(() => {}) }));
     const count = await mount(useFactoryAttentionCount);
     expect(count.current).toBe(0);
   });
 
   it("is the number of open attention items once the status is ready", async () => {
+    await using _state = setup();
     __setFactoryApiForTests(api({ status: async () => status(3) }));
     const count = await mount(useFactoryAttentionCount);
     expect(count.current).toBe(3);
   });
 
   it("is 0 when the first read fails, such as on a server without the factory", async () => {
+    await using _state = setup();
     __setFactoryApiForTests(api({ status: notFound }));
     const count = await mount(useFactoryAttentionCount);
     expect(count.current).toBe(0);
   });
 
   it("keeps the last count when a later fetch fails", async () => {
+    await using _state = setup();
     let fail = false;
     __setFactoryApiForTests(
       api({
@@ -483,6 +499,7 @@ describe("useFactoryAttentionCount", () => {
 
 describe("useFactorySupported", () => {
   it("is true before any answer and once the status is ready", async () => {
+    await using _state = setup();
     const pending = deferred<ReturnType<typeof status>>();
     __setFactoryApiForTests(api({ status: () => pending.promise }));
     const supported = await mount(useFactorySupported);
@@ -492,10 +509,11 @@ describe("useFactorySupported", () => {
   });
 
   it("is false once the status answered 404, and true on any other failure", async () => {
+    await using _state = setup();
     __setFactoryApiForTests(api({ status: notFound }));
     const supported = await mount(useFactorySupported);
     expect(supported.current).toBe(false);
-    unmountAll();
+    await unmountAll();
     __resetFactoryStoresForTests();
     __setFactoryApiForTests(
       api({
@@ -511,6 +529,7 @@ describe("useFactorySupported", () => {
 
 describe("the stores are per environment", () => {
   it("keeps one status per environment, each read from its own environment", async () => {
+    await using _state = setup();
     const fetchStatus = vi.fn(async (env: EnvironmentId) => status(env === ENV_1 ? 1 : 4));
     __setFactoryApiForTests(api({ status: fetchStatus }));
     const first = await mount(() => useFactoryStatus(ENV_1));
@@ -521,6 +540,7 @@ describe("the stores are per environment", () => {
   });
 
   it("reads nothing and stays loading without an environment", async () => {
+    await using _state = setup();
     const fetchStatus = vi.fn(async () => status(0));
     const fetchRuns = vi.fn<FactoryApi["runs"]>(async () => ({ runs: [] }));
     __setFactoryApiForTests(api({ status: fetchStatus, runs: fetchRuns }));
@@ -531,7 +551,7 @@ describe("the stores are per environment", () => {
     for (const result of [statusResult, runsResult, runResult]) {
       expect(result.current.status).toBe("loading");
       expect(result.current.data).toBeNull();
-      act(() => result.current.refresh());
+      await act(() => result.current.refresh());
     }
     expect(fetchStatus).not.toHaveBeenCalled();
     expect(fetchRuns).not.toHaveBeenCalled();
@@ -543,6 +563,7 @@ describe("useFactoryEnvironments", () => {
     list.map((entry) => entry.environmentId);
 
   it("lists the primary, then the other connected environments, with their labels", async () => {
+    await using _state = setup();
     environments.connected = [ENV_2, ENV_1, ENV_3];
     environments.labels = new Map([
       [ENV_1, "Desktop"],
@@ -557,6 +578,7 @@ describe("useFactoryEnvironments", () => {
   });
 
   it("lists the primary even before the catalog lists it as connected", async () => {
+    await using _state = setup();
     environments.connected = [ENV_2];
     const fetchStatus = vi.fn(async (_env: EnvironmentId) => status(0));
     __setFactoryApiForTests(api({ status: fetchStatus }));
@@ -566,6 +588,7 @@ describe("useFactoryEnvironments", () => {
   });
 
   it("lists only the connected environments without a primary", async () => {
+    await using _state = setup();
     environments.primary = null;
     environments.connected = [ENV_2];
     __setFactoryApiForTests(api({}));
@@ -574,12 +597,14 @@ describe("useFactoryEnvironments", () => {
   });
 
   it("is empty without any candidate", async () => {
+    await using _state = setup();
     environments.primary = null;
     const list = await mount(useFactoryEnvironments);
     expect(list.current).toEqual([]);
   });
 
   it("leaves out an environment whose status answered 404, and reads it once", async () => {
+    await using _state = setup();
     environments.connected = [ENV_1, ENV_2];
     const fetchStatus = vi.fn(async (env: EnvironmentId) => {
       if (env === ENV_1) return notFound();
@@ -596,6 +621,7 @@ describe("useFactoryEnvironments", () => {
   });
 
   it("keeps an environment that is loading or failed, without holding the others back", async () => {
+    await using _state = setup();
     environments.connected = [ENV_1, ENV_2, ENV_3];
     __setFactoryApiForTests(
       api({
@@ -612,6 +638,7 @@ describe("useFactoryEnvironments", () => {
   });
 
   it("refreshes the status of the environment it belongs to", async () => {
+    await using _state = setup();
     environments.connected = [ENV_1, ENV_2];
     const fetchStatus = vi.fn(async (_env: EnvironmentId) => status(0));
     __setFactoryApiForTests(api({ status: fetchStatus }));
@@ -622,6 +649,7 @@ describe("useFactoryEnvironments", () => {
   });
 
   it("polls every environment on the live-refresh policy", async () => {
+    await using _state = setup();
     environments.connected = [ENV_1, ENV_2];
     const fetchStatus = vi.fn(async (_env: EnvironmentId) => status(0));
     __setFactoryApiForTests(api({ status: fetchStatus }));
@@ -632,6 +660,7 @@ describe("useFactoryEnvironments", () => {
   });
 
   it("reflects a later answer, and drops an environment that turns 404", async () => {
+    await using _state = setup();
     environments.connected = [ENV_1, ENV_2];
     let attention = 0;
     let gone = false;
@@ -654,6 +683,7 @@ describe("useFactoryEnvironments", () => {
   });
 
   it("neither reads again nor re-renders without end when a third environment connects and leaves", async () => {
+    await using _state = setup();
     environments.connected = [ENV_1, ENV_2];
     const fetchStatus = vi.fn(async (_env: EnvironmentId) => status(0));
     __setFactoryApiForTests(api({ status: fetchStatus }));
@@ -663,11 +693,11 @@ describe("useFactoryEnvironments", () => {
       useFactoryEnvironments();
       return null;
     };
-    const root = await mountElement(createElement(Probe));
+    const screen = await mountElement(createElement(Probe));
     environments.connected = [ENV_1, ENV_2, ENV_3];
-    await act(async () => root.render(createElement(Probe)));
+    await screen.rerender(createElement(Probe));
     environments.connected = [ENV_1, ENV_2];
-    await act(async () => root.render(createElement(Probe)));
+    await screen.rerender(createElement(Probe));
     const calls = (env: EnvironmentId) => fetchStatus.mock.calls.filter(([e]) => e === env).length;
     expect([calls(ENV_1), calls(ENV_2), calls(ENV_3)]).toEqual([1, 1, 1]);
     expect(renders).toBeLessThan(20);
@@ -676,6 +706,7 @@ describe("useFactoryEnvironments", () => {
 
 describe("useFactoryRunsOf", () => {
   it("reads each environment's own runs, and a failure of one leaves the others", async () => {
+    await using _state = setup();
     const fetchRuns = vi.fn<FactoryApi["runs"]>(async (env) => {
       if (env === ENV_1) throw new Error("down");
       return { runs: [{ id: `${env}-run` }] } as never;
@@ -691,13 +722,14 @@ describe("useFactoryRunsOf", () => {
   });
 
   it("polls the recent window but reads the full list once", async () => {
+    await using _state = setup();
     const fetchRuns = vi.fn<FactoryApi["runs"]>(async () => ({ runs: [] }));
     __setFactoryApiForTests(api({ runs: fetchRuns }));
     await mount(() => useFactoryRunsOf([ENV_1, ENV_2], true));
     expect(fetchRuns).toHaveBeenCalledTimes(2);
     await settle(90_000);
     expect(fetchRuns).toHaveBeenCalledTimes(2);
-    unmountAll();
+    await unmountAll();
     __resetFactoryStoresForTests();
     fetchRuns.mockClear();
     await mount(() => useFactoryRunsOf([ENV_1, ENV_2], false));
@@ -706,6 +738,7 @@ describe("useFactoryRunsOf", () => {
   });
 
   it("refreshes the one environment it is asked to", async () => {
+    await using _state = setup();
     const fetchRuns = vi.fn<FactoryApi["runs"]>(async () => ({ runs: [] }));
     __setFactoryApiForTests(api({ runs: fetchRuns }));
     const runs = await mount(() => useFactoryRunsOf([ENV_1, ENV_2], false));
@@ -715,6 +748,7 @@ describe("useFactoryRunsOf", () => {
   });
 
   it("reads nothing without environments", async () => {
+    await using _state = setup();
     const fetchRuns = vi.fn<FactoryApi["runs"]>(async () => ({ runs: [] }));
     __setFactoryApiForTests(api({ runs: fetchRuns }));
     const runs = await mount(() => useFactoryRunsOf([], false));
@@ -725,6 +759,7 @@ describe("useFactoryRunsOf", () => {
 
 describe("the badge and the sidebar item across several environments", () => {
   it("sums the open attention items over every listed environment", async () => {
+    await using _state = setup();
     environments.connected = [ENV_1, ENV_2, ENV_3];
     __setFactoryApiForTests(
       api({
@@ -739,6 +774,7 @@ describe("the badge and the sidebar item across several environments", () => {
   });
 
   it("shares the status read with the pages' own hooks", async () => {
+    await using _state = setup();
     environments.connected = [ENV_1, ENV_2];
     const fetchStatus = vi.fn(async (env: EnvironmentId) => status(env === ENV_2 ? 3 : 0));
     __setFactoryApiForTests(api({ status: fetchStatus }));
@@ -750,13 +786,14 @@ describe("the badge and the sidebar item across several environments", () => {
   });
 
   it("is supported while a candidate has not answered, and when one of them has a factory", async () => {
+    await using _state = setup();
     environments.connected = [ENV_1, ENV_2];
     __setFactoryApiForTests(
       api({ status: (env) => (env === ENV_1 ? notFound() : new Promise(() => {})) }),
     );
     const pending = await mount(useFactorySupported);
     expect(pending.current).toBe(true);
-    unmountAll();
+    await unmountAll();
     __resetFactoryStoresForTests();
     __setFactoryApiForTests(
       api({ status: (env) => (env === ENV_1 ? notFound() : Promise.resolve(status(0))) }),
@@ -766,6 +803,7 @@ describe("the badge and the sidebar item across several environments", () => {
   });
 
   it("is unsupported only once every candidate answered 404", async () => {
+    await using _state = setup();
     environments.connected = [ENV_1, ENV_2];
     __setFactoryApiForTests(api({ status: notFound }));
     const supported = await mount(useFactorySupported);
@@ -773,6 +811,7 @@ describe("the badge and the sidebar item across several environments", () => {
   });
 
   it("is supported with no candidate at all", async () => {
+    await using _state = setup();
     environments.primary = null;
     const supported = await mount(useFactorySupported);
     expect(supported.current).toBe(true);
@@ -781,6 +820,7 @@ describe("the badge and the sidebar item across several environments", () => {
 
 describe("useFactoryEnvironmentLabel", () => {
   it("is the environment's label, else its id", async () => {
+    await using _state = setup();
     environments.labels = new Map([[ENV_1, "Desktop"]]);
     const label = await mount(() => [
       useFactoryEnvironmentLabel(ENV_1),

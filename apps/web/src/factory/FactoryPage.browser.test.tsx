@@ -1,7 +1,8 @@
-import { createElement, act, useSyncExternalStore, type ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { createElement, useSyncExternalStore, type ReactNode } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { page as browser, userEvent } from "vite-plus/test/browser";
 
+import { act } from "../../test/render";
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
 import type { FactoryResource } from "./useFactoryData";
 import { render, renderAt } from "./testing";
@@ -21,7 +22,8 @@ const state = vi.hoisted(() => ({
   navigations: [] as Array<{ to: string; search: Record<string, string>; replace?: boolean }>,
 }));
 
-vi.mock("@tanstack/react-router", () => ({
+vi.mock("@tanstack/react-router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-router")>()),
   Link: ({
     to,
     params,
@@ -79,7 +81,7 @@ const resource = <T,>(overrides: Partial<FactoryResource<T>>): FactoryResource<T
   status: "ready",
   data: null,
   error: null,
-  readAt: Date.now(),
+  readAt: NOW,
   refresh: vi.fn(),
   ...overrides,
 });
@@ -123,8 +125,8 @@ const api = (overrides: Partial<FactoryApi>): FactoryApi => ({
   ...overrides,
 });
 
-beforeEach(() => {
-  vi.useFakeTimers({ toFake: ["Date"] });
+// Ages are read from the clock; only Date is faked, so the page's own timers stay real.
+function setup(): Disposable {
   vi.setSystemTime(NOW);
   state.status = resource({ data: statusData() });
   state.runs = resource({ data: { runs: [] } });
@@ -133,16 +135,18 @@ beforeEach(() => {
   state.listed = true;
   state.search = {};
   state.navigations = [];
-});
-
-afterEach(() => {
-  __setFactoryApiForTests();
-  vi.useRealTimers();
-});
+  return {
+    [Symbol.dispose]() {
+      __setFactoryApiForTests();
+      vi.useRealTimers();
+    },
+  };
+}
 
 describe("FactoryPage", () => {
   it("says there are no runs yet when the factory has none", async () => {
-    const page = await render(createElement(FactoryPage));
+    using _state = setup();
+    await using page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("Factory");
     expect(page.text()).toContain("No runs in the last week");
     expect(page.text()).not.toContain("Needs attention");
@@ -151,13 +155,15 @@ describe("FactoryPage", () => {
   });
 
   it("shows a loading state while either read is loading", async () => {
+    using _state = setup();
     state.status = resource({ status: "loading" });
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     expect(page.all('[aria-label="Loading factory"]')).not.toHaveLength(0);
     expect(page.text()).not.toContain("No runs");
   });
 
   it("shows the error and retries both reads", async () => {
+    using _state = setup();
     const refreshStatus = vi.fn();
     const refreshRuns = vi.fn();
     state.status = resource({ status: "ready", data: statusData(), refresh: refreshStatus });
@@ -166,7 +172,7 @@ describe("FactoryPage", () => {
       error: new FactoryApiError(403, null, "Missing permission orchestration:read"),
       refresh: refreshRuns,
     });
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     expect(page.text()).toContain(
       "Could not refresh Mac Studio: Missing permission orchestration:read",
     );
@@ -177,6 +183,7 @@ describe("FactoryPage", () => {
   });
 
   it("keeps the page when a later poll fails, with the error as a notice and a Retry", async () => {
+    using _state = setup();
     const refreshStatus = vi.fn();
     const refreshRuns = vi.fn();
     state.status = resource({ data: statusData(), refresh: refreshStatus });
@@ -186,7 +193,7 @@ describe("FactoryPage", () => {
       error: new Error("fetch failed"),
       refresh: refreshRuns,
     });
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("original-solutions/t3code-factory");
     expect(page.text()).toContain("Could not refresh Mac Studio: fetch failed");
     expect(page.text()).not.toContain("Could not load the factory");
@@ -196,6 +203,7 @@ describe("FactoryPage", () => {
   });
 
   it("lists the week the server sent, and every run once asked", async () => {
+    using _state = setup();
     const old = runRow({
       id: "o__r__1__1",
       started_ts: "2026-09-01T10:00:00.000Z",
@@ -203,7 +211,7 @@ describe("FactoryPage", () => {
     });
     state.runs = resource({ data: { runs: [runRow()] } });
     state.allRuns = resource({ data: { runs: [runRow(), old] } });
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     const runLinks = () =>
       page.all("a").filter((a) => a.getAttribute("data-to") === "/factory/$environmentId/$runId");
     expect(runLinks()).toHaveLength(1);
@@ -217,12 +225,14 @@ describe("FactoryPage", () => {
   });
 
   it("says when the week holds no runs and still offers every run", async () => {
-    const page = await render(createElement(FactoryPage));
+    using _state = setup();
+    await using page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("No runs in the last week");
     expect(page.button("Show all runs")).toBeDefined();
   });
 
   it("lists the runs with repo, issue, state, step, age and pull request link", async () => {
+    using _state = setup();
     state.runs = resource({
       data: {
         runs: [
@@ -231,7 +241,7 @@ describe("FactoryPage", () => {
         ],
       },
     });
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     const text = page.text();
     expect(text).toContain("original-solutions/t3code-factory");
     expect(text).toContain("#20");
@@ -252,6 +262,7 @@ describe("FactoryPage", () => {
   });
 
   it("links a pull request only when it is a github.com URL", async () => {
+    using _state = setup();
     state.runs = resource({
       data: {
         runs: [
@@ -261,7 +272,7 @@ describe("FactoryPage", () => {
         ],
       },
     });
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     const hrefs = page.all("a").map((a) => a.getAttribute("href"));
     expect(hrefs).toContain(PR_URL);
     expect(hrefs).not.toContain("javascript:alert(1)");
@@ -270,6 +281,7 @@ describe("FactoryPage", () => {
   });
 
   it("lists the newest run first, and falls back to the last event without a step", async () => {
+    using _state = setup();
     state.runs = resource({
       data: {
         runs: [
@@ -283,7 +295,8 @@ describe("FactoryPage", () => {
         ],
       },
     });
-    const text = (await render(createElement(FactoryPage))).text();
+    await using page = await render(createElement(FactoryPage));
+    const text = page.text();
     expect(text.indexOf("original-solutions/t3code-factory")).toBeLessThan(
       text.indexOf("acme/old"),
     );
@@ -291,13 +304,16 @@ describe("FactoryPage", () => {
   });
 
   it("marks an unreadable run", async () => {
+    using _state = setup();
     state.runs = resource({
       data: { runs: [runRow({ unreadable: true, state: null, step: null, last_event: null })] },
     });
-    expect((await render(createElement(FactoryPage))).text()).toContain("unreadable");
+    await using page = await render(createElement(FactoryPage));
+    expect(page.text()).toContain("unreadable");
   });
 
   it("shows the open attention items at the top", async () => {
+    using _state = setup();
     state.status = resource({
       data: statusData({
         attention: [
@@ -314,7 +330,8 @@ describe("FactoryPage", () => {
       }),
     });
     state.runs = resource({ data: { runs: [runRow()] } });
-    const text = (await render(createElement(FactoryPage))).text();
+    await using page = await render(createElement(FactoryPage));
+    const text = page.text();
     expect(text).toContain("stuck");
     expect(text).toContain("original-solutions/t3code-factory#20");
     expect(text).toContain("run ended stuck: the gate failed");
@@ -323,15 +340,18 @@ describe("FactoryPage", () => {
   });
 
   it("shows an idle factory with its reason", async () => {
+    using _state = setup();
     state.status = resource({
       data: statusData({ state: "idle", reason: "no factory config" }),
     });
-    const text = (await render(createElement(FactoryPage))).text();
+    await using page = await render(createElement(FactoryPage));
+    const text = page.text();
     expect(text).toContain("Mac Studio");
     expect(text).toContain("Idle: no factory config");
   });
 
   it("pauses claims, shows the answer and refreshes", async () => {
+    using _state = setup();
     const refreshStatus = vi.fn();
     state.status = resource({ data: statusData(), refresh: refreshStatus });
     const pauseClaims = vi.fn(async () => ({
@@ -341,7 +361,7 @@ describe("FactoryPage", () => {
       message: "claims paused",
     }));
     __setFactoryApiForTests(api({ pauseClaims }));
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     expect(page.button("Resume claims")).toBeUndefined();
     await page.click(page.button("Pause claims")!);
     expect(pauseClaims).toHaveBeenCalledTimes(1);
@@ -351,6 +371,7 @@ describe("FactoryPage", () => {
   });
 
   it("resumes claims when they are paused by hand, saying since when", async () => {
+    using _state = setup();
     state.status = resource({
       data: statusData({
         paused_by_hand: { since: "2026-10-17T11:00:00.000Z", for_ms: 3_600_000 },
@@ -362,7 +383,7 @@ describe("FactoryPage", () => {
       message: "claims resumed",
     }));
     __setFactoryApiForTests(api({ resumeClaims }));
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("Claims paused since 1h");
     expect(page.button("Pause claims")).toBeUndefined();
     await page.click(page.button("Resume claims")!);
@@ -372,6 +393,7 @@ describe("FactoryPage", () => {
   });
 
   it("disables Pause claims while the call is pending", async () => {
+    using _state = setup();
     state.status = resource({ data: statusData() });
     let resolve!: (value: {
       paused: true;
@@ -386,7 +408,7 @@ describe("FactoryPage", () => {
         ),
     );
     __setFactoryApiForTests(api({ pauseClaims }));
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     expect(page.button("Pause claims")!.disabled).toBeFalsy();
     await page.click(page.button("Pause claims")!);
     expect(page.button("Pause claims")!.disabled).toBe(true);
@@ -397,6 +419,7 @@ describe("FactoryPage", () => {
   });
 
   it("disables Resume claims while the call is pending", async () => {
+    using _state = setup();
     state.status = resource({
       data: statusData({
         paused_by_hand: { since: "2026-10-17T11:00:00.000Z", for_ms: 3_600_000 },
@@ -407,7 +430,7 @@ describe("FactoryPage", () => {
       () => new Promise<{ paused: false; already: boolean; message: string }>((r) => (resolve = r)),
     );
     __setFactoryApiForTests(api({ resumeClaims }));
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     expect(page.button("Resume claims")!.disabled).toBeFalsy();
     await page.click(page.button("Resume claims")!);
     expect(page.button("Resume claims")!.disabled).toBe(true);
@@ -416,6 +439,7 @@ describe("FactoryPage", () => {
   });
 
   it("shows the message of a control call that fails", async () => {
+    using _state = setup();
     __setFactoryApiForTests(
       api({
         pauseClaims: async () => {
@@ -423,7 +447,7 @@ describe("FactoryPage", () => {
         },
       }),
     );
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     await page.click(page.button("Pause claims")!);
     expect(page.text()).toContain("Missing permission orchestration:operate");
   });
@@ -431,13 +455,15 @@ describe("FactoryPage", () => {
 
 describe("FactoryPage environments", () => {
   it("says no factory runs when no connected environment has one", async () => {
+    using _state = setup();
     state.listed = false;
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("No factory");
     expect(page.all('[aria-label="Loading factory"]')).toHaveLength(0);
   });
 
   it("shows a loading row for an environment whose status is loading, and the others' runs", async () => {
+    using _state = setup();
     state.runs = resource({ data: { runs: [runRow()] } });
     state.others = [
       {
@@ -447,7 +473,7 @@ describe("FactoryPage environments", () => {
         runs: resource({ status: "loading" }),
       },
     ];
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("Laptop");
     expect(page.all('[aria-label="Loading Laptop"]')).toHaveLength(1);
     expect(page.text()).toContain("original-solutions/t3code-factory");
@@ -455,6 +481,7 @@ describe("FactoryPage environments", () => {
   });
 
   it("shows the error of a status that failed with no data, and retries only that status", async () => {
+    using _state = setup();
     const refreshOther = vi.fn();
     const refreshOwn = vi.fn();
     state.status = resource({ data: statusData(), refresh: refreshOwn });
@@ -470,7 +497,7 @@ describe("FactoryPage environments", () => {
         runs: resource({ status: "loading" }),
       },
     ];
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("connection refused");
     await page.click(page.button("Retry")!);
     expect(refreshOther).toHaveBeenCalledTimes(1);
@@ -478,6 +505,7 @@ describe("FactoryPage environments", () => {
   });
 
   it("keeps a status that failed after a good read, with a notice naming its environment and a Retry for that status", async () => {
+    using _state = setup();
     const refreshOther = vi.fn();
     const refreshOwn = vi.fn();
     state.status = resource({ data: statusData(), refresh: refreshOwn });
@@ -495,7 +523,7 @@ describe("FactoryPage environments", () => {
         runs: resource({ data: { runs: [] } }),
       },
     ];
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("Could not refresh Laptop: timed out");
     expect(page.text()).toContain("Idle: no repos");
     await page.click(page.button("Retry")!);
@@ -504,15 +532,17 @@ describe("FactoryPage environments", () => {
   });
 
   it("shows loading in place of the runs while no environment has listed its runs", async () => {
+    using _state = setup();
     state.runs = resource({ status: "loading" });
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     expect(page.all('[aria-label="Loading runs"]')).not.toHaveLength(0);
     expect(page.text()).not.toContain("No runs");
   });
 
   it("shows the Environment column and each run's label only with several environments", async () => {
+    using _state = setup();
     state.runs = resource({ data: { runs: [runRow()] } });
-    const alone = await render(createElement(FactoryPage));
+    await using alone = await render(createElement(FactoryPage));
     expect(alone.all("th").map((th) => th.textContent)).not.toContain("Environment");
     await alone.unmount();
     state.others = [
@@ -523,10 +553,10 @@ describe("FactoryPage environments", () => {
         runs: resource({ data: { runs: [runRow({ id: "acme__w__7__1" })] } }),
       },
     ];
-    const table = await render(createElement(FactoryPage));
+    await using table = await render(createElement(FactoryPage));
     expect(table.all("th").map((th) => th.textContent)).toContain("Environment");
     await table.unmount();
-    const cards = await renderAt(375, createElement(FactoryPage));
+    await using cards = await renderAt(375, createElement(FactoryPage));
     const card = cards.all("ul").find((ul) => ul.getAttribute("data-layout") === "cards")!;
     expect(card.textContent).toContain("Laptop");
     expect(card.textContent).toContain("Mac Studio");
@@ -557,8 +587,9 @@ describe.each([375, 1280])("FactoryPage at %i px", (width) => {
   };
 
   it(narrow ? "lists the runs as cards, not a table" : "lists the runs in a table", async () => {
+    using _state = setup();
     populate();
-    const page = await renderAt(width, createElement(FactoryPage));
+    await using page = await renderAt(width, createElement(FactoryPage));
     expect(page.all("table")).toHaveLength(narrow ? 0 : 1);
     const cards = page.all("ul").filter((ul) => ul.getAttribute("data-layout") === "cards");
     expect(cards).toHaveLength(narrow ? 1 : 0);
@@ -566,8 +597,9 @@ describe.each([375, 1280])("FactoryPage at %i px", (width) => {
   });
 
   it("puts the attention items above the runs", async () => {
+    using _state = setup();
     populate();
-    const page = await renderAt(width, createElement(FactoryPage));
+    await using page = await renderAt(width, createElement(FactoryPage));
     const text = page.text();
     expect(text.indexOf("run ended stuck")).toBeGreaterThan(-1);
     expect(text.indexOf("run ended stuck")).toBeLessThan(text.indexOf("launch-sending"));
@@ -577,6 +609,7 @@ describe.each([375, 1280])("FactoryPage at %i px", (width) => {
   });
 
   it("shows a control's answer in the body, below the attention items", async () => {
+    using _state = setup();
     populate();
     __setFactoryApiForTests(
       api({
@@ -588,7 +621,7 @@ describe.each([375, 1280])("FactoryPage at %i px", (width) => {
         }),
       }),
     );
-    const page = await renderAt(width, createElement(FactoryPage));
+    await using page = await renderAt(width, createElement(FactoryPage));
     await page.click(page.button("Pause claims")!);
     const text = page.text();
     expect(text.indexOf("claims paused")).toBeGreaterThan(text.indexOf("run ended stuck"));
@@ -599,9 +632,10 @@ describe.each([375, 1280])("FactoryPage at %i px", (width) => {
 
 describe("FactoryPage attention items at 375 px", () => {
   it("puts the message on its own full-width line after the badge, repo and age", async () => {
+    using _state = setup();
     state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
     state.runs = resource({ data: { runs: [runRow()] } });
-    const page = await renderAt(375, createElement(FactoryPage));
+    await using page = await renderAt(375, createElement(FactoryPage));
     const section = page
       .all("section")
       .find((node) => node.getAttribute("aria-label") === "Needs attention")!;
@@ -626,8 +660,9 @@ describe("FactoryPage attention items at 375 px", () => {
 
 describe("FactoryPage run cards at 375 px", () => {
   it("shows each run's repo, issue, state, step, age and pull request, and links to the run", async () => {
+    using _state = setup();
     state.runs = resource({ data: { runs: [runRow()] } });
-    const page = await renderAt(375, createElement(FactoryPage));
+    await using page = await renderAt(375, createElement(FactoryPage));
     const link = page
       .all("a")
       .find(
@@ -646,8 +681,9 @@ describe("FactoryPage run cards at 375 px", () => {
   });
 
   it("links the issue and the pull request outside the card's own link", async () => {
+    using _state = setup();
     state.runs = resource({ data: { runs: [runRow()] } });
-    const page = await renderAt(375, createElement(FactoryPage));
+    await using page = await renderAt(375, createElement(FactoryPage));
     const hrefs = page
       .all("a")
       .map((a) => a.getAttribute("href"))
@@ -664,8 +700,9 @@ describe("FactoryPage run cards at 375 px", () => {
   });
 
   it("leaves a non-GitHub pull request URL as text on the card", async () => {
+    using _state = setup();
     state.runs = resource({ data: { runs: [runRow({ pr_url: "https://example.com/pr/1" })] } });
-    const page = await renderAt(375, createElement(FactoryPage));
+    await using page = await renderAt(375, createElement(FactoryPage));
     expect(page.all("a").map((a) => a.getAttribute("href"))).not.toContain(
       "https://example.com/pr/1",
     );
@@ -674,12 +711,13 @@ describe("FactoryPage run cards at 375 px", () => {
   });
 
   it("keeps the newest first, the empty state and the Show all runs control", async () => {
+    using _state = setup();
     state.runs = resource({
       data: {
         runs: [runRow({ id: "acme__old__3__1", started_ts: "2026-10-16T12:00:00.000Z" }), runRow()],
       },
     });
-    const page = await renderAt(375, createElement(FactoryPage));
+    await using page = await renderAt(375, createElement(FactoryPage));
     const text = page.text();
     expect(text.indexOf("original-solutions/t3code-factory")).toBeLessThan(
       text.indexOf("acme/old"),
@@ -687,7 +725,7 @@ describe("FactoryPage run cards at 375 px", () => {
     expect(page.button("Show all runs")).toBeDefined();
     await page.unmount();
     state.runs = resource({ data: { runs: [] } });
-    const empty = await renderAt(375, createElement(FactoryPage));
+    await using empty = await renderAt(375, createElement(FactoryPage));
     expect(empty.text()).toContain("No runs in the last week");
     expect(empty.button("Show all runs")).toBeDefined();
     await empty.unmount();
@@ -699,8 +737,9 @@ describe.each([
   [640, false],
 ])("FactoryPage at the 640 px breakpoint, %i px", (width, narrow) => {
   it(narrow ? "lists cards just below 640" : "lists the table from 640", async () => {
+    using _state = setup();
     state.runs = resource({ data: { runs: [runRow()] } });
-    const page = await renderAt(width, createElement(FactoryPage));
+    await using page = await renderAt(width, createElement(FactoryPage));
     expect(page.all("table")).toHaveLength(narrow ? 0 : 1);
     const cards = page.all("ul").filter((ul) => ul.getAttribute("data-layout") === "cards");
     expect(cards).toHaveLength(narrow ? 1 : 0);
@@ -742,13 +781,14 @@ describe("FactoryPage dismissing attention items", () => {
     Array.from(item.querySelectorAll("button")).find((button) => holdsText(button, "Dismiss"))!;
 
   it("Dismiss removes that item at once and sends its id", async () => {
+    using _state = setup();
     state.status = resource({ data: statusData({ attention: [ATTENTION, CONFIG] }) });
     let resolve!: (value: { dismissed: ReadonlyArray<string> }) => void;
     const dismissAttention = vi.fn(
       () => new Promise<{ dismissed: ReadonlyArray<string> }>((r) => (resolve = r)),
     );
     __setFactoryApiForTests(api({ dismissAttention }));
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     await page.click(dismissIn(itemOf(page, ATTENTION.message)!));
     expect(dismissAttention).toHaveBeenCalledWith("env-2", [ATTENTION.id]);
     expect(page.text()).not.toContain(ATTENTION.message);
@@ -758,12 +798,13 @@ describe("FactoryPage dismissing attention items", () => {
   });
 
   it("Dismiss all sends exactly the ids shown, and the section goes", async () => {
+    using _state = setup();
     state.status = resource({ data: statusData({ attention: [ATTENTION, CONFIG, PASS] }) });
     const dismissAttention = vi.fn(async (_environmentId: string, ids: ReadonlyArray<string>) => ({
       dismissed: ids,
     }));
     __setFactoryApiForTests(api({ dismissAttention }));
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     await page.click(dismissIn(itemOf(page, CONFIG.message)!));
     await page.click(page.button("Dismiss all")!);
     expect(dismissAttention).toHaveBeenLastCalledWith("env-2", [ATTENTION.id, PASS.id]);
@@ -772,11 +813,12 @@ describe("FactoryPage dismissing attention items", () => {
   });
 
   it("keeps Pause claims disabled when a dismiss finishes while the pause is pending", async () => {
+    using _state = setup();
     state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
     const pauseClaims = vi.fn(() => new Promise<never>(() => {}));
     const dismissAttention = vi.fn(async () => ({ dismissed: [ATTENTION.id] }));
     __setFactoryApiForTests(api({ pauseClaims, dismissAttention }));
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     await page.click(page.button("Pause claims")!);
     await page.click(dismissIn(itemOf(page, ATTENTION.message)!));
     expect(dismissAttention).toHaveBeenCalled();
@@ -784,11 +826,13 @@ describe("FactoryPage dismissing attention items", () => {
   });
 
   it("has no Dismiss all when nothing needs attention", async () => {
-    const page = await render(createElement(FactoryPage));
+    using _state = setup();
+    await using page = await render(createElement(FactoryPage));
     expect(page.button("Dismiss all")).toBeUndefined();
   });
 
   it("brings the item back and shows the error when the dismiss fails", async () => {
+    using _state = setup();
     state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
     __setFactoryApiForTests(
       api({
@@ -797,16 +841,17 @@ describe("FactoryPage dismissing attention items", () => {
         },
       }),
     );
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     await page.click(dismissIn(itemOf(page, ATTENTION.message)!));
     expect(page.text()).toContain(ATTENTION.message);
     expect(page.text()).toContain("Missing permission orchestration:operate");
   });
 
   it("shows an item again when the factory raises it anew after it was dismissed", async () => {
+    using _state = setup();
     state.status = resource({ data: statusData({ attention: [CONFIG] }) });
     __setFactoryApiForTests(api({ dismissAttention: async () => ({ dismissed: [CONFIG.id] }) }));
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     await page.click(dismissIn(itemOf(page, CONFIG.message)!));
     expect(page.text()).not.toContain(CONFIG.message);
     state.status = resource({
@@ -817,8 +862,9 @@ describe("FactoryPage dismissing attention items", () => {
   });
 
   it("links a run item to its run, a config item to the factory settings, and others nowhere", async () => {
+    using _state = setup();
     state.status = resource({ data: statusData({ attention: [ATTENTION, CONFIG, PASS] }) });
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     const linksIn = (message: string) => Array.from(itemOf(page, message)!.querySelectorAll("a"));
     const [run] = linksIn(ATTENTION.message);
     expect(run!.getAttribute("data-to")).toBe("/factory/$environmentId/$runId");
@@ -892,8 +938,9 @@ describe("FactoryPage filters", () => {
   });
 
   it("picking an environment hides the other environment's rows, items and runs and writes it to the URL", async () => {
+    using _state = setup();
     twoEnvironments();
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     expect(runLinks(page)).toHaveLength(2);
     await pick("Environment", "Laptop");
     expect(state.navigations.at(-1)).toEqual({
@@ -912,8 +959,9 @@ describe("FactoryPage filters", () => {
   });
 
   it("picking a repo hides other repos' runs and items and keeps an item with no repo", async () => {
+    using _state = setup();
     twoEnvironments();
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     await pick("Repo", "acme/widgets");
     expect(state.navigations.at(-1)).toEqual({
       to: "/factory",
@@ -928,11 +976,12 @@ describe("FactoryPage filters", () => {
   });
 
   it("lists the repos of the runs and items once each, sorted without regard to case", async () => {
+    using _state = setup();
     twoEnvironments();
     state.runs = resource({
       data: { runs: [runRow(), runRow({ id: "Acme__Widgets__8__1" }), runRow({ id: "x" })] },
     });
-    await render(createElement(FactoryPage));
+    await using _page = await render(createElement(FactoryPage));
     await userEvent.click(browser.getByRole("combobox", { name: "Repo" }));
     const options = Array.from(document.querySelectorAll('[role="option"]')).map(
       (option) => option.textContent,
@@ -941,21 +990,23 @@ describe("FactoryPage filters", () => {
   });
 
   it("opens filtered from the URL, matching the repo without regard to case", async () => {
+    using _state = setup();
     twoEnvironments();
     state.search = { repo: "ORIGINAL-SOLUTIONS/T3code-factory" };
     state.others[0]!.runs = resource({
       data: { runs: [runRow({ id: LAPTOP_RUN }), runRow({ id: "unparsed" })] },
     });
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     expect(runLinks(page)).toEqual([RUN_ID]);
     expect(page.text()).toContain("run ended stuck: the gate failed");
     expect(page.text()).not.toContain("laptop run ended stuck");
   });
 
   it("shows a run whose id does not parse only with no repo filter", async () => {
+    using _state = setup();
     twoEnvironments();
     state.runs = resource({ data: { runs: [runRow(), runRow({ id: "unparsed" })] } });
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     expect(runLinks(page)).toContain("unparsed");
     await pick("Environment", "Mac Studio");
     expect(runLinks(page)).toContain("unparsed");
@@ -968,14 +1019,16 @@ describe("FactoryPage filters", () => {
   });
 
   it("matches a run's repo to the chosen one without regard to case", async () => {
+    using _state = setup();
     twoEnvironments();
     state.runs = resource({ data: { runs: [runRow(), runRow({ id: "Acme__Widgets__8__1" })] } });
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     await pick("Repo", "acme/widgets");
     expect(runLinks(page).toSorted()).toEqual(["Acme__Widgets__8__1", LAPTOP_RUN]);
   });
 
   it("shows only the chosen environment's read failures", async () => {
+    using _state = setup();
     twoEnvironments();
     state.runs = resource({
       status: "error",
@@ -983,48 +1036,52 @@ describe("FactoryPage filters", () => {
       error: new Error("fetch failed"),
     });
     state.search = { environment: "env-3" };
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     expect(page.text()).not.toContain("Could not refresh Mac Studio");
   });
 
   it("says the runs are loading, not that none match, while the chosen environment's runs are read", async () => {
+    using _state = setup();
     twoEnvironments();
     state.others[0]!.runs = resource({ status: "loading" });
     state.search = { environment: "env-3" };
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     expect(page.all('[aria-label="Loading runs"]')).not.toHaveLength(0);
     expect(page.text()).not.toContain("No runs match the filter");
   });
 
   it("reads only the chosen environment's runs for loading and for no match", async () => {
+    using _state = setup();
     twoEnvironments();
     state.others[0]!.runs = resource({ status: "error", error: new Error("timed out") });
     state.search = { environment: "env-3" };
-    const failed = await render(createElement(FactoryPage));
+    await using failed = await render(createElement(FactoryPage));
     expect(failed.text()).toContain("Could not refresh Laptop: timed out");
     expect(failed.text()).not.toContain("No runs match the filter");
     await failed.unmount();
     state.others[0]!.runs = resource({ data: { runs: [] } });
     state.runs = resource({ status: "loading" });
-    const empty = await render(createElement(FactoryPage));
+    await using empty = await render(createElement(FactoryPage));
     expect(empty.all('[aria-label="Loading runs"]')).toHaveLength(0);
     expect(empty.text()).toContain("No runs in the last week");
   });
 
   it("keeps the select of a filter that is on, so it can be cleared", async () => {
+    using _state = setup();
     state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
     state.runs = resource({ data: { runs: [runRow(), runRow({ id: "unparsed" })] } });
     state.search = { repo: "original-solutions/t3code-factory" };
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     expect(runLinks(page)).toEqual([RUN_ID]);
     await pick("Repo", "All repos");
     expect(runLinks(page).toSorted()).toEqual([RUN_ID, "unparsed"].toSorted());
   });
 
   it("renders everything for an environment or repo that names nothing listed", async () => {
+    using _state = setup();
     twoEnvironments();
     state.search = { environment: "env-9", repo: "nobody/nothing" };
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     expect(statusRows(page)).toHaveLength(2);
     expect(runLinks(page)).toHaveLength(2);
     expect(page.text()).toContain("laptop run ended stuck");
@@ -1032,9 +1089,10 @@ describe("FactoryPage filters", () => {
   });
 
   it("says no runs match when the filters hide every run, and Clear filters shows everything again", async () => {
+    using _state = setup();
     twoEnvironments();
     state.search = { environment: "env-3", repo: "original-solutions/t3code-factory" };
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     expect(runLinks(page)).toHaveLength(0);
     expect(page.text()).toContain("No runs match the filter");
     expect(page.button("Show all runs")).toBeDefined();
@@ -1046,9 +1104,10 @@ describe("FactoryPage filters", () => {
   });
 
   it("has no Environment select with one environment and no Repo select with one repo", async () => {
+    using _state = setup();
     state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
     state.runs = resource({ data: { runs: [runRow(), runRow({ id: "unparsed" })] } });
-    const page = await render(createElement(FactoryPage));
+    await using page = await render(createElement(FactoryPage));
     expect(page.all('[role="combobox"]')).toHaveLength(0);
     await page.unmount();
     twoEnvironments();
@@ -1056,7 +1115,7 @@ describe("FactoryPage filters", () => {
     state.others[0]!.runs = resource({
       data: { runs: [runRow({ id: "original-solutions__t3code-factory__21__1" })] },
     });
-    const both = await render(createElement(FactoryPage));
+    await using both = await render(createElement(FactoryPage));
     expect(
       both.all('[role="combobox"]').map((select) => select.getAttribute("aria-label")),
     ).toEqual(["Environment"]);

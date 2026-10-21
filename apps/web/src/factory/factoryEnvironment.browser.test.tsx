@@ -1,9 +1,10 @@
-import { createElement, act, type ReactNode } from "react";
+import { createElement, type ReactNode } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
+import { act, fakeTimers } from "../../test/render";
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
-import { render, resetDocumentVisible, setDocumentVisible } from "./testing";
+import { render, setDocumentVisible } from "./testing";
 import { __resetFactoryStoresForTests, useFactorySupported } from "./useFactoryData";
 
 // The real hooks and pages over a fake API with one world per environment: which environments the
@@ -23,7 +24,8 @@ vi.mock("~/state/environments", () => ({
     ),
   }),
 }));
-vi.mock("@tanstack/react-router", () => ({
+vi.mock("@tanstack/react-router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-router")>()),
   Link: ({
     to,
     params,
@@ -34,6 +36,9 @@ vi.mock("@tanstack/react-router", () => ({
     children?: ReactNode;
   }) =>
     createElement("a", { "data-to": to, "data-params": JSON.stringify(params ?? {}) }, children),
+  // The page's filters read the URL; these tests open it unfiltered and never change them.
+  useSearch: () => ({}),
+  useNavigate: () => () => Promise.resolve(),
 }));
 
 import { FactoryNavIcon } from "./FactoryNavIcon";
@@ -171,6 +176,7 @@ const linksTo = (page: Page, to: string) =>
     .filter((a) => a.getAttribute("data-to") === to)
     .map((a) => JSON.parse(a.getAttribute("data-params")!) as Record<string, string>);
 
+// What a test showed; its `setup()` unmounts what is left when the test ends.
 let mounted: Page[] = [];
 const show = async (element: Parameters<typeof render>[0]) => {
   const page = await render(element);
@@ -195,10 +201,11 @@ const rowOf = (page: Page, label: string) =>
 const buttonIn = (row: Element, label: string) =>
   Array.from(row.querySelectorAll("button")).find((b) => b.textContent === label)!;
 
-beforeEach(() => {
-  vi.useFakeTimers();
+function setup(): AsyncDisposable {
+  const stack = new AsyncDisposableStack();
+  stack.use(fakeTimers());
   vi.setSystemTime(Date.parse("2026-10-17T12:00:00.000Z"));
-  setDocumentVisible(true);
+  stack.use(setDocumentVisible(true));
   catalog.primary = ENV_1;
   catalog.connected = [ENV_1, ENV_2];
   catalog.labels = new Map([
@@ -214,21 +221,23 @@ beforeEach(() => {
     runs: [runRow(RUN_2, "2026-10-17T11:00:00.000Z")],
   });
   __setFactoryApiForTests(fakeApi);
-});
-
-afterEach(async () => {
-  for (const page of mounted) await page.unmount();
-  mounted = [];
-  __resetFactoryStoresForTests();
-  __setFactoryApiForTests();
-  worlds.clear();
-  for (const list of Object.values(calls)) list.length = 0;
-  resetDocumentVisible();
-  vi.useRealTimers();
-});
+  stack.defer(() => {
+    __resetFactoryStoresForTests();
+    __setFactoryApiForTests();
+    worlds.clear();
+    for (const list of Object.values(calls)) list.length = 0;
+  });
+  stack.defer(async () => {
+    const pages = mounted;
+    mounted = [];
+    for (const page of pages) await page.unmount();
+  });
+  return stack;
+}
 
 describe("the Factory page shows every environment that runs a factory", () => {
   it("lists both factories' runs with their environments, each run linking to its own", async () => {
+    await using _state = setup();
     const page = await show(createElement(FactoryPage));
     expect(page.text()).toContain("original-solutions/t3code-factory");
     expect(page.text()).toContain("acme/widgets");
@@ -248,6 +257,7 @@ describe("the Factory page shows every environment that runs a factory", () => {
   });
 
   it("shows no Environment column when only one environment runs a factory", async () => {
+    await using _state = setup();
     catalog.connected = [ENV_1];
     worlds.delete(ENV_2);
     const page = await show(createElement(FactoryPage));
@@ -256,6 +266,7 @@ describe("the Factory page shows every environment that runs a factory", () => {
   });
 
   it("reads every environment's full list once when asked for all runs", async () => {
+    await using _state = setup();
     const page = await show(createElement(FactoryPage));
     await page.click(page.button("Show all runs")!);
     await settle();
@@ -268,6 +279,7 @@ describe("the Factory page shows every environment that runs a factory", () => {
   });
 
   it("sums the open attention items of both environments on the badge", async () => {
+    await using _state = setup();
     worlds.get(ENV_1)!.status = statusBody("running", {
       attention: [attentionItem("a", "one", "2026-10-17T10:00:00.000Z")],
     });
@@ -282,6 +294,7 @@ describe("the Factory page shows every environment that runs a factory", () => {
   });
 
   it("pauses only the environment whose row was clicked", async () => {
+    await using _state = setup();
     const page = await show(createElement(FactoryPage));
     await page.click(buttonIn(rowOf(page, "Studio"), "Pause claims"));
     expect(calls.pause).toEqual([ENV_2]);
@@ -289,6 +302,7 @@ describe("the Factory page shows every environment that runs a factory", () => {
   });
 
   it("disables only the row whose pause is in flight, and enables it again when that settles", async () => {
+    await using _state = setup();
     let finish!: () => void;
     __setFactoryApiForTests({
       ...fakeApi,
@@ -316,6 +330,7 @@ describe("the Factory page shows every environment that runs a factory", () => {
   });
 
   it("resumes a paused environment and says since when on its row only", async () => {
+    await using _state = setup();
     worlds.get(ENV_2)!.status = statusBody("running", { paused: true });
     const page = await show(createElement(FactoryPage));
     expect(rowOf(page, "Studio").textContent).toContain("Claims paused since 1h");
@@ -326,6 +341,7 @@ describe("the Factory page shows every environment that runs a factory", () => {
   });
 
   it("dismisses an item on its own environment, and Dismiss all splits the ids by environment", async () => {
+    await using _state = setup();
     worlds.get(ENV_1)!.status = statusBody("running", {
       attention: [
         attentionItem("a1", "first one", "2026-10-17T10:00:00.000Z"),
@@ -362,6 +378,7 @@ describe("the Factory page shows every environment that runs a factory", () => {
   });
 
   it("shows no environment label on an attention item when only one environment runs a factory", async () => {
+    await using _state = setup();
     catalog.connected = [ENV_1];
     worlds.delete(ENV_2);
     worlds.get(ENV_1)!.status = statusBody("running", {
@@ -373,6 +390,7 @@ describe("the Factory page shows every environment that runs a factory", () => {
   });
 
   it("dismisses one of two same-id, same-first_seen items on its own environment only", async () => {
+    await using _state = setup();
     worlds.get(ENV_1)!.status = statusBody("running", {
       attention: [attentionItem("same", "on desktop", "2026-10-17T10:00:00.000Z")],
     });
@@ -390,6 +408,7 @@ describe("the Factory page shows every environment that runs a factory", () => {
   });
 
   it("splits Dismiss all by environment, one call each", async () => {
+    await using _state = setup();
     worlds.get(ENV_1)!.status = statusBody("running", {
       attention: [attentionItem("same", "on desktop", "2026-10-17T10:00:00.000Z")],
     });
@@ -409,6 +428,7 @@ describe("the Factory page shows every environment that runs a factory", () => {
   });
 
   it("brings back only the items of the environment whose Dismiss all call failed, and reads every status again", async () => {
+    await using _state = setup();
     worlds.get(ENV_1)!.status = statusBody("running", {
       attention: [
         attentionItem("a1", "first one", "2026-10-17T10:00:00.000Z"),
@@ -442,6 +462,7 @@ describe("the Factory page shows every environment that runs a factory", () => {
   });
 
   it("shows one row per environment: the primary's idle reason, and the second's runs", async () => {
+    await using _state = setup();
     worlds.set(ENV_1, { status: statusBody("idle", { reason: "no repos" }), runs: [] });
     const page = await show(createElement(FactoryPage));
     expect(rowOf(page, "Desktop").textContent).toContain("Idle: no repos");
@@ -450,6 +471,7 @@ describe("the Factory page shows every environment that runs a factory", () => {
   });
 
   it("lists only the second environment when the primary has no factory", async () => {
+    await using _state = setup();
     worlds.delete(ENV_1);
     const page = await show(createElement(FactoryPage));
     expect(page.text()).toContain("acme/widgets");
@@ -460,6 +482,7 @@ describe("the Factory page shows every environment that runs a factory", () => {
   });
 
   it("shows the runs of the others while a candidate has not answered, and reads no runs of it yet", async () => {
+    await using _state = setup();
     worlds.set(ENV_1, { status: statusBody("running"), runs: [], hang: true });
     const page = await show(createElement(FactoryPage));
     expect(page.text()).toContain("acme/widgets");
@@ -473,6 +496,7 @@ describe("the Factory page shows every environment that runs a factory", () => {
   });
 
   it("shows a status that failed on its first read as a notice in its row, and reads no runs for it", async () => {
+    await using _state = setup();
     const statusReads: string[] = [];
     __setFactoryApiForTests({
       ...fakeApi,
@@ -494,6 +518,7 @@ describe("the Factory page shows every environment that runs a factory", () => {
   });
 
   it("names the environment whose runs could not be read, and keeps the rest", async () => {
+    await using _state = setup();
     const runs = fakeApi.runs;
     __setFactoryApiForTests({
       ...fakeApi,
@@ -514,16 +539,19 @@ describe("the sidebar item follows the environments", () => {
   const supported = async () => (await show(createElement(Probe))).text() === "true";
 
   it("stays when the primary has no factory and the second runs one", async () => {
+    await using _state = setup();
     worlds.delete(ENV_1);
     expect(await supported()).toBe(true);
   });
 
   it("is hidden when every candidate answered 404", async () => {
+    await using _state = setup();
     worlds.clear();
     expect(await supported()).toBe(false);
   });
 
   it("stays while a candidate has not answered", async () => {
+    await using _state = setup();
     worlds.delete(ENV_1);
     worlds.set(ENV_2, { status: statusBody("running"), runs: [], hang: true });
     expect(await supported()).toBe(true);
@@ -532,6 +560,7 @@ describe("the sidebar item follows the environments", () => {
 
 describe("the run page follows its environment", () => {
   it("reads, stops and links the thread on the environment it is given, and names it", async () => {
+    await using _state = setup();
     const page = await show(createElement(FactoryRunPage, { environmentId: ENV_2, runId: RUN_2 }));
     expect(calls.runRead.length).toBeGreaterThan(0);
     expect(calls.runRead.every(([env, id]) => env === ENV_2 && id === RUN_2)).toBe(true);

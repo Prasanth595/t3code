@@ -74,19 +74,19 @@ async function renderFooter(element = createElement(UtilityMenu)) {
 describe("FactoryNavIcon", () => {
   it("shows no badge at zero", async () => {
     state.count = 0;
-    const icon = await render(createElement(FactoryNavIcon));
+    await using icon = await render(createElement(FactoryNavIcon));
     expect(icon.text()).toBe("");
   });
 
   it("shows the number of open attention items", async () => {
     state.count = 3;
-    const icon = await render(createElement(FactoryNavIcon));
+    await using icon = await render(createElement(FactoryNavIcon));
     expect(icon.text()).toBe("3");
   });
 
   it("is the same size and colour as the Settings icon beside it", async () => {
     state.count = 0;
-    const footer = await renderFooter();
+    await using footer = await renderFooter();
     const settings = footer.svg("Settings").getBoundingClientRect();
     const factory = footer.svg("Factory").getBoundingClientRect();
     expect(settings.width).toBe(16);
@@ -100,10 +100,10 @@ describe("FactoryNavIcon", () => {
 
   it("takes the same colour as the Settings icon when active", async () => {
     state.count = 0;
-    const rest = await renderFooter(createElement(Footer));
+    await using rest = await renderFooter(createElement(Footer));
     const restColor = getComputedStyle(rest.svg("Settings")).color;
     await rest.unmount();
-    const footer = await renderFooter(createElement(Footer, { active: true }));
+    await using footer = await renderFooter(createElement(Footer, { active: true }));
     const settingsColor = getComputedStyle(footer.svg("Settings")).color;
     expect(settingsColor).not.toBe(restColor);
     expect(getComputedStyle(footer.svg("Factory")).color).toBe(settingsColor);
@@ -111,7 +111,7 @@ describe("FactoryNavIcon", () => {
 
   it.each([1, 12])("shows a count of %i at the icon's top-right, inside the button", async (n) => {
     state.count = n;
-    const footer = await renderFooter();
+    await using footer = await renderFooter();
     expect(footer.button("Factory").textContent).toBe(String(n));
     const badge = footer.button("Factory").querySelector("[data-slot=badge]")!;
     const b = badge.getBoundingClientRect();
@@ -132,10 +132,10 @@ describe("FactoryNavIcon", () => {
       const icon = view.svg("Factory").getBoundingClientRect();
       return { top: b.top - icon.top, right: b.right - icon.right };
     };
-    const footer = await renderFooter();
+    await using footer = await renderFooter();
     const inFooter = offset(footer);
     await footer.unmount();
-    const labelled = await renderFooter(
+    await using labelled = await renderFooter(
       <SidebarProvider>
         <SidebarMenu>
           <SidebarMenuItem>
