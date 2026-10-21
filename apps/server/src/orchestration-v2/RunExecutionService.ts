@@ -1332,6 +1332,35 @@ export const layer: Layer.Layer<
                       finalized
                         ? Effect.void
                         : Ref.get(latestProviderThread).pipe(
+                            Effect.tap((providerThread) =>
+                              Effect.gen(function* () {
+                                const routing = yield* Ref.get(eventRouting);
+                                if (
+                                  Cause.hasInterruptsOnly(cause) ||
+                                  routing.rootProviderTurnId === null ||
+                                  routing.rootTurnEnded
+                                ) {
+                                  return;
+                                }
+                                // A failed event write can leave the provider running.
+                                // Stop it before a failed run permits another message.
+                                yield* input.session
+                                  .interruptTurn({
+                                    providerThread,
+                                    providerTurnId: routing.rootProviderTurnId,
+                                  })
+                                  .pipe(
+                                    Effect.catchCause((interruptCause) =>
+                                      Cause.hasInterruptsOnly(interruptCause)
+                                        ? Effect.failCause(interruptCause)
+                                        : Effect.logWarning(
+                                            "orchestration V2 failed to interrupt turn after ingestion failure",
+                                            { runId: input.run.id, cause: interruptCause },
+                                          ),
+                                    ),
+                                  );
+                              }),
+                            ),
                             Effect.flatMap((providerThread) =>
                               Ref.get(latestTurnItemOrdinal).pipe(
                                 Effect.flatMap((latestItemOrdinal) =>
