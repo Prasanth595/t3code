@@ -451,7 +451,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private var hasDeferredForcedRebuild = false
   private var pendingContentOffset: CGPoint?
   private var needsSelectionReveal = false
-  private var selectionBeforeFocusingTap: NSRange?
+  private var selectionBeforeFocusingTap: (selection: ComposerSelectionPayload, value: String)?
 
   let onComposerChange = EventDispatcher()
   let onComposerSelectionChange = EventDispatcher()
@@ -523,11 +523,11 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   @objc private func openContext(_ recognizer: UITapGestureRecognizer) {
     guard let (index, attachment) = contextAttachment(at: recognizer.location(in: textView)) else {
       textView.becomeFirstResponder()
-      if let selection = selectionBeforeFocusingTap {
+      if let snapshot = selectionBeforeFocusingTap {
         selectionBeforeFocusingTap = nil
         // UIKit places the caret from its own tap recognizer during this same touch.
         DispatchQueue.main.async { [weak self] in
-          self?.restoreSelection(selection)
+          self?.restoreSelection(snapshot.selection, ifValueIs: snapshot.value)
         }
       }
       return
@@ -571,7 +571,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     // The collapsed editor only shows the draft's first line, so a tap that expands an
     // overflowing draft returns to the caret it was left at instead of moving it there.
     let collapsedOverflow = !textView.isFirstResponder && !textView.isScrollEnabled && draftOverflowsBounds()
-    selectionBeforeFocusingTap = collapsedOverflow ? textView.selectedRange : nil
+    selectionBeforeFocusingTap = collapsedOverflow ? (sourceSelection(), value) : nil
     return true
   }
 
@@ -1174,13 +1174,16 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     revealSelectionAfterLayout()
   }
 
-  private func restoreSelection(_ selection: NSRange) {
-    guard textView.isFirstResponder,
-          !NSEqualRanges(selection, textView.selectedRange),
-          NSMaxRange(selection) <= textView.attributedText.length else {
+  private func restoreSelection(_ selection: ComposerSelectionPayload, ifValueIs expectedValue: String) {
+    // A draft that changed during the touch, such as a transcript landing, owns the caret now.
+    guard textView.isFirstResponder, textView.markedTextRange == nil, value == expectedValue else {
       return
     }
-    textView.selectedRange = selection
+    let range = displayRange(for: selection)
+    guard !NSEqualRanges(range, textView.selectedRange) else {
+      return
+    }
+    textView.selectedRange = range
     revealSelectionAfterLayout()
   }
 

@@ -100,9 +100,11 @@ for resizeBeforeProp in [false, true] {
   composer.layoutIfNeeded()
   check(caretIsVisible(editor), "Reveal a caret moved to the end")
 
-  editor.insertText(" typed text")
+  let typedLines = String(repeating: "\nTyped line", count: 12)
+  editor.insertText(typedLines)
   composer.layoutIfNeeded()
-  check(caretIsVisible(editor), "Reveal caret after native insertion")
+  check(editor.text.hasSuffix(typedLines), "Insert typed text at the caret")
+  check(caretIsVisible(editor), "Reveal caret after native insertion past the visible lines")
 
   collapse()
   document(composer, longerDraft + String(repeating: "\nMore dictated text", count: 10))
