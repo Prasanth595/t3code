@@ -1,7 +1,9 @@
 import { RegistryContext } from "@effect/atom-react";
-import { NavigationContainer } from "@react-navigation/native";
+import { NavigationContainer, useNavigation } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import {
+  EnvironmentId,
+  PullRequestActivity,
   ProjectId,
   ProjectIconColor,
   ThreadId,
@@ -29,8 +31,12 @@ import {
   useAppearancePreferences,
 } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadFeed } from "../threads/ThreadFeed";
+import { ExistingThreadSettingsRouteProvider } from "../threads/ThreadSettingsSheet";
 import { ThreadComposer } from "../threads/ThreadComposer";
 import { FileMarkdownPreview } from "../files/FileMarkdownPreview";
+import { pullRequestTimelineRows } from "../pull-requests/PullRequestTimeline";
+import { PullRequestDescription } from "../pull-requests/PullRequestDescription";
+import { PullRequestMarkdownRepository } from "../pull-requests/PullRequestMarkdown";
 import { PullRequestMarkdown } from "../pull-requests/PullRequestMarkdown";
 import { CommandPalette } from "../keyboard/CommandPalette";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
@@ -40,8 +46,10 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useMobileNavigationTheme } from "../../lib/useMobileNavigationTheme";
 import { MOBILE_THEME_IDS } from "../../lib/mobileTheme";
 import { setComposerDraftText, setComposerDraftContext } from "../../state/use-composer-drafts";
-import { makeThreadShellFixture } from "../../test-fixtures";
-import { Rasterizer } from "./rasterizer";
+import { makeRawThreadShell, makeThreadShellFixture } from "../../test-fixtures";
+import { VoiceInputProvider } from "../voice-input/VoiceInputProvider";
+import { ArchiveFixture, HomeFixture, NewTaskFixture } from "./CallerFixtures";
+import { Rasterizer, seedGlyphFailures } from "./rasterizer";
 import {
   ATLAS,
   context,
@@ -65,6 +73,8 @@ import {
 import "../../../global.css";
 
 validateFixtures();
+seedGlyphFailures();
+const decodeActivity = Schema.decodeUnknownSync(PullRequestActivity);
 const decodeRecords = Schema.decodeUnknownSync(Schema.Array(ComposerContextRecord));
 const Stack = createNativeStackNavigator();
 const draftKey = "chip-evidence-static-draft";
@@ -73,12 +83,19 @@ const shell = makeThreadShellFixture({
   id: THREAD_ID,
   title: "Chip contrast fixture",
 });
+const fixtureUpdates = new Map<unknown, () => void>();
 function preload<A>(atom: Atom.Atom<A>, value: A) {
   const node = appAtomRegistry.ensureNode(atom);
+  if (fixtureUpdates.has(atom)) {
+    fixtureUpdates.set(atom, () => node.setInitialValue(value));
+    node.setInitialValue(value);
+    return;
+  }
+  fixtureUpdates.set(atom, () => node.setInitialValue(value));
   node.setInitialValue(value);
   // Async catalog initialization must not replace this fixture with empty remote state.
   appAtomRegistry.subscribe(atom, (next) => {
-    if (next !== value) node.setInitialValue(value);
+    if (next !== value) fixtureUpdates.get(atom)?.();
   });
 }
 preload(
@@ -114,6 +131,10 @@ const projectKinds: ReadonlyArray<{ id: string; title: string; icon?: ProjectIco
   { id: "normal", title: "Mobile app" },
   { id: "punctuation", title: "!!!" },
   { id: "digit", title: "t3code" },
+  { id: "blank", title: "   " },
+  { id: "scratch", title: "Scratch" },
+  { id: "pending", title: "Pending glyph", icon: { kind: "monogram", text: "P", color: "blue" } },
+  { id: "failed", title: "Failed glyph", icon: { kind: "monogram", text: "F", color: "red" } },
 ];
 for (const kind of projectKinds) {
   const project = {
@@ -155,6 +176,44 @@ preload(
   shell,
 );
 
+const remoteEnvironment = EnvironmentId.make("chip-evidence-remote");
+const remoteThreadId = ThreadId.make("remote:linked");
+const remoteProject = {
+  ...projects[0]!,
+  environmentId: remoteEnvironment,
+  id: ProjectId.make("remote-project"),
+  workspaceRoot: "/fixture/remote",
+  title: "Remote project",
+  projectIcon: { kind: "emoji" as const, emoji: "🛰️" },
+};
+const remoteShell = makeThreadShellFixture({
+  environmentId: remoteEnvironment,
+  id: remoteThreadId,
+  projectId: remoteProject.id,
+  title: "Remote original title",
+});
+preload(
+  environmentProjects.projectAtom({
+    environmentId: remoteEnvironment,
+    projectId: remoteProject.id,
+  }),
+  remoteProject,
+);
+preload(
+  environmentThreadShells.threadShellAtom({
+    environmentId: remoteEnvironment,
+    threadId: remoteThreadId,
+  }),
+  remoteShell,
+);
+preload(environmentThreadShells.threadRefsAtom, [
+  { environmentId: ENVIRONMENT_ID, threadId: THREAD_ID },
+  { environmentId: remoteEnvironment, threadId: remoteThreadId },
+  ...projectKinds.map((kind) => ({
+    environmentId: ENVIRONMENT_ID,
+    threadId: ThreadId.make(`linked-${kind.id}`),
+  })),
+]);
 function readRequest(url: string) {
   const query = new URL(url).searchParams;
   const requestedScene = query.get("scene");
@@ -165,14 +224,17 @@ function readRequest(url: string) {
   return { scene, theme, appearance, fontSize } as const;
 }
 function recordsFor(scene: Scene) {
-  if (scene.startsWith("P1") || scene.startsWith("P2")) return [...PR_REVIEWS, REVIEW];
+  if (scene.startsWith("P1") || scene.startsWith("P2") || scene === "C2-pr")
+    return [...PR_REVIEWS, REVIEW];
   if (scene.startsWith("F1"))
     return FILES.slice(scene.endsWith("2") ? 4 : 0, scene.endsWith("2") ? 7 : 4);
   if (scene.startsWith("F2")) return SIZES;
+
   if (scene.startsWith("N1")) return [UNKNOWN];
   return ATLAS.slice(scene.endsWith("2") ? 5 : 0, scene.endsWith("2") ? 10 : 5);
 }
 function FixtureScreen() {
+  const navigation = useNavigation();
   const [request, setRequest] = useState(() => readRequest("t3code-preview://chip-fixture"));
   const [palette, setPalette] = useState(false);
   const { scene, theme, appearance, fontSize } = request;
@@ -219,6 +281,33 @@ function FixtureScreen() {
     themeMode,
     typography.baseFontSize,
   ]);
+  useEffect(() => {
+    if (!scene.startsWith("T5")) return;
+    const updated = {
+      ...remoteShell,
+      title: scene === "T5-renamed" ? "Remote renamed title" : "Remote original title",
+    };
+    preload(
+      environmentThreadShells.threadShellAtom({
+        environmentId: remoteEnvironment,
+        threadId: remoteThreadId,
+      }),
+      updated,
+    );
+    preload(
+      environmentThreadShells.environmentThreadIndexAtom(ENVIRONMENT_ID),
+      new Map([
+        [
+          remoteThreadId,
+          makeRawThreadShell({
+            id: remoteThreadId,
+            projectId: remoteProject.id,
+            title: updated.title,
+          }),
+        ],
+      ]),
+    );
+  }, [scene]);
   let records = recordsFor(scene);
   let text =
     scene.includes("composer") || scene.startsWith("C1")
@@ -229,11 +318,15 @@ function FixtureScreen() {
           )
           .join("\n")
       : markdown(records);
-  const role = scene.includes("assistant") || scene.startsWith("A1") ? "assistant" : "user";
+  const role =
+    scene.includes("assistant") || scene.startsWith("A1") || scene === "P3-streaming"
+      ? "assistant"
+      : "user";
   if (scene === "C1-3") text = "Plain text control\n@src/app.tsx $check.mobile";
   if (scene.startsWith("P3")) text = EXTERNAL;
   if (scene.startsWith("A1"))
     text += "\n\nTry $check.mobile and `src/app.tsx` or [app.tsx](file:///fixture/src/app.tsx).";
+  if (scene.startsWith("F2")) text += "\n\n[No size record](t3-context://v1/file/no-size)";
   if (scene.startsWith("N1"))
     text +=
       "\n\n[Missing image](t3-context://v1/image/missing) [Missing terminal](t3-context://v1/terminal/missing)\n\nPlain control.";
@@ -257,6 +350,18 @@ function FixtureScreen() {
     };
     records = [record];
     text = markdown(records) + `\n\nRaw [${id} thread](t3-thread://v1/${threadId})`;
+    if (scene.startsWith("T5")) {
+      records = [
+        {
+          ...record,
+          environmentId: remoteEnvironment,
+          threadId: remoteThreadId,
+          title: "Remote project",
+          label: "Remote context",
+        },
+      ];
+      text = markdown(records) + "\n\n[Remote alias](t3-thread://v1/remote%3Alinked)";
+    }
   }
   if (scene === "E4" || scene === "E4-empty")
     text = `Prose before [file](file:///fixture/src/app.tsx).\n\n<review_comment sectionId="file:src/app.tsx" sectionTitle="src/app.tsx" filePath="src/app.tsx" startIndex="0" endIndex="0" rangeLabel="L1">\n${scene === "E4-empty" ? "" : REVIEW.text}\n\`\`\`diff\n${REVIEW.diff}\n\`\`\`\n</review_comment>\n\nProse after [terminal](t3-context://v1/terminal/terminal).`;
@@ -267,108 +372,216 @@ function FixtureScreen() {
     setComposerDraftContext(draftKey, draftContext);
     setComposerDraftText(draftKey, composer ? text : "");
   }, [composer, text, recordJson]);
-  const content = scene.startsWith("E3") ? (
-    <View style={{ flex: 1, justifyContent: "flex-end", padding: 12 }}>
-      <PendingUserInputCard
-        canOperateThread
-        pendingUserInput={{
-          requestId: RuntimeRequestId.make("fixture-question"),
-          createdAt: FIXED_TIME,
-          questions: [
-            {
-              id: "choice",
-              header: "Fixture choice",
-              question: PREVIEW,
-              options: [
-                { label: "Keep", description: "Keep current behavior" },
-                { label: "Change", description: "Use the requested behavior" },
-              ],
-              multiSelect: false,
-            },
-          ],
-          responseCapability: "live",
-          dismissible: true,
-        }}
-        maxHeight={600}
-        collapsed={scene === "E3-collapsed"}
-        onToggleCollapsed={() =>
-          setRequest({
-            ...request,
-            scene: scene === "E3-collapsed" ? "E3-expanded" : "E3-collapsed",
-          })
-        }
-        drafts={{}}
-        answers={null}
-        respondingUserInputId={null}
-        onSelectOption={() => {}}
-        onChangeCustomAnswer={() => {}}
-        onSubmit={async () => {}}
-        onDismiss={async () => {}}
+  const content =
+    scene === "G3-home" ? (
+      <HomeFixture projects={projects} thread={shell} />
+    ) : scene === "G3-archive" ? (
+      <ArchiveFixture projects={projects} thread={shell} />
+    ) : scene === "G3-new-task" || scene.startsWith("C2") ? (
+      <NewTaskFixture
+        picker={scene === "G3-new-task"}
+        project={projects[0]!}
+        text={text}
+        records={records}
       />
-    </View>
-  ) : scene === "E1" ? (
-    <FileMarkdownPreview
-      environmentId={ENVIRONMENT_ID}
-      threadId={THREAD_ID}
-      cwd="/fixture"
-      relativePath="README.md"
-      markdown={PREVIEW}
-      captured
-    />
-  ) : scene === "E2" ? (
-    <ScrollView contentContainerStyle={{ padding: 16 }}>
-      <PullRequestMarkdown markdown={PREVIEW} />
-    </ScrollView>
-  ) : scene === "G1" ? (
-    <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
-      {projects.map((project) => (
-        <View key={project.id} style={{ flexDirection: "row", gap: 12, alignItems: "center" }}>
-          <ProjectFavicon
-            environmentId={ENVIRONMENT_ID}
-            projectTitle={project.title}
-            projectIcon={project.projectIcon}
-            size={20}
-          />
-          <ProjectFavicon
-            environmentId={ENVIRONMENT_ID}
-            projectTitle={project.title}
-            projectIcon={project.projectIcon}
-            size={42}
-          />
-          <Text style={{ color: colors["--color-foreground"] }}>{project.title}</Text>
-        </View>
-      ))}
-    </ScrollView>
-  ) : (
-    <ThreadFeed
-      key={scene}
-      environmentId={ENVIRONMENT_ID}
-      threadId={THREAD_ID}
-      threadTitle="Chip contrast fixture"
-      workspaceRoot="/fixture"
-      queuedMessages={[]}
-      dispatchingMessageId={null}
-      onEditPendingMessage={null}
-      feed={
-        composer
-          ? []
-          : feed(text, role, role === "user" ? records : undefined, scene === "P3-streaming")
-      }
-      contentPresentation={{ kind: "ready" }}
-      agentLabel="Fixture agent"
-      latestRun={null}
-      activeWorkStartedAt={null}
-      listRef={listRef}
-      freeze={freeze}
-      anchorMessageId={null}
-      submittedMessageId={null}
-      contentInsetEndAdjustment={endAdjustment}
-      keyboardOffset={0}
-      contentTopInset={12}
-      contentBottomInset={12}
-      skills={SKILLS}
-    />
-  );
+    ) : scene.startsWith("E3") ? (
+      <View style={{ flex: 1, justifyContent: "flex-end", padding: 12 }}>
+        <PendingUserInputCard
+          canOperateThread
+          pendingUserInput={{
+            requestId: RuntimeRequestId.make("fixture-question"),
+            createdAt: FIXED_TIME,
+            questions: [
+              {
+                id: "choice",
+                header: "Fixture choice",
+                question: PREVIEW,
+                options: [
+                  { label: "Keep", description: "Keep current behavior" },
+                  { label: "Change", description: "Use the requested behavior" },
+                ],
+                multiSelect: false,
+              },
+            ],
+            responseCapability: "live",
+            dismissible: true,
+          }}
+          maxHeight={600}
+          collapsed={scene === "E3-collapsed"}
+          onToggleCollapsed={() =>
+            setRequest({
+              ...request,
+              scene: scene === "E3-collapsed" ? "E3-expanded" : "E3-collapsed",
+            })
+          }
+          drafts={{}}
+          answers={null}
+          respondingUserInputId={null}
+          onSelectOption={() => {}}
+          onChangeCustomAnswer={() => {}}
+          onSubmit={async () => {}}
+          onDismiss={async () => {}}
+        />
+      </View>
+    ) : scene === "E1" ? (
+      <FileMarkdownPreview
+        environmentId={ENVIRONMENT_ID}
+        threadId={THREAD_ID}
+        cwd="/fixture"
+        relativePath="README.md"
+        markdown={PREVIEW}
+        captured
+      />
+    ) : scene.startsWith("E2") ? (
+      <ScrollView className="bg-screen" contentContainerStyle={{ padding: 16 }}>
+        <PullRequestMarkdownRepository
+          value="fixture/repo"
+          params={{
+            environmentId: ENVIRONMENT_ID,
+            projectId: projects[0]!.id,
+            repository: "fixture/repo",
+            number: 42,
+          }}
+        >
+          {scene === "E2-timeline" ? (
+            pullRequestTimelineRows(
+              decodeActivity({
+                comments: [
+                  {
+                    id: "fixture-comment",
+                    kind: "issue-comment",
+                    author: null,
+                    body: Array(5).fill(PREVIEW).join("\n\n"),
+                    createdAt: FIXED_TIME,
+                    url: null,
+                    path: null,
+                    reviewState: null,
+                  },
+                ],
+                commentCount: 1,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+              }),
+              {
+                environmentId: ENVIRONMENT_ID,
+                projectId: projects[0]!.id,
+                repository: "fixture/repo",
+                number: 42,
+              },
+              navigation,
+            ).map((row) => <View key={row.key}>{row.content}</View>)
+          ) : scene === "E2-description" ? (
+            <PullRequestDescription
+              markdown={Array(5).fill(PREVIEW).join("\n\n")}
+              expanded={false}
+              onCollapse={() => {}}
+              onExpandedChange={() => {}}
+            />
+          ) : (
+            <View
+              className={scene === "E2-grouped" ? "bg-grouped-card p-3 rounded-xl" : "bg-screen"}
+              style={scene === "E2-note" ? { marginLeft: 40 } : undefined}
+            >
+              <PullRequestMarkdown
+                markdown={
+                  PREVIEW +
+                  "\n\n[Repository file](src/app.tsx)\n\n[A long wrapping chip label whose suffix remains visible](file:///fixture/src/a-very-long-name.tsx)"
+                }
+              />
+            </View>
+          )}
+        </PullRequestMarkdownRepository>
+      </ScrollView>
+    ) : scene === "G3-sizes" ? (
+      <ScrollView className="bg-screen" contentContainerStyle={{ padding: 12, gap: 12 }}>
+        {[15, 18, 20, 24, 48].map((size) => (
+          <View key={size} className="bg-grouped-card p-3" style={{ gap: 8 }}>
+            <Text style={{ color: colors["--color-foreground"] }}>
+              Caller size {size} / normal and 0.4 opacity
+            </Text>
+            {[1, 0.4].map((opacity) => (
+              <View key={opacity} style={{ opacity, flexDirection: "row", gap: 12 }}>
+                {projectKinds.slice(0, 4).map((kind) => (
+                  <ProjectFavicon
+                    key={kind.id}
+                    environmentId={ENVIRONMENT_ID}
+                    projectTitle={kind.title}
+                    workspaceRoot={`/fixture/${kind.id}`}
+                    projectIcon={kind.icon}
+                    size={size}
+                  />
+                ))}
+              </View>
+            ))}
+          </View>
+        ))}
+      </ScrollView>
+    ) : scene === "G1" ? (
+      <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
+        {projects.map((project) => (
+          <View key={project.id} style={{ flexDirection: "row", gap: 12, alignItems: "center" }}>
+            <ProjectFavicon
+              environmentId={ENVIRONMENT_ID}
+              projectTitle={project.title}
+              projectIcon={project.projectIcon}
+              size={20}
+            />
+            <ProjectFavicon
+              environmentId={ENVIRONMENT_ID}
+              projectTitle={project.title}
+              projectIcon={project.projectIcon}
+              size={42}
+            />
+            <Text style={{ color: colors["--color-foreground"] }}>{project.title}</Text>
+          </View>
+        ))}
+      </ScrollView>
+    ) : (
+      <ThreadFeed
+        key={scene}
+        environmentId={ENVIRONMENT_ID}
+        threadId={THREAD_ID}
+        threadTitle="Chip contrast fixture"
+        workspaceRoot="/fixture"
+        queuedMessages={[]}
+        dispatchingMessageId={null}
+        onEditPendingMessage={null}
+        feed={
+          composer
+            ? []
+            : [
+                ...feed(
+                  text,
+                  role,
+                  role === "user" ? records : undefined,
+                  scene === "P3-streaming",
+                ),
+                ...(scene.startsWith("T")
+                  ? feed(
+                      scene.startsWith("T5")
+                        ? "Assistant [remote alias](t3-thread://v1/remote%3Alinked)"
+                        : `Assistant [linked thread](t3-thread://v1/linked-${scene === "T1" ? "favicon" : scene.replace(/^T[234]-/, "")})`,
+                      "assistant",
+                    )
+                  : []),
+              ]
+        }
+        contentPresentation={{ kind: "ready" }}
+        agentLabel="Fixture agent"
+        latestRun={null}
+        activeWorkStartedAt={null}
+        listRef={listRef}
+        freeze={freeze}
+        anchorMessageId={null}
+        submittedMessageId={null}
+        contentInsetEndAdjustment={endAdjustment}
+        keyboardOffset={0}
+        contentTopInset={12}
+        contentBottomInset={12}
+        skills={SKILLS}
+      />
+    );
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors["--color-thread-canvas"] }}>
       <StatusBar barStyle={appearance === "dark" ? "light-content" : "dark-content"} />
@@ -454,7 +667,7 @@ function FixtureScreen() {
           onUpdateInteractionMode={() => {}}
         />
       ) : null}
-      {palette ? (
+      {palette || scene === "K1" || scene.startsWith("K2") ? (
         <CommandPalette pathname="/" onClose={() => setPalette(false)} onCommand={() => {}} />
       ) : null}
       <Rasterizer />
@@ -480,9 +693,13 @@ export default function ChipEvidenceApp() {
         <GestureHandlerRootView style={{ flex: 1 }}>
           <KeyboardProvider>
             <SafeAreaProvider>
-              <NativeLayoutMetricsProvider>
-                <FixtureNavigation />
-              </NativeLayoutMetricsProvider>
+              <VoiceInputProvider>
+                <NativeLayoutMetricsProvider>
+                  <ExistingThreadSettingsRouteProvider>
+                    <FixtureNavigation />
+                  </ExistingThreadSettingsRouteProvider>
+                </NativeLayoutMetricsProvider>
+              </VoiceInputProvider>
             </SafeAreaProvider>
           </KeyboardProvider>
         </GestureHandlerRootView>

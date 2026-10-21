@@ -28,7 +28,7 @@ repository root:
 node apps/mobile/scripts/chip-evidence-snapshot.mjs <baseline-sha> /tmp/chip-before
 ```
 
-This extracts the committed source and copies only the fixture, its entry-point
+This extracts the committed source and overlays committed fixture files with `git archive HEAD --` for only the fixture, its entry-point
 switch, EAS profile and snapshot script. A no-op adapter replaces the rasterizer
 on source revisions that predate it. `chip-evidence-source.json` records source
 and fixture revisions. No other baseline production source changes. Build the

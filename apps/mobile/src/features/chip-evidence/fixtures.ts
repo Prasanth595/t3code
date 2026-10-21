@@ -174,10 +174,10 @@ export function feed(
   return [
     {
       type: "message",
-      id: "fixture-message",
+      id: `fixture-${role}`,
       createdAt: FIXED_TIME,
       message: {
-        id: MessageId.make("fixture-message"),
+        id: MessageId.make(`fixture-${role}`),
         role,
         text,
         attachments: [],
@@ -224,6 +224,10 @@ export const SCENES = [
   "N1-composer",
   "E1",
   "E2",
+  "E2-grouped",
+  "E2-note",
+  "E2-description",
+  "E2-timeline",
   "E4",
   "E4-empty",
   "E3-expanded",
@@ -240,8 +244,22 @@ export const SCENES = [
   "T3-punctuation",
   "T3-digit",
   "T4-missing",
+  "T4-blank",
+  "T4-scratch",
+  "T4-pending",
+  "T4-failed",
+  "T5-before",
+  "T5-renamed",
   "G1",
   "K1",
+  "K2",
+  "G3-sizes",
+  "G3-home",
+  "G3-archive",
+  "G3-new-task",
+  "C2-1",
+  "C2-2",
+  "C2-pr",
 ] as const;
 export type Scene = (typeof SCENES)[number];
 export function validateFixtures() {

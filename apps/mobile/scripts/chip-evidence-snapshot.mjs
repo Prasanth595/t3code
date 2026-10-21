@@ -23,34 +23,39 @@ const extracted = NodeChildProcess.spawnSync("tar", ["-x", "-C", destination], {
 if (extracted.status !== 0) throw new Error(extracted.stderr.toString());
 // The exact same fixture is overlaid onto both revisions; only this adapter differs
 // because main predates the inherited native project glyph rasterizer.
-for (const path of [
-  "apps/mobile/src/features/chip-evidence",
-  "apps/mobile/index.ts",
-  "apps/mobile/eas.json",
-  "apps/mobile/scripts/chip-evidence-snapshot.mjs",
-]) {
-  NodeFS.cpSync(NodePath.resolve(root, path), NodePath.resolve(destination, path), {
-    recursive: true,
-  });
-}
+const fixtureSha = NodeChildProcess.execFileSync("git", ["rev-parse", "HEAD"], {
+  cwd: root,
+  encoding: "utf8",
+}).trim();
+const overlay = NodeChildProcess.execFileSync(
+  "git",
+  [
+    "archive",
+    fixtureSha,
+    "--",
+    "apps/mobile/src/features/chip-evidence",
+    "apps/mobile/index.ts",
+    "apps/mobile/eas.json",
+    "apps/mobile/scripts/chip-evidence-snapshot.mjs",
+  ],
+  { cwd: root, maxBuffer: 32 * 1024 * 1024 },
+);
+const overlaid = NodeChildProcess.spawnSync("tar", ["-x", "-C", destination], { input: overlay });
+if (overlaid.status !== 0) throw new Error(overlaid.stderr.toString());
 const hasRasterizer = NodeFS.existsSync(
   NodePath.resolve(destination, "apps/mobile/src/native/ProjectChipIconImages.tsx"),
 );
-NodeFS.writeFileSync(
-  NodePath.resolve(destination, "apps/mobile/src/features/chip-evidence/rasterizer.tsx"),
-  hasRasterizer
-    ? 'export { ProjectChipIconRasterizer as Rasterizer } from "../../native/ProjectChipIconImages";\n'
-    : "export function Rasterizer() { return null; }\n",
-);
+if (!hasRasterizer)
+  NodeFS.writeFileSync(
+    NodePath.resolve(destination, "apps/mobile/src/features/chip-evidence/rasterizer.tsx"),
+    "export function Rasterizer() { return null; }\nexport function seedGlyphFailures() {}\n",
+  );
 NodeFS.writeFileSync(
   NodePath.resolve(destination, "chip-evidence-source.json"),
   JSON.stringify(
     {
       sourceSha: sha,
-      fixtureSha: NodeChildProcess.execFileSync("git", ["rev-parse", "HEAD"], {
-        cwd: root,
-        encoding: "utf8",
-      }).trim(),
+      fixtureSha,
       hasRasterizer,
     },
     null,
