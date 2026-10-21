@@ -643,9 +643,10 @@ const threadShowCommand = Command.make("show", {
         flags,
         Effect.fn("cli.thread.show")(function* (tools) {
           const { thread, items } = yield* readTimeline(tools, threadId, "messages");
-          const latest = items
-            .filter((item) => item.type === "user_message" || item.type === "assistant_message")
-            .slice(-Math.max(0, flags.messages));
+          const conversation = items.filter(
+            (item) => item.type === "user_message" || item.type === "assistant_message",
+          );
+          const latest = conversation.slice(Math.max(0, conversation.length - flags.messages));
           const messages = yield* Effect.forEach(latest, (item) =>
             readFullText(tools, threadId, item).pipe(
               Effect.map((text) => ({

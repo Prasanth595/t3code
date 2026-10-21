@@ -4,6 +4,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   type Project as ProjectRecord,
+  type ModelSelection,
   type RuntimeMode,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -31,6 +32,8 @@ import { ProjectToolkit } from "./tools.ts";
 const clientLaunchHarness = (input: {
   readonly runtimeModeCeiling: RuntimeMode;
   readonly defaultRuntimeMode?: RuntimeMode;
+  /** Where Settings saves a project's model; the legacy project field stays null. */
+  readonly overrideModel?: ModelSelection;
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly workspaceRoot?: string;
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
@@ -41,11 +44,19 @@ const clientLaunchHarness = (input: {
     model: "claude-opus",
   };
   const layerDependencies = Layer.mergeAll(
-    ServerSettings.layerTest(
-      input.defaultRuntimeMode === undefined
+    ServerSettings.layerTest({
+      ...(input.defaultRuntimeMode === undefined
         ? {}
-        : { defaultRuntimeMode: input.defaultRuntimeMode },
-    ),
+        : { defaultRuntimeMode: input.defaultRuntimeMode }),
+      ...(input.overrideModel === undefined
+        ? {}
+        : {
+            projectSettingsFolded: true,
+            projectSettingsOverrides: {
+              [projectId]: { defaultModelSelection: input.overrideModel },
+            },
+          }),
+    }),
     NodeCrypto.layer,
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
       environmentId: EnvironmentId.make("environment"),
@@ -85,7 +96,7 @@ const clientLaunchHarness = (input: {
             ? Option.some({
                 id,
                 workspaceRoot: input.workspaceRoot ?? "/projects/client-target",
-                defaultModelSelection: modelSelection,
+                defaultModelSelection: input.overrideModel === undefined ? modelSelection : null,
               } as unknown as ProjectRecord)
             : Option.none(),
         ),
@@ -117,13 +128,16 @@ it.effect(
           readonly message?: string;
           readonly runtimeMode?: RuntimeMode;
           readonly targeted?: false;
+          readonly overrideModel?: ModelSelection;
         },
       ) {
+        const { targeted, overrideModel, ...input } = params;
         const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
         const { projectId, modelSelection, dependencies } = clientLaunchHarness({
           runtimeModeCeiling,
           defaultRuntimeMode,
           launched,
+          ...(overrideModel === undefined ? {} : { overrideModel }),
         });
         const toolkit = yield* ProjectToolkit.pipe(
           Effect.provide(
@@ -132,7 +146,6 @@ it.effect(
             ),
           ),
         );
-        const { targeted, ...input } = params;
         const result = yield* toolkit
           .handle("t3_thread_launch", targeted === false ? input : { ...input, projectId })
           .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
@@ -171,6 +184,16 @@ it.effect(
         targeted: false,
       });
       expect(untargeted.result).toMatchObject({ code: "target_required" });
+
+      const overrideModel = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-settings",
+      };
+      const fromSettings = yield* launchWith("full-access", "full-access", {
+        title: "Fix",
+        overrideModel,
+      });
+      expect(fromSettings.launched[0]?.modelSelection).toEqual(overrideModel);
     }),
 );
 

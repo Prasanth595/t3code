@@ -125,10 +125,26 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 }),
             ),
           );
+        // A caller outside a thread has nothing to inherit, so it starts with the
+        // project's effective defaults, as the composer does. Its mode stays
+        // within the ceiling it was approved with.
+        const projectDefaults =
+          caller === undefined
+            ? yield* ServerSettings.ServerSettingsService.pipe(
+                Effect.flatMap((settings) => settings.getSettings),
+                Effect.mapError(unavailable),
+                Effect.flatMap((settings) =>
+                  Effect.map(
+                    readProject,
+                    (project) => resolveProjectSettings(settings, projectId, project).settings,
+                  ),
+                ),
+              )
+            : undefined;
         const modelSelection =
           input.modelSelection ??
           caller?.modelSelection ??
-          (yield* readProject)?.defaultModelSelection ??
+          projectDefaults?.defaultModelSelection ??
           undefined;
         if (modelSelection === undefined)
           return yield* new OrchestratorMcpFailure({
@@ -136,26 +152,10 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message:
               "Pass modelSelection: the project has no default model. orchestrator_capabilities lists providers and models.",
           });
-        // A caller outside a thread has only its approved ceiling to inherit, so
-        // it starts at the project's default mode, as the composer does.
         const startedRuntimeMode =
-          caller === undefined && input.runtimeMode === undefined
-            ? yield* ServerSettings.ServerSettingsService.pipe(
-                Effect.flatMap((settings) => settings.getSettings),
-                Effect.mapError(unavailable),
-                Effect.flatMap((settings) =>
-                  Effect.map(
-                    readProject,
-                    (project) =>
-                      resolveProjectSettings(settings, projectId, project).settings
-                        .defaultRuntimeMode,
-                  ),
-                ),
-                Effect.flatMap((projectDefault) =>
-                  resolveRuntimeMode(runtimeMode, projectDefault).pipe(
-                    Effect.orElseSucceed(() => runtimeMode),
-                  ),
-                ),
+          projectDefaults !== undefined && input.runtimeMode === undefined
+            ? yield* resolveRuntimeMode(runtimeMode, projectDefaults.defaultRuntimeMode).pipe(
+                Effect.orElseSucceed(() => runtimeMode),
               )
             : runtimeMode;
         const result = yield* ThreadMessageIntake.launchThread({
