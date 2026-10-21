@@ -9310,8 +9310,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     context.openedPermissionMode =
                       message.permissionMode ?? context.openedPermissionMode;
                     context.receivedInit = true;
+                    // Launch arguments can open the query below the policy's bypass on purpose.
                     restoreBypass =
                       queryPolicy.permissionMode === "bypassPermissions" &&
+                      queryOptions.permissionMode === "bypassPermissions" &&
                       context.openedPermissionMode !== "bypassPermissions";
                   }
                   if (

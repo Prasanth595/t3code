@@ -2958,6 +2958,63 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
     );
+
+    // regression: #22888 review; an explicit `--permission-mode` is the user's approval choice
+    it.effect("does not force bypass when launch arguments open the query in default", () =>
+      Effect.gen(function* () {
+        const { harness, start, reportDefault, finish } = yield* openFullAccessQueryOpenedInDefault(
+          {
+            settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs: "--permission-mode default" },
+          },
+        );
+        yield* start;
+        const opened = harness.getOpenedOptions()!;
+        assert.equal(opened.permissionMode, "default");
+        assert.equal(opened.allowDangerouslySkipPermissions, true, "Settings policy allows bypass");
+        yield* reportDefault;
+        yield* finish;
+        yield* start;
+        yield* finish;
+        assert.deepEqual(harness.permissionModeChanges, []);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
+    // the launch argument asks for bypass, but settings disable it: still nothing to force
+    it.effect(
+      "does not force bypass when launch arguments ask for it and settings disable it",
+      () =>
+        Effect.gen(function* () {
+          vi.mocked(ClaudeSdk.resolveSettings).mockResolvedValue({
+            effective: { permissions: { disableBypassPermissionsMode: "disable" } },
+            provenance: {},
+            sources: [],
+          });
+          const { harness, start, reportDefault, finish } =
+            yield* openFullAccessQueryOpenedInDefault({
+              settings: {
+                ...DEFAULT_CLAUDE_SETTINGS,
+                launchArgs: "--permission-mode bypassPermissions",
+              },
+            });
+          yield* start;
+          const opened = harness.getOpenedOptions()!;
+          assert.equal(opened.permissionMode, "bypassPermissions");
+          assert.isUndefined(opened.allowDangerouslySkipPermissions);
+          yield* reportDefault;
+          yield* finish;
+          yield* start;
+          yield* finish;
+          assert.deepEqual(harness.permissionModeChanges, []);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
   });
 
   describe("Plan-mode tool approval", () => {
