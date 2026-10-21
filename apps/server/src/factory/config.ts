@@ -56,7 +56,10 @@ const DEFAULT_REGATES = 5;
 const DEFAULT_INTERRUPTION_RESUMES = 2;
 export const DEFAULT_POLL_SECONDS = 60;
 export const DEFAULT_MAX_CONCURRENT_GATES = 2;
-/** Installed versions autodeploy.sh keeps besides `current`; it reads the key itself. */
+/**
+ * Installed versions autodeploy.sh keeps besides `current`. The script reads the key itself and
+ * has its own copy of this default in `prune_versions`; change both together.
+ */
 const DEFAULT_KEEP_VERSIONS = 3;
 
 /** What a repo's runs are timed by when none of its project configs has loaded. */

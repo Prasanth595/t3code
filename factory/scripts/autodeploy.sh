@@ -187,13 +187,16 @@ build() {
 # whenever keep_versions is at least 1; the rest go by install time, the directory's mtime, which
 # install.sh's unpack into a fresh directory sets. Prints a line per directory it deletes.
 prune_versions() {
-  local keep=3 line current previous name kept=0
+  local keep=3 current previous name kept=0
   local -a order=()
-  line=$(grep -E '^keep_versions:' "$machine_config" 2> /dev/null || true)
-  if [[ -n $line ]]; then
-    keep=$(sed -E 's/^keep_versions:[[:space:]]*([0-9]+)[[:space:]]*(#.*)?$/\1/' <<< "$line")
+  # The server reads the file as YAML, which accepts forms this does not (a quoted or spaced key,
+  # a BOM). Any uncommented mention of the key that is not one plain `keep_versions: <n>` line
+  # stops the prune rather than falling back to the default. Nine digits at most keeps n inside
+  # bash's integer range.
+  if grep -qE '^[^#]*keep_versions' "$machine_config" 2> /dev/null; then
+    keep=$(sed -nE 's/^keep_versions:[[:space:]]*([0-9]{1,9})[[:space:]]*(#.*)?$/\1/p' "$machine_config")
     if [[ ! $keep =~ ^[0-9]+$ ]]; then
-      say "not pruning versions: keep_versions in $machine_config is not a whole number"
+      say "not pruning versions: cannot read keep_versions in $machine_config as one whole number up to 999999999"
       return 0
     fi
   fi
