@@ -15,6 +15,7 @@ import {
   GripVerticalIcon,
   ListOrderedIcon,
   PencilIcon,
+  SendHorizontalIcon,
 } from "lucide-react";
 import { useId, useImperativeHandle, useRef, useState, type Ref } from "react";
 
@@ -83,6 +84,7 @@ export function QueuedRunsControl({
   const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun);
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
+  const resumeQueue = useAtomCommand(threadEnvironment.resumeThreadQueue);
   const [expanded, setExpanded] = useState(true);
   const queueListId = useId();
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
@@ -107,6 +109,10 @@ export function QueuedRunsControl({
   const queued = workflow?.queuedRuns ?? [];
   const activeRun = workflow?.activeRun ?? null;
   const canReorder = workflow?.canReorder === true;
+  const isHeld = workflow?.isHeld === true;
+  // Stop holds the queue and leaves no turn to steer, so a held row is sent
+  // by moving it to the front and releasing the queue.
+  const canSendHeld = isHeld && activeRun === null;
   const queuedImageUrlById = new Map(
     queuedImageAttachmentUrls.flatMap((url, index) => {
       const resource = queuedImageAttachmentResources[index];
@@ -182,10 +188,37 @@ export function QueuedRunsControl({
     setBusyRunId(null);
   };
 
+  const sendHeld = async (queuedRunId: RunId) => {
+    if (!canSendHeld || steerInFlightRef.current) return;
+    steerInFlightRef.current = true;
+    setBusyRunId(queuedRunId);
+    const firstRunId = queued[0]?.run.id;
+    const reordered =
+      firstRunId === undefined || firstRunId === queuedRunId
+        ? null
+        : await reorder({
+            environmentId: props.environmentId,
+            input: { threadId: props.threadId, runId: queuedRunId, beforeRunId: firstRunId },
+          });
+    if (reordered?._tag !== "Failure") {
+      await resumeQueue({
+        environmentId: props.environmentId,
+        input: { threadId: props.threadId },
+      });
+    }
+    steerInFlightRef.current = false;
+    setBusyRunId(null);
+  };
+
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
       const next = queued[0];
-      if (!next || !workflow?.canPromoteToSteer) return false;
+      if (!next) return false;
+      if (canSendHeld) {
+        if (!repeat && busyRunId === null) void sendHeld(next.run.id);
+        return true;
+      }
+      if (!workflow?.canPromoteToSteer) return false;
       if (!repeat && busyRunId === null) void steer(next.run.id);
       return true;
     },
@@ -238,7 +271,15 @@ export function QueuedRunsControl({
           <ComposerBanner.Icon>
             <ListOrderedIcon />
           </ComposerBanner.Icon>
-          <ComposerBanner.Content className="text-muted-foreground">Queued</ComposerBanner.Content>
+          <ComposerBanner.Content className="text-muted-foreground">
+            Queued
+            {isHeld ? (
+              <>
+                <ComposerBanner.Separator />
+                Held
+              </>
+            ) : null}
+          </ComposerBanner.Content>
           <ComposerBanner.Actions>
             <ComposerBanner.Count>{items.length}</ComposerBanner.Count>
             <ComposerBanner.ToggleIcon expanded={expanded} />
@@ -419,32 +460,59 @@ export function QueuedRunsControl({
                             {`Edit in the composer${item.serverIndex === queued.length - 1 && props.editShortcutLabel ? ` (${props.editShortcutLabel})` : ""}`}
                           </TooltipPopup>
                         </Tooltip>
-                        <Tooltip>
-                          <TooltipTrigger render={<span className="flex shrink-0" />}>
-                            <Button
-                              size="xs"
-                              variant="ghost-muted"
-                              disabled={
-                                item.runId === null ||
-                                busyRunId !== null ||
-                                !workflow?.canPromoteToSteer
-                              }
-                              onClick={() => {
-                                if (item.runId !== null) {
-                                  void steer(item.runId);
+                        {canSendHeld ? (
+                          <Tooltip>
+                            <TooltipTrigger render={<span className="flex shrink-0" />}>
+                              <Button
+                                size="xs"
+                                variant="ghost-muted"
+                                disabled={
+                                  item.runId === null ||
+                                  busyRunId !== null ||
+                                  (item.serverIndex !== 0 && !canReorder)
                                 }
-                              }}
-                            >
-                              <CornerUpRightIcon />
-                              Steer
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipPopup>
-                            {activeRun === null
-                              ? "There is no active run to steer"
-                              : `Send as a steer instead${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
-                          </TooltipPopup>
-                        </Tooltip>
+                                onClick={() => {
+                                  if (item.runId !== null) {
+                                    void sendHeld(item.runId);
+                                  }
+                                }}
+                              >
+                                <SendHorizontalIcon />
+                                Send
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipPopup>
+                              {`Send now and resume the queue${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
+                            </TooltipPopup>
+                          </Tooltip>
+                        ) : (
+                          <Tooltip>
+                            <TooltipTrigger render={<span className="flex shrink-0" />}>
+                              <Button
+                                size="xs"
+                                variant="ghost-muted"
+                                disabled={
+                                  item.runId === null ||
+                                  busyRunId !== null ||
+                                  !workflow?.canPromoteToSteer
+                                }
+                                onClick={() => {
+                                  if (item.runId !== null) {
+                                    void steer(item.runId);
+                                  }
+                                }}
+                              >
+                                <CornerUpRightIcon />
+                                Steer
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipPopup>
+                              {activeRun === null
+                                ? "There is no active run to steer"
+                                : `Send as a steer instead${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
+                            </TooltipPopup>
+                          </Tooltip>
+                        )}
                         <Tooltip>
                           <TooltipTrigger
                             render={
