@@ -45,8 +45,7 @@
     "measure-renders": "node scripts/measure-renders.mts",
     "generate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/generate-uniwind-themes.mts",
     "test": "vp test run --project unit --project react",
-    "typecheck": "tsc-rs --noEmit",
-    "eas-build-post-install": "node scripts/chip-evidence-native-build.mjs"
+    "typecheck": "tsc-rs --noEmit"
   },
   "dependencies": {
     "@clerk/expo": "catalog:",

@@ -15,9 +15,4 @@ if (process.env.EXPO_PUBLIC_SHOWCASE === "1") {
   LogBox.ignoreAllLogs();
 }
 
-const Root =
-  process.env.EXPO_PUBLIC_CHIP_EVIDENCE === "1"
-    ? require("./src/features/chip-evidence/ChipEvidenceApp").default
-    : App;
-
-registerRootComponent(Root);
+registerRootComponent(App);
