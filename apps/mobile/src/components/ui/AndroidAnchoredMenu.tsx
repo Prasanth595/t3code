@@ -6,6 +6,7 @@ import { BackHandler, Pressable, ScrollView, View } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
 import Animated, { FadeIn } from "react-native-reanimated";
 
+import type { VerticalHinge } from "../../lib/layout";
 import { deriveMenuHorizontalPlacement } from "../../lib/menu-placement";
 import { WindowHingeContext } from "../../native/window-hinge-context";
 import { OverlayPortal } from "./OverlayPortal";
@@ -17,12 +18,14 @@ const ANCHOR_GAP = 6;
 
 // Both snapshots are taken at open time so later reflows (keyboard show/hide,
 // screen transitions) can't flip an opens-up menu to opens-down
-// mid-presentation.
+// mid-presentation. The anchor is re-measured when the hinge changes, since a
+// hinge resize moves it with its pane.
 type AnchorSnapshot = {
   readonly x: number;
   readonly y: number;
   readonly width: number;
   readonly height: number;
+  readonly hinge: VerticalHinge | null;
   readonly keyboardWasVisible: boolean;
 };
 
@@ -63,9 +66,18 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
 
   const open = useCallback(() => {
     anchorRef.current?.measureInWindow((x, y, width, height) => {
-      setAnchor({ x, y, width, height, keyboardWasVisible: keyboardVisible });
+      setAnchor({ x, y, width, height, hinge: windowHinge, keyboardWasVisible: keyboardVisible });
     });
-  }, [keyboardVisible]);
+  }, [keyboardVisible, windowHinge]);
+
+  useEffect(() => {
+    if (anchor === null || anchor.hinge === windowHinge) return;
+    anchorRef.current?.measureInWindow((x, y, width, height) => {
+      setAnchor((current) =>
+        current === null ? null : { ...current, x, y, width, height, hinge: windowHinge },
+      );
+    });
+  }, [anchor, windowHinge]);
 
   const measureOverlay = useCallback(() => {
     overlayRef.current?.measureInWindow((x, y, width, height) => {
@@ -95,6 +107,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
     (action) => !(action.attributes?.hidden ?? false),
   );
 
+  const hinge = anchor?.hinge ?? null;
   const local =
     anchor === null || overlay === null
       ? null
@@ -113,7 +126,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
           overlayWidth: overlay.width,
           desiredWidth: desiredMenuWidth,
           margin: SCREEN_MARGIN,
-          hinge: windowHinge && { x: windowHinge.x - overlay.x, width: windowHinge.width },
+          hinge: hinge && { x: hinge.x - overlay.x, width: hinge.width },
         });
   // The keyboard stays up while the menu is open (in-window overlay, no
   // focus change), so the space it covers is not usable — without this the
@@ -176,7 +189,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
               <MenuPopup
                 // Compose aligns its dropdown to the trigger's start whenever it fits, so a
                 // trigger at the hinge-safe position keeps the menu on the anchor's side.
-                anchor={windowHinge ? { ...local, x: left, width: menuWidth } : local}
+                anchor={hinge ? { ...local, x: left, width: menuWidth } : local}
                 menuWidth={menuWidth}
                 actions={levelActions}
                 title={props.title}
