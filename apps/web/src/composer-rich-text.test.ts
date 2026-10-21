@@ -10,6 +10,7 @@ describe("composer rich text markdown", () => {
       "ملف_الاعدادات و ملف_البيانات",
       "ملفٌ_اول و ملفٌ_ثاني",
       "файл_один и файл_два",
+      "𐐀_𐐁_𐐂 and 𠀀_𠀁_𠀂",
       "unmatched **",
       "** spaced **",
       "\\*literal\\*",

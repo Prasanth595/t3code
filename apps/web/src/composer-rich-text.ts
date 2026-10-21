@@ -14,7 +14,9 @@ export const RICH_TEXT_DELIMITERS: Record<RichTextMark, string> = {
 
 // An underscore inside a word is part of the name in any script, as in
 // `ملف_الاعدادات` or `файл_один`, so it neither opens nor closes emphasis.
-const WORD_CHARACTER = /[\p{L}\p{M}\p{N}_]/u;
+// They read two code units so a letter outside the BMP is matched whole.
+const WORD_CHARACTER_BEFORE = /[\p{L}\p{M}\p{N}_]$/u;
+const WORD_CHARACTER_AFTER = /^[\p{L}\p{M}\p{N}_]/u;
 
 function pushSpan(spans: RichTextSpan[], text: string, marks: RichTextMark[]): void {
   if (!text) return;
@@ -68,10 +70,10 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
     while (text[end] === char) end += 1;
     const before = text[index - 1] ?? "";
     const after = text[end] ?? "";
-    const canClose =
-      before !== "" && !/\s/.test(before) && (char !== "_" || !WORD_CHARACTER.test(after));
-    const canOpen =
-      after !== "" && !/\s/.test(after) && (char !== "_" || !WORD_CHARACTER.test(before));
+    const wordAfter = WORD_CHARACTER_AFTER.test(text.slice(end, end + 2));
+    const wordBefore = WORD_CHARACTER_BEFORE.test(text.slice(Math.max(0, index - 2), index));
+    const canClose = before !== "" && !/\s/.test(before) && (char !== "_" || !wordAfter);
+    const canOpen = after !== "" && !/\s/.test(after) && (char !== "_" || !wordBefore);
     while (index < end) {
       const top = stack.at(-1);
       const opensNestedBold =
