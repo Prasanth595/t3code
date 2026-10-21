@@ -37,11 +37,7 @@ import {
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
-import {
-  ProviderOptionDescriptor,
-  ProviderOptionSelection,
-  ProviderOptionSelectionValue,
-} from "./model.ts";
+import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)).annotate({
@@ -225,7 +221,7 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
     Schema.Struct({ requestId: RuntimeRequestId, kind: ProviderRequestKind, runId: RunId }),
   ).annotate({
     description:
-      "Identity of the oldest pending live approval for this task's own unfinished work, or null. Ends mode=wait without cancelling the child; completion still wakes this thread. This grants no approval authority. Read the fresh full request in childThreadId before responding: the record can outlive its provider callback. Use t3_pending_request_read to read the fresh request and t3_pending_request_respond with decision to respond; accepting needs a full-access/default caller, while declining or cancelling does not.",
+      "Identity of the oldest pending live approval for this task's own unfinished work, or null. Ends mode=wait without cancelling the child; completion still wakes this thread. This grants no approval authority. Read the fresh full request in childThreadId before responding: the record can outlive its provider callback. Decisions remain with the child's existing approval holder; pending request tools answer questions only.",
   }),
   waitTimedOut: Schema.Boolean.annotate({
     description:
@@ -507,6 +503,23 @@ export const OrchestratorMcpThreadInterruptResult = Schema.Struct({
 });
 export type OrchestratorMcpThreadInterruptResult = typeof OrchestratorMcpThreadInterruptResult.Type;
 
+export const OrchestratorMcpCapabilitiesInput = Schema.Struct({
+  search: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(200)).annotate({
+      description:
+        "Words to match against model ids and labels. Lists matching models instead of the default short list.",
+    }),
+  ),
+});
+export type OrchestratorMcpCapabilitiesInput = typeof OrchestratorMcpCapabilitiesInput.Type;
+
+export const OrchestratorMcpModelOption = Schema.Struct({
+  id: Schema.String,
+  values: Schema.Array(ProviderOptionSelectionValue),
+  default: Schema.optional(ProviderOptionSelectionValue),
+});
+export type OrchestratorMcpModelOption = typeof OrchestratorMcpModelOption.Type;
+
 export const OrchestratorMcpProviderCapability = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   driverKind: ProviderDriverKind,
@@ -514,10 +527,13 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
   models: Schema.Array(
     Schema.Struct({
       id: Schema.String,
-      label: Schema.NullOr(Schema.String),
-      options: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
+      /** Omitted when it only restates the id. */
+      label: Schema.optional(Schema.String),
+      options: Schema.optional(Schema.Array(OrchestratorMcpModelOption)),
     }),
   ),
+  /** Models left out of `models`: unlisted visible models, or matches past the cap with `search`. */
+  omittedModels: Schema.optional(NonNegativeInt),
   runtimeModes: Schema.optional(Schema.Array(RuntimeMode)),
   canRunChildTask: Schema.Boolean,
   canRunCrossProviderChildTask: Schema.Boolean,

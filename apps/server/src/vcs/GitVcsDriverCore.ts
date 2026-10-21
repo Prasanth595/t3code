@@ -78,7 +78,6 @@ const REVIEW_DIFF_ARGS = [
   "--no-color",
   "--no-ext-diff",
   "--no-textconv",
-  "--minimal",
   ...PATCH_RENDER_PREFIX_ARGS,
 ];
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
@@ -3073,15 +3072,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     const cwd = repository.worktreeRoot;
-    const sourceKind = input.file?.sourceKind ?? input.sourceKind;
-    const dirtyRef = sourceKind === "branch-range" ? null : "HEAD";
+    const dirtyRef = input.file?.sourceKind === "branch-range" ? null : "HEAD";
     const review =
-      sourceKind === "working-tree"
+      input.file?.sourceKind === "working-tree"
         ? { baseRef: input.baseRef ?? null, mergeBase: null }
         : yield* resolveReviewMergeBase(cwd, repository.currentBranch, input.baseRef);
 
     const diffArgs = [
       ...REVIEW_DIFF_ARGS,
+      "--minimal",
       ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
     ];
     const readStats = Effect.fn("GitVcsDriver.getReviewDiffPreview.stat")(function* (
@@ -3199,10 +3198,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return {
       cwd: input.cwd,
       generatedAt: yield* DateTime.now,
-      sources:
-        input.file === undefined && sourceKind !== undefined
-          ? sources.filter((source) => source.kind === sourceKind)
-          : sources,
+      sources,
     };
   });
 
