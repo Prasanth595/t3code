@@ -586,15 +586,19 @@ function AdaptiveWorkspaceLayoutContent(
   const listPaneFloor = listPaneSizing.listPaneFloor ?? 0;
   const listPaneCeiling = listPaneSizing.listPaneCeiling ?? 0;
   const listPaneRevision = listPaneSizing.revision;
-  // A hinge resize slides overlay anchors with the panes. Overlays get the new hinge only once
-  // the panes are at rest, so they never pair it with an anchor that is still moving.
-  const [overlayHinge, setOverlayHinge] = useState(windowHinge);
+  // A hinge resize slides overlay anchors with the panes. Overlays get a new value only once the
+  // panes are at rest, so they never pair the hinge with an anchor that is still moving. A
+  // resize can end on the hinge it started from, so every resize publishes a new value.
+  const [overlayHinge, setOverlayHinge] = useState({
+    hinge: windowHinge,
+    revision: listPaneRevision,
+  });
   if (
-    overlayHinge !== windowHinge &&
+    (overlayHinge.hinge !== windowHinge || overlayHinge.revision !== listPaneRevision) &&
     listPaneSizing.listPaneTarget === layout.listPaneWidth &&
     listPaneFloor === listPaneCeiling
   ) {
-    setOverlayHinge(windowHinge);
+    setOverlayHinge({ hinge: windowHinge, revision: listPaneRevision });
   }
   // Android lays the content out at its new width as soon as a pane toggles, then holds it
   // against the edge that stays put while the other one slides, so nothing reflows after the

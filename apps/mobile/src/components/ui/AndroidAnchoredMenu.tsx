@@ -1,12 +1,11 @@
 import type { MenuAction, MenuComponentProps } from "@react-native-menu/menu";
-import type { ReactNode } from "react";
+import type { ContextType, ReactNode } from "react";
 import { use, useCallback, useEffect, useRef, useState } from "react";
 import type { StyleProp, ViewInstance, ViewStyle } from "react-native";
 import { BackHandler, Pressable, ScrollView, View } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
 import Animated, { FadeIn } from "react-native-reanimated";
 
-import type { VerticalHinge } from "../../lib/layout";
 import { deriveMenuHorizontalPlacement } from "../../lib/menu-placement";
 import { WindowHingeContext } from "../../native/window-hinge-context";
 import { OverlayPortal } from "./OverlayPortal";
@@ -18,14 +17,14 @@ const ANCHOR_GAP = 6;
 
 // Both snapshots are taken at open time so later reflows (keyboard show/hide,
 // screen transitions) can't flip an opens-up menu to opens-down
-// mid-presentation. The anchor is re-measured when the hinge changes, since a
-// hinge resize moves it with its pane.
+// mid-presentation. The anchor is re-measured when the workspace publishes a new
+// hinge value, since a hinge resize moves it with its pane.
 type AnchorSnapshot = {
   readonly x: number;
   readonly y: number;
   readonly width: number;
   readonly height: number;
-  readonly hinge: VerticalHinge | null;
+  readonly windowHinge: ContextType<typeof WindowHingeContext>;
   readonly keyboardWasVisible: boolean;
 };
 
@@ -66,15 +65,15 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
 
   const open = useCallback(() => {
     anchorRef.current?.measureInWindow((x, y, width, height) => {
-      setAnchor({ x, y, width, height, hinge: windowHinge, keyboardWasVisible: keyboardVisible });
+      setAnchor({ x, y, width, height, windowHinge, keyboardWasVisible: keyboardVisible });
     });
   }, [keyboardVisible, windowHinge]);
 
   useEffect(() => {
-    if (anchor === null || anchor.hinge === windowHinge) return;
+    if (anchor === null || anchor.windowHinge === windowHinge) return;
     anchorRef.current?.measureInWindow((x, y, width, height) => {
       setAnchor((current) =>
-        current === null ? null : { ...current, x, y, width, height, hinge: windowHinge },
+        current === null ? null : { ...current, x, y, width, height, windowHinge },
       );
     });
   }, [anchor, windowHinge]);
@@ -107,7 +106,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
     (action) => !(action.attributes?.hidden ?? false),
   );
 
-  const hinge = anchor?.hinge ?? null;
+  const hinge = anchor?.windowHinge.hinge ?? null;
   const local =
     anchor === null || overlay === null
       ? null
