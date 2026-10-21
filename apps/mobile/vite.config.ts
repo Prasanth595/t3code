@@ -21,7 +21,10 @@ export default defineConfig({
           name: "unit",
           include: ["**/*.test.{ts,tsx,mjs}"],
           exclude: ["**/node_modules/**", ...reactTests],
-          setupFiles: ["../../packages/shared/src/testing/longTempDir.ts"],
+          setupFiles: [
+            "../../packages/shared/src/testing/longTempDir.ts",
+            "../../packages/shared/src/testing/providerEnv.ts",
+          ],
         },
       },
       {
@@ -31,6 +34,7 @@ export default defineConfig({
           include: reactTests,
           // Native components mock React Native and render through react-dom in these tests.
           environment: "jsdom",
+          setupFiles: ["../../packages/shared/src/testing/providerEnv.ts"],
         },
       },
     ],
