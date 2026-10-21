@@ -8,7 +8,6 @@ apps/desktop/src/app/DesktopAppIdentity.test.ts
 apps/desktop/src/app/DesktopClerk.test.ts
 apps/desktop/src/app/DesktopCliCommand.test.ts
 apps/desktop/src/app/DesktopCliShim.ts
-apps/desktop/src/app/DesktopEarlyElectronStartup.test.ts
 apps/desktop/src/app/DesktopEnvironment.test.ts
 apps/desktop/src/app/DesktopEnvironment.ts
 apps/desktop/src/app/DesktopLegacyLocalStorage.test.ts
@@ -37,6 +36,7 @@ apps/server/src/httpCors.test.ts
 apps/server/src/httpCors.ts
 apps/server/src/provider/CodexChatGptAuth.test.ts
 apps/server/src/server.ts
+apps/server/src/serverRuntimeState.test.ts
 apps/web/src/components/settings/SettingsSidebarNav.tsx
 apps/web/src/components/settings/settingsSearch.ts
 apps/web/src/components/sidebar/SidebarChrome.tsx
