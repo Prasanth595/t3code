@@ -969,7 +969,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(refreshed?.pr?.number).toBe(42);
       const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
       expect(result.pr.status).toBe("opened_existing");
-      expect(ghCalls.some((args) => args[0] === "pr" && args[1] === "create")).toBe(false);
+      expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
 
       // The stored snapshot stays open while the provider's current head or state changes.
       for (const change of [
