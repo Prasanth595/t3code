@@ -472,18 +472,24 @@ export const PreviewAutomationSelectResult = Schema.Struct({
 });
 export type PreviewAutomationSelectResult = typeof PreviewAutomationSelectResult.Type;
 
-/** Its JSON schema keeps only the description on its last check. */
-const DescribedLocator = (description: string) =>
-  Schema.String.check(Schema.isTrimmed())
-    .check(Schema.isNonEmpty({ description }))
-    .annotateKey({ description });
+/** Describes the encoded string so JSON schema exports a plain typed, described parameter. */
+const DescribedTrimmedString = (description: string, maxLength?: number) =>
+  Schema.String.annotate({ description }).pipe(
+    Schema.decodeTo(
+      maxLength === undefined
+        ? TrimmedNonEmptyString
+        : TrimmedNonEmptyString.check(Schema.isMaxLength(maxLength)),
+    ),
+  );
 
 export const PreviewAutomationDragInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
-  source: DescribedLocator(
+  source: DescribedTrimmedString(
     "Locator of the element to drag, for example aria-ref=<ref> from the latest snapshot.",
   ),
-  target: DescribedLocator("Locator of the element to drop onto, for example aria-ref=<ref>."),
+  target: DescribedTrimmedString(
+    "Locator of the element to drop onto, for example aria-ref=<ref>.",
+  ),
   timeoutMs: OptionalTimeoutMs,
 }).annotate({ description: "Drags one element and drops it onto another." });
 export type PreviewAutomationDragInput = typeof PreviewAutomationDragInput.Type;
@@ -548,17 +554,9 @@ export type PreviewAutomationTypeInput = typeof PreviewAutomationTypeInput.Type;
 
 export const PreviewAutomationPressInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
-  key: Schema.String.check(Schema.isTrimmed())
-    .check(
-      Schema.isNonEmpty({
-        description:
-          "Keyboard key name such as Enter, Escape, Tab, ArrowDown, Backspace, or a single character.",
-      }),
-    )
-    .annotateKey({
-      description:
-        "Keyboard key name such as Enter, Escape, Tab, ArrowDown, Backspace, or a single character.",
-    }),
+  key: DescribedTrimmedString(
+    "Keyboard key name such as Enter, Escape, Tab, ArrowDown, Backspace, or a single character.",
+  ),
   modifiers: Schema.optional(
     Schema.Array(Schema.Literals(["Alt", "Control", "Meta", "Shift"])).annotate({
       description: "Modifier keys held while pressing key.",
@@ -604,18 +602,10 @@ export type PreviewAutomationScrollInput = typeof PreviewAutomationScrollInput.T
 
 export const PreviewAutomationEvaluateInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
-  expression: Schema.String.check(Schema.isTrimmed())
-    .check(
-      Schema.isNonEmpty({
-        description:
-          "JavaScript expression evaluated in the page's main frame, for example document.title or (() => ({href: location.href}))().",
-      }),
-    )
-    .check(Schema.isMaxLength(64_000))
-    .annotateKey({
-      description:
-        "JavaScript expression evaluated in the page's main frame, for example document.title or (() => ({href: location.href}))().",
-    }),
+  expression: DescribedTrimmedString(
+    "JavaScript expression evaluated in the page's main frame, for example document.title or (() => ({href: location.href}))().",
+    64_000,
+  ),
   awaitPromise: Schema.optional(
     Schema.Boolean.annotate({ description: "Await a returned Promise. Defaults to true." }),
   ),

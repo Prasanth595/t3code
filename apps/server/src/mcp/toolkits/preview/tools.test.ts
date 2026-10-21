@@ -1,4 +1,10 @@
 import { expect, it } from "@effect/vitest";
+import {
+  PreviewAutomationDragInput,
+  PreviewAutomationEvaluateInput,
+  PreviewAutomationPressInput,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { Tool } from "effect/ai";
 
 import { PreviewToolkit } from "./tools.ts";
@@ -52,6 +58,25 @@ it("exports provider-compatible object schemas with described parameters", () =>
         schemaHasDescription(fieldSchema),
         `${tool.name}.${field} should explain what data the agent must pass`,
       ).toBe(true);
+      // Some MCP clients render a typed parameter that also carries allOf as an untyped value.
+      expect(
+        (fieldSchema as { readonly allOf?: unknown }).allOf,
+        `${tool.name}.${field} must not export allOf`,
+      ).toBeUndefined();
     }
   }
+});
+
+const decodeEvaluate = Schema.decodeUnknownSync(PreviewAutomationEvaluateInput);
+const decodePress = Schema.decodeUnknownSync(PreviewAutomationPressInput);
+const decodeDrag = Schema.decodeUnknownSync(PreviewAutomationDragInput);
+
+it("trims surrounding whitespace from free-text parameters instead of rejecting them", () => {
+  expect(decodeEvaluate({ expression: " document.title\n" }).expression).toBe("document.title");
+  expect(decodePress({ key: "Enter " }).key).toBe("Enter");
+  expect(decodeDrag({ source: " aria-ref=e1", target: "aria-ref=e2 " })).toMatchObject({
+    source: "aria-ref=e1",
+    target: "aria-ref=e2",
+  });
+  expect(() => decodeEvaluate({ expression: "  " })).toThrow();
 });
