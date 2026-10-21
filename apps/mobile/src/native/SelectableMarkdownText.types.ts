@@ -74,7 +74,10 @@ export interface SelectableMarkdownTextProps {
   readonly onLinkPress?: (href: string) => void;
   readonly fileContextMenu?: (href: string) => MarkdownFileContextMenu | undefined;
   readonly onFileContextMenuAction?: (href: string, actionId: string) => void;
-  readonly linkCustomization?: (href: string) => MarkdownLinkCustomization | undefined;
+  readonly linkCustomization?: (
+    href: string,
+    linkTexts: () => ReadonlySet<string> | undefined,
+  ) => MarkdownLinkCustomization | undefined;
   readonly contextClipboardFragment?: string;
   readonly renderImage?: MarkdownImageRenderer;
   readonly resolveImageSource?: MarkdownImageSourceResolver;

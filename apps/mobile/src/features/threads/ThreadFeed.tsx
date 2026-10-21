@@ -748,7 +748,10 @@ interface MarkdownLinkHandlers {
   readonly onFileContextMenuAction: (href: string, actionId: string) => void;
   readonly onImagePress?: (href: string) => void;
   readonly resolveImageSource?: MarkdownImageSourceResolver;
-  readonly linkCustomization?: (href: string) => MarkdownLinkCustomization | undefined;
+  readonly linkCustomization?: (
+    href: string,
+    linkTexts: () => ReadonlySet<string> | undefined,
+  ) => MarkdownLinkCustomization | undefined;
 }
 
 interface MarkdownStyleSets {
@@ -1576,9 +1579,9 @@ function UserMessageContent(props: UserMessageContentProps) {
                 });
             }
           },
-          linkCustomization: (href) =>
+          linkCustomization: (href, linkTexts) =>
             enrichedContextLinkCustomization(href, props.context?.records ?? []) ??
-            props.linkHandlers.linkCustomization?.(href),
+            props.linkHandlers.linkCustomization?.(href, linkTexts),
         }}
       />
       {selected ? (
@@ -1981,7 +1984,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   });
   const markdownLinkHandlers: MarkdownLinkHandlers = {
     onLinkPress: onMarkdownLinkPress,
-    linkCustomization: (href) => enrichedChatLinkCustomization(href, pullRequestChipStates),
+    linkCustomization: (href, linkTexts) =>
+      enrichedChatLinkCustomization(href, pullRequestChipStates, linkTexts),
     onImagePress: (href) => onMarkdownLinkPress(href, true),
     resolveImageSource,
     fileContextMenu: (href) => {

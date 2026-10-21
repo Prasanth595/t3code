@@ -63,15 +63,18 @@ export function pullRequestChipStates(links: ReadonlyArray<ThreadPullRequestLink
 export function enrichedChatLinkPresentation(
   href: string,
   pullRequestStates: ReadonlyMap<string, PullRequestChipState>,
+  linkTexts: () => ReadonlySet<string> | undefined,
 ): { accent?: string; icon: ContextChipIconRef; label?: string } | undefined {
   if (parseThreadLinkHref(href)) return chatLinkChip(contextChipPresentation("thread"));
   const pullRequest = parseChangeRequestUrl(href);
   if (!pullRequest || resolveMarkdownLinkIcon(pullRequest.host) !== "github") return undefined;
+  const label = `#${pullRequest.number}`;
+  if ([...(linkTexts() ?? [])].some((text) => text !== href && text !== label)) return undefined;
   return chatLinkChip(
     contextChipPresentation("pull-request", {
       pullRequest: pullRequestStates.get(threadPullRequestKeyOf(pullRequest)),
     }),
-    `#${pullRequest.number}`,
+    label,
   );
 }
 

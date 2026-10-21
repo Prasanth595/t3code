@@ -236,3 +236,29 @@ export function markdownWithTableBreaks(markdown: string): string {
 export function parseMarkdownDocument(markdown: string): Root {
   return parser.parse(markdownWithHtml(markdown));
 }
+
+function nodeText(node: MarkdownNode): string {
+  if ("value" in node && node.type !== "html") return node.value;
+  return "children" in node ? node.children.map(nodeText).join("") : "";
+}
+
+export function markdownLinkTexts(markdown: string): ReadonlyMap<string, ReadonlySet<string>> {
+  const texts = new Map<string, Set<string>>();
+  const definitions = new Map<string, string>();
+  const references: Array<{ identifier: string; text: string }> = [];
+  const add = (url: string, text: string) =>
+    texts.set(url, (texts.get(url) ?? new Set()).add(text));
+  const visit = (node: MarkdownNode) => {
+    if (node.type === "link") add(node.url, nodeText(node));
+    else if (node.type === "linkReference")
+      references.push({ identifier: node.identifier, text: nodeText(node) });
+    else if (node.type === "definition") definitions.set(node.identifier, node.url);
+    if ("children" in node) node.children.forEach(visit);
+  };
+  visit(parser.parse(markdown));
+  for (const { identifier, text } of references) {
+    const url = definitions.get(identifier);
+    if (url !== undefined) add(url, text);
+  }
+  return texts;
+}

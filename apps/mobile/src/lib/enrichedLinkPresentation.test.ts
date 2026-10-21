@@ -7,6 +7,9 @@ import {
   enrichedSkillLinkRegex,
   pullRequestChipStates,
 } from "./enrichedLinkPresentation";
+import { markdownLinkTexts } from "./markdownDocument";
+
+const noTexts = () => undefined;
 
 describe("Enriched link presentation", () => {
   it("recognizes file-shaped code without turning commands or URLs into links", () => {
@@ -53,17 +56,30 @@ describe("Enriched link presentation", () => {
   it("presents GitHub pull request URLs with the state their threads already know", () => {
     const states = new Map([["github.com/example/repo#7", { state: "open", isDraft: true }]]);
     expect(
-      enrichedChatLinkPresentation("https://github.com/Example/Repo/pull/7/files", states),
+      enrichedChatLinkPresentation("https://github.com/Example/Repo/pull/7/files", states, noTexts),
     ).toEqual({
       accent: "#7f8793",
       icon: { kind: "chip", name: "git-pull-request-draft" },
       label: "#7",
     });
-    expect(enrichedChatLinkPresentation("https://github.com/example/repo/pull/8", states)).toEqual({
+    expect(
+      enrichedChatLinkPresentation("https://github.com/example/repo/pull/8", states, noTexts),
+    ).toEqual({
       accent: "#7079e4",
       icon: { kind: "chip", name: "git-pull-request-arrow" },
       label: "#8",
     });
+  });
+
+  it("only turns pull request links into chips when that hides none of their text", () => {
+    const url = "https://github.com/example/repo/pull/7";
+    const chipLabel = (markdown: string) =>
+      enrichedChatLinkPresentation(url, new Map(), () => markdownLinkTexts(markdown).get(url))
+        ?.label;
+    expect(chipLabel(`See ${url}.`)).toBe("#7");
+    expect(chipLabel(`See <${url}> and [#7](${url}).`)).toBe("#7");
+    expect(chipLabel(`See [the fix](${url}).`)).toBeUndefined();
+    expect(chipLabel(`See ${url} and [the fix][pr].\n\n[pr]: ${url}`)).toBeUndefined();
   });
 
   it("leaves other links alone", () => {
@@ -73,7 +89,7 @@ describe("Enriched link presentation", () => {
       "https://example.com/example/repo/pulls/7",
       "t3-context://v1/thread/thread_1",
     ]) {
-      expect(enrichedChatLinkPresentation(href, new Map()), href).toBeUndefined();
+      expect(enrichedChatLinkPresentation(href, new Map(), noTexts), href).toBeUndefined();
     }
   });
 
@@ -110,6 +126,7 @@ describe("Enriched link presentation", () => {
         enrichedChatLinkPresentation(
           "https://github.com/example/repo/pull/7",
           pullRequestChipStates(links),
+          noTexts,
         )?.icon,
       ).toEqual({ kind: "chip", name: "git-merge" });
     }
@@ -118,6 +135,7 @@ describe("Enriched link presentation", () => {
       enrichedChatLinkPresentation(
         "https://github.com/example/repo/pull/7",
         pullRequestChipStates([stale, unlinked]),
+        noTexts,
       )?.icon,
     ).toEqual({ kind: "chip", name: "git-pull-request-arrow" });
     expect(pullRequestChipStates([unlinked]).size).toBe(0);
