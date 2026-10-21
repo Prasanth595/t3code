@@ -4,6 +4,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   isFileDiffCollapsed,
   isLineInFileDiff,
+  reconcileDiffSlices,
+  type DiffSlice,
   toggleFileDiffFoldForViewed,
 } from "./pullRequestDiff.logic";
 
@@ -52,5 +54,46 @@ describe("toggleFileDiffFoldForViewed", () => {
   it("moves against whatever the toolbar last asked for", () => {
     expect([...toggleFileDiffFoldForViewed("a.ts", true, "expanded", new Set())]).toEqual(["a.ts"]);
     expect(toggleFileDiffFoldForViewed("a.ts", false, "expanded", new Set()).size).toBe(0);
+  });
+});
+
+describe("reconcileDiffSlices", () => {
+  const slice = (cursor: string | null, patch: string, nextCursor: string | null): DiffSlice => ({
+    cursor,
+    patch,
+    truncated: false,
+    nextCursor,
+    omittedFileStats: [{ path: "large.bin", additions: 1, deletions: 0 }],
+  });
+  const loaded = [slice(null, "a", "2"), slice("2", "b", "3"), slice("3", "c", "4")];
+
+  it("revalidates unchanged loaded pages in order without replacing them or loading more", () => {
+    let state = { cursor: null as string | null, slices: loaded as ReadonlyArray<DiffSlice> };
+    for (const [cursor, patch, nextCursor, expectedCursor] of [
+      [null, "a", "2", "2"],
+      ["2", "b", "3", "3"],
+      ["3", "c", "4", "3"],
+    ] as const) {
+      expect(state.cursor).toBe(cursor);
+      state = reconcileDiffSlices(state.slices, slice(cursor, patch, nextCursor));
+      expect(state.cursor).toBe(expectedCursor);
+      expect(state.slices).toBe(loaded);
+    }
+  });
+
+  it("keeps earlier pages but replaces a changed page and discards its descendants", () => {
+    const replacement = slice("2", "updated b", "new-3");
+    const refreshed = reconcileDiffSlices(loaded, replacement);
+
+    expect(refreshed.cursor).toBe("2");
+    expect(refreshed.slices).toEqual([loaded[0], replacement]);
+    expect(refreshed.slices[0]).toBe(loaded[0]);
+    expect(loaded).toHaveLength(3);
+
+    const nextPage = slice("new-3", "updated c", null);
+    expect(reconcileDiffSlices(refreshed.slices, nextPage)).toEqual({
+      cursor: "new-3",
+      slices: [loaded[0], replacement, nextPage],
+    });
   });
 });

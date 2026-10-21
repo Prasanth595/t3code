@@ -4,7 +4,6 @@ import type {
   EnvironmentId,
   PullRequestDetailView,
   PullRequestDiffSide,
-  PullRequestOmittedFileStat,
   PullRequestRef,
   PullRequestReviewPosition,
   PullRequestReviewThread,
@@ -24,11 +23,12 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown } from "lucide";
-import { useAtomRefresh } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
   createContext,
   use,
+  useContext,
   useEffect,
   useEffectEvent,
   useRef,
@@ -98,8 +98,10 @@ import {
 import {
   isFileDiffCollapsed,
   isLineInFileDiff,
+  reconcileDiffSlices,
   toggleFileDiffFoldForViewed,
   type DiffFoldOverride,
+  type DiffSlice,
 } from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
@@ -123,14 +125,6 @@ type ReviewAnnotation = DiffLineAnnotation<ReviewAnnotationGroup>;
 const COMMIT_PAGE_SIZE = 10;
 
 const PULL_REQUEST_FILE_TREE_STORAGE_KEY = "t3code.pullRequestFileTreeOpen";
-
-interface DiffSlice {
-  readonly cursor: string | null;
-  readonly patch: string;
-  readonly truncated: boolean;
-  readonly nextCursor: string | null;
-  readonly omittedFileStats: ReadonlyArray<PullRequestOmittedFileStat>;
-}
 
 /**
  * The viewer's own per-file counts are hidden and drawn from this side of its shadow root
@@ -252,7 +246,7 @@ function PullRequestCodeTab({
   onAddToAgentSelection,
   onRefresh,
   refreshToken = 0,
-  backgroundRefreshToken = 0,
+  backgroundRefreshToken = "",
   revealRequest = null,
 }: {
   scrollerRef: (node: HTMLDivElement | null) => void;
@@ -267,9 +261,10 @@ function PullRequestCodeTab({
   onAddToAgentSelection?: (input: PullRequestAgentSelectionInput) => void;
   onRefresh: () => void;
   refreshToken?: number;
-  backgroundRefreshToken?: number;
+  backgroundRefreshToken?: string;
   revealRequest?: { readonly path: string; readonly nonce: number } | null;
 }) {
+  const registry = useContext(RegistryContext);
   const resolvedTheme = useRenderedAppearance();
   const settings = useClientSettings((settings) => ({
     diffFilesCollapsed: settings.diffFilesCollapsed,
@@ -303,7 +298,8 @@ function PullRequestCodeTab({
     readonly key: string;
     readonly cursor: string | null;
     readonly slices: ReadonlyArray<DiffSlice>;
-  }>({ key: "", cursor: null, slices: NO_SLICES });
+    readonly revalidating: boolean;
+  }>({ key: "", cursor: null, slices: NO_SLICES, revalidating: false });
   const [viewer, setViewer] = useState<CodeViewHandle<ReviewAnnotationGroup, undefined> | null>(
     null,
   );
@@ -322,79 +318,87 @@ function PullRequestCodeTab({
     setFoldOverride(null);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
-    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
+    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES, revalidating: false });
   }
 
   const loadedSlices = sliceState.key === scopeKey ? sliceState.slices : NO_SLICES;
   const cursor = sliceState.key === scopeKey ? sliceState.cursor : null;
-  const diffQuery = useEnvironmentQuery(
-    pullRequestEnvironment.diff({
-      environmentId,
-      input: {
-        ...reference,
-        ...(cursor === null ? {} : { cursor }),
-        ...(commit === null ? {} : { commit }),
-      },
-    }),
-  );
-  // Pages accumulate into slices as each answer arrives, so the slice list is adjusted while
-  // rendering the answer rather than one commit later.
+  const diffAtom = pullRequestEnvironment.diff({
+    environmentId,
+    input: {
+      ...reference,
+      ...(cursor === null ? {} : { cursor }),
+      ...(commit === null ? {} : { commit }),
+    },
+  });
+  const diffQuery = useEnvironmentQuery(diffAtom);
+  // Result identity distinguishes fresh successes even when structural sharing preserves the
+  // data and two answers have the same timestamp.
+  const diffResult = useAtomValue(diffAtom);
+  const [appliedRefresh, setAppliedRefresh] = useState({ refreshToken, backgroundRefreshToken });
+  const refreshChanged =
+    appliedRefresh.refreshToken !== refreshToken ||
+    appliedRefresh.backgroundRefreshToken !== backgroundRefreshToken;
+  if (refreshChanged) {
+    setAppliedRefresh({ refreshToken, backgroundRefreshToken });
+    setSliceState({
+      key: scopeKey,
+      cursor: null,
+      slices:
+        appliedRefresh.refreshToken === refreshToken && sliceState.key === scopeKey
+          ? loadedSlices
+          : NO_SLICES,
+      revalidating: true,
+    });
+  }
+  const revalidating = sliceState.key === scopeKey && sliceState.revalidating;
+  const requestKey = JSON.stringify([scopeKey, refreshToken, backgroundRefreshToken, cursor]);
+  const [requestedPage, setRequestedPage] = useState<{
+    readonly key: string;
+    readonly before: typeof diffResult;
+  } | null>(null);
+  useEffect(() => {
+    if (!revalidating) return;
+    const before = registry.get(diffAtom);
+    // oxlint-disable-next-line react/set-state-in-effect -- Record the cached result before forcing this page's fresh read.
+    setRequestedPage({ key: requestKey, before });
+    if (before._tag !== "Initial") registry.refresh(diffAtom);
+  }, [diffAtom, registry, requestKey, revalidating]);
+
+  // Apply pages during render so a changed page never commits alongside its old descendants.
   const [appliedPage, setAppliedPage] = useState<{
-    readonly data: typeof diffQuery.data;
+    readonly result: typeof diffResult;
     readonly cursor: string | null;
     readonly scopeKey: string;
   } | null>(null);
   const data = diffQuery.data;
   if (
+    !refreshChanged &&
+    stateScopeKey === scopeKey &&
     data !== null &&
-    (appliedPage?.data !== data ||
+    diffQuery.isSuccess &&
+    !diffQuery.isPending &&
+    (!revalidating || (requestedPage?.key === requestKey && requestedPage.before !== diffResult)) &&
+    (appliedPage?.result !== diffResult ||
       appliedPage.cursor !== cursor ||
       appliedPage.scopeKey !== scopeKey)
   ) {
-    setAppliedPage({ data, cursor, scopeKey });
-    setSliceState((previous) => {
-      const slices = previous.key === scopeKey ? previous.slices : NO_SLICES;
-      const next = {
-        cursor,
-        patch: data.patch,
-        truncated: data.truncated,
-        nextCursor: data.nextCursor,
-        omittedFileStats: data.omittedFileStats ?? [],
-      };
-      const index = slices.findIndex((slice) => slice.cursor === cursor);
-      if (index === -1) {
-        return { key: scopeKey, cursor, slices: [...slices, next] };
-      }
-      const existing = slices[index];
-      if (
-        existing !== undefined &&
-        existing.patch === next.patch &&
-        existing.truncated === next.truncated &&
-        existing.nextCursor === next.nextCursor &&
-        existing.omittedFileStats.length === next.omittedFileStats.length &&
-        existing.omittedFileStats.every((file, index) => {
-          const refreshed = next.omittedFileStats[index];
-          return (
-            refreshed !== undefined &&
-            refreshed.path === file.path &&
-            refreshed.additions === file.additions &&
-            refreshed.deletions === file.deletions
-          );
-        })
-      ) {
-        return previous;
-      }
-      // A page that came back different means the diff moved under the review. The slices
-      // after it go with the replacement: their cursors were positions in the old diff.
-      return { key: scopeKey, cursor, slices: [...slices.slice(0, index), next] };
+    setAppliedPage({ result: diffResult, cursor, scopeKey });
+    const next = reconcileDiffSlices(loadedSlices, {
+      cursor,
+      patch: data.patch,
+      truncated: data.truncated,
+      nextCursor: data.nextCursor,
+      omittedFileStats: data.omittedFileStats ?? [],
     });
+    if (next.slices !== loadedSlices || next.cursor !== cursor || revalidating) {
+      setSliceState({
+        key: scopeKey,
+        ...next,
+        revalidating: revalidating && next.cursor !== cursor,
+      });
+    }
   }
-  const refreshFirstDiffPage = useAtomRefresh(
-    pullRequestEnvironment.diff({
-      environmentId,
-      input: { ...reference, ...(commit === null ? {} : { commit }) },
-    }),
-  );
   const reviewKey = referenceKey;
   const pendingComments = usePendingReviewComments(reference);
   const addComment = usePullRequestReviewStore((store) => store.addComment);
@@ -426,23 +430,17 @@ function PullRequestCodeTab({
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
   } = filesViewed;
-  const appliedRefreshToken = useRef(refreshToken);
+  const appliedViewedRefresh = useRef({ refreshToken, backgroundRefreshToken });
+  const refreshViewedFiles = useEffectEvent(refreshFilesViewed);
   useEffect(() => {
-    if (appliedRefreshToken.current === refreshToken) return;
-    appliedRefreshToken.current = refreshToken;
-    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
-    refreshFirstDiffPage();
-    refreshFilesViewed();
-  }, [refreshToken, scopeKey, refreshFirstDiffPage, refreshFilesViewed]);
-  const appliedBackgroundRefreshToken = useRef(backgroundRefreshToken);
-  useEffect(() => {
-    if (appliedBackgroundRefreshToken.current === backgroundRefreshToken) return;
-    appliedBackgroundRefreshToken.current = backgroundRefreshToken;
-    // Keeping slices mounted preserves scroll; the page merge invalidates changed pages.
-    setSliceState((previous) => ({ ...previous, cursor: null }));
-    refreshFirstDiffPage();
-    refreshFilesViewed();
-  }, [backgroundRefreshToken, refreshFirstDiffPage, refreshFilesViewed]);
+    if (
+      appliedViewedRefresh.current.refreshToken === refreshToken &&
+      appliedViewedRefresh.current.backgroundRefreshToken === backgroundRefreshToken
+    )
+      return;
+    appliedViewedRefresh.current = { refreshToken, backgroundRefreshToken };
+    refreshViewedFiles();
+  }, [refreshToken, backgroundRefreshToken]);
 
   // The sentinel is held as state rather than a ref because the viewer mounts its own footer:
   // an effect reading a ref could run before that node exists and would never arm the observer.
@@ -659,13 +657,16 @@ function PullRequestCodeTab({
   // A failed slice must not be asked for again on its own. The files already loaded keep the
   // sentinel on screen, so re-arming it after a failure would request the same slice forever.
   const canLoadNextSlice =
+    !revalidating &&
     nextCursor !== null &&
     nextCursor !== cursor &&
     !diffQuery.isPending &&
     diffQuery.error === null;
   const loadNextSlice = () => {
-    if (nextCursor === null) return;
-    setSliceState((previous) => ({ ...previous, cursor: nextCursor }));
+    if (nextCursor === null || revalidating) return;
+    // A changed earlier page can reuse a discarded page's cursor. Its cached success must not
+    // put the old descendant back on screen before the fresh read starts.
+    setSliceState((previous) => ({ ...previous, cursor: nextCursor, revalidating: true }));
   };
 
   const toggleFile = (fileKey: string) =>
@@ -1314,16 +1315,37 @@ function PullRequestCodeTab({
       onSelectedCommitChange(null);
     }
   }, [commit, onSelectedCommitChange, selectedCommit]);
+  const diffError =
+    diffQuery.error !== null && loadedSlices.length > 0 ? (
+      <div
+        role="status"
+        className="flex shrink-0 items-center justify-between gap-2 border-b border-border/60 px-4 py-2 text-xs text-muted-foreground"
+      >
+        <span>The latest diff could not be loaded.</span>
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={diffQuery.isPending}
+          onClick={() => diffQuery.refresh()}
+        >
+          Retry
+        </Button>
+      </div>
+    ) : null;
   const withToolbar = (body: ReactNode) => (
     <div className="flex h-full min-h-0 flex-col">
       {toolbar}
+      {diffError}
       <div ref={scrollerRef} className="min-h-0 flex-1 overflow-auto">
         {body}
       </div>
     </div>
   );
 
-  if (diffQuery.isPending && loadedSlices.length === 0) {
+  if (
+    loadedSlices.length === 0 &&
+    (diffQuery.isPending || (revalidating && diffQuery.error === null))
+  ) {
     return withToolbar(<DiffPanelLoadingState label="Loading pull request diff..." />);
   }
 
@@ -1363,6 +1385,7 @@ function PullRequestCodeTab({
   return (
     <div className="flex h-full min-h-0 flex-col">
       {toolbar}
+      {diffError}
       {orphanFiles.size > 0 ? (
         <div className="shrink-0 border-b border-border/60">
           <Collapsible open={orphansOpen} onOpenChange={setOrphansOpen}>
@@ -1484,7 +1507,7 @@ function PullRequestCodeTab({
                       size="xs"
                       variant="outline"
                       className="w-full"
-                      disabled={diffQuery.isPending}
+                      disabled={diffQuery.isPending || (revalidating && diffQuery.error === null)}
                       onClick={diffQuery.error !== null ? () => diffQuery.refresh() : loadNextSlice}
                     >
                       {diffQuery.error !== null
