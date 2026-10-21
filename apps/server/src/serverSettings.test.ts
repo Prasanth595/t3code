@@ -344,6 +344,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           yield* service.start;
           yield* Queue.clear(reads);
           const changes = yield* service.subscribeChanges;
+          assert.isTrue((yield* service.getSettings).continueThreadsAfterServerUpdate);
 
           // A write caught halfway, then one the schema rejects.
           for (const contents of [
@@ -359,6 +360,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
               kept.defaultProjectScripts.map((script) => script.id),
               ["usage"],
             );
+            // The unreadable file may hold an opt-out, so threads are not resumed meanwhile.
+            assert.isFalse(kept.continueThreadsAfterServerUpdate);
           }
           assert.lengthOf(
             messages.filter((message) => message.includes("failed to parse settings.json")),
@@ -377,6 +380,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             Option.getOrUndefined(change)?.defaultProjectScripts.map((script) => script.id),
             ["usage", "perf-lab"],
           );
+          assert.isTrue(Option.getOrUndefined(change)?.continueThreadsAfterServerUpdate);
         }),
       ).pipe(
         Effect.provide(

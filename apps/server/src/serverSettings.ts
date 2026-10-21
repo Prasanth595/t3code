@@ -806,7 +806,8 @@ const make = Effect.gen(function* () {
 
   // A file caught mid-write or left invalid keeps the settings that last loaded instead of
   // resetting them to defaults, also for readers that join a reload. Its parse failure still
-  // blocks saves.
+  // blocks saves, and it still never resumes threads, as at startup: the unreadable file may
+  // hold an opt-out.
   const loadKeepingLastGoodSettings = Effect.gen(function* () {
     const loaded = yield* loadSettingsFromDisk;
     if (Option.isNone(loaded.parseFailure)) {
@@ -814,7 +815,9 @@ const make = Effect.gen(function* () {
       return loaded;
     }
     const lastGood = yield* Ref.get(lastGoodSettingsRef);
-    return Option.isSome(lastGood) ? { ...loaded, settings: lastGood.value } : loaded;
+    return Option.isSome(lastGood)
+      ? { ...loaded, settings: { ...lastGood.value, continueThreadsAfterServerUpdate: false } }
+      : loaded;
   });
 
   const settingsCache = yield* Cache.makeWith(
