@@ -1558,11 +1558,10 @@ describe("liveWorld", () => {
 
   it("serverStartedMs is this process's start, before now", () => {
     const started = serverStartedMs();
+    // The time origin is when this process started, so it is before any now.
     assert.ok(
-      Number.isInteger(started) &&
-        started > 0 &&
-        started <= performance.timeOrigin + performance.now(),
-      String(started),
+      Number.isInteger(started) && started > 0 && Math.abs(started - performance.timeOrigin) <= 0.5,
+      `${started} vs ${performance.timeOrigin}`,
     );
   });
 });

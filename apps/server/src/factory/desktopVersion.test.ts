@@ -1,5 +1,4 @@
 // @effect-diagnostics nodeBuiltinImport:off
-// @effect-diagnostics globalDate:off - one test checks the default date is the wall clock's UTC day, as `date -u` gives.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -41,6 +40,10 @@ const run = (packageVersion: string, ...args: Array<string>) => {
   );
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 };
+
+// The UTC day from the same source the script reads.
+const shellToday = () =>
+  NodeChildProcess.spawnSync("date", ["-u", "+%Y%m%d"], { encoding: "utf8" }).stdout.trim();
 
 // Semver 2.0.0 precedence for the versions this script prints.
 const compareSemver = (a: string, b: string) => {
@@ -92,14 +95,12 @@ describe("desktop-version.sh", () => {
   });
 
   it("uses today's UTC date when no date is given", () => {
-    const today = new Date().toISOString().slice(0, 10).replaceAll("-", "");
+    const before = shellToday();
     const result = run("0.1.0", "5");
+    const after = shellToday();
     expect(result.status).toBe(0);
-    // A run straddling UTC midnight may print tomorrow; both are "today" here.
-    const tomorrow = new Date(Date.now() + 60_000).toISOString().slice(0, 10).replaceAll("-", "");
-    expect([`0.1.0-nightly.${today}.5\n`, `0.1.0-nightly.${tomorrow}.5\n`]).toContain(
-      result.stdout,
-    );
+    // A run straddling UTC midnight prints either day.
+    expect([`0.1.0-nightly.${before}.5\n`, `0.1.0-nightly.${after}.5\n`]).toContain(result.stdout);
   });
 
   it("gives a later run a higher semver, on the same day and the next", () => {

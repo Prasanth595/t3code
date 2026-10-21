@@ -126,5 +126,4 @@ it.live(
         }).pipe(Effect.provide(layerRuntime({ repo, worktreesDir })));
       }),
     ).pipe(Effect.provide(Layer.merge(layerGit, NodeServices.layer))),
-  120_000,
 );

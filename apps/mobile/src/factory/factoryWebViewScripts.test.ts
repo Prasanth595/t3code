@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   FACTORY_BEFORE_CONTENT_LOADED_SCRIPT,
@@ -25,14 +25,15 @@ function runExchange(locationOrigin: string, respond: ExchangeFetch = async () =
   return { fetched, posted, replaced };
 }
 
-async function settle() {
-  await new Promise((resolve) => setTimeout(resolve, 0));
+// Every exchange ends by posting exactly one result, so that post marks it settled.
+async function settled(run: { posted: unknown[] }) {
+  await vi.waitFor(() => expect(run.posted).toHaveLength(1));
 }
 
 describe("factoryExchangeScript", () => {
   it("posts the credential on the server origin", async () => {
     const run = runExchange(ORIGIN);
-    await settle();
+    await settled(run);
     expect(run.fetched).toHaveLength(1);
     expect(run.fetched[0]?.url).toBe("/api/auth/browser-session");
     expect(run.fetched[0]?.body).toContain("cred-1");
@@ -42,7 +43,7 @@ describe("factoryExchangeScript", () => {
 
   it("never sends the credential from another origin", async () => {
     const run = runExchange("https://evil.example");
-    await settle();
+    await settled(run);
     expect(run.fetched).toHaveLength(0);
     expect(run.posted).toEqual([{ type: "exchange", ok: false }]);
     expect(run.replaced).toEqual([]);
@@ -50,7 +51,7 @@ describe("factoryExchangeScript", () => {
 
   it("reports a refused credential and stays on the page", async () => {
     const run = runExchange(ORIGIN, async () => ({ ok: false }));
-    await settle();
+    await settled(run);
     expect(run.fetched).toHaveLength(1);
     expect(run.posted).toEqual([{ type: "exchange", ok: false }]);
     expect(run.replaced).toEqual([]);
@@ -60,7 +61,7 @@ describe("factoryExchangeScript", () => {
     const run = runExchange(ORIGIN, async () => {
       throw new TypeError("Network request failed");
     });
-    await settle();
+    await settled(run);
     expect(run.posted).toEqual([{ type: "exchange", ok: false }]);
     expect(run.replaced).toEqual([]);
   });

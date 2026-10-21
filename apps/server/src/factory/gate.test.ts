@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Tests make real git repositories, lock files and fake `git` scripts in temp dirs, and probe process groups with kill(pid, 0).
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -1189,12 +1189,12 @@ it.live("a checkout that runs past its limit is killed with everything it starte
       assert.include(failed.stderr, "did not finish within 300ms");
       // The script's own process group, not a search by name: another run of this suite on the
       // same machine has a `sleep 3032` of its own.
-      let gone = false;
-      for (let i = 0; i < 100 && !gone; i++) {
-        gone = !fake.groupAlive();
-        if (!gone) yield* Effect.sleep("30 millis");
-      }
-      assert.isTrue(gone, "a sleeper outlived the call");
+      yield* Effect.promise(() =>
+        vi.waitFor(() => assert.isFalse(fake.groupAlive(), "a sleeper outlived the call"), {
+          timeout: 3_000,
+          interval: 30,
+        }),
+      );
       assert.isFalse(NodeFS.existsSync(NodePath.join(fake.dir, "wt")));
     }),
   ),
@@ -1586,8 +1586,13 @@ it.live("a second run for the same run while one is running returns running", ()
     };
     const first = yield* Effect.forkChild(gate.run(input));
     yield* Effect.gen(function* () {
-      for (let i = 0; i < 400 && !NodeFS.existsSync(started); i++) yield* Effect.sleep("25 millis");
-      assert.isTrue(NodeFS.existsSync(started), "the first gate never started its command");
+      yield* Effect.promise(() =>
+        vi.waitFor(
+          () =>
+            assert.isTrue(NodeFS.existsSync(started), "the first gate never started its command"),
+          { timeout: 10_000, interval: 25 },
+        ),
+      );
       const before = entries(dataDir, run).length;
       const second = yield* gate.run(input);
       assert.deepStrictEqual(second, { _tag: "running" });

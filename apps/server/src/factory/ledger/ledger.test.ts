@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import {
   InvalidRunIdError,
@@ -486,16 +486,20 @@ describe("create", () => {
 
   it("create now stamps events with the system clock", () => {
     const dataDir = tempDir();
-    const before = Date.now();
+    // Not T0, so a stamp from any clock but the system's would not match.
+    const systemNow = 1_800_000_123_456;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    vi.setSystemTime(systemNow);
     const ledger = Ledger.create(dataDir, softfacRun);
     handles.push(ledger);
     ledger.append(stuck(), testCause());
-    const after = Date.now();
 
     const line = JSON.parse(readText(runFileFor(dataDir)).trimEnd()) as { ts: string; ms: number };
-    expect(line.ms).toBeGreaterThanOrEqual(before);
-    expect(line.ms).toBeLessThanOrEqual(after);
-    expect(line.ts).toBe(formatTs(line.ms));
+    expect(line.ms).toBe(systemNow);
+    expect(line.ts).toBe(formatTs(systemNow));
   });
 
   it("create makes new directories private and the file owner only", () => {
