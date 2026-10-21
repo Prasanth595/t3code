@@ -3,11 +3,11 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 
 /**
  * The `codex-t3` wrapper's versioned pool protocol (dotfiles
- * `scripts/codex_t3_contract.py`, proxy `docs/delegated-launch.md` v1). Every
+ * `scripts/codex_t3_contract.py`, proxy `docs/delegated-launch.md` v2). Every
  * field is nonsecret: a binding path is not bearer authority without the
  * launcher's own client credential, which never reaches T3.
  */
-export const CODEX_POOL_PROTOCOL = "codex-t3-pool-v1";
+export const CODEX_POOL_PROTOCOL = "codex-t3-pool-v2";
 
 export const CodexPoolSessionId = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_.-]{1,128}$/));
 export const CodexPoolRequestId = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_.-]{1,256}$/));
@@ -37,7 +37,7 @@ export const CodexPoolWindow = Schema.Struct({
 
 /** The exact ready result; the wrapper replays prepare and requires equality. */
 export const CodexPoolReadyResult = Schema.Struct({
-  protocolVersion: Schema.Literal(1),
+  protocolVersion: Schema.Literal(2),
   status: Schema.Literal("ready"),
   checkedAt: CodexPoolTimestamp,
   expiresAt: CodexPoolTimestamp,
@@ -90,7 +90,7 @@ export const CodexPoolQuotaScope = Schema.Literals(["account", "model", "unknown
 
 /** Authenticated binding state: the only trusted source of refusal scope. */
 export const CodexPoolBindingState = Schema.Struct({
-  protocolVersion: Schema.Literal(1),
+  protocolVersion: Schema.Literal(2),
   state: Schema.Literals(["pending", "established", "released", "invalid"]),
   active: Schema.Boolean,
   executorAttempts: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
@@ -101,6 +101,7 @@ export const CodexPoolBindingState = Schema.Struct({
       quotaScope: CodexPoolQuotaScope,
       quotaDomains: Schema.Array(CodexPoolQuotaDomain),
       bindingId: Schema.optionalKey(CodexPoolBindingId),
+      attemptedAccountDomain: Schema.optionalKey(CodexPoolQuotaDomain),
     }),
   ),
 });

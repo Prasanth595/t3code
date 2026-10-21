@@ -404,3 +404,20 @@ it.effect("does not narrow a Claude refusal to an absent model window", () =>
     );
   }),
 );
+
+it.effect("keeps attempted direct aliases out of routing without an exhaustion diagnosis", () =>
+  Effect.gen(function* () {
+    const timestamp = DateTime.formatIso(yield* DateTime.now);
+    const result = yield* selectLaunchCandidate({
+      candidates: [selection("a"), selection("alias", "gpt-6-astra")],
+      blockedDomains: ["launch:attempt:codex:account:same@example.com"],
+      probe: (target) =>
+        Effect.succeed({
+          provider: provider(target, "same@example.com", limits(0, timestamp)),
+          probeStartedAt: Date.parse(timestamp),
+        }),
+    });
+    assert.equal(result.status, "waiting");
+    if (result.status === "waiting") assert.equal(result.reason, "throttled");
+  }),
+);

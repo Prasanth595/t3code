@@ -262,22 +262,22 @@ describe("CodexAdapterV2 bound process spawning", () => {
       // nothing is spawned for a bound launch.
       for (const [config, pooled] of [
         [{}, true],
-        [{ delegatedLaunchControl: "codex-t3-pool-v1" as const }, false],
-        [{ delegatedLaunchControl: "codex-t3-pool-v1" as const, launchArgs: "--profile x" }, true],
+        [{ delegatedLaunchControl: "codex-t3-pool-v2" as const }, false],
+        [{ delegatedLaunchControl: "codex-t3-pool-v2" as const, launchArgs: "--profile x" }, true],
       ] as const) {
         const exit = yield* open(yield* create(config, pooled));
         assert.isTrue(Exit.isFailure(exit));
       }
       assert.lengthOf(spawned, 0);
 
-      yield* open(yield* create({ delegatedLaunchControl: "codex-t3-pool-v1" }));
+      yield* open(yield* create({ delegatedLaunchControl: "codex-t3-pool-v2" }));
       assert.lengthOf(spawned, 1);
       const [mode, payload, ...rest] = spawned[0]!.args;
       assert.equal(spawned[0]!.command, "/opt/fake/codex-t3");
       assert.equal(mode, "pool-launch");
       assert.lengthOf(rest, 0);
       assert.deepEqual(yield* decodePoolLaunchPayload(payload), {
-        protocolVersion: 1,
+        protocolVersion: 2,
         prepareRequest: binding.prepareRequest,
         binding: binding.result,
         options: {},
@@ -532,7 +532,7 @@ const makePoolBinding = (
   const bindingId = overrides.bindingId ?? POOL_BINDING_ID;
   const sessionId = "t3.session-adapter";
   return {
-    protocol: "codex-t3-pool-v1",
+    protocol: "codex-t3-pool-v2",
     instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
     prepareRequest: {
       clientRequestId: overrides.clientRequestId ?? "t3.request-adapter",
@@ -542,7 +542,7 @@ const makePoolBinding = (
       blockedQuotaDomains: [],
     },
     result: {
-      protocolVersion: 1,
+      protocolVersion: 2,
       status: "ready",
       checkedAt: "2026-10-20T10:00:00.000Z",
       expiresAt: "2026-10-20T10:00:30.000Z",
@@ -570,7 +570,7 @@ const makeFakePool = (state: () => CodexPoolBindingState | undefined) => {
   return { pool, calls };
 };
 const launchableState: CodexPoolBindingState = {
-  protocolVersion: 1,
+  protocolVersion: 2,
   state: "pending",
   active: false,
   executorAttempts: 0,
@@ -1096,7 +1096,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
         settings: bound
-          ? { ...DEFAULT_CODEX_SETTINGS, delegatedLaunchControl: "codex-t3-pool-v1" }
+          ? { ...DEFAULT_CODEX_SETTINGS, delegatedLaunchControl: "codex-t3-pool-v2" }
           : DEFAULT_CODEX_SETTINGS,
         environment: {},
         clientFactory,

@@ -3634,7 +3634,7 @@ it.effect(
         bindingIds.set(clientRequestId, bindingId);
         const sessionId = `t3.session-${generation}-${model}`;
         return {
-          protocol: "codex-t3-pool-v1",
+          protocol: "codex-t3-pool-v2",
           instanceId: providerInstanceId,
           prepareRequest: {
             clientRequestId,
@@ -3644,7 +3644,7 @@ it.effect(
             blockedQuotaDomains: blocked,
           },
           result: {
-            protocolVersion: 1,
+            protocolVersion: 2,
             status: "ready",
             checkedAt: DateTime.formatIso(DateTime.makeUnsafe(at)),
             expiresAt: DateTime.formatIso(DateTime.makeUnsafe(at + 30_000)),
@@ -3782,7 +3782,7 @@ it.effect(
 
         // Dispatch-time throttle before useful work: skip this candidate only.
         state = {
-          protocolVersion: 1,
+          protocolVersion: 2,
           state: "established",
           active: false,
           executorAttempts: 1,
@@ -3822,7 +3822,7 @@ it.effect(
 
         // Verified account exhaustion blocks that account for every model.
         state = {
-          protocolVersion: 1,
+          protocolVersion: 2,
           state: "established",
           active: false,
           executorAttempts: 1,
@@ -3847,7 +3847,7 @@ it.effect(
         yield* admission.markStarted(threadId, runId);
         const reads = stateReads;
         state = {
-          protocolVersion: 1,
+          protocolVersion: 2,
           state: "established",
           active: false,
           executorAttempts: 1,

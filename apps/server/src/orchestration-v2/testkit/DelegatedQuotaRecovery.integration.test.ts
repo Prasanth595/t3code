@@ -58,12 +58,14 @@ it.effect.each([
   "stream",
   "fallback",
   "account-throttle",
+  "throttle-restart",
   "expired",
 ] as const)("handles delegated %s through persisted parent/task projections", (mode) =>
   Effect.gen(function* () {
     let starts = 0;
     let invalidated = false;
-    const canFallback = mode === "fallback" || mode === "account-throttle";
+    const isThrottle = mode === "account-throttle" || mode === "throttle-restart";
+    const canFallback = mode === "fallback" || isThrottle;
     let restartChild: ThreadId | undefined;
     let restartRun: RunId | undefined;
     let persistedBinding: DelegatedLaunchBinding | undefined;
@@ -71,13 +73,18 @@ it.effect.each([
     const pool: DelegatedLaunchPool = {
       prepare: (request) =>
         Effect.gen(function* () {
-          if (invalidated || (request.blockedQuotaDomains.includes(domain) && !canFallback))
+          if (
+            invalidated ||
+            ((request.blockedQuotaDomains.includes(domain) ||
+              request.blockedQuotaDomains.includes(`launch:attempt:${domain}`)) &&
+              !canFallback)
+          )
             return { status: "waiting", quotaDomains: [domain] };
           const now = yield* DateTime.now;
           const sessionId = `session-${request.generation}`;
           const bindingId = "a".repeat(48);
           const binding: DelegatedLaunchBinding = {
-            protocol: "codex-t3-pool-v1",
+            protocol: "codex-t3-pool-v2",
             instanceId,
             prepareRequest: {
               clientRequestId: `prepare-${request.generation}`,
@@ -87,13 +94,16 @@ it.effect.each([
               blockedQuotaDomains: [],
             },
             result: {
-              protocolVersion: 1,
+              protocolVersion: 2,
               status: "ready",
               checkedAt: DateTime.formatIso(now),
               expiresAt: DateTime.formatIso(DateTime.add(now, { seconds: 30 })),
               ordinaryUsageAllowed: true,
               quotaDomains: [
-                request.blockedQuotaDomains.includes(domain) ? `${domain}-spare` : domain,
+                request.blockedQuotaDomains.includes(domain) ||
+                request.blockedQuotaDomains.includes(`launch:attempt:${domain}`)
+                  ? `${domain}-spare`
+                  : domain,
               ],
               bindingId,
               basePath: `/v1/delegated-launch/bindings/${bindingId}/sessions/${sessionId}`,
@@ -116,22 +126,23 @@ it.effect.each([
           ? Effect.succeed(undefined)
           : mode === "expired"
             ? Effect.succeed({
-                protocolVersion: 1,
+                protocolVersion: 2,
                 state: "pending",
                 active: false,
                 executorAttempts: 0,
                 refusalVersion: 0,
               })
             : Effect.succeed({
-                protocolVersion: 1,
+                protocolVersion: 2,
                 state: "established",
                 active: false,
                 executorAttempts: 1,
                 refusalVersion: 1,
                 refusal: {
-                  code: mode === "account-throttle" ? "throttled" : "usage_limit",
-                  quotaScope: "account",
-                  quotaDomains: [domain],
+                  code: isThrottle ? "throttled" : "usage_limit",
+                  quotaScope: isThrottle ? "transient" : "account",
+                  quotaDomains: isThrottle ? [] : [domain],
+                  ...(isThrottle ? { attemptedAccountDomain: domain } : {}),
                 },
               }),
       release: () => Effect.succeed(true),
@@ -521,6 +532,19 @@ it.effect.each([
       assert.equal(recoveredEvent.type, "run.updated");
       if (recoveredEvent.type === "run.updated")
         assert.equal(recoveredEvent.payload.delegatedLaunch?.generation, 1);
+      if (isThrottle && recoveredEvent.type === "run.updated") {
+        assert.deepEqual(recoveredEvent.payload.delegatedLaunch?.blockedDomains, [
+          `launch:attempt:${domain}`,
+        ]);
+        yield* orchestrator.dispatch(request);
+        assert.lengthOf((yield* orchestrator.getThreadProjection(parentThreadId)).subagents, 1);
+        assert.equal(starts, 1);
+        if (mode === "throttle-restart") {
+          restartChild = task.childThreadId;
+          restartRun = recoveredEvent.payload.id;
+          return;
+        }
+      }
       yield* worker.drain();
       if (canFallback)
         yield* sink.stream({ afterSequence: sequence }).pipe(
@@ -559,6 +583,7 @@ it.effect.each([
       }
       assert.equal(child.runs[0]?.status, "starting");
       assert.ok(child.runs[0]?.capacityWait);
+      if (mode === "expired") assert.notEqual(child.runs[0]?.capacityWait?.reason, "exhausted");
       assert.equal(starts, mode === "expired" ? 0 : 1);
       assert.ok(opened[0]);
       const events = yield* sink.stream({ afterSequence: sequence }).pipe(
@@ -584,13 +609,36 @@ it.effect.each([
       assert.equal(starts, mode === "expired" ? 0 : 1);
     }).pipe(Effect.provide(layer));
     if (restartChild && restartRun) {
-      invalidated = true;
+      invalidated = mode !== "throttle-restart";
       const threadId = restartChild;
       const runId = restartRun;
       yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const start = yield* ProviderTurnStartService.ProviderTurnStartServiceV2;
-        yield* start.start({ threadId, runId }).pipe(Effect.exit);
+        yield* start
+          .start({
+            threadId,
+            runId,
+            ...(mode === "throttle-restart" ? { launchGeneration: 1 } : {}),
+          })
+          .pipe(Effect.exit);
+        if (mode === "throttle-restart") {
+          const child = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(child.runs[0]?.delegatedLaunch?.blockedDomains, [
+            `launch:attempt:${domain}`,
+          ]);
+          assert.equal(opened[1]?.result.quotaDomains[0], `${domain}-spare`);
+          assert.equal(starts, 2);
+          yield* start
+            .start({
+              threadId,
+              runId,
+              ...(mode === "throttle-restart" ? { launchGeneration: 1 } : {}),
+            })
+            .pipe(Effect.exit);
+          assert.equal(starts, 2);
+          return;
+        }
         const child = yield* orchestrator.getThreadProjection(threadId);
         const current = child.runs.find((run) => run.id === runId)!;
         assert.deepEqual(

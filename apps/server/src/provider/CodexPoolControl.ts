@@ -43,7 +43,7 @@ const strict = { onExcessProperty: "error" } as const;
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const ErrorEnvelope = Schema.Struct({
-  protocolVersion: Schema.Literal(1),
+  protocolVersion: Schema.Literal(2),
   error: Schema.Struct({ code: Schema.String.check(Schema.isPattern(/^[a-z_]{1,64}$/)) }),
 });
 const decodeErrorEnvelope = Schema.decodeUnknownOption(
@@ -57,7 +57,7 @@ const envelope = <Operation extends string, S extends Schema.Top>(
 ) =>
   Schema.fromJsonString(
     Schema.Struct({
-      protocolVersion: Schema.Literal(1),
+      protocolVersion: Schema.Literal(2),
       operation: Schema.Literal(operation),
       result,
     }),
@@ -68,13 +68,13 @@ const Capabilities = Schema.Struct({
   controlOperations: Schema.Array(Schema.String),
   boundLaunch: Schema.Literal("app-server-stdio"),
   origin: Schema.String.check(Schema.isPattern(/^https:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/)),
-  proxyProtocolVersion: Schema.Literal(1),
+  proxyProtocolVersion: Schema.Literal(2),
   supportsWebsockets: Schema.Literal(false),
   requestMaxRetries: Schema.Literal(0),
   streamMaxRetries: Schema.Literal(0),
 });
 const DeniedResult = Schema.Struct({
-  protocolVersion: Schema.Literal(1),
+  protocolVersion: Schema.Literal(2),
   status: Schema.Literals(["waiting", "unverified"]),
   checkedAt: Schema.String,
   expiresAt: Schema.String,
@@ -109,7 +109,11 @@ const decoders = {
   ),
 };
 
-export type LaunchRefusalScope = DelegatedQuotaScope | { readonly type: "candidate" };
+export const launchAttemptKey = (domain: string) => `launch:attempt:${domain}`;
+export type LaunchRefusalScope =
+  | DelegatedQuotaScope
+  | { readonly type: "candidate" }
+  | { readonly type: "attempt"; readonly domain: string };
 
 /**
  * Maps authenticated binding state to the admission block for a launch that
@@ -125,6 +129,12 @@ export function classifyPoolRefusal(
       case "usage_limit":
       case "model_quota":
       case "throttled":
+        if (
+          refusal.code === "throttled" &&
+          refusal.quotaScope === "transient" &&
+          refusal.attemptedAccountDomain
+        )
+          return { scope: { type: "attempt", domain: refusal.attemptedAccountDomain } };
         if (refusal.quotaScope === "account" && refusal.quotaDomains.length > 0)
           return { scope: { type: "account" }, domains: refusal.quotaDomains };
         if (refusal.quotaScope === "model" || refusal.quotaScope === "transient")
@@ -180,9 +190,11 @@ export const codexPoolPrepareRequest = Effect.fn("CodexPoolControl.prepareReques
         .pipe(Effect.map((bytes) => Hex.encode(bytes).slice(0, 40)));
     const blockedQuotaDomains = [
       ...new Set(
-        input.blockedQuotaDomains.filter(
-          (domain) => isQuotaDomain(domain) && !domain.includes(":quota:"),
-        ),
+        input.blockedQuotaDomains
+          .map((key) =>
+            key.startsWith("launch:attempt:") ? key.slice("launch:attempt:".length) : key,
+          )
+          .filter((domain) => isQuotaDomain(domain) && !domain.includes(":quota:")),
       ),
     ].toSorted();
     const scope = [input.runId, input.generation, input.instanceId, input.model];
@@ -223,7 +235,7 @@ export function codexPoolLaunchArgs(binding: DelegatedLaunchBinding): ReadonlyAr
   return [
     "pool-launch",
     encodeJson({
-      protocolVersion: 1,
+      protocolVersion: 2,
       prepareRequest: binding.prepareRequest,
       binding: binding.result,
       // Effort and summary travel on each turn/start, as for ordinary sessions.
@@ -267,7 +279,7 @@ export const makeCodexPoolControl = Effect.fn("CodexPoolControl.make")(function*
           Stream.runDrain(child.stderr),
           child.exitCode,
           Stream.run(
-            Stream.encodeText(Stream.make(encodeJson({ protocolVersion: 1, ...request }))),
+            Stream.encodeText(Stream.make(encodeJson({ protocolVersion: 2, ...request }))),
             child.stdin,
           ),
         ],
@@ -368,7 +380,10 @@ export const makeCodexPoolControl = Effect.fn("CodexPoolControl.make")(function*
     state: (b) =>
       call("state", decoders.state, { binding: binding(b) }).pipe(
         Effect.map((state) =>
-          state.refusal?.bindingId !== undefined && state.refusal.bindingId !== b.result.bindingId
+          (state.refusal?.bindingId !== undefined &&
+            state.refusal.bindingId !== b.result.bindingId) ||
+          (state.refusal?.attemptedAccountDomain !== undefined &&
+            !b.result.quotaDomains.includes(state.refusal.attemptedAccountDomain))
             ? undefined
             : state,
         ),

@@ -70,7 +70,7 @@ only a typed model window observed at admission permits a narrower block.
 ## Bound `codex-t3` pool launches
 
 A Codex instance whose launcher speaks the `codex-t3` pool protocol can opt in
-with `"delegatedLaunchControl": "codex-t3-pool-v1"` in its provider instance
+with `"delegatedLaunchControl": "codex-t3-pool-v2"` in its provider instance
 config. The field names a protocol, not a health claim. Without it, a custom
 provider stays unverified. With it, T3 still asks the configured `binaryPath`
 for `pool-control` capabilities on every prepare. These must be exactly
@@ -149,7 +149,7 @@ must never resume through an ordinary unpinned launcher. Useful output, tools,
 plans and input requests permanently close the launch retry boundary, including
 in the final persisted run.
 
-The v1 proxy stores bindings in memory, and the wrapper refuses `pool-launch`
+The v2 proxy stores bindings in memory, and the wrapper refuses `pool-launch`
 for an established binding. Consequently a T3 process restart cannot reopen an
 established native pin through this launch-only protocol, even when the proxy
 still has the binding. A proxy restart likewise loses the pin. These sessions
@@ -194,3 +194,23 @@ proxy revision `d523fa86a409835223ee4b8be5bca6bf52f4122e`,
 Synthetic native-schema fixtures prove weekly-only admission, withheld permission
 refusal, canonical pool/direct alias exclusion and independent same-model
 capacity. This is source/schema evidence, not a live credential comparison.
+
+
+Protocol 2 carries `attemptedAccountDomain` separately from depletion scope.
+For `throttled/transient`, T3 verifies this against the admitted binding and
+persists `launch:attempt:<canonical-domain>` in the existing launch block set.
+Only at prepare does that marker become an account exclusion. Direct aliases
+are skipped too; neither path calls the account exhausted. Existing generation,
+60-second block expiry, request identity, 64-domain prepare bound and useful-work
+freeze still apply. Global model capacity skips the candidate. Missing identity
+cannot unlock same-pool traversal; malformed/foreign identity fails closed.
+The protocol setting is `codex-t3-pool-v2`; all three matching layers are required.
+Old protocol replies/bindings are incompatible and are not reinterpreted.
+
+The actual Go HTTP-executor fixture exports throttle/capacity states; the real
+Python wrapper validates and re-emits them; `CodexPoolControl.test.ts` consumes
+those envelopes when `QUOTA_CONTRACT_EXPORT` is set. Persisted orchestration
+fixtures cover same-model retry, duplicate dispatch and fresh-layer restart.
+The delayed-helper fixture uses a synchronized helper process and virtual clock;
+expired pending launch returns to admission/wait without exhaustion or failed child.
+Slow-helper performance remains unproven; no lease renewal or credential cache was added.

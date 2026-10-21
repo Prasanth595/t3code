@@ -25,7 +25,11 @@ import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { classifyPoolRefusal, type LaunchRefusalScope } from "../provider/CodexPoolControl.ts";
+import {
+  classifyPoolRefusal,
+  launchAttemptKey,
+  type LaunchRefusalScope,
+} from "../provider/CodexPoolControl.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -217,7 +221,7 @@ export const selectLaunchCandidate = Effect.fn("DelegatedLaunchAdmission.selectC
   }) {
     const blocked = new Set<string>(input.blockedDomains);
     let exhausted = false;
-    let throttled = false;
+    let throttled = [...blocked].some((key) => key.startsWith("launch:attempt:"));
     for (const candidate of input.candidates) {
       if (blocked.has(launchCandidateKey(candidate))) {
         throttled = true;
@@ -237,6 +241,10 @@ export const selectLaunchCandidate = Effect.fn("DelegatedLaunchAdmission.selectC
         }
         if (outcome.status === "unverified") continue;
         const domains = outcome.binding.result.quotaDomains;
+        if (domains.some((key) => blocked.has(launchAttemptKey(key)))) {
+          throttled = true;
+          continue;
+        }
         if (domains.some((key) => blocked.has(key))) {
           exhausted = true;
           continue;
@@ -285,6 +293,10 @@ export const selectLaunchCandidate = Effect.fn("DelegatedLaunchAdmission.selectC
       const blockedScope = scopedWindowIds.find((id) =>
         scopedIdentities(id).some((key) => blocked.has(key)),
       );
+      if (identities.some((key) => blocked.has(launchAttemptKey(key)))) {
+        throttled = true;
+        continue;
+      }
       const blockedAccount = identities.some((key) => blocked.has(key));
       if (blockedAccount || blockedScope) {
         for (const key of blockedAccount ? identities : scopedIdentities(blockedScope!))
@@ -539,10 +551,12 @@ export const layer = Layer.effect(
                     ...run.delegatedLaunch.blockedDomains,
                     ...(scope.type === "candidate"
                       ? [launchCandidateKey(run.modelSelection)]
-                      : [
-                          ...refusedQuotaDomains(run.delegatedLaunch.admittedDomains, scope),
-                          ...refusedDomains,
-                        ]),
+                      : scope.type === "attempt"
+                        ? [launchAttemptKey(scope.domain)]
+                        : [
+                            ...refusedQuotaDomains(run.delegatedLaunch.admittedDomains, scope),
+                            ...refusedDomains,
+                          ]),
                   ]),
                 ],
                 admittedDomains: [],

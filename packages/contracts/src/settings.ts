@@ -632,7 +632,7 @@ export const CodexSettings = makeProviderSettingsSchema(
     ),
     // Names the launcher's control protocol only. The launcher must still
     // answer that protocol's capabilities before any launch is admitted.
-    delegatedLaunchControl: Schema.optionalKey(Schema.Literal("codex-t3-pool-v1")).pipe(
+    delegatedLaunchControl: Schema.optionalKey(Schema.Literal("codex-t3-pool-v2")).pipe(
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     customModels: Schema.Array(CustomModelSetting).pipe(

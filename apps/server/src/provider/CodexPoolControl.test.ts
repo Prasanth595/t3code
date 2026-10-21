@@ -1,8 +1,13 @@
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { ProviderInstanceId, type CodexPoolBindingState } from "@t3tools/contracts";
+import {
+  ProviderInstanceId,
+  type DelegatedLaunchBinding,
+  type CodexPoolBindingState,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -30,7 +35,7 @@ const CAPABILITIES = {
   controlOperations: ["capabilities", "prepare", "state", "touch", "release", "cancel", "resume"],
   boundLaunch: "app-server-stdio",
   origin: "https://pool.example.test:8445",
-  proxyProtocolVersion: 1,
+  proxyProtocolVersion: 2,
   supportsWebsockets: false,
   requestMaxRetries: 0,
   streamMaxRetries: 0,
@@ -41,7 +46,7 @@ type Reply = { readonly exit?: number; readonly body: unknown } | { readonly raw
 type Responder = (request: Request, nowMs: number) => Reply;
 
 const ok = (operation: string, result: unknown): Reply => ({
-  body: { protocolVersion: 1, operation, result },
+  body: { protocolVersion: 2, operation, result },
 });
 
 /** A launcher speaking protocol v1 over stdin/stdout, recording every invocation. */
@@ -98,7 +103,7 @@ const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 const readyFor = (request: Request, nowMs: number, overrides: Record<string, unknown> = {}) => {
   const prepare = request.request;
   return ok("prepare", {
-    protocolVersion: 1,
+    protocolVersion: 2,
     status: "ready",
     checkedAt: iso(nowMs),
     expiresAt: iso(nowMs + 30_000),
@@ -150,7 +155,7 @@ it.effect("prepares a ready binding through the configured launcher with nonsecr
     const outcome = yield* pool.prepare(prepareInput(["codex:credential:acct-2"]));
     assert.equal(outcome.status, "ready");
     if (outcome.status !== "ready") return;
-    assert.equal(outcome.binding.protocol, "codex-t3-pool-v1");
+    assert.equal(outcome.binding.protocol, "codex-t3-pool-v2");
     assert.equal(outcome.binding.instanceId, INSTANCE);
     assert.deepEqual(outcome.binding.result.quotaDomains, [ACCOUNT]);
     assert.deepEqual(
@@ -161,7 +166,7 @@ it.effect("prepares a ready binding through the configured launcher with nonsecr
       ],
     );
     assert.deepEqual(calls[1]!.request, {
-      protocolVersion: 1,
+      protocolVersion: 2,
       operation: "prepare",
       request: outcome.binding.prepareRequest,
     });
@@ -249,14 +254,14 @@ it.effect("fails closed when custom launch arguments would bypass the bound proc
 const invalidPrepares: ReadonlyArray<readonly [string, Responder]> = [
   [
     "an error envelope",
-    () => ({ exit: 1, body: { protocolVersion: 1, error: { code: "timeout" } } }),
+    () => ({ exit: 1, body: { protocolVersion: 2, error: { code: "timeout" } } }),
   ],
   ["non-JSON output", () => ({ raw: "Traceback (most recent call last)" })],
   ["an oversized response", () => ({ raw: "x".repeat(20_000) })],
   [
     "a protocol version mismatch",
     (request, nowMs) => ({
-      body: { ...(readyFor(request, nowMs) as { body: object }).body, protocolVersion: 2 },
+      body: { ...(readyFor(request, nowMs) as { body: object }).body, protocolVersion: 1 },
     }),
   ],
   [
@@ -293,7 +298,7 @@ it.effect.each(invalidPrepares.map(([name, reply]) => ({ name, reply })))(
 
 const denied = (nowMs: number, fields: Record<string, unknown>) =>
   ok("prepare", {
-    protocolVersion: 1,
+    protocolVersion: 2,
     checkedAt: iso(nowMs),
     expiresAt: iso(nowMs + 60_000),
     ordinaryUsageAllowed: false,
@@ -334,7 +339,7 @@ it.effect("maps verified account exhaustion to waiting and everything else to un
 it.effect("reads authenticated state and acknowledges refusals by version only", () =>
   Effect.gen(function* () {
     const state: CodexPoolBindingState = {
-      protocolVersion: 1,
+      protocolVersion: 2,
       state: "established",
       active: false,
       executorAttempts: 1,
@@ -377,7 +382,7 @@ it.effect("reads authenticated state and acknowledges refusals by version only",
     assert.isTrue(yield* pool.release(outcome.binding));
     assert.isTrue(yield* pool.cancel(outcome.binding.prepareRequest.clientRequestId));
     assert.deepEqual(calls.find((c) => c.request.operation === "resume")!.request, {
-      protocolVersion: 1,
+      protocolVersion: 2,
       operation: "resume",
       binding: {
         bindingId: BINDING_ID,
@@ -387,7 +392,7 @@ it.effect("reads authenticated state and acknowledges refusals by version only",
       expectedRefusalVersion: 3,
     });
     assert.deepEqual(calls.at(-1)!.request, {
-      protocolVersion: 1,
+      protocolVersion: 2,
       operation: "cancel",
       clientRequestId: outcome.binding.prepareRequest.clientRequestId,
     });
@@ -400,7 +405,7 @@ it.effect("reports failed lifecycle calls as false instead of failing the sessio
       withCapabilities((request, nowMs) =>
         request.operation === "prepare"
           ? readyFor(request, nowMs)
-          : { exit: 1, body: { protocolVersion: 1, error: { code: "conflict" } } },
+          : { exit: 1, body: { protocolVersion: 2, error: { code: "conflict" } } },
       ),
     );
     const outcome = yield* pool.prepare(prepareInput());
@@ -420,7 +425,7 @@ it.effect("builds a single nonsecret pool-launch argument from the persisted bin
     assert.equal(mode, "pool-launch");
     assert.lengthOf(rest, 0);
     assert.deepEqual(decodeJson(payload!), {
-      protocolVersion: 1,
+      protocolVersion: 2,
       prepareRequest: outcome.binding.prepareRequest,
       binding: outcome.binding.result,
       options: {},
@@ -429,7 +434,7 @@ it.effect("builds a single nonsecret pool-launch argument from the persisted bin
 );
 
 const stateWith = (fields: Partial<CodexPoolBindingState>): CodexPoolBindingState => ({
-  protocolVersion: 1,
+  protocolVersion: 2,
   state: "pending",
   active: false,
   executorAttempts: 0,
@@ -499,7 +504,7 @@ it.live.skipIf(!wrapperContractDir)(
               return readyFor(request, nowMs);
             case "state":
               return ok("state", {
-                protocolVersion: 1,
+                protocolVersion: 2,
                 state: "established",
                 active: false,
                 executorAttempts: 1,
@@ -554,3 +559,61 @@ it("does not turn integration refusals into capacity exhaustion", () => {
     );
   }
 });
+
+const producerFixture = process.env.QUOTA_CONTRACT_EXPORT;
+it.effect.skipIf(!producerFixture)(
+  "classifies actual proxy output after real wrapper validation",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      for (const mode of ["throttle", "capacity"]) {
+        const fixture = JSON.parse(yield* fs.readFileString(`${producerFixture}/${mode}.json`));
+        const envelope = JSON.parse(
+          yield* fs.readFileString(`${producerFixture}/${mode}-wrapper.json`),
+        );
+        const { pool } = yield* poolWith(withCapabilities(() => ({ body: envelope })));
+        const binding: DelegatedLaunchBinding = {
+          protocol: "codex-t3-pool-v2",
+          instanceId: INSTANCE,
+          result: fixture.ready,
+          prepareRequest: {
+            clientRequestId: "request",
+            sessionId: fixture.ready.sessionId,
+            provider: "codex",
+            model: fixture.ready.model,
+            blockedQuotaDomains: [],
+          },
+        };
+        const state = yield* pool.state(binding);
+        assert.deepEqual(state, fixture.state);
+        assert.deepEqual(
+          classifyPoolRefusal(state, false),
+          mode === "throttle"
+            ? { scope: { type: "attempt", domain: "codex:credential:synthetic-account" } }
+            : { scope: { type: "candidate" } },
+        );
+        const mismatch = yield* pool.state({
+          ...binding,
+          result: { ...binding.result, quotaDomains: [ACCOUNT] },
+        });
+        assert.equal(mismatch, undefined);
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("excludes attempted identities without inventing exhausted domains", () =>
+  Effect.gen(function* () {
+    const input = {
+      ...prepareInput(),
+      instanceId: INSTANCE,
+      blockedQuotaDomains: ["launch:attempt:codex:credential:attempted"],
+    };
+    const request = yield* requestFor(input);
+    assert.deepEqual(request?.blockedQuotaDomains, ["codex:credential:attempted"]);
+    assert.deepEqual(yield* requestFor(input), request);
+    assert.notEqual(
+      (yield* requestFor({ ...input, blockedQuotaDomains: [] }))?.clientRequestId,
+      request?.clientRequestId,
+    );
+  }),
+);

@@ -295,7 +295,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, recording));
 
       expect((yield* create({})).delegatedLaunchPool).toBeUndefined();
-      const pooled = yield* create({ delegatedLaunchControl: "codex-t3-pool-v1" });
+      const pooled = yield* create({ delegatedLaunchControl: "codex-t3-pool-v2" });
       expect(pooled.delegatedLaunchPool).toBeDefined();
       spawned.length = 0;
       // An unreachable launcher is unverified, never an exemption.

@@ -183,7 +183,7 @@ export const CodexDriver: ProviderDriver<
     // Only an explicitly named launcher protocol is consulted; the launcher must
     // still prove it per call. Other custom providers stay unverified.
     const delegatedLaunchPool =
-      effectiveConfig.delegatedLaunchControl === "codex-t3-pool-v1"
+      effectiveConfig.delegatedLaunchControl === "codex-t3-pool-v2"
         ? yield* makeCodexPoolControl({
             instanceId,
             binaryPath: effectiveConfig.binaryPath,

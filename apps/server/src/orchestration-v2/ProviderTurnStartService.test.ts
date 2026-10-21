@@ -1140,7 +1140,7 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
 }
 
 const boundLaunchBinding: DelegatedLaunchBinding = {
-  protocol: "codex-t3-pool-v1",
+  protocol: "codex-t3-pool-v2",
   instanceId: ProviderInstanceId.make("codex-personal"),
   prepareRequest: {
     clientRequestId: "t3.request-turn-start",
@@ -1150,7 +1150,7 @@ const boundLaunchBinding: DelegatedLaunchBinding = {
     blockedQuotaDomains: [],
   },
   result: {
-    protocolVersion: 1,
+    protocolVersion: 2,
     status: "ready",
     checkedAt: "2026-09-04T12:00:00Z",
     expiresAt: "2026-09-04T12:00:30Z",
