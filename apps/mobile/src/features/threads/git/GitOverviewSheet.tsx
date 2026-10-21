@@ -68,7 +68,12 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
     if (isBlankLink) navigation.goBack();
   }, [isBlankLink, navigation]);
   if (isBlankLink) return null;
-  return <GitOverviewSheetContent {...props} />;
+  return (
+    <>
+      <GitOverviewSheetContent {...props} />
+      <Dialog.SheetHost />
+    </>
+  );
 }
 
 function GitOverviewSheetContent(props: GitOverviewSheetProps) {
