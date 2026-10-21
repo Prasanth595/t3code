@@ -1,4 +1,4 @@
-import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
@@ -28,7 +28,7 @@ import {
   threadIdOf,
 } from "./format";
 import { TouchLink } from "./TouchLink";
-import { useFactoryEnvironmentId, useFactoryRun } from "./useFactoryData";
+import { useFactoryEnvironmentLabel, useFactoryRun } from "./useFactoryData";
 
 /** Pairs each item with a key unique within the list, though two rows may read the same. */
 function keyed<T>(items: ReadonlyArray<T>, base: (item: T) => string): Array<[string, T]> {
@@ -177,18 +177,22 @@ function Ledger({
   );
 }
 
-export function FactoryRunPage({ runId }: { runId: string }) {
-  const factoryEnvironmentId = useFactoryEnvironmentId();
-  const run = useFactoryRun(factoryEnvironmentId, runId);
-  const environmentId = factoryEnvironmentId ?? PRIMARY_LOCAL_ENVIRONMENT_ID;
+export function FactoryRunPage({
+  environmentId,
+  runId,
+}: {
+  environmentId: EnvironmentId;
+  runId: string;
+}) {
+  const run = useFactoryRun(environmentId, runId);
+  const label = useFactoryEnvironmentLabel(environmentId);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
   const stop = async () => {
-    if (factoryEnvironmentId === null) return;
     setBusy(true);
     try {
-      setNote((await factoryApi.stopRun(factoryEnvironmentId, runId)).message);
+      setNote((await factoryApi.stopRun(environmentId, runId)).message);
     } catch (error) {
       setNote(messageOf(error));
     } finally {
@@ -260,6 +264,7 @@ export function FactoryRunPage({ runId }: { runId: string }) {
             Back
           </TouchLink>
           <h1 className="min-w-0 truncate font-mono text-sm font-medium">{runId}</h1>
+          <span className="min-w-0 shrink-0 truncate text-sm text-muted-foreground">{label}</span>
         </div>
       }
     >

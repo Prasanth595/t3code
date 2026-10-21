@@ -1,8 +1,12 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useSyncExternalStore } from "react";
+import { useRef, useSyncExternalStore } from "react";
 
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
-import { useConnectedEnvironmentIds, usePrimaryEnvironmentId } from "~/state/environments";
+import {
+  useConnectedEnvironmentIds,
+  useEnvironments,
+  usePrimaryEnvironmentId,
+} from "~/state/environments";
 
 import {
   FactoryApiError,
@@ -200,66 +204,111 @@ export const useFactoryRun = (
 ): FactoryResource<FactoryRunDetail> =>
   useFactoryResource<FactoryRunDetail>(environmentId, `run:${id}`);
 
-/** The first candidate that runs; null while an earlier one has not answered; else the primary. */
-export function pickFactoryEnvironment(
-  candidates: ReadonlyArray<EnvironmentId>,
-  primary: EnvironmentId | null,
-  statusOf: (id: EnvironmentId) => Loaded<FactoryStatus>,
-): EnvironmentId | null {
-  for (const id of candidates) {
-    const { status, data } = statusOf(id);
-    if (data?.state === "running") return id;
-    if (status === "loading") return null;
-  }
-  return primary;
+/**
+ * The same resource of several environments, one resource each in the order of `environmentIds`.
+ * One subscription covers them all, so the set may change between renders. Its snapshot is the
+ * previous array while every store's state is the same object, which `useSyncExternalStore` needs
+ * to not render again for nothing. One live-refresh timer ticks every key. Readers of one key
+ * share the store with `useFactoryResource`.
+ */
+function useFactoryResources<T>(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+  resource: Resource,
+): Array<FactoryResource<T>> {
+  const keys = environmentIds.map((id) => keyOf(id, resource));
+  const last = useRef<ReadonlyArray<Loaded<unknown>>>([]);
+  const states = useSyncExternalStore(
+    (listener: () => void) => {
+      const unsubscribes = environmentIds.map((id) => subscribe(id, resource, listener));
+      return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+    },
+    () => {
+      const next = keys.map(snapshot);
+      const previous = last.current;
+      if (previous.length === next.length && previous.every((state, i) => state === next[i])) {
+        return previous;
+      }
+      last.current = next;
+      return next;
+    },
+  );
+  useLiveRefresh(() => keys.forEach(tick), {
+    key: `factory:all:${resource}`,
+    intervalMs: POLL_MS,
+    enabled: keys.length > 0 && resource !== "runs:all",
+  });
+  return keys.map((key, i) => ({
+    ...(states[i] as Loaded<T>),
+    refresh: () => refresh(key),
+  }));
 }
 
+/** The runs list of each environment: the recent window, polled; or every run with `all`, read once. */
+export const useFactoryRunsOf = (
+  environmentIds: ReadonlyArray<EnvironmentId>,
+  all: boolean,
+): Array<FactoryResource<{ readonly runs: ReadonlyArray<FactoryRunRow> }>> =>
+  useFactoryResources(environmentIds, all ? "runs:all" : "runs");
+
+/** An environment's name for people: the label it was saved under, else its id. */
+export function useFactoryEnvironmentLabel(environmentId: EnvironmentId): string {
+  return useEnvironments().presentationById.get(environmentId)?.entry.target.label ?? environmentId;
+}
+
+export interface FactoryEnvironment {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly status: FactoryResource<FactoryStatus>;
+}
+
+const isNotFound = (error: Error | null): boolean =>
+  error instanceof FactoryApiError && error.status === 404;
+
 /**
- * The environment whose factory the pages show: the first connected environment whose status says
- * `running`, the primary first; with none running, the primary, whose status then says why it is
- * idle. Every candidate's status is read and polled here, through the same stores the pages' own
- * status hooks use, so choosing costs no read beyond the candidates'. Null without a primary, and
- * while a candidate ahead of any running one has not answered yet: the pages read nothing from an
- * environment that a later answer could displace.
+ * Every candidate environment's status: the primary first, then the other connected ones. Read and
+ * polled through the same stores the pages' own hooks use. An environment still loading or failed
+ * stays; an upstream server without a factory (404) is left out here, and only here.
  */
-export function useFactoryEnvironmentId(): EnvironmentId | null {
+function useFactoryCandidates(): {
+  readonly candidates: ReadonlyArray<EnvironmentId>;
+  readonly statuses: ReadonlyArray<FactoryResource<FactoryStatus>>;
+} {
   const primary = usePrimaryEnvironmentId();
   const connected = useConnectedEnvironmentIds();
   const candidates =
     primary === null ? connected : [primary, ...connected.filter((id) => id !== primary)];
-  const state = useSyncExternalStore(
-    (listener: () => void) => {
-      const unsubscribes = candidates.map((id) => subscribe(id, "status", listener));
-      return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
-    },
-    () =>
-      pickFactoryEnvironment(
-        candidates,
-        primary,
-        (id) => snapshot(keyOf(id, "status")) as Loaded<FactoryStatus>,
-      ),
-  );
-  const tickAll = () => candidates.forEach((id) => tick(keyOf(id, "status")));
-  useLiveRefresh(tickAll, {
-    key: "factory:environment",
-    intervalMs: POLL_MS,
-    enabled: candidates.length > 0,
-  });
-  return state;
+  return { candidates, statuses: useFactoryResources<FactoryStatus>(candidates, "status") };
 }
 
 /**
- * False once the factory environment's status answered 404: this server has no factory (an
- * upstream build), so the sidebar hides the item instead of leading to a page that cannot load.
- * True before any answer.
+ * The environments whose factory the pages show, in order: the primary, then the other connected
+ * environments, each with its label and status, without those that have no factory.
  */
-export function useFactorySupported(): boolean {
-  const { error } = useFactoryStatus(useFactoryEnvironmentId());
-  return !(error instanceof FactoryApiError && error.status === 404);
+export function useFactoryEnvironments(): ReadonlyArray<FactoryEnvironment> {
+  const { candidates, statuses } = useFactoryCandidates();
+  const { presentationById } = useEnvironments();
+  return candidates.flatMap((environmentId, i) => {
+    const status = statuses[i]!;
+    if (isNotFound(status.error)) return [];
+    const label = presentationById.get(environmentId)?.entry.target.label ?? environmentId;
+    return [{ environmentId, label, status }];
+  });
 }
 
-/** The open attention items, for the sidebar badge: the last count known, 0 before any answer. */
+/**
+ * False only once every candidate's status answered 404: no server here has a factory (an upstream
+ * build), so the sidebar hides the item instead of leading to a page that cannot load. True before
+ * every candidate has answered, and with no candidate.
+ */
+export function useFactorySupported(): boolean {
+  const { statuses } = useFactoryCandidates();
+  return statuses.length === 0 || !statuses.every((status) => isNotFound(status.error));
+}
+
+/** The open attention items over every listed environment, for the sidebar badge: 0 before any answer. */
 export function useFactoryAttentionCount(): number {
-  const { data } = useFactoryStatus(useFactoryEnvironmentId());
-  return data?.attention.length ?? 0;
+  return useFactoryEnvironments().reduce(
+    (sum, { status }) => sum + (status.data?.attention.length ?? 0),
+    0,
+  );
 }

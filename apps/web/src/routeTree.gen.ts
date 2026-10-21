@@ -34,9 +34,9 @@ import { Route as SettingsConnectionsRouteImport } from './routes/settings.conne
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
-import { Route as FactoryRunIdRouteImport } from './routes/factory_.$runId'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
+import { Route as FactoryEnvironmentIdRunIdRouteImport } from './routes/factory_.$environmentId.$runId'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
@@ -165,11 +165,6 @@ const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
   path: '/projects/$projectKey',
   getParentRoute: () => rootRouteImport,
 } as any)
-const FactoryRunIdRoute = FactoryRunIdRouteImport.update({
-  id: '/factory_/$runId',
-  path: '/factory/$runId',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   id: '/pull-requests',
   path: '/pull-requests',
@@ -180,6 +175,12 @@ const ChatNewRoute = ChatNewRouteImport.update({
   path: '/new',
   getParentRoute: () => ChatRoute,
 } as any)
+const FactoryEnvironmentIdRunIdRoute =
+  FactoryEnvironmentIdRunIdRouteImport.update({
+    id: '/factory_/$environmentId/$runId',
+    path: '/factory/$environmentId/$runId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
   id: '/draft/$draftId',
   path: '/draft/$draftId',
@@ -203,7 +204,6 @@ export interface FileRoutesByFullPath {
   '/welcome': typeof WelcomeRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
-  '/factory/$runId': typeof FactoryRunIdRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -222,6 +222,7 @@ export interface FileRoutesByFullPath {
   '/settings/storage': typeof SettingsStorageRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/factory/$environmentId/$runId': typeof FactoryEnvironmentIdRunIdRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -233,7 +234,6 @@ export interface FileRoutesByTo {
   '/welcome': typeof WelcomeRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
-  '/factory/$runId': typeof FactoryRunIdRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -253,6 +253,7 @@ export interface FileRoutesByTo {
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/factory/$environmentId/$runId': typeof FactoryEnvironmentIdRunIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -266,7 +267,6 @@ export interface FileRoutesById {
   '/welcome': typeof WelcomeRoute
   '/_chat/new': typeof ChatNewRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
-  '/factory_/$runId': typeof FactoryRunIdRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -286,6 +286,7 @@ export interface FileRoutesById {
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/factory_/$environmentId/$runId': typeof FactoryEnvironmentIdRunIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -300,7 +301,6 @@ export interface FileRouteTypes {
     | '/welcome'
     | '/new'
     | '/pull-requests'
-    | '/factory/$runId'
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
@@ -319,6 +319,7 @@ export interface FileRouteTypes {
     | '/settings/storage'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/factory/$environmentId/$runId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -330,7 +331,6 @@ export interface FileRouteTypes {
     | '/welcome'
     | '/new'
     | '/pull-requests'
-    | '/factory/$runId'
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
@@ -350,6 +350,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/factory/$environmentId/$runId'
   id:
     | '__root__'
     | '/_chat'
@@ -362,7 +363,6 @@ export interface FileRouteTypes {
     | '/welcome'
     | '/_chat/new'
     | '/_chat/pull-requests'
-    | '/factory_/$runId'
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
@@ -382,6 +382,7 @@ export interface FileRouteTypes {
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
+    | '/factory_/$environmentId/$runId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -393,8 +394,8 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRouteWithChildren
   UsageRoute: typeof UsageRoute
   WelcomeRoute: typeof WelcomeRoute
-  FactoryRunIdRoute: typeof FactoryRunIdRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
+  FactoryEnvironmentIdRunIdRoute: typeof FactoryEnvironmentIdRunIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -574,13 +575,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectKeyRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/factory_/$runId': {
-      id: '/factory_/$runId'
-      path: '/factory/$runId'
-      fullPath: '/factory/$runId'
-      preLoaderRoute: typeof FactoryRunIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/_chat/pull-requests': {
       id: '/_chat/pull-requests'
       path: '/pull-requests'
@@ -594,6 +588,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/new'
       preLoaderRoute: typeof ChatNewRouteImport
       parentRoute: typeof ChatRoute
+    }
+    '/factory_/$environmentId/$runId': {
+      id: '/factory_/$environmentId/$runId'
+      path: '/factory/$environmentId/$runId'
+      fullPath: '/factory/$environmentId/$runId'
+      preLoaderRoute: typeof FactoryEnvironmentIdRunIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_chat/draft/$draftId': {
       id: '/_chat/draft/$draftId'
@@ -679,8 +680,8 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRouteWithChildren,
   UsageRoute: UsageRoute,
   WelcomeRoute: WelcomeRoute,
-  FactoryRunIdRoute: FactoryRunIdRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
+  FactoryEnvironmentIdRunIdRoute: FactoryEnvironmentIdRunIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
