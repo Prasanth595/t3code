@@ -1026,25 +1026,23 @@ const parseIpv4Addresses = (raw: string): ReadonlyArray<string> =>
  * vEthernet address plus any distro-local VPN addresses (e.g. Tailscale); under
  * mirrored networking it is the Windows host's own addresses.
  */
-export const probeDistroIpv4Addresses = (
-  distro: string | null,
-): Effect.Effect<
-  Option.Option<ReadonlyArray<string>>,
-  never,
-  ChildProcessSpawner.ChildProcessSpawner
-> => runDistroShell(distro, "hostname -I").pipe(Effect.map(Option.map(parseIpv4Addresses)));
+export const probeDistroIpv4Addresses = Effect.fn("DesktopWslEnvironment.probeDistroIpv4Addresses")(
+  function* (distro: string | null) {
+    return Option.map(yield* runDistroShell(distro, "hostname -I"), parseIpv4Addresses);
+  },
+);
 
 /**
  * The IPv4 addresses the distro's own Tailscale reports (`tailscale ip -4`).
  * Empty when Tailscale isn't installed or running in the distro, since address
  * ranges alone can't tell Tailscale from other VPNs sharing 100.64.0.0/10.
  */
-export const probeDistroTailscaleIpv4Addresses = (
-  distro: string | null,
-): Effect.Effect<ReadonlyArray<string>, never, ChildProcessSpawner.ChildProcessSpawner> =>
-  runDistroShell(distro, "tailscale ip -4").pipe(
-    Effect.map((raw) => Option.match(raw, { onNone: () => [], onSome: parseIpv4Addresses })),
-  );
+export const probeDistroTailscaleIpv4Addresses = Effect.fn(
+  "DesktopWslEnvironment.probeDistroTailscaleIpv4Addresses",
+)(function* (distro: string | null) {
+  const raw = yield* runDistroShell(distro, "tailscale ip -4");
+  return Option.match(raw, { onNone: (): ReadonlyArray<string> => [], onSome: parseIpv4Addresses });
+});
 
 // The first entry on the WSL2 default network is always the eth0 vEthernet
 // address Windows can reach directly (no wslhost forwarding required).
