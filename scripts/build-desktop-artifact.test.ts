@@ -490,7 +490,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
       assert.isUndefined(latestConfig);
       assert.isUndefined(nightlyConfig);
-      assert.notProperty(build, "publish");
+      assert.isNull(build.publish);
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
