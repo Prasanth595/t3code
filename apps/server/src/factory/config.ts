@@ -143,8 +143,8 @@ export interface MachineConfig {
   /** Whether a new attention item posts a macOS notification. The list is kept either way. */
   readonly notify: boolean;
   /**
-   * The free GiB the volume of the worktrees must have for a pass to claim an issue or start a
-   * gate. 0 turns the check off.
+   * The free GiB the volumes of the worktrees and of the factory's data must have for a pass to
+   * claim an issue or start a gate. 0 turns the check off.
    */
   readonly minFreeGib: number;
 }

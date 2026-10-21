@@ -35,7 +35,7 @@ import {
   type WatchedListing,
   type WatchedRepo,
 } from "./config.ts";
-import { readLowestFreeSpace } from "./disk.ts";
+import { readLowestFreeSpace, type FreeSpace } from "./disk.ts";
 import * as Gate from "./gate.ts";
 import { FactoryGate, clearGateLocks, gateLockFile } from "./gate.ts";
 import type { State } from "./domain/lifecycle.ts";
@@ -755,6 +755,8 @@ export interface RuntimeOptions {
   readonly gateRemoteBase?: string;
   /** Called with each world a start or reload builds, once the world is built: for a test that needs the pass world a reload built. */
   readonly onWorld?: (world: PassWorld) => void;
+  /** How a directory's free space is read. Default `statfs`; a test passes the sizes it needs. */
+  readonly readFreeSpace?: (path: string) => FreeSpace;
 }
 
 /** A pass of a factory with no config to run on. */
@@ -860,7 +862,10 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
           Effect.flatMap((worktrees) =>
             Effect.try({
               try: () =>
-                readLowestFreeSpace([...(worktrees === null ? [] : [worktrees]), factoryDir]),
+                readLowestFreeSpace(
+                  [...(worktrees === null ? [] : [worktrees]), factoryDir],
+                  options.readFreeSpace,
+                ),
               // Local disk, as softfac files it: the kind the machine's own files have.
               catch: (cause): PassError => ({
                 kind: "ledger",

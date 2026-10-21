@@ -2385,7 +2385,7 @@ describe("reloading the machine config", () => {
               onWorld: (world) => worlds.push(world),
               readFreeSpace: (path) => {
                 read.push(path);
-                return { path, freeBytes: path === factoryDir ? 7 : 3 };
+                return { path, freeBytes: path === elsewhere ? 3 : 7 };
               },
             },
             watching([A_B]),

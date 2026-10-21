@@ -401,7 +401,7 @@ const prepareText = (text: string): string => {
 /** A pass in flight: the counts, the lines, and whether the machine log has failed once. */
 class Pass {
   readonly report: Report = { runs: 0, claimed: 0, errors: 0, attention: 0 };
-  /** The volume of the worktrees is below `min_free_gib`: nothing is claimed and no gate starts. */
+  /** A probed volume is below `min_free_gib`: nothing is claimed and no gate starts. */
   lowDisk = false;
   private logFailed = false;
   private readonly world: PassWorld;
@@ -651,7 +651,7 @@ const closedStuck = Effect.fn("Pass.closedStuck")(function* (
   }
 });
 
-/** The machine's attention item while the volume of the worktrees is below `min_free_gib`. */
+/** The machine's attention item while a probed volume is below `min_free_gib`. */
 const LOW_DISK_ITEM_ID = "low-disk";
 const GIB = 1024 ** 3;
 
@@ -701,8 +701,8 @@ const lowDisk = Effect.fn("Pass.lowDisk")(function* (
     repo: null,
     issue: null,
     run: null,
-    // No figure: an open item is not raised again, so one would go stale.
-    message: `low disk: ${plain(path)} has less free than min_free_gib ${machine.minFreeGib}; ${held}`,
+    // No figure and no path: an open item is not raised again, so they would go stale.
+    message: `low disk: free space is below min_free_gib ${machine.minFreeGib}; ${held}`,
   });
   return true;
 });
