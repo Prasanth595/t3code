@@ -66,12 +66,13 @@ const git = (cwd: string, ...args: Array<string>) => {
 
 // A deploy.sh that records each call with the commit it ran at, whether it was told to leave the
 // autodeploy job loaded and whether it was told it already holds the deploy lock, and on an
-// install makes the commit's version directory (leaving the install time of one that is already
-// there), keeps the old `current` as `previous` and points `current` at the commit, as install.sh
-// would. DEPLOY_FAIL fails the build,
+// install keeps the old `current` as `previous` and points `current` at the commit, as install.sh
+// would. It makes the commit's version directory but, unlike install.sh, leaves the install time
+// of one already there, so a test can make `current` the oldest. DEPLOY_FAIL fails the build,
 // INSTALL_FAIL the install (as a health check that rolled back would), BUILD_HANG makes the build
-// hang on a child whose pid it writes there, and HOLD_DURING_BUILD leaves autodeploy.hold as a
-// deploy by hand during the build would.
+// hang on a child whose pid it writes there, HOLD_DURING_BUILD leaves autodeploy.hold as a
+// deploy by hand during the build would, and ABSOLUTE_CURRENT points `current` by absolute path,
+// as a link repaired by hand might.
 const FAKE_DEPLOY = [
   "#!/usr/bin/env bash",
   "set -euo pipefail",
@@ -88,7 +89,8 @@ const FAKE_DEPLOY = [
   'mkdir -p "$r/versions/0.0.1+fac.$sha"',
   'old=$(readlink "$r/current" || true)',
   '[[ -z $old || $old == "versions/0.0.1+fac.$sha" ]] || ln -sfn "$old" "$r/previous"',
-  'ln -sfn "versions/0.0.1+fac.$sha" "$r/current"',
+  'target="versions/0.0.1+fac.$sha"; [[ -z ${ABSOLUTE_CURRENT:-} ]] || target="$r/$target"',
+  'ln -sfn "$target" "$r/current"',
   "",
 ].join("\n");
 
@@ -599,7 +601,7 @@ describe("autodeploy.sh pruning old versions", () => {
     writeMachineConfig("gh_config_dir: /gh\nmax_concurrent_runs: 1\nkeep_versions: 0 # tight\n");
     const sha = commitToOrigin("second");
     const short = git(clone, "rev-parse", "--short", sha);
-    // An install time older than every other: a reinstall that kept its directory.
+    // Older than every other, which install.sh never leaves, so only the name keeps it.
     addVersion(`0.0.1+fac.${short}`, 60);
     addVersion(installedName(), 30);
     addVersion("0.0.1+fac.ccccccc", 20);
@@ -631,8 +633,15 @@ describe("autodeploy.sh pruning old versions", () => {
     expect(pruned(build.output + install.output)).toEqual([]);
   });
 
-  it("does not prune when keep_versions is not a whole number, and says so", async () => {
-    writeMachineConfig("gh_config_dir: /gh\nmax_concurrent_runs: 1\nkeep_versions: lots\n");
+  // The server's YAML parser reads every one of these; the script reads none, so it must not guess.
+  it.each([
+    "keep_versions: lots",
+    "keep_versions: 10000000000000000000",
+    "keep_versions : 10",
+    '"keep_versions": 10',
+    "keep_versions: 1\nkeep_versions: 2",
+  ])("does not prune when it cannot read %j, and says so", async (line) => {
+    writeMachineConfig(`gh_config_dir: /gh\nmax_concurrent_runs: 1\n${line}\n`);
     for (const [i, name] of ["a", "b", "c", "d", "e"].entries()) {
       addVersion(`0.0.1+fac.${name.repeat(7)}`, 60 - i);
     }
@@ -643,10 +652,43 @@ describe("autodeploy.sh pruning old versions", () => {
 
     expect(result.status).toBe(0);
     expect(versions()).toHaveLength(7);
-    expect(result.output).toContain("not pruning versions: keep_versions");
+    expect(pruned(result.output)).toEqual([]);
+    expect(result.output).toContain("not pruning versions: cannot read keep_versions");
     expect(lines(result.output)[0]).toContain(
       `deployed ${git(clone, "rev-parse", "--short", sha)}`,
     );
+  });
+
+  it("takes the default past a commented-out keep_versions", async () => {
+    writeMachineConfig("gh_config_dir: /gh\nmax_concurrent_runs: 1\n# keep_versions: 0\n");
+    for (const [i, name] of ["a", "b", "c", "d", "e"].entries()) {
+      addVersion(`0.0.1+fac.${name.repeat(7)}`, 60 - i);
+    }
+    addVersion(installedName(), 10);
+    commitToOrigin("second");
+
+    const result = await runAutodeploy();
+
+    expect(result.status).toBe(0);
+    expect(versions()).toHaveLength(4);
+    expect(pruned(result.output)).toHaveLength(3);
+  });
+
+  it("deletes nothing when current is not a versions/<name> link", async () => {
+    writeMachineConfig("gh_config_dir: /gh\nmax_concurrent_runs: 1\nkeep_versions: 0\n");
+    for (const [i, name] of ["a", "b", "c"].entries()) {
+      addVersion(`0.0.1+fac.${name.repeat(7)}`, 60 - i);
+    }
+    addVersion(installedName(), 10);
+    const sha = commitToOrigin("second");
+    const short = git(clone, "rev-parse", "--short", sha);
+
+    const result = await runAutodeploy({ ABSOLUTE_CURRENT: "1" });
+
+    expect(result.status).toBe(0);
+    expect(current()).toBe(NodePath.join(root(), `versions/0.0.1+fac.${short}`));
+    expect(versions()).toHaveLength(5);
+    expect(pruned(result.output)).toEqual([]);
   });
 
   // `previous` is kept first, so a version installed after it (then rolled back from) goes first.
