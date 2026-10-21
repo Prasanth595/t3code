@@ -1752,11 +1752,12 @@ function useProviderWorkspaceSnapshotRefresh(input: {
     }).then((result) => {
       const refreshedSnapshot =
         result._tag === "Success" &&
-        hasCompleteProviderWorkspaceSnapshot(
+        hasCurrentProviderWorkspaceSnapshot(
           result.value.providers.find(
             (provider) => provider.instanceId === selectedProviderEntry.instanceId,
           ),
           gitCwd,
+          Date.now(),
         );
       if (!refreshedSnapshot) retryLater();
     }, retryLater);
