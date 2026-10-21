@@ -334,6 +334,102 @@ describe("DesktopServerExposure", () => {
     ),
   );
 
+  describe("WSL primary", () => {
+    const hostInterfaces = {
+      ...lanNetworkInterfaces,
+      tailscale0: [{ address: "100.90.1.2", family: "IPv4" as const, internal: false }],
+    };
+    const tailscaleStatus = `{"Self":{"DNSName":"win-host.tail1234.ts.net.","TailscaleIPs":["100.90.1.2"]}}`;
+
+    // Answers `wsl.exe` with `distroAddresses` (null: the probe fails) and
+    // everything else (the tailscale CLI) with the Windows node's status.
+    const wslSpawner = (distroAddresses: string | null) =>
+      Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) =>
+          Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Effect.succeed(
+                ChildProcessSpawner.ExitCode(
+                  command._tag === "StandardCommand" &&
+                    command.command === "wsl.exe" &&
+                    distroAddresses === null
+                    ? 1
+                    : 0,
+                ),
+              ),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.make(
+                encoder.encode(
+                  command._tag === "StandardCommand" && command.command === "wsl.exe"
+                    ? (distroAddresses ?? "")
+                    : tailscaleStatus,
+                ),
+              ),
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          ),
+        ),
+      );
+
+    const advertisedUrls = (distroAddresses: string | null) =>
+      withHarness(
+        hostInterfaces,
+        Effect.gen(function* () {
+          const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+          yield* settings.setServerExposureMode("network-accessible");
+          yield* settings.setWslBackendEnabled(true);
+          yield* settings.setWslOnly(true);
+          yield* serverExposure.configureFromSettings({ port: 4173 });
+          return (yield* serverExposure.getAdvertisedEndpoints).map(
+            (endpoint) => endpoint.httpBaseUrl,
+          );
+        }),
+        {},
+        wslSpawner(distroAddresses),
+      );
+
+    it.effect("NAT: drops Windows addresses and adds the distro's Tailscale IP", () =>
+      Effect.gen(function* () {
+        assert.deepEqual(yield* advertisedUrls("172.20.1.5 100.64.0.9\n"), [
+          "http://127.0.0.1:4173/",
+          "https://win-host.tail1234.ts.net/",
+          "http://100.64.0.9:4173/",
+        ]);
+      }),
+    );
+
+    it.effect("mirrored: keeps the Windows addresses the distro shares", () =>
+      Effect.gen(function* () {
+        assert.deepEqual(yield* advertisedUrls("192.168.1.20 100.90.1.2\n"), [
+          "http://127.0.0.1:4173/",
+          "http://192.168.1.20:4173/",
+          "http://100.90.1.2:4173/",
+          "https://win-host.tail1234.ts.net/",
+        ]);
+      }),
+    );
+
+    it.effect("keeps the Windows addresses when the distro can't be probed", () =>
+      Effect.gen(function* () {
+        assert.deepEqual(yield* advertisedUrls(null), [
+          "http://127.0.0.1:4173/",
+          "http://192.168.1.20:4173/",
+          "http://100.90.1.2:4173/",
+          "https://win-host.tail1234.ts.net/",
+        ]);
+      }),
+    );
+  });
+
   it.effect("keeps Tailscale-only hosts network-accessible", () =>
     withHarness(
       tailnetNetworkInterfaces,

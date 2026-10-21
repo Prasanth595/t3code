@@ -986,16 +986,22 @@ const windowsToWslPathImpl = (
 
 const IPV4_PATTERN = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 
-const getDistroIpImpl = (
+/**
+ * Every IPv4 address the distro has bound (`hostname -I`, loopback excluded),
+ * or `None` when the probe fails or times out. Under WSL2 NAT this is the eth0
+ * vEthernet address plus any distro-local VPN addresses (e.g. Tailscale); under
+ * mirrored networking it is the Windows host's own addresses.
+ */
+export const probeDistroIpv4Addresses = (
   distro: string | null,
-): Effect.Effect<Option.Option<string>, never, ChildProcessSpawner.ChildProcessSpawner> =>
+): Effect.Effect<
+  Option.Option<ReadonlyArray<string>>,
+  never,
+  ChildProcessSpawner.ChildProcessSpawner
+> =>
   Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      // `hostname -I` prints a space-separated list of all non-loopback
-      // IPs the distro has bound. The first entry on the WSL2 default
-      // network is always the eth0 vEthernet address Windows can reach
-      // directly (no wslhost forwarding required).
       const command = ChildProcess.make(
         "wsl.exe",
         [...buildDistroArgs(distro), "--", "sh", "-c", "hostname -I"],
@@ -1010,15 +1016,23 @@ const getDistroIpImpl = (
       const handle = yield* spawner.spawn(command);
       const stdoutBytes = yield* Stream.runCollect(handle.stdout);
       const exitCode = yield* handle.exitCode;
-      if ((exitCode as unknown as number) !== 0) return Option.none<string>();
+      if ((exitCode as unknown as number) !== 0) return Option.none<ReadonlyArray<string>>();
       const raw = decodeUtf8(concatChunks(stdoutBytes)).trim();
-      const candidate = raw.split(/\s+/).find((part) => IPV4_PATTERN.test(part));
-      return candidate ? Option.some(candidate) : Option.none<string>();
+      return Option.some(raw.split(/\s+/).filter((part) => IPV4_PATTERN.test(part)));
     }),
   ).pipe(
     Effect.timeoutOption(USER_HOME_TIMEOUT),
     Effect.map(Option.flatten),
-    Effect.orElseSucceed(() => Option.none<string>()),
+    Effect.orElseSucceed(() => Option.none<ReadonlyArray<string>>()),
+  );
+
+// The first entry on the WSL2 default network is always the eth0 vEthernet
+// address Windows can reach directly (no wslhost forwarding required).
+const getDistroIpImpl = (
+  distro: string | null,
+): Effect.Effect<Option.Option<string>, never, ChildProcessSpawner.ChildProcessSpawner> =>
+  probeDistroIpv4Addresses(distro).pipe(
+    Effect.map((addresses) => Option.flatMapNullishOr(addresses, (all) => all[0])),
   );
 
 const getUserHomeImpl = (
