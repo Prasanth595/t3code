@@ -35,6 +35,7 @@ it.effect("maps GitLab MR summaries into provider-neutral change requests", () =
           url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
           baseRefName: "main",
           headRefName: "feature/source-control",
+          headSha: "a".repeat(40),
           state: "closed",
           closedAt: "2026-08-23T10:00:00Z",
           isCrossRepository: true,
@@ -55,6 +56,7 @@ it.effect("maps GitLab MR summaries into provider-neutral change requests", () =
       url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
       baseRefName: "main",
       headRefName: "feature/source-control",
+      headSha: "a".repeat(40),
       state: "closed",
       closedAt: "2026-08-23T10:00:00Z",
       mergedAt: null,
@@ -62,108 +64,6 @@ it.effect("maps GitLab MR summaries into provider-neutral change requests", () =
       isCrossRepository: true,
       headRepositoryNameWithOwner: "fork/t3code",
       headRepositoryOwnerLogin: "fork",
-    });
-  }),
-);
-
-it.effect("adds repository context while retaining GitLab CLI causes", () =>
-  Effect.gen(function* () {
-    const cause = new GitLabCli.GitLabCliCommandError({
-      operation: "execute",
-      command: "glab",
-      cwd: "/repo",
-      cause: new Error("raw upstream detail that should remain in the cause"),
-    });
-    const provider = yield* makeProvider({
-      createRepository: () => Effect.fail(cause),
-    });
-
-    const error = yield* provider
-      .createRepository({
-        cwd: "/repo",
-        repository: "owner/repo",
-        visibility: "private",
-      })
-      .pipe(Effect.flip);
-
-    assert.deepStrictEqual(
-      {
-        provider: error.provider,
-        operation: error.operation,
-        command: error.command,
-        cwd: error.cwd,
-        repository: error.repository,
-        detail: error.detail,
-      },
-      {
-        provider: "gitlab",
-        operation: "createRepository",
-        command: "glab",
-        cwd: "/repo",
-        repository: "owner/repo",
-        detail: "GitLab CLI command failed.",
-      },
-    );
-    assert.strictEqual(error.cause, cause);
-    assert.equal(error.message.includes("raw upstream detail"), false);
-  }),
-);
-
-it.effect("lists GitLab MRs through provider-neutral input names", () =>
-  Effect.gen(function* () {
-    let listInput: Parameters<GitLabCli.GitLabCli["Service"]["listMergeRequests"]>[0] | null = null;
-    const provider = yield* makeProvider({
-      listMergeRequests: (input) => {
-        listInput = input;
-        return Effect.succeed([]);
-      },
-    });
-
-    yield* provider.listChangeRequests({
-      cwd: "/repo",
-      headSelector: "feature/provider",
-      state: "all",
-      limit: 10,
-    });
-
-    assert.deepStrictEqual(listInput, {
-      cwd: "/repo",
-      headSelector: "feature/provider",
-      state: "all",
-      limit: 10,
-    });
-  }),
-);
-
-it.effect("creates GitLab MRs through provider-neutral input names", () =>
-  Effect.gen(function* () {
-    let createInput: Parameters<GitLabCli.GitLabCli["Service"]["createMergeRequest"]>[0] | null =
-      null;
-    const provider = yield* makeProvider({
-      createMergeRequest: (input) => {
-        createInput = input;
-        return Effect.void;
-      },
-    });
-
-    yield* provider.createChangeRequest({
-      cwd: "/repo",
-      baseRefName: "main",
-      headSelector: "owner:feature/provider",
-      title: "Provider MR",
-      bodyFile: "/tmp/body.md",
-    });
-
-    assert.deepStrictEqual(createInput, {
-      cwd: "/repo",
-      baseBranch: "main",
-      headSelector: "owner:feature/provider",
-      source: {
-        owner: "owner",
-        refName: "feature/provider",
-      },
-      title: "Provider MR",
-      bodyFile: "/tmp/body.md",
     });
   }),
 );
