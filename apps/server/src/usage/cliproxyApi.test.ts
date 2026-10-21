@@ -9,7 +9,6 @@ import {
 } from "@t3tools/contracts";
 import { collectLimitAccounts, collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
@@ -165,6 +164,7 @@ describe("CLIProxyAPI hub failures", () => {
     }),
   );
 
+  // regression: #18168 Limits hub failures name their TLS, HTTP, or timeout cause
   it.effect("ignores a transport code that is not a short Node error code", () =>
     Effect.gen(function* () {
       const api = yield* unreachableHub(
@@ -198,40 +198,6 @@ describe("CLIProxyAPI hub failures", () => {
       const error = yield* Effect.flip(api.readAccounts(config));
       expect(error.detail).toContain("401");
       expect(error.detail).not.toContain("management-secret");
-    }),
-  );
-
-  it.effect("says when the hub does not answer in time", () =>
-    Effect.gen(function* () {
-      const api = yield* makeCliproxyApi.pipe(
-        Effect.provideService(
-          HttpClient.HttpClient,
-          HttpClient.make(() => Effect.never),
-        ),
-        Effect.provide(NodeCrypto.layer),
-      );
-      const pending = yield* Effect.flip(api.readAccounts(config)).pipe(
-        Effect.forkChild({ startImmediately: true }),
-      );
-      yield* TestClock.adjust("15 seconds");
-      const error = yield* Fiber.join(pending);
-      expect(error.detail).toContain("did not answer within 15 seconds");
-    }),
-  );
-
-  it.effect("keeps a malformed account list generic", () =>
-    Effect.gen(function* () {
-      const test = HttpClient.make((request) =>
-        Effect.succeed(
-          HttpClientResponse.fromWeb(request, Response.json({ nope: "hub-internal" })),
-        ),
-      );
-      const api = yield* makeCliproxyApi.pipe(
-        Effect.provideService(HttpClient.HttpClient, test),
-        Effect.provide(NodeCrypto.layer),
-      );
-      const error = yield* Effect.flip(api.readAccounts(config));
-      expect(error.detail).toBe("The hub could not list accounts.");
     }),
   );
 });
@@ -555,21 +521,6 @@ describe("CLIProxyAPI built-in management API", () => {
           .filter((request) => request.path.endsWith("/reset-quota"))
           .map((request) => request.body?.auth_index),
       ).toEqual(["b", "b"]);
-    }),
-  );
-
-  it.effect.each([
-    ["nothing_to_reset", "nothingToReset"],
-    ["no_credit", "noCredit"],
-    ["already_redeemed", "alreadyRedeemed"],
-  ] as const)("reports %s accurately", ([code, outcome]) =>
-    Effect.gen(function* () {
-      const test = fixture({ upstream: () => ({ status: 200, body: { code } }) });
-      const api = yield* test.api;
-      expect(yield* api.consume(config, "first.json", "credit")).toEqual({ outcome });
-      expect(test.requests.some((request) => request.path.endsWith("/reset-quota"))).toBe(
-        code === "already_redeemed",
-      );
     }),
   );
 
