@@ -39,6 +39,7 @@ import {
   FinderIcon,
   Icon,
   KiroIcon,
+  QtCreatorIcon,
   TraeIcon,
   VisualStudioCode,
   VisualStudioCodeInsiders,
@@ -180,6 +181,11 @@ const resolveOpenInOptions = (platform: string, availableEditors: ReadonlyArray<
     {
       Icon: WebStormIcon,
       value: "webstorm",
+      kind: "brand",
+    },
+    {
+      Icon: QtCreatorIcon,
+      value: "qtcreator",
       kind: "brand",
     },
     {
