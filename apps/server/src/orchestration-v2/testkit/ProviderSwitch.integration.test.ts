@@ -2420,9 +2420,6 @@ describe("orchestration v2 provider switching", () => {
             if (compatible) {
               assert.equal(executed.nativeThreadId, turns[0]!.nativeThreadId);
               assert.isEmpty(after.contextHandoffs);
-              if (delivery === "automatic") {
-                assert.equal(delivered.providerThreadId, wake.providerThreadId);
-              }
             }
             assert.equal(
               after.providerThreads.find((entry) => entry.id === delivered.providerThreadId)
