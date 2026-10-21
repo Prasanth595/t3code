@@ -1,45 +1,30 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
-import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
 import {
   CommandId,
   EnvironmentId,
   EventId,
-  IsoDateTime,
   isProviderNativeSubagentThread,
   MessageId,
   NodeId,
-  RunId,
   type ModelSelection,
-  type OrchestrationV2DelegatedCompletionDelivery,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
-  type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ThreadProjection,
-  OrchestratorMcpCreateThreadsResult,
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpTaskCancelResult,
   OrchestratorMcpThreadInterruptResult,
-  OrchestratorMcpThreadListResult,
-  OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadSendResult,
-  OrchestratorMcpThreadWaitResult,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderOptionDescriptor,
   ProviderThreadId,
   ProviderTurnId,
-  type ScheduledTask,
-  RuntimeRequestId,
-  ScheduledTaskId,
-  type ScheduledTaskUpsertInput,
   type ServerProvider,
   ThreadId,
-  ThreadMetadataMcpUpdateResult,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -54,16 +39,12 @@ import * as Result from "effect/Result";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as Schema from "effect/Schema";
-import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/ai";
 
-import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
-import { threadShellFromProjection } from "../orchestration-v2/ProjectionStore.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
-import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -71,9 +52,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
@@ -95,48 +74,27 @@ const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
 );
 
-// Effect returns a declared tool failure as `isError` with its encoded payload
-// as JSON text, never as `structuredContent`.
-const declaredFailure = (result: McpSchema.CallToolResult) => {
-  const text = result.content[0];
-  return result.isError === true && text?.type === "text" ? JSON.parse(text.text) : undefined;
-};
-
 const parentThreadId = ThreadId.make("thread:mcp-orchestrator-parent");
 const projectId = ProjectId.make("project:mcp-orchestrator");
 const codexInstanceId = ProviderInstanceId.make("codex");
-const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
 const codexModel = "gpt-5.4";
-const claudeModel = "claude-opus-4-6";
 const parentPrompt = "Keep this parent turn active while orchestration tools are tested.";
 const delegatedPrompt = "Inspect the delegated API boundary and return the result.";
 const delegatedResult = "Delegated API boundary inspected.";
 const cancellationPrompt = "Remain active until the parent cancels this delegated task.";
-const createdThreadPrompt = "Complete the newly created ordinary thread.";
 const queuedFollowupPrompt = "Complete the queued follow-up and return the final result.";
 const queuedFollowupResult = "Queued delegated follow-up completed.";
-const approvalCompletionPrompt = "Finish the delegated work once its approval is decided.";
 
-const decodeCreateThreadsResult = Schema.decodeUnknownEffect(OrchestratorMcpCreateThreadsResult);
 const decodeDelegateTaskResult = Schema.decodeUnknownEffect(OrchestratorMcpDelegateTaskResult);
 const decodeTaskCancelResult = Schema.decodeUnknownEffect(OrchestratorMcpTaskCancelResult);
 const decodeThreadInterruptResult = Schema.decodeUnknownEffect(
   OrchestratorMcpThreadInterruptResult,
 );
-const decodeThreadListResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadListResult);
-const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 const decodeThreadSendResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadSendResult);
-const decodeThreadWaitResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadWaitResult);
-const decodeThreadUpdateResult = Schema.decodeUnknownEffect(ThreadMetadataMcpUpdateResult);
 
 const codexSelection = {
   instanceId: codexInstanceId,
   model: codexModel,
-} satisfies ModelSelection;
-
-const claudeSelection = {
-  instanceId: claudeInstanceId,
-  model: claudeModel,
 } satisfies ModelSelection;
 
 const delegatedTaskStatusTranscriptFile = new URL(
@@ -454,18 +412,12 @@ function waitForProjection(
   threadId: ThreadId,
   predicate: (projection: OrchestrationV2ThreadProjection) => boolean,
 ) {
-  return Effect.gen(function* () {
-    for (let attempt = 0; attempt < 1_000; attempt += 1) {
-      const projection = yield* orchestrator.getThreadProjection(threadId);
-      if (predicate(projection)) {
-        return projection;
-      }
-      yield* Effect.sleep("5 millis");
-    }
-    return yield* Effect.die(
-      new Error(`Timed out waiting for orchestration projection ${threadId}.`),
-    );
-  });
+  // Re-read the projection after every stored event instead of polling the clock.
+  return orchestrator.streamStoredEventsFrom({ afterSequence: 0 }).pipe(
+    Stream.mapEffect(() => orchestrator.getThreadProjection(threadId)),
+    Stream.filter(predicate),
+    Stream.runHead,
+  );
 }
 
 const client = McpSchema.McpServerClient.of({
@@ -480,45 +432,6 @@ const client = McpSchema.McpServerClient.of({
   },
   getClient: Effect.die("unused"),
 });
-
-function scheduledTaskFromUpsert(input: ScheduledTaskUpsertInput): ScheduledTask {
-  const timestamp = IsoDateTime.make("2026-07-01T09:00:00.000Z");
-  return {
-    id: input.id ?? ScheduledTaskId.make(`scheduled-task:${input.commandId ?? "stub"}`),
-    title: input.title,
-    prompt: input.prompt,
-    enabled: input.enabled,
-    schedule:
-      input.schedule.type === "webhook"
-        ? {
-            type: "webhook",
-            signature:
-              input.schedule.signature == null
-                ? null
-                : {
-                    header: input.schedule.signature.header,
-                    encoding: input.schedule.signature.encoding,
-                    prefix: input.schedule.signature.prefix,
-                  },
-          }
-        : input.schedule,
-    projectId: input.projectId,
-    threadId: input.threadId ?? null,
-    workspaceStrategy: input.workspaceStrategy,
-    modelSelection: input.modelSelection,
-    runtimeMode: input.runtimeMode,
-    interactionMode: input.interactionMode,
-    createdBy: input.createdBy ?? "user",
-    creationSource: input.creationSource ?? "web",
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    nextRunAt: null,
-    lastRunAt: null,
-    lastRunStatus: "never",
-    lastRunError: null,
-    runCount: 0,
-  };
-}
 
 const layerMemorySecretStore = Layer.sync(ServerSecretStore.ServerSecretStore, () => {
   const stored = new Map<string, Uint8Array>();
@@ -679,197 +592,192 @@ const invokePolicyTool = (threadId: ThreadId, name: string, args: Record<string,
     ),
   );
 
-it.live(
-  "governed completion and UI followups count children across root forks",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const cwd = yield* checkpointWorkspace("governed-budget");
-        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
-        const registry = ProviderAdapterRegistry.layerFromAdapters([
-          makeDeterministicAdapter({
-            instanceId: codexInstanceId,
-            driver: ProviderDriverKind.make("codex"),
-            capabilities: CodexProviderCapabilitiesV2,
-            capturedTurns,
-            allowFork: true,
-            shouldComplete: (turn) => turn.message.text === "complete",
-            response: () => "Complete.",
-          }),
-        ]);
+it.live("governed completion and UI followups count children across root forks", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("governed-budget");
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const registry = ProviderAdapterRegistry.layerFromAdapters([
+        makeDeterministicAdapter({
+          instanceId: codexInstanceId,
+          driver: ProviderDriverKind.make("codex"),
+          capabilities: CodexProviderCapabilitiesV2,
+          capturedTurns,
+          allowFork: true,
+          shouldComplete: (turn) => turn.message.text === "complete",
+          response: () => "Complete.",
+        }),
+      ]);
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const database = Layer.succeed(SqlClient.SqlClient, sql);
         yield* Effect.gen(function* () {
-          const sql = yield* SqlClient.SqlClient;
-          const database = Layer.succeed(SqlClient.SqlClient, sql);
-          yield* Effect.gen(function* () {
-            const orchestrator = yield* Orchestrator.OrchestratorV2;
-            const store = yield* ProjectionStore.ProjectionStoreV2;
-            const sink = yield* EventSink.EventSinkV2;
-            // Replay real persisted events into the memory implementation at every budget checkpoint.
-            const budget = (expected: { active: number; total: number }) =>
-              Effect.gen(function* () {
-                expect(yield* store.getDelegationBudget(parentThreadId)).toEqual(expected);
-                const memory = yield* Effect.service(ProjectionStore.ProjectionStoreV2).pipe(
-                  Effect.provide(ProjectionStore.layerMemory),
-                );
-                const through = yield* sink.latestSequence();
-                yield* sink.stream({ afterSequence: 0 }).pipe(
-                  Stream.takeUntil((stored) => stored.sequence >= through),
-                  Stream.runForEach((stored) => memory.apply(stored.event)),
-                );
-                expect(yield* memory.getDelegationBudget(parentThreadId)).toEqual(expected);
-              });
-            yield* createPolicyRoot(parentThreadId, cwd);
-            yield* policyMessage(parentThreadId, "root-complete", "complete");
-            yield* awaitPolicyEvent(
-              parentThreadId,
-              (e) => e.type === "run.updated" && e.payload.status === "completed",
-            );
-            const rootFork = ThreadId.make("policy-root-fork");
-            yield* orchestrator.dispatch({
-              type: "thread.fork",
-              commandId: CommandId.make("fork-root"),
-              sourceThreadId: parentThreadId,
-              targetThreadId: rootFork,
-              sourcePoint: { type: "latest_stable" },
-              createdBy: "user",
-              creationSource: "web",
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const store = yield* ProjectionStore.ProjectionStoreV2;
+          const sink = yield* EventSink.EventSinkV2;
+          // Replay real persisted events into the memory implementation at every budget checkpoint.
+          const budget = (expected: { active: number; total: number }) =>
+            Effect.gen(function* () {
+              expect(yield* store.getDelegationBudget(parentThreadId)).toEqual(expected);
+              const memory = yield* Effect.service(ProjectionStore.ProjectionStoreV2).pipe(
+                Effect.provide(ProjectionStore.layerMemory),
+              );
+              const through = yield* sink.latestSequence();
+              yield* sink.stream({ afterSequence: 0 }).pipe(
+                Stream.takeUntil((stored) => stored.sequence >= through),
+                Stream.runForEach((stored) => memory.apply(stored.event)),
+              );
+              expect(yield* memory.getDelegationBudget(parentThreadId)).toEqual(expected);
             });
-            yield* policyMessage(parentThreadId, "root-hold", cancellationPrompt);
-            yield* policyMessage(rootFork, "fork-hold", cancellationPrompt);
-            yield* policyRequest(parentThreadId, "completed-child", "complete");
-            yield* awaitPolicyEvent(
-              parentThreadId,
-              (e) => e.type === "subagent.updated" && e.payload.status === "completed",
-            );
-            const completed = (yield* orchestrator.getThreadProjection(parentThreadId))
-              .subagents[0]!;
-            const child = completed.childThreadId!;
-            yield* budget({ active: 0, total: 1 });
-            const childFork = ThreadId.make("policy-child-fork");
-            yield* orchestrator.dispatch({
-              type: "thread.fork",
-              commandId: CommandId.make("fork-child"),
-              sourceThreadId: child,
-              targetThreadId: childFork,
-              sourcePoint: { type: "latest_stable" },
-              createdBy: "user",
-              creationSource: "web",
-            });
-            yield* policyMessage(childFork, "child-fork-hold", cancellationPrompt);
-            yield* awaitPolicyEvent(
-              childFork,
-              (e) => e.type === "provider-turn.updated" && e.payload.status === "running",
-            );
-            const before = yield* sink.latestSequence();
-            const denied = yield* policyRequest(childFork, "fork-child-denied").pipe(Effect.result);
-            expect(Result.isFailure(denied) && denied.failure).toMatchObject({
-              _tag: "DelegationPolicyError",
-              code: "delegation_depth_exceeded",
-            });
-            expect(yield* sink.latestSequence()).toBe(before);
-            yield* policyMessage(child, "followup-running", cancellationPrompt);
-            const followupNode = (yield* orchestrator.getThreadProjection(child)).runs.at(
-              -1,
-            )!.rootNodeId;
-            yield* awaitPolicyEvent(
-              child,
-              (e) =>
-                e.type === "provider-turn.updated" &&
-                e.payload.status === "running" &&
-                e.payload.nodeId === followupNode,
-            );
-            yield* policyMessage(child, "followup-queued-one", cancellationPrompt, true);
-            yield* policyMessage(child, "followup-queued-two", cancellationPrompt, true);
-            expect(
-              (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.length,
-            ).toBeGreaterThan(1);
-            yield* budget({ active: 1, total: 1 });
-            const concurrent = yield* Effect.forEach(
-              [parentThreadId, rootFork, rootFork],
-              (id, index) => policyRequest(id, `shared-${index}`).pipe(Effect.result),
-              { concurrency: 3 },
-            );
-            expect(concurrent.filter(Result.isSuccess)).toHaveLength(1);
-            for (const result of concurrent.filter(Result.isFailure))
-              expect(result.failure).toMatchObject({ code: "delegation_budget_exceeded" });
-            yield* budget({ active: 2, total: 2 });
-            const status = yield* invokePolicyTool(parentThreadId, "task_status", {
-              taskId: completed.id,
-            });
-            expect(status.isError).toBe(false);
-            const followupTask = (yield* orchestrator.getThreadProjection(
-              parentThreadId,
-            )).subagents.find((task) => task.childThreadId === child && task.id !== completed.id)!;
-            const cancel = yield* invokePolicyTool(parentThreadId, "task_cancel", {
-              taskId: followupTask.id,
-            });
-            expect(cancel.isError).toBe(false);
-            yield* awaitPolicyEvent(
-              child,
-              (e) => e.type === "run.updated" && e.payload.status === "interrupted",
-            );
-            // Stop holds other queued followups for Resume; cancel each task to release that child.
-            for (const task of (yield* orchestrator.getThreadProjection(parentThreadId))
-              .subagents) {
-              if (
-                task.childThreadId === child &&
-                task.id !== completed.id &&
-                task.id !== followupTask.id
-              ) {
-                expect(
-                  (yield* invokePolicyTool(parentThreadId, "task_cancel", { taskId: task.id }))
-                    .isError,
-                ).toBe(false);
-              }
+          yield* createPolicyRoot(parentThreadId, cwd);
+          yield* policyMessage(parentThreadId, "root-complete", "complete");
+          yield* awaitPolicyEvent(
+            parentThreadId,
+            (e) => e.type === "run.updated" && e.payload.status === "completed",
+          );
+          const rootFork = ThreadId.make("policy-root-fork");
+          yield* orchestrator.dispatch({
+            type: "thread.fork",
+            commandId: CommandId.make("fork-root"),
+            sourceThreadId: parentThreadId,
+            targetThreadId: rootFork,
+            sourcePoint: { type: "latest_stable" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* policyMessage(parentThreadId, "root-hold", cancellationPrompt);
+          yield* policyMessage(rootFork, "fork-hold", cancellationPrompt);
+          yield* policyRequest(parentThreadId, "completed-child", "complete");
+          yield* awaitPolicyEvent(
+            parentThreadId,
+            (e) => e.type === "subagent.updated" && e.payload.status === "completed",
+          );
+          const completed = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
+          const child = completed.childThreadId!;
+          yield* budget({ active: 0, total: 1 });
+          const childFork = ThreadId.make("policy-child-fork");
+          yield* orchestrator.dispatch({
+            type: "thread.fork",
+            commandId: CommandId.make("fork-child"),
+            sourceThreadId: child,
+            targetThreadId: childFork,
+            sourcePoint: { type: "latest_stable" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* policyMessage(childFork, "child-fork-hold", cancellationPrompt);
+          yield* awaitPolicyEvent(
+            childFork,
+            (e) => e.type === "provider-turn.updated" && e.payload.status === "running",
+          );
+          const before = yield* sink.latestSequence();
+          const denied = yield* policyRequest(childFork, "fork-child-denied").pipe(Effect.result);
+          expect(Result.isFailure(denied) && denied.failure).toMatchObject({
+            _tag: "DelegationPolicyError",
+            code: "delegation_depth_exceeded",
+          });
+          expect(yield* sink.latestSequence()).toBe(before);
+          yield* policyMessage(child, "followup-running", cancellationPrompt);
+          const followupNode = (yield* orchestrator.getThreadProjection(child)).runs.at(
+            -1,
+          )!.rootNodeId;
+          yield* awaitPolicyEvent(
+            child,
+            (e) =>
+              e.type === "provider-turn.updated" &&
+              e.payload.status === "running" &&
+              e.payload.nodeId === followupNode,
+          );
+          yield* policyMessage(child, "followup-queued-one", cancellationPrompt, true);
+          yield* policyMessage(child, "followup-queued-two", cancellationPrompt, true);
+          expect(
+            (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.length,
+          ).toBeGreaterThan(1);
+          yield* budget({ active: 1, total: 1 });
+          const concurrent = yield* Effect.forEach(
+            [parentThreadId, rootFork, rootFork],
+            (id, index) => policyRequest(id, `shared-${index}`).pipe(Effect.result),
+            { concurrency: 3 },
+          );
+          expect(concurrent.filter(Result.isSuccess)).toHaveLength(1);
+          for (const result of concurrent.filter(Result.isFailure))
+            expect(result.failure).toMatchObject({ code: "delegation_budget_exceeded" });
+          yield* budget({ active: 2, total: 2 });
+          const status = yield* invokePolicyTool(parentThreadId, "task_status", {
+            taskId: completed.id,
+          });
+          expect(status.isError).toBe(false);
+          const followupTask = (yield* orchestrator.getThreadProjection(
+            parentThreadId,
+          )).subagents.find((task) => task.childThreadId === child && task.id !== completed.id)!;
+          const cancel = yield* invokePolicyTool(parentThreadId, "task_cancel", {
+            taskId: followupTask.id,
+          });
+          expect(cancel.isError).toBe(false);
+          yield* awaitPolicyEvent(
+            child,
+            (e) => e.type === "run.updated" && e.payload.status === "interrupted",
+          );
+          // Stop holds other queued followups for Resume; cancel each task to release that child.
+          for (const task of (yield* orchestrator.getThreadProjection(parentThreadId)).subagents) {
+            if (
+              task.childThreadId === child &&
+              task.id !== completed.id &&
+              task.id !== followupTask.id
+            ) {
+              expect(
+                (yield* invokePolicyTool(parentThreadId, "task_cancel", { taskId: task.id }))
+                  .isError,
+              ).toBe(false);
             }
-            yield* sink.stream({ threadId: parentThreadId, afterSequence: 0 }).pipe(
-              Stream.mapEffect(() => store.getDelegationBudget(parentThreadId)),
-              Stream.filter((current) => current.active === 1),
-              Stream.runHead,
-            );
-            yield* budget({ active: 1, total: 2 });
-            yield* policyRequest(rootFork, "last-launch");
-            yield* budget({ active: 2, total: 3 });
-            const lastTask = (yield* orchestrator.getThreadProjection(rootFork)).subagents.at(-1)!;
-            expect(
-              (yield* invokePolicyTool(rootFork, "task_cancel", { taskId: lastTask.id })).isError,
-            ).toBe(false);
-            yield* sink.stream({ threadId: rootFork, afterSequence: 0 }).pipe(
-              Stream.mapEffect(() => store.getDelegationBudget(parentThreadId)),
-              Stream.filter((current) => current.active === 1),
-              Stream.runHead,
-            );
-            yield* budget({ active: 1, total: 3 });
-            const exhausted = yield* policyRequest(parentThreadId, "fork-shared-total-denied").pipe(
-              Effect.result,
-            );
-            expect(Result.isFailure(exhausted) && exhausted.failure).toMatchObject({
-              code: "delegation_budget_exceeded",
-            });
-            // Legacy rows without backing children consume neither budget, in either store.
-            yield* sink.write({
-              events: [
-                {
-                  id: EventId.make("policy-null-child"),
-                  type: "subagent.updated",
-                  threadId: parentThreadId,
-                  occurredAt: completed.updatedAt,
-                  payload: {
-                    ...completed,
-                    id: NodeId.make("policy-null-child"),
-                    childThreadId: null,
-                    status: "running",
-                    result: null,
-                  },
+          }
+          yield* sink.stream({ threadId: parentThreadId, afterSequence: 0 }).pipe(
+            Stream.mapEffect(() => store.getDelegationBudget(parentThreadId)),
+            Stream.filter((current) => current.active === 1),
+            Stream.runHead,
+          );
+          yield* budget({ active: 1, total: 2 });
+          yield* policyRequest(rootFork, "last-launch");
+          yield* budget({ active: 2, total: 3 });
+          const lastTask = (yield* orchestrator.getThreadProjection(rootFork)).subagents.at(-1)!;
+          expect(
+            (yield* invokePolicyTool(rootFork, "task_cancel", { taskId: lastTask.id })).isError,
+          ).toBe(false);
+          yield* sink.stream({ threadId: rootFork, afterSequence: 0 }).pipe(
+            Stream.mapEffect(() => store.getDelegationBudget(parentThreadId)),
+            Stream.filter((current) => current.active === 1),
+            Stream.runHead,
+          );
+          yield* budget({ active: 1, total: 3 });
+          const exhausted = yield* policyRequest(parentThreadId, "fork-shared-total-denied").pipe(
+            Effect.result,
+          );
+          expect(Result.isFailure(exhausted) && exhausted.failure).toMatchObject({
+            code: "delegation_budget_exceeded",
+          });
+          // Legacy rows without backing children consume neither budget, in either store.
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make("policy-null-child"),
+                type: "subagent.updated",
+                threadId: parentThreadId,
+                occurredAt: completed.updatedAt,
+                payload: {
+                  ...completed,
+                  id: NodeId.make("policy-null-child"),
+                  childThreadId: null,
+                  status: "running",
+                  result: null,
                 },
-              ],
-            });
-            yield* budget({ active: 1, total: 3 });
-          }).pipe(Effect.provide(policyToolkitLayer(registry, cwd, database)));
-        }).pipe(Effect.provide(SqlitePersistence.layerMemory));
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
-  30_000,
+              },
+            ],
+          });
+          yield* budget({ active: 1, total: 3 });
+        }).pipe(Effect.provide(policyToolkitLayer(registry, cwd, database)));
+      }).pipe(Effect.provide(SqlitePersistence.layerMemory));
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.live(
@@ -957,7 +865,6 @@ it.live(
         }).pipe(Effect.provide(SqlitePersistence.layerMemory));
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
-  30_000,
 );
 
 it.live.each(["starting", "running"] as const)(
@@ -1097,7 +1004,6 @@ it.live.each(["starting", "running"] as const)(
         }).pipe(Effect.provide(SqlitePersistence.layerMemory));
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
-  15_000,
 );
 
 describe("orchestrator MCP toolkit", () => {
