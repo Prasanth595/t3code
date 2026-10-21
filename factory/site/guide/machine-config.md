@@ -21,12 +21,13 @@ notify: true
 | `max_concurrent_runs`  | yes      |         | Runs that may hold an issue at once, across every repo, at least 1. A run holds a slot from its claim until its session reports a pull request or the run ends. The gate and the wait for required checks take no run slot. |
 | `max_concurrent_gates` | no       | `2`     | Gates that may run at once, at least 1.                                                                                                                                                                                     |
 | `notify`               | no       | `true`  | Posts a macOS notification when something needs a person. `false` keeps the list on the Factory page and turns the notification off.                                                                                        |
+| `keep_versions`        | no       | `3`     | Installed versions autodeploy keeps besides the current one, at least 0. The job reads it at each deploy, so an edit needs no restart. See [Follow main](/guide/install#follow-main).                                       |
 
-Any other key is an error, and the factory stays idle until it is fixed. Three keys from older versions, `model_instance`, `model` and `repos`, load with a warning instead: the current version ignores them, and a save from Settings → Factory keeps them, so a rollback to a version that needs them still starts. Delete them once you won't roll back that far.
+Any other key is an error, and the factory stays idle until it is fixed. A version from before `keep_versions` treats it as one, so delete the key before you roll back that far. Three keys from older versions, `model_instance`, `model` and `repos`, load with a warning instead: the current version ignores them, and a save from Settings → Factory keeps them, so a rollback to a version that needs them still starts. Delete them once you won't roll back that far.
 
 ## Changing it
 
-Settings → Factory edits `gh_config_dir`, `poll_seconds`, `max_concurrent_runs` and `max_concurrent_gates`. Edit `notify` in the file by hand. A save checks the whole file with the same rules the server uses at start and refuses one that would fail, so a bad value never reaches disk from the page.
+Settings → Factory edits `gh_config_dir`, `poll_seconds`, `max_concurrent_runs` and `max_concurrent_gates`. Edit `notify` and `keep_versions` in the file by hand. A save checks the whole file with the same rules the server uses at start and refuses one that would fail, so a bad value never reaches disk from the page.
 
 The server reads the file when it starts and each time Settings → Factory saves it. It doesn't watch the file, so a hand edit takes effect at the next save from the page or the next restart.
 

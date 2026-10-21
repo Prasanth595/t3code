@@ -36,6 +36,11 @@ max_concurrent_gates: 1
 # Factory page and turns the notification off.
 notify: true
 
+# Installed versions in ~/.local/share/t3fac/versions that autodeploy keeps besides the current
+# one, at least 0 (default 3). It deletes the rest after each deploy that passes its health check.
+# A version from before this key rejects it, so delete it before rolling back that far.
+# keep_versions: 3
+
 # There is no `repos` key (retired by #106). The factory watches the T3 projects of this
 # server whose checkout has a .dw/config.yml with a `factory` block. To add a repo, add its
 # clone as a project on this server once (the sidebar, or `t3 project add <path>`). The clone

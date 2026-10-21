@@ -46,6 +46,8 @@ Once it is on, the server follows `main` on its own. Every 10 minutes the autode
 
 A build that fails, or is still going after an hour, is tried again on the next two ticks; after the third failure that commit is left until `main` moves. A commit that fails its health check is left at once.
 
+After a deploy that passes its health check, the job deletes old versions from `~/.local/share/t3fac/versions` and logs each one in `autodeploy.log`. It keeps the current version and 3 others: the one `rollback.sh` returns to, then the most recently installed. Set `keep_versions` in the [machine config](/guide/machine-config) to keep a different number; `0` keeps only the current version, which leaves nothing to roll back to. A failed deploy deletes nothing, and neither does an install or rollback you run by hand.
+
 The job builds with its plist's `PATH`, which covers Homebrew, `vp` and `~/.cargo/bin` from rustup, plus anything `~/.config/t3fac/env` adds to it.
 
 To turn it on, make a clone used for nothing else, and mint a token that can read the factory's status:
