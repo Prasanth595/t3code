@@ -15,12 +15,13 @@ const sha = NodeChildProcess.execFileSync("git", ["rev-parse", `${ref}^{commit}`
   encoding: "utf8",
 }).trim();
 NodeFS.mkdirSync(destination, { recursive: false });
-const archive = NodeChildProcess.execFileSync("git", ["archive", sha], {
-  cwd: root,
-  maxBuffer: 256 * 1024 * 1024,
-});
-const extracted = NodeChildProcess.spawnSync("tar", ["-x", "-C", destination], { input: archive });
-if (extracted.status !== 0) throw new Error(extracted.stderr.toString());
+const archivePath = `${destination}.tar`;
+try {
+  NodeChildProcess.execFileSync("git", ["archive", sha, "--output", archivePath], { cwd: root });
+  NodeChildProcess.execFileSync("tar", ["-xf", archivePath, "-C", destination]);
+} finally {
+  NodeFS.rmSync(archivePath, { force: true });
+}
 // The exact same fixture is overlaid onto both revisions; only this adapter differs
 // because main predates the inherited native project glyph rasterizer.
 const fixtureSha = NodeChildProcess.execFileSync("git", ["rev-parse", "HEAD"], {
