@@ -13,7 +13,7 @@ private struct ComposerTokenPayload: Decodable {
   let end: Int
 }
 
-private struct ComposerSelectionPayload: Decodable {
+private struct ComposerSelectionPayload: Decodable, Equatable {
   let start: Int
   let end: Int
 }
@@ -523,11 +523,10 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   @objc private func openContext(_ recognizer: UITapGestureRecognizer) {
     guard let (index, attachment) = contextAttachment(at: recognizer.location(in: textView)) else {
       textView.becomeFirstResponder()
-      if let snapshot = selectionBeforeFocusingTap {
-        selectionBeforeFocusingTap = nil
+      if selectionBeforeFocusingTap != nil {
         // UIKit places the caret from its own tap recognizer during this same touch.
         DispatchQueue.main.async { [weak self] in
-          self?.restoreSelection(snapshot.selection, ifValueIs: snapshot.value)
+          self?.restoreSelectionBeforeFocusingTap()
         }
       }
       return
@@ -662,10 +661,12 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       tokens = decode([ComposerTokenPayload].self, from: document.tokensJson) ?? []
       tokensNeedRebuild = true
     }
+    let previousSelection = sourceSelection()
     value = document.value
     requestedSelection = document.selection
     applyControlledDocument(force: tokensNeedRebuild)
     applyRequestedSelection()
+    cancelFocusingTapRestoreIfSelectionMoved(from: previousSelection)
     if tokensMatchCurrentValue() {
       tokensNeedRebuild = false
     }
@@ -777,8 +778,10 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   func setSelection(start: Int, end: Int) {
+    let previousSelection = sourceSelection()
     requestedSelection = ComposerSelectionPayload(start: start, end: end)
     applyRequestedSelection()
+    cancelFocusingTapRestoreIfSelectionMoved(from: previousSelection)
   }
 
   public func textViewDidChange(_ textView: UITextView) {
@@ -1174,17 +1177,27 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     revealSelectionAfterLayout()
   }
 
-  private func restoreSelection(_ selection: ComposerSelectionPayload, ifValueIs expectedValue: String) {
-    // A draft that changed during the touch, such as a transcript landing, owns the caret now.
-    guard textView.isFirstResponder, textView.markedTextRange == nil, value == expectedValue else {
+  private func restoreSelectionBeforeFocusingTap() {
+    guard let snapshot = selectionBeforeFocusingTap else {
       return
     }
-    let range = displayRange(for: selection)
+    selectionBeforeFocusingTap = nil
+    // A draft that changed during the touch, such as a transcript landing, owns the caret now.
+    guard textView.isFirstResponder, textView.markedTextRange == nil, value == snapshot.value else {
+      return
+    }
+    let range = displayRange(for: snapshot.selection)
     guard !NSEqualRanges(range, textView.selectedRange) else {
       return
     }
     textView.selectedRange = range
     revealSelectionAfterLayout()
+  }
+
+  private func cancelFocusingTapRestoreIfSelectionMoved(from previousSelection: ComposerSelectionPayload) {
+    if sourceSelection() != previousSelection {
+      selectionBeforeFocusingTap = nil
+    }
   }
 
   private func draftOverflowsBounds() -> Bool {
