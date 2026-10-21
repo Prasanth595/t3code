@@ -515,14 +515,16 @@ export const make = Effect.gen(function* () {
   const wslAddressesCache = yield* Cache.make({
     capacity: 1,
     timeToLive: WSL_ADDRESSES_CACHE_TTL,
-    lookup: (distro: string) =>
-      Effect.gen(function* () {
+    lookup: Effect.fn("DesktopServerExposure.probeWslAddresses")(
+      function* (distro: string) {
         const target = distro === "" ? null : distro;
         const addresses = yield* DesktopWslEnvironment.probeDistroIpv4Addresses(target);
         if (Option.isNone(addresses)) return Option.none();
         const tailscale = yield* DesktopWslEnvironment.probeDistroTailscaleIpv4Addresses(target);
         return Option.some({ addresses: addresses.value, tailscale });
-      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner)),
+      },
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+    ),
   });
 
   const readNetworkInterfaces = networkInterfaces.read;
