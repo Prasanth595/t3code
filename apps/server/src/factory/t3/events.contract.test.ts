@@ -101,7 +101,8 @@ it.live(
 
           // The run is history now. Replay precedes live, so a stream that
           // replayed history would emit A's id (lower sequence) before B's.
-          // Start the consumer before anything else is launched.
+          // The consumer is forked before B launches but subscribes on its
+          // first pull; B's terminal status is a second chance to see it.
           yield* EffectWorker.OrchestrationEffectWorkerV2.use((worker) => worker.drain());
           const next = yield* events.runStatusChanges.pipe(
             Stream.take(1),
