@@ -648,7 +648,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     return undefined;
   };
 
-  const answeredQuestionRuns = new Map(
+  const answeredQuestionRuns = new Map<string, RunId | null>(
     input.visibleTurnItems.flatMap(({ item }) =>
       item.type === "user_input_request" && item.questionAnswer
         ? [[`async-answer:${item.questionAnswer.requestId}`, item.runId] as const]

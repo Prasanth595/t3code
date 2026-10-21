@@ -84,7 +84,7 @@ function parseText(key: TextKey): readonly string[] {
 }
 
 function searchableRows(items: readonly OrchestrationV2ProjectedTurnItem[]) {
-  const answeredQuestionRuns = new Map(
+  const answeredQuestionRuns = new Map<string, OrchestrationV2TurnItem["runId"]>(
     items.flatMap(({ item }) =>
       item.type === "user_input_request" && item.questionAnswer
         ? [[`async-answer:${item.questionAnswer.requestId}`, item.runId] as const]
