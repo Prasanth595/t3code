@@ -401,7 +401,7 @@ it.effect("looks up a thread's unfinished turn items without reading its finishe
       );
     }
     // Partial indexes hold only unfinished items, so a long thread's history stays unread.
-    assert.isNotEmpty(itemLookups);
+    assert.equal(itemLookups.length, 7);
     for (const lookup of itemLookups) {
       assert.match(lookup, /turn_items_(?:active|recovery)_idx\b/);
     }
