@@ -77,13 +77,7 @@ export class ThreadWatchReactor extends Context.Service<
   ThreadWatchReactor,
   {
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
-    /** Queues a check of the thread's watches, as a thread event would. */
     readonly checkThread: (threadId: ThreadId) => Effect.Effect<void>;
-    /**
-     * Watching the same URL again replaces its secret. A watch made before its
-     * thread exists, as a launch does, hears the first run; any other watch
-     * starts from the thread as it is now.
-     */
     readonly watch: (input: {
       readonly threadId: ThreadId;
       readonly projectId: ProjectId;
@@ -100,7 +94,6 @@ export class ThreadWatchReactor extends Context.Service<
       readonly threadId: ThreadId;
       readonly url: string;
     }) => Effect.Effect<{ readonly wasWatching: boolean }, ThreadWatchStoreError>;
-    /** Resolves once queued threads are checked and their deliveries have settled. */
     readonly drain: Effect.Effect<void>;
   }
 >()("t3/orchestration-v2/ThreadWatchReactor") {}
@@ -112,21 +105,17 @@ interface Watch {
   readonly key: Uint8Array;
 }
 
-/** The URL as it is stored and compared, or null when a delivery must not go there. */
 function threadWatchUrl(value: string): string | null {
   if (!URL.canParse(value)) return null;
   const url = new URL(value);
-  // Credentials or a fragment would be stored and sent along with every delivery.
   if (url.username !== "" || url.password !== "" || url.hash !== "") return null;
   const loopback =
     url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
   return url.protocol === "https:" || (url.protocol === "http:" && loopback) ? url.href : null;
 }
 
-/**
- * The mobile alerts' events, plus a `request_secret` wait: it shows as pending
- * input, but its only event is a turn item those alerts skip.
- */
+// A `request_secret` wait shows as pending input, but its only event is a turn
+// item the mobile alert filter skips.
 const wakesWatchers = (event: OrchestrationV2DomainEvent) =>
   shouldPublishAgentAwarenessEvent(event) ||
   (event.type === "turn-item.updated" && event.payload.type === "secret_request");
@@ -141,10 +130,7 @@ export const make = Effect.gen(function* () {
   const deliveries = yield* FiberSet.make<void, never>();
   // Registration changes take turns, so a late removal cannot delete a newer watch's row.
   const registrations = yield* Semaphore.make(1);
-  // Watches are few, so they live in memory and the table only keeps them across restarts.
   const watchesByThread = new Map<ThreadId, Map<string, Watch>>();
-  // What each watch was last told. A watch with no entry takes its first look as
-  // a baseline, so after a restart watches start over from what threads look like.
   const told = new Map<string, ThreadWatchState>();
 
   const add = (watch: Watch) => {
@@ -227,10 +213,7 @@ export const make = Effect.gen(function* () {
   });
 
   const deliver = (watch: Watch, eventId: string, body: string) =>
-    Effect.suspend(() =>
-      // A watch ended or replaced meanwhile gets nothing more.
-      isCurrent(watch) ? post(watch, eventId, body) : Effect.succeed(0),
-    ).pipe(
+    Effect.suspend(() => (isCurrent(watch) ? post(watch, eventId, body) : Effect.succeed(0))).pipe(
       Effect.retry({ schedule: Schedule.exponential("2 seconds"), times: 3 }),
       // MCP Events: 410 means the receiver dropped the subscription.
       Effect.flatMap((status) => (status === 410 ? end(watch) : Effect.void)),
@@ -243,8 +226,7 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  // Untraced: it runs for every qualifying event, and returns at once for the
-  // many threads nobody watches.
+  // Untraced: it runs for every qualifying event on every thread.
   const check = Effect.fnUntraced(
     function* (threadId: ThreadId) {
       const watches = watchesByThread.get(threadId);
@@ -256,7 +238,7 @@ export const make = Effect.gen(function* () {
         const prior = told.get(watch.id);
         const { state, kind } = observeThreadWatch(shell, prior ?? UNSEEN);
         told.set(watch.id, state);
-        // A first look only sets a baseline, unless the thread has already ended.
+        // A first look only sets the baseline, unless the thread already ended.
         if (kind === null || (prior === undefined && kind !== "ended")) continue;
         const eventId = threadWatchEventId(watch.id, kind, state);
         const body = threadWatchEventBody({
@@ -267,7 +249,6 @@ export const make = Effect.gen(function* () {
           kind,
           occurredAt: now,
         });
-        // The watch ends once its ended event has been sent or given up on.
         yield* FiberSet.run(
           deliveries,
           kind === "ended"
@@ -296,11 +277,9 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.mapError((cause) => new ThreadWatchStoreError({ cause })));
       if (shell?.lineage.relationshipToParent === "subagent")
         return yield* new ThreadWatchInvalidError({ reason: "subagent" });
-      // A thread that does not exist yet is being launched, so its first run is news.
+      // A thread that does not exist yet is being launched: its first run is news.
       const baseline = shell === null ? UNSEEN : observeThreadWatch(shell, UNSEEN).state;
       if (baseline.ended) return yield* new ThreadWatchInvalidError({ reason: "ended" });
-      // A secretRef keeps the secret out of the calling agent's transcript, as
-      // it does for scheduled task webhooks. Using it consumes it.
       const secret =
         delivery.secretRef === undefined
           ? (delivery.secret ?? "")
@@ -322,6 +301,8 @@ export const make = Effect.gen(function* () {
           return { wasWatching };
         }),
         registrations.withPermits(1),
+        // The thread may have changed since its baseline was read.
+        Effect.tap(() => (shell === null ? Effect.void : worker.enqueue(threadId))),
       );
     },
   );
@@ -348,7 +329,7 @@ export const make = Effect.gen(function* () {
           wakesWatchers(event) ? worker.enqueue(event.threadId) : Effect.void,
         ),
       );
-      // Watches from before this start take their baseline now, so the next change is news.
+      // Watches from before this start take their baseline now.
       yield* Effect.forEach([...watchesByThread.keys()], worker.enqueue, { discard: true });
     },
   );

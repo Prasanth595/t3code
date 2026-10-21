@@ -76,7 +76,6 @@ const completed = (runId = RUN_1, completedAt = "2026-10-20T12:05:00.000Z") =>
     latestRunCompletedAt: at(completedAt),
   });
 
-/** Feeds shells through in order and collects what a watcher would be told. */
 function told(shells: ReadonlyArray<OrchestrationV2ThreadShell | null>) {
   let state: ThreadWatchState = UNSEEN;
   return shells.map((next) => {

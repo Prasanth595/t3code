@@ -102,11 +102,13 @@ interface Received {
   readonly body: string;
 }
 
-/** A real reactor on the caller's SQLite, with the thread, secrets and receiver faked. */
 const makeHarness = Effect.fnUntraced(function* (
   options: {
     readonly respond?: (attempt: number, request: Received) => Response | Promise<Response>;
     readonly secretRefValue?: string;
+    readonly whileConsuming?: (
+      current: Ref.Ref<OrchestrationV2ThreadShell | null>,
+    ) => Effect.Effect<void>;
     readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
     readonly initial?: OrchestrationV2ThreadShell | null;
   } = {},
@@ -149,9 +151,14 @@ const makeHarness = Effect.fnUntraced(function* (
           consume: ({ ref, projectId }) =>
             Effect.suspend(() => {
               consumed.push({ ref, projectId });
-              return options.secretRefValue === undefined
-                ? Effect.fail(new SecretRequestError({ reason: "ref_expired" }))
-                : Effect.succeed(options.secretRefValue);
+              const value = options.secretRefValue;
+              return (options.whileConsuming?.(current) ?? Effect.void).pipe(
+                Effect.andThen(
+                  value === undefined
+                    ? Effect.fail(new SecretRequestError({ reason: "ref_expired" }))
+                    : Effect.succeed(value),
+                ),
+              );
             }),
         }),
         Layer.succeed(ServerEnvironment.ServerEnvironment, {
@@ -232,12 +239,14 @@ describe("ThreadWatchReactor", () => {
     "a watch made before its thread exists hears its first run, or ends if it never comes",
     () =>
       Effect.gen(function* () {
-        const { received, watch, settle } = yield* makeHarness({ initial: null });
+        const { received, reactor, watch, settle } = yield* makeHarness({ initial: null });
         yield* watch();
+        yield* reactor.drain;
+        assert.strictEqual(received.length, 0, "the thread is still being launched");
         yield* settle(shell({ status: "failed", activityRunStatus: null }));
         assert.deepInclude(verified(received[0]).data, { kind: "failed", runId: RUN_1 });
 
-        // A launch that failed before creating its thread: the next look ends the watch.
+        // A launch that failed before creating its thread.
         const unborn = yield* makeHarness({ initial: null });
         yield* unborn.watch();
         yield* unborn.settle(null);
@@ -250,13 +259,27 @@ describe("ThreadWatchReactor", () => {
     Effect.gen(function* () {
       const first = yield* makeHarness();
       yield* first.watch();
-      // The run is still going when the server comes back, then it completes.
       const restarted = yield* makeHarness({ initial: shell() });
       assert.deepStrictEqual(yield* restarted.watch(), { wasWatching: true });
       yield* restarted.reactor.start();
       yield* restarted.reactor.drain;
       yield* restarted.settle(completed());
       assert.deepInclude(verified(restarted.received[0]).data, { kind: "completed", runId: RUN_1 });
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+  );
+
+  it.effect("a change made while a watch is being registered is still sent", () =>
+    Effect.gen(function* () {
+      const { received, reactor, watch } = yield* makeHarness({
+        secretRefValue: SECRET,
+        whileConsuming: (current) => Ref.set(current, completed()),
+      });
+      yield* watch({
+        url: URL,
+        secretRef: SecretRef.make("secret-ref:0123456789abcdef0123456789abcdef"),
+      });
+      yield* reactor.drain;
+      assert.deepInclude(verified(received[0]).data, { kind: "completed", runId: RUN_1 });
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
   );
 
@@ -285,7 +308,6 @@ describe("ThreadWatchReactor", () => {
           },
         }),
       );
-      // request_secret records only a turn item, which the mobile alert filter skips.
       yield* Queue.offer(events, {
         id: EventId.make("event:secret"),
         type: "turn-item.updated",

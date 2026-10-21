@@ -205,8 +205,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             }
             return unavailable();
           }),
-          // A launch that failed may still have created the thread, so the watch
-          // looks at it: one that never came to be ends its watch.
+          // A failed launch may still have created the thread; a check ends the
+          // watch only if it did not.
           Effect.onError(() =>
             watchDelivery === undefined
               ? Effect.void
