@@ -6,6 +6,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import {
   type DesktopUpdateChannel,
+  IDLE_COMPACTION_MODES,
   ProviderDriverKind,
   type ProviderInstanceId,
   type SidebarProjectGroupingMode,
@@ -990,6 +991,50 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Working section (beta)"
             />
+          }
+        />
+
+        <SettingsRow
+          serverScoped
+          settingKeys={["compactIdleThreads"]}
+          {...searchableSetting("compact-idle-threads")}
+          description="When to compact a Claude thread over 200,000 tokens whose prompt cache expired while you were away. Each Claude provider can override this."
+          resetAction={
+            settings.compactIdleThreads !== DEFAULT_UNIFIED_SETTINGS.compactIdleThreads ? (
+              <SettingResetButton
+                label="compact idle threads"
+                onClick={() =>
+                  updateSettings({
+                    compactIdleThreads: DEFAULT_UNIFIED_SETTINGS.compactIdleThreads,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.compactIdleThreads}
+              onValueChange={(value) => {
+                const mode = IDLE_COMPACTION_MODES.find((candidate) => candidate.value === value);
+                if (mode) updateSettings({ compactIdleThreads: mode.value });
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Compact idle threads">
+                <SelectValue>
+                  {
+                    IDLE_COMPACTION_MODES.find((mode) => mode.value === settings.compactIdleThreads)
+                      ?.label
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {IDLE_COMPACTION_MODES.map((mode) => (
+                  <SelectItem hideIndicator key={mode.value} value={mode.value}>
+                    {mode.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           }
         />
 

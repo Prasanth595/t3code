@@ -97,7 +97,7 @@ const makeClaudeConfig = (overrides: Partial<ClaudeSettings>): ClaudeSettings =>
   customModels: [],
   launchArgs: "",
   autoCompactWindow: "",
-  idleCompaction: "onReturn",
+  idleCompaction: "default",
   ...overrides,
 });
 

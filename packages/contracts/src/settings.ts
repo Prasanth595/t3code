@@ -644,15 +644,33 @@ export type CodexSettings = typeof CodexSettings.Type;
 
 const CLAUDE_AUTO_COMPACT_WINDOW_PATTERN = /^(?:|[1-9]\d{5}|1000000)$/;
 
-const CLAUDE_IDLE_COMPACTION_MODES = [
+export const IDLE_COMPACTION_MODES = [
   { value: "onReturn", label: "When you return" },
   { value: "beforeCacheExpires", label: "Before the cache expires (beta)" },
   { value: "off", label: "Never" },
 ] as const;
-const ClaudeIdleCompaction = Schema.Literals(
-  CLAUDE_IDLE_COMPACTION_MODES.map((mode) => mode.value),
+export const IdleCompactionMode = Schema.Literals(IDLE_COMPACTION_MODES.map((mode) => mode.value));
+export type IdleCompactionMode = typeof IdleCompactionMode.Type;
+
+// `compactIdleThreads` was a beta on/off switch for compacting before the cache expires.
+const LegacyCompactIdleThreads = Schema.Boolean.pipe(
+  Schema.decodeTo(
+    IdleCompactionMode,
+    SchemaTransformation.transform({
+      decode: (enabled): IdleCompactionMode => (enabled ? "beforeCacheExpires" : "onReturn"),
+      encode: (mode) => mode === "beforeCacheExpires",
+    }),
+  ),
 );
-export type ClaudeIdleCompaction = typeof ClaudeIdleCompaction.Type;
+const IdleCompactionModeSetting = Schema.Union([IdleCompactionMode, LegacyCompactIdleThreads]);
+
+const INSTANCE_IDLE_COMPACTION_MODES = [
+  { value: "default", label: "Use default" },
+  ...IDLE_COMPACTION_MODES,
+] as const;
+const InstanceIdleCompaction = Schema.Literals(
+  INSTANCE_IDLE_COMPACTION_MODES.map((mode) => mode.value),
+);
 
 export const ClaudeSettings = makeProviderSettingsSchema(
   {
@@ -705,15 +723,15 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
-    idleCompaction: ClaudeIdleCompaction.pipe(
-      Schema.withDecodingDefault(Effect.succeed("onReturn" as const)),
+    idleCompaction: InstanceIdleCompaction.pipe(
+      Schema.withDecodingDefault(Effect.succeed("default" as const)),
       Schema.annotateKey({
         title: "Compact idle threads",
         description:
-          "When to compact a thread over 200,000 tokens whose prompt cache expired while you were away.",
+          "When to compact a thread over 200,000 tokens whose prompt cache expired while you were away. Overrides the default in General settings.",
         providerSettingsForm: {
           control: "select",
-          options: CLAUDE_IDLE_COMPACTION_MODES,
+          options: INSTANCE_IDLE_COMPACTION_MODES,
           clearWhenEmpty: "omit",
         },
       }),
@@ -1184,6 +1202,9 @@ export const ServerSettings = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
+  compactIdleThreads: IdleCompactionModeSetting.pipe(
+    Schema.withDecodingDefault(Effect.succeed("onReturn" as const)),
+  ),
   snoozeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarAutoSettleKeepPullRequests: Schema.Boolean.pipe(
@@ -1359,16 +1380,18 @@ export const resolveProjectProviderInstanceEnabled = (
 
 const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
 
-export const resolveClaudeIdleCompaction = (
-  settings: Pick<ServerSettings, "providerInstances">,
+export const resolveIdleCompaction = (
+  settings: Pick<ServerSettings, "providerInstances" | "compactIdleThreads">,
   instanceId: ProviderInstanceId,
-): ClaudeIdleCompaction => {
+): IdleCompactionMode => {
   const instance = Object.hasOwn(settings.providerInstances, instanceId)
     ? settings.providerInstances[instanceId]
     : undefined;
-  return decodeClaudeSettings(instance?.config ?? {}).pipe(
-    Option.match({ onNone: () => "onReturn" as const, onSome: (config) => config.idleCompaction }),
+  const override = decodeClaudeSettings(instance?.config ?? {}).pipe(
+    Option.map((config) => config.idleCompaction),
+    Option.getOrElse(() => "default" as const),
   );
+  return override === "default" ? settings.compactIdleThreads : override;
 };
 
 export const ServerSettingsOperation = Schema.Literals([
@@ -1512,6 +1535,7 @@ export const ServerSettingsPatch = Schema.Struct({
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),
   easDeviceHosts: Schema.optionalKey(EasDeviceHostConfigs),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
+  compactIdleThreads: Schema.optionalKey(IdleCompactionMode),
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   autoResumeLimitedThreads: Schema.optionalKey(Schema.Boolean),

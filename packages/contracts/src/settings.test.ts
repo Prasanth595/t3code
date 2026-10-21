@@ -9,7 +9,7 @@ import {
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
   requiredScopesForProjectMutation,
-  resolveClaudeIdleCompaction,
+  resolveIdleCompaction,
   resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
   ServerSettings,
@@ -135,23 +135,27 @@ describe("custom model settings", () => {
   });
 });
 
-describe("resolveClaudeIdleCompaction", () => {
-  it("reads each Claude instance's own mode and defaults to compacting on return", () => {
+describe("resolveIdleCompaction", () => {
+  it("lets a Claude instance override the global default", () => {
     const settings = decodeServerSettings({
+      compactIdleThreads: "off",
       providerInstances: {
-        claude_work: { driver: "claudeAgent", config: { idleCompaction: "off" } },
+        claude_work: { driver: "claudeAgent", config: { idleCompaction: "onReturn" } },
         claude_personal: { driver: "claudeAgent" },
       },
     });
-    expect(resolveClaudeIdleCompaction(settings, ProviderInstanceId.make("claude_work"))).toBe(
-      "off",
-    );
-    expect(resolveClaudeIdleCompaction(settings, ProviderInstanceId.make("claude_personal"))).toBe(
+    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("claude_work"))).toBe(
       "onReturn",
     );
-    expect(resolveClaudeIdleCompaction(settings, ProviderInstanceId.make("claudeAgent"))).toBe(
-      "onReturn",
+    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("claude_personal"))).toBe("off");
+    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("claudeAgent"))).toBe("off");
+  });
+
+  it("keeps the legacy beta switch's behavior", () => {
+    expect(decodeServerSettings({ compactIdleThreads: true }).compactIdleThreads).toBe(
+      "beforeCacheExpires",
     );
+    expect(decodeServerSettings({}).compactIdleThreads).toBe("onReturn");
   });
 });
 

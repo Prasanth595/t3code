@@ -1,7 +1,7 @@
 import {
   CommandId,
   MessageId,
-  resolveClaudeIdleCompaction,
+  resolveIdleCompaction,
   resolveProjectProviderInstanceEnabled,
   type RunId,
   type ThreadId,
@@ -48,7 +48,7 @@ export const make = Effect.gen(function* () {
           { messageRunIds: [runId], turnItemStatuses: ["pending", "running", "waiting"] },
         );
         if (
-          resolveClaudeIdleCompaction(current, records.thread.providerInstanceId) !==
+          resolveIdleCompaction(current, records.thread.providerInstanceId) !==
             "beforeCacheExpires" ||
           !resolveProjectProviderInstanceEnabled(
             current,
