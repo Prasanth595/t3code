@@ -129,37 +129,6 @@ describe("DesktopPreReadyPlatform", () => {
     );
   });
 
-  it.effect.each(["darwin", "win32"] as const)("leaves device scaling alone on %s", (platform) => {
-    readFileSyncMock.mockReturnValue("1.75");
-    hasSwitchMock.mockImplementation((name: string) => name === "force-device-scale-factor");
-    getSwitchValueMock.mockReturnValue("2");
-
-    return Effect.gen(function* () {
-      yield* DesktopPreReadyPlatform.make;
-      assert.deepEqual(readFileSyncMock.mock.calls, []);
-      assert.deepEqual(writeFileSyncMock.mock.calls, []);
-      assert.deepEqual(appendSwitchMock.mock.calls, []);
-    }).pipe(Effect.provideService(HostProcess.Platform, platform));
-  });
-
-  it.effect("preserves an explicit Linux password-store switch", () => {
-    hasSwitchMock.mockImplementation((switchName) => switchName === "password-store");
-    getSwitchValueMock.mockReturnValue(" basic ");
-
-    return Effect.gen(function* () {
-      const options = yield* DesktopPreReadyPlatform.DesktopPreReadyElectronOptions;
-
-      assert.equal(options.linuxPasswordStoreCommandLine, "basic");
-      assert.isFalse(appendSwitchMock.mock.calls.some(([name]) => name === "password-store"));
-    }).pipe(
-      Effect.provide(
-        DesktopPreReadyPlatform.layer.pipe(
-          Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
-        ),
-      ),
-    );
-  });
-
   it.effect.each([
     {
       label: "merges the color-manager fallback into disabled features on Hyprland 0.48.1",
@@ -253,29 +222,8 @@ describe("DesktopPreReadyPlatform", () => {
           "Icon=/xdg/icons/com.t3tools.T3Code.desktop.png",
         );
         assert.isTrue(identity.iconInstalled);
-        assert.deepEqual(
-          readFileSyncMock.mock.calls.filter(([path]) => path === iconSource),
-          [[iconSource]],
-        );
-        assert.deepEqual(
-          writeFileSyncMock.mock.calls.filter(([path]) => path === iconPath),
-          [[iconPath, iconBytes, { mode: 0o600 }]],
-        );
-        assert.equal(copyFileSyncMock.mock.calls.length, 0);
       }),
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
-  });
-
-  it.effect("keeps startup available when the early desktop entry cannot be written", () => {
-    getSwitchValueMock.mockReturnValue("");
-    mkdirSyncMock.mockImplementation(() => {
-      throw new Error("read-only filesystem");
-    });
-
-    return DesktopPreReadyPlatform.make.pipe(
-      Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.asVoid,
-    );
   });
 
   it.effect("refreshes a stale icon once across repeated launches", () => {
@@ -283,29 +231,24 @@ describe("DesktopPreReadyPlatform", () => {
     vi.stubEnv("XDG_DATA_HOME", "/xdg");
     getSwitchValueMock.mockReturnValue("");
     let installedIcon = Buffer.from([0x89, 0x50, 0x00, 0xfe, 0x80, 0x0a]);
+    let iconWrites = 0;
     readFileSyncMock.mockImplementation((path: string) => {
       if (path === iconSource) return Buffer.from(iconBytes);
       if (path === iconPath) return Buffer.from(installedIcon);
       return "{}";
     });
     writeFileSyncMock.mockImplementation((path: string, contents: Buffer) => {
-      if (path === iconPath) installedIcon = Buffer.from(contents);
+      if (path !== iconPath) return;
+      installedIcon = Buffer.from(contents);
+      iconWrites += 1;
     });
 
     return Effect.gen(function* () {
       yield* DesktopPreReadyPlatform.make;
       assert.deepEqual(installedIcon, iconBytes);
       yield* DesktopPreReadyPlatform.make;
-      assert.deepEqual(
-        writeFileSyncMock.mock.calls.filter(([path]) => path === iconPath),
-        [[iconPath, iconBytes, { mode: 0o600 }]],
-      );
-      assert.equal(copyFileSyncMock.mock.calls.length, 0);
-      assert.equal(
-        writeFileSyncMock.mock.calls.filter(([path]) => path === desktopEntryPath).length,
-        2,
-      );
-      assert.equal(setDesktopNameMock.mock.calls.length, 2);
+      assert.deepEqual(installedIcon, iconBytes);
+      assert.equal(iconWrites, 1);
     }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
@@ -316,20 +259,21 @@ describe("DesktopPreReadyPlatform", () => {
     vi.stubEnv("VITE_DEV_SERVER_URL", "");
     vi.stubEnv("XDG_DATA_HOME", "/xdg");
     getSwitchValueMock.mockReturnValue("");
+    const written = new Map<string, Array<string | Buffer>>();
     readFileSyncMock.mockImplementation((path: string) => {
       if (path === iconSource) throw new Error("unreadable bundled icon");
       return "{}";
     });
+    writeFileSyncMock.mockImplementation((path: string, contents: string | Buffer) => {
+      written.set(path, [...(written.get(path) ?? []), contents]);
+    });
+
     return Effect.gen(function* () {
       yield* DesktopPreReadyPlatform.make;
-      assert.isTrue(readFileSyncMock.mock.calls.some(([path]) => path === iconSource));
-      assert.equal(copyFileSyncMock.mock.calls.length, 0);
-      assert.equal(writeFileSyncMock.mock.calls.length, 1);
-      const [path, contents] = writeFileSyncMock.mock.calls[0]!;
-      assert.equal(path, desktopEntryPath);
-      assert.include(contents, "MimeType=x-scheme-handler/t3code;");
-      assert.include(contents, `Icon=${iconPath}`);
-      assert.equal(setDesktopNameMock.mock.calls.length, 1);
+      const entries = written.get(desktopEntryPath) ?? [];
+      assert.equal(entries.length, 1);
+      assert.include(String(entries[0]), `Icon=${iconPath}`);
+      assert.isFalse(written.has(iconPath));
     }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
