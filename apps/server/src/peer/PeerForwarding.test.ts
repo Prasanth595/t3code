@@ -5,6 +5,7 @@ import {
   EnvironmentId,
   type OrchestrationV2Run,
   type SourceControlCloneRepositoryInput,
+  type ModelSelection,
   ProjectId,
   ProviderInstanceId,
   RunId,
@@ -53,6 +54,7 @@ interface Seen {
   readonly clones: ReadonlyArray<SourceControlCloneRepositoryInput>;
   /** Commands dispatched and delegated-task stops, as `<type> <threadId>`. */
   readonly stops: ReadonlyArray<string>;
+  readonly selections: ReadonlyArray<ModelSelection>;
 }
 const nothingSeen: Seen = {
   sends: [],
@@ -61,6 +63,7 @@ const nothingSeen: Seen = {
   projects: [],
   clones: [],
   stops: [],
+  selections: [],
 };
 
 /**
@@ -68,7 +71,15 @@ const nothingSeen: Seen = {
  * third wait. Every send and wait is recorded.
  */
 const boxThreads = (seen: Ref.Ref<Seen>) => {
-  const shell = { ...liveThreadShell(boxThread, { runtimeMode: "auto" }), projectId: boxProject };
+  const shell = {
+    ...liveThreadShell(boxThread, { runtimeMode: "auto" }),
+    projectId: boxProject,
+    modelSelection: {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5",
+      options: [{ id: "reasoning", value: "high" }],
+    },
+  };
   const run = (status: OrchestrationV2Run["status"]) =>
     ({ id: boxRun, status }) as unknown as OrchestrationV2Run;
   const projection = { thread: shell, runs: [run("running")], runtimeRequests: [] } as never;
@@ -84,6 +95,10 @@ const boxThreads = (seen: Ref.Ref<Seen>) => {
     dispatch: (command) =>
       Ref.update(seen, (current) => ({
         ...current,
+        selections:
+          command.type === "thread.model-selection.set"
+            ? [...current.selections, command.modelSelection]
+            : current.selections,
         stops: [
           ...current.stops,
           `${command.type} ${"threadId" in command ? command.threadId : ""}`,
@@ -554,6 +569,33 @@ it.effect("runs any tool that takes a linked environment there", () =>
       });
       expect(archived.isError).toBe(false);
       expect((yield* Ref.get(seen)).stops).toEqual([`thread.archive ${boxThread}`]);
+
+      const selection = {
+        instanceId: "codex",
+        model: "gpt-5",
+        options: [{ id: "reasoning", value: "high" }],
+      };
+      const configured = yield* a.call("thread:laptop-full", "t3_thread_configure", {
+        environmentId: box.environmentId,
+        threadId: boxThread,
+        modelSelection: { provider: "codex", model: "gpt-5", options: { reasoning: "high" } },
+      });
+      expect(configured.isError).toBe(false);
+      expect((yield* Ref.get(seen)).selections).toEqual([selection]);
+      expect(there.structuredContent).toHaveProperty("modelSelection", selection);
+
+      // The tool's own checks hold here, before anything leaves.
+      yield* Ref.set(b.bearers, []);
+      const mismatched = yield* a
+        .call("thread:laptop-full", "t3_thread_update", {
+          environmentId: box.environmentId,
+          threadId: boxThread,
+          action: "regenerate_title",
+          title: "Requested title",
+        })
+        .pipe(Effect.flip);
+      expect(mismatched.message).toContain("regenerate_title does not accept title");
+      expect(yield* Ref.get(b.bearers)).toEqual([]);
 
       // This environment's own id keeps the call here.
       const own = yield* a.call("thread:laptop-full", "t3_thread_configuration", {
