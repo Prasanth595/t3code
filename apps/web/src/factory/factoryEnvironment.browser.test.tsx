@@ -473,12 +473,13 @@ describe("the Factory page shows every environment that runs a factory", () => {
   });
 
   it("shows a status that failed on its first read as a notice in its row, and reads no runs for it", async () => {
-    const status = fakeApi.status;
+    const statusReads: string[] = [];
     __setFactoryApiForTests({
       ...fakeApi,
       status: async (env) => {
+        statusReads.push(env);
         if (env === ENV_1) throw new FactoryApiError(500, null, "state file locked");
-        return status(env);
+        return fakeApi.status(env);
       },
     });
     const page = await show(createElement(FactoryPage));
@@ -486,7 +487,10 @@ describe("the Factory page shows every environment that runs a factory", () => {
     expect(page.text()).not.toContain("Could not refresh Desktop");
     expect(page.text()).toContain("acme/widgets");
     expect(calls.runs.map(([env]) => env)).toEqual([ENV_2]);
-    expect(buttonIn(rowOf(page, "Desktop"), "Retry")).toBeDefined();
+    statusReads.length = 0;
+    await page.click(buttonIn(rowOf(page, "Desktop"), "Retry"));
+    await settle();
+    expect(statusReads).toEqual([ENV_1]);
   });
 
   it("names the environment whose runs could not be read, and keeps the rest", async () => {

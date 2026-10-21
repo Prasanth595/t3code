@@ -20,8 +20,8 @@ function Row({
 }) {
   const report = status.data;
   const paused = report?.paused_by_hand ?? null;
-  // A first read that failed takes the row's place with the page's read-failure notice, so a
-  // failure looks the same before data and after.
+  // Before any data there is no row to show, so the read-failure notice stands in its place; once
+  // data exists the row stays and the page shows the same notice below the list.
   if (report === null && status.status === "error") {
     return (
       <li>
