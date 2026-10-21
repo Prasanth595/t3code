@@ -101,7 +101,7 @@ const expandedRowClassName =
 function useRowClassName(interactive: boolean, expanded: boolean) {
   const grouped = use(GroupedRows);
   return cn(
-    "group/timeline-row relative w-full min-w-0 rounded-md px-0.5 text-left transition-[background-color,box-shadow]",
+    "group/timeline-row relative w-full min-w-0 rounded-md px-0.5 text-left transition-[background-color,box-shadow,margin] duration-200",
     grouped ? "py-0" : "py-0.5",
     interactive && workLogInteractiveClassName,
     expanded && expandedRowClassName,

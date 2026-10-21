@@ -22,7 +22,7 @@ import {
   turnItemNeedsDetailFetch,
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
-import { memo, use, useState, type KeyboardEvent } from "react";
+import { memo, use, useRef, useState, type KeyboardEvent } from "react";
 import {
   workEntryDisplayIndicatesToolFailure,
   workEntrySignalsSevereFailure,
@@ -52,7 +52,14 @@ import {
   WorkGroupViewCtx,
   type TimelineWorkEntry,
 } from "./timelineRowContext";
-import { MESSAGE_HEADING_LEVEL, TimelineReveal, TimelineRowTimestamp } from "./TimelineRowParts";
+import {
+  captureCollapseGhost,
+  CollapseGhostView,
+  MESSAGE_HEADING_LEVEL,
+  TimelineReveal,
+  TimelineRowTimestamp,
+  type CollapseGhost,
+} from "./TimelineRowParts";
 import {
   failedToolIconClassName,
   toolIconAcceptsTint,
@@ -133,7 +140,6 @@ export function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<Time
           headingLevelOffset={MESSAGE_HEADING_LEVEL}
           onUseArtifactTemplate={ctx.onUseArtifactTemplate}
           onImageExpand={ctx.onImageExpand}
-                  source={ctx.turnItemSource}
           lineBreaks
         />
       ))}
@@ -188,9 +194,12 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
   );
   const [revealDetails, setRevealDetails] = useState(false);
+  const detailsRef = useRef<HTMLDivElement>(null);
+  const [collapseGhost, setCollapseGhost] = useState<CollapseGhost | null>(null);
   const toggleExpanded = () => {
     const next = !expanded;
     if (next) setRevealDetails(true);
+    setCollapseGhost(next ? null : captureCollapseGhost(detailsRef.current));
     if (groupView) {
       groupView.onToggleEntry(!next);
       if (next) groupView.state.expandedEntries.add(workEntry.id);
@@ -491,60 +500,68 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     >
       {expanded ? (
         <TimelineReveal animate={revealDetails}>
-          {viewedImage && threadRef ? (
-            <WorkLogDetails kind="media">
-              <ChatMarkdownAssetImage
-                environmentId={threadRef.environmentId}
-                resource={viewedImage.resource}
-                alt={viewedImage.alt}
-                srcFragment={viewedImage.srcFragment}
-                workspaceRoot={workspaceRoot}
-                maxHeightRem={16}
-                onImageExpand={onImageExpand}
-              />
-            </WorkLogDetails>
-          ) : null}
-          {workEntry.questionAnswer ? (
-            <QuestionAnswerHistory answer={workEntry.questionAnswer} />
-          ) : null}
-          {isReasoning ? <ReasoningTraceContent entries={[workEntry]} /> : null}
-          {!isReasoning &&
-          !workEntry.questionAnswer &&
-          canExpandProjectedItem &&
-          (expandedBody ||
-            plainOutputFetches ||
-            (workEntry.projectedItem && plainOutput === undefined)) ? (
-            <WorkLogDetails kind="panel">
-              {workEntry.projectedItem && plainOutput === undefined ? (
-                <V2ItemInspector
-                  projectedItem={workEntry.projectedItem}
-                  environmentId={ctx.activeThreadEnvironmentId}
-                  cwd={ctx.markdownCwd}
+          <div ref={detailsRef}>
+            {viewedImage && threadRef ? (
+              <WorkLogDetails kind="media">
+                <ChatMarkdownAssetImage
+                  environmentId={threadRef.environmentId}
+                  resource={viewedImage.resource}
+                  alt={viewedImage.alt}
+                  srcFragment={viewedImage.srcFragment}
                   workspaceRoot={workspaceRoot}
-                  onOpenThread={ctx.onOpenThread}
-                  onOpenTurnDiff={ctx.onOpenTurnDiff}
-                  onRollbackCheckpoint={ctx.onRollbackCheckpoint}
-                  onImageExpand={ctx.onImageExpand}
-                  source={ctx.turnItemSource}
+                  maxHeightRem={16}
+                  onImageExpand={onImageExpand}
                 />
-              ) : (
-                <>
-                  {expandedBody ? (
-                    <pre className={toolCallExpandedBodyClassName}>{expandedBody}</pre>
-                  ) : null}
-                  {plainOutputFetches && workEntry.projectedItem ? (
-                    <FetchedToolOutput
-                      projectedItem={workEntry.projectedItem}
-                      environmentId={ctx.activeThreadEnvironmentId}
-                      onImageExpand={onImageExpand}
-                      source={ctx.turnItemSource}
-                    />
-                  ) : null}
-                </>
-              )}
-            </WorkLogDetails>
-          ) : null}
+              </WorkLogDetails>
+            ) : null}
+            {workEntry.questionAnswer ? (
+              <QuestionAnswerHistory answer={workEntry.questionAnswer} />
+            ) : null}
+            {isReasoning ? <ReasoningTraceContent entries={[workEntry]} /> : null}
+            {!isReasoning &&
+            !workEntry.questionAnswer &&
+            canExpandProjectedItem &&
+            (expandedBody ||
+              plainOutputFetches ||
+              (workEntry.projectedItem && plainOutput === undefined)) ? (
+              <WorkLogDetails kind="panel">
+                {workEntry.projectedItem && plainOutput === undefined ? (
+                  <V2ItemInspector
+                    projectedItem={workEntry.projectedItem}
+                    environmentId={ctx.activeThreadEnvironmentId}
+                    cwd={ctx.markdownCwd}
+                    workspaceRoot={workspaceRoot}
+                    onOpenThread={ctx.onOpenThread}
+                    onOpenTurnDiff={ctx.onOpenTurnDiff}
+                    onRollbackCheckpoint={ctx.onRollbackCheckpoint}
+                    onImageExpand={ctx.onImageExpand}
+                    source={ctx.turnItemSource}
+                  />
+                ) : (
+                  <>
+                    {expandedBody ? (
+                      <pre className={toolCallExpandedBodyClassName}>{expandedBody}</pre>
+                    ) : null}
+                    {plainOutputFetches && workEntry.projectedItem ? (
+                      <FetchedToolOutput
+                        projectedItem={workEntry.projectedItem}
+                        environmentId={ctx.activeThreadEnvironmentId}
+                        onImageExpand={onImageExpand}
+                        source={ctx.turnItemSource}
+                      />
+                    ) : null}
+                  </>
+                )}
+              </WorkLogDetails>
+            ) : null}
+          </div>
         </TimelineReveal>
+      ) : collapseGhost ? (
+        <CollapseGhostView
+          key={collapseGhost.id}
+          ghost={collapseGhost}
+          onDone={() => setCollapseGhost(null)}
+        />
       ) : null}
     </WorkLogRow>
   );

@@ -676,6 +676,8 @@ function workGroupId(timelineEntryId: string): string {
 
 export type TimelineToolPresentation = T3McpToolPresentation;
 
+export const expandedWorkGroupRowId = (groupId: string) => `${groupId}:details`;
+
 function expandedWorkGroupRow(
   groupId: string,
   createdAt: string,
@@ -683,7 +685,7 @@ function expandedWorkGroupRow(
 ): Extract<MessagesTimelineRow, { kind: "work" }> {
   return {
     kind: "work",
-    id: `${groupId}:details`,
+    id: expandedWorkGroupRowId(groupId),
     createdAt,
     groupedEntries,
     isExpandedToolGroup: true,

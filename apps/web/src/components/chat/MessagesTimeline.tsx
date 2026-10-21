@@ -61,6 +61,7 @@ import { type AssistantCitationRequest } from "./AssistantCitationSource";
 import { useAssistantCitationTarget } from "./useAssistantCitationTarget";
 import { resolveCitationPhase, type CitedHistory } from "./citationProcedure";
 import {
+  expandedWorkGroupRowId,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapCurrentIndex,
@@ -93,7 +94,15 @@ import {
   type WorkGroupViewState,
   type TimelineRow,
 } from "./timelineRowContext";
-import { TimelineReveal, TimelineRowTimestamp, ActivityShimmerOverlay } from "./TimelineRowParts";
+import {
+  captureCollapseGhost,
+  CollapseGhostView,
+  stackCollapseGhosts,
+  TimelineReveal,
+  TimelineRowTimestamp,
+  ActivityShimmerOverlay,
+  type CollapseGhost,
+} from "./TimelineRowParts";
 import {
   WorkGroupSection,
   WorkingTimelineRow,
@@ -441,8 +450,20 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   // Rows a disclosure inserts mount within its settle window; LegendList can
   // mount some of them a frame after the toggle, so the flag spans the window.
-  const revealingDisclosureRef = useRef(false);
-  const isDisclosureRevealPending = useStableCallback(() => revealingDisclosureRef.current);
+  const [revealingDisclosure, setRevealingDisclosure] = useState(false);
+  // Collapsed rows unmount, so the disclosure's header row plays a copy of
+  // them. Like the reveal flag, the copy is only offered during the window.
+  const [collapseGhostOffer, setCollapseGhostOffer] = useState<{
+    rowId: string;
+    ghost: CollapseGhost;
+  } | null>(null);
+  // A fold hides rows that cannot be named before the rows rederive, so it
+  // copies every visible row below and keeps the ones that disappeared.
+  const pendingFoldCaptureRef = useRef<{
+    rowId: string;
+    captures: ReadonlyArray<{ rowId: string; ghost: CollapseGhost }>;
+    maxHeight: number;
+  } | null>(null);
   const scheduleDisclosureSettle = () => {
     if (disclosureSettleFrameRef.current !== null) {
       cancelAnimationFrame(disclosureSettleFrameRef.current);
@@ -456,7 +477,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
         pinDisclosureToEnd();
         disclosurePinsEndRef.current = false;
         disclosureAnchorKeyRef.current = null;
-        revealingDisclosureRef.current = false;
+        setRevealingDisclosure(false);
+        setCollapseGhostOffer(null);
         setDisclosureToggleSettling(false);
         disclosureSettleFrameRef.current = null;
         disclosureSettleSecondFrameRef.current = null;
@@ -484,9 +506,18 @@ const ConversationTimeline = memo(function ConversationTimeline({
     return disclosureAnchorKey === null || row.id === disclosureAnchorKey;
   };
 
+  const prepareFoldMotion = (rowId: string, collapsing: boolean) => {
+    setRevealingDisclosure(!collapsing);
+    setCollapseGhostOffer(null);
+    const scrollNode = listRef.current?.getScrollableNode();
+    pendingFoldCaptureRef.current =
+      collapsing && scrollNode ? captureVisibleRowsBelow(scrollNode, rowId) : null;
+  };
+
   const onToggleTurnFold = (runId: RunId) => {
-    revealingDisclosureRef.current = !expandedRunIds.has(runId);
-    suspendEndScrollMaintenanceForDisclosure(`turn-fold:${runId}`);
+    const rowId = `turn-fold:${runId}`;
+    prepareFoldMotion(rowId, expandedRunIds.has(runId));
+    suspendEndScrollMaintenanceForDisclosure(rowId);
     setExpandedRunIds((existing) => {
       const next = new Set(existing);
       if (next.has(runId)) {
@@ -499,7 +530,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
   const onToggleWorkGroup = (groupId: string, anchorKey: string) => {
     const collapsing = expandedWorkGroupIds.has(groupId);
-    revealingDisclosureRef.current = !collapsing;
+    setRevealingDisclosure(!collapsing);
+    const ghost = collapsing
+      ? captureCollapseGhost(
+          listRef.current
+            ?.getScrollableNode()
+            ?.querySelector(
+              `[data-timeline-row-id="${CSS.escape(expandedWorkGroupRowId(groupId))}"]`,
+            ) ?? null,
+        )
+      : null;
+    setCollapseGhostOffer(ghost ? { rowId: anchorKey, ghost } : null);
     suspendEndScrollMaintenanceForDisclosure(anchorKey, collapsing);
     setExpandedWorkGroupIds((existing) => {
       const next = new Set(existing);
@@ -512,8 +553,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
   const onToggleAttemptFold = (attemptId: RunAttemptId) => {
-    revealingDisclosureRef.current = !expandedAttemptIds.has(attemptId);
-    suspendEndScrollMaintenanceForDisclosure(`attempt-fold:${attemptId}`);
+    const rowId = `attempt-fold:${attemptId}`;
+    prepareFoldMotion(rowId, expandedAttemptIds.has(attemptId));
+    suspendEndScrollMaintenanceForDisclosure(rowId);
     setExpandedAttemptIds((existing) => {
       const next = new Set(existing);
       if (next.has(attemptId)) {
@@ -665,7 +707,22 @@ const ConversationTimeline = memo(function ConversationTimeline({
     worktreeSetup,
   });
   const rows = useStableRows(rawRows, listIdentityKey);
-  // Run status/timestamps change per stream event; keep them out of shared row context.
+
+  // Runs before paint, so the fold row shows the copy in the same frame the
+  // hidden rows disappear.
+  useLayoutEffect(() => {
+    const pending = pendingFoldCaptureRef.current;
+    if (!pending) return;
+    pendingFoldCaptureRef.current = null;
+    const remaining = new Set(rows.map((row) => row.id));
+    const ghost = stackCollapseGhosts(
+      pending.captures.filter(({ rowId }) => !remaining.has(rowId)).map(({ ghost }) => ghost),
+      pending.maxHeight,
+    );
+    if (ghost) setCollapseGhostOffer({ rowId: pending.rowId, ghost });
+  }, [rows]);
+  // Run status/timestamps churn on every stream event; the shared row context
+  // must not change with them or every timeline row re-renders per event.
   const runs = useStableHandoffRuns(runsProp);
   const minimapItems = deriveTimelineMinimapItems(rows);
   const minimapRowIndices = minimapItems.map((item) => item.rowIndex);
@@ -1208,9 +1265,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
           data-timeline-root="true"
         >
           <AudioPreviewUnmountContext value={onAudioUnmount}>
-            <DisclosureReveal isPending={isDisclosureRevealPending}>
-              <TimelineRowContent row={item} />
-            </DisclosureReveal>
+          <TimelineRowMotion
+            revealPending={revealingDisclosure}
+            collapseGhost={collapseGhostOffer?.rowId === item.id ? collapseGhostOffer.ghost : null}
+          >
+            <TimelineRowContent row={item} />
+          </TimelineRowMotion>
           </AudioPreviewUnmountContext>
         </div>
       </div>
@@ -1376,16 +1436,57 @@ function getItemType(item: MessagesTimelineRow) {
   return `message:${item.message.role}:${lengthBucket}`;
 }
 
-/** Decides once, at mount, whether a disclosure the user just opened inserted this row. */
-function DisclosureReveal({
-  isPending,
+/**
+ * Copies the visible rows below `rowId` before a collapse unmounts some of
+ * them. Rows past the viewport bottom are skipped; nobody sees them leave.
+ */
+function captureVisibleRowsBelow(scrollNode: HTMLElement, rowId: string) {
+  const row = scrollNode.querySelector(`[data-timeline-row-id="${CSS.escape(rowId)}"]`);
+  if (!row) return null;
+  const top = row.getBoundingClientRect().bottom;
+  const bottom = scrollNode.getBoundingClientRect().bottom;
+  // Virtualized containers are absolutely positioned and recycled, so DOM
+  // order is not visual order.
+  const rowsBelow = Array.from(scrollNode.querySelectorAll("[data-timeline-row-id]"))
+    .map((element) => ({ element, rect: element.getBoundingClientRect() }))
+    .filter(({ rect }) => rect.top >= top - 1 && rect.top < bottom)
+    .sort((a, b) => a.rect.top - b.rect.top);
+  const captures = rowsBelow.flatMap(({ element }) => {
+    const ghost = captureCollapseGhost(element);
+    const id = element.getAttribute("data-timeline-row-id");
+    return ghost && id ? [{ rowId: id, ghost }] : [];
+  });
+  return captures.length > 0 ? { rowId, captures, maxHeight: bottom - top } : null;
+}
+
+/**
+ * Reveals a row a disclosure the user just opened inserted (decided once, at
+ * mount), and plays the copy of rows a disclosure collapsed under its header.
+ */
+function TimelineRowMotion({
+  revealPending,
+  collapseGhost: offeredGhost,
   children,
 }: {
-  isPending: () => boolean;
+  revealPending: boolean;
+  collapseGhost: CollapseGhost | null;
   children: ReactNode;
 }) {
-  const [animate] = useState(isPending);
-  return <TimelineReveal animate={animate}>{children}</TimelineReveal>;
+  const [reveal] = useState(revealPending);
+  const [seenGhost, setSeenGhost] = useState(offeredGhost);
+  const [ghost, setGhost] = useState<CollapseGhost | null>(null);
+  if (offeredGhost !== seenGhost) {
+    setSeenGhost(offeredGhost);
+    if (offeredGhost) setGhost(offeredGhost);
+  }
+  return (
+    <>
+      <TimelineReveal animate={reveal}>{children}</TimelineReveal>
+      {ghost ? (
+        <CollapseGhostView key={ghost.id} ghost={ghost} onDone={() => setGhost(null)} />
+      ) : null}
+    </>
+  );
 }
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
