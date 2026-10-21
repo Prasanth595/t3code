@@ -10,7 +10,6 @@ const runId = RunId.make("run-1");
 /** Answers each tool call with the next scripted response for that tool. */
 const scriptedTools = (script: Record<string, Array<unknown>>) => {
   const calls: Array<{ readonly tool: string; readonly args: unknown }> = [];
-  // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off - responses stand in for decoded tool results.
   const call = ((tool: string, args: unknown) => {
     calls.push({ tool, args });
     const next = script[tool]?.shift();

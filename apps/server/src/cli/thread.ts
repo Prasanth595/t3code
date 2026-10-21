@@ -303,7 +303,7 @@ const readTimeline = Effect.fn("cli.thread.readTimeline")(function* (
 ) {
   const items: Array<OrchestratorMcpThreadTimelineItem> = [];
   let afterPosition: number | undefined;
-  let page: typeof OrchestratorMcpThreadReadResult.Type;
+  let page: OrchestratorMcpThreadReadResult;
   do {
     page = yield* tools.call(
       "t3_thread_read",
