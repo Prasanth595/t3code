@@ -11,6 +11,7 @@ import {
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+import * as ByteSize from "effect/ByteSize";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -1264,6 +1265,71 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             outcome._tag === "Importable" ? outcome.thread.providerSessionId : outcome._tag,
           ),
         ).toEqual(["large-first", "Skipped", "Skipped"]);
+      }),
+    );
+
+    it.effect("imports a zstd rollout that decompresses to exactly the remaining budget", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+
+        const rollout = [
+          encodeTranscriptRecord({
+            type: "session_meta",
+            payload: { id: "exact-limit", cwd: workspace },
+          }),
+          encodeTranscriptRecord({
+            type: "event_msg",
+            payload: { type: "user_message", message: "Imported prompt" },
+          }),
+        ].join("\n");
+        const decompressedBytes =
+          new TextEncoder().encode(rollout).byteLength + 3 * ZSTD_BLOCK_BYTES;
+        const sessionsDir = path.join(codexHomePath, "sessions", "2026", "08", "24");
+        const reservingPath = path.join(sessionsDir, "rollout-reserving.jsonl");
+        yield* writeTranscript({
+          filePath: reservingPath,
+          contents: codexRolloutLine(workspace),
+          mtimeMs: nowMs,
+        });
+        yield* writeTranscript({
+          filePath: path.join(sessionsDir, "rollout-exact-limit.jsonl.zst"),
+          contents: zstdRolloutWithPadding(rollout, 3),
+          mtimeMs: nowMs - 1_000,
+        });
+
+        // A plain file's size is reserved from the 4 GiB import budget before it is read. Reporting
+        // all but `decompressedBytes` of it leaves the zstd rollout a read limit of exactly its
+        // decompressed length; the mismatch with the real file then ends the read at once.
+        const simulatedFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          stat: (filePath) =>
+            fileSystem
+              .stat(filePath)
+              .pipe(
+                Effect.map((info) =>
+                  filePath === reservingPath
+                    ? { ...info, size: ByteSize.bytes(4 * 1024 * 1024 * 1024 - decompressedBytes) }
+                    : info,
+                ),
+              ),
+        });
+        const outcomes = yield* runRecentThreadOutcomes({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, simulatedFileSystem));
+
+        expect(
+          outcomes.map((outcome) =>
+            outcome._tag === "Importable" ? outcome.thread.providerSessionId : outcome._tag,
+          ),
+        ).toEqual(["Skipped", "exact-limit"]);
       }),
     );
 

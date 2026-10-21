@@ -967,7 +967,9 @@ export const make = Effect.gen(function* () {
               if (!withinBudget) return null;
             }
 
-            if (compressed && !reachedEnd) return null;
+            // Filling the limit exactly is not EOF; only an empty read shows the transcript fits.
+            // A byte found past the limit is left uncharged so the budget never goes negative.
+            if (compressed && !reachedEnd && Option.isSome(yield* file.readAlloc(1))) return null;
             if (recordStarted && !(yield* Effect.try(finishRecord))) return null;
             return sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))
               ? { records, recordCount, cwd, claudeFields }
