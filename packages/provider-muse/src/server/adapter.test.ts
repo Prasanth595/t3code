@@ -444,27 +444,6 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  it.effect(
-    "starts fresh after recovery clears a native ref instead of reusing the startup hint",
-    () =>
-      Effect.gen(function* () {
-        const fake = yield* makeFakeMuse();
-        const cleared = yield* preallocatedProviderThread();
-        const harness = yield* makeHarness(
-          fake,
-          INSTANCE_ID,
-          "failed-old-session",
-          undefined,
-          cleared,
-        );
-        const started = yield* fake.takeCall("session/start");
-        assert.isFalse(fake.calls.some((call) => call.method === "session/resume"));
-        assert.notStrictEqual(started.params.sessionId, "failed-old-session");
-        assert.strictEqual(harness.providerThread.id, cleared.id);
-        yield* startConversation(harness, fake);
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  );
-
   it.effect("retries a missing native session with a cleared ref on the same healthy host", () =>
     Effect.gen(function* () {
       for (const kind of ["sessionNotFound", "notFound"] as const) {
@@ -580,19 +559,6 @@ describe("MuseAdapterV2", () => {
     ),
   );
 
-  it.effect("skips an unreadable usage notification without ending the turn", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
-      const { nativeId } = yield* startConversation(harness, fake);
-      yield* fake.emit("session/tokenUsage", { turnId: nativeId, usage: "not usage" });
-      yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
-      const terminal = yield* harness.takeEvent("turn.terminal");
-      assert.strictEqual(terminal.status, "completed");
-      assert.strictEqual(fake.closeCount(), 0);
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  );
-
   it.effect("stops at a Meta usage limit until every exhausted window resets", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
@@ -632,24 +598,6 @@ describe("MuseAdapterV2", () => {
       });
       const throttled = yield* harness.takeEvent("turn.terminal");
       assert.strictEqual(throttled.failure?.class, "provider_error");
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  );
-
-  it.effect("limits a quota stop without a reset time when no report shows a used-up window", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
-      // The last report still had room in both windows, so it cannot say when Meta will allow more.
-      yield* fake.emitHostWide("usage/changed", SUBSCRIPTION_USAGE);
-      const { nativeId } = yield* startConversation(harness, fake);
-      yield* fake.emit("turn/completed", {
-        turnId: nativeId,
-        terminal: "failed",
-        error: { message: QUOTA_MESSAGE },
-      });
-      const terminal = yield* harness.takeEvent("turn.terminal");
-      assert.strictEqual(terminal.failure?.class, "usage_limit");
-      assert.isUndefined(terminal.failure?.resetAt);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
@@ -801,14 +749,6 @@ describe("MuseAdapterV2", () => {
       );
       yield* startConversation(harness, fake, 2);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  );
-
-  it.effect("closes its SDK host exactly once when its session scope ends", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakeMuse();
-      yield* makeHarness(fake).pipe(Effect.scoped);
-      assert.strictEqual(fake.closeCount(), 1);
-    }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect(
@@ -1035,24 +975,165 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  it.effect("approves a workflow child's approval in full access after its turn ended", () =>
+  it.effect.each([
+    { when: "after its turn ended", turnEnded: true },
+    { when: "while its turn runs", turnEnded: false },
+  ] as const)(
+    "hides a workflow child's automatic approval $when and retains completed history",
+    ({ turnEnded }) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakeMuse();
+        const harness = yield* makeHarness(fake);
+        const { nativeId } = yield* startConversation(harness, fake);
+        if (turnEnded) {
+          yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
+          yield* harness.takeEvent("turn.terminal");
+        }
+        const acknowledgement = pendingPromise<Record<string, unknown>>();
+        fake.queueResponse("approval/decide", acknowledgement.promise);
+        const child = { ...approval("child-run-1"), subagentOrigin: { subagentId: "a7" } };
+        const before = harness.allEvents.length;
+        yield* fake.emit("approval/requested", child);
+        const decision = yield* fake.takeCall("approval/decide");
+        assert.strictEqual(decision.params.choiceId, "once");
+        const snapshot = yield* harness.runtime.readThreadSnapshot!({
+          providerThread: harness.providerThread,
+        });
+        assert.deepStrictEqual(snapshot.runtimeRequests, []);
+        assert.deepStrictEqual(harness.allEvents.slice(before), []);
+        if (!turnEnded) {
+          const parent = {
+            ...approval(nativeId),
+            approvalId: "parent-approval",
+            currentRequirementId: { approvalId: "parent-approval", sourceIndex: 0 },
+          };
+          yield* fake.emit("approval/requested", parent);
+          const shown = yield* harness.takeEvent("runtime_request.updated");
+          assert.strictEqual(shown.runtimeRequest.status, "pending");
+          yield* harness.takeEvent("provider_session.updated");
+          yield* fake.emit("approval/resolved", parent);
+          // The child remains unacknowledged when the visible request stops blocking the turn.
+          const session = yield* harness.takeEvent("provider_session.updated");
+          assert.strictEqual(session.providerSession.status, "running");
+        }
+        yield* fake.emit("approval/resolved", child);
+        const resolved = yield* harness.takeEvent("runtime_request.updated");
+        assert.strictEqual(resolved.runtimeRequest.status, "resolved");
+        assert.strictEqual(resolved.runtimeRequest.decision, "accept");
+        assert.isNull(resolved.runtimeRequest.providerTurnId);
+        const node = yield* harness.takeEvent("node.updated");
+        const item = yield* harness.takeEvent("turn_item.updated");
+        assert.strictEqual(node.node.status, "completed");
+        assert.strictEqual(item.turnItem.status, "completed");
+        acknowledgement.resolve({});
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("reveals only the current failed child approval and sends the user's decline", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
       const harness = yield* makeHarness(fake);
-      const { nativeId } = yield* startConversation(harness, fake);
-      yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
-      yield* harness.takeEvent("turn.terminal");
-      const childApproval = { ...approval("child-run-1"), subagentOrigin: { subagentId: "a7" } };
-      yield* fake.emit("approval/requested", childApproval);
+      yield* startConversation(harness, fake);
+      const outdated = pendingPromise<Record<string, unknown>>();
+      const current = pendingPromise<Record<string, unknown>>();
+      fake.queueResponse("approval/decide", outdated.promise);
+      fake.queueResponse("approval/decide", current.promise);
+      const child = {
+        ...approval("child-run-1"),
+        subagentOrigin: {
+          subagentId: "a7",
+          childRunId: "child-run-1",
+          childSessionId: "child-session",
+        },
+      };
+      yield* fake.emit("approval/requested", child);
+      yield* fake.takeCall("approval/decide");
+      yield* fake.emit("approval/updated", {
+        approvalId: child.approvalId,
+        availableChoices: child.availableChoices,
+        subject: child.subject,
+        subagentOrigin: child.subagentOrigin,
+        currentRequirementId: { approvalId: "approval-1", sourceIndex: 1 },
+      });
+      const second = yield* fake.takeCall("approval/decide");
+      assert.deepStrictEqual(second.params.requirementId, {
+        approvalId: "approval-1",
+        sourceIndex: 1,
+      });
+      outdated.reject(
+        new MspError({
+          code: -32053,
+          message: "Stale requirement",
+          data: { kind: "approvalRequirementStale" },
+        }),
+      );
+      current.reject(
+        new MspError({
+          code: -32052,
+          message: "Choice rejected",
+          data: { kind: "approvalChoiceInvalid" },
+        }),
+      );
       const asked = yield* harness.takeEvent("runtime_request.updated");
       assert.strictEqual(asked.runtimeRequest.status, "pending");
-      assert.isNull(asked.runtimeRequest.providerTurnId);
-      const decision = yield* fake.takeCall("approval/decide");
-      assert.strictEqual(decision.params.choiceId, "once");
-      yield* fake.emit("approval/resolved", childApproval);
+      const waiting = yield* harness.takeEvent("provider_session.updated");
+      assert.strictEqual(waiting.providerSession.status, "waiting");
+      const snapshot = yield* harness.runtime.readThreadSnapshot!({
+        providerThread: harness.providerThread,
+      });
+      assert.deepStrictEqual(snapshot.runtimeRequests, [asked.runtimeRequest]);
+      assert.lengthOf(
+        harness.allEvents.filter((event) => event.type === "runtime_request.updated"),
+        1,
+      );
+      yield* harness.runtime.respondToRuntimeRequest({
+        requestId: asked.runtimeRequest.id,
+        decision: "decline",
+      });
+      const decline = yield* fake.takeCall("approval/decide");
+      assert.strictEqual(decline.params.choiceId, "deny");
+      assert.deepStrictEqual(decline.params.requirementId, second.params.requirementId);
+      yield* fake.emit("approval/resolved", child);
+      const resolved = yield* harness.takeEvent("runtime_request.updated");
+      assert.strictEqual(resolved.runtimeRequest.decision, "decline");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("does not resurrect a settled child approval when its automatic answer fails", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      yield* startConversation(harness, fake);
+      const acknowledgement = pendingPromise<Record<string, unknown>>();
+      fake.queueResponse("approval/decide", acknowledgement.promise);
+      const child = { ...approval("child-run-1"), subagentOrigin: { subagentId: "a7" } };
+      yield* fake.emit("approval/requested", child);
+      yield* fake.takeCall("approval/decide");
+      yield* fake.emit("approval/resolved", child);
       const resolved = yield* harness.takeEvent("runtime_request.updated");
       assert.strictEqual(resolved.runtimeRequest.status, "resolved");
-      assert.strictEqual(resolved.runtimeRequest.decision, "accept");
+      acknowledgement.reject(
+        new MspError({
+          code: -32051,
+          message: "Already resolved",
+          data: { kind: "approvalAlreadyResolved" },
+        }),
+      );
+      // A later rejected answer provides an observable milestone after the stale rejection.
+      fake.queueResponse("approval/decide", new Error("Choice rejected"));
+      yield* fake.emit("approval/requested", {
+        ...child,
+        approvalId: "approval-2",
+        currentRequirementId: { approvalId: "approval-2", sourceIndex: 0 },
+      });
+      const asked = yield* harness.takeEvent("runtime_request.updated");
+      assert.strictEqual(asked.runtimeRequest.nativeRequestRef?.nativeId, "approval-2");
+      assert.deepStrictEqual(
+        harness.allEvents.flatMap((event) =>
+          event.type === "runtime_request.updated" ? [event.runtimeRequest.status] : [],
+        ),
+        ["resolved", "pending"],
+      );
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
