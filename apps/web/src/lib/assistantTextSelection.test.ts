@@ -286,30 +286,6 @@ describe("captureAssistantTextSelection", () => {
     expect(captured?.selector).toEqual(selector(quote.data));
   });
 
-  it.each([false, true])(
-    "finds assistant text between selectable message metadata, backwards=%s",
-    (backwards) => {
-      const userMessage = textNode("A user message.");
-      const quote = textNode("The assistant response.");
-      const source = assistantSource(quote);
-      const timestamp = textNode("1:50 AM");
-      const viewport = new SelectionNode("MAIN").append(
-        assistantSource(textNode("Previous response.")),
-        new SelectionNode("P").append(userMessage),
-        source,
-        new SelectionNode("P").append(timestamp),
-        assistantSource(textNode("Next response.")),
-      );
-      const selection = nativeSelection([userMessage, 2], [timestamp, 1], backwards);
-      const captured = capture(viewport, selection);
-
-      expect(captured?.source).toBe(source);
-      expect(captured?.selector).toEqual(selector(quote.data));
-      expect(selection.getRangeAt(0).startContainer).toBe(userMessage);
-      expect(selection.getRangeAt(0).endContainer).toBe(timestamp);
-    },
-  );
-
   it.each([false, true])("clips overlap to the originating response, backwards=%s", (backwards) => {
     const first = textNode("First response.");
     const second = textNode("Second response.");

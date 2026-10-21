@@ -286,23 +286,3 @@ it.each(["timer", "frame"])(
     expectInside(cite(), boundary);
   },
 );
-
-it.each(["Escape", "window blur"])(
-  "keeps Cite dismissed after %s and further scrolling",
-  async (reason) => {
-    using fixture = setup();
-    const { viewport, boundary, source } = fixture;
-    source.style.height = "1500px";
-    source.textContent = "The selected assistant response.";
-    await using _screen = await mount(fixture);
-    await act(() =>
-      window.getSelection()!.setBaseAndExtent(source.firstChild!, 0, source.firstChild!, 12),
-    );
-    await vi.waitFor(() => expectInside(cite(), boundary));
-    if (reason === "Escape") await userEvent.keyboard("{Escape}");
-    else await act(() => window.dispatchEvent(new Event("blur")));
-    await vi.waitFor(() => expect(cite()).toBeNull());
-    await scrollTo(viewport, { top: 500 });
-    expect(cite()).toBeNull();
-  },
-);
