@@ -344,6 +344,33 @@ describe("handoff budget", () => {
       0,
     );
   });
+
+  it("native context estimation ignores items prior to latest compaction", () => {
+    const history = [
+      { id: "1", type: "user_message", text: "message 1", providerThreadId: "pt-1" },
+      { id: "2", type: "assistant_message", text: "response 1", providerThreadId: "pt-1" },
+      { id: "3", type: "compaction" },
+      { id: "4", type: "user_message", text: "message 2 after compact", providerThreadId: "pt-1" },
+      {
+        id: "5",
+        type: "assistant_message",
+        text: "response 2 after compact",
+        providerThreadId: "pt-1",
+      },
+    ];
+    let startIndex = 0;
+    for (let i = history.length - 1; i >= 0; i--) {
+      if (history[i]!.type === "compaction") {
+        startIndex = i + 1;
+        break;
+      }
+    }
+    const retained = history.slice(startIndex);
+    assert.deepEqual(
+      retained.map((i) => i.id),
+      ["4", "5"],
+    );
+  });
   it("reserves context for image batches up to the attachment limit, honoring smaller known windows", () => {
     let previousBudget = 16_000;
     for (let count = 1; count <= PROVIDER_SEND_TURN_MAX_ATTACHMENTS; count++) {

@@ -22,7 +22,6 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ServerConfig from "../config.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
@@ -1040,34 +1039,39 @@ export const layer: Layer.Layer<
       // Legacy attempts lack native identity; exclude their explicitly recovered history, whose
       // attachments were not replayed into the replacement thread.
       const nativeContextEstimate = Effect.gen(function* () {
-        return sameNativeThread
-          ? (yield* projectionStore.getTurnStartHistory(input.threadId)).reduce((sum, item) => {
-              if (
-                item.runId === run.id ||
-                (item.runId !== null &&
-                  missedRunIds.has(item.runId) &&
-                  !deliveredItemIds.has(item.id)) ||
-                (item.providerThreadId !== providerThread.id && !deliveredItemIds.has(item.id))
-              )
-                return sum;
-              const historical = historicalMessage(item);
-              const nativeAttachments =
-                item.type === "user_message" &&
-                item.providerThreadId === providerThread.id &&
-                item.runId !== null &&
-                (nativeInputRunIds.has(item.runId) ||
-                  (legacyInputRunIds.has(item.runId) &&
-                    !coveredItemIds.has(item.id) &&
-                    !legacyRecoveredRunIds.has(item.runId)))
-                  ? attachmentTokenAllowance(item.attachments)
-                  : 0;
-              return (
-                sum +
-                (historical === null ? 0 : Buffer.byteLength(historical.text)) +
-                nativeAttachments
-              );
-            }, 0)
-          : 0;
+        if (!sameNativeThread) return 0;
+        const history = yield* projectionStore.getTurnStartHistory(input.threadId);
+        let startIndex = 0;
+        for (let i = history.length - 1; i >= 0; i--) {
+          if (history[i].type === "compaction") {
+            startIndex = i + 1;
+            break;
+          }
+        }
+        return history.slice(startIndex).reduce((sum, item) => {
+          if (
+            item.runId === run.id ||
+            (item.runId !== null &&
+              missedRunIds.has(item.runId) &&
+              !deliveredItemIds.has(item.id)) ||
+            (item.providerThreadId !== providerThread.id && !deliveredItemIds.has(item.id))
+          )
+            return sum;
+          const historical = historicalMessage(item);
+          const nativeAttachments =
+            item.type === "user_message" &&
+            item.providerThreadId === providerThread.id &&
+            item.runId !== null &&
+            (nativeInputRunIds.has(item.runId) ||
+              (legacyInputRunIds.has(item.runId) &&
+                !coveredItemIds.has(item.id) &&
+                !legacyRecoveredRunIds.has(item.runId)))
+              ? attachmentTokenAllowance(item.attachments)
+              : 0;
+          return (
+            sum + (historical === null ? 0 : Buffer.byteLength(historical.text)) + nativeAttachments
+          );
+        }, 0);
       });
       const modelContextWindow =
         knownModelWindow ??

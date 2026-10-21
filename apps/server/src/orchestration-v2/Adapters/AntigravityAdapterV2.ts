@@ -15,6 +15,12 @@ import * as Scope from "effect/Scope";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import {
+  associateConversationProject,
+  cancelCascade,
+  resolveOrCreateProjectForWorkspace,
+  syncConversationTitle,
+} from "../../provider/AntigravityLanguageServer.ts";
 import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
@@ -136,13 +142,25 @@ export function makeAntigravityAcpAdapterFlavor(
       return {
         ...runtime,
         start: () =>
-          runtime
-            .start()
-            .pipe(
-              Effect.tap(
-                (started) => options.onSessionStarted?.(started, input.cwd) ?? Effect.void,
-              ),
+          runtime.start().pipe(
+            Effect.tap((started) =>
+              Effect.gen(function* () {
+                if (options.onSessionStarted) {
+                  yield* options.onSessionStarted(started, input.cwd);
+                }
+                if (started.sessionId && input.cwd) {
+                  const projectId = yield* resolveOrCreateProjectForWorkspace(input.cwd).pipe(
+                    Effect.orElseSucceed(() => undefined),
+                  );
+                  if (projectId) {
+                    yield* associateConversationProject(started.sessionId, projectId).pipe(
+                      Effect.ignore,
+                    );
+                  }
+                }
+              }),
             ),
+          ),
       };
     },
     Effect.provideService(Crypto.Crypto, options.crypto),
@@ -206,6 +224,7 @@ export function makeAntigravityAcpAdapterFlavor(
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
     supportsCompaction: true,
+    preserveRuntimeOnSettledInterrupt: true,
   };
 }
 
@@ -218,7 +237,7 @@ export const makeAntigravityAdapterV2 = Effect.fn("makeAntigravityAdapterV2")(fu
     path: yield* Path.Path,
     host: yield* ProviderHost.ProviderHost,
   };
-  return yield* makeAcpAdapterV2({
+  const adapter = yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
     flavor: makeAntigravityAcpAdapterFlavor({ ...options, ...services }),
     selfInvocation: options.selfInvocation,
@@ -227,4 +246,30 @@ export const makeAntigravityAdapterV2 = Effect.fn("makeAntigravityAdapterV2")(fu
       ? {}
       : { continuationRequests: options.continuationRequests }),
   });
+
+  return {
+    ...adapter,
+    openSession: Effect.fn("AntigravityAdapterV2.openSession")(function* (input) {
+      const session = yield* adapter.openSession(input);
+      return {
+        ...session,
+        startTurn: Effect.fn("AntigravityAdapterV2.startTurn")(function* (turnInput) {
+          const sessionId = turnInput.providerThread.nativeThreadRef?.nativeId;
+          const title = turnInput.appThread?.title;
+          const cwd = turnInput.providerThread.worktreePath;
+          if (sessionId && title) {
+            yield* syncConversationTitle(sessionId, title, cwd).pipe(Effect.ignore);
+          }
+          return yield* session.startTurn(turnInput);
+        }),
+        interruptTurn: Effect.fn("AntigravityAdapterV2.interruptTurn")(function* (interruptInput) {
+          const sessionId = interruptInput.providerThread.nativeThreadRef?.nativeId;
+          if (sessionId) {
+            yield* cancelCascade(sessionId).pipe(Effect.ignore);
+          }
+          return yield* session.interruptTurn(interruptInput);
+        }),
+      };
+    }),
+  };
 });

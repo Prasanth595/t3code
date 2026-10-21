@@ -27,6 +27,7 @@ import {
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   buildServerProvider,
+  COMPACT_SLASH_COMMAND,
   isCommandMissingCause,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
@@ -83,7 +84,7 @@ function nativeCommands(
   commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
 ): ReadonlyArray<ServerProviderSlashCommand> {
   const seen = new Set<string>();
-  return commands.flatMap((command): ServerProviderSlashCommand[] => {
+  const parsed = commands.flatMap((command): ServerProviderSlashCommand[] => {
     if (!command.name.trim() || seen.has(command.name)) return [];
     seen.add(command.name);
     const description = command.description.trim();
@@ -96,6 +97,7 @@ function nativeCommands(
       },
     ];
   });
+  return seen.has(COMPACT_SLASH_COMMAND.name) ? parsed : [COMPACT_SLASH_COMMAND, ...parsed];
 }
 
 function isMissingInstallation(error: EffectAcpErrors.AcpError | ProviderSetupError): boolean {
@@ -151,6 +153,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           : "Antigravity is disabled in T3 Code settings.",
       },
     }),
+    slashCommands: [COMPACT_SLASH_COMMAND],
     setup: { canAuthenticate: true, canInstall: true },
     supportsConversationRollback: false,
     supportsTextGeneration: false,

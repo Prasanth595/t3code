@@ -3,6 +3,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import { deleteCascadeTrajectory } from "../AntigravityLanguageServer.ts";
+
 const isNativeSessionId = Schema.is(Schema.String.check(Schema.isUUID(4)));
 const decodeSessionMetadata = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Struct({ cwd: Schema.String })),
@@ -22,22 +24,32 @@ export const removeAntigravitySessionFiles = Effect.fn("removeAntigravitySession
     const path = yield* Path.Path;
     const acpDirectory = path.join(input.profileDirectory, "antigravity-acp");
     const base = path.join(acpDirectory, "conversations", input.sessionId);
-    if (!(yield* fs.exists(`${base}.meta`))) {
+    const metaExists = yield* fs.exists(`${base}.meta`);
+    if (metaExists) {
+      const metadata = yield* fs
+        .readFileString(`${base}.meta`)
+        .pipe(Effect.flatMap(decodeSessionMetadata));
+      if (metadata.cwd !== input.cwd) {
+        return;
+      }
+      for (const suffix of [".db", ".db-wal", ".db-shm", ".db-journal", ".meta"]) {
+        yield* fs.remove(`${base}${suffix}`, { force: true });
+      }
+      yield* fs.remove(path.join(acpDirectory, "brain", input.sessionId), {
+        recursive: true,
+        force: true,
+      });
+      yield* deleteCascadeTrajectory(input.sessionId, {
+        profileDirectory: input.profileDirectory,
+      }).pipe(Effect.ignore);
       return;
     }
-    const metadata = yield* fs
-      .readFileString(`${base}.meta`)
-      .pipe(Effect.flatMap(decodeSessionMetadata));
-    if (metadata.cwd !== input.cwd) {
-      return;
+
+    if (input.cwd.includes("t3-antigravity-setup-") || input.cwd.includes("t3-antigravity-text-")) {
+      yield* deleteCascadeTrajectory(input.sessionId, {
+        profileDirectory: input.profileDirectory,
+      }).pipe(Effect.ignore);
     }
-    for (const suffix of [".db", ".db-wal", ".db-shm", ".db-journal", ".meta"]) {
-      yield* fs.remove(`${base}${suffix}`, { force: true });
-    }
-    yield* fs.remove(path.join(acpDirectory, "brain", input.sessionId), {
-      recursive: true,
-      force: true,
-    });
   },
   Effect.catch(() => Effect.logWarning("Could not remove temporary Antigravity session files.")),
 );

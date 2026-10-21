@@ -42,10 +42,24 @@ const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFil
             Effect.orElseSucceed(() => true),
           );
           if (entryExists) return yield* outside;
-          const parent = yield* input.fileSystem
-            .realPath(path.dirname(resolved))
-            .pipe(Effect.orElseSucceed(() => path.dirname(resolved)));
-          return path.join(parent, path.basename(resolved));
+          let current = path.dirname(resolved);
+          let suffix = path.basename(resolved);
+          while (true) {
+            const exists = yield* input.fileSystem
+              .exists(current)
+              .pipe(Effect.orElseSucceed(() => false));
+            if (exists) {
+              const realParent = yield* input.fileSystem
+                .realPath(current)
+                .pipe(Effect.orElseSucceed(() => current));
+              return path.join(realParent, suffix);
+            }
+            const next = path.dirname(current);
+            if (next === current) break;
+            suffix = path.join(path.basename(current), suffix);
+            current = next;
+          }
+          return resolved;
         }),
       ),
     );
