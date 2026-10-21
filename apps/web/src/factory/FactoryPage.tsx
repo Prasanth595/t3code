@@ -121,7 +121,7 @@ export function FactoryPage() {
   const runsListed = runsOf.some(({ data }) => data !== null);
   const runsPending = runsOf.some(({ status }) => status === "loading");
   // A failed read is a notice naming its environment while the rest of the page stays.
-  const notices = environments.flatMap(({ label, status }, i) => {
+  const notices = environments.flatMap(({ environmentId, label, status }, i) => {
     const runsRead = runsOf[i];
     const failed =
       runsRead?.status === "error"
@@ -132,6 +132,7 @@ export function FactoryPage() {
     if (failed === null) return [];
     return [
       {
+        environmentId,
         label,
         message: messageOf(failed.error),
         retry: () => {
@@ -169,8 +170,8 @@ export function FactoryPage() {
           onDismiss={dismiss}
           showEnvironment={showEnvironment}
         />
-        {notices.map(({ label, message, retry }) => (
-          <Alert key={label} variant="error">
+        {notices.map(({ environmentId, label, message, retry }) => (
+          <Alert key={environmentId} variant="error">
             <AlertDescription>
               Could not refresh {label}: {message}
             </AlertDescription>
