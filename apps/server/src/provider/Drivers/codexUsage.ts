@@ -71,6 +71,8 @@ export const CodexScanState = Schema.Struct({
   sessionId: Schema.mutableKey(Schema.String),
   lastUsageSignature: Schema.mutableKey(Schema.NullOr(Schema.String)),
   lastCumulativeUsage: Schema.mutableKey(Schema.NullOr(CodexTokenUsage)),
+  // Optional so scan states cached before this field existed stay valid.
+  sequenceStartUsage: Schema.mutableKey(Schema.optionalKey(CodexTokenUsage)),
   malformedRecords: Schema.mutableKey(TokenCount),
   sawSessionMeta: Schema.mutableKey(Schema.Boolean),
   modelProvider: Schema.mutableKey(Schema.String),
@@ -243,6 +245,16 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
   if (cumulative !== null) {
     // A session resumed in a new Codex process restarts its cumulative counters at this request.
     const restarted = CODEX_USAGE_FIELDS.every((key) => cumulative[key] === last[key]);
+    const sequenceStart = state.sequenceStartUsage;
+    // Re-emitting the current sequence's first request is already billed and must not rewind the baseline.
+    if (
+      restarted &&
+      sequenceStart !== undefined &&
+      CODEX_USAGE_FIELDS.every((key) => cumulative[key] === sequenceStart[key])
+    ) {
+      state.lastCumulativeUsage = previous;
+      return null;
+    }
     if (
       !restarted &&
       !CODEX_USAGE_FIELDS.every((key) => cumulative[key] - (previous?.[key] ?? 0) === last[key])
@@ -250,6 +262,7 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
       state.malformedRecords += 1;
       return null;
     }
+    if (restarted) state.sequenceStartUsage = cumulative;
   } else {
     if (signature === state.lastUsageSignature) return null;
     // Advance expected totals for billed legacy requests so a cumulative re-emission is stale.

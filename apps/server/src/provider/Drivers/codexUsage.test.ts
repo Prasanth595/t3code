@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { totalTokens } from "@t3tools/provider-core/server/usage";
 
 import { codexUsageFormat, initialCodexScanState, parseCodexLine } from "./codexUsage.ts";
 
@@ -254,6 +255,26 @@ describe("parseCodexLine", () => {
       parseCodexLine(counted(counters(10, 2), counters(40, 7)), state)?.totals.outputTokens,
     ).toBe(2);
     expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
+  });
+
+  it("ignores a replay of the current sequence's first request without rewinding the baseline", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const request = counters(100, 20);
+    const processed = [
+      counted(request, request),
+      counted(request, counters(200, 40)),
+      counted(request, request),
+      counted(request, counters(300, 60)),
+    ].map((line) => {
+      const record = parseCodexLine(line, state);
+      return record === null ? 0 : totalTokens(record.totals);
+    });
+
+    expect({
+      processed,
+      skipped: codexUsageFormat.readMalformedRecords?.(state),
+    }).toEqual({ processed: [120, 120, 0, 120], skipped: 0 });
   });
 
   it("retains initial tier evidence only for the own OpenAI session and exact context until native settings arrive", () => {
