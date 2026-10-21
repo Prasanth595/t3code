@@ -1,4 +1,5 @@
 import {
+  AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   EnvironmentId,
   ProjectId,
@@ -7,14 +8,17 @@ import {
   type EditorId,
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../test/render";
 import { useRightPanelStore } from "../rightPanelStore";
+import { toastManager } from "./ui/toast";
 
 const state = vi.hoisted(() => ({
   allowed: true,
+  canReadFiles: true,
   listeners: new Set<() => void>(),
   openEditor: vi.fn(),
   updateMetadata: vi.fn(),
@@ -23,6 +27,7 @@ const state = vi.hoisted(() => ({
   openFile: vi.fn(),
   openExternal: vi.fn(),
   copy: vi.fn(),
+  toast: vi.fn(),
   linkedPullRequest: null as ThreadLinkedPullRequest | null,
 }));
 
@@ -44,7 +49,8 @@ vi.mock(import("../state/session"), async (original) => {
   const { useSyncExternalStore } = await import("react");
   const readEnvironmentScope = (id: EnvironmentId | null, scope: AuthEnvironmentScope) =>
     id !== null &&
-    (scope !== AuthOrchestrationOperateScope || id !== threadRef.environmentId || state.allowed);
+    (scope !== AuthOrchestrationOperateScope || id !== threadRef.environmentId || state.allowed) &&
+    (scope !== AuthFilesystemReadScope || state.canReadFiles);
   return {
     ...(await original()),
     readEnvironmentScope,
@@ -133,6 +139,7 @@ const serverConfig = {
 function setup() {
   using stack = new DisposableStack();
   state.allowed = true;
+  state.canReadFiles = true;
   state.listeners.clear();
   state.linkedPullRequest = null;
   state.openEditor.mockReset().mockResolvedValue(AsyncResult.success(undefined));
@@ -142,6 +149,7 @@ function setup() {
   state.openFile.mockReset();
   state.openExternal.mockReset().mockResolvedValue(undefined);
   state.copy.mockReset().mockResolvedValue(undefined);
+  state.toast.mockReset().mockReturnValue("toast");
   const { openFile } = useRightPanelStore.getState();
   useRightPanelStore.setState({ openFile: state.openFile });
   stack.defer(() => useRightPanelStore.setState({ openFile }));
@@ -152,6 +160,7 @@ function setup() {
       await state.copy(await (await item.getType("text/plain")).text());
     }),
   );
+  stack.use(vi.spyOn(toastManager, "add").mockImplementation(state.toast));
   return stack.move();
 }
 
@@ -206,24 +215,73 @@ it("removes host actions after revocation while keeping file preview and copying
   expect(state.openEditor).not.toHaveBeenCalled();
 });
 
-it("copies the file contents the host reads", async () => {
+function mockFileRead(read: unknown) {
+  state.search.mockImplementation(async (request: { input: object }) =>
+    "relativePath" in request.input ? read : AsyncResult.success({ entries: [] }),
+  );
+}
+
+it("copies a line-linked file's complete contents from the host", async () => {
   using _setup = setup();
-  state.search.mockResolvedValue(
+  mockFileRead(
     AsyncResult.success({
       relativePath: "/work/docs/readme.md",
-      contents: "# Readme\n",
-      byteLength: 9,
+      contents: "# Readme\n\nWhole file.\n",
+      byteLength: 22,
       truncated: false,
     }),
   );
   state.choose.mockResolvedValue("copy-contents");
-  await using screen = await renderMarkdown("[Readme](docs/readme.md)");
+  await using screen = await renderMarkdown("[Readme](docs/readme.md:12)");
   await screen.openContextMenu();
-  await vi.waitFor(() => expect(state.copy).toHaveBeenCalledWith("# Readme\n"));
+  await vi.waitFor(() => expect(state.copy).toHaveBeenCalledWith("# Readme\n\nWhole file.\n"));
   expect(state.search).toHaveBeenCalledWith({
     environmentId: threadRef.environmentId,
     input: { cwd: "/work", relativePath: "/work/docs/readme.md" },
   });
+});
+
+it("refuses to copy a file the host only partially read", async () => {
+  using _setup = setup();
+  mockFileRead(
+    AsyncResult.success({
+      relativePath: "/work/big.log",
+      contents: "partial",
+      byteLength: 2_000_000,
+      truncated: true,
+    }),
+  );
+  state.choose.mockResolvedValue("copy-contents");
+  await using screen = await renderMarkdown("[Log](big.log)");
+  await screen.openContextMenu();
+  await vi.waitFor(() =>
+    expect(state.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "error", description: "File is too large to copy." }),
+    ),
+  );
+  expect(state.copy).not.toHaveBeenCalled();
+});
+
+it("reports a failed file read instead of copying", async () => {
+  using _setup = setup();
+  mockFileRead(AsyncResult.failure(Cause.fail(new Error("File not found"))));
+  state.choose.mockResolvedValue("copy-contents");
+  await using screen = await renderMarkdown("[Readme](docs/readme.md)");
+  await screen.openContextMenu();
+  await vi.waitFor(() =>
+    expect(state.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "error", description: "File not found" }),
+    ),
+  );
+  expect(state.copy).not.toHaveBeenCalled();
+});
+
+it("does not offer copying contents without host file read access", async () => {
+  using _setup = setup();
+  state.canReadFiles = false;
+  await using screen = await renderMarkdown("[Readme](docs/readme.md)");
+  await screen.openContextMenu();
+  expect(offeredActions()).not.toContain("copy-contents");
 });
 
 it("does not launch an editor after revocation during a native context menu", async () => {
