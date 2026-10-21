@@ -27,7 +27,6 @@ import {
   unlockNotificationAudio,
 } from "../threadNotifications";
 import { resolveSidebarThreadStatus } from "./Sidebar.logic";
-import { resolveThreadCompletionNotification } from "./ThreadNotificationCoordinator.logic";
 import { toastManager } from "./ui/toast";
 
 export function ThreadNotificationCoordinator() {
@@ -143,18 +142,21 @@ function EnvironmentNotifications({
         status === "input" || status === "approval" || status === "failed" || status === "limited"
           ? `${thread.latestRun?.runId ?? ""}:${status}`
           : null;
-      const { completion, notify: notifyCompletion } = resolveThreadCompletionNotification(
-        thread,
-        status === "ready",
-        prior?.completion ?? null,
-        rawThread.latestRunStopRequested === true,
-      );
+      const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
+      const completion =
+        status === "ready" &&
+        thread.latestRun?.status === "completed" &&
+        Number.isFinite(completedAt)
+          ? completedAt
+          : (prior?.completion ?? null);
       next.set(thread.id, { raw: rawThread, subagentRequest, attention, completion });
       if (!prior || thread.archivedAt !== null) continue;
       const kind =
         attention && attention !== prior.attention
           ? "input"
-          : notifyCompletion
+          : !rawThread.latestRunStopRequested &&
+              completion !== null &&
+              (prior.completion === null || completion > prior.completion)
             ? "completion"
             : null;
       if (!kind) continue;
