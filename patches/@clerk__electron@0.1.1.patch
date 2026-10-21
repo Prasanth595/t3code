@@ -1,5 +1,5 @@
 diff --git a/dist/cjs/index.js b/dist/cjs/index.js
-index 97a5a25d58584c9bf04997fcec67e29923a0cf76..f830912f5b2900f2f96018b723a86c27e105954e 100644
+index 97a5a25d58584c9bf04997fcec67e29923a0cf76..89a09e487f213c90057779b1670345eb3203e87e 100644
 --- a/dist/cjs/index.js
 +++ b/dist/cjs/index.js
 @@ -95,7 +95,7 @@ function setupOAuthTransportIpcHandlers(options) {
@@ -11,6 +11,19 @@ index 97a5a25d58584c9bf04997fcec67e29923a0cf76..f830912f5b2900f2f96018b723a86c27
  		assertExternalOAuthUrl(url);
  		const window = electron.BrowserWindow.fromWebContents(event.sender);
  		const callbackPromise = new Promise((resolve, reject) => {
+@@ -109,10 +109,11 @@ function setupOAuthTransportIpcHandlers(options) {
+ 				window
+ 			};
+ 		});
++		const flow = pendingOAuthFlow;
+ 		try {
+ 			await electron.shell.openExternal(url);
+ 		} catch (err) {
+-			disposePendingOAuthFlow(err instanceof Error ? err : new Error(String(err)));
++			if (pendingOAuthFlow === flow) disposePendingOAuthFlow(err instanceof Error ? err : new Error(String(err)));
+ 		}
+ 		return callbackPromise;
+ 	});
 diff --git a/dist/cjs/preload/index.js b/dist/cjs/preload/index.js
 index 310c21a720e7b5da06ee301f6b51597f081a8179..3518d29e786258065bc5ab92b664ea06dc99b659 100644
 --- a/dist/cjs/preload/index.js
@@ -25,7 +38,7 @@ index 310c21a720e7b5da06ee301f6b51597f081a8179..3518d29e786258065bc5ab92b664ea06
  	};
  	if (process.contextIsolated) electron.contextBridge.exposeInMainWorld("__clerk_internal_electron", bridge);
 diff --git a/dist/esm/index.js b/dist/esm/index.js
-index 29284ea0e6325afc72024ec8c2e69ab3cb78ad00..e17ac66a597afce4273aa8bdd308a794504a8340 100644
+index 29284ea0e6325afc72024ec8c2e69ab3cb78ad00..091dc64206c0331b0e3663ee08da1d586b16a08d 100644
 --- a/dist/esm/index.js
 +++ b/dist/esm/index.js
 @@ -94,7 +94,7 @@ function setupOAuthTransportIpcHandlers(options) {
@@ -37,6 +50,19 @@ index 29284ea0e6325afc72024ec8c2e69ab3cb78ad00..e17ac66a597afce4273aa8bdd308a794
  		assertExternalOAuthUrl(url);
  		const window = BrowserWindow.fromWebContents(event.sender);
  		const callbackPromise = new Promise((resolve, reject) => {
+@@ -108,10 +108,11 @@ function setupOAuthTransportIpcHandlers(options) {
+ 				window
+ 			};
+ 		});
++		const flow = pendingOAuthFlow;
+ 		try {
+ 			await shell.openExternal(url);
+ 		} catch (err) {
+-			disposePendingOAuthFlow(err instanceof Error ? err : new Error(String(err)));
++			if (pendingOAuthFlow === flow) disposePendingOAuthFlow(err instanceof Error ? err : new Error(String(err)));
+ 		}
+ 		return callbackPromise;
+ 	});
 diff --git a/dist/esm/preload/index.js b/dist/esm/preload/index.js
 index 4a131a7d148fb402fe5e04336ccf7398723501b4..110dab808a7c6a1a7664dc5d9ab254af2fa4c4bc 100644
 --- a/dist/esm/preload/index.js
