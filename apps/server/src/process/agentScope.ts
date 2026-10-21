@@ -2,6 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 
+import { type AgentMemoryLimit, DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import {
   AgentScope,
   agentScopeCommand,
@@ -14,9 +15,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const AGENT_SLICE = "app-t3code-agents.slice";
 
@@ -28,16 +31,22 @@ export function ownedAgentSlice(stateDir: string): string {
 const GiB = 1024 ** 3;
 
 /**
- * Agents together leave about 6 GB free before they are throttled and 4 GB
- * before the kernel kills one, so the server, sshd, and tailscaled keep
- * working. Small machines still give agents at least half of RAM before
- * throttling and three quarters before a kill.
+ * On "auto", agents together leave about 6 GB free before they are throttled
+ * and 4 GB before the kernel kills one, so the server, sshd, and tailscaled
+ * keep working. Small machines still give agents at least half of RAM before
+ * throttling and three quarters before a kill. A fixed cap throttles 2 GB
+ * below the kill, or at three quarters of a small cap.
  */
-function agentSliceMemoryLimits(totalBytes: number) {
-  return {
-    high: Math.max(totalBytes - 6 * GiB, Math.floor(totalBytes / 2)),
-    max: Math.max(totalBytes - 4 * GiB, Math.floor(totalBytes * 0.75)),
-  };
+export function agentSliceMemoryLimits(totalBytes: number, setting: AgentMemoryLimit) {
+  if (setting === "off") return { high: "infinity", max: "infinity" } as const;
+  if (setting === "auto") {
+    return {
+      high: Math.max(totalBytes - 6 * GiB, Math.floor(totalBytes / 2)),
+      max: Math.max(totalBytes - 4 * GiB, Math.floor(totalBytes * 0.75)),
+    };
+  }
+  const max = Math.floor(setting * GiB);
+  return { high: Math.max(max - 2 * GiB, Math.floor(max * 0.75)), max };
 }
 
 export interface ScopeState {
@@ -100,6 +109,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const hostEnvironment = yield* HostProcess.Environment;
   const { stateDir } = yield* ServerConfig.ServerConfig;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const ownedSlice = ownedAgentSlice(stateDir);
   const layerScope = yield* Effect.scope;
 
@@ -148,6 +158,30 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  // Undefined until the first agent sets up scopes, which reads the setting itself.
+  let appliedMemoryLimit: AgentMemoryLimit | undefined;
+  const applyMemoryLimits = Effect.fn("agentScope.applyMemoryLimits")(function* (
+    systemctl: string,
+    setting: AgentMemoryLimit,
+  ) {
+    appliedMemoryLimit = setting;
+    const limits = agentSliceMemoryLimits(NodeOS.totalmem(), setting);
+    const limited = yield* run(systemctl, [
+      "--user",
+      "set-property",
+      "--runtime",
+      AGENT_SLICE,
+      `MemoryHigh=${limits.high}`,
+      `MemoryMax=${limits.max}`,
+    ]);
+    if (limited._tag === "None" || limited.value.code !== 0) {
+      yield* Effect.logWarning("Could not set memory limits on the agents slice", {
+        stderr: limited._tag === "Some" ? limited.value.stderr.trim() : undefined,
+      });
+    }
+    return limits;
+  });
+
   const systemd = yield* Effect.cached(
     Effect.gen(function* () {
       const runtimeDir = hostEnvironment.XDG_RUNTIME_DIR;
@@ -173,20 +207,10 @@ export const make = Effect.gen(function* () {
         yield* Effect.logInfo("Agent scopes are off: no systemd user manager");
         return undefined;
       }
-      const limits = agentSliceMemoryLimits(NodeOS.totalmem());
-      const limited = yield* run(systemctl, [
-        "--user",
-        "set-property",
-        "--runtime",
-        AGENT_SLICE,
-        `MemoryHigh=${limits.high}`,
-        `MemoryMax=${limits.max}`,
-      ]);
-      if (limited._tag === "None" || limited.value.code !== 0) {
-        yield* Effect.logWarning("Could not set memory limits on the agents slice", {
-          stderr: limited._tag === "Some" ? limited.value.stderr.trim() : undefined,
-        });
-      }
+      const { agentMemoryLimit } = yield* serverSettings.getSettings.pipe(
+        Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS),
+      );
+      const limits = yield* applyMemoryLimits(systemctl, agentMemoryLimit);
       yield* Effect.logInfo("Agent scopes are on", {
         slice: AGENT_SLICE,
         ...limits,
@@ -200,6 +224,19 @@ export const make = Effect.gen(function* () {
       };
     }),
   );
+
+  // Agents keep running under the old cap until a new one is set, so a change
+  // takes effect without restarting them.
+  const settingsChanges = yield* serverSettings.subscribeChanges;
+  yield* Stream.runForEach(settingsChanges, ({ agentMemoryLimit }) =>
+    Effect.gen(function* () {
+      if (appliedMemoryLimit === undefined || agentMemoryLimit === appliedMemoryLimit) return;
+      const scope = yield* systemd;
+      if (scope === undefined) return;
+      const limits = yield* applyMemoryLimits(scope.systemctl, agentMemoryLimit);
+      yield* Effect.logInfo("Agent memory limits changed", limits);
+    }),
+  ).pipe(Effect.forkIn(layerScope));
 
   const scopeByThread = new Map<string, { unit: string; oomKilled: boolean }>();
 

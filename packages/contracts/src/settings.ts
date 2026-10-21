@@ -1090,6 +1090,24 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
+export const MIN_AGENT_MEMORY_LIMIT_GIB = 1;
+export const MAX_AGENT_MEMORY_LIMIT_GIB = 4096;
+/**
+ * Memory for all agents and terminals together, on Linux with systemd.
+ * "auto" sizes the cap from RAM when the server starts. "off" sets no cap,
+ * for VMs whose RAM grows on demand. A number is the cap in GiB.
+ */
+export const AgentMemoryLimit = Schema.Union([
+  Schema.Literals(["auto", "off"]),
+  Schema.Number.check(
+    Schema.isBetween({
+      minimum: MIN_AGENT_MEMORY_LIMIT_GIB,
+      maximum: MAX_AGENT_MEMORY_LIMIT_GIB,
+    }),
+  ),
+]);
+export type AgentMemoryLimit = typeof AgentMemoryLimit.Type;
+
 export const ServerSettings = Schema.Struct({
   // Null means no client has migrated this preference yet; an empty value is
   // authoritative so another device cannot resurrect cleared preferences.
@@ -1116,6 +1134,9 @@ export const ServerSettings = Schema.Struct({
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   continueThreadsAfterServerUpdate: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
+  agentMemoryLimit: AgentMemoryLimit.pipe(
+    Schema.withDecodingDefault(Effect.succeed("auto" as const)),
   ),
 
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -1436,6 +1457,7 @@ export const ServerSettingsPatch = Schema.Struct({
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
+  agentMemoryLimit: Schema.optionalKey(AgentMemoryLimit),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),

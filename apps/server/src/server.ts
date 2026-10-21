@@ -1061,7 +1061,7 @@ const layerMakeServer = Layer.unwrap(
       Layer.provide(layerApplicationObservability),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(VcsProcess.layer),
-      Layer.provideMerge(AgentScopeLive.layer),
+      Layer.provideMerge(AgentScopeLive.layer.pipe(Layer.provide(layerServerSettings))),
       Layer.provideMerge(layerPlatformServices),
     );
   }),

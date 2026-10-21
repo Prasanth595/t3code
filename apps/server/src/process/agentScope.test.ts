@@ -14,7 +14,14 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as ServerConfig from "../config.ts";
 import { makeCodexAppServerSpawnCommand } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { classifyScope, make, ownedAgentSlice, type ScopeState } from "./agentScope.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import {
+  agentSliceMemoryLimits,
+  classifyScope,
+  make,
+  ownedAgentSlice,
+  type ScopeState,
+} from "./agentScope.ts";
 
 const running: ScopeState = {
   loadState: "loaded",
@@ -23,6 +30,20 @@ const running: ScopeState = {
   oomKills: 0,
   populated: true,
 };
+
+const GiB = 1024 ** 3;
+
+describe("agentSliceMemoryLimits", () => {
+  it("leaves headroom on auto, sets no cap when off, and throttles below a fixed cap", () => {
+    expect(agentSliceMemoryLimits(16 * GiB, "auto")).toEqual({ high: 10 * GiB, max: 12 * GiB });
+    expect(agentSliceMemoryLimits(16 * GiB, "off")).toEqual({
+      high: "infinity",
+      max: "infinity",
+    });
+    expect(agentSliceMemoryLimits(16 * GiB, 64)).toEqual({ high: 62 * GiB, max: 64 * GiB });
+    expect(agentSliceMemoryLimits(16 * GiB, 4)).toEqual({ high: 3 * GiB, max: 4 * GiB });
+  });
+});
 
 describe("classifyScope", () => {
   it("reports an OOM kill only once systemd records it", () => {
@@ -42,7 +63,13 @@ const withFakeSystemd = <A, E>(
     readonly calls: ReadonlyArray<ReadonlyArray<string>>;
     readonly stateDir: string;
   }) => Effect.Effect<A, E>,
-  { oomPolicy = true }: { readonly oomPolicy?: boolean } = {},
+  {
+    oomPolicy = true,
+    settings = {},
+  }: {
+    readonly oomPolicy?: boolean;
+    readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
+  } = {},
 ) =>
   Effect.gen(function* () {
     const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-agent-scope-"));
@@ -91,9 +118,10 @@ const withFakeSystemd = <A, E>(
   }).pipe(
     Effect.scoped,
     Effect.provide(
-      ServerConfig.layerTest(process.cwd(), { prefix: "t3-agent-scope-" }).pipe(
-        Layer.provideMerge(NodeServices.layer),
-      ),
+      Layer.mergeAll(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-agent-scope-" }),
+        ServerSettings.layerTest(settings),
+      ).pipe(Layer.provideMerge(NodeServices.layer)),
     ),
   );
 
@@ -192,6 +220,26 @@ describe("AgentScope service", () => {
         expect(sliceOf(terminal)).toBe("app-t3code-agents.slice");
         expect(calls.filter(([, verb]) => verb === "stop")).toHaveLength(1);
       }),
+    ),
+  );
+
+  it.effect("caps the agents slice from the memory limit setting", () =>
+    withFakeSystemd(
+      ({ scope, calls }) =>
+        Effect.gen(function* () {
+          yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+          expect(calls.filter(([, verb]) => verb === "set-property")).toEqual([
+            [
+              "--user",
+              "set-property",
+              "--runtime",
+              "app-t3code-agents.slice",
+              "MemoryHigh=infinity",
+              "MemoryMax=infinity",
+            ],
+          ]);
+        }),
+      { settings: { agentMemoryLimit: "off" } },
     ),
   );
 });
