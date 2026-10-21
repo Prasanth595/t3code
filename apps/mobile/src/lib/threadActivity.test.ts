@@ -143,28 +143,43 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
 }
 
 describe("buildThreadFeed", () => {
-  it("keeps async answers in question history instead of user bubbles", () => {
-    const requestId = RuntimeRequestId.make("question");
-    const question: OrchestrationV2TurnItem = {
-      ...base("question", "2026-06-20T00:00:01.000Z", 0),
-      type: "user_input_request",
-      requestId,
-      questions: [],
-      questionAnswer: { requestId, answers: { color: "Blue" }, attachmentsByQuestionId: {} },
-    };
-    const reply: OrchestrationV2TurnItem = {
-      ...userMessage(),
-      id: TurnItemId.make("answer"),
-      messageId: MessageId.make(`async-answer:${requestId}`),
-    };
-    const feed = buildThreadFeed([projected(question, 0), projected(reply, 1)]);
-    expect(feed).toHaveLength(1);
-    expect(feed[0]).toMatchObject({
-      type: "activity-group",
-      activities: [{ workEntry: { questionAnswer: question.questionAnswer } }],
-    });
-    expect(buildThreadFeed([projected(reply, 0)])[0]?.type).toBe("message");
-  });
+  it.each([runId, RunId.make("later-answer-run")])(
+    "folds async answers only into questions from the same run (%s)",
+    (answerRunId) => {
+      const requestId = RuntimeRequestId.make("question");
+      const question: OrchestrationV2TurnItem = {
+        ...base("question", "2026-06-20T00:00:01.000Z", 0),
+        type: "user_input_request",
+        requestId,
+        questions: [],
+        questionAnswer: { requestId, answers: { color: "Blue" }, attachmentsByQuestionId: {} },
+      };
+      const reply: OrchestrationV2TurnItem = {
+        ...userMessage(),
+        id: TurnItemId.make("answer"),
+        runId: answerRunId,
+        messageId: MessageId.make(`async-answer:${requestId}`),
+      };
+      const cache = createThreadFeedCache();
+      const rows = [projected(question, 0)];
+      buildThreadFeed(rows, { cache });
+      const nextRows = [...rows, projected(reply, 1)];
+      const feed = buildThreadFeed(nextRows, { cache });
+      expect(feed).toEqual(buildThreadFeed(nextRows));
+      expect(feed).toHaveLength(answerRunId === runId ? 1 : 2);
+      if (answerRunId !== runId) {
+        expect(feed[1]).toMatchObject({
+          type: "message",
+          message: { id: reply.messageId, runId: answerRunId, text: reply.text },
+        });
+      }
+      expect(feed[0]).toMatchObject({
+        type: "activity-group",
+        activities: [{ workEntry: { questionAnswer: question.questionAnswer } }],
+      });
+      expect(buildThreadFeed([projected(reply, 0)])[0]?.type).toBe("message");
+    },
+  );
 
   it.each([false, true])(
     "keeps answered questions outside settled work (attachments only: %s)",

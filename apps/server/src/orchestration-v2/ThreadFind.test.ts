@@ -26,6 +26,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as EventStore from "./EventStore.ts";
 import { encodeThreadHistoryCursor, selectHistoryPageFromCursor } from "./threadHistoryPaging.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
+import { findProjectedThreadItems } from "./ThreadFind.ts";
 
 const layerTest = Layer.mergeAll(EventStore.layer, ProjectionStore.layer, ProjectStore.layer).pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
@@ -469,6 +470,50 @@ describe("V2 thread find", () => {
       yield* commit([{ ...updated, type: "run.updated" }]);
       assert.equal((yield* projection.searchThread({ threadId, query: "needle" })).totalMatches, 0);
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([runId, RunId.make("later-answer-run")])(
+    "searches an async answer only when it belongs to a later run (%s)",
+    (answerRunId) =>
+      Effect.gen(function* () {
+        const projection = yield* setup;
+        if (answerRunId !== runId) yield* commit([run(threadId, answerRunId, 2)]);
+        const question: OrchestrationV2TurnItem = {
+          ...item("question", 1, ""),
+          type: "user_input_request",
+          requestId: RuntimeRequestId.make("question"),
+          questions: [],
+          questionAnswer: { requestId: "question", answers: {}, attachmentsByQuestionId: {} },
+        };
+        const answer = {
+          ...item("async-answer:question", 2, "needle", "user_message"),
+          runId: answerRunId,
+        };
+        const items = [question, answer];
+        yield* putItems(items);
+        const input = { threadId, query: "needle" };
+        const persisted = yield* projection.searchThread(input);
+        const memory = findProjectedThreadItems(
+          items.map((item, position) => ({
+            position,
+            visibility: "local",
+            sourceThreadId: item.threadId,
+            sourceItemId: item.id,
+            item,
+          })),
+          input,
+          0,
+        );
+        for (const result of [persisted, memory]) {
+          assert.equal(result.totalMatches, answerRunId === runId ? 0 : 1);
+          assert.deepEqual(
+            result.match,
+            answerRunId === runId
+              ? null
+              : { entryId: "async-answer:question", runId: answerRunId, occurrence: 0 },
+          );
+        }
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect(
