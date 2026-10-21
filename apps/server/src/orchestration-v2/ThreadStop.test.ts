@@ -167,6 +167,7 @@ it.effect.each([
   ["idle", "subagent.stop"],
   ["running", "subagent.stop"],
   ["bound", "subagent.stop"],
+  ["correlated", "subagent.stop"],
   ["archived", "thread.stop"],
   ["missing", "thread.stop"],
   ["running", "thread.stop"],
@@ -179,7 +180,7 @@ it.effect.each([
   ["question", "thread.stop"],
   ["restart", "thread.stop"],
 ] as const)(
-  "Stop clears an orphaned follow-up when its child is finished; its own Stop always does (%s via %s)",
+  "Stop clears an orphaned follow-up when its child is finished; its own Stop does unless a run is bound (%s via %s)",
   ([childState, type]) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -443,9 +444,9 @@ it.effect.each([
         (after.thread.pullRequests ?? []).filter((link) => link.watch !== undefined),
         type === "subagent.stop" ? 1 : 0,
       );
-      // A run bound to the task is left to the child stop, which settles it with its outcome.
+      // A task with a bound run, live or ended, keeps its settlement path.
       const expected =
-        childState === "bound"
+        childState === "bound" || childState === "correlated"
           ? "running"
           : type === "subagent.stop" || childState === "idle" || childState === "archived"
             ? "cancelled"
@@ -455,7 +456,7 @@ it.effect.each([
       assert.equal(after.turnItems.find((item) => item.id === itemId)?.status, expected);
       assert.equal(
         after.subagents.find((task) => task.id === taskId)?.completionDelivery?.state,
-        childState === "bound" ? undefined : "disposed",
+        type === "subagent.stop" && expected === "running" ? undefined : "disposed",
       );
       assert.equal(
         after.subagents.find((task) => task.id === original.id)?.result,

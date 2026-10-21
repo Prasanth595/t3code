@@ -9411,11 +9411,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ]);
     const run = projection.runs.find((candidate) => candidate.id === command.runId);
     const subagent = projection.subagents.find((candidate) => candidate.id === command.subagentId);
-    // A user Stop cancels an app-owned task here unless a live child run is bound to it, whatever
-    // else its child is doing, so a task that lost its child run (#19002) cannot outlive Stop. A
-    // bound run is left to the child stop the client sends next: the run settles, records its
-    // outcome, and wakes a parent that may wait on it. A task that already ended is written again,
-    // so a client holding a stale copy, such as one cached before a repair, shows it ended.
+    // A user Stop cancels an app-owned task here when nothing else can settle it: no child run was
+    // ever bound to it and it is not the child's original task (#19002). This holds whatever else
+    // the child is doing. A task with a bound run, live or ended, keeps its settlement path, since
+    // its result may still be on the way, and the child stop the client sends next interrupts the
+    // run. A task that already ended is written again, so a client holding a stale copy, such as
+    // one cached before a repair, shows it ended.
     if (
       subagent?.origin === "app_owned" &&
       subagent.childThreadId !== null &&
@@ -9428,17 +9429,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           (cause) => new OrchestratorProjectionError({ threadId: childThreadId, cause }),
         ),
       );
-      const original =
-        child?.thread.forkedFrom?.type === "node" && child.thread.forkedFrom.nodeId === subagent.id;
-      const willSettle =
-        child?.runs.some(
-          (run) =>
-            (run.status === "queued" || isBlockingRun(run)) &&
-            (run.delegatedTaskId === subagent.id ||
-              (original && run.delegatedTaskId === undefined)),
-        ) ?? false;
       const active = isOrchestrationV2WorkActive(subagent.status);
-      if (active && willSettle) return;
+      if (
+        active &&
+        child !== null &&
+        ((child.thread.forkedFrom?.type === "node" &&
+          child.thread.forkedFrom.nodeId === subagent.id) ||
+          child.runs.some((run) => run.delegatedTaskId === subagent.id))
+      )
+        return;
       const records = yield* loadProjectionForCommand(command, ["nodes", "turnItems"], {
         turnItemTypes: ["subagent"],
         turnItemRunIds: [subagent.runId],
