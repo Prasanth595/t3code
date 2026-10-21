@@ -669,6 +669,31 @@ effectIt.effect("finds a server an agent left before a restart on the first scan
   }).pipe(Effect.provide(layer));
 });
 
+effectIt.effect("never reads listeners on Windows while idle, including the startup read", () => {
+  let processCalls = 0;
+  const layer = PortScanner.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerNoProc,
+        Layer.succeed(ProcessRunner.ProcessRunner, {
+          run: (input) => {
+            processCalls += 1;
+            return processProbeFailure(input);
+          },
+        }),
+        Layer.succeed(HostProcess.Platform, "win32"),
+        FetchHttpClient.layer,
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    expect(yield* scanner.scan()).toEqual([]);
+    expect(yield* scanner.scan()).toEqual([]);
+    expect(processCalls).toBe(0);
+  }).pipe(Effect.provide(layer));
+});
+
 effectIt.effect("forgets agent pids while no client scans, since they can be reused", () => {
   const port = 43_126;
   let environ = `${PortScanner.AGENT_THREAD_ENV}=thread-agent\0`;
