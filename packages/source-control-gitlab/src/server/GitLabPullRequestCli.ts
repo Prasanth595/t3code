@@ -1245,7 +1245,11 @@ export const make = Effect.gen(function* () {
             kind: "user" as const,
             isRequested: true,
           }));
-          const requestedIds = new Set(requested.map((reviewer) => reviewer.id));
+          const listed = new Set(requested.map((reviewer) => reviewer.id));
+          // Every reviewer id, not just the ones shown above: a reviewer GitLab sent without a
+          // username can still turn up on the users page, and must read as requested there or
+          // choosing them would ask again instead of taking the request back.
+          const requestedIds = new Set(mergeRequest.reviewerIds.map(String));
           return {
             // The reviewers lead, and come from the merge request rather than the users page:
             // that page stops at a hundred, and somebody missing from it could not be taken off.
@@ -1253,9 +1257,11 @@ export const make = Effect.gen(function* () {
             // who opened a merge request its reviewer.
             candidates: [
               ...requested,
-              ...users.candidates.filter(
-                (candidate) => candidate.login !== author && !requestedIds.has(candidate.id),
-              ),
+              ...users.candidates
+                .filter((candidate) => candidate.login !== author && !listed.has(candidate.id))
+                .map((candidate) =>
+                  requestedIds.has(candidate.id) ? { ...candidate, isRequested: true } : candidate,
+                ),
             ],
             truncated: users.rawCount >= MAX_PAGE_SIZE,
           };
