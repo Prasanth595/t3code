@@ -342,7 +342,7 @@ export const checkBackendOwnership = Effect.fn("desktop.backend.checkOwnership")
   });
 }, Effect.timeout(DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT));
 
-export const waitForHttpReady = (
+const waitForHttpReady = (
   options: BackendProcessContext & {
     readonly timeout: Duration.Duration;
     readonly desktopLaunchId: string;
