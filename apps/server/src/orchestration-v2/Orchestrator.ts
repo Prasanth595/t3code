@@ -9411,11 +9411,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ]);
     const run = projection.runs.find((candidate) => candidate.id === command.runId);
     const subagent = projection.subagents.find((candidate) => candidate.id === command.subagentId);
-    // A user Stop ends an app-owned task here, whatever state its child is in, so a task that lost
-    // its child run (#19002) cannot outlive Stop. The client then stops the child thread. A live
-    // child run bound to the task keeps its delivery: when it settles it records the real outcome
-    // and wakes the parent, whose own task may wait on it. A task that already ended is written
-    // again, so a client holding a stale copy stops showing it as running.
+    // A user Stop cancels an app-owned task here unless a live child run is bound to it, whatever
+    // else its child is doing, so a task that lost its child run (#19002) cannot outlive Stop. A
+    // bound run is left to the child stop the client sends next: the run settles, records its
+    // outcome, and wakes a parent that may wait on it. A task that already ended is written again,
+    // so a client holding a stale copy, such as one cached before a repair, shows it ended.
     if (
       subagent?.origin === "app_owned" &&
       subagent.childThreadId !== null &&
@@ -9437,6 +9437,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             (run.delegatedTaskId === subagent.id ||
               (original && run.delegatedTaskId === undefined)),
         ) ?? false;
+      const active = isOrchestrationV2WorkActive(subagent.status);
+      if (active && willSettle) return;
       const records = yield* loadProjectionForCommand(command, ["nodes", "turnItems"], {
         turnItemTypes: ["subagent"],
         turnItemRunIds: [subagent.runId],
@@ -9446,11 +9448,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return yield* writeAppOwnedTask({
         command,
         events,
-        task: !isOrchestrationV2WorkActive(subagent.status)
-          ? subagent
-          : willSettle
-            ? { ...subagent, status: "cancelled", completedAt: now, updatedAt: now }
-            : cancelledAppOwnedTask(subagent, now),
+        task: active ? cancelledAppOwnedTask(subagent, now) : subagent,
         nodes: records.nodes,
         turnItems: records.turnItems,
         now,

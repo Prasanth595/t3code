@@ -443,14 +443,16 @@ it.effect.each([
         (after.thread.pullRequests ?? []).filter((link) => link.watch !== undefined),
         type === "subagent.stop" ? 1 : 0,
       );
+      // A run bound to the task is left to the child stop, which settles it with its outcome.
       const expected =
-        type === "subagent.stop" || childState === "idle" || childState === "archived"
-          ? "cancelled"
-          : "running";
+        childState === "bound"
+          ? "running"
+          : type === "subagent.stop" || childState === "idle" || childState === "archived"
+            ? "cancelled"
+            : "running";
       assert.equal(after.subagents.find((task) => task.id === taskId)?.status, expected);
       assert.equal(after.nodes.find((node) => node.id === taskId)?.status, expected);
       assert.equal(after.turnItems.find((item) => item.id === itemId)?.status, expected);
-      // A live child run bound to the task still reports its outcome to the parent.
       assert.equal(
         after.subagents.find((task) => task.id === taskId)?.completionDelivery?.state,
         childState === "bound" ? undefined : "disposed",
