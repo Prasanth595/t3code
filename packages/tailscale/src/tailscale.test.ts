@@ -5,8 +5,6 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
-import * as Schedule from "effect/Schedule";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -229,36 +227,33 @@ describe("tailscale", () => {
   });
 });
 
-// The wrapper keeps the default SIGTERM disposition while its `sleep` child
-// inherits an ignored one, so SIGTERM ends the leader and leaves a group member.
-const sigtermIgnoringTailscale = (readyPath: string) => `#!/bin/sh
-trap '' TERM
-sleep 60 &
-child=$!
-trap - TERM
-echo "$$ $child" > '${readyPath}'
+// The leader dies on SIGTERM while a subshell in its process group catches it and
+// lingers, like a helper that outlives `tailscale`. Every member holds fd 3, the
+// write end of the `group` FIFO, so reading it reaches EOF once the whole group is
+// gone. A survivor SIGKILL never reached reports itself on the way out, so a leak
+// fails an assertion instead of hanging the read.
+const lingeringTailscale = (readyPath: string, groupPath: string) => `#!/bin/sh
+exec 3> '${groupPath}'
+( trap 'sleep 3; echo survived >&3; exit' TERM
+  sleep 60 &
+  echo ready > '${readyPath}'
+  wait ) &
 wait
 `;
 
-const isProcessAlive = (pid: number) =>
-  Effect.try(() => process.kill(pid, 0)).pipe(
-    Effect.match({ onFailure: () => false, onSuccess: () => true }),
-  );
-
 describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("tailscale probe cleanup", () => {
-  it.effect("kills a timed-out status probe whose process group ignores SIGTERM", () =>
+  it.effect("kills a timed-out status probe whose process group outlives SIGTERM", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-tailscale-" });
       const readyPath = path.join(directory, "ready");
-      // The fixture reports its PIDs through a FIFO so the test blocks on the
-      // fixture being up instead of polling for a file.
-      yield* spawner.exitCode(ChildProcess.make("mkfifo", [readyPath]));
+      const groupPath = path.join(directory, "group");
+      yield* spawner.exitCode(ChildProcess.make("mkfifo", [readyPath, groupPath]));
       yield* fs.writeFileString(
         path.join(directory, "tailscale"),
-        sigtermIgnoringTailscale(readyPath),
+        lingeringTailscale(readyPath, groupPath),
         { mode: 0o700 },
       );
       yield* Effect.acquireRelease(
@@ -272,41 +267,27 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("tailscale prob
             process.env.PATH = originalPath;
           }),
       );
-
-      const fiber = yield* readTailscaleStatus.pipe(Effect.flip, Effect.forkScoped);
-      const pids: Array<number> = [];
+      // Interrupting a FIFO read leaves its threadpool thread parked until a
+      // writer opens the FIFO, so opening both releases readers a failed run left.
       yield* Effect.addFinalizer(() =>
         Effect.forEach(
-          pids,
-          (pid) => Effect.try(() => process.kill(pid, "SIGKILL")).pipe(Effect.ignore),
+          [readyPath, groupPath],
+          (fifo) => fs.open(fifo, { flag: "r+" }).pipe(Effect.scoped, Effect.ignore),
           { discard: true },
         ),
       );
-      // Interrupting a FIFO read leaves its threadpool thread parked until a
-      // writer opens the FIFO, so a failed wait opens it to release the reader.
-      const report = yield* fs.readFileString(readyPath).pipe(
-        Effect.raceFirst(Fiber.join(fiber).pipe(Effect.flatMap(Effect.fail))),
-        Effect.timeout("5 seconds"),
-        TestClock.withLive,
-        Effect.onError(() => fs.open(readyPath, { flag: "r+" }).pipe(Effect.scoped, Effect.ignore)),
-      );
-      pids.push(...report.trim().split(" ").map(Number));
-      assert.deepEqual(yield* Effect.forEach(pids, isProcessAlive), [true, true]);
 
-      yield* TestClock.adjust("3500 millis");
-      const error = yield* Fiber.join(fiber);
+      const group = yield* fs.readFileString(groupPath).pipe(Effect.forkScoped);
+      const probe = yield* readTailscaleStatus.pipe(Effect.flip, Effect.forkScoped);
+      yield* fs
+        .readFileString(readyPath)
+        .pipe(Effect.raceFirst(Fiber.join(probe).pipe(Effect.flatMap(Effect.fail))));
+
+      yield* TestClock.adjust("1 minute");
+      const error = yield* Fiber.join(probe);
 
       assert.instanceOf(error, TailscaleCommandTimeoutError);
-      // SIGKILL lands asynchronously, so give the group a bounded real-time window to go.
-      const alive = yield* Effect.forEach(pids, isProcessAlive).pipe(
-        Effect.repeat({
-          until: (states) => states.every((state) => !state),
-          schedule: Schedule.spaced("20 millis"),
-          times: 100,
-        }),
-        TestClock.withLive,
-      );
-      assert.deepEqual(alive, [false, false]);
+      assert.equal(yield* Fiber.join(group), "", "a process group member outlived the probe");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
