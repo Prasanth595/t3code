@@ -13,7 +13,29 @@ import {
   normalizeCustomModelSlug,
   normalizeModelSlug,
   modelSelectionsEqual,
+  withFastModeOff,
 } from "./model.ts";
+
+it("turns off fast mode and fast Codex tiers but keeps flex", () => {
+  const selection = (options: ReadonlyArray<{ id: string; value: string | boolean }>) =>
+    createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", options);
+  expect(
+    withFastModeOff(
+      selection([
+        { id: "fastMode", value: true },
+        { id: "serviceTier", value: "priority" },
+        { id: "reasoningEffort", value: "high" },
+      ]),
+    ).options,
+  ).toEqual([
+    { id: "fastMode", value: false },
+    { id: "serviceTier", value: "default" },
+    { id: "reasoningEffort", value: "high" },
+  ]);
+  expect(withFastModeOff(selection([{ id: "serviceTier", value: "flex" }])).options).toEqual([
+    { id: "serviceTier", value: "flex" },
+  ]);
+});
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [

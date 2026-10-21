@@ -132,6 +132,7 @@ import {
   formatModelSlugName,
   resolvePromptInjectedEffort,
   resolveSelectableModel,
+  withFastModeOff,
 } from "@t3tools/shared/model";
 import {
   projectScriptCwd,
@@ -7753,10 +7754,13 @@ export default function ChatView(props: ChatViewProps) {
     }
     const rememberedOptions =
       useComposerDraftStore.getState().stickyOptionsByModelByProvider[instanceId]?.[resolvedModel];
-    const nextModelSelection: ModelSelection =
+    const rememberedSelection: ModelSelection =
       rememberedOptions !== undefined && rememberedOptions.length > 0
         ? { instanceId, model: resolvedModel, options: [...rememberedOptions] }
         : { instanceId, model: resolvedModel };
+    const nextModelSelection = settings.neverStartInFastMode
+      ? withFastModeOff(rememberedSelection)
+      : rememberedSelection;
     const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
       providers: providerStatuses,
       hasStartedSession: activeRuntime !== null,

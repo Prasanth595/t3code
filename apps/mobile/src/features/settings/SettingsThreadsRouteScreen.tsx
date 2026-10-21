@@ -90,6 +90,7 @@ function AutoSettleSettingsRows() {
     patch: Partial<AutoSettleSettings> & {
       autoResumeLimitedThreads?: boolean;
       snoozeLimitedThreads?: boolean;
+      neverStartInFastMode?: boolean;
     },
   ) => {
     if (
@@ -174,6 +175,17 @@ function AutoSettleSettingsRows() {
           disabled={!canWriteSettings}
           onClear={clearProjectOverrides}
         />
+      ) : null}
+      {!projectSelected ? (
+        <SettingsSection title="New threads">
+          <SettingsSwitchRow
+            icon="bolt.circle"
+            label="Never start in fast mode"
+            value={uniformMobileSetting(displayTargets, "neverStartInFastMode")}
+            disabled={disabled}
+            onValueChange={(value) => writeToAll({ neverStartInFastMode: value })}
+          />
+        </SettingsSection>
       ) : null}
       {!projectSelected ? (
         <SettingsSection title="Usage limits">

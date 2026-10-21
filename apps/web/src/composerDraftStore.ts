@@ -41,6 +41,7 @@ import {
   createModelSelection,
   draftModelPickMatchesThread,
   normalizeModelSlug,
+  withFastModeOff,
 } from "@t3tools/shared/model";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 import * as Option from "effect/Option";
@@ -519,7 +520,11 @@ interface ComposerDraftStoreState {
       | null
       | undefined,
   ) => void;
-  applyStickyState: (threadRef: ComposerThreadTarget) => void;
+  /** Seeds a new draft from the sticky picks. `fastModeOff` keeps sticky Fast out of it. */
+  applyStickyState: (
+    threadRef: ComposerThreadTarget,
+    options?: { readonly fastModeOff?: boolean },
+  ) => void;
   setProviderModelOptions: (
     threadRef: ComposerThreadTarget,
     provider: ProviderDriverKind,
@@ -675,11 +680,15 @@ function cloneModelSelection(selection: ModelSelection): DeepMutable<ModelSelect
 
 function compactModelSelectionByProvider(
   selections: Partial<Record<ProviderInstanceId, ModelSelection>>,
+  { fastModeOff = false }: { readonly fastModeOff?: boolean } = {},
 ): DeepMutable<Record<ProviderInstanceId, ModelSelection>> {
   const entries: Array<[string, DeepMutable<ModelSelection>]> = [];
   for (const [provider, selection] of Object.entries(selections)) {
     if (selection !== undefined) {
-      entries.push([provider, cloneModelSelection(selection)]);
+      entries.push([
+        provider,
+        cloneModelSelection(fastModeOff ? withFastModeOff(selection) : selection),
+      ]);
     }
   }
   return Object.fromEntries(entries) as DeepMutable<Record<ProviderInstanceId, ModelSelection>>;
@@ -2834,7 +2843,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             };
           });
         },
-        applyStickyState: (threadRef) => {
+        applyStickyState: (threadRef, options) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
             return;
@@ -2844,7 +2853,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const stickyActiveProvider = state.stickyActiveProvider;
             const existing = state.draftsByThreadKey[threadKey];
             const base = existing ?? createEmptyThreadDraft();
-            const nextMap = compactModelSelectionByProvider(stickyMap);
+            const nextMap = compactModelSelectionByProvider(stickyMap, options);
             if (
               Equal.equals(base.modelSelectionByProvider, nextMap) &&
               base.activeProvider === stickyActiveProvider &&

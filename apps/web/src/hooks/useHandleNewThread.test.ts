@@ -112,6 +112,7 @@ vi.mock("@t3tools/contracts", () => ({
   DEFAULT_RUNTIME_MODE: "default",
   DEFAULT_SERVER_SETTINGS: {},
 }));
+vi.mock("@t3tools/shared/model", () => ({ withFastModeOff: <T>(selection: T) => selection }));
 vi.mock("@t3tools/shared/projectSettings", () => ({
   resolveProjectSettings: (
     settings: Record<string, unknown>,

@@ -20,6 +20,7 @@ import {
   getProjectOrderKey,
   selectProjectGroupingSettings,
 } from "../logicalProject";
+import { withFastModeOff } from "@t3tools/shared/model";
 import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   readProject,
@@ -82,6 +83,7 @@ export function useNewThreadHandler() {
     const environmentServerConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
     const targetServerSettings =
       environmentServerConfigs.get(projectRef.environmentId)?.settings ?? DEFAULT_SERVER_SETTINGS;
+    const fastModeOff = targetServerSettings.neverStartInFastMode;
     const {
       getComposerDraft,
       getDraftSessionByLogicalProjectKey,
@@ -130,14 +132,16 @@ export function useNewThreadHandler() {
     );
     const projectDefaultModelSelection = projectSettings.settings.defaultModelSelection;
     const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
-    const resolveModelSelectionOverride = (destinationDraftId: DraftId) =>
-      resolveNewThreadModelSelectionOverride({
+    const resolveModelSelectionOverride = (destinationDraftId: DraftId) => {
+      const selection = resolveNewThreadModelSelectionOverride({
         projectDefaultSelection: projectDefaultModelSelection ?? null,
         carrySelection: carryModelSelection,
         carrySourceDraftId:
           currentRouteTarget?.kind === "draft" ? currentRouteTarget.draftId : null,
         destinationDraftId,
       });
+      return selection && fastModeOff ? withFastModeOff(selection) : selection;
+    };
     const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
       const consultProjectFile =
         project !== undefined && projectSettings.settings.defaultThreadEnvMode === null;
@@ -248,7 +252,7 @@ export function useNewThreadHandler() {
         const storedDraft = getComposerDraft(emptyStoredDraftThread.draftId);
         const storedDraftHasExplicitModelPick = hasExplicitComposerModelSelection(storedDraft);
         if (!storedDraftHasExplicitModelPick) {
-          applyStickyState(emptyStoredDraftThread.draftId);
+          applyStickyState(emptyStoredDraftThread.draftId, { fastModeOff });
           const modelSelectionOverride = resolveModelSelectionOverride(
             emptyStoredDraftThread.draftId,
           );
@@ -368,7 +372,7 @@ export function useNewThreadHandler() {
         runtimeMode: defaultRuntimeMode,
         ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
       });
-      applyStickyState(draftId);
+      applyStickyState(draftId, { fastModeOff });
       const modelSelectionOverride = resolveModelSelectionOverride(draftId);
       if (modelSelectionOverride) {
         setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });

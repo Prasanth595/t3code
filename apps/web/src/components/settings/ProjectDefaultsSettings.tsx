@@ -30,6 +30,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
+import { ScopedSwitch } from "./ScopedSwitch";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
@@ -270,6 +271,22 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       ) : category === "general" ? (
         <>
           {modelRow}
+          <SettingsRow
+            serverScoped
+            settingKeys={["neverStartInFastMode"]}
+            {...searchableSetting("never-start-in-fast-mode")}
+            description="New threads start at normal speed on every device, even after you use Fast in another thread. Turn Fast on in a thread to use it there."
+            control={
+              <ScopedSwitch
+                settingKeys={["neverStartInFastMode"]}
+                aria-label="Never start in fast mode"
+                checked={settings.neverStartInFastMode}
+                onCheckedChange={(enabled) =>
+                  updateSettings({ neverStartInFastMode: Boolean(enabled) })
+                }
+              />
+            }
+          />
           <SettingsRow
             serverScoped
             settingKeys={["defaultRuntimeMode"]}

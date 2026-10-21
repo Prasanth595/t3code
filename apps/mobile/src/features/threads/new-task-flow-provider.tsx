@@ -25,6 +25,7 @@ import {
 } from "@t3tools/contracts";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContextReferences";
+import { withFastModeOff } from "@t3tools/shared/model";
 import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import * as Arr from "effect/Array";
@@ -542,16 +543,24 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedProjectDraft.modelSelection ?? null,
     selectedProject?.id ?? null,
   );
-  const projectDefaultModelSelection = resolveDefaultableModelSelection(
-    selectedEnvironmentServerConfig,
-    projectSettings.settings.defaultModelSelection,
-    selectedProject?.id ?? null,
+  // The draft's own pick is explicit; defaults and sticky picks are not.
+  const fastModeOff = selectedEnvironmentServerConfig?.settings.neverStartInFastMode ?? false;
+  const withoutImplicitFastMode = <T extends ModelSelection>(selection: T | null): T | null =>
+    selection && fastModeOff ? withFastModeOff(selection) : selection;
+  const projectDefaultModelSelection = withoutImplicitFastMode(
+    resolveDefaultableModelSelection(
+      selectedEnvironmentServerConfig,
+      projectSettings.settings.defaultModelSelection,
+      selectedProject?.id ?? null,
+    ),
   );
   const storedStickyModelSelection = useStickyComposerModelSelection();
-  const stickyModelSelection = resolveDefaultableModelSelection(
-    selectedEnvironmentServerConfig,
-    storedStickyModelSelection,
-    selectedProject?.id ?? null,
+  const stickyModelSelection = withoutImplicitFastMode(
+    resolveDefaultableModelSelection(
+      selectedEnvironmentServerConfig,
+      storedStickyModelSelection,
+      selectedProject?.id ?? null,
+    ),
   );
   const modelOptions = buildModelOptions(
     selectedEnvironmentServerConfig,
@@ -597,9 +606,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     if (!option) {
       return;
     }
-    const selection = withRememberedModelOptions(
+    const remembered = withRememberedModelOptions(
       options ? { ...option.selection, options } : option.selection,
     );
+    const selection = options ? remembered : (withoutImplicitFastMode(remembered) ?? remembered);
     const provider = selectedEnvironmentServerConfig?.providers.find(
       (candidate) => candidate.instanceId === selection.instanceId,
     );

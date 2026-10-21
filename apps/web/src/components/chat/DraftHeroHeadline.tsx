@@ -3,6 +3,7 @@ import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDr
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { withFastModeOff } from "@t3tools/shared/model";
 import { FolderPlusIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useRef, useState } from "react";
@@ -188,18 +189,23 @@ export function DraftHeroHeadline({
       draftId,
     );
     if (!hasExplicitComposerModelSelection(currentDraft)) {
-      applyStickyState(draftId);
       const environmentSettings = environments.find(
         (environment) => environment.environmentId === project.environmentId,
       )?.serverConfig?.settings;
+      const fastModeOff = environmentSettings?.neverStartInFastMode ?? false;
+      applyStickyState(draftId, { fastModeOff });
       const defaultModelSelection = environmentSettings
         ? resolveProjectSettings(environmentSettings, project.id, project).settings
             .defaultModelSelection
         : project.defaultModelSelection;
       if (defaultModelSelection) {
-        setModelSelection(draftId, defaultModelSelection, {
-          replaceOptions: true,
-        });
+        setModelSelection(
+          draftId,
+          fastModeOff ? withFastModeOff(defaultModelSelection) : defaultModelSelection,
+          {
+            replaceOptions: true,
+          },
+        );
       }
     }
   };

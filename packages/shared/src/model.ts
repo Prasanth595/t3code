@@ -130,6 +130,30 @@ export function draftModelPickMatchesThread(pick: ModelSelection, thread: ModelS
   return modelSelectionsEqual(withoutFastModeOff(pick), withoutFastModeOff(thread));
 }
 
+// Flex is a slower, cheaper Codex tier, so it is not fast mode.
+const NON_FAST_SERVICE_TIERS: ReadonlySet<string> = new Set(["default", "flex"]);
+
+/**
+ * Turns fast mode off: Claude and Cursor's `fastMode`, and any Codex service
+ * tier faster than standard. Seeds new threads for users who never want them
+ * to start in fast mode.
+ */
+export function withFastModeOff<T extends ModelSelection>(selection: T): T {
+  if (!selection.options) return selection;
+  return {
+    ...selection,
+    options: selection.options.map((option) =>
+      option.id === "fastMode" && option.value === true
+        ? { ...option, value: false }
+        : option.id === "serviceTier" &&
+            typeof option.value === "string" &&
+            !NON_FAST_SERVICE_TIERS.has(option.value)
+          ? { ...option, value: "default" }
+          : option,
+    ),
+  };
+}
+
 function resolveDescriptorChoiceValue(
   descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
   raw: string | null | undefined,

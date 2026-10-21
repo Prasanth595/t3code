@@ -1809,6 +1809,26 @@ describe("composerDraftStore modelSelection", () => {
     );
   });
 
+  it("keeps sticky fast mode out of new drafts when asked", () => {
+    const store = useComposerDraftStore.getState();
+    store.setStickyModelSelection(
+      modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", { effort: "max", fastMode: true }),
+    );
+
+    store.applyStickyState(threadRef, { fastModeOff: true });
+
+    expect(
+      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CLAUDE_AGENT_INSTANCE],
+    ).toEqual(
+      modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", { effort: "max", fastMode: false }),
+    );
+    expect(
+      useComposerDraftStore.getState().stickyModelSelectionByProvider[CLAUDE_AGENT_INSTANCE],
+    ).toEqual(
+      modelSelection(CLAUDE_AGENT_DRIVER, "claude-opus-4-6", { effort: "max", fastMode: true }),
+    );
+  });
+
   it("marks trait edits as explicit model intent", () => {
     const store = useComposerDraftStore.getState();
     store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"));

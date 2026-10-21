@@ -190,6 +190,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["new thread project provider reasoning effort"],
   },
   {
+    id: "never-start-in-fast-mode",
+    title: "Never start in fast mode",
+    to: "/settings/general",
+    searchTerms: ["fast mode speed normal new thread sticky service tier priority"],
+  },
+  {
     id: "default-permissions",
     title: "Permissions",
     to: "/settings/general",

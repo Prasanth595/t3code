@@ -63,6 +63,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject, useThreadShells } from "../../state/entities";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { withFastModeOff } from "@t3tools/shared/model";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { ComposerAttachmentButton } from "./ComposerAttachmentButton";
@@ -644,6 +645,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     capabilities: currentModelOption?.capabilities,
     selections: currentModelSelection.options,
   });
+  // Remembered traits for a model pick, with fast mode stripped when the user opted out of it.
+  const restoreModelSelection = (selection: ModelSelection) => {
+    const restored = withRememberedModelOptions(selection);
+    return props.serverConfig?.settings.neverStartInFastMode ? withFastModeOff(restored) : restored;
+  };
   const settingsOwnerId = composerOwnerKey;
   const settingsRouteSession = {
     ownerId: settingsOwnerId,
@@ -656,9 +662,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     prompt: draftMessage,
     onPromptChange: (text) => setComposerDraftText(composerDraftKey, text),
     reportedModelSelection: props.reportedModelSelection,
-    onSelectModel: (option) =>
-      props.onUpdateModelSelection(withRememberedModelOptions(option.selection)),
-    restoreSelection: withRememberedModelOptions,
+    onSelectModel: (option) => props.onUpdateModelSelection(restoreModelSelection(option.selection)),
+    restoreSelection: restoreModelSelection,
     optionDescriptors: providerOptionDescriptors,
     onUpdateOptionSelections: (options) => {
       rememberModelOptions(
