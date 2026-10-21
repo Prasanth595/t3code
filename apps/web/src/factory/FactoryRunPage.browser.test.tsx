@@ -5,7 +5,7 @@ import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api
 import type { FactoryResource } from "./useFactoryData";
 import { render, renderAt } from "./testing";
 
-const state = vi.hoisted(() => ({ run: null as unknown, environmentId: "env-1" as string | null }));
+const state = vi.hoisted(() => ({ run: null as unknown, environmentId: "env-1" as string }));
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({
@@ -20,8 +20,9 @@ vi.mock("@tanstack/react-router", () => ({
     createElement("a", { "data-to": to, "data-params": JSON.stringify(params ?? {}) }, children),
 }));
 vi.mock("./useFactoryData", () => ({
-  useFactoryEnvironmentId: () => state.environmentId,
   useFactoryRun: () => state.run,
+  useFactoryEnvironmentLabel: (environmentId: string) =>
+    environmentId === "env-2" ? "Mac Studio" : environmentId,
 }));
 
 import { FactoryRunPage } from "./FactoryRunPage";
@@ -79,7 +80,9 @@ const api = (overrides: Partial<FactoryApi>): FactoryApi => ({
   ...overrides,
 });
 
-const mount = () => render(createElement(FactoryRunPage, { runId: RUN_ID }));
+const runPage = () =>
+  createElement(FactoryRunPage, { environmentId: state.environmentId as never, runId: RUN_ID });
+const mount = () => render(runPage());
 
 beforeEach(() => {
   state.environmentId = "env-1";
@@ -163,13 +166,15 @@ describe("FactoryRunPage", () => {
     });
   });
 
-  it("falls back to the primary environment id", async () => {
-    state.environmentId = null;
+  it("names the environment after the run id", async () => {
+    state.environmentId = "env-2";
     const page = await mount();
-    const thread = page
-      .all("a")
-      .find((a) => a.getAttribute("data-to") === "/$environmentId/$threadId");
-    expect(JSON.parse(thread!.getAttribute("data-params")!).environmentId).toBe("primary");
+    const header = page.all("h1")[0]!.parentElement!;
+    expect(header.textContent).toContain(RUN_ID);
+    expect(header.textContent).toContain("Mac Studio");
+    expect(header.textContent!.indexOf("Mac Studio")).toBeGreaterThan(
+      header.textContent!.indexOf(RUN_ID),
+    );
   });
 
   it("renders the relaunch message as plain text", async () => {
@@ -245,7 +250,7 @@ describe("FactoryRunPage", () => {
 
 describe.each([375, 1280])("FactoryRunPage at %i px", (width) => {
   const narrow = width < 640;
-  const mountAt = () => renderAt(width, createElement(FactoryRunPage, { runId: RUN_ID }));
+  const mountAt = () => renderAt(width, runPage());
 
   it(narrow ? "lists the gate commands and ledger, not tables" : "keeps the tables", async () => {
     const page = await mountAt();
@@ -262,7 +267,7 @@ describe.each([375, 1280])("FactoryRunPage at %i px", (width) => {
 
 describe("FactoryRunPage lists at 375 px", () => {
   it("makes a list item of each gate command and each ledger entry", async () => {
-    const page = await renderAt(375, createElement(FactoryRunPage, { runId: RUN_ID }));
+    const page = await renderAt(375, runPage());
     const items = page.all("li");
     // 2 gate commands, then one item per ledger entry.
     expect(items).toHaveLength(2 + BUILDING.length);
@@ -276,7 +281,7 @@ describe.each([
   [640, false],
 ])("FactoryRunPage at the 640 px breakpoint, %i px", (width, narrow) => {
   it(narrow ? "lists just below 640" : "keeps the tables from 640", async () => {
-    const page = await renderAt(width, createElement(FactoryRunPage, { runId: RUN_ID }));
+    const page = await renderAt(width, runPage());
     expect(page.all("table")).toHaveLength(narrow ? 0 : 2);
     const lists = page.all("ul").filter((ul) => ul.getAttribute("data-layout") === "list");
     expect(lists).toHaveLength(narrow ? 2 : 0);

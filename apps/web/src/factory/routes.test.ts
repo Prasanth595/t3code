@@ -9,12 +9,17 @@ import tree from "../routeTree.gen.ts?raw";
 describe("factory routes", () => {
   it("hangs the run route off the root route, not the runs list", () => {
     const update =
-      /const FactoryRunIdRoute = FactoryRunIdRouteImport\.update\(\{[\s\S]*?as any\)/.exec(tree);
+      /const \w+ = \w+RouteImport\.update\(\{\s*id: '\/factory_\/\$environmentId\/\$runId',[\s\S]*?as any\)/.exec(
+        tree,
+      );
     expect(update?.[0]).toContain("getParentRoute: () => rootRouteImport");
     expect(tree).not.toContain("FactoryRouteChildren");
   });
 
-  it("keeps /factory/$runId as the run route's full path", () => {
-    expect(tree).toMatch(/'\/factory_\/\$runId': \{[^}]*fullPath: '\/factory\/\$runId'/);
+  it("makes /factory/$environmentId/$runId the run route's full path, and drops /factory/$runId", () => {
+    expect(tree).toMatch(
+      /'\/factory_\/\$environmentId\/\$runId': \{[^}]*fullPath: '\/factory\/\$environmentId\/\$runId'/,
+    );
+    expect(tree).not.toContain("'/factory_/$runId'");
   });
 });

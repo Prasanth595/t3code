@@ -6,11 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
 import {
   __resetFactoryStoresForTests,
-  pickFactoryEnvironment,
   useFactoryAttentionCount,
-  useFactoryEnvironmentId,
+  useFactoryEnvironmentLabel,
+  useFactoryEnvironments,
   useFactoryRun,
   useFactoryRuns,
+  useFactoryRunsOf,
   useFactoryStatus,
   useFactorySupported,
   type FactoryResource,
@@ -21,10 +22,16 @@ import { resetDocumentVisible, setDocumentVisible } from "./testing";
 const environments = vi.hoisted(() => ({
   primary: "env-1" as string | null,
   connected: [] as Array<string>,
+  labels: new Map<string, string>(),
 }));
 vi.mock("~/state/environments", () => ({
   usePrimaryEnvironmentId: () => environments.primary,
   useConnectedEnvironmentIds: () => environments.connected,
+  useEnvironments: () => ({
+    presentationById: new Map(
+      [...environments.labels].map(([id, label]) => [id, { entry: { target: { label } } }]),
+    ),
+  }),
 }));
 
 const ENV_1 = "env-1" as EnvironmentId;
@@ -135,6 +142,7 @@ beforeEach(() => {
   setDocumentVisible(true);
   environments.primary = ENV_1;
   environments.connected = [];
+  environments.labels = new Map();
 });
 
 afterEach(() => {
@@ -515,114 +523,56 @@ describe("the stores are per environment", () => {
   });
 });
 
-describe("useFactoryEnvironmentId", () => {
-  const byEnvironment = (running: () => ReadonlyArray<string>) =>
-    api({
-      status: async (env) => status(0, running().includes(env) ? "running" : "idle"),
-    });
+describe("useFactoryEnvironments", () => {
+  const ids = (list: ReadonlyArray<{ readonly environmentId: EnvironmentId }>) =>
+    list.map((entry) => entry.environmentId);
 
-  it("is the connected environment that runs the factory when the primary is idle", async () => {
-    environments.connected = [ENV_1, ENV_2];
-    __setFactoryApiForTests(byEnvironment(() => [ENV_2]));
-    const id = await mount(useFactoryEnvironmentId);
-    expect(id.current).toBe(ENV_2);
-  });
-
-  it("is the primary when only the primary runs the factory", async () => {
-    environments.connected = [ENV_2, ENV_1];
-    __setFactoryApiForTests(byEnvironment(() => [ENV_1]));
-    const id = await mount(useFactoryEnvironmentId);
-    expect(id.current).toBe(ENV_1);
-  });
-
-  it("prefers the primary when several environments run a factory", async () => {
+  it("lists the primary, then the other connected environments, with their labels", async () => {
     environments.connected = [ENV_2, ENV_1, ENV_3];
-    __setFactoryApiForTests(byEnvironment(() => [ENV_3, ENV_2, ENV_1]));
-    const id = await mount(useFactoryEnvironmentId);
-    expect(id.current).toBe(ENV_1);
+    environments.labels = new Map([
+      [ENV_1, "Desktop"],
+      [ENV_2, "Studio"],
+    ]);
+    __setFactoryApiForTests(api({}));
+    const list = await mount(useFactoryEnvironments);
+    expect(ids(list.current)).toEqual([ENV_1, ENV_2, ENV_3]);
+    // An environment with no presentation is labelled by its id.
+    expect(list.current.map((entry) => entry.label)).toEqual(["Desktop", "Studio", "env-3"]);
+    expect(list.current.every((entry) => entry.status.data !== null)).toBe(true);
   });
 
-  it("is the primary while nothing runs", async () => {
-    environments.connected = [ENV_1, ENV_2];
-    __setFactoryApiForTests(byEnvironment(() => []));
-    const id = await mount(useFactoryEnvironmentId);
-    expect(id.current).toBe(ENV_1);
-  });
-
-  it("is undecided while a candidate that could come first has not answered", async () => {
-    environments.connected = [ENV_1, ENV_2];
-    const primary = deferred<ReturnType<typeof status>>();
-    __setFactoryApiForTests(
-      api({ status: (env) => (env === ENV_1 ? primary.promise : Promise.resolve(status(0))) }),
-    );
-    const id = await mount(useFactoryEnvironmentId);
-    expect(id.current).toBeNull();
-    await act(async () => primary.resolve(status(0, "idle")));
-    expect(id.current).toBe(ENV_2);
-  });
-
-  it("is a running primary without waiting for the others", async () => {
-    environments.connected = [ENV_1, ENV_2];
-    __setFactoryApiForTests(
-      api({
-        status: (env) => (env === ENV_1 ? Promise.resolve(status(0)) : new Promise(() => {})),
-      }),
-    );
-    const id = await mount(useFactoryEnvironmentId);
-    expect(id.current).toBe(ENV_1);
-  });
-
-  it("moves past a candidate whose first read failed", async () => {
-    environments.connected = [ENV_1, ENV_2];
-    __setFactoryApiForTests(
-      api({
-        status: async (env) => {
-          if (env === ENV_1) throw new Error("down");
-          return status(0);
-        },
-      }),
-    );
-    const id = await mount(useFactoryEnvironmentId);
-    expect(id.current).toBe(ENV_2);
-  });
-
-  it("is the primary even before the catalog lists it as connected", async () => {
+  it("lists the primary even before the catalog lists it as connected", async () => {
     environments.connected = [ENV_2];
-    const fetchStatus = vi.fn(async (_env: EnvironmentId) => status(0, "idle"));
+    const fetchStatus = vi.fn(async (_env: EnvironmentId) => status(0));
     __setFactoryApiForTests(api({ status: fetchStatus }));
-    const id = await mount(useFactoryEnvironmentId);
-    expect(id.current).toBe(ENV_1);
+    const list = await mount(useFactoryEnvironments);
+    expect(ids(list.current)).toEqual([ENV_1, ENV_2]);
     expect(fetchStatus.mock.calls.map(([env]) => env as string).sort()).toEqual([ENV_1, ENV_2]);
   });
 
-  it("is null without a primary environment", async () => {
+  it("lists only the connected environments without a primary", async () => {
     environments.primary = null;
     environments.connected = [ENV_2];
-    __setFactoryApiForTests(byEnvironment(() => []));
-    const id = await mount(useFactoryEnvironmentId);
-    expect(id.current).toBeNull();
+    __setFactoryApiForTests(api({}));
+    const list = await mount(useFactoryEnvironments);
+    expect(ids(list.current)).toEqual([ENV_2]);
   });
 
-  it("goes back to the primary when the factory environment turns idle on a later poll", async () => {
-    environments.connected = [ENV_1, ENV_2];
-    let running: Array<string> = [ENV_2];
-    __setFactoryApiForTests(byEnvironment(() => running));
-    const id = await mount(useFactoryEnvironmentId);
-    expect(id.current).toBe(ENV_2);
-    running = [];
-    await settle(30_000);
-    expect(id.current).toBe(ENV_1);
+  it("is empty without any candidate", async () => {
+    environments.primary = null;
+    const list = await mount(useFactoryEnvironments);
+    expect(list.current).toEqual([]);
   });
 
-  it("reads a candidate that answered 404 once, while the others are still polled", async () => {
+  it("leaves out an environment whose status answered 404, and reads it once", async () => {
     environments.connected = [ENV_1, ENV_2];
     const fetchStatus = vi.fn(async (env: EnvironmentId) => {
       if (env === ENV_1) return notFound();
       return status(0, "running");
     });
     __setFactoryApiForTests(api({ status: fetchStatus }));
-    const id = await mount(useFactoryEnvironmentId);
-    expect(id.current).toBe(ENV_2);
+    const list = await mount(useFactoryEnvironments);
+    expect(ids(list.current)).toEqual([ENV_2]);
     await settle(90_000);
     await show(false);
     await show(true);
@@ -630,119 +580,197 @@ describe("useFactoryEnvironmentId", () => {
     expect(fetchStatus.mock.calls.filter(([env]) => env === ENV_2).length).toBeGreaterThan(1);
   });
 
-  it("shares the status read with the factory environment's own hooks", async () => {
-    environments.connected = [ENV_1, ENV_2];
-    const fetchStatus = vi.fn(async (env: EnvironmentId) =>
-      status(env === ENV_2 ? 3 : 0, env === ENV_2 ? "running" : "idle"),
+  it("keeps an environment that is loading or failed, without holding the others back", async () => {
+    environments.connected = [ENV_1, ENV_2, ENV_3];
+    __setFactoryApiForTests(
+      api({
+        status: async (env) => {
+          if (env === ENV_1) return new Promise<never>(() => {});
+          if (env === ENV_2) throw new Error("down");
+          return status(0);
+        },
+      }),
     );
+    const list = await mount(useFactoryEnvironments);
+    expect(ids(list.current)).toEqual([ENV_1, ENV_2, ENV_3]);
+    expect(list.current.map((entry) => entry.status.status)).toEqual(["loading", "error", "ready"]);
+  });
+
+  it("refreshes the status of the environment it belongs to", async () => {
+    environments.connected = [ENV_1, ENV_2];
+    const fetchStatus = vi.fn(async (_env: EnvironmentId) => status(0));
     __setFactoryApiForTests(api({ status: fetchStatus }));
-    const count = await mount(useFactoryAttentionCount);
-    expect(count.current).toBe(3);
+    const list = await mount(useFactoryEnvironments);
+    fetchStatus.mockClear();
+    await act(async () => list.current[1]!.status.refresh());
+    expect(fetchStatus.mock.calls).toEqual([[ENV_2]]);
+  });
+
+  it("polls every environment on the live-refresh policy", async () => {
+    environments.connected = [ENV_1, ENV_2];
+    const fetchStatus = vi.fn(async (_env: EnvironmentId) => status(0));
+    __setFactoryApiForTests(api({ status: fetchStatus }));
+    await mount(useFactoryEnvironments);
     expect(fetchStatus).toHaveBeenCalledTimes(2);
     await settle(30_000);
     expect(fetchStatus).toHaveBeenCalledTimes(4);
   });
-});
 
-describe("the factory environment across a change of candidates", () => {
-  const settled = (state: "running" | "idle") => ({
-    status: "ready" as const,
-    data: status(0, state),
+  it("reflects a later answer, and drops an environment that turns 404", async () => {
+    environments.connected = [ENV_1, ENV_2];
+    let attention = 0;
+    let gone = false;
+    __setFactoryApiForTests(
+      api({
+        status: async (env) => {
+          if (env === ENV_2 && gone) return notFound();
+          return status(env === ENV_1 ? attention : 0);
+        },
+      }),
+    );
+    const list = await mount(useFactoryEnvironments);
+    expect(list.current[0]!.status.data?.attention).toHaveLength(0);
+    attention = 2;
+    await settle(30_000);
+    expect(list.current[0]!.status.data?.attention).toHaveLength(2);
+    gone = true;
+    await settle(30_000);
+    expect(ids(list.current)).toEqual([ENV_1]);
   });
 
-  it("stays on the running environment, and reads nothing again, when a third environment connects and leaves", async () => {
+  it("neither reads again nor re-renders without end when a third environment connects and leaves", async () => {
     environments.connected = [ENV_1, ENV_2];
-    const fetchStatus = vi.fn(async (env: EnvironmentId) =>
-      status(0, env === ENV_2 ? "running" : "idle"),
-    );
-    const fetchRuns = vi.fn(async (_env: EnvironmentId) => ({ runs: [] }));
-    __setFactoryApiForTests(api({ status: fetchStatus, runs: fetchRuns }));
-    const seen: Array<EnvironmentId | null> = [];
+    const fetchStatus = vi.fn(async (_env: EnvironmentId) => status(0));
+    __setFactoryApiForTests(api({ status: fetchStatus }));
+    let renders = 0;
     const Probe = () => {
-      const id = useFactoryEnvironmentId();
-      seen.push(id);
-      useFactoryStatus(id);
-      useFactoryRuns(id);
+      renders++;
+      useFactoryEnvironments();
       return null;
     };
     const root = await mountElement(createElement(Probe));
-    const calls = (fn: typeof fetchStatus, env: EnvironmentId) =>
-      fn.mock.calls.filter(([e]) => e === env).length;
-    const ranOnce = { status: calls(fetchStatus, ENV_2), runs: fetchRuns.mock.calls.length };
-    expect(ranOnce).toEqual({ status: 1, runs: 1 });
-
-    seen.length = 0;
     environments.connected = [ENV_1, ENV_2, ENV_3];
     await act(async () => root.render(createElement(Probe)));
-    expect(seen.length).toBeGreaterThan(0);
-    expect(seen.every((id) => id === ENV_2)).toBe(true);
-    expect(calls(fetchStatus, ENV_2)).toBe(1);
-    expect(calls(fetchStatus, ENV_1)).toBe(1);
-    expect(calls(fetchStatus, ENV_3)).toBe(1);
-    expect(fetchRuns).toHaveBeenCalledTimes(1);
-
-    seen.length = 0;
     environments.connected = [ENV_1, ENV_2];
     await act(async () => root.render(createElement(Probe)));
-    expect(seen.length).toBeGreaterThan(0);
-    expect(seen.every((id) => id === ENV_2)).toBe(true);
-    expect(calls(fetchStatus, ENV_2)).toBe(1);
-    expect(calls(fetchStatus, ENV_1)).toBe(1);
-    expect(fetchRuns).toHaveBeenCalledTimes(1);
+    const calls = (env: EnvironmentId) => fetchStatus.mock.calls.filter(([e]) => e === env).length;
+    expect([calls(ENV_1), calls(ENV_2), calls(ENV_3)]).toEqual([1, 1, 1]);
+    expect(renders).toBeLessThan(20);
+  });
+});
+
+describe("useFactoryRunsOf", () => {
+  it("reads each environment's own runs, and a failure of one leaves the others", async () => {
+    const fetchRuns = vi.fn<FactoryApi["runs"]>(async (env) => {
+      if (env === ENV_1) throw new Error("down");
+      return { runs: [{ id: `${env}-run` }] } as never;
+    });
+    __setFactoryApiForTests(api({ runs: fetchRuns }));
+    const runs = await mount(() => useFactoryRunsOf([ENV_1, ENV_2], false));
+    expect(runs.current.map((entry) => entry.status)).toEqual(["error", "ready"]);
+    expect(runs.current[1]!.data?.runs).toEqual([{ id: "env-2-run" }]);
+    expect(fetchRuns.mock.calls.map(([env, options]) => [env, options.all])).toEqual([
+      [ENV_1, false],
+      [ENV_2, false],
+    ]);
   });
 
-  describe("pickFactoryEnvironment", () => {
-    const statuses: Record<
-      string,
-      | ReturnType<typeof settled>
-      | { status: "loading" | "error"; data: null }
-      | { status: "error"; data: ReturnType<typeof status> }
-    > = {};
-    const pick = (candidates: Array<EnvironmentId>, primary: EnvironmentId | null) =>
-      pickFactoryEnvironment(candidates, primary, (id) => statuses[id] as never);
-    beforeEach(() => {
-      for (const key of Object.keys(statuses)) delete statuses[key];
-    });
+  it("polls the recent window but reads the full list once", async () => {
+    const fetchRuns = vi.fn<FactoryApi["runs"]>(async () => ({ runs: [] }));
+    __setFactoryApiForTests(api({ runs: fetchRuns }));
+    await mount(() => useFactoryRunsOf([ENV_1, ENV_2], true));
+    expect(fetchRuns).toHaveBeenCalledTimes(2);
+    await settle(90_000);
+    expect(fetchRuns).toHaveBeenCalledTimes(2);
+    unmountAll();
+    __resetFactoryStoresForTests();
+    fetchRuns.mockClear();
+    await mount(() => useFactoryRunsOf([ENV_1, ENV_2], false));
+    await settle(30_000);
+    expect(fetchRuns).toHaveBeenCalledTimes(4);
+  });
 
-    it("is the first candidate that runs", () => {
-      statuses[ENV_1] = settled("running");
-      statuses[ENV_2] = settled("running");
-      expect(pick([ENV_1, ENV_2], ENV_1)).toBe(ENV_1);
-    });
+  it("refreshes the one environment it is asked to", async () => {
+    const fetchRuns = vi.fn<FactoryApi["runs"]>(async () => ({ runs: [] }));
+    __setFactoryApiForTests(api({ runs: fetchRuns }));
+    const runs = await mount(() => useFactoryRunsOf([ENV_1, ENV_2], false));
+    fetchRuns.mockClear();
+    await act(async () => runs.current[1]!.refresh());
+    expect(fetchRuns.mock.calls.map(([env]) => env)).toEqual([ENV_2]);
+  });
 
-    it("is a running candidate behind an idle one", () => {
-      statuses[ENV_1] = settled("idle");
-      statuses[ENV_2] = settled("running");
-      expect(pick([ENV_1, ENV_2], ENV_1)).toBe(ENV_2);
-    });
+  it("reads nothing without environments", async () => {
+    const fetchRuns = vi.fn<FactoryApi["runs"]>(async () => ({ runs: [] }));
+    __setFactoryApiForTests(api({ runs: fetchRuns }));
+    const runs = await mount(() => useFactoryRunsOf([], false));
+    expect(runs.current).toEqual([]);
+    expect(fetchRuns).not.toHaveBeenCalled();
+  });
+});
 
-    it("is null while a candidate ahead of a running one is loading", () => {
-      statuses[ENV_1] = { status: "loading", data: null };
-      statuses[ENV_2] = settled("running");
-      expect(pick([ENV_1, ENV_2], ENV_1)).toBeNull();
-    });
+describe("the badge and the sidebar item across several environments", () => {
+  it("sums the open attention items over every listed environment", async () => {
+    environments.connected = [ENV_1, ENV_2, ENV_3];
+    __setFactoryApiForTests(
+      api({
+        status: async (env) => {
+          if (env === ENV_3) return notFound();
+          return status(env === ENV_1 ? 2 : 3);
+        },
+      }),
+    );
+    const count = await mount(useFactoryAttentionCount);
+    expect(count.current).toBe(5);
+  });
 
-    it("is the primary when every candidate is idle", () => {
-      statuses[ENV_1] = settled("idle");
-      statuses[ENV_2] = settled("idle");
-      expect(pick([ENV_1, ENV_2], ENV_1)).toBe(ENV_1);
-    });
+  it("shares the status read with the pages' own hooks", async () => {
+    environments.connected = [ENV_1, ENV_2];
+    const fetchStatus = vi.fn(async (env: EnvironmentId) => status(env === ENV_2 ? 3 : 0));
+    __setFactoryApiForTests(api({ status: fetchStatus }));
+    await mount(useFactoryAttentionCount);
+    await mount(useFactoryEnvironments);
+    expect(fetchStatus).toHaveBeenCalledTimes(2);
+    await settle(30_000);
+    expect(fetchStatus).toHaveBeenCalledTimes(4);
+  });
 
-    it("is the primary without candidates, and null without a primary", () => {
-      expect(pick([], ENV_1)).toBe(ENV_1);
-      expect(pick([], null)).toBeNull();
-    });
+  it("is supported while a candidate has not answered, and when one of them has a factory", async () => {
+    environments.connected = [ENV_1, ENV_2];
+    __setFactoryApiForTests(
+      api({ status: (env) => (env === ENV_1 ? notFound() : new Promise(() => {})) }),
+    );
+    const pending = await mount(useFactorySupported);
+    expect(pending.current).toBe(true);
+    unmountAll();
+    __resetFactoryStoresForTests();
+    __setFactoryApiForTests(
+      api({ status: (env) => (env === ENV_1 ? notFound() : Promise.resolve(status(0))) }),
+    );
+    const some = await mount(useFactorySupported);
+    expect(some.current).toBe(true);
+  });
 
-    it("counts an errored candidate's stale running data", () => {
-      statuses[ENV_1] = { status: "error", data: status(0, "running") };
-      statuses[ENV_2] = settled("running");
-      expect(pick([ENV_1, ENV_2], ENV_1)).toBe(ENV_1);
-    });
+  it("is unsupported only once every candidate answered 404", async () => {
+    environments.connected = [ENV_1, ENV_2];
+    __setFactoryApiForTests(api({ status: notFound }));
+    const supported = await mount(useFactorySupported);
+    expect(supported.current).toBe(false);
+  });
 
-    it("skips an errored candidate that never had data", () => {
-      statuses[ENV_1] = { status: "error", data: null };
-      statuses[ENV_2] = settled("running");
-      expect(pick([ENV_1, ENV_2], ENV_1)).toBe(ENV_2);
-    });
+  it("is supported with no candidate at all", async () => {
+    environments.primary = null;
+    const supported = await mount(useFactorySupported);
+    expect(supported.current).toBe(true);
+  });
+});
+
+describe("useFactoryEnvironmentLabel", () => {
+  it("is the environment's label, else its id", async () => {
+    environments.labels = new Map([[ENV_1, "Desktop"]]);
+    const label = await mount(() => [
+      useFactoryEnvironmentLabel(ENV_1),
+      useFactoryEnvironmentLabel(ENV_2),
+    ]);
+    expect(label.current).toEqual(["Desktop", "env-2"]);
   });
 });
