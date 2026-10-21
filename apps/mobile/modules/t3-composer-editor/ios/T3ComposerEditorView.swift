@@ -451,6 +451,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private var hasDeferredForcedRebuild = false
   private var pendingContentOffset: CGPoint?
   private var needsSelectionReveal = false
+  private var selectionBeforeFocusingTap: NSRange?
 
   let onComposerChange = EventDispatcher()
   let onComposerSelectionChange = EventDispatcher()
@@ -522,6 +523,13 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   @objc private func openContext(_ recognizer: UITapGestureRecognizer) {
     guard let (index, attachment) = contextAttachment(at: recognizer.location(in: textView)) else {
       textView.becomeFirstResponder()
+      if let selection = selectionBeforeFocusingTap {
+        selectionBeforeFocusingTap = nil
+        // UIKit places the caret from its own tap recognizer during this same touch.
+        DispatchQueue.main.async { [weak self] in
+          self?.restoreSelection(selection)
+        }
+      }
       return
     }
     openContext(index: index, attachment: attachment)
@@ -560,7 +568,11 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-    true
+    // The collapsed editor only shows the draft's first line, so a tap that expands an
+    // overflowing draft returns to the caret it was left at instead of moving it there.
+    let collapsedOverflow = !textView.isFirstResponder && !textView.isScrollEnabled && draftOverflowsBounds()
+    selectionBeforeFocusingTap = collapsedOverflow ? textView.selectedRange : nil
+    return true
   }
 
   public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -1160,6 +1172,21 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     textView.selectedRange = nextRange
     isApplyingControlledValue = false
     revealSelectionAfterLayout()
+  }
+
+  private func restoreSelection(_ selection: NSRange) {
+    guard textView.isFirstResponder,
+          !NSEqualRanges(selection, textView.selectedRange),
+          NSMaxRange(selection) <= textView.attributedText.length else {
+      return
+    }
+    textView.selectedRange = selection
+    revealSelectionAfterLayout()
+  }
+
+  private func draftOverflowsBounds() -> Bool {
+    let size = textView.sizeThatFits(CGSize(width: textView.bounds.width, height: .greatestFiniteMagnitude))
+    return size.height > textView.bounds.height + 1
   }
 
   private func revealSelectionAfterLayout() {
