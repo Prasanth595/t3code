@@ -387,15 +387,13 @@ export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
   threadId: ThreadId,
   runId: RunId,
 ) {
+  const waitSlice = (timeoutMs: number) =>
+    tools.call("t3_thread_wait", { threadId, runId, timeoutMs }, OrchestratorMcpThreadWaitResult);
+  const ended = (waited: OrchestratorMcpThreadWaitResult) =>
+    ({ type: "ended", runId: waited.runId, status: waited.status }) satisfies WaitOutcome;
   while (true) {
-    const waited = yield* tools.call(
-      "t3_thread_wait",
-      { threadId, runId, timeoutMs: WAIT_SLICE_MS },
-      OrchestratorMcpThreadWaitResult,
-    );
-    if (!waited.timedOut) {
-      return { type: "ended", runId: waited.runId, status: waited.status } satisfies WaitOutcome;
-    }
+    const waited = yield* waitSlice(WAIT_SLICE_MS);
+    if (!waited.timedOut) return ended(waited);
     // A pending request on this run, or on an earlier run this one is queued
     // behind, blocks it until someone answers.
     const { thread } = yield* tools.call(
@@ -403,7 +401,12 @@ export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
       { threadId, limit: 1, runLimit: 1 },
       OrchestratorMcpThreadReadResult,
     );
-    if (thread.pendingRequestCount > 0) return { type: "needs_input" } satisfies WaitOutcome;
+    if (thread.pendingRequestCount > 0) {
+      // The count is thread-wide: if this run ended since the slice, the
+      // request belongs to a later run.
+      const recheck = yield* waitSlice(1);
+      return recheck.timedOut ? ({ type: "needs_input" } satisfies WaitOutcome) : ended(recheck);
+    }
   }
 });
 
