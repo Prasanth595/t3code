@@ -39,6 +39,7 @@ function catalog(checkedAt: number, recovered = false): ServerProvider {
     driver: ProviderDriverKind.make("codex"),
     enabled: true,
     installed: true,
+    version: null,
     status: "ready",
     auth: { status: "authenticated" },
     checkedAt: new Date(checkedAt).toISOString(),
