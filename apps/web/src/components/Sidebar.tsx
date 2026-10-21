@@ -154,6 +154,7 @@ import {
   resolveSidebarDropTarget,
   resolveSidebarDropVerb,
   resolveSidebarThreadSection,
+  resolveSidebarReorderableThreadKeys,
   searchSidebarThreads,
   shouldCreateNewThreadInCurrentProject,
   shouldNavigateAfterThreadPark,
@@ -289,6 +290,7 @@ interface SidebarThreadPartitionInput {
   readonly threads: readonly EnvironmentThreadShell[];
   readonly scopedProjectKeys: ReadonlySet<string> | null;
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
+  readonly connectedEnvironmentIds: readonly EnvironmentId[];
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly workingShelfEnabled: boolean;
   // Snooze wakes and the queued-turn grace depend on the clock, so the minute
@@ -351,11 +353,18 @@ function useSidebarThreads(input: {
   readonly projectScopeKey: string | null;
   readonly scopedProjectKeys: ReadonlySet<string> | null;
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
+  readonly connectedEnvironmentIds: readonly EnvironmentId[];
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly routeThreadRef: ScopedThreadRef | null;
 }) {
-  const { projectScopeKey, scopedProjectKeys, serverConfigs, optimisticDrop, routeThreadRef } =
-    input;
+  const {
+    projectScopeKey,
+    scopedProjectKeys,
+    serverConfigs,
+    connectedEnvironmentIds,
+    optimisticDrop,
+    routeThreadRef,
+  } = input;
   const threads = useThreadShells();
   const routeRowThreadKey =
     routeThreadRef === null
@@ -410,6 +419,7 @@ function useSidebarThreads(input: {
     threads,
     scopedProjectKeys,
     serverConfigs,
+    connectedEnvironmentIds,
     optimisticDrop,
     workingShelfEnabled,
     clockKey: `${nowMinute}:${snoozeWakeTick}`,
@@ -512,17 +522,16 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     workingShelfEnabled && isSidebarThreadWorking(thread) ? working : active;
   const snoozed: EnvironmentThreadShell[] = [];
   const settled: EnvironmentThreadShell[] = [];
-  const draggable = new Set<string>();
-  const activeReorderable = new Set<string>();
+  const { draggableThreadKeys, activeReorderableThreadKeys } = resolveSidebarReorderableThreadKeys({
+    threads: visible,
+    serverConfigs,
+    connectedEnvironmentIds: input.connectedEnvironmentIds,
+  });
   for (const thread of visible) {
     const capabilities = serverConfigs.get(thread.environmentId)?.environment.capabilities;
     const supportsSettlement = capabilities?.threadSettlement === true;
     const supportsSnooze = capabilities?.threadSnooze === true;
     const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-    if (capabilities?.threadActiveReorder === true) activeReorderable.add(threadKey);
-    if (capabilities?.threadPinning === true && capabilities.threadPinReorder === true) {
-      draggable.add(threadKey);
-    }
     if (optimisticDrop?.key === threadKey) {
       const projected = applySidebarThreadDrop(
         thread,
@@ -556,7 +565,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
       ).push(thread);
     }
   }
-  // Server capability only gates DRAGGING — it must not influence the
+  // Availability only gates dragging. It must not influence the
   // sort, or mixed-version fleets would render different pinned orders on
   // web and mobile from the same data.
   const sortedPinned = sortPinnedThreadsForSidebar(pinned);
@@ -572,8 +581,8 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
             preferredIds: optimisticDrop.order,
             getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
           }),
-    draggableThreadKeys: draggable,
-    activeReorderableThreadKeys: activeReorderable,
+    draggableThreadKeys,
+    activeReorderableThreadKeys,
     activeThreads:
       optimisticDrop?.section !== "active" || optimisticDrop.order === null
         ? sortedActive
@@ -867,8 +876,8 @@ export default function Sidebar() {
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [searchHighlight, setSearchHighlight] = useState({ orderKey: "", index: 0 });
-  const searchEnvironmentIds = useConnectedEnvironmentIds();
-  const threadSearch = useThreadSearch(searchEnvironmentIds, threadSearchQuery);
+  const connectedEnvironmentIds = useConnectedEnvironmentIds();
+  const threadSearch = useThreadSearch(connectedEnvironmentIds, threadSearchQuery);
   const handleNewThreadRef = useRef(newThreadContext.handleNewThread);
   const queuePendingFileDrop = useSidebarPendingFileDropStore((s) => s.queuePendingFileDrop);
   const clearPendingFileDrop = useSidebarPendingFileDropStore((s) => s.clearPendingFileDrop);
@@ -1056,6 +1065,7 @@ export default function Sidebar() {
     projectScopeKey,
     scopedProjectKeys,
     serverConfigs,
+    connectedEnvironmentIds,
     optimisticDrop,
     routeThreadRef,
   });
