@@ -1033,29 +1033,38 @@ function renderFeedEntry(
 
   if (entry.type === "run-fold") {
     return (
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ expanded: entry.expanded }}
-        onPress={() => props.onToggleTurnFold(entry.runId)}
-        hitSlop={4}
-        className="mb-1 min-h-11 flex-row items-center gap-2 border-b border-border-subtle px-2"
-        style={{
-          minHeight: Math.max(TURN_FOLD_HEIGHT - 3.5, props.workRowSizing.estimatedRowHeight),
-        }}
-      >
-        <Text
-          key={props.workRowSizing.textSizeKey}
-          className="font-t3-medium text-sm tabular-nums text-foreground-muted"
+      <View className="mb-1 flex-row items-center border-b border-border-subtle px-2">
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded: entry.expanded }}
+          onPress={() => props.onToggleTurnFold(entry.runId)}
+          hitSlop={4}
+          className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2"
+          style={{
+            minHeight: Math.max(TURN_FOLD_HEIGHT - 3.5, props.workRowSizing.estimatedRowHeight),
+          }}
         >
-          {entry.label}
-        </Text>
-        <ThreadDisclosureChevron
-          expanded={entry.expanded}
-          collapsedDirection="right"
-          size={15}
-          tintColor={iconSubtleColor}
-        />
-      </Pressable>
+          <Text
+            key={props.workRowSizing.textSizeKey}
+            numberOfLines={1}
+            className="shrink font-t3-medium text-sm tabular-nums text-foreground-muted"
+          >
+            {entry.label}
+          </Text>
+          <ThreadDisclosureChevron
+            expanded={entry.expanded}
+            collapsedDirection="right"
+            size={15}
+            tintColor={iconSubtleColor}
+          />
+        </Pressable>
+        {entry.checkpointSummary ? (
+          <TurnDiffStat
+            checkpoint={entry.checkpointSummary}
+            onOpenTurnDiff={props.onOpenTurnDiff}
+          />
+        ) : null}
+      </View>
     );
   }
 
@@ -1107,6 +1116,14 @@ function renderFeedEntry(
         hasFailure={entry.hasFailure}
         shimmer={entry.shimmer}
         thought={entry.thought}
+        trailing={
+          entry.checkpointSummary ? (
+            <TurnDiffStat
+              checkpoint={entry.checkpointSummary}
+              onOpenTurnDiff={props.onOpenTurnDiff}
+            />
+          ) : null
+        }
         onToggle={() => props.onToggleWorkGroup(entry.groupId, entry.id)}
       />
     );
@@ -1431,7 +1448,7 @@ function renderFeedEntry(
           );
         })}
         {showAssistantMeta && message.checkpointSummary ? (
-          <AssistantChangedFilesSummary
+          <TurnDiffStat
             checkpoint={message.checkpointSummary}
             onOpenTurnDiff={props.onOpenTurnDiff}
           />
@@ -1486,7 +1503,7 @@ function renderFeedEntry(
   );
 }
 
-function AssistantChangedFilesSummary(props: {
+function TurnDiffStat(props: {
   readonly checkpoint: ThreadCheckpointSummary;
   readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
 }) {
@@ -1497,29 +1514,17 @@ function AssistantChangedFilesSummary(props: {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Review turn ${props.checkpoint.checkpointTurnCount}: ${fileCountLabel}, ${additions} additions, ${deletions} deletions`}
+      accessibilityLabel={`Review ${fileCountLabel}, ${additions} additions, ${deletions} deletions`}
       onPress={() => props.onOpenTurnDiff(props.checkpoint)}
-      className="mt-2 min-h-11 gap-1 rounded-xl border border-border-subtle px-3 py-2 active:bg-subtle"
+      className="min-h-11 shrink-0 flex-row items-center gap-2 px-2 active:bg-subtle"
     >
-      <View className="flex-row items-center gap-2">
-        <Text className="flex-1 font-t3-medium text-xs text-foreground-secondary">
-          {fileCountLabel}
-        </Text>
-        <Text className="font-t3-medium text-xs tabular-nums text-adaptive-emerald-700-300">
-          +{formatDiffCount(additions)}
-        </Text>
-        <Text className="font-t3-medium text-xs tabular-nums text-adaptive-rose-700-300">
-          -{formatDiffCount(deletions)}
-        </Text>
-        <SymbolView name="chevron.right" size={12} tintColorClassName="accent-foreground-muted" />
-      </View>
-      <Text className="text-xs text-foreground-muted" numberOfLines={2}>
-        {files
-          .slice(0, 3)
-          .map((file) => file.path)
-          .join(" · ")}
-        {files.length > 3 ? ` · +${files.length - 3} more` : ""}
+      <Text className="font-t3-medium text-xs tabular-nums text-adaptive-emerald-700-300">
+        +{formatDiffCount(additions)}
       </Text>
+      <Text className="font-t3-medium text-xs tabular-nums text-adaptive-rose-700-300">
+        −{formatDiffCount(deletions)}
+      </Text>
+      <SymbolView name="chevron.right" size={12} tintColorClassName="accent-foreground-muted" />
     </Pressable>
   );
 }
@@ -2531,7 +2536,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (entry.type === "html-render") {
       return htmlRenderRowHeight(htmlRenderFrameHeight(entry.render, contentWidth));
     }
-    if (workRowSizing.fixedRowHeight === undefined) {
+    if (workRowSizing.fixedRowHeight === undefined || entry.checkpointSummary) {
       return undefined;
     }
     switch (entry.type) {
