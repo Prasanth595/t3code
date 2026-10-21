@@ -454,6 +454,32 @@ describe("FactoryPage environments", () => {
     expect(refreshOwn).not.toHaveBeenCalled();
   });
 
+  it("keeps a status that failed after a good read, with a notice naming its environment and a Retry for that status", async () => {
+    const refreshOther = vi.fn();
+    const refreshOwn = vi.fn();
+    state.status = resource({ data: statusData(), refresh: refreshOwn });
+    state.runs = resource({ data: { runs: [runRow()] } });
+    state.others = [
+      {
+        environmentId: "env-3",
+        label: "Laptop",
+        status: resource({
+          status: "error",
+          data: statusData({ state: "idle", reason: "no repos" }),
+          error: new Error("timed out"),
+          refresh: refreshOther,
+        }),
+        runs: resource({ data: { runs: [] } }),
+      },
+    ];
+    const page = await render(createElement(FactoryPage));
+    expect(page.text()).toContain("Could not refresh Laptop: timed out");
+    expect(page.text()).toContain("Idle: no repos");
+    await page.click(page.button("Retry")!);
+    expect(refreshOther).toHaveBeenCalledTimes(1);
+    expect(refreshOwn).not.toHaveBeenCalled();
+  });
+
   it("shows loading in place of the runs while no environment has listed its runs", async () => {
     state.runs = resource({ status: "loading" });
     const page = await render(createElement(FactoryPage));

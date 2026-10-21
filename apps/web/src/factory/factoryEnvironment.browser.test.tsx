@@ -288,6 +288,33 @@ describe("the Factory page shows every environment that runs a factory", () => {
     expect(buttonIn(rowOf(page, "Desktop"), "Pause claims").disabled).toBe(false);
   });
 
+  it("disables only the row whose pause is in flight, and enables it again when that settles", async () => {
+    let finish!: () => void;
+    __setFactoryApiForTests({
+      ...fakeApi,
+      pauseClaims: (env) => {
+        calls.pause.push(env);
+        return new Promise((resolve) => {
+          finish = () =>
+            resolve({
+              paused: true,
+              already: false,
+              since: "2026-10-17T12:00:00.000Z",
+              message: "paused",
+            });
+        });
+      },
+    });
+    const page = await show(createElement(FactoryPage));
+    await page.click(buttonIn(rowOf(page, "Studio"), "Pause claims"));
+    expect(calls.pause).toEqual([ENV_2]);
+    expect(buttonIn(rowOf(page, "Studio"), "Pause claims").disabled).toBe(true);
+    expect(buttonIn(rowOf(page, "Desktop"), "Pause claims").disabled).toBe(false);
+    await act(async () => finish());
+    await settle();
+    expect(buttonIn(rowOf(page, "Studio"), "Pause claims").disabled).toBe(false);
+  });
+
   it("resumes a paused environment and says since when on its row only", async () => {
     worlds.get(ENV_2)!.status = statusBody("running", { paused: true });
     const page = await show(createElement(FactoryPage));
@@ -318,13 +345,48 @@ describe("the Factory page shows every environment that runs a factory", () => {
       environmentId: ENV_2,
       runId: RUN_2,
     });
-    const item = page.all("li").find((li) => li.textContent?.includes("third one"))!;
+    const itemOf = (message: string) =>
+      page.all("li").find((li) => li.textContent?.includes(message))!;
+    // With several environments each item says which one raised it.
+    expect(itemOf("first one").textContent).toContain("Desktop");
+    expect(itemOf("second one").textContent).toContain("Desktop");
+    expect(itemOf("third one").textContent).toContain("Studio");
+    expect(itemOf("third one").textContent).not.toContain("Desktop");
+    const item = itemOf("third one");
     await page.click(
       Array.from(item.querySelectorAll("button")).find((b) => b.textContent === "Dismiss")!,
     );
     expect(calls.dismiss).toEqual([[ENV_2, ["b1"]]]);
     await page.click(page.button("Dismiss all")!);
     expect(calls.dismiss.slice(1)).toEqual([[ENV_1, ["a1", "a2"]]]);
+  });
+
+  it("shows no environment label on an attention item when only one environment runs a factory", async () => {
+    catalog.connected = [ENV_1];
+    worlds.delete(ENV_2);
+    worlds.get(ENV_1)!.status = statusBody("running", {
+      attention: [attentionItem("a1", "lonely one", "2026-10-17T10:00:00.000Z")],
+    });
+    const page = await show(createElement(FactoryPage));
+    const item = page.all("li").find((li) => li.textContent?.includes("lonely one"))!;
+    expect(item.textContent).not.toContain("Desktop");
+  });
+
+  it("dismisses one of two same-id, same-first_seen items on its own environment only", async () => {
+    worlds.get(ENV_1)!.status = statusBody("running", {
+      attention: [attentionItem("same", "on desktop", "2026-10-17T10:00:00.000Z")],
+    });
+    worlds.get(ENV_2)!.status = statusBody("running", {
+      attention: [attentionItem("same", "on studio", "2026-10-17T10:00:00.000Z")],
+    });
+    const page = await show(createElement(FactoryPage));
+    const item = page.all("li").find((li) => li.textContent?.includes("on desktop"))!;
+    await page.click(
+      Array.from(item.querySelectorAll("button")).find((b) => b.textContent === "Dismiss")!,
+    );
+    expect(calls.dismiss).toEqual([[ENV_1, ["same"]]]);
+    expect(page.text()).not.toContain("on desktop");
+    expect(page.text()).toContain("on studio");
   });
 
   it("splits Dismiss all by environment, one call each", async () => {
