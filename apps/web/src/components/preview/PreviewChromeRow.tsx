@@ -81,6 +81,7 @@ export function PreviewChromeRow({
   leadingActions,
 }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const handledFocusUrlNonce = useRef<number | undefined>(undefined);
   const [drafts, setDrafts] = useState<ReadonlyMap<string | null, string>>(() => new Map());
   const draft = drafts.get(tabId) ?? url;
   const setDraft = (value: string | null) => {
@@ -94,9 +95,10 @@ export function PreviewChromeRow({
   const [inputFocused, setInputFocused] = useState(false);
 
   useEffect(() => {
-    if (focusUrlNonce == null) return;
+    if (focusUrlNonce == null || focusUrlNonce === handledFocusUrlNonce.current) return;
     const node = inputRef.current;
     if (!node) return;
+    handledFocusUrlNonce.current = focusUrlNonce;
     node.focus();
     node.select();
   }, [focusUrlNonce]);

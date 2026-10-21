@@ -260,6 +260,40 @@ describe("PreviewView", () => {
     await expect.element(page.getByRole("textbox", { name: "Chat draft" })).toHaveValue("");
   });
 
+  it("does not replay an address focus request when returning to a browser tab", async () => {
+    setup();
+    await using screen = await render(
+      <>
+        <textarea aria-label="Chat draft" />
+        {view()}
+      </>,
+    );
+    const address = page.getByPlaceholder("Search or enter URL");
+    const chat = page.getByRole("textbox", { name: "Chat draft" });
+    await act(() => dispatchPreviewAction("focus-url"));
+    await expect.element(address).toHaveFocus();
+    await userEvent.click(chat);
+    await screen.rerender(
+      <>
+        <textarea aria-label="Chat draft" />
+        <PreviewView threadRef={TEST_THREAD_REF} tabId="tab-2" visible />
+      </>,
+    );
+    await userEvent.click(chat);
+    await screen.rerender(
+      <>
+        <textarea aria-label="Chat draft" />
+        {view()}
+      </>,
+    );
+    await expect.element(chat).toHaveFocus();
+    await act(() => dispatchPreviewAction("focus-url"));
+    await expect.element(address).toHaveFocus();
+    await userEvent.click(chat);
+    await act(() => dispatchPreviewAction("focus-url"));
+    await expect.element(address).toHaveFocus();
+  });
+
   it("starts and cancels the same annotation picker through a browser action", async () => {
     setup();
     let finish: ((result: unknown) => void) | undefined;
