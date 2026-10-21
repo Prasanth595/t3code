@@ -1081,7 +1081,8 @@ export function ThreadSearchPullRequestNumber({
           : presentation.toneClassName,
       )}
     >
-      <presentation.Icon aria-hidden className="size-3 shrink-0" />
+      {/* text-current opts out of the command palette's muted icon color. */}
+      <presentation.Icon aria-hidden className="size-3 shrink-0 text-current" />
       <span>{presentation.text}</span>
     </span>
   );
