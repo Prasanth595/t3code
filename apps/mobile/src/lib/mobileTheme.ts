@@ -188,6 +188,11 @@ function contrastRatio(
   );
 }
 
+export function isDarkThemeColor(color: string): boolean {
+  const channels = rgbChannels(color);
+  return channels !== null && relativeLuminance(channels) < 0.18;
+}
+
 export function themeColorWithContrast(
   accent: string,
   surface: string | ReadonlyArray<string>,

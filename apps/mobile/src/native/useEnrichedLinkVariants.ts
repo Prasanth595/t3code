@@ -6,7 +6,7 @@ import type {
   MarkdownStyle,
 } from "react-native-enriched-markdown";
 import type { ComposerContextRecord } from "@t3tools/contracts";
-import { contextChipPresentation } from "../lib/composerChipPresentation";
+import { contextChipAccent, contextChipPresentation } from "../lib/composerChipPresentation";
 import { CONTEXT_CHIP_ICON_SOURCES } from "../lib/contextChipIcons.generated";
 import { FONT_FAMILIES } from "../lib/fontFamilies";
 import { contextChipIconSource } from "../lib/contextChipIconSource";
@@ -111,7 +111,9 @@ export function useEnrichedLinkVariants(
       new Map(
         [...links].map(([url, link]) => [
           url,
-          link.chip ? (link.chip.accent ?? textStyle.color) : undefined,
+          link.chip
+            ? (contextChipAccent(link.chip.accent, textStyle.color) ?? textStyle.color)
+            : undefined,
         ]),
       ),
     [links, textStyle],

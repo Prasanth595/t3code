@@ -4,6 +4,7 @@ import { videoMimeType } from "@t3tools/shared/video";
 
 import type { CONTEXT_CHIP_ICON_SOURCES } from "./contextChipIcons.generated";
 import { resolveMarkdownFileIcon, type MarkdownFileIcon } from "./markdownLinks";
+import { isDarkThemeColor } from "./mobileTheme";
 
 export type ContextChipIcon = keyof typeof CONTEXT_CHIP_ICON_SOURCES;
 
@@ -38,6 +39,29 @@ const CONTEXT_CHIP_PRESENTATIONS = {
     icon: "messages-square",
   },
 } as const satisfies Record<string, ContextChipPresentation>;
+
+const LIGHT_SURFACE_CONTEXT_CHIP_ACCENTS: Readonly<Record<string, string>> = {
+  "#d55665": "#af3346",
+  "#d06217": "#a04701",
+  "#0090cd": "#016795",
+  "#0096af": "#016b7d",
+  "#009f6e": "#016f4c",
+  "#b87501": "#895601",
+  "#8a70dd": "#6a4eb8",
+  "#7079e4": "#5155bd",
+  "#b261be": "#90409c",
+  "#009c96": "#036d69",
+  "#7f8793": "#5a626d",
+};
+
+export function contextChipAccent(
+  accent: string | undefined,
+  textColor: string,
+): string | undefined {
+  return accent && isDarkThemeColor(textColor)
+    ? (LIGHT_SURFACE_CONTEXT_CHIP_ACCENTS[accent] ?? accent)
+    : accent;
+}
 
 export const UNAVAILABLE_CONTEXT_CHIP_PRESENTATION: ContextChipPresentation = {
   icon: "circle-dashed",
