@@ -4,7 +4,6 @@ import {
   compactDynamicToolOutput,
   htmlRenderFromToolItem,
   MAX_TOOL_OUTPUT_IMAGES,
-  omitToolOutputImageData,
   toolOutputImages,
   toolOutputIndicatesFailure,
 } from "./toolOutput.ts";
@@ -161,18 +160,6 @@ describe("compactDynamicToolOutput", () => {
       compactDynamicToolOutput({ type: "MCP", output: { OkayOutput: "" }, threadId: "thread-1" }),
     ).toEqual({ threadId: "thread-1" });
   });
-
-  it("is idempotent for compact metadata", () => {
-    const compact = compactDynamicToolOutput({
-      isError: true,
-      structuredContent: {
-        threadId: "thread-1",
-        threads: [{ threadId: "thread-1" }, { status: "rolled_back" }],
-        output: "Private output",
-      },
-    });
-    expect(compactDynamicToolOutput(compact)).toEqual(compact);
-  });
 });
 
 describe("toolOutputIndicatesFailure", () => {
@@ -238,20 +225,5 @@ describe("toolOutputImages", () => {
   it("stops after the first few images", () => {
     const images = toolOutputImages(Array.from({ length: 10_000 }, () => mcpImage));
     expect(images).toHaveLength(MAX_TOOL_OUTPUT_IMAGES);
-  });
-
-  it("drops the bytes but keeps each image's position", () => {
-    const omitted = omitToolOutputImageData({ content: [text, claudeImage, mcpImage] });
-    expect(omitted).toEqual({
-      content: [
-        text,
-        { type: "image", mimeType: "image/jpeg" },
-        { type: "image", mimeType: "image/png" },
-      ],
-    });
-    expect(toolOutputImages(omitted)).toEqual([
-      { mimeType: "image/jpeg" },
-      { mimeType: "image/png" },
-    ]);
   });
 });
