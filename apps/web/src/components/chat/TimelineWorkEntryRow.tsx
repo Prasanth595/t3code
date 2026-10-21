@@ -203,8 +203,12 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       failureItem.failure.class === "usage_limit" || failureItem.failure.class === "model_capacity";
     const resetAt = failureItem.failure.resetAt;
     const resetTime = resetAt ? formatUpcomingTimestamp(resetAt, timestampFormat) : null;
+    const failureLabel =
+      failureItem.failure.class === "model_capacity"
+        ? "Model at capacity."
+        : "Usage limit reached.";
     const label = warning
-      ? `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
+      ? `${failureLabel}${resetTime ? ` Retry after ${resetTime}.` : ""}`
       : workEntry.label;
     const retryRunId =
       failureItem.runId !== null &&

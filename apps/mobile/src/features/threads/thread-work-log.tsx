@@ -911,8 +911,12 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
           minute: "2-digit",
         })
       : null;
+    const failureLabel =
+      failureItem.failure.class === "model_capacity"
+        ? "Model at capacity."
+        : "Usage limit reached.";
     const label = warning
-      ? `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
+      ? `${failureLabel}${resetTime ? ` Retry after ${resetTime}.` : ""}`
       : row.summary;
     return (
       <WorkLogPressable
