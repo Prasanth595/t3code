@@ -256,10 +256,6 @@ import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useRemoveClonedProject } from "../hooks/useRemoveClonedProject";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
-import {
-  getComposerPromptInjectionState,
-  getComposerProviderState,
-} from "./chat/composerProviderState";
 import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
@@ -432,7 +428,6 @@ import {
   resolveFileAttachmentUrl,
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
-  getAntigravitySendBlockReason,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
@@ -488,6 +483,8 @@ import { useLocalDispatchState } from "./chat/useLocalDispatchState";
 import {
   draftFanoutSelectionsAtom,
   draftSendState,
+  type MultipleModelTarget,
+  resolveMultipleModelTargets,
   restoreComposerDraft,
   rewindToMessage,
   startFanoutThread,
@@ -5085,53 +5082,20 @@ export default function ChatView(props: ChatViewProps) {
       };
     };
 
-    const multipleTargets: Array<{
-      readonly selection: ModelSelection;
-      readonly text: string;
-      readonly interactionMode: ProviderInteractionMode;
-    }> = [];
-    for (const selection of multipleModelSelections ?? []) {
-      const provider = providerInstanceEntries.find(
-        (entry) => entry.instanceId === selection.instanceId,
-      );
-      if (!provider?.enabled || !provider.isAvailable || provider.status !== "ready") {
-        setThreadError(threadIdForSend, `Provider for ${selection.model} is unavailable.`);
+    const multipleTargets: MultipleModelTarget[] = [];
+    for (const resolved of resolveMultipleModelTargets({
+      selections: multipleModelSelections ?? [],
+      providerInstanceEntries,
+      messageText: messageTextForSend,
+      planModeEnabled: settings.planModeEnabled,
+      interactionMode: sendInteractionMode,
+    })) {
+      if ("error" in resolved) {
+        setThreadError(threadIdForSend, resolved.error);
         return;
       }
-      const providerBlockReason = getAntigravitySendBlockReason(provider.snapshot, selection.model);
-      if (providerBlockReason) {
-        setThreadError(threadIdForSend, providerBlockReason);
-        return;
-      }
-      const providerState = getComposerProviderState({
-        provider: provider.driverKind,
-        model: selection.model,
-        models: provider.models,
-        modelOptions: selection.options,
-        promptInjectionState: getComposerPromptInjectionState(messageTextForSend),
-        planModeEnabled: settings.planModeEnabled,
-      });
-      const text = formatOutgoingPrompt({
-        provider: provider.driverKind,
-        model: selection.model,
-        models: provider.models,
-        effort: providerState.promptEffort,
-        text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-      });
-      if (composerRef.current?.validateProviderInput(text) === false) return;
-      multipleTargets.push({
-        selection: createModelSelection(
-          selection.instanceId,
-          selection.model,
-          providerState.modelOptionsForDispatch,
-        ),
-        text,
-        interactionMode: resolveComposerInteractionMode({
-          planModeEnabled: settings.planModeEnabled,
-          provider: provider.snapshot,
-          interactionMode: sendInteractionMode,
-        }).interactionMode,
-      });
+      if (composerRef.current?.validateProviderInput(resolved.text) === false) return;
+      multipleTargets.push(resolved);
     }
 
     sendInFlightRef.current = true;
