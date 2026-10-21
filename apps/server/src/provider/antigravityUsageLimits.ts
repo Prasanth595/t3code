@@ -133,15 +133,13 @@ function modelWindows(models: typeof Models.Type) {
   const windows = new Map<string, ServerProviderUsageWindow>();
   for (const [modelId, model] of Object.entries(models.models)) {
     const family =
-      modelId.startsWith("gemini-") && modelId.includes("-argon")
-        ? "Gemini 4 Argon"
-        : model.modelProvider === "MODEL_PROVIDER_GOOGLE" || modelId.startsWith("gemini-")
-          ? "Gemini"
-          : model.modelProvider === "MODEL_PROVIDER_ANTHROPIC" || modelId.startsWith("claude-")
-            ? "Claude"
-            : model.modelProvider === "MODEL_PROVIDER_OPENAI" || modelId.startsWith("gpt-")
-              ? "GPT"
-              : undefined;
+      model.modelProvider === "MODEL_PROVIDER_GOOGLE" || modelId.startsWith("gemini-")
+        ? "Gemini"
+        : model.modelProvider === "MODEL_PROVIDER_ANTHROPIC" || modelId.startsWith("claude-")
+          ? "Claude"
+          : model.modelProvider === "MODEL_PROVIDER_OPENAI" || modelId.startsWith("gpt-")
+            ? "GPT"
+            : undefined;
     if (!family) continue;
     for (const [suffix, quota] of [
       ["quota", model.quotaInfo],
@@ -149,7 +147,7 @@ function modelWindows(models: typeof Models.Type) {
     ] as const) {
       if (!quota) continue;
       const window = quotaWindow(
-        `${family.toLowerCase().replaceAll(" ", "-")}-${suffix}`,
+        `${family.toLowerCase()}-${suffix}`,
         `${family} · ${suffix === "weekly" ? "Weekly" : "Reported quota"}`,
         quota,
         suffix === "weekly" ? "weekly" : "other",
