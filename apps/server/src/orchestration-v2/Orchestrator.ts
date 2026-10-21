@@ -565,6 +565,15 @@ function hasLiveRun(projection: Pick<OrchestrationV2ThreadProjection, "runs">): 
   );
 }
 
+/** A queued run cancelled before it started owns no work, so Stop never reaches it. */
+function latestDequeuedRun(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+): OrchestrationV2Run | undefined {
+  return runs.findLast(
+    (run) => run.status !== "queued" && !(run.status === "cancelled" && run.startedAt === null),
+  );
+}
+
 function withPullRequestWatch(
   link: ThreadPullRequestLink,
   watch: ThreadPullRequestWatch | undefined,
@@ -9528,7 +9537,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? undefined
         : projection.providerThreads.find((candidate) => candidate.id === run?.providerThreadId);
     const hasBackgroundWork =
-      run?.id === projection.runs.findLast((candidate) => candidate.status !== "queued")?.id &&
+      run?.id === latestDequeuedRun(projection.runs)?.id &&
       derivePendingBackgroundWork({
         latestRun: run,
         providerThreads: projection.providerThreads,
@@ -10001,7 +10010,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
     if (projection.thread.deletedAt !== null) return undefined;
-    const latestRun = projection.runs.findLast((run) => run.status !== "queued");
+    const latestRun = latestDequeuedRun(projection.runs);
     if (command.throughSequence !== undefined && latestRun !== undefined) {
       // A queued run already belonged to Stop even if it started before the delegated walk.
       const existed = yield* eventSink

@@ -1164,6 +1164,197 @@ it.effect("a partial delegated Stop retries only the original children that fail
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect.each([
+  {
+    name: "an active run past a queue cancelled since",
+    afterStop: ["queue", "cancel"],
+    expected: { runs: ["interrupted", "cancelled"], watched: [] },
+  },
+  {
+    name: "a finished run past a queue cancelled since",
+    afterStop: ["queue", "cancel", "complete"],
+    expected: { runs: ["completed", "cancelled"], watched: [] },
+  },
+  {
+    name: "a run queued before Stop that started since",
+    beforeStop: ["queue"],
+    afterStop: ["complete", "resume"],
+    expected: { runs: ["completed", "interrupted"], watched: [] },
+  },
+  {
+    name: "a run queued before Stop that started after newer work finished",
+    beforeStop: ["queue"],
+    afterStop: ["complete", "start", "complete", "resume"],
+    expected: { runs: ["completed", "completed", "interrupted"], watched: [] },
+  },
+  {
+    // Partial retries keep queue/watch changes thread-wide while the original run is current.
+    name: "the original run and the queue and watch added since",
+    afterStop: ["queue", "watch"],
+    expected: { runs: ["interrupted", "queued:held"], watched: [] },
+  },
+  {
+    name: "nothing when only newer work started",
+    afterStop: ["complete", "start"],
+    expected: { runs: ["completed", "starting"], watched: [40] },
+  },
+  {
+    name: "nothing when newer work finished past a queue cancelled since",
+    afterStop: ["complete", "start", "queue", "cancel", "complete"],
+    expected: { runs: ["completed", "completed", "cancelled"], watched: [40] },
+  },
+] as const)("a Stop retry reaches $name", ({ beforeStop = [], afterStop, expected }) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make(
+      `thread:stop-retry-bound:${afterStop.join(",")}:${beforeStop.join(",")}`,
+    );
+    let step = 0;
+    const apply = (action: (typeof beforeStop)[number] | (typeof afterStop)[number]) =>
+      Effect.gen(function* () {
+        step++;
+        if (action === "queue")
+          return yield* send(threadId, `queued ${step}`, "queue_after_active");
+        if (action === "start") return yield* send(threadId, `new ${step}`, "start_immediately");
+        if (action === "watch") return yield* watch(threadId, 41);
+        const runs = (yield* orchestrator.getThreadProjection(threadId)).runs;
+        if (action === "resume")
+          return yield* orchestrator.dispatch({
+            type: "queue.resume",
+            commandId: CommandId.make(`resume:${step}`),
+            threadId,
+          });
+        if (action === "cancel")
+          return yield* orchestrator.dispatch({
+            type: "queued-run.cancel",
+            commandId: CommandId.make(`cancel:${step}`),
+            threadId,
+            runId: runs.findLast((run) => run.status === "queued")!.id,
+          });
+        const now = yield* DateTime.now;
+        const run = runs.findLast((candidate) => candidate.status === "starting")!;
+        yield* projections.apply({
+          id: EventId.make(`event:stop-retry-bound:${step}`),
+          type: "run.updated",
+          threadId,
+          runId: run.id,
+          occurredAt: now,
+          payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+        });
+      });
+    yield* createWatchingThread(threadId, 40);
+    yield* send(threadId, "original", "start_immediately");
+    for (const action of beforeStop) yield* apply(action);
+    // The original Stop's receipt bound; its walk failed before reaching this thread.
+    const throughSequence = yield* orchestrator.getThreadEventSequence(threadId);
+    for (const action of afterStop) yield* apply(action);
+    yield* orchestrator.dispatch({
+      type: "thread.stop",
+      commandId: CommandId.make("retry-stop"),
+      threadId,
+      throughSequence,
+    });
+    assert.deepEqual(yield* threadState(threadId), {
+      runs: [...expected.runs],
+      watched: [...expected.watched],
+    });
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("thread.stop interrupts background work past a queue cancelled before it ran", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:stop-background-cancelled-queue");
+    yield* createWatchingThread(threadId, 42);
+    yield* send(threadId, "work", "start_immediately");
+    yield* send(threadId, "queued", "queue_after_active");
+    const [run, queued] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+    yield* orchestrator.dispatch({
+      type: "queued-run.cancel",
+      commandId: CommandId.make("cancel-before-background"),
+      threadId,
+      runId: queued!.id,
+    });
+    const now = yield* DateTime.now;
+    const providerTurnId = ProviderTurnId.make("provider-turn:stop-background");
+    yield* projections.apply({
+      id: EventId.make("event:stop-background:turn"),
+      type: "provider-turn.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: providerTurnId,
+        providerThreadId: run!.providerThreadId!,
+        nodeId: run!.rootNodeId!,
+        runAttemptId: run!.activeAttemptId!,
+        nativeTurnRef: null,
+        ordinal: 1,
+        status: "completed",
+        startedAt: now,
+        completedAt: now,
+      },
+    });
+    const backgroundId = TurnItemId.make("item:stop-background");
+    yield* projections.apply({
+      id: EventId.make("event:stop-background:item"),
+      type: "turn-item.updated",
+      threadId,
+      runId: run!.id,
+      occurredAt: now,
+      payload: {
+        id: backgroundId,
+        threadId,
+        runId: run!.id,
+        nodeId: run!.rootNodeId!,
+        providerThreadId: run!.providerThreadId!,
+        providerTurnId,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "running",
+        title: "Background command",
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        type: "command_execution",
+        input: "test background work",
+      },
+    });
+    yield* projections.apply({
+      id: EventId.make("event:stop-background:completed"),
+      type: "run.updated",
+      threadId,
+      runId: run!.id,
+      occurredAt: now,
+      payload: { ...run!, status: "completed", startedAt: now, completedAt: now },
+    });
+
+    yield* orchestrator.dispatch({
+      type: "thread.stop",
+      commandId: CommandId.make("stop-background"),
+      threadId,
+    });
+    const stopped = yield* orchestrator.getThreadProjection(threadId);
+    assert.notInclude(
+      ["pending", "running", "waiting"],
+      stopped.turnItems.find((item) => item.id === backgroundId)?.status,
+    );
+    assert.deepEqual(
+      stopped.turnItems
+        .filter((item) => item.type === "run_interrupt_request")
+        .map((item) => item.runId),
+      [run!.id],
+    );
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(watch(threadId, 43))));
+    assert.deepEqual(yield* threadState(threadId), {
+      runs: ["completed", "cancelled"],
+      watched: [],
+    });
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("thread.stop marks a turn it cannot interrupt so a late agent watch is refused", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
