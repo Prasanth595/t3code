@@ -311,14 +311,14 @@ describe("captureAssistantTextSelection", () => {
   );
 
   it.each([false, true])("clips overlap to the originating response, backwards=%s", (backwards) => {
-    const first = textNode("Repeated quote.");
-    const second = textNode(first.data);
-    const viewport = new SelectionNode("MAIN").append(
-      assistantSource(first),
-      assistantSource(second),
-    );
+    const first = textNode("First response.");
+    const second = textNode("Second response.");
+    const firstSource = assistantSource(first);
+    const secondSource = assistantSource(second);
+    const viewport = new SelectionNode("MAIN").append(firstSource, secondSource);
     const captured = capture(viewport, nativeSelection([first, 0], [second, 1], backwards));
-    expect(captured?.selector.text).toBe(backwards ? "R" : first.data);
+    expect(captured?.source).toBe(backwards ? secondSource : firstSource);
+    expect(captured?.selector.text).toBe(backwards ? "S" : first.data);
   });
 
   it("accepts a control endpoint only when none of its text is selected", () => {
