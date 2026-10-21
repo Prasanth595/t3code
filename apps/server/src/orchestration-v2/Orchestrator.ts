@@ -9412,14 +9412,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const run = projection.runs.find((candidate) => candidate.id === command.runId);
     const subagent = projection.subagents.find((candidate) => candidate.id === command.subagentId);
     // A user Stop ends an app-owned task here, whatever state its child is in, so a task that lost
-    // its child run (#19002) cannot outlive Stop. The client then stops the child thread; a child
-    // run that settles later still records its real outcome. A task that already ended is written
+    // its child run (#19002) cannot outlive Stop. The client then stops the child thread. A live
+    // child run bound to the task keeps its delivery: when it settles it records the real outcome
+    // and wakes the parent, whose own task may wait on it. A task that already ended is written
     // again, so a client holding a stale copy stops showing it as running.
     if (
       subagent?.origin === "app_owned" &&
       subagent.childThreadId !== null &&
       subagent.runId === command.runId
     ) {
+      const childThreadId = subagent.childThreadId;
+      const child = yield* projectionStore.getThreadRecords(childThreadId, ["runs"]).pipe(
+        Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: childThreadId, cause }),
+        ),
+      );
+      const original =
+        child?.thread.forkedFrom?.type === "node" && child.thread.forkedFrom.nodeId === subagent.id;
+      const willSettle =
+        child?.runs.some(
+          (run) =>
+            (run.status === "queued" || isBlockingRun(run)) &&
+            (run.delegatedTaskId === subagent.id ||
+              (original && run.delegatedTaskId === undefined)),
+        ) ?? false;
       const records = yield* loadProjectionForCommand(command, ["nodes", "turnItems"], {
         turnItemTypes: ["subagent"],
         turnItemRunIds: [subagent.runId],
@@ -9429,9 +9446,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return yield* writeAppOwnedTask({
         command,
         events,
-        task: isOrchestrationV2WorkActive(subagent.status)
-          ? cancelledAppOwnedTask(subagent, now)
-          : subagent,
+        task: !isOrchestrationV2WorkActive(subagent.status)
+          ? subagent
+          : willSettle
+            ? { ...subagent, status: "cancelled", completedAt: now, updatedAt: now }
+            : cancelledAppOwnedTask(subagent, now),
         nodes: records.nodes,
         turnItems: records.turnItems,
         now,

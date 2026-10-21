@@ -166,6 +166,7 @@ it.effect.each([
   ["idle", "run.interrupt"],
   ["idle", "subagent.stop"],
   ["running", "subagent.stop"],
+  ["bound", "subagent.stop"],
   ["archived", "thread.stop"],
   ["missing", "thread.stop"],
   ["running", "thread.stop"],
@@ -279,7 +280,9 @@ it.effect.each([
       const childRunStatus =
         childState === "running" || childState === "queued" || childState === "waiting"
           ? childState
-          : "completed";
+          : childState === "bound"
+            ? "running"
+            : "completed";
       yield* apply({
         type: "run.updated",
         threadId: childThreadId,
@@ -299,12 +302,14 @@ it.effect.each([
           ...runAtStart,
           status: childRunStatus,
           completedAt: childRunStatus === "completed" ? now : null,
-          ...(childState === "correlated" ? { delegatedTaskId: taskId } : {}),
+          ...(childState === "correlated" || childState === "bound"
+            ? { delegatedTaskId: taskId }
+            : {}),
         },
       });
       assert.equal(
         (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]?.delegatedTaskId,
-        childState === "correlated" ? taskId : undefined,
+        childState === "correlated" || childState === "bound" ? taskId : undefined,
       );
       if (childState === "provider-active" || childState === "roster") {
         yield* apply({
@@ -445,9 +450,10 @@ it.effect.each([
       assert.equal(after.subagents.find((task) => task.id === taskId)?.status, expected);
       assert.equal(after.nodes.find((node) => node.id === taskId)?.status, expected);
       assert.equal(after.turnItems.find((item) => item.id === itemId)?.status, expected);
+      // A live child run bound to the task still reports its outcome to the parent.
       assert.equal(
         after.subagents.find((task) => task.id === taskId)?.completionDelivery?.state,
-        "disposed",
+        childState === "bound" ? undefined : "disposed",
       );
       assert.equal(
         after.subagents.find((task) => task.id === original.id)?.result,
