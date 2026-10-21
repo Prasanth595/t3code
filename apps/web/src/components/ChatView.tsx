@@ -208,7 +208,7 @@ import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { usePreviewSession } from "./preview/usePreviewSession";
-import { subscribePreviewAction } from "./preview/previewActionBus";
+import { dispatchPreviewAction, subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 
 import {
@@ -2830,6 +2830,15 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
   const createBrowserSurfaceStable = useStableCallback(createBrowserSurface);
+  const runBrowserShortcut = useStableCallback((command: "preview.newTab" | "preview.annotate") => {
+    if (!canOperatePreview || !browserAvailable) return false;
+    if (command === "preview.newTab") createBrowserSurface();
+    else {
+      if (!previewPanelOpen) return false;
+      dispatchPreviewAction("annotate");
+    }
+    return true;
+  });
   const addDiffSurface = () => {
     if (!activeThreadRef || !isServerThread || !isGitRepo) return;
     useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
@@ -4210,6 +4219,14 @@ export default function ChatView(props: ChatViewProps) {
       focusComposerStable();
     },
     commands: {
+      "preview.newTab": ({ event, terminalFocusOwner }) => {
+        if (terminalFocusOwner !== null) return false;
+        if (!event.repeat) return runBrowserShortcut("preview.newTab");
+      },
+      "preview.annotate": ({ event, terminalFocusOwner }) => {
+        if (terminalFocusOwner !== null) return false;
+        if (!event.repeat) return runBrowserShortcut("preview.annotate");
+      },
       "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReferenceStable();
       },
@@ -4330,8 +4347,13 @@ export default function ChatView(props: ChatViewProps) {
     return window.desktopBridge?.onMenuAction((action) => {
       if (action === "rightPanel.toggle") toggleRightPanelStable();
       else if (action === "rightPanel.toggleMaximized") toggleRightPanelMaximizedStable();
+      else if (
+        (action === "preview.newTab" || action === "preview.annotate") &&
+        !isCommandPaletteOpen()
+      )
+        runBrowserShortcut(action);
     });
-  }, [toggleRightPanelStable, toggleRightPanelMaximizedStable]);
+  }, [runBrowserShortcut, toggleRightPanelStable, toggleRightPanelMaximizedStable]);
 
   // Paste-to-focus: the resting composer blurs on a click into the timeline,
   // so a paste that follows has no editable target and would be dropped.

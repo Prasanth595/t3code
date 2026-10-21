@@ -29,6 +29,7 @@ interface Props {
   refreshDisabled: boolean;
   inputDisabled?: boolean | undefined;
   focusUrlNonce?: number | undefined;
+  emptyTabToFocus?: string | null | undefined;
   onBack: () => void;
   onForward: () => void;
   onRefresh: () => void;
@@ -58,6 +59,7 @@ export function PreviewChromeRow({
   refreshDisabled,
   inputDisabled,
   focusUrlNonce,
+  emptyTabToFocus,
   onBack,
   onForward,
   onRefresh,
@@ -85,7 +87,12 @@ export function PreviewChromeRow({
     const node = inputRef.current;
     if (!node) return;
     node.focus();
+    node.select();
   }, [focusUrlNonce]);
+
+  useEffect(() => {
+    if (emptyTabToFocus) inputRef.current?.focus();
+  }, [emptyTabToFocus]);
 
   const submit = (event?: FormEvent | KeyboardEvent) => {
     event?.preventDefault();
