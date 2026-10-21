@@ -106,18 +106,21 @@ export interface ManualServerUpdate {
  * A server's supervisor restarts it at the version it pins, so a relaunch typed
  * by hand only collides with it; the command has to go through that unit.
  */
+const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+
 export function manualServerUpdate(
   targetVersion: string,
   serverLabel: string,
   installation?: ServerInstallation,
 ): ManualServerUpdate {
   const unit = installation?.systemdUnit;
+  // systemd-escape writes `\x2d` into instance names; unquoted, the shell drops the backslash.
+  const unitName = unit ? shellQuote(unit.name) : "";
   const systemctl = unit?.scope === "user" ? "systemctl --user" : "sudo systemctl";
   if (installation?.kind === "npm-global") {
-    const prefix = `'${installation.prefix.replaceAll("'", "'\\''")}'`;
-    const install = `npm install --global --prefix ${prefix} t3@${targetVersion}`;
+    const install = `npm install --global --prefix ${shellQuote(installation.prefix)} t3@${targetVersion}`;
     return {
-      command: unit ? `${install} && ${systemctl} restart ${unit.name}` : install,
+      command: unit ? `${install} && ${systemctl} restart ${unitName}` : install,
       label: "Copy update command",
       title: "Update command copied",
       description: unit
@@ -129,8 +132,9 @@ export function manualServerUpdate(
     installation?.kind === "pnpm-dlx" ? "pnpm dlx" : installation?.kind === "bunx" ? "bunx" : "npx";
   const launch = `${runner} t3@${targetVersion}`;
   if (unit?.scope === "user") {
+    const baseDir = installation?.baseDir ? ` --base-dir ${shellQuote(installation.baseDir)}` : "";
     return {
-      command: `${systemctl} disable --now ${unit.name} && ${launch} service install`,
+      command: `${systemctl} disable --now ${unitName} && ${launch} service install${baseDir}`,
       label: "Copy update command",
       title: "Update command copied",
       description: `${unit.name} on ${serverLabel} keeps restarting this server on its old version. Run the command there: it turns ${unit.name} off and installs T3 Code's own service on t3@${targetVersion}, which updates in one click next time. Running agents stop.`,
@@ -138,7 +142,8 @@ export function manualServerUpdate(
   }
   if (unit) {
     return {
-      command: `${systemctl} restart ${unit.name}`,
+      // Without a reload, restart reuses the ExecStart systemd loaded before the edit.
+      command: `${systemctl} daemon-reload && ${systemctl} restart ${unitName}`,
       label: "Copy restart command",
       title: "Restart command copied",
       description: `The system service ${unit.name} runs this server on ${serverLabel}. Change the t3 version in its ExecStart to t3@${targetVersion}, then run the command.`,

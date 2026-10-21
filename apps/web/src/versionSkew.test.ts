@@ -40,10 +40,10 @@ describe("versionSkew", () => {
 
   it("goes through the systemd unit that would restart the old version", () => {
     expect(command({ kind: "npx", subcommand: "serve", systemdUnit: userUnit })).toBe(
-      "systemctl --user disable --now t3.service && npx t3@0.0.45 service install",
+      "systemctl --user disable --now 't3.service' && npx t3@0.0.45 service install",
     );
     expect(command({ kind: "npm-global", prefix: "/opt/node", systemdUnit: userUnit })).toBe(
-      "npm install --global --prefix '/opt/node' t3@0.0.45 && systemctl --user restart t3.service",
+      "npm install --global --prefix '/opt/node' t3@0.0.45 && systemctl --user restart 't3.service'",
     );
     expect(
       manualServerUpdate("0.0.45", "vm", {
@@ -51,9 +51,21 @@ describe("versionSkew", () => {
         systemdUnit: { name: "t3.service", scope: "system" },
       }),
     ).toMatchObject({
-      command: "sudo systemctl restart t3.service",
+      command: "sudo systemctl daemon-reload && sudo systemctl restart 't3.service'",
       description: expect.stringContaining("ExecStart"),
     });
+  });
+
+  it("keeps the replaced unit's data directory and escaped unit name intact", () => {
+    expect(
+      command({
+        kind: "npx",
+        systemdUnit: { name: "t3@my\\x2dinstance.service", scope: "user" },
+        baseDir: "/srv/maria's t3",
+      }),
+    ).toBe(
+      "systemctl --user disable --now 't3@my\\x2dinstance.service' && npx t3@0.0.45 service install --base-dir '/srv/maria'\\''s t3'",
+    );
   });
   beforeEach(() => {
     branding.APP_VERSION = "0.0.34";
