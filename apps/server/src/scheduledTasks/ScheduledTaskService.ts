@@ -48,7 +48,9 @@ import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
+import { forkParked } from "../serverActivation.ts";
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
+import { makeTrackedRuns, type SettledRun } from "./TrackedRuns.ts";
 import {
   redactHeaders,
   redactQuery,
@@ -425,6 +427,7 @@ export const layer = Layer.effect(
       ReadonlyMap<ScheduledTaskId, ReadonlyArray<number>>
     >(new Map());
     const activeRuns = yield* Ref.make<ReadonlySet<ScheduledTaskId>>(new Set());
+    const trackedRuns = makeTrackedRuns();
     // Sliding(1) coalesces the dirty-signal: every notification triggers a
     // full list() re-emit anyway, so a slow subscriber only ever needs the
     // latest signal — an unbounded backlog would just grow memory.
@@ -651,6 +654,9 @@ export const layer = Layer.effect(
         SET updated_at = ${startedAtIso},
             last_run_at = ${startedAtIso},
             last_run_webhook_delivery_id = ${webhookDeliveryId ?? null},
+            -- A run still 'running' here was dispatched and never reported an end.
+            -- This run replaces it on the row, so it is counted now.
+            run_count = run_count + CASE WHEN last_run_status = 'running' THEN 1 ELSE 0 END,
             last_run_status = 'running',
             last_run_error = NULL
         WHERE task_id = ${id}
@@ -668,7 +674,10 @@ export const layer = Layer.effect(
       readonly id: ScheduledTaskId;
       readonly completedAtIso: string;
       readonly nextRunAtIso: string | null;
-      readonly status: "succeeded" | "failed";
+      // A dispatched run stays 'running' until its turn ends, and counts then:
+      // startup recovery counts a row it finds 'running', so counting here too
+      // would count a restart-interrupted run twice.
+      readonly status: "running" | "succeeded" | "failed";
       readonly error: string | null;
       readonly startedAtIso: string;
     }) =>
@@ -678,7 +687,7 @@ export const layer = Layer.effect(
             next_run_at = ${input.nextRunAtIso},
             last_run_status = ${input.status},
             last_run_error = ${input.error},
-            run_count = run_count + 1
+            run_count = run_count + ${input.status === "running" ? 0 : 1}
         WHERE task_id = ${input.id}
           AND last_run_status = 'running'
           AND last_run_at = ${input.startedAtIso}
@@ -688,6 +697,25 @@ export const layer = Layer.effect(
         ),
       );
 
+    // The startedAtIso guard leaves the row alone once a newer run has taken it.
+    const recordRunEnd = Effect.fn("ScheduledTaskService.recordRunEnd")(function* (
+      run: SettledRun,
+    ) {
+      const now = yield* localNow;
+      const rows = yield* sql<{ task_id: string }>`
+        UPDATE scheduled_tasks
+        SET updated_at = ${iso(now)},
+            last_run_status = ${run.status},
+            last_run_error = ${run.error},
+            run_count = run_count + 1
+        WHERE task_id = ${run.taskId}
+          AND last_run_status = 'running'
+          AND last_run_at = ${run.startedAtIso}
+        RETURNING task_id
+      `;
+      if (rows.length > 0) yield* notifyChanged;
+    });
+
     // Best-effort escape hatch: if anything fails between markRunning and
     // markCompleted, write a full terminal record so runDueTasks neither skips
     // the task forever (it filters out 'running' rows) nor re-fires it
@@ -695,7 +723,12 @@ export const layer = Layer.effect(
     // advance. Pending webhook attempts count only with their completion state;
     // other attempts count here.
     const releaseStuckRun = Effect.fn("ScheduledTaskService.releaseStuckRun")(
-      function* (task: ScheduledTask, message: string, pendingDeliveryId?: string) {
+      function* (
+        task: ScheduledTask,
+        message: string,
+        startedAtIso: string,
+        pendingDeliveryId?: string,
+      ) {
         const now = yield* localNow;
         const reread = yield* Effect.result(findTask(task.id));
         if (Result.isSuccess(reread) && reread.success === null) return;
@@ -711,10 +744,11 @@ export const layer = Layer.effect(
                 WHERE delivery_id = ${pendingDeliveryId ?? null} AND state = 'running'
               ) THEN 0 ELSE 1 END
           WHERE task_id = ${task.id} AND last_run_status = 'running'
+            AND last_run_at = ${startedAtIso}
         `;
         yield* notifyChanged;
       },
-      (effect, task, _message, _pendingDeliveryId) =>
+      (effect, task, _message, _startedAtIso, _pendingDeliveryId) =>
         effect.pipe(
           Effect.catch((cause) =>
             Effect.logWarning("Could not release stuck schedule task run", {
@@ -747,6 +781,9 @@ export const layer = Layer.effect(
         return { task, threadId: null };
       }
 
+      // Set once this run owns the row, so a failure before that cannot
+      // release a turn an earlier run left in flight.
+      const markedAtIso = yield* Ref.make<string | null>(null);
       return yield* Effect.gen(function* () {
         const startedAt = yield* localNow;
         const startedAtIso = iso(startedAt);
@@ -813,6 +850,7 @@ export const layer = Layer.effect(
               ),
             );
 
+        yield* Ref.set(markedAtIso, startedAtIso);
         yield* notifyChanged;
 
         const fireKey =
@@ -821,6 +859,7 @@ export const layer = Layer.effect(
             : `${active.id}:webhook:${webhook.deliveryId}`;
         const commandId = CommandId.make(`scheduled-task:${fireKey}`);
         const messageId = MessageId.make(`scheduled-task-message:${fireKey}`);
+        trackedRuns.track(messageId, active.id, startedAtIso);
         // A webhook prompt was rendered from the row when the request arrived.
         const prompt = webhook?.prompt ?? active.prompt;
 
@@ -872,8 +911,12 @@ export const layer = Layer.effect(
         const runSucceeded = result._tag === "Success";
         if (webhook !== undefined && runSucceeded) yield* Ref.set(webhook.dispatched, true);
         const completedAt = yield* localNow;
-        const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
-        const lastRunError = runSucceeded ? null : errorMessage(result.cause);
+        // Accepted is not finished: the row stays 'running' until the turn
+        // ends, unless it already ended while the dispatch was returning.
+        const ended = runSucceeded ? trackedRuns.dispatched(messageId) : null;
+        if (!runSucceeded) trackedRuns.forgetTask(active.id);
+        const lastRunStatus = runSucceeded ? (ended?.status ?? "running") : ("failed" as const);
+        const lastRunError = runSucceeded ? (ended?.error ?? null) : errorMessage(result.cause);
         const threadId = runSucceeded ? result.value : null;
         const current = yield* findTask(task.id);
         const scheduleSource = current ?? task;
@@ -884,7 +927,7 @@ export const layer = Layer.effect(
           nextRunAt: nextRunAt(scheduleSource, completedAt),
           lastRunStatus,
           lastRunError,
-          runCount: scheduleSource.runCount + 1,
+          runCount: scheduleSource.runCount + (lastRunStatus === "running" ? 0 : 1),
         };
         if (current !== null) {
           // startedAtIso in the guard ensures this writes only to the row this
@@ -920,10 +963,22 @@ export const layer = Layer.effect(
                 ),
               );
           yield* notifyChanged;
-        }
+        } else trackedRuns.forgetTask(task.id);
         return { task: completed, threadId };
       }).pipe(
-        Effect.onError((cause) => releaseStuckRun(task, errorMessage(cause), webhook?.deliveryId)),
+        Effect.onError((cause) =>
+          Ref.get(markedAtIso).pipe(
+            Effect.flatMap((startedAtIso) =>
+              startedAtIso === null
+                ? Effect.void
+                : Effect.sync(() => trackedRuns.forgetTask(task.id)).pipe(
+                    Effect.andThen(
+                      releaseStuckRun(task, errorMessage(cause), startedAtIso, webhook?.deliveryId),
+                    ),
+                  ),
+            ),
+          ),
+        ),
         Effect.ensuring(
           Ref.update(activeRuns, (active) => {
             const next = new Set(active);
@@ -1036,6 +1091,26 @@ export const layer = Layer.effect(
     );
 
     yield* scheduler.register("scheduled-tasks", runDueTasks());
+
+    // Dispatching a run only gets it accepted; its turn ends later, so the
+    // outcome is read from the thread's run events.
+    yield* forkParked(
+      Stream.runForEach(threadManagement.streamDomainEvents, (event) => {
+        // Every domain event passes through here, so the common case stays allocation-free.
+        const ended = trackedRuns.observe(event);
+        return ended.length === 0
+          ? Effect.void
+          : Effect.forEach(ended, recordRunEnd, { discard: true }).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Could not record scheduled task run outcome", { cause }),
+              ),
+            );
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Scheduled task run event stream failed", { cause }),
+        ),
+      ),
+    );
 
     const list: ScheduledTaskService["Service"]["list"] = () =>
       listRows().pipe(
@@ -1593,12 +1668,18 @@ export const layer = Layer.effect(
       const dispatched = yield* Ref.make(false);
       return yield* runTask(task, "webhook", { deliveryId, prompt, dispatched }).pipe(
         Effect.flatMap(({ task: completed }) =>
-          completed.lastRunStatus === "failed"
-            ? runOutcome("failed").pipe(
-                Effect.andThen(markDeliveryFailed(deliveryId, "The run failed to start.")),
-                Effect.andThen(releaseFailedDelivery(deliveryId)),
-              )
-            : runOutcome("started"),
+          // The row may already hold the turn's own failure; the delivery log
+          // records only whether the dispatch was accepted.
+          Ref.get(dispatched).pipe(
+            Effect.flatMap((accepted) =>
+              completed.lastRunStatus === "failed" && !accepted
+                ? runOutcome("failed").pipe(
+                    Effect.andThen(markDeliveryFailed(deliveryId, "The run failed to start.")),
+                    Effect.andThen(releaseFailedDelivery(deliveryId)),
+                  )
+                : runOutcome("started"),
+            ),
+          ),
         ),
         Effect.catchTags({
           WebhookDeliverySkipped: (skipped) =>

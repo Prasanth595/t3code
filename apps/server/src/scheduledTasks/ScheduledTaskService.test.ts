@@ -4,11 +4,17 @@ import * as NodeUtil from "node:util";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
+  EventId,
+  MessageId,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2Run,
   ProjectId,
   ProviderInstanceId,
+  RunId,
   ScheduledTaskError,
   ScheduledTaskId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -19,6 +25,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 import * as Deferred from "effect/Deferred";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -403,5 +410,187 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
       yield* Fiber.join(run);
       assert.lengthOf((yield* service.list()).tasks, 0);
     }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+const turnThreadId = ThreadId.make("thread:turn-outcome");
+const epoch = DateTime.makeUnsafe(0);
+
+const runOf = (
+  runId: string,
+  userMessageId: MessageId,
+  status: OrchestrationV2Run["status"],
+): OrchestrationV2Run => ({
+  id: RunId.make(runId),
+  threadId: turnThreadId,
+  ordinal: 1,
+  providerInstanceId: ProviderInstanceId.make("codex"),
+  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+  providerThreadId: null,
+  userMessageId,
+  rootNodeId: null,
+  activeAttemptId: null,
+  status,
+  requestedAt: epoch,
+  startedAt: null,
+  completedAt: null,
+  checkpointId: null,
+  contextHandoffId: null,
+});
+
+const runEvent = (run: OrchestrationV2Run): OrchestrationV2DomainEvent => ({
+  id: EventId.make(`event:${run.id}:${run.status}`),
+  type: "run.updated",
+  threadId: run.threadId,
+  runId: run.id,
+  occurredAt: epoch,
+  payload: run,
+});
+
+const providerErrorEvent = (runId: string, message: string): OrchestrationV2DomainEvent => ({
+  id: EventId.make(`event:${runId}:error`),
+  type: "turn-item.updated",
+  threadId: turnThreadId,
+  runId: RunId.make(runId),
+  occurredAt: epoch,
+  payload: {
+    id: TurnItemId.make(`turn-item:${runId}:error`),
+    threadId: turnThreadId,
+    runId: RunId.make(runId),
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    status: "failed",
+    title: null,
+    startedAt: epoch,
+    completedAt: epoch,
+    updatedAt: epoch,
+    type: "error",
+    failure: { class: "usage_limit", message, code: null, retryable: false },
+  },
+});
+
+// Dispatches to a bound thread succeed at once; the run's events are fed by hand.
+const makeTurnHarness = Effect.gen(function* () {
+  const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+  const dispatched = yield* Queue.unbounded<MessageId>();
+  const layer = ScheduledTaskService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          sendToThread: (input) =>
+            Queue.offer(dispatched, input.messageId).pipe(Effect.as(undefined as never)),
+          streamDomainEvents: Stream.fromQueue(events),
+        }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          isScratchProject: () => Effect.succeed(false),
+        }),
+        NodeCrypto.layer,
+        Scheduler.layer,
+      ),
+    ),
+  );
+  return { events, dispatched, layer };
+});
+
+const upsertBoundTask = (service: ScheduledTaskService.ScheduledTaskService["Service"]) =>
+  service.upsert({
+    id: ScheduledTaskId.make("task:turn-outcome"),
+    title: "Check orchestration",
+    prompt: "Check progress",
+    enabled: false,
+    schedule: { type: "interval", everyMs: 60_000 },
+    projectId: ProjectId.make("project:test"),
+    threadId: turnThreadId,
+    workspaceStrategy: { type: "root" },
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+  });
+
+const untilStatus = (
+  service: ScheduledTaskService.ScheduledTaskService["Service"],
+  id: ScheduledTaskId,
+  status: string,
+) =>
+  service.subscribeList().pipe(
+    Stream.filter(({ tasks }) => tasks.some((t) => t.id === id && t.lastRunStatus === status)),
+    Stream.take(1),
+    Stream.runDrain,
+  );
+
+it.effect("a failed turn replaces the dispatched run's status with the provider error", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeTurnHarness;
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      const ran = yield* service.runNow({ id: task.id });
+      // Accepted is not finished: the turn has not ended yet.
+      assert.equal(ran.task.lastRunStatus, "running");
+      assert.equal(ran.task.runCount, 0);
+      const messageId = yield* Queue.take(harness.dispatched);
+      yield* Queue.offerAll(harness.events, [
+        runEvent(runOf("run:usage-limit", messageId, "queued")),
+        runEvent(runOf("run:usage-limit", messageId, "running")),
+        providerErrorEvent("run:usage-limit", "You have reached your usage limit."),
+        runEvent(runOf("run:usage-limit", messageId, "failed")),
+      ]);
+      yield* untilStatus(service, task.id, "failed");
+      const [settled] = (yield* service.list()).tasks;
+      assert.equal(settled?.lastRunStatus, "failed");
+      assert.equal(settled?.lastRunError, "You have reached your usage limit.");
+      assert.equal(settled?.runCount, 1);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a completed turn records the run as succeeded", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeTurnHarness;
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      yield* service.runNow({ id: task.id });
+      const messageId = yield* Queue.take(harness.dispatched);
+      yield* Queue.offerAll(harness.events, [
+        runEvent(runOf("run:completes", messageId, "running")),
+        runEvent(runOf("run:completes", messageId, "completed")),
+      ]);
+      yield* untilStatus(service, task.id, "succeeded");
+      const [settled] = (yield* service.list()).tasks;
+      assert.isNull(settled?.lastRunError);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("an earlier run's turn ending cannot overwrite a newer run", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeTurnHarness;
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      yield* service.runNow({ id: task.id });
+      const first = yield* Queue.take(harness.dispatched);
+      // Run now again while the first turn is still in flight.
+      yield* TestClock.adjust("1 second");
+      yield* service.runNow({ id: task.id });
+      const second = yield* Queue.take(harness.dispatched);
+      yield* Queue.offerAll(harness.events, [
+        runEvent(runOf("run:first", first, "failed")),
+        runEvent(runOf("run:second", second, "completed")),
+      ]);
+      yield* untilStatus(service, task.id, "succeeded");
+      const [settled] = (yield* service.list()).tasks;
+      assert.equal(settled?.lastRunStatus, "succeeded");
+      assert.isNull(settled?.lastRunError);
+      assert.equal(settled?.runCount, 2);
+    }).pipe(Effect.provide(harness.layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
