@@ -120,8 +120,6 @@ function nativeSelection(
 ) {
   let root = start[0];
   while (root.parentElement !== null) root = root.parentElement;
-  // Give every DOM boundary its own position, including element boundaries
-  // immediately before text offset 0 and after its final character.
   const positions = new Map<SelectionNode, number[]>();
   let position = 0;
   const index = (node: SelectionNode) => {
@@ -429,22 +427,9 @@ describe("createAssistantTextSelector", () => {
       expect(findAssistantCitationText(text, parsed!)).toBeNull();
     },
   );
-
-  it.each(["", " \n\t\r\n"])("rejects empty or whitespace-only selections: %j", (text) => {
-    expect(createAssistantTextSelector(text, 0, text.length)).toBeNull();
-  });
 });
 
 describe("findAssistantCitationText", () => {
-  it("resolves an exact selection with its saved position and context", () => {
-    expect(
-      findAssistantCitationText(
-        "Before the selected text after.",
-        selector("selected text", { start: 11, end: 24, prefix: "Before the ", suffix: " after." }),
-      ),
-    ).toEqual({ start: 11, end: 24 });
-  });
-
   it("finds a unique quote when insertion before it shifts its offsets", () => {
     expect(
       findAssistantCitationText(

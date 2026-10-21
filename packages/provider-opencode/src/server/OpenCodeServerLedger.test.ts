@@ -28,32 +28,34 @@ const groupExists = (pgid: number) => {
   }
 };
 
+// A group of zombies can be reaped between a check and the kill, so ESRCH just means it is gone.
 const killGroup = (pgid: number) =>
   Effect.sync(() => {
-    if (groupExists(pgid)) process.kill(-pgid, "SIGKILL");
+    try {
+      process.kill(-pgid, "SIGKILL");
+    } catch (cause) {
+      if (!(cause instanceof Error && "code" in cause && cause.code === "ESRCH")) throw cause;
+    }
   });
 
-/**
- * Spawns a throwaway process group shaped like `opencode serve`: by default a
- * shell leader whose argv ends in the serve arguments, plus a `sleep` member.
- */
 const spawnGroup = (args: ReadonlyArray<string>, script = "sleep 600 & wait") =>
   Effect.acquireRelease(
     Effect.gen(function* () {
       const child = NodeChildProcess.spawn("/bin/sh", ["-c", script, ...args], {
         detached: true,
-        stdio: "ignore",
+        stdio: ["ignore", "pipe", "ignore"],
       });
       const exited = yield* Deferred.make<NodeJS.Signals | null>();
+      const printed = yield* Deferred.make<void>();
       child.once("exit", (_code, signal) => Deferred.doneUnsafe(exited, Effect.succeed(signal)));
+      child.stdout.once("data", () => Deferred.doneUnsafe(printed, Effect.void));
       const pid = child.pid;
       if (pid === undefined) return yield* Effect.die("spawn failed");
-      return { pid, exited: Deferred.await(exited) };
+      return { pid, exited: Deferred.await(exited), printed: Deferred.await(printed) };
     }),
     ({ pid }) => killGroup(pid),
   );
 
-/** A T3 server that recorded its OpenCode server and then died without cleanup. */
 const recordFromDeadServer = (stateDir: string, server: { readonly pid: number }) =>
   Effect.gen(function* () {
     const previousServer = yield* spawnGroup([]);
@@ -61,7 +63,6 @@ const recordFromDeadServer = (stateDir: string, server: { readonly pid: number }
       stateDir,
       ownerPid: previousServer.pid,
     });
-    // The previous server never gets to forget its entry.
     yield* Effect.asVoid(previousLedger.track({ pid: server.pid, port: 4096, args: SERVE_ARGS }));
     process.kill(-previousServer.pid, "SIGKILL");
     yield* previousServer.exited;
@@ -102,12 +103,14 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-ledger-" });
-      // The wrapper starts the serve process in its group and exits.
+      // The inner shell prints once it has exec'd. Until then it still carries the wrapper's
+      // command line, and recording that would make the reaper skip the group as recycled.
       const wrapper = yield* spawnGroup(
         SERVE_ARGS,
-        '/bin/sh -c "sleep 600 & wait" "$0" "$@" & exit 0',
+        '/bin/sh -c "echo ready; sleep 600 & wait" "$0" "$@" & exit 0',
       );
       yield* wrapper.exited;
+      yield* wrapper.printed;
       expect(groupExists(wrapper.pid)).toBe(true);
 
       yield* recordFromDeadServer(stateDir, wrapper);
@@ -129,7 +132,6 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
       const unrelated = yield* spawnGroup(SERVE_ARGS);
       yield* recordFromDeadServer(stateDir, unrelated);
       const entryPath = path.join(stateDir, "opencode-servers", `${unrelated.pid}.json`);
-      // Same pid, a different process: what a recycled pid looks like.
       const entry = yield* fs.readFileString(entryPath);
       yield* fs.writeFileString(entryPath, entry.replace(/"startTime":"[^"]+"/, '"startTime":"1"'));
 
@@ -149,7 +151,6 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
       const unrelated = yield* spawnGroup(SERVE_ARGS);
       yield* recordFromDeadServer(stateDir, unrelated);
       const entryPath = path.join(stateDir, "opencode-servers", `${unrelated.pid}.json`);
-      // Same pid and start second, but not the server T3 started.
       const entry = yield* fs.readFileString(entryPath);
       yield* fs.writeFileString(entryPath, entry.replace("--port=4096", "--port=4097"));
 
@@ -186,8 +187,6 @@ describe.skipIf(observedPlatforms.length === 0)("OpenCode server startup", () =>
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-startup-" });
-      // A wrapper that leaves the serve process running in its group and exits 0,
-      // which the spawner's own cleanup does not stop.
       const binaryPath = path.join(tempDir, "opencode");
       yield* fs.writeFileString(binaryPath, "#!/bin/sh\nsleep 600 &\nexit 0\n");
       yield* fs.chmod(binaryPath, 0o755);
@@ -210,7 +209,6 @@ describe.skipIf(observedPlatforms.length === 0)("OpenCode server startup", () =>
           Layer.succeed(
             OpenCodeServerLedger.OpenCodeServerLedger,
             OpenCodeServerLedger.OpenCodeServerLedger.of({
-              // Recording stalls until the scope is interrupted, after the wrapper exited.
               track: (server) =>
                 Effect.gen(function* () {
                   yield* (yield* Deferred.await(spawned)).exitCode.pipe(Effect.ignore);

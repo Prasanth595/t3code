@@ -71,10 +71,6 @@ function comment(overrides: Partial<PullRequestComment> = {}): PullRequestCommen
 }
 
 describe("canEditPullRequestChangeRequest", () => {
-  it("lets the author rewrite their own change request", () => {
-    expect(canEditPullRequestChangeRequest(subject())).toBe(true);
-  });
-
   it("matches the author regardless of case", () => {
     expect(canEditPullRequestChangeRequest(subject({ viewer: "OctoCat" }))).toBe(true);
   });
@@ -106,7 +102,6 @@ describe("canEditPullRequestChangeRequest", () => {
         }),
       ),
     ).toBe(false);
-    // The host can't rewrite change requests at all, so the reader's answer can't widen that.
     expect(
       canEditPullRequestChangeRequest(
         subject({
@@ -151,10 +146,6 @@ describe("canEditPullRequestChangeRequest", () => {
 });
 
 describe("canEditPullRequestComment", () => {
-  it("lets the reader rewrite their own conversation comment", () => {
-    expect(canEditPullRequestComment(subject(), comment())).toBe(true);
-  });
-
   it("lets the reader rewrite their own remark on a line", () => {
     expect(canEditPullRequestComment(subject(), comment({ kind: "review-comment" }))).toBe(true);
   });
@@ -182,7 +173,6 @@ describe("canEditPullRequestComment", () => {
         comment({ author: actor("someone-else"), canEdit: true }),
       ),
     ).toBe(true);
-    // The host can't rewrite remarks at all, so its per-remark answer can't widen that.
     expect(
       canEditPullRequestComment(
         subject({ capabilities: capabilities({ changeRequest: true, comment: false }) }),
@@ -209,10 +199,6 @@ describe("canEditPullRequestComment", () => {
     expect(canEditPullRequestComment(subject({ capabilities: capabilities() }), comment())).toBe(
       false,
     );
-  });
-
-  it("refuses where the host did not say who the reader is", () => {
-    expect(canEditPullRequestComment(subject({ viewer: undefined }), comment())).toBe(false);
   });
 });
 

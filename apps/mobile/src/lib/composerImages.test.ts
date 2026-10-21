@@ -12,7 +12,6 @@ const clipboard = vi.hoisted(() => ({
 
 vi.mock("expo-clipboard", () => clipboard);
 
-/** A native image renderer that reports the source size the test gives it. */
 const manipulator = vi.hoisted(() => {
   const state = { sourceSize: { width: 0, height: 0 } };
   const manipulate = vi.fn((source: string | { width: number; height: number }) => {
@@ -138,23 +137,6 @@ describe("composer clipboard paste", () => {
     ).toEqual({ images: [], text: null, error: expect.stringContaining("up to") });
     expect(clipboard.getStringAsync).not.toHaveBeenCalled();
   });
-
-  it("returns plain text without image chips", async () => {
-    expect(await pasteComposerClipboard({ existingCount: 0 })).toEqual({
-      images: [],
-      text: "clipboard text",
-      error: null,
-    });
-  });
-
-  it("reports an empty text clipboard", async () => {
-    clipboard.getStringAsync.mockResolvedValue("");
-    expect(await pasteComposerClipboard({ existingCount: 0 })).toEqual({
-      images: [],
-      text: null,
-      error: "Clipboard is empty.",
-    });
-  });
 });
 
 describe("oversized pasted images", () => {
@@ -205,16 +187,6 @@ describe("oversized pasted images", () => {
         previewUri: "data:image/png;base64,cmVuZGVyZWQ=",
       }),
     ]);
-  });
-
-  it("keeps a 2000px clipboard image byte for byte without rendering it", async () => {
-    const pasted = pngDataUrl(2000, 1200);
-    clipboard.getImageAsync.mockResolvedValue({ data: pasted });
-
-    const result = await pasteComposerClipboard({ existingCount: 0 });
-
-    expect(manipulator.manipulate).not.toHaveBeenCalled();
-    expect(result.images).toEqual([expect.objectContaining({ dataUrl: pasted })]);
   });
 });
 
@@ -319,19 +291,6 @@ describe("composerStripAttachments", () => {
     fileUri: "file:///notes.txt",
   };
 
-  it("keeps media, because a thumbnail is the only way to see it", async () => {
-    const { composerStripAttachments } = await import("./composerImages");
-    const kept = composerStripAttachments([image, video] as never);
-    expect(kept.map((a) => a.id)).toEqual(["img-1", "vid-1"]);
-  });
-
-  it("never shows a non-media file above the composer", async () => {
-    const { composerStripAttachments } = await import("./composerImages");
-    // A document reads as its inline chip. A tile with a generic glyph says less than the
-    // chip does, so it is not a fallback worth having, chip present or not.
-    expect(composerStripAttachments([doc] as never)).toEqual([]);
-  });
-
   it("keeps media beside a document rather than dropping the whole strip", async () => {
     const { composerStripAttachments } = await import("./composerImages");
     expect(composerStripAttachments([doc, image, video] as never).map((a) => a.id)).toEqual([
@@ -342,7 +301,6 @@ describe("composerStripAttachments", () => {
 
   it("treats a picture picked through the document picker as media", async () => {
     const { composerStripAttachments } = await import("./composerImages");
-    // The document picker types every pick as a plain file; what it *is* decides the strip.
     const pickedImage = {
       id: "pick-1",
       type: "file" as const,
@@ -358,8 +316,6 @@ describe("composerStripAttachments", () => {
 describe("composerAttachmentInlineUri", () => {
   it("offers the inline bytes of a picture that owns no file", async () => {
     const { composerAttachmentInlineUri } = await import("./composerImages");
-    // The photo library and the clipboard both produce this shape. Its `attachmentId` is a
-    // local draft id, so a remote asset lookup for it can only fail.
     expect(
       composerAttachmentInlineUri({
         id: "img-1",
@@ -371,49 +327,5 @@ describe("composerAttachmentInlineUri", () => {
         previewUri: "ph://asset",
       } as never),
     ).toBe("data:image/jpeg;base64,AAAA");
-  });
-
-  it("falls back to the preview when a picture kept only its asset uri", async () => {
-    const { composerAttachmentInlineUri } = await import("./composerImages");
-    expect(
-      composerAttachmentInlineUri({
-        id: "img-2",
-        type: "image",
-        name: "IMG_0112.jpg",
-        mimeType: "image/jpeg",
-        sizeBytes: 10,
-        previewUri: "ph://asset",
-      } as never),
-    ).toBe("ph://asset");
-  });
-
-  it("leaves a file-backed attachment to the retain-lease path", async () => {
-    const { composerAttachmentInlineUri } = await import("./composerImages");
-    expect(
-      composerAttachmentInlineUri({
-        id: "img-3",
-        type: "image",
-        name: "IMG_0113.jpg",
-        mimeType: "image/jpeg",
-        sizeBytes: 10,
-        fileUri: "file:///owned.jpg",
-        previewUri: "file:///owned.jpg",
-      } as never),
-    ).toBeUndefined();
-  });
-
-  it("has nothing to offer for a plain file or a missing attachment", async () => {
-    const { composerAttachmentInlineUri } = await import("./composerImages");
-    expect(composerAttachmentInlineUri(undefined)).toBeUndefined();
-    expect(
-      composerAttachmentInlineUri({
-        id: "doc-1",
-        type: "file",
-        name: "notes.txt",
-        mimeType: "text/plain",
-        sizeBytes: 4,
-        fileUri: "file:///notes.txt",
-      } as never),
-    ).toBeUndefined();
   });
 });

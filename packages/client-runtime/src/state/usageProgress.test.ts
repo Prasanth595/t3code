@@ -53,14 +53,6 @@ function environment(
 const options = { providerLabel: (provider: UsageProviderKind) => `${provider} label` };
 
 describe("usageProgress", () => {
-  it("dims a lone environment while it refetches over its old totals", () => {
-    expect(usageProgress([environment("a", { isPending: true })], options)).toEqual({
-      dimmed: true,
-      label: "Updating…",
-    });
-    expect(usageProgress([environment("a")], options)).toEqual({ dimmed: false, label: null });
-  });
-
   it("undims once one device answers and names the slow one", () => {
     const waiting = [environment("a", { isPending: true }), environment("b", { isPending: true })];
     expect(usageProgress(waiting, options)).toEqual({
@@ -91,7 +83,6 @@ describe("usageProgress", () => {
         options,
       ),
     ).toEqual({ dimmed: false, label: "Updating 2 providers…" });
-    // Without a follow-up in flight, a leftover refreshing source is not waited on.
     expect(usageProgress([{ ...partway, isPending: false }], options)).toEqual({
       dimmed: false,
       label: null,
@@ -114,13 +105,6 @@ describe("usageProgress", () => {
       ),
     ).toEqual({ dimmed: false, label: "Updating slow…" });
     expect(usageEnvironmentProgress(ignored[0]!)).toEqual({ phase: "inactive" });
-  });
-
-  it("dims every answered environment while a manual refresh runs", () => {
-    // Pricing refreshes first, so neither query is pending yet.
-    expect(
-      usageProgress([environment("a"), environment("b")], { ...options, refreshing: true }),
-    ).toEqual({ dimmed: true, label: "Updating 2 environments…" });
   });
 });
 

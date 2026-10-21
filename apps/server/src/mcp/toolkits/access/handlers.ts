@@ -32,25 +32,24 @@ const access = Effect.gen(function* () {
   return scope.thread.threadId;
 });
 
-const administer = <A>(
+const administer = Effect.fn("mcp.access.administer")(function* <A>(
   operation: (
     auth: EnvironmentAuth.EnvironmentAuth["Service"],
   ) => Effect.Effect<A, EnvironmentAuth.ServerAuthInternalError>,
-) =>
-  Effect.gen(function* () {
-    const threadId = yield* access;
-    const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
-    return yield* executor.withLock(
-      threadId,
-      Effect.gen(function* () {
-        // Recheck after waiting for a turn completion or mode change under the lock.
-        yield* access;
-        return yield* operation(yield* EnvironmentAuth.EnvironmentAuth).pipe(
-          Effect.mapError(unavailable),
-        );
-      }),
-    );
-  });
+) {
+  const threadId = yield* access;
+  const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+  return yield* executor.withLock(
+    threadId,
+    Effect.gen(function* () {
+      // Recheck after waiting for a turn completion or mode change under the lock.
+      yield* access;
+      return yield* operation(yield* EnvironmentAuth.EnvironmentAuth).pipe(
+        Effect.mapError(unavailable),
+      );
+    }),
+  );
+});
 
 export const layer = McpToolAccess.toLayer(AccessToolkit, {
   t3_pairing_create: McpToolAccess.writesEnvironment((input) =>

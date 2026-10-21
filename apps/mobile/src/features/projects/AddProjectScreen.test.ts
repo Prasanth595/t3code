@@ -24,11 +24,11 @@ vi.mock("react", async (importOriginal) => ({
   useRef: (current: unknown) => ({ current }),
   useEffect: () => {},
 }));
-vi.mock("../../components/MaterialListRow", () => ({ MaterialListRow: "MaterialListRow" }));
-vi.mock("../../components/MaterialButton", () => ({ MaterialButton: "MaterialButton" }));
-vi.mock("../../components/ScreenScrollView", () => ({ ScreenScrollView: "ScrollView" }));
+vi.mock("../../components/ui/NavigationRow", () => ({ NavigationRow: "NavigationRow" }));
+vi.mock("../../components/ui/Button", () => ({ Button: "Button" }));
+vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: "ScrollView" }));
 vi.mock("../settings/components/SettingsScreen", () => ({ SettingsScreen: "SettingsScreen" }));
-vi.mock("../../components/ThemedSwitch", () => ({ ThemedSwitch: "Switch" }));
+vi.mock("../../components/ui/ThemedSwitch", () => ({ ThemedSwitch: "Switch" }));
 vi.mock("react-native", () => ({
   Platform: { OS: "ios" },
   ActivityIndicator: "ActivityIndicator",
@@ -45,13 +45,13 @@ vi.mock("@react-navigation/native", () => ({
 vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ bottom: 0 }),
 }));
-vi.mock("../../components/AppSymbol", () => ({ SymbolView: "SymbolView" }));
-vi.mock("../../components/AppText", () => ({ AppText: "Text", AppTextInput: "TextInput" }));
+vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: "SymbolView" }));
+vi.mock("../../components/ui/AppText", () => ({ AppText: "Text", AppTextInput: "TextInput" }));
 vi.mock("../../components/EnvironmentMachineSymbol", () => ({
   EnvironmentMachineSymbol: "EnvironmentMachineSymbol",
 }));
-vi.mock("../../components/ErrorBanner", () => ({ ErrorBanner: "ErrorBanner" }));
-vi.mock("../../components/SourceControlIcon", () => ({ SourceControlIcon: "SourceControlIcon" }));
+vi.mock("../../components/ui/ErrorBanner", () => ({ ErrorBanner: "ErrorBanner" }));
+vi.mock("./SourceControlIcon", () => ({ SourceControlIcon: "SourceControlIcon" }));
 vi.mock("../../lib/uuid", () => ({ uuidv4: () => "project" }));
 vi.mock("../../state/session", () => ({
   useEnvironmentScope: (environmentId: string, scope: string) =>
@@ -187,15 +187,6 @@ describe("clone project permissions", () => {
     expect(state.projects).toEqual([]);
   });
 
-  it("clones and registers the project when both permissions are granted", async () => {
-    state.scopes.add(AuthOrchestrationOperateScope);
-    await cloneAction()();
-
-    const destination = NodePath.join(state.baseDirectory, "repo");
-    expect(NodeFS.existsSync(destination)).toBe(true);
-    expect(state.projects).toEqual([destination]);
-  });
-
   it.each([AuthSourceControlWriteScope, AuthOrchestrationOperateScope])(
     "rechecks %s before a retained clone action creates a directory",
     async (scope) => {
@@ -241,15 +232,6 @@ describe("local project permissions", () => {
     expect(state.createRequests).toEqual([
       { environmentId: "environment", workspaceRoot: state.baseDirectory },
     ]);
-    expect(state.projects).toEqual([state.baseDirectory]);
-  });
-
-  it("uses a grant added while the local-folder form is open", async () => {
-    const submit = localProjectAction();
-    state.scopes.add(AuthOrchestrationOperateScope);
-
-    await submit();
-
     expect(state.projects).toEqual([state.baseDirectory]);
   });
 

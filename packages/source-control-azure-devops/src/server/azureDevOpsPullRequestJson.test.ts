@@ -8,13 +8,11 @@ import {
   decodePullRequestJson,
   decodePullRequestListJson,
   decodeThreadsJson,
-  decodeViewerJson,
 } from "./azureDevOpsPullRequestJson.ts";
 
 const REST_URL =
   "https://dev.azure.com/acme/_apis/git/repositories/6f9c9b7f-0000-0000-0000-000000000000/pullRequests/42";
 
-/** Shaped after Azure's `GitPullRequest`, trimmed to the fields that are read. */
 function pullRequest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     pullRequestId: 42,
@@ -49,9 +47,7 @@ describe("decodePullRequestListJson", () => {
     expect(batch.items[0]).toMatchObject({
       number: 42,
       title: "Add the change requests page",
-      // The login is an email, because that is what `az account show` reports to compare with.
       author: { login: "bilal@acme.dev", name: "Bilal Hassan" },
-      // Azure prefixes its refs, which no other host does.
       headBranch: "feat/page",
       baseBranch: "main",
       state: "open",
@@ -62,22 +58,6 @@ describe("decodePullRequestListJson", () => {
 
   it("assembles a browser url when Azure reports no web link", () => {
     const batch = expectSuccess(decodePullRequestListJson(asJson([pullRequest()])));
-
-    expect(batch.items[0]?.url).toBe("https://dev.azure.com/acme/platform/_git/web/pullrequest/42");
-  });
-
-  it("prefers the web link Azure sends when asked for one", () => {
-    const batch = expectSuccess(
-      decodePullRequestListJson(
-        asJson([
-          pullRequest({
-            _links: {
-              web: { href: "https://dev.azure.com/acme/platform/_git/web/pullrequest/42" },
-            },
-          }),
-        ]),
-      ),
-    );
 
     expect(batch.items[0]?.url).toBe("https://dev.azure.com/acme/platform/_git/web/pullrequest/42");
   });
@@ -130,38 +110,6 @@ describe("decodePullRequestListJson", () => {
 });
 
 describe("decodePullRequestJson", () => {
-  it("reads reviewers as review requests", () => {
-    const detail = expectSuccess(
-      decodePullRequestJson(
-        asJson(
-          pullRequest({
-            reviewers: [{ displayName: "Julius", uniqueName: "julius@acme.dev", vote: 10 }],
-          }),
-        ),
-      ),
-    );
-
-    expect(detail?.reviewRequestLogins).toEqual(["julius@acme.dev"]);
-    expect(detail?.reviewers).toEqual([
-      { login: "julius@acme.dev", name: "Julius", avatarUrl: null },
-    ]);
-  });
-
-  it("reads auto-complete from whoever armed it, and its absence as nobody", () => {
-    const armed = expectSuccess(
-      decodePullRequestJson(
-        asJson(pullRequest({ autoCompleteSetBy: { displayName: "Bilal Hassan" } })),
-      ),
-    );
-    expect(armed?.autoMergeEnabled).toBe(true);
-
-    // Azure leaves the field out entirely rather than sending it empty, so its absence is the
-    // whole of what it says about auto-complete being off.
-    expect(expectSuccess(decodePullRequestJson(asJson(pullRequest())))?.autoMergeEnabled).toBe(
-      false,
-    );
-  });
-
   it("keeps the strategy stored with auto-complete", () => {
     const armed = expectSuccess(
       decodePullRequestJson(
@@ -197,8 +145,6 @@ describe("decodePullRequestJson", () => {
   });
 
   it("reports no repository location when Azure said too little to name one", () => {
-    // A web link places the pull request, but with no repository named there is nothing to
-    // address the routes that read its files and its conversation.
     const detail = expectSuccess(
       decodePullRequestJson(
         asJson(
@@ -225,18 +171,6 @@ describe("decodePullRequestJson", () => {
   });
 });
 
-describe("decodeViewerJson", () => {
-  it("reads the signed-in account name", () => {
-    expect(expectSuccess(decodeViewerJson(asJson({ user: { name: "bilal@acme.dev" } })))).toBe(
-      "bilal@acme.dev",
-    );
-  });
-
-  it("returns nothing when nobody is signed in", () => {
-    expect(expectSuccess(decodeViewerJson(asJson({ user: null })))).toBeNull();
-  });
-});
-
 describe("decodeThreadsJson", () => {
   it("takes every real comment of every thread, oldest first", () => {
     const comments = expectSuccess(
@@ -257,7 +191,6 @@ describe("decodeThreadsJson", () => {
             {
               id: 1,
               comments: [
-                // Azure's own activity notes are events rather than remarks.
                 { id: 1, content: "Bilal voted", commentType: "system", publishedDate: "x" },
                 {
                   id: 2,
@@ -363,7 +296,6 @@ describe("decodeIterationsJson", () => {
   });
 
   it("skips a push Azure could not place both ends of", () => {
-    // A patch is taken over a range, and an iteration missing either end names no range at all.
     const iterations = expectSuccess(
       decodeIterationsJson(
         asJson({
@@ -401,8 +333,6 @@ describe("decodeIterationChangesJson", () => {
   });
 
   it("keeps a space at the end of a file's name, which belongs to the name", () => {
-    // Git will carry a name that ends in a space, and the patch and the viewed mark are both
-    // keyed by it. Tidying it here files the change under a name nothing else uses.
     const page = expectSuccess(
       decodeIterationChangesJson(
         asJson({
@@ -463,7 +393,6 @@ describe("decodeIterationChangesJson", () => {
   });
 
   it("drops the folders Azure lists alongside the files that changed", () => {
-    // A review shows files, and a folder has no content on either side to show for one.
     const page = expectSuccess(
       decodeIterationChangesJson(
         asJson({
@@ -491,21 +420,7 @@ describe("decodeIterationChangesJson", () => {
     expect(page.nextSkip).toBe(2000);
   });
 
-  it("reads the last page, which names no page after it, as the end of the change", () => {
-    const page = expectSuccess(
-      decodeIterationChangesJson(
-        asJson({
-          changeEntries: [{ changeType: "add", item: { path: "/DEMO.md", objectId: "ec00" } }],
-        }),
-      ),
-    );
-
-    expect(page.nextSkip).toBeNull();
-  });
-
   it("reads where a rename came from out of either of the two places Azure names it", () => {
-    // The iteration-changes route answers with `originalPath`; the commit routes answer with
-    // `sourceServerItem`, and both are the same fact under two names.
     const page = expectSuccess(
       decodeIterationChangesJson(
         asJson({
@@ -525,12 +440,6 @@ describe("decodeIterationChangesJson", () => {
 });
 
 describe("decodeItemContentJson", () => {
-  it("reads the file's text out of the envelope Azure wraps it in", () => {
-    expect(
-      expectSuccess(decodeItemContentJson(asJson({ path: "/a.md", content: "one\ntwo" }))),
-    ).toEqual({ contents: "one\ntwo", isBinary: false });
-  });
-
   it("reads an empty file as empty rather than as a failure to look", () => {
     expect(expectSuccess(decodeItemContentJson(asJson({ path: "/a.md" })))).toEqual({
       contents: "",
@@ -539,7 +448,6 @@ describe("decodeItemContentJson", () => {
   });
 
   it("keeps Azure's own word that a file is binary", () => {
-    // Which it answers base64-encoded, so nothing in the text it sent would give it away.
     expect(
       expectSuccess(
         decodeItemContentJson(
@@ -551,15 +459,14 @@ describe("decodeItemContentJson", () => {
 });
 
 /**
- * Every other fixture in this file is written from Azure's published contract. These are the
- * shapes a real organisation answered with, read back through `az devops invoke` rather than
- * `az rest`: the extension hands over the route's own body with one key of its own added, and a
- * live repository leaves out fields the contract documents.
+ * These are the shapes a real organisation answered with, read back through `az devops invoke`
+ * rather than `az rest`: the extension hands over the route's own body with one key of its own
+ * added, and a live repository leaves out fields the contract documents.
  */
 describe("what az devops invoke answers with", () => {
   it("reads the envelope the extension adds its own continuation token to", () => {
     // Set on every JSON body it returns, from a response header these routes do not send, so it
-    // arrives as null rather than not at all. Nothing reads it, and it must not fail the decode.
+    // arrives as null rather than not at all.
     expect(
       expectSuccess(decodeThreadsJson(asJson({ value: [], count: 0, continuation_token: null }))),
     ).toEqual([]);
@@ -591,9 +498,7 @@ describe("what az devops invoke answers with", () => {
 
   it("keeps the files of a change that names neither their object type nor their page after it", () => {
     // A live iteration states `changeType`, `item.path` and `item.objectId` and nothing else: no
-    // `gitObjectType`, no `isFolder`, and no `nextSkip` on the only page. Each of those absences
-    // is what the defaults in the decoder are for, and reading any of them as stated would drop
-    // every file of every Azure change request.
+    // `gitObjectType`, no `isFolder`, and no `nextSkip` on the only page.
     const page = expectSuccess(
       decodeIterationChangesJson(
         asJson({

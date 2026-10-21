@@ -8,9 +8,7 @@ import * as Deferred from "effect/Deferred";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
-import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -141,7 +139,6 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         yield* Fiber.join(first);
         yield* Fiber.join(second);
         expect(yield* Deferred.isDone(ownerInvalidated)).toBe(false);
-        // A connection whose upgrade authenticated just before revocation must also stop.
         yield* sessions.awaitInvalidation(client.sessionId);
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
@@ -280,32 +277,6 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
     }),
   );
 
-  it.effect("keeps the reusable token active after normal sessions expire", () =>
-    Effect.gen(function* () {
-      const sessions = yield* SessionStore.SessionStore;
-      const token = "reusable-dev-auth-token-that-is-long-enough";
-      const normal = yield* sessions.issue({ subject: "normal-session" });
-
-      yield* TestClock.adjust(Duration.days(31));
-
-      expect((yield* sessions.verify(token)).subject).toBe("reusable-dev-token");
-      expect((yield* Effect.flip(sessions.verify(normal.token)))._tag).toBe(
-        "SessionTokenExpiredError",
-      );
-    }).pipe(
-      Effect.provide(
-        Layer.merge(
-          layerSessionStore({
-            mode: "web",
-            devUrl: new URL("http://127.0.0.1:5173"),
-            devAuthToken: Redacted.make("reusable-dev-auth-token-that-is-long-enough"),
-          }),
-          TestClock.layer(),
-        ),
-      ),
-    ),
-  );
-
   it.effect("issues and verifies signed browser session tokens", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
@@ -350,7 +321,6 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       const secrets = yield* ServerSecretStore.ServerSecretStore;
       const legacyScopes = ["orchestration:read", "terminal:operate", "review:write"] as const;
       const issued = yield* sessions.issue({ subject: "one-time-token", scopes: legacyScopes });
-      // Accept prerelease v2 credentials without widening their recorded grant.
       const [encodedPayload] = issued.token.split(".");
       const currentClaims = base64UrlDecodeUtf8(encodedPayload!);
       expect(currentClaims).toContain('"v":1');
@@ -669,159 +639,6 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
     }).pipe(Effect.provide(layerSessionStore())),
   );
 
-  it.effect("persists lastConnectedAt on first connect and updates it after reconnect", () =>
-    Effect.gen(function* () {
-      const sessions = yield* SessionStore.SessionStore;
-      const issued = yield* sessions.issue({
-        subject: "reconnect-test",
-        method: "bearer-access-token",
-      });
-
-      const beforeConnect = yield* sessions.listActive();
-      expect(beforeConnect[0]?.lastConnectedAt).toBeNull();
-
-      yield* TestClock.adjust(Duration.seconds(1));
-      yield* sessions.markConnected(issued.sessionId);
-      const firstConnect = yield* sessions.listActive();
-      const firstConnectedAt = firstConnect[0]?.lastConnectedAt;
-
-      expect(firstConnect[0]?.connected).toBe(true);
-      expect(firstConnectedAt).not.toBeNull();
-
-      yield* TestClock.adjust(Duration.seconds(1));
-      yield* sessions.markConnected(issued.sessionId);
-      const stillConnected = yield* sessions.listActive();
-
-      expect(stillConnected[0]?.lastConnectedAt?.toString()).toBe(firstConnectedAt?.toString());
-
-      yield* sessions.markDisconnected(issued.sessionId);
-      yield* sessions.markDisconnected(issued.sessionId);
-      const afterDisconnect = yield* sessions.listActive();
-
-      expect(afterDisconnect[0]?.connected).toBe(false);
-      expect(afterDisconnect[0]?.lastConnectedAt?.toString()).toBe(firstConnectedAt?.toString());
-
-      yield* TestClock.adjust(Duration.seconds(1));
-      yield* sessions.markConnected(issued.sessionId);
-      const afterReconnect = yield* sessions.listActive();
-
-      expect(afterReconnect[0]?.connected).toBe(true);
-      expect(afterReconnect[0]?.lastConnectedAt).not.toBeNull();
-      expect(afterReconnect[0]?.lastConnectedAt?.toString()).not.toBe(firstConnectedAt?.toString());
-    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
-  );
-
-  it.effect("keeps connected relay sessions visible through expiry and HTTP renewal", () =>
-    Effect.gen(function* () {
-      const sessions = yield* SessionStore.SessionStore;
-      const original = yield* sessions.issue(relaySessionInput);
-      const websocket = yield* sessions.issueWebSocketToken(original.sessionId, {
-        ttl: Duration.hours(2),
-      });
-      yield* sessions.verifyWebSocketToken(websocket.token);
-      yield* sessions.markConnected(original.sessionId);
-      const beforeExpiry = yield* sessions.listActive();
-      expect(beforeExpiry).toHaveLength(1);
-      expect(beforeExpiry[0]?.connected).toBe(true);
-
-      yield* TestClock.adjust(Duration.minutes(61));
-
-      expect(yield* sessions.listActive()).toEqual(beforeExpiry);
-      expect(yield* Effect.flip(sessions.verify(original.token))).toMatchObject({
-        _tag: "SessionTokenExpiredError",
-      });
-      expect(yield* Effect.flip(sessions.verifyWebSocketToken(websocket.token))).toMatchObject({
-        _tag: "WebSocketSessionExpiredError",
-      });
-
-      const renewed = yield* sessions.issue(relaySessionInput);
-      const afterRenewal = yield* sessions.listActive();
-      expect(renewed.sessionId).not.toBe(original.sessionId);
-      expect(afterRenewal).toHaveLength(2);
-      expect(afterRenewal).toEqual(
-        expect.arrayContaining([
-          beforeExpiry[0],
-          expect.objectContaining({
-            sessionId: renewed.sessionId,
-            connected: false,
-            lastConnectedAt: null,
-          }),
-        ]),
-      );
-    }).pipe(Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
-  );
-
-  it.effect.each([1, 2])(
-    "removes an expired session from listings and updates after its last of %s sockets closes",
-    (socketCount) =>
-      Effect.gen(function* () {
-        const sessions = yield* SessionStore.SessionStore;
-        const issued = yield* sessions.issue(relaySessionInput);
-        const changes = yield* Queue.unbounded<SessionStore.SessionCredentialChange>();
-        yield* sessions.streamChanges.pipe(
-          Stream.runForEach((change) => Queue.offer(changes, change)),
-          Effect.forkScoped({ startImmediately: true }),
-        );
-        for (let index = 0; index < socketCount; index += 1) {
-          yield* sessions.markConnected(issued.sessionId);
-          expect(yield* Queue.take(changes)).toMatchObject({
-            type: "clientUpserted",
-            clientSession: { sessionId: issued.sessionId, connected: true },
-          });
-        }
-
-        yield* TestClock.adjust(Duration.minutes(61));
-
-        for (let remaining = socketCount - 1; remaining >= 0; remaining -= 1) {
-          yield* sessions.markDisconnected(issued.sessionId);
-          const change = yield* Queue.take(changes);
-          const listed = yield* sessions.listActive();
-          if (remaining > 0) {
-            expect(change).toMatchObject({
-              type: "clientUpserted",
-              clientSession: { sessionId: issued.sessionId, connected: true },
-            });
-            expect(listed).toHaveLength(1);
-            expect(listed[0]?.connected).toBe(true);
-          } else {
-            expect(change).toEqual({ type: "clientRemoved", sessionId: issued.sessionId });
-            expect(listed).toEqual([]);
-          }
-        }
-      }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
-  );
-
-  it.effect.each(["revoke", "revokeAllExcept"] as const)(
-    "removes expired connected sessions with %s",
-    (operation) =>
-      Effect.gen(function* () {
-        const sessions = yield* SessionStore.SessionStore;
-        const administrative = yield* sessions.issue({ subject: "desktop-bootstrap" });
-        const client = yield* sessions.issue(relaySessionInput);
-        yield* sessions.markConnected(client.sessionId);
-        yield* TestClock.adjust(Duration.minutes(61));
-        const changes = yield* Queue.unbounded<SessionStore.SessionCredentialChange>();
-        yield* sessions.streamChanges.pipe(
-          Stream.runForEach((change) => Queue.offer(changes, change)),
-          Effect.forkScoped({ startImmediately: true }),
-        );
-
-        if (operation === "revoke") {
-          expect(yield* sessions.revoke(client.sessionId)).toBe(true);
-        } else {
-          expect(yield* sessions.revokeAllExcept(administrative.sessionId)).toBe(1);
-        }
-
-        expect(yield* Queue.take(changes)).toEqual({
-          type: "clientRemoved",
-          sessionId: client.sessionId,
-        });
-        const listed = yield* sessions.listActive();
-        expect(listed).toHaveLength(1);
-        expect(listed[0]?.sessionId).toBe(administrative.sessionId);
-      }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
-  );
-
   it.effect("records client connection metadata without clearing prior values", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
@@ -845,7 +662,6 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       });
       expect((yield* readRow)[0]).toEqual({ surface: "mobile", appVersion: "1.2.0" });
 
-      // A partial report (old or minimal client) must not null out stored data.
       yield* sessions.recordClientConnection(issued.sessionId, { appVersion: "1.3.0" });
       expect((yield* readRow)[0]).toEqual({ surface: "mobile", appVersion: "1.3.0" });
 

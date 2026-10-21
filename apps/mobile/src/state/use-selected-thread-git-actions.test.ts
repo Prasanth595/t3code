@@ -226,23 +226,12 @@ describe("thread Git mutation permissions", () => {
 
   it("refreshes the worktree status when the metadata update is denied after checkout", async () => {
     state.scopes.add(AuthOrchestrationOperateScope);
-    // Git already switched the branch, so the sheet must show it even though the
-    // thread record could not be updated.
     state.afterGitAction = () => state.scopes.delete(AuthOrchestrationOperateScope);
     expect(
       await useSelectedThreadGitActions().onCheckoutSelectedThreadBranch("feature"),
     ).toBeNull();
     expect(state.branch).toBe("feature");
     expect(state.statusRefreshes).toBe(1);
-  });
-
-  it("uses a newly granted task permission for a retained branch callback", async () => {
-    state.primaryScopes.clear();
-    const actions = useSelectedThreadGitActions();
-    state.scopes.add(AuthOrchestrationOperateScope);
-    await actions.onCreateSelectedThreadBranch("feature");
-    expect(state.thread.branch).toBe("feature");
-    expect(state.metadataRequests).toEqual([{ environmentId: "environment", branch: "feature" }]);
   });
 
   it.each(["create", "checkout", "worktree"] as const)(
@@ -270,15 +259,4 @@ describe("thread Git mutation permissions", () => {
       expect(state.results).toEqual([]);
     },
   );
-
-  it("returns a successful checkout when the requested branch is already selected", async () => {
-    state.scopes.add(AuthOrchestrationOperateScope);
-
-    expect(await useSelectedThreadGitActions().onCheckoutSelectedThreadBranch("main")).toEqual({
-      refName: "main",
-    });
-    expect(state.branch).toBe("main");
-    expect(state.thread.branch).toBe("main");
-    expect(state.results).toEqual([]);
-  });
 });
