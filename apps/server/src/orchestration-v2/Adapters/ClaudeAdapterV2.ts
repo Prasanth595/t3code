@@ -2599,6 +2599,10 @@ function webSearchResultsFromClaudeOutput(
   });
 }
 
+function boundText(value: string, limit = 2_000): string {
+  return value.length <= limit ? value : `${value.slice(0, limit)}…`;
+}
+
 function summarizeClaudeToolRequest(toolName: string, input: ClaudeNativeToolInput): string {
   const command = firstStringInputField(input, ["command", "cmd", "script"]);
   if (command !== undefined) {
@@ -8910,14 +8914,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const prompt =
             callbackOptions.title ??
             callbackOptions.description ??
-            callbackOptions.decisionReason ??
             summarizeClaudeToolRequest(toolName, nativeToolInput);
+          const liveQuery = yield* Ref.get(queryContext);
+          const reason = callbackOptions.decisionReason?.trim();
+          const blockedPath = callbackOptions.blockedPath?.trim();
+          const detail = reason
+            ? `${prompt}\n\n${
+                liveQuery?.permissionMode === "bypassPermissions"
+                  ? "Full access is on, but Claude still requires approval: "
+                  : ""
+              }${boundText(reason)}${blockedPath ? `\n\nPath: ${boundText(blockedPath)}` : ""}`
+            : prompt;
           const artifacts = yield* buildApprovalRequestArtifacts({
             context,
             nativeItemId: nativeRequestId,
             nativeRequestId,
             requestKind,
-            prompt,
+            prompt: detail,
           });
           const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
           yield* Ref.update(pendingRuntimeRequests, (current) => {

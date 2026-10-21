@@ -2797,6 +2797,196 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     );
   });
 
+  describe("forwarded Claude approval reasons", () => {
+    const callbackPayload = {
+      toolName: "Edit",
+      input: {
+        file_path: "/workspace/.claude/settings.json",
+        old_string: "false",
+        new_string: "true",
+      },
+      options: {
+        toolUseID: "tool-settings-edit",
+        requestId: "request-settings-edit",
+        description: "Edit /workspace/.claude/settings.json",
+        decisionReason: "Claude Code settings files require explicit approval.",
+        blockedPath: "/workspace/.claude/settings.json",
+      },
+    };
+
+    it.effect.each([
+      {
+        name: "bypass",
+        runtimeMode: "full-access",
+        reason: "reason",
+        description: true,
+        mode: undefined,
+      },
+      {
+        name: "non-bypass",
+        runtimeMode: "approval-required",
+        reason: "reason",
+        description: true,
+        mode: undefined,
+      },
+      {
+        name: "absent reason",
+        runtimeMode: "full-access",
+        reason: undefined,
+        description: true,
+        mode: undefined,
+      },
+      {
+        name: "whitespace reason",
+        runtimeMode: "full-access",
+        reason: "   \n ",
+        description: true,
+        mode: undefined,
+      },
+      {
+        name: "reason only",
+        runtimeMode: "full-access",
+        reason: "reason",
+        description: false,
+        mode: undefined,
+      },
+      {
+        name: "absent reason and description",
+        runtimeMode: "full-access",
+        reason: undefined,
+        description: false,
+        mode: undefined,
+      },
+      {
+        name: "long reason and path",
+        runtimeMode: "full-access",
+        reason: "r".repeat(20_000),
+        description: true,
+        mode: undefined,
+      },
+      {
+        name: "CLI init downgrade",
+        runtimeMode: "full-access",
+        reason: "reason",
+        description: true,
+        mode: "init",
+      },
+      {
+        name: "CLI status downgrade",
+        runtimeMode: "full-access",
+        reason: "reason",
+        description: true,
+        mode: "status",
+      },
+      {
+        name: "CLI status bypass",
+        runtimeMode: "approval-required",
+        reason: "reason",
+        description: true,
+        mode: "bypass",
+      },
+    ] as const)(
+      "renders $name with the action preserved and timeline title unchanged",
+      ({ runtimeMode, reason, description, mode }) =>
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-approval-reason"),
+              text: "Update project settings.",
+              attachments: [],
+              runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+                runtimeMode,
+                interactionMode: "default",
+                cwd: "/workspace",
+              }),
+            }),
+          );
+          if (mode !== undefined) {
+            yield* harness.offerAndWait(
+              claudeSdkFrame({
+                type: "system",
+                subtype: mode === "init" ? "init" : "status",
+                ...(mode === "init" ? {} : { status: null }),
+                permissionMode: mode === "bypass" ? "bypassPermissions" : "default",
+                uuid: "approval-mode-transition",
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            );
+          }
+          const decisionReason =
+            reason === "reason" ? callbackPayload.options.decisionReason : reason;
+          const blockedPath =
+            reason?.length === 20_000
+              ? "/" + "p".repeat(20_000)
+              : callbackPayload.options.blockedPath;
+          const decision = yield* Effect.promise((signal) =>
+            harness.getOpenedOptions()!.canUseTool!(
+              callbackPayload.toolName,
+              callbackPayload.input,
+              {
+                toolUseID: callbackPayload.options.toolUseID,
+                requestId: callbackPayload.options.requestId,
+                ...(description ? { description: callbackPayload.options.description } : {}),
+                ...(decisionReason === undefined ? {} : { decisionReason }),
+                blockedPath,
+                signal,
+              },
+            ),
+          ).pipe(Effect.forkScoped);
+          const event = yield* Queue.take(harness.runtimeRequestReceipts);
+          yield* harness.until(() =>
+            harness.events.some(
+              (candidate) =>
+                candidate.type === "turn_item.updated" &&
+                candidate.turnItem.type === "approval_request" &&
+                candidate.turnItem.requestId === event.runtimeRequest.id,
+            ),
+          );
+          const itemEvent = harness.events.findLast(
+            (candidate) =>
+              candidate.type === "turn_item.updated" &&
+              candidate.turnItem.type === "approval_request" &&
+              candidate.turnItem.requestId === event.runtimeRequest.id,
+          );
+          if (
+            itemEvent?.type !== "turn_item.updated" ||
+            itemEvent.turnItem.type !== "approval_request"
+          ) {
+            throw new Error("Expected an approval request item");
+          }
+          const item = itemEvent.turnItem;
+          const action = description
+            ? callbackPayload.options.description
+            : "Edit: /workspace/.claude/settings.json";
+          const bound = (value: string) =>
+            value.length <= 2_000 ? value : `${value.slice(0, 2_000)}…`;
+          const trimmedReason = decisionReason?.trim();
+          const bypass = mode === "bypass" || (mode === undefined && runtimeMode === "full-access");
+          assert.isNull(item.title);
+          assert.equal(
+            item.prompt,
+            trimmedReason
+              ? `${action}\n\n${bypass ? "Full access is on, but Claude still requires approval: " : ""}${bound(trimmedReason)}\n\nPath: ${bound(blockedPath)}`
+              : action,
+          );
+          yield* harness.runtime.respondToRuntimeRequest({
+            requestId: event.runtimeRequest.id,
+            decision: "decline",
+          });
+          assert.equal((yield* Fiber.join(decision))?.behavior, "deny");
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
+  });
+
   describe("Plan-mode tool approval", () => {
     const openPlanTurn = Effect.fn("openPlanTurn")(function* (
       runtimeMode: "auto" | "full-access",
