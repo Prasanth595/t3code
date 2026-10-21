@@ -46,55 +46,77 @@ const runEvent = (
   },
 });
 
-it("holds an outcome that lands during the dispatch until the dispatch returns", () => {
+const settledFor = (
+  status: "succeeded" | "failed",
+  error: string | null,
+  cancelledRunId: string | null = null,
+) => ({
+  taskId,
+  startedAtIso: "start",
+  messageId,
+  threadId,
+  status,
+  error,
+  cancelledRunId: cancelledRunId === null ? null : RunId.make(cancelledRunId),
+});
+
+it("holds an outcome that lands before the dispatch bookkeeping is saved", () => {
   const runs = makeTrackedRuns();
   runs.track(messageId, taskId, "start");
   assert.deepEqual(runs.observe(runEvent("run:fast", "failed")), []);
-  assert.deepEqual(runs.dispatched(messageId), {
-    taskId,
-    startedAtIso: "start",
-    status: "failed",
-    error: "The run failed.",
-  });
-  assert.isNull(runs.dispatched(messageId));
+  assert.deepEqual(runs.dispatched(messageId, threadId), settledFor("failed", "The run failed."));
+  assert.isNull(runs.dispatched(messageId, threadId));
 });
 
-it("ignores the end of a queued run whose message was promoted into the active run", () => {
+it("does not end a queued run cancelled only because its message was promoted into the active run", () => {
   const runs = makeTrackedRuns();
   runs.track(messageId, taskId, "start");
-  runs.dispatched(messageId);
+  runs.dispatched(messageId, threadId);
   assert.deepEqual(runs.observe(runEvent("run:queued", "queued")), []);
-  runs.observe({
-    id: EventId.make("event:promoted"),
-    type: "message.updated",
-    threadId,
-    runId: RunId.make("run:active"),
-    occurredAt: epoch,
-    payload: {
-      id: messageId,
-      threadId,
-      runId: RunId.make("run:active"),
-      nodeId: null,
-      role: "user",
-      text: "Run the audit",
-      attachments: [],
-      streaming: false,
-      createdAt: epoch,
-      updatedAt: epoch,
-      createdBy: "user",
-      creationSource: "web",
-    },
-  });
-  assert.deepEqual(runs.observe(runEvent("run:queued", "cancelled")), []);
+  // Promotion cancels the queued run first, then moves the message into the active run.
+  const [cancelled] = runs.observe(runEvent("run:queued", "cancelled"));
+  assert.deepEqual(cancelled, settledFor("failed", "The run was cancelled.", "run:queued"));
+  assert.isFalse(runs.confirmCancel(messageId, RunId.make("run:active")));
   assert.deepEqual(runs.observe(runEvent("run:active", "completed")), [
-    { taskId, startedAtIso: "start", status: "succeeded", error: null },
+    settledFor("succeeded", null),
   ]);
+});
+
+it("ends a queued run that was cancelled outright", () => {
+  const runs = makeTrackedRuns();
+  runs.track(messageId, taskId, "start");
+  runs.dispatched(messageId, threadId);
+  runs.observe(runEvent("run:queued", "queued"));
+  runs.observe(runEvent("run:queued", "cancelled"));
+  assert.isTrue(runs.confirmCancel(messageId, RunId.make("run:queued")));
+  assert.isFalse(runs.confirmCancel(messageId, RunId.make("run:queued")));
+});
+
+it("lists only dispatched runs as pending, and follows a run bound from the projection", () => {
+  const runs = makeTrackedRuns();
+  runs.track(messageId, taskId, "start");
+  assert.deepEqual(runs.pending(), []);
+  runs.dispatched(messageId, threadId);
+  assert.deepEqual(runs.pending(), [{ messageId, threadId }]);
+  runs.bindRun(messageId, RunId.make("run:caught-up"));
+  assert.deepEqual(runs.observe(runEvent("run:caught-up", "completed", MessageId.make("other"))), [
+    settledFor("succeeded", null),
+  ]);
+  assert.deepEqual(runs.pending(), []);
+});
+
+it("fails every dispatched run when events can no longer be followed", () => {
+  const runs = makeTrackedRuns();
+  runs.track(messageId, taskId, "start");
+  runs.dispatched(messageId, threadId);
+  assert.deepEqual(runs.abandonAll("gave up"), [settledFor("failed", "gave up")]);
+  assert.deepEqual(runs.abandonAll("gave up"), []);
 });
 
 it("fails a run whose thread is deleted before the turn ends", () => {
   const runs = makeTrackedRuns();
   runs.track(messageId, taskId, "start");
-  runs.dispatched(messageId);
+  runs.dispatched(messageId, threadId);
   runs.observe(runEvent("run:orphaned", "running"));
   assert.deepEqual(
     runs.observe({
@@ -104,6 +126,6 @@ it("fails a run whose thread is deleted before the turn ends", () => {
       occurredAt: epoch,
       payload: undefined as never,
     }),
-    [{ taskId, startedAtIso: "start", status: "failed", error: "The thread was deleted." }],
+    [settledFor("failed", "The thread was deleted.")],
   );
 });

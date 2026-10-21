@@ -474,37 +474,77 @@ const providerErrorEvent = (runId: string, message: string): OrchestrationV2Doma
 });
 
 // Dispatches to a bound thread succeed at once; the run's events are fed by hand.
-const makeTurnHarness = Effect.gen(function* () {
-  const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
-  const dispatched = yield* Queue.unbounded<MessageId>();
-  const layer = ScheduledTaskService.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
-        Layer.mock(ThreadManagementService.ThreadManagementService)({
-          sendToThread: (input) =>
-            Queue.offer(dispatched, input.messageId).pipe(Effect.as(undefined as never)),
-          streamDomainEvents: Stream.fromQueue(events),
-        }),
-        Layer.mock(SecretRequests.SecretRequests)({}),
-        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-          namedProjectsRoot: "/projects",
-          isScratchProject: () => Effect.succeed(false),
-        }),
-        NodeCrypto.layer,
-        Scheduler.layer,
+const makeTurnHarness = (
+  options: {
+    /** Runs inside the dispatch, so the turn's events can land before it returns. */
+    readonly duringDispatch?: (
+      events: Queue.Queue<OrchestrationV2DomainEvent>,
+      messageId: MessageId,
+    ) => Effect.Effect<void>;
+    /** The run the thread's projection says the scheduled message now belongs to. */
+    readonly messageRunId?: RunId;
+    /** The runs the thread's projection holds, as read back after the event stream drops. */
+    readonly runs?: ReadonlyArray<OrchestrationV2Run>;
+    /** How many times the event stream fails before it starts to deliver events. */
+    readonly streamFailures?: number;
+  } = {},
+) =>
+  Effect.gen(function* () {
+    const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+    const dispatched = yield* Queue.unbounded<MessageId>();
+    const subscriptions = yield* Ref.make(0);
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            sendToThread: (input) =>
+              Queue.offer(dispatched, input.messageId).pipe(
+                Effect.andThen(options.duringDispatch?.(events, input.messageId) ?? Effect.void),
+                Effect.as(undefined as never),
+              ),
+            getThreadRecords: (_threadId, _fields, filter) =>
+              Effect.succeed({
+                messages: (filter?.messageIds ?? []).map((id) => ({
+                  id,
+                  runId: options.messageRunId ?? null,
+                })),
+                runs: (options.runs ?? []).filter(
+                  (run) => filter?.runIds === undefined || filter.runIds.includes(run.id),
+                ),
+              } as never),
+            streamDomainEvents: Stream.unwrap(
+              Ref.getAndUpdate(subscriptions, (n) => n + 1).pipe(
+                Effect.map((attempt) =>
+                  attempt < (options.streamFailures ?? 0)
+                    ? Stream.fail(new Error("event stream dropped") as never)
+                    : Stream.fromQueue(events),
+                ),
+              ),
+            ),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Scheduler.layer,
+        ),
       ),
-    ),
-  );
-  return { events, dispatched, layer };
-});
+    );
+    return { events, dispatched, subscriptions, layer };
+  });
 
-const upsertBoundTask = (service: ScheduledTaskService.ScheduledTaskService["Service"]) =>
+const upsertBoundTask = (
+  service: ScheduledTaskService.ScheduledTaskService["Service"],
+  enabled = false,
+) =>
   service.upsert({
     id: ScheduledTaskId.make("task:turn-outcome"),
     title: "Check orchestration",
     prompt: "Check progress",
-    enabled: false,
+    enabled,
     schedule: { type: "interval", everyMs: 60_000 },
     projectId: ProjectId.make("project:test"),
     threadId: turnThreadId,
@@ -527,7 +567,7 @@ const untilStatus = (
 
 it.effect("a failed turn replaces the dispatched run's status with the provider error", () =>
   Effect.gen(function* () {
-    const harness = yield* makeTurnHarness;
+    const harness = yield* makeTurnHarness();
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
       const { task } = yield* upsertBoundTask(service);
@@ -553,7 +593,7 @@ it.effect("a failed turn replaces the dispatched run's status with the provider 
 
 it.effect("a completed turn records the run as succeeded", () =>
   Effect.gen(function* () {
-    const harness = yield* makeTurnHarness;
+    const harness = yield* makeTurnHarness();
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
       const { task } = yield* upsertBoundTask(service);
@@ -572,7 +612,7 @@ it.effect("a completed turn records the run as succeeded", () =>
 
 it.effect("an earlier run's turn ending cannot overwrite a newer run", () =>
   Effect.gen(function* () {
-    const harness = yield* makeTurnHarness;
+    const harness = yield* makeTurnHarness();
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
       const { task } = yield* upsertBoundTask(service);
@@ -591,6 +631,140 @@ it.effect("an earlier run's turn ending cannot overwrite a newer run", () =>
       assert.equal(settled?.lastRunStatus, "succeeded");
       assert.isNull(settled?.lastRunError);
       assert.equal(settled?.runCount, 2);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+const messageMovedEvent = (messageId: MessageId, runId: string): OrchestrationV2DomainEvent => ({
+  id: EventId.make(`event:${messageId}:moved`),
+  type: "message.updated",
+  threadId: turnThreadId,
+  runId: RunId.make(runId),
+  occurredAt: epoch,
+  payload: {
+    id: messageId,
+    threadId: turnThreadId,
+    runId: RunId.make(runId),
+    nodeId: null,
+    role: "user",
+    text: "Check progress",
+    attachments: [],
+    streaming: false,
+    createdAt: epoch,
+    updatedAt: epoch,
+    createdBy: "user",
+    creationSource: "web",
+  },
+});
+
+it.effect("a turn that ends while the dispatch is being recorded still advances the schedule", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeTurnHarness({
+      duringDispatch: (events, messageId) =>
+        Queue.offerAll(events, [
+          runEvent(runOf("run:fast", messageId, "queued")),
+          runEvent(runOf("run:fast", messageId, "failed")),
+        ]),
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service, true);
+      yield* TestClock.adjust("30 seconds");
+      yield* service.runNow({ id: task.id });
+      yield* untilStatus(service, task.id, "failed");
+      const [settled] = (yield* service.list()).tasks;
+      assert.equal(settled?.runCount, 1);
+      // Dispatched 30 seconds after the task was saved, so the next run is 60 seconds on from then.
+      assert.equal(
+        settled?.nextRunAt,
+        DateTime.formatIso(DateTime.makeUnsafe(Date.parse(task.nextRunAt!) + 30_000)),
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a queued message promoted to a steer keeps its run going in the active run", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeTurnHarness({ messageRunId: RunId.make("run:active") });
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      yield* service.runNow({ id: task.id });
+      const messageId = yield* Queue.take(harness.dispatched);
+      yield* Queue.offerAll(harness.events, [
+        runEvent(runOf("run:queued", messageId, "queued")),
+        // Promotion cancels the queued run before it moves the message into the active one.
+        runEvent(runOf("run:queued", messageId, "cancelled")),
+        messageMovedEvent(messageId, "run:active"),
+        runEvent(runOf("run:active", MessageId.make("message:active-turn"), "completed")),
+      ]);
+      yield* service.subscribeList().pipe(
+        Stream.filter(({ tasks }) => tasks.some((t) => t.lastRunStatus !== "running")),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      const [settled] = (yield* service.list()).tasks;
+      assert.equal(settled?.lastRunStatus, "succeeded");
+      assert.isNull(settled?.lastRunError);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a run whose outcome cannot be saved is released instead of left running", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeTurnHarness();
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const sql = yield* SqlClient.SqlClient;
+      const { task } = yield* upsertBoundTask(service);
+      yield* service.runNow({ id: task.id });
+      const messageId = yield* Queue.take(harness.dispatched);
+      // Only the release path may write the terminal state.
+      yield* sql`CREATE TRIGGER fail_outcome BEFORE UPDATE ON scheduled_tasks
+        WHEN OLD.last_run_status = 'running' AND NEW.last_run_status = 'succeeded'
+        BEGIN SELECT RAISE(FAIL, 'outcome unavailable'); END`;
+      yield* Queue.offerAll(harness.events, [
+        runEvent(runOf("run:unsaved", messageId, "completed")),
+      ]);
+      yield* untilStatus(service, task.id, "failed");
+      const [settled] = (yield* service.list()).tasks;
+      assert.equal(settled?.lastRunError, "Could not record how the run ended.");
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a dropped event stream is resumed, and runs that ended meanwhile are caught up", () =>
+  Effect.gen(function* () {
+    const runId = RunId.make("run:during-gap");
+    const harness = yield* makeTurnHarness({
+      streamFailures: 1,
+      messageRunId: runId,
+      runs: [runOf(runId, MessageId.make("unused"), "completed")],
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      yield* service.runNow({ id: task.id });
+      yield* Queue.take(harness.dispatched);
+      // The run completed while no one was listening; the resumed listener finds it.
+      yield* TestClock.adjust("30 seconds");
+      yield* untilStatus(service, task.id, "succeeded");
+      assert.equal(yield* Ref.get(harness.subscriptions), 2);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("runs are released as failed once the event stream cannot be resumed", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeTurnHarness({ streamFailures: 1_000 });
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      yield* service.runNow({ id: task.id });
+      yield* TestClock.adjust("10 minutes");
+      yield* untilStatus(service, task.id, "failed");
+      const [settled] = (yield* service.list()).tasks;
+      assert.equal(settled?.lastRunError, "Run outcomes could no longer be followed.");
     }).pipe(Effect.provide(harness.layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

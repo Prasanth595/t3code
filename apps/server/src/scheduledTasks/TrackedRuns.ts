@@ -14,9 +14,17 @@ export interface SettledRun {
   readonly startedAtIso: string;
   readonly status: "succeeded" | "failed";
   readonly error: string | null;
+  readonly messageId: MessageId;
+  readonly threadId: ThreadId | null;
+  /**
+   * Set when the run was cancelled. Promoting a queued message to a steer
+   * cancels its queued run before moving the message, so a cancel is only an
+   * end once `confirmCancel` finds the message still belongs to that run.
+   */
+  readonly cancelledRunId: RunId | null;
 }
 
-type RunEnd = Pick<SettledRun, "status" | "error">;
+type RunEnd = Pick<SettledRun, "status" | "error" | "cancelledRunId">;
 
 interface TrackedRun {
   /** The user message the dispatch stamped, which the run is first found by. */
@@ -63,14 +71,22 @@ export function makeTrackedRuns() {
   };
 
   // The row's dispatch bookkeeping must be written before an outcome replaces
-  // it, so an outcome that lands during the dispatch waits for `dispatched`.
+  // it, so an outcome that lands during the dispatch waits for `dispatched`,
+  // which the caller marks only once that bookkeeping is saved.
   const end = (run: TrackedRun, outcome: RunEnd): SettledRun | null => {
     if (!run.dispatched) {
       run.ended = outcome;
       return null;
     }
-    runs.delete(run.messageId);
-    return { taskId: run.taskId, startedAtIso: run.startedAtIso, ...outcome };
+    // A cancelled run stays tracked until `confirmCancel` rules on it.
+    if (outcome.cancelledRunId === null) runs.delete(run.messageId);
+    return {
+      taskId: run.taskId,
+      startedAtIso: run.startedAtIso,
+      messageId: run.messageId,
+      threadId: run.threadId,
+      ...outcome,
+    };
   };
 
   return {
@@ -90,12 +106,50 @@ export function makeTrackedRuns() {
       });
     },
     forgetTask,
-    /** Returns the outcome if the run already ended while it was being dispatched. */
-    dispatched: (messageId: MessageId): SettledRun | null => {
+    /**
+     * Marks the dispatch bookkeeping as saved, and returns the outcome if the
+     * run already ended while that was happening.
+     */
+    dispatched: (messageId: MessageId, threadId: ThreadId | null): SettledRun | null => {
       const run = runs.get(messageId);
       if (run === undefined) return null;
       run.dispatched = true;
-      return run.ended === null ? null : end(run, run.ended);
+      run.threadId ??= threadId;
+      const held = run.ended;
+      run.ended = null;
+      return held === null ? null : end(run, held);
+    },
+    /** Dispatched runs still waiting for an end, for catching up after missed events. */
+    pending: (): ReadonlyArray<{ readonly messageId: MessageId; readonly threadId: ThreadId }> =>
+      [...runs.values()].flatMap((run) =>
+        run.dispatched && run.threadId !== null
+          ? [{ messageId: run.messageId, threadId: run.threadId }]
+          : [],
+      ),
+    /** Follows a run found by reading the projection rather than by events. */
+    bindRun: (messageId: MessageId, runId: RunId) => {
+      const run = runs.get(messageId);
+      if (run !== undefined) run.runId = runId;
+    },
+    /** Ends every dispatched run as failed, for when events can no longer be followed. */
+    abandonAll: (error: string): ReadonlyArray<SettledRun> =>
+      [...runs.values()].flatMap((run) =>
+        run.dispatched ? settled(end(run, { status: "failed", error, cancelledRunId: null })) : [],
+      ),
+    /**
+     * Rules on a cancelled run, given the run its message belongs to now.
+     * Returns false when the message moved into another run, which is then
+     * followed instead.
+     */
+    confirmCancel: (messageId: MessageId, messageRunId: RunId | null): boolean => {
+      const run = runs.get(messageId);
+      if (run === undefined) return false;
+      if (messageRunId !== null && messageRunId !== run.runId) {
+        run.runId = messageRunId;
+        return false;
+      }
+      runs.delete(messageId);
+      return true;
     },
     /** Folds in one domain event and returns the outcome once a tracked run ends. */
     observe: (event: OrchestrationV2DomainEvent): ReadonlyArray<SettledRun> => {
@@ -129,7 +183,7 @@ export function makeTrackedRuns() {
             run.threadId = threadId;
           }
           if (status === "completed")
-            return settled(end(run, { status: "succeeded", error: null }));
+            return settled(end(run, { status: "succeeded", error: null, cancelledRunId: null }));
           const failure = ENDED_RUN_ERRORS[status];
           if (failure === undefined) return [];
           // Only a failed run carries a provider error; an interrupt or cancel is the user's.
@@ -137,6 +191,7 @@ export function makeTrackedRuns() {
             end(run, {
               status: "failed",
               error: status === "failed" ? (run.providerError ?? failure) : failure,
+              cancelledRunId: status === "cancelled" ? id : null,
             }),
           );
         }
@@ -144,7 +199,13 @@ export function makeTrackedRuns() {
           return [...runs.values()]
             .filter((run) => run.threadId === event.threadId)
             .flatMap((run) =>
-              settled(end(run, { status: "failed", error: "The thread was deleted." })),
+              settled(
+                end(run, {
+                  status: "failed",
+                  error: "The thread was deleted.",
+                  cancelledRunId: null,
+                }),
+              ),
             );
         }
         default:
