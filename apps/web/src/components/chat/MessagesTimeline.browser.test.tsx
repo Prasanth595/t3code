@@ -289,6 +289,58 @@ describe("MessagesTimeline scroll position", () => {
     },
   );
 
+  it("keeps streamed growth smooth after restoring a working thread", async () => {
+    const props = baseProps();
+    const timeline = (restored: boolean, growth = 0) => (
+      <MessagesTimeline
+        {...props}
+        routeThreadKey={restored ? `${props.routeThreadKey}-restored` : props.routeThreadKey}
+        isWorking
+        timelineEntries={[
+          ...tallEntries.slice(0, -1),
+          message(
+            `Message 11\n\n${"Long paragraph. ".repeat(80 + growth * 20)}`,
+            { role: "assistant", streaming: true },
+            "message-11",
+          ),
+        ]}
+      />
+    );
+    await using screen = await renderElement(timeline(false));
+    const viewport = await waitForList(props);
+    await vi.waitFor(() =>
+      expect(
+        viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop,
+      ).toBeLessThanOrEqual(2),
+    );
+    const initialHeight = viewport.scrollHeight;
+    const scrollable: { scrollTo(options: ScrollToOptions): void } = viewport;
+    using scrollTo = vi.spyOn(scrollable, "scrollTo");
+    using restoration = vi.spyOn(props.listRef.current!, "scrollToEnd");
+    {
+      using _timers = fakeTimers();
+      await screen.rerender(timeline(true));
+      await vi.waitFor(() => expect(restoration).toHaveResolved());
+      scrollTo.mockClear();
+      for (let growth = 1; growth <= 16; growth += 1) {
+        await screen.rerender(timeline(true, growth));
+        await act(async () => vi.advanceTimersByTimeAsync(16));
+      }
+      // LegendList coalesces further growth behind its 500ms smooth-follow timer.
+      await act(async () => vi.advanceTimersByTimeAsync(1000));
+    }
+    expect(viewport.scrollHeight).toBeGreaterThan(initialHeight);
+    const behaviors = scrollTo.mock.calls.map(([options]) => options.behavior);
+    const smoothStart = behaviors.indexOf("smooth");
+    expect(smoothStart).toBeGreaterThanOrEqual(0);
+    expect(behaviors.slice(smoothStart + 1)).not.toContain("auto");
+    await vi.waitFor(() =>
+      expect(
+        viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop,
+      ).toBeLessThanOrEqual(2),
+    );
+  });
+
   it("does not interrupt a smooth jump when following is re-enabled without new rows", async () => {
     const onIsAtEndChange = vi.fn();
     const props = { ...baseProps(), onIsAtEndChange };

@@ -898,6 +898,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const restoringAlwaysRender =
     restoringThreadPosition && restoreRowIndex >= 0 ? { indices: [restoreRowIndex] } : undefined;
   const followsEndRef = useRef(false);
+  const followsEndSmoothlyRef = useRef(false);
   const endPinWasAtEndRef = useRef(true);
   const endPinCancelRef = useRef<(() => void) | null>(null);
   useEffect(() => {
@@ -971,7 +972,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
       if (position?.atEnd !== false || index < 0) {
         // That scroll aimed at estimated row heights; keep scrolling while the rows measure.
         if (position?.atEnd !== false && scrolling !== undefined) {
-          endPinCancelRef.current = pinTimelineToEnd(list, () => followsEndRef.current);
+          endPinCancelRef.current = pinTimelineToEnd(
+            list,
+            () => followsEndRef.current && !followsEndSmoothlyRef.current,
+          );
         }
         setPositionedThreadKey(listIdentityKey);
         return;
@@ -1476,7 +1480,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const followsEndSmoothly = followsEnd && isWorking && !prefersReducedMotion;
   useLayoutEffect(() => {
     followsEndRef.current = followsEnd;
-  }, [followsEnd]);
+    followsEndSmoothlyRef.current = followsEndSmoothly && settlingListIdentity === null;
+  }, [followsEnd, followsEndSmoothly, settlingListIdentity]);
   // Rows that land on a followed thread (a reply that finished while it was in the
   // background) can grow the content past what LegendList keeps following. Check once
   // the rows have laid out; smooth following during a stream moves the view itself.
