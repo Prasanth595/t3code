@@ -90,13 +90,15 @@ function LinkRowImpl({
   projectId,
   speedMode,
   onUnlink,
+  canUnlinkStack,
   onSetWatching,
 }: {
   line: PullRequestListLine;
   threadRef: ScopedThreadRef;
   projectId: ProjectId | null;
   speedMode: boolean;
-  onUnlink: (link: ThreadPullRequestLink) => void;
+  onUnlink: (link: ThreadPullRequestLink, wholeStack?: boolean) => void;
+  canUnlinkStack: boolean;
   onSetWatching: ((link: ThreadPullRequestLink, watching: boolean) => void) | null;
 }) {
   const openPrLink = useOpenPrLink(threadRef);
@@ -341,6 +343,12 @@ function LinkRowImpl({
               <PullRequestGlyph.unlink className="size-3.5" />
               {link.source === "stack" ? "Dismiss from thread" : "Unlink from thread"}
             </MenuItem>
+            {stack && canUnlinkStack ? (
+              <MenuItem onClick={() => onUnlink(link, true)}>
+                <PullRequestGlyph.unlink className="size-3.5" />
+                Unlink stack from thread
+              </MenuItem>
+            ) : null}
           </MenuPopup>
         </Menu>
       </span>
@@ -402,7 +410,8 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
   const capabilities = useServerConfigs().get(threadRef.environmentId)?.environment.capabilities;
   const supportsWatch = capabilities?.threadPullRequestWatch === true;
-  const handleUnlink = (link: ThreadPullRequestLink) => {
+  const supportsStackUnlink = capabilities?.threadPullRequestStackUnlink === true;
+  const handleUnlink = (link: ThreadPullRequestLink, wholeStack = false) => {
     void unlink({
       environmentId: threadRef.environmentId,
       input: {
@@ -410,6 +419,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
         host: link.host,
         repository: link.repository,
         number: link.number,
+        ...(wholeStack ? { wholeStack: true } : {}),
       },
     });
   };
@@ -428,7 +438,14 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
 
   // Legend re-renders visible rows only when data or extraData changes, so everything the rows
   // read from outside their line goes in here.
-  const rowInputs = { speedMode, environmentProjects, capabilities, supportsWatch, thread };
+  const rowInputs = {
+    speedMode,
+    environmentProjects,
+    capabilities,
+    supportsWatch,
+    supportsStackUnlink,
+    thread,
+  };
 
   if (linkCount === 0) {
     return (
@@ -468,6 +485,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
             }
             speedMode={speedMode}
             onUnlink={handleUnlink}
+            canUnlinkStack={supportsStackUnlink}
             onSetWatching={supportsWatch ? handleSetWatching : null}
           />
         )}
