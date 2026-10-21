@@ -1482,9 +1482,6 @@ export const make = Effect.gen(function* () {
             url: changeRequest.url,
             state: changeRequest.state,
             headBranch: changeRequest.headBranch,
-            ...(changeRequest.headRepositoryNameWithOwner === undefined
-              ? {}
-              : { headRepositoryNameWithOwner: changeRequest.headRepositoryNameWithOwner }),
             baseBranch: changeRequest.baseBranch,
             closedAt: changeRequest.closedAt ?? null,
             mergedAt: changeRequest.mergedAt ?? null,
@@ -2871,7 +2868,6 @@ export const make = Effect.gen(function* () {
     changedFiles: detail.changedFiles,
     mergeability: detail.mergeability,
     headBranch: detail.headBranch,
-    headRepositoryNameWithOwner: detail.headRepositoryNameWithOwner ?? null,
     baseBranch: detail.baseBranch,
     closedAt: detail.closedAt,
     mergedAt: detail.mergedAt,

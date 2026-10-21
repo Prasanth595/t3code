@@ -3,13 +3,6 @@ import { GraphQL, GraphQLGroup } from "effect/graphql"
 import * as Schema from "effect/Schema"
 import * as Shared from "../../schema/github.graphql.ts"
 
-/** A repository contains the content for a project. */
-export const HeadRepositoryRepository = Schema.Struct({
-  /** The repository's name with owner. */
-  nameWithOwner: Schema.String
-})
-export interface HeadRepositoryRepository extends Schema.Struct.Type<typeof HeadRepositoryRepository.fields> {}
-
 /** A user is an individual's account on GitHub that owns repositories and can make new content. */
 export const User = Schema.Struct({
   __typename: Schema.Literal("User"),
@@ -132,8 +125,6 @@ export const PullRequestSummaryRepositoryPullRequestPullRequest = Schema.Struct(
   closedAt: Schema.NullOr(Shared.DateTime),
   /** Identifies the name of the head Ref associated with the pull request, even if the ref has been deleted. */
   headRefName: Schema.String,
-  /** The repository associated with this pull request's head Ref. */
-  headRepository: Schema.NullOr(HeadRepositoryRepository),
   /** Identifies the name of the base Ref associated with the pull request, even if the ref has been deleted. */
   baseRefName: Schema.String,
   /** The actor who authored the comment. */
@@ -169,7 +160,7 @@ export const PullRequestSummary = GraphQL.query("PullRequestSummary", {
       { name: "stacks", body: "Boolean!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){number title url state isDraft mergeable reviewDecision additions deletions changedFiles updatedAt mergedAt closedAt headRefName headRepository{nameWithOwner}baseRefName author{__typename login avatarUrl...on User{name}}latestReviews(first:20){nodes{state author{__typename login}}}commits(last:1){nodes{commit{statusCheckRollup{state}}}}stack@include(if:$", "stacks", "){number size baseRefName}stackEntry@include(if:$", "stacks", "){position}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){number title url state isDraft mergeable reviewDecision additions deletions changedFiles updatedAt mergedAt closedAt headRefName baseRefName author{__typename login avatarUrl...on User{name}}latestReviews(first:20){nodes{state author{__typename login}}}commits(last:1){nodes{commit{statusCheckRollup{state}}}}stack@include(if:$", "stacks", "){number size baseRefName}stackEntry@include(if:$", "stacks", "){position}}}"] }
     ],
     fragments: []
   },

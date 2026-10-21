@@ -1,6 +1,5 @@
 import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
-import { resolveThreadGitStatus } from "@t3tools/shared/threadPullRequests";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { createNativeHeaderMenu } from "../../components/ui/nativeHeaderMenu.ios";
 import type { AppBarMenu } from "../../components/ui/AppBar.types";
@@ -9,7 +8,6 @@ import {
   EnvironmentId,
   type GitRunStackedActionResult,
   type ProjectScript,
-  type ThreadPullRequestLink,
   ThreadId,
   type VcsStatusResult,
 } from "@t3tools/contracts";
@@ -89,7 +87,6 @@ export type ThreadGitMenuProps = {
   readonly threadId: ThreadId | string;
   readonly currentBranch: string | null;
   readonly gitStatus: VcsStatusResult | null;
-  readonly pullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
   readonly gitOperationLabel: string | null;
   readonly onOpenFilesInspector?: () => void;
   readonly onOpenGitInspector?: () => void;
@@ -118,11 +115,13 @@ type ThreadGitControlsProps = ThreadGitMenuProps & {
 function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const navigation = useNavigation();
   const openPullRequest = useOpenPullRequest();
-  const environmentId = EnvironmentId.make(props.environmentId);
-  const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
-  const threadId = ThreadId.make(props.threadId);
-  const { gitOperationLabel, onPull, onRunAction } = props;
-  const gitStatus = resolveThreadGitStatus(props.gitStatus, props.pullRequests);
+  const environmentId = props.environmentId;
+  const canWriteSourceControl = useEnvironmentScope(
+    environmentId ? EnvironmentId.make(String(environmentId)) : null,
+    AuthSourceControlWriteScope,
+  );
+  const threadId = props.threadId;
+  const { gitStatus, gitOperationLabel, onPull, onRunAction } = props;
 
   const currentBranchLabel = gitStatus?.refName ?? props.currentBranch ?? "Detached HEAD";
   const busy = gitOperationLabel !== null;
@@ -249,7 +248,6 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   };
 
   return {
-    gitStatus,
     currentBranchLabel,
     isRepo,
     openFiles,
@@ -343,7 +341,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
       menu: {
         items: [
           {
-            description: compactMenuStatus(model.gitStatus),
+            description: compactMenuStatus(props.gitStatus),
             disabled: true,
             icon: {
               name: "point.topleft.down.curvedto.point.bottomright.up",
@@ -491,7 +489,7 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
           separateBackground
         />
       ) : null}
-      {showActionControls ? createNativeHeaderMenu(threadGitMenuDefinition(model)) : null}
+      {showActionControls ? createNativeHeaderMenu(threadGitMenuDefinition(props, model)) : null}
     </Toolbar>
   );
 }
@@ -508,10 +506,13 @@ export function ThreadGitMenu(props: ThreadGitMenuProps) {
 
 /** Returns menu data because native toolbars serialize direct items rather than rendering component children. */
 export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMenu | null {
-  return threadGitMenuDefinition(useThreadGitControlModel(props));
+  return threadGitMenuDefinition(props, useThreadGitControlModel(props));
 }
 
-function threadGitMenuDefinition(model: ReturnType<typeof useThreadGitControlModel>): AppBarMenu {
+function threadGitMenuDefinition(
+  props: ThreadGitMenuProps,
+  model: ReturnType<typeof useThreadGitControlModel>,
+): AppBarMenu {
   return {
     title: "Git controls",
     icon: "point.topleft.down.curvedto.point.bottomright.up",
@@ -522,7 +523,7 @@ function threadGitMenuDefinition(model: ReturnType<typeof useThreadGitControlMod
         title: compactMenuBranchLabel(model.currentBranchLabel),
         icon: "point.topleft.down.curvedto.point.bottomright.up",
         disabled: true,
-        subtitle: compactMenuStatus(model.gitStatus),
+        subtitle: compactMenuStatus(props.gitStatus),
         onPress: () => {},
       },
       {

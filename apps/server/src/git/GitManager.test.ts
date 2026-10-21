@@ -743,6 +743,7 @@ function preparePullRequestThread(
 
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
+  linkedPullRequests?: ReadonlyArray<ProjectionStore.ProjectionThreadPullRequests>;
   sourceControlProvider?: SourceControlProvider["Service"];
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
@@ -876,7 +877,15 @@ function makeManager(input?: {
     if (input?.seed !== undefined) {
       yield* input.seed.pipe(Effect.provideContext(stores), Effect.orDie);
     }
+    const projections = Context.get(stores, ProjectionStore.ProjectionStoreV2);
     const manager = yield* GitManager.make.pipe(
+      Effect.provideService(ProjectionStore.ProjectionStoreV2, {
+        ...projections,
+        getThreadsWithPullRequests:
+          input?.linkedPullRequests === undefined
+            ? projections.getThreadsWithPullRequests
+            : () => Effect.succeed(input.linkedPullRequests!),
+      }),
       Effect.provideService(HostProcess.Environment, input?.environment ?? {}),
       Effect.provide(layerManager),
       Effect.provideContext(stores),
@@ -894,6 +903,100 @@ const layerGitManagerTest = GitVcsDriver.layer.pipe(
 );
 
 it.layer(layerGitManagerTest)("GitManager", (it) => {
+  it.effect("linked PR lookup verifies the head and prevents duplicate creation", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/linked"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/linked"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/team/repo.git",
+        remoteDir,
+      );
+      const threadId = ThreadId.make("thread:linked-pr");
+      const pullRequest: FakePullRequest = {
+        number: 42,
+        title: "Existing PR",
+        url: "https://github.com/upstream/repo/pull/42",
+        baseRefName: "main",
+        headRefName: "feature/linked",
+        state: "open",
+        headRepositoryNameWithOwner: "team/repo",
+        isCrossRepository: true,
+      };
+      const link = {
+        host: "github.com",
+        repository: "upstream/repo",
+        number: 42,
+        url: pullRequest.url,
+        source: "manual" as const,
+        linkedAt: "2026-10-01T00:00:00.000Z",
+        stack: null,
+        snapshot: {
+          state: "open" as const,
+          title: "Existing PR",
+          headBranch: "feature/linked",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: null,
+          syncedAt: "2026-10-01T00:00:00.000Z",
+        },
+      };
+      const linkedThread: ProjectionStore.ProjectionThreadPullRequests = {
+        id: threadId,
+        projectId: ProjectId.make("project:linked-pr"),
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        settledOverride: null,
+        settledAt: null,
+        pullRequests: [link],
+      };
+      const ghScenario: FakeGhScenario = { prListSequence: ["[]"], pullRequest };
+      const linkedPullRequests: Array<ProjectionStore.ProjectionThreadPullRequests> = [];
+      const { manager, ghCalls } = yield* makeManager({ ghScenario, linkedPullRequests });
+      expect((yield* manager.status({ cwd: repoDir })).pr).toBeNull();
+      linkedPullRequests.push(linkedThread);
+      const refreshed = yield* manager.remoteStatus(
+        { cwd: repoDir },
+        {
+          refreshUpstream: false,
+          refreshMissingPullRequest: true,
+        },
+      );
+      expect(refreshed?.pr?.number).toBe(42);
+      const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
+      expect(result.pr.status).toBe("opened_existing");
+      expect(ghCalls.some((args) => args[0] === "pr" && args[1] === "create")).toBe(false);
+
+      // The stored snapshot stays open while the provider's current head or state changes.
+      for (const change of [
+        { headRepositoryNameWithOwner: "someone-else/repo" },
+        { url: "https://other.example/upstream/repo/pull/42" },
+        { headRepositoryNameWithOwner: null },
+        { headRefName: "another-branch" },
+        { state: "closed" as const },
+        { state: "merged" as const },
+      ]) {
+        ghScenario.pullRequest = { ...pullRequest, ...change };
+        yield* manager.invalidateStatus(repoDir);
+        expect((yield* manager.status({ cwd: repoDir })).pr).toBeNull();
+      }
+      ghScenario.pullRequest = pullRequest;
+      for (const links of [
+        [{ ...link, source: "stack-dismissed" as const }],
+        [{ ...link, url: "https://other.example/upstream/repo/pull/42" }],
+        [],
+      ]) {
+        linkedPullRequests[0] = { ...linkedThread, pullRequests: links };
+        yield* manager.invalidateStatus(repoDir);
+        expect((yield* manager.status({ cwd: repoDir })).pr).toBeNull();
+      }
+    }),
+  );
+
   it.effect("status ignores invalid gh pr list entries and keeps valid ones", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -2542,12 +2645,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const originRemote = yield* createBareRemote();
         yield* runGit(repoDir, ["remote", "add", "origin", originRemote]);
         yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-retarget"]);
-        yield* configureVisibleRemoteUrlWithLocalRewrite(
-          repoDir,
-          "origin",
-          "https://github.com/pingdotgg/codething-mvp.git",
-          originRemote,
-        );
 
         const existingPr = {
           number: 214,
@@ -2567,17 +2664,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
         const first = yield* manager.status({ cwd: repoDir });
         expect(first.pr?.number).toBe(214);
-        expect(first.repositoryKey).toBe("github.com/pingdotgg/codething-mvp");
 
         const forkRemote = yield* createBareRemote();
         yield* runGit(repoDir, ["remote", "add", "fork", forkRemote]);
         yield* runGit(repoDir, ["push", "fork", "feature/pr-retarget"]);
-        yield* configureVisibleRemoteUrlWithLocalRewrite(
-          repoDir,
-          "fork",
-          "https://github.com/contributor/codething-mvp.git",
-          forkRemote,
-        );
         yield* runGit(repoDir, [
           "branch",
           "--set-upstream-to=fork/feature/pr-retarget",
@@ -2587,33 +2677,16 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         yield* manager.invalidateStatus(repoDir);
         const second = yield* manager.status({ cwd: repoDir });
         expect(second.pr).toBeNull();
-        // Push targets fork/feature/pr-retarget, so origin's linked PR must not match.
-        expect.soft(second.repositoryKey).not.toBe(first.repositoryKey);
-        expect
-          .soft((yield* manager.localStatus({ cwd: repoDir })).repositoryKey)
-          .not.toBe(first.repositoryKey);
       }),
   );
 
-  it.effect("status refreshes checkout identity and PR when its remote changes", () =>
+  it.effect("status drops the last known PR when the tracked remote is repointed", () =>
     Effect.gen(function* () {
-      const workspaceDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(workspaceDir);
-      yield* runGit(workspaceDir, ["checkout", "-b", "feature/pr-repointed"]);
-      const repoDir = NodePath.join(workspaceDir, "checkout");
-      yield* makeDirectory(repoDir);
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-repointed"]);
       const originalRemoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", originalRemoteDir]);
-      const originalUrl = "https://github.com/pingdotgg/codething-mvp.git";
-      yield* configureVisibleRemoteUrlWithLocalRewrite(
-        repoDir,
-        "origin",
-        originalUrl,
-        originalRemoteDir,
-      );
-      yield* runGit(workspaceDir, ["remote", "add", "origin", originalUrl]);
       yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-repointed"]);
 
       const existingPr = {
@@ -2632,32 +2705,17 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         },
       });
 
-      const workspaceStatus = yield* manager.localStatus({ cwd: workspaceDir });
-      expect.soft(workspaceStatus.repositoryKey).toBe("github.com/pingdotgg/codething-mvp");
       const first = yield* manager.status({ cwd: repoDir });
       expect(first.pr?.number).toBe(216);
-      expect.soft(first.repositoryKey).toBe("github.com/pingdotgg/codething-mvp");
 
       const replacementRemoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "replacement", replacementRemoteDir]);
       yield* runGit(repoDir, ["push", "replacement", "feature/pr-repointed"]);
-      yield* configureVisibleRemoteUrlWithLocalRewrite(
-        repoDir,
-        "origin",
-        "https://github.com/pingdotgg/unrelated.git",
-        replacementRemoteDir,
-      );
+      yield* runGit(repoDir, ["remote", "set-url", "origin", replacementRemoteDir]);
       yield* manager.invalidateStatus(repoDir);
 
       const second = yield* manager.status({ cwd: repoDir });
       expect(second.pr).toBeNull();
-      expect(second.refName).toBe(first.refName);
-      expect.soft(second.repositoryKey).toBe("github.com/pingdotgg/unrelated");
-      const local = yield* manager.localStatus({ cwd: repoDir });
-      expect.soft(local.repositoryKey).toBe("github.com/pingdotgg/unrelated");
-      expect
-        .soft((yield* manager.localStatus({ cwd: workspaceDir })).repositoryKey)
-        .toBe("github.com/pingdotgg/codething-mvp");
     }),
   );
 

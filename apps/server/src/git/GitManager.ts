@@ -256,16 +256,6 @@ interface BranchHeadContext {
   isCrossRepository: boolean;
 }
 
-function checkoutRepositoryKey(remoteUrl: string | null): string | null {
-  if (!remoteUrl || !detectSourceControlProviderFromGitRemoteUrl(remoteUrl)) return null;
-  let key = normalizeGitRemoteUrl(remoteUrl);
-  // HTTP ports distinguish repositories on separate servers; SSH ports do not identify web ports.
-  if (/^https?:\/\//iu.test(remoteUrl.trim())) {
-    key = key.replace(/^[^/]+/u, new URL(remoteUrl.trim()).host.toLowerCase());
-  }
-  return canonicalRepositoryKey(key);
-}
-
 export function pullRequestRepositoryKey(value: string): string | null {
   try {
     const url = new URL(value);
@@ -1136,13 +1126,13 @@ export const make = Effect.gen(function* () {
       .pipe(
         Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(nonRepositoryStatusDetails)),
       );
-    const repositoryContext = details.isRepo
-      ? yield* resolveLocalRepositoryContext(cwd, details.branch)
-      : {};
+    const hostingProvider = details.isRepo
+      ? yield* resolveHostingProvider(cwd, details.branch)
+      : null;
 
     return {
       isRepo: details.isRepo,
-      ...repositoryContext,
+      ...(hostingProvider ? { sourceControlProvider: hostingProvider } : {}),
       hasPrimaryRemote: details.hasOriginRemote,
       isDefaultRef: details.isDefaultBranch,
       refName: details.branch,
@@ -1473,90 +1463,27 @@ export const make = Effect.gen(function* () {
     return locator === null || `${locator.owner}/${locator.name}`.toLowerCase() === repository;
   });
 
-  const resolveLocalRepositoryContext = Effect.fn("resolveLocalRepositoryContext")(function* (
+  const resolveHostingProvider = Effect.fn("resolveHostingProvider")(function* (
     cwd: string,
     branch: string | null,
   ) {
-    const originUrl = yield* readConfigValueNullable(cwd, "remote.origin.url");
-    const primaryRemoteName = originUrl
-      ? "origin"
-      : yield* gitCore.resolvePrimaryRemoteName(cwd).pipe(Effect.orElseSucceed(() => null));
-    const primaryRemoteUrl =
-      primaryRemoteName === "origin"
-        ? originUrl
-        : primaryRemoteName
-          ? yield* readConfigValueNullable(cwd, `remote.${primaryRemoteName}.url`)
-          : null;
-    const repositoryKey = checkoutRepositoryKey(primaryRemoteUrl);
     const preferredRemoteName =
       branch === null
         ? "origin"
         : ((yield* readConfigValueNullable(cwd, `branch.${branch}.remote`)) ?? "origin");
     const remoteUrl =
-      preferredRemoteName === primaryRemoteName
-        ? primaryRemoteUrl
-        : ((yield* readConfigValueNullable(cwd, `remote.${preferredRemoteName}.url`)) ?? originUrl);
-
-    // Keep linked-PR fallback conservative: upstream and publish routing must agree on the
-    // primary repository, and publishing must not strip a remote prefix from the branch.
-    const canMatchLinkedPullRequest =
-      repositoryKey !== null && branch !== null && preferredRemoteName === primaryRemoteName
-        ? yield* gitCore
-            .execute({
-              operation: "GitManager.resolveLocalRepositoryContext.pushConfig",
-              cwd,
-              args: [
-                "config",
-                "--null",
-                "--get-regexp",
-                "^(remote\\.|branch\\..*\\.(remote|pushremote)$|url\\..*\\.pushinsteadof$)",
-              ],
-              timeoutMs: 5_000,
-            })
-            .pipe(
-              Effect.map(({ stdout }) =>
-                stdout.split("\0").every((entry) => {
-                  if (entry.length === 0) return true;
-                  const separator = entry.indexOf("\n");
-                  if (separator < 0) return false;
-                  const key = entry.slice(0, separator);
-                  const value = entry.slice(separator + 1);
-                  if (
-                    key === `branch.${branch}.remote` ||
-                    key === `branch.${branch}.pushremote` ||
-                    key === "remote.pushdefault"
-                  ) {
-                    return value.trim() === primaryRemoteName;
-                  }
-                  const remote = /^remote\.(.+)\.([^.]+)$/u.exec(key);
-                  if (!remote) return !key.endsWith(".pushinsteadof");
-                  if (branch.startsWith(`${remote[1]}/`)) return false;
-                  return (
-                    remote[1] !== primaryRemoteName ||
-                    (remote[2] !== "url" && remote[2] !== "pushurl") ||
-                    checkoutRepositoryKey(value) === repositoryKey
-                  );
-                }),
-              ),
-              Effect.orElseSucceed(() => false),
-            )
-        : false;
+      (yield* readConfigValueNullable(cwd, `remote.${preferredRemoteName}.url`)) ??
+      (yield* readConfigValueNullable(cwd, "remote.origin.url"));
 
     const provider = remoteUrl ? detectSourceControlProviderFromGitRemoteUrl(remoteUrl) : null;
-    const handle =
-      remoteUrl && provider?.kind === "unknown"
-        ? yield* sourceControlProviders
-            .resolveHandle({
-              cwd,
-              context: { provider, remoteName: preferredRemoteName, remoteUrl },
-            })
-            .pipe(Effect.orElseSucceed(() => null))
-        : null;
-    const sourceControlProvider = handle?.context?.provider ?? provider;
-    return {
-      ...(canMatchLinkedPullRequest && repositoryKey ? { repositoryKey } : {}),
-      ...(sourceControlProvider ? { sourceControlProvider } : {}),
-    };
+    if (!remoteUrl || provider?.kind !== "unknown") return provider;
+    const handle = yield* sourceControlProviders
+      .resolveHandle({
+        cwd,
+        context: { provider, remoteName: preferredRemoteName, remoteUrl },
+      })
+      .pipe(Effect.orElseSucceed(() => null));
+    return handle?.context?.provider ?? provider;
   });
 
   const resolveRemoteRepositoryContext = Effect.fn("resolveRemoteRepositoryContext")(function* (
@@ -1919,11 +1846,58 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.orElseSucceed(() => false));
   });
 
+  // A linked PR can be known before branch discovery finds it. Treat the link as a
+  // lookup hint, and verify its current head rather than promoting a cached snapshot.
+  const findLinkedPr = Effect.fn("findLinkedPr")(function* (
+    cwd: string,
+    headContext: Pick<BranchHeadContext, "headBranch" | "headRemoteUrlKey">,
+  ) {
+    if (headContext.headRemoteUrlKey === null) return null;
+    const repositoryKey = canonicalRepositoryKey(headContext.headRemoteUrlKey);
+    const linkedThreads = yield* threads
+      .getThreadsWithPullRequests()
+      .pipe(Effect.orElseSucceed(() => []));
+    const references = new Set(
+      linkedThreads.flatMap((thread) =>
+        (thread.pullRequests ?? []).flatMap((link) =>
+          link.source !== "stack-dismissed" &&
+          link.snapshot?.state === "open" &&
+          link.snapshot.headBranch === headContext.headBranch
+            ? [link.url]
+            : [],
+        ),
+      ),
+    );
+    if (references.size === 0) return null;
+    const provider = yield* sourceControlProvider(cwd);
+    for (const reference of references) {
+      const url = URL.parse(reference);
+      if (!url || !repositoryKey.startsWith(`${url.host.toLowerCase()}/`)) continue;
+      const pr = yield* provider.getChangeRequest({ cwd, reference }).pipe(
+        Effect.map(toPullRequestInfo),
+        Effect.orElseSucceed(() => null),
+      );
+      if (pr?.state !== "open" || pr.headRefName !== headContext.headBranch) continue;
+      const resolvedUrl = URL.parse(pr.url);
+      if (!resolvedUrl) continue;
+      const headKey = pr.headRepositoryNameWithOwner
+        ? canonicalRepositoryKey(
+            `${resolvedUrl.host}/${pr.headRepositoryNameWithOwner}`.toLowerCase(),
+          )
+        : pr.isCrossRepository === false
+          ? pullRequestRepositoryKey(pr.url)
+          : null;
+      if (headKey === repositoryKey) return pr;
+    }
+    return null;
+  });
+
   const findOpenPr = Effect.fn("findOpenPr")(function* (
     cwd: string,
     headContext: Pick<
       BranchHeadContext,
       | "headBranch"
+      | "headRemoteUrlKey"
       | "headSelectors"
       | "headRepositoryNameWithOwner"
       | "headRepositoryOwnerLogin"
@@ -1953,7 +1927,7 @@ export const make = Effect.gen(function* () {
       }
     }
 
-    return null;
+    return yield* findLinkedPr(cwd, headContext);
   });
 
   const findLatestPrForHeadContext = Effect.fn("findLatestPrForHeadContext")(function* (
@@ -1986,7 +1960,7 @@ export const make = Effect.gen(function* () {
     if (latestOpenPr) {
       return latestOpenPr;
     }
-    return parsed[0] ?? null;
+    return parsed[0] ?? (yield* findLinkedPr(cwd, headContext));
   });
   const buildCompletionToast = Effect.fn("buildCompletionToast")(function* (
     cwd: string,

@@ -997,7 +997,6 @@ export interface GitHubPullRequestSummary {
   readonly title: string;
   readonly url: string;
   readonly headBranch: string;
-  readonly headRepositoryNameWithOwner?: string | null;
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
@@ -1022,7 +1021,6 @@ export function toPullRequestSummary(pr: SummarizedPullRequest): GitHubPullReque
     title: pr.title,
     url: pr.url,
     headBranch: pr.headRefName,
-    headRepositoryNameWithOwner: trimmed(pr.headRepository?.nameWithOwner),
     baseBranch: pr.baseRefName,
     state: toState(pr),
     isDraft: pr.isDraft,

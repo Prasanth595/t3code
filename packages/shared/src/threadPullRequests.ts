@@ -5,7 +5,6 @@ import type {
   ThreadLinkedPullRequest,
   ThreadPullRequestKey,
   ThreadPullRequestLink,
-  VcsStatusResult,
 } from "@t3tools/contracts";
 
 import { pullRequestHostOf } from "@t3tools/contracts";
@@ -429,49 +428,4 @@ export function pullRequestListLines(
           : null,
     }));
   });
-}
-
-// Branch lookup and linked PR snapshots refresh independently.
-export function resolveThreadGitStatus(
-  status: VcsStatusResult | null,
-  links: ReadonlyArray<ThreadPullRequestLink> | undefined,
-): VcsStatusResult | null {
-  if (!status || status.pr !== null || status.refName === null || !status.repositoryKey)
-    return status;
-  const canonicalKey = canonicalRepositoryKey(status.repositoryKey.trim().toLowerCase());
-  for (const link of links ?? []) {
-    const snapshot = link.snapshot;
-    if (
-      link.source === "stack-dismissed" ||
-      snapshot?.state !== "open" ||
-      snapshot.headBranch !== status.refName ||
-      !snapshot.headRepositoryNameWithOwner
-    )
-      continue;
-    let url: URL;
-    try {
-      url = new URL(link.url);
-    } catch {
-      continue;
-    }
-    if (url.protocol !== "https:" && url.protocol !== "http:") continue;
-    const headKey = canonicalRepositoryKey(
-      `${url.host}/${snapshot.headRepositoryNameWithOwner}`.trim().toLowerCase(),
-    );
-    if (headKey !== canonicalKey) continue;
-    return {
-      ...status,
-      pr: {
-        number: link.number,
-        url: link.url,
-        title: snapshot.title,
-        headRef: snapshot.headBranch,
-        baseRef: snapshot.baseBranch,
-        state: snapshot.state,
-        isDraft: snapshot.isDraft,
-        updatedAt: snapshot.updatedAt,
-      },
-    };
-  }
-  return status;
 }

@@ -100,7 +100,6 @@ export interface ProviderChangeRequestSummary {
   readonly title: string;
   readonly url: string;
   readonly headBranch: string;
-  readonly headRepositoryNameWithOwner?: string | null;
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft?: boolean;

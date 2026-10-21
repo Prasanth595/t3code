@@ -529,9 +529,6 @@ export const make = Effect.gen(function* () {
       readPull("getChangeRequestSummary", input).pipe(
         Effect.map((pull) => ({
           ...Json.toChangeRequest(pull, input),
-          headRepositoryNameWithOwner: pull.sourceRepo
-            ? `${pull.sourceRepo.owner}/${pull.sourceRepo.name}`
-            : input.repository,
           closedAt: pull.closedAt,
           mergedAt: pull.mergedAt,
         })),
@@ -562,9 +559,9 @@ export const make = Effect.gen(function* () {
         ...Json.toChangeRequest(pull, input),
         headSha: pull.headOid,
         body: pull.description ?? "",
-        headRepositoryNameWithOwner: pull.sourceRepo
-          ? `${pull.sourceRepo.owner}/${pull.sourceRepo.name}`
-          : input.repository,
+        ...(pull.sourceRepo === null
+          ? {}
+          : { headRepositoryNameWithOwner: `${pull.sourceRepo.owner}/${pull.sourceRepo.name}` }),
         additions: changes?.additions ?? 0,
         deletions: changes?.deletions ?? 0,
         changedFiles: changes?.changedFiles ?? 0,
