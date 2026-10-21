@@ -996,6 +996,21 @@ describe("FactoryPage filters", () => {
     expect(page.text()).not.toContain("No runs match the filter");
   });
 
+  it("reads only the chosen environment's runs for loading and for no match", async () => {
+    twoEnvironments();
+    state.others[0]!.runs = resource({ status: "error", error: new Error("timed out") });
+    state.search = { environment: "env-3" };
+    const failed = await render(createElement(FactoryPage));
+    expect(failed.text()).toContain("Could not refresh Laptop: timed out");
+    expect(failed.text()).not.toContain("No runs match the filter");
+    await failed.unmount();
+    state.others[0]!.runs = resource({ data: { runs: [] } });
+    state.runs = resource({ status: "loading" });
+    const empty = await render(createElement(FactoryPage));
+    expect(empty.all('[aria-label="Loading runs"]')).toHaveLength(0);
+    expect(empty.text()).toContain("No runs in the last week");
+  });
+
   it("keeps the select of a filter that is on, so it can be cleared", async () => {
     state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
     state.runs = resource({ data: { runs: [runRow(), runRow({ id: "unparsed" })] } });
