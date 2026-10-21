@@ -960,7 +960,50 @@ describe("FactoryPage filters", () => {
     await pick("Environment", "Mac Studio");
     expect(runLinks(page)).toContain("unparsed");
     await pick("Repo", "original-solutions/t3code-factory");
+    expect(state.navigations.at(-1)?.search).toEqual({
+      environment: "env-2",
+      repo: "original-solutions/t3code-factory",
+    });
     expect(runLinks(page)).toEqual([RUN_ID]);
+  });
+
+  it("matches a run's repo to the chosen one without regard to case", async () => {
+    twoEnvironments();
+    state.runs = resource({ data: { runs: [runRow(), runRow({ id: "Acme__Widgets__8__1" })] } });
+    const page = await render(createElement(FactoryPage));
+    await pick("Repo", "acme/widgets");
+    expect(runLinks(page).toSorted()).toEqual(["Acme__Widgets__8__1", LAPTOP_RUN]);
+  });
+
+  it("shows only the chosen environment's read failures", async () => {
+    twoEnvironments();
+    state.runs = resource({
+      status: "error",
+      data: { runs: [runRow()] },
+      error: new Error("fetch failed"),
+    });
+    state.search = { environment: "env-3" };
+    const page = await render(createElement(FactoryPage));
+    expect(page.text()).not.toContain("Could not refresh Mac Studio");
+  });
+
+  it("says the runs are loading, not that none match, while the chosen environment's runs are read", async () => {
+    twoEnvironments();
+    state.others[0]!.runs = resource({ status: "loading" });
+    state.search = { environment: "env-3" };
+    const page = await render(createElement(FactoryPage));
+    expect(page.all('[aria-label="Loading runs"]')).not.toHaveLength(0);
+    expect(page.text()).not.toContain("No runs match the filter");
+  });
+
+  it("keeps the select of a filter that is on, so it can be cleared", async () => {
+    state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
+    state.runs = resource({ data: { runs: [runRow(), runRow({ id: "unparsed" })] } });
+    state.search = { repo: "original-solutions/t3code-factory" };
+    const page = await render(createElement(FactoryPage));
+    expect(runLinks(page)).toEqual([RUN_ID]);
+    await pick("Repo", "All repos");
+    expect(runLinks(page).toSorted()).toEqual([RUN_ID, "unparsed"].toSorted());
   });
 
   it("renders everything for an environment or repo that names nothing listed", async () => {
