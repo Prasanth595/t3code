@@ -5,7 +5,11 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 
-import { retryPromptOnBusy, type AcpPromptBusyRetryPolicy } from "./promptBusyRetry.ts";
+import {
+  makeAcpPromptBusyRetryGate,
+  retryPromptOnBusy,
+  type AcpPromptBusyRetryPolicy,
+} from "./promptBusyRetry.ts";
 
 class BusyError extends Error {
   override readonly name = "BusyError";
@@ -144,6 +148,105 @@ describe("retryPromptOnBusy", () => {
 
       assert.isTrue(Exit.isFailure(exit));
       assert.strictEqual(attempts, 1);
+    }),
+  );
+
+  it.effect("does not re-send a prompt that was cancelled while it was waiting", () =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      const fiber = yield* Effect.forkChild(
+        retryPromptOnBusy(
+          busyPolicy,
+          Effect.suspend(() => {
+            attempts += 1;
+            return Effect.fail(new BusyError("session is busy"));
+          }),
+          { cancelled: Effect.succeed(true) },
+        ),
+      );
+      yield* TestClock.adjust(1_000);
+
+      const exit = yield* Fiber.join(fiber).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(exit));
+      assert.strictEqual(attempts, 1);
+      if (Exit.isFailure(exit)) {
+        assert.isTrue(Cause.hasInterruptsOnly(exit.cause));
+      }
+    }),
+  );
+
+  it.effect("re-sends a prompt that is still allowed to be delivered", () =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      const fiber = yield* Effect.forkChild(
+        retryPromptOnBusy(
+          busyPolicy,
+          Effect.suspend(() => {
+            attempts += 1;
+            return attempts === 1
+              ? Effect.fail(new BusyError("session is busy"))
+              : Effect.succeed("accepted");
+          }),
+          { cancelled: Effect.succeed(false) },
+        ),
+      );
+      yield* TestClock.adjust(1_000);
+
+      const result = yield* Fiber.join(fiber);
+      assert.strictEqual(result, "accepted");
+      assert.strictEqual(attempts, 2);
+    }),
+  );
+});
+
+describe("AcpPromptBusyRetryGate", () => {
+  it.effect("drops a prompt that was issued before the cancel", () =>
+    Effect.gen(function* () {
+      const gate = yield* makeAcpPromptBusyRetryGate;
+      const token = yield* gate.issue;
+      assert.isFalse(yield* gate.cancelled(token));
+
+      yield* gate.cancel;
+      assert.isTrue(yield* gate.cancelled(token));
+    }),
+  );
+
+  it.effect("keeps a prompt that is issued after the cancel", () =>
+    Effect.gen(function* () {
+      const gate = yield* makeAcpPromptBusyRetryGate;
+      yield* gate.cancel;
+
+      const token = yield* gate.issue;
+      assert.isFalse(yield* gate.cancelled(token));
+    }),
+  );
+
+  it.effect("does not re-send a prompt that was cancelled while it was waiting", () =>
+    Effect.gen(function* () {
+      const gate = yield* makeAcpPromptBusyRetryGate;
+      const token = yield* gate.issue;
+      let attempts = 0;
+      const fiber = yield* Effect.forkChild(
+        retryPromptOnBusy(
+          busyPolicy,
+          Effect.suspend(() => {
+            attempts += 1;
+            return Effect.fail(new BusyError("session is busy"));
+          }),
+          { cancelled: gate.cancelled(token) },
+        ),
+      );
+
+      // The user stops the turn while the prompt waits to be re-sent.
+      yield* gate.cancel;
+      yield* TestClock.adjust(10_000);
+
+      const exit = yield* Fiber.join(fiber).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(exit));
+      assert.strictEqual(attempts, 1);
+      if (Exit.isFailure(exit)) {
+        assert.isTrue(Cause.hasInterruptsOnly(exit.cause));
+      }
     }),
   );
 });
