@@ -48,13 +48,24 @@ const threadShell = vi.hoisted(() => ({
   environmentId: "undo-env",
   session: null,
 }));
+const threadShells = vi.hoisted(() => ({
+  current: [] as {
+    id: string;
+    environmentId: string;
+    archivedAt: string | null;
+    settledOverride: "settled" | "active" | null;
+    settledAt: string | null;
+    lineage: { relationshipToParent: "subagent" | "fork" | null };
+  }[],
+}));
 vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
   readEnvironmentSupportsPinning: () => true,
   readEnvironmentSupportsPinReorder: () => true,
-  readEnvironmentSupportsSettlement: () => true,
+  readEnvironmentSupportsSettlement: (environmentId: string) => environmentId !== "legacy-env",
   readEnvironmentSupportsSnooze: () => true,
   readThreadShell: () => threadShell,
+  readThreadShells: () => threadShells.current,
 }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) => {
@@ -100,6 +111,7 @@ beforeEach(() => {
   router.state.matches[0]!.params = {};
   threadShell.pinnedAt = null;
   threadShell.snoozedUntil = null;
+  threadShells.current = [];
 });
 afterEach(() => {
   vi.runAllTimers();
@@ -268,5 +280,56 @@ describe("settle and snooze Undo", () => {
       environmentId: target.environmentId,
       input: { threadId: target.threadId, reason: "user" },
     });
+  });
+});
+
+describe("unsettleLastThread", () => {
+  const settled = (id: string, settledAt: string | null, overrides = {}) => ({
+    id,
+    environmentId: "undo-env",
+    archivedAt: null,
+    settledOverride: "settled" as const,
+    settledAt,
+    lineage: { relationshipToParent: null },
+    ...overrides,
+  });
+
+  it("restores the latest eligible thread without navigating and expires its settle Undo", async () => {
+    threadShells.current = [
+      settled("older", "2026-01-02T00:00:00.000Z"),
+      settled("hidden-child", "2026-01-09T00:00:00.000Z", {
+        lineage: { relationshipToParent: "subagent" },
+      }),
+      settled("latest", "2026-01-03T00:00:00.000Z", { environmentId: "remote-env" }),
+      settled("older-after-latest", "2026-01-01T00:00:00.000Z"),
+      settled("archived", "2026-01-09T00:00:00.000Z", { archivedAt: "2026-01-09T00:00:00.000Z" }),
+      settled("legacy", "2026-01-09T00:00:00.000Z", { environmentId: "legacy-env" }),
+      settled("active", "2026-01-09T00:00:00.000Z", { settledOverride: "active" }),
+      settled("unparseable", "not a date"),
+      settled("never-settled", null),
+    ];
+    const actions = useThreadActions();
+    await actions.settleThread({
+      environmentId: EnvironmentId.make("remote-env"),
+      threadId: ThreadId.make("latest"),
+    });
+    const staleUndo = currentUndo();
+    await actions.unsettleLastThread();
+    expect(commands.unsettle).toHaveBeenCalledExactlyOnceWith({
+      environmentId: "remote-env",
+      input: { threadId: "latest", reason: "user" },
+    });
+    await staleUndo();
+    expect(commands.unsettle).toHaveBeenCalledOnce();
+    expect(router.navigate).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when no thread is eligible", async () => {
+    threadShells.current = [
+      settled("legacy", "2026-01-09T00:00:00.000Z", { environmentId: "legacy-env" }),
+    ];
+    await useThreadActions().unsettleLastThread();
+    expect(commands.unsettle).not.toHaveBeenCalled();
+    expect(router.navigate).not.toHaveBeenCalled();
   });
 });
