@@ -1,5 +1,6 @@
-import { createElement, act, type ReactNode } from "react";
+import { createElement, act, useSyncExternalStore, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { page as browser, userEvent } from "vite-plus/test/browser";
 
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
 import type { FactoryResource } from "./useFactoryData";
@@ -14,6 +15,10 @@ const state = vi.hoisted(() => ({
   // Environments beyond "env-2" (labelled "Mac Studio"), each with its own status and runs.
   listed: true,
   others: [] as Array<{ environmentId: string; label: string; status: unknown; runs: unknown }>,
+  // The page's URL search, as the route validated it; `navigate` replaces it and re-renders.
+  search: {} as Record<string, string>,
+  listeners: new Set<() => void>(),
+  navigations: [] as Array<{ to: string; search: Record<string, string>; replace?: boolean }>,
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -27,6 +32,21 @@ vi.mock("@tanstack/react-router", () => ({
     children?: ReactNode;
   }) =>
     createElement("a", { "data-to": to, "data-params": JSON.stringify(params ?? {}) }, children),
+  useSearch: () =>
+    useSyncExternalStore(
+      (listener) => {
+        state.listeners.add(listener);
+        return () => state.listeners.delete(listener);
+      },
+      () => state.search,
+    ),
+  useNavigate:
+    () => (options: { to: string; search: Record<string, string>; replace?: boolean }) => {
+      state.navigations.push(options);
+      state.search = options.search;
+      for (const listener of state.listeners) listener();
+      return Promise.resolve();
+    },
 }));
 vi.mock("./useFactoryData", () => ({
   useFactoryEnvironments: () =>
@@ -53,6 +73,7 @@ vi.mock("./useFactoryData", () => ({
 }));
 
 import { FactoryPage } from "./FactoryPage";
+import { validateFactorySearch } from "./search";
 
 const resource = <T,>(overrides: Partial<FactoryResource<T>>): FactoryResource<T> => ({
   status: "ready",
@@ -110,6 +131,8 @@ beforeEach(() => {
   state.allRuns = state.runs;
   state.others = [];
   state.listed = true;
+  state.search = {};
+  state.navigations = [];
 });
 
 afterEach(() => {
@@ -810,5 +833,232 @@ describe("FactoryPage dismissing attention items", () => {
     for (const link of [run!, settings!]) {
       expect(link.querySelectorAll("button")).toHaveLength(0);
     }
+  });
+});
+
+describe("FactoryPage filters", () => {
+  const LAPTOP_RUN = "acme__widgets__7__1";
+  const configItem = {
+    ...ATTENTION,
+    id: "config",
+    kind: "config",
+    repo: null,
+    issue: null,
+    run: null,
+    message: "the machine config failed to load",
+  };
+  const laptopItem = {
+    ...ATTENTION,
+    id: "stuck:7",
+    repo: "acme/widgets",
+    issue: 7,
+    run: LAPTOP_RUN,
+    message: "laptop run ended stuck",
+  };
+  /** Mac Studio: a t3code-factory run and item; Laptop: an acme/widgets run and item, and a config item. */
+  const twoEnvironments = () => {
+    state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
+    state.runs = resource({ data: { runs: [runRow()] } });
+    state.others = [
+      {
+        environmentId: "env-3",
+        label: "Laptop",
+        status: resource({ data: statusData({ attention: [laptopItem, configItem] }) }),
+        runs: resource({ data: { runs: [runRow({ id: LAPTOP_RUN })] } }),
+      },
+    ];
+  };
+  // The runs table's links only; an attention item's View run links to the same route.
+  const runLinks = (page: Awaited<ReturnType<typeof render>>) =>
+    page
+      .all("table a")
+      .filter((a) => a.getAttribute("data-to") === "/factory/$environmentId/$runId")
+      .map((a) => JSON.parse(a.getAttribute("data-params")!).runId as string);
+  const statusRows = (page: Awaited<ReturnType<typeof render>>) =>
+    page.all('[aria-label="Factories"] li').map((li) => li.textContent ?? "");
+  const pick = async (select: string, option: string) => {
+    await userEvent.click(browser.getByRole("combobox", { name: select }));
+    await userEvent.click(browser.getByRole("option", { name: option, exact: true }));
+  };
+
+  it("keeps a string search value and drops one that is not a string", () => {
+    expect(validateFactorySearch({ environment: "env-3", repo: "acme/widgets" })).toEqual({
+      environment: "env-3",
+      repo: "acme/widgets",
+    });
+    expect(validateFactorySearch({ environment: 3, repo: ["acme/widgets"], other: "x" })).toEqual(
+      {},
+    );
+  });
+
+  it("picking an environment hides the other environment's rows, items and runs and writes it to the URL", async () => {
+    twoEnvironments();
+    const page = await render(createElement(FactoryPage));
+    expect(runLinks(page)).toHaveLength(2);
+    await pick("Environment", "Laptop");
+    expect(state.navigations.at(-1)).toEqual({
+      to: "/factory",
+      search: { environment: "env-3" },
+      replace: true,
+    });
+    expect(statusRows(page)).toHaveLength(1);
+    expect(statusRows(page)[0]).toContain("Laptop");
+    expect(runLinks(page)).toEqual([LAPTOP_RUN]);
+    expect(page.text()).toContain("laptop run ended stuck");
+    expect(page.text()).not.toContain("run ended stuck: the gate failed");
+    await pick("Environment", "All environments");
+    expect(state.navigations.at(-1)).toEqual({ to: "/factory", search: {}, replace: true });
+    expect(runLinks(page)).toHaveLength(2);
+  });
+
+  it("picking a repo hides other repos' runs and items and keeps an item with no repo", async () => {
+    twoEnvironments();
+    const page = await render(createElement(FactoryPage));
+    await pick("Repo", "acme/widgets");
+    expect(state.navigations.at(-1)).toEqual({
+      to: "/factory",
+      search: { repo: "acme/widgets" },
+      replace: true,
+    });
+    expect(runLinks(page)).toEqual([LAPTOP_RUN]);
+    expect(page.text()).toContain("laptop run ended stuck");
+    expect(page.text()).toContain("the machine config failed to load");
+    expect(page.text()).not.toContain("run ended stuck: the gate failed");
+    expect(statusRows(page)).toHaveLength(2);
+  });
+
+  it("lists the repos of the runs and items once each, sorted without regard to case", async () => {
+    twoEnvironments();
+    state.runs = resource({
+      data: { runs: [runRow(), runRow({ id: "Acme__Widgets__8__1" }), runRow({ id: "x" })] },
+    });
+    await render(createElement(FactoryPage));
+    await userEvent.click(browser.getByRole("combobox", { name: "Repo" }));
+    const options = Array.from(document.querySelectorAll('[role="option"]')).map(
+      (option) => option.textContent,
+    );
+    expect(options).toEqual(["All repos", "acme/widgets", "original-solutions/t3code-factory"]);
+  });
+
+  it("opens filtered from the URL, matching the repo without regard to case", async () => {
+    twoEnvironments();
+    state.search = { repo: "ORIGINAL-SOLUTIONS/T3code-factory" };
+    state.others[0]!.runs = resource({
+      data: { runs: [runRow({ id: LAPTOP_RUN }), runRow({ id: "unparsed" })] },
+    });
+    const page = await render(createElement(FactoryPage));
+    expect(runLinks(page)).toEqual([RUN_ID]);
+    expect(page.text()).toContain("run ended stuck: the gate failed");
+    expect(page.text()).not.toContain("laptop run ended stuck");
+  });
+
+  it("shows a run whose id does not parse only with no repo filter", async () => {
+    twoEnvironments();
+    state.runs = resource({ data: { runs: [runRow(), runRow({ id: "unparsed" })] } });
+    const page = await render(createElement(FactoryPage));
+    expect(runLinks(page)).toContain("unparsed");
+    await pick("Environment", "Mac Studio");
+    expect(runLinks(page)).toContain("unparsed");
+    await pick("Repo", "original-solutions/t3code-factory");
+    expect(state.navigations.at(-1)?.search).toEqual({
+      environment: "env-2",
+      repo: "original-solutions/t3code-factory",
+    });
+    expect(runLinks(page)).toEqual([RUN_ID]);
+  });
+
+  it("matches a run's repo to the chosen one without regard to case", async () => {
+    twoEnvironments();
+    state.runs = resource({ data: { runs: [runRow(), runRow({ id: "Acme__Widgets__8__1" })] } });
+    const page = await render(createElement(FactoryPage));
+    await pick("Repo", "acme/widgets");
+    expect(runLinks(page).toSorted()).toEqual(["Acme__Widgets__8__1", LAPTOP_RUN]);
+  });
+
+  it("shows only the chosen environment's read failures", async () => {
+    twoEnvironments();
+    state.runs = resource({
+      status: "error",
+      data: { runs: [runRow()] },
+      error: new Error("fetch failed"),
+    });
+    state.search = { environment: "env-3" };
+    const page = await render(createElement(FactoryPage));
+    expect(page.text()).not.toContain("Could not refresh Mac Studio");
+  });
+
+  it("says the runs are loading, not that none match, while the chosen environment's runs are read", async () => {
+    twoEnvironments();
+    state.others[0]!.runs = resource({ status: "loading" });
+    state.search = { environment: "env-3" };
+    const page = await render(createElement(FactoryPage));
+    expect(page.all('[aria-label="Loading runs"]')).not.toHaveLength(0);
+    expect(page.text()).not.toContain("No runs match the filter");
+  });
+
+  it("reads only the chosen environment's runs for loading and for no match", async () => {
+    twoEnvironments();
+    state.others[0]!.runs = resource({ status: "error", error: new Error("timed out") });
+    state.search = { environment: "env-3" };
+    const failed = await render(createElement(FactoryPage));
+    expect(failed.text()).toContain("Could not refresh Laptop: timed out");
+    expect(failed.text()).not.toContain("No runs match the filter");
+    await failed.unmount();
+    state.others[0]!.runs = resource({ data: { runs: [] } });
+    state.runs = resource({ status: "loading" });
+    const empty = await render(createElement(FactoryPage));
+    expect(empty.all('[aria-label="Loading runs"]')).toHaveLength(0);
+    expect(empty.text()).toContain("No runs in the last week");
+  });
+
+  it("keeps the select of a filter that is on, so it can be cleared", async () => {
+    state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
+    state.runs = resource({ data: { runs: [runRow(), runRow({ id: "unparsed" })] } });
+    state.search = { repo: "original-solutions/t3code-factory" };
+    const page = await render(createElement(FactoryPage));
+    expect(runLinks(page)).toEqual([RUN_ID]);
+    await pick("Repo", "All repos");
+    expect(runLinks(page).toSorted()).toEqual([RUN_ID, "unparsed"].toSorted());
+  });
+
+  it("renders everything for an environment or repo that names nothing listed", async () => {
+    twoEnvironments();
+    state.search = { environment: "env-9", repo: "nobody/nothing" };
+    const page = await render(createElement(FactoryPage));
+    expect(statusRows(page)).toHaveLength(2);
+    expect(runLinks(page)).toHaveLength(2);
+    expect(page.text()).toContain("laptop run ended stuck");
+    expect(page.text()).toContain("run ended stuck: the gate failed");
+  });
+
+  it("says no runs match when the filters hide every run, and Clear filters shows everything again", async () => {
+    twoEnvironments();
+    state.search = { environment: "env-3", repo: "original-solutions/t3code-factory" };
+    const page = await render(createElement(FactoryPage));
+    expect(runLinks(page)).toHaveLength(0);
+    expect(page.text()).toContain("No runs match the filter");
+    expect(page.button("Show all runs")).toBeDefined();
+    await page.click(page.button("Clear filters")!);
+    expect(state.navigations.at(-1)).toEqual({ to: "/factory", search: {}, replace: true });
+    expect(runLinks(page)).toHaveLength(2);
+    expect(page.text()).not.toContain("No runs match the filter");
+    expect(page.button("Clear filters")).toBeUndefined();
+  });
+
+  it("has no Environment select with one environment and no Repo select with one repo", async () => {
+    state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
+    state.runs = resource({ data: { runs: [runRow(), runRow({ id: "unparsed" })] } });
+    const page = await render(createElement(FactoryPage));
+    expect(page.all('[role="combobox"]')).toHaveLength(0);
+    await page.unmount();
+    twoEnvironments();
+    state.others[0]!.status = resource({ data: statusData() });
+    state.others[0]!.runs = resource({
+      data: { runs: [runRow({ id: "original-solutions__t3code-factory__21__1" })] },
+    });
+    const both = await render(createElement(FactoryPage));
+    expect(
+      both.all('[role="combobox"]').map((select) => select.getAttribute("aria-label")),
+    ).toEqual(["Environment"]);
   });
 });

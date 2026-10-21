@@ -1,13 +1,23 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useState } from "react";
+
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 
 import { factoryApi } from "./api";
 import { AttentionList, type EnvironmentAttention } from "./AttentionList";
 import { EnvironmentStatusRows } from "./EnvironmentStatusRows";
 import { FactoryFrame } from "./FactoryFrame";
 import { FactoryError, FactoryLoading, FactoryReadFailure } from "./FactoryNotices";
-import { messageOf } from "./format";
+import { messageOf, parseRunId } from "./format";
 import { RunsTable } from "./RunsTable";
+import type { FactorySearch } from "./search";
 import {
   useFactoryEnvironments,
   useFactoryRunsOf,
@@ -30,7 +40,50 @@ const withEnvironment = (set: ReadonlySet<EnvironmentId>, id: EnvironmentId, mem
   return next;
 };
 
+/** `search` with one filter set to `value`, or removed when `value` is null. */
+const withFilter = (search: FactorySearch, key: keyof FactorySearch, value: string | null) => {
+  const { [key]: _, ...rest } = search;
+  return value === null ? rest : { ...rest, [key]: value };
+};
+
+/** One filter's select: "All …" first, then each option. */
+function FilterSelect({
+  label,
+  all,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  all: string;
+  options: ReadonlyArray<{ value: string; label: string }>;
+  value: string | null;
+  onChange: (value: string | null) => void;
+}) {
+  const items = [{ value: null, label: all }, ...options];
+  return (
+    <div className="w-40 min-w-0">
+      <Select items={items} onValueChange={onChange} value={value}>
+        <SelectTrigger aria-label={label} size="sm">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectPopup>
+          {items.map((item) => (
+            <SelectItem key={item.value ?? ""} value={item.value}>
+              {item.label}
+            </SelectItem>
+          ))}
+        </SelectPopup>
+      </Select>
+    </div>
+  );
+}
+
 export function FactoryPage() {
+  const search = useSearch({ from: "/factory" });
+  const navigate = useNavigate();
+  const setSearch = (next: FactorySearch) =>
+    void navigate({ to: "/factory", search: next, replace: true });
   const environments = useFactoryEnvironments();
   const supported = useFactorySupported();
   // The recent window until the user asks for every run; the switch starts a fresh read.
@@ -66,7 +119,7 @@ export function FactoryPage() {
     }
   };
 
-  const attention = environments
+  const allAttention = environments
     .flatMap(({ environmentId, label, status }) =>
       (status.data?.attention ?? []).map((item) => ({ environmentId, label, item })),
     )
@@ -117,13 +170,52 @@ export function FactoryPage() {
     ...runsOf.map(({ readAt }) => readAt),
   );
   const showEnvironment = environments.length > 1;
-  const runs = answered.flatMap(({ environmentId, label }, i) =>
-    (runsOf[i]?.data?.runs ?? []).map((run) => ({ environmentId, label, run })),
+  const listedRuns = answered.flatMap(({ environmentId, label }, i) =>
+    (runsOf[i]?.data?.runs ?? []).map((run) => {
+      const parsed = parseRunId(run.id);
+      return { environmentId, label, run, repo: parsed ? `${parsed.owner}/${parsed.repo}` : null };
+    }),
   );
-  const runsListed = runsOf.some(({ data }) => data !== null);
-  const runsPending = runsOf.some(({ status }) => status === "loading");
+
+  // Every repo on the page, once each without regard to case, sorted the same way.
+  const repos = [
+    ...new Map(
+      [...listedRuns.map(({ repo }) => repo), ...allAttention.map(({ item }) => item.repo)]
+        .filter((repo): repo is string => !!repo)
+        .map((repo) => [repo.toLowerCase(), repo]),
+    ).values(),
+  ].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+  // A filter that names nothing on the page is "all".
+  const environmentFilter =
+    environments.find(({ environmentId }) => environmentId === search.environment)?.environmentId ??
+    null;
+  const repoFilter =
+    repos.find((repo) => repo.toLowerCase() === search.repo?.toLowerCase()) ?? null;
+  const inEnvironment = (id: EnvironmentId) =>
+    environmentFilter === null || id === environmentFilter;
+  const inRepo = (repo: string | null) =>
+    repoFilter === null || repo?.toLowerCase() === repoFilter.toLowerCase();
+
+  const shownEnvironments = environments.filter(({ environmentId }) =>
+    inEnvironment(environmentId),
+  );
+  // An item with no repo is about the machine, not a repo, so a repo filter keeps it.
+  const attention = allAttention.filter(
+    ({ environmentId, item }) => inEnvironment(environmentId) && (!item.repo || inRepo(item.repo)),
+  );
+  const runs = listedRuns.filter(
+    ({ environmentId, repo }) => inEnvironment(environmentId) && inRepo(repo),
+  );
+  const filtersHideEveryRun = runs.length === 0 && listedRuns.length > 0;
+  // Only the shown environments' reads: a filtered-out read loading or listed says nothing here.
+  const shownRunsOf = shownEnvironments.flatMap(({ environmentId }) => {
+    const read = runsById.get(environmentId);
+    return read ? [read] : [];
+  });
+  const runsListed = shownRunsOf.some(({ data }) => data !== null);
+  const runsPending = shownRunsOf.some(({ status }) => status === "loading");
   // A failed read is a notice naming its environment while the rest of the page stays.
-  const notices = environments.flatMap(({ environmentId, label, status }) => {
+  const notices = shownEnvironments.flatMap(({ environmentId, label, status }) => {
     const runsRead = runsById.get(environmentId);
     const failed =
       runsRead?.status === "error"
@@ -162,7 +254,7 @@ export function FactoryPage() {
       <>
         <EnvironmentStatusRows
           busy={busy}
-          environments={environments}
+          environments={shownEnvironments}
           nowMs={nowMs}
           onTogglePause={(environment) => void togglePause(environment)}
         />
@@ -186,11 +278,12 @@ export function FactoryPage() {
             {note}
           </p>
         ) : null}
-        {!runsListed && runsPending ? (
+        {(!runsListed || runs.length === 0) && runsPending ? (
           <FactoryLoading label="Loading runs" />
         ) : runsListed ? (
           <RunsTable
             nowMs={nowMs}
+            onClearFilters={filtersHideEveryRun ? () => setSearch({}) : undefined}
             onShowAll={() => setAllRuns(true)}
             onShowRecent={() => setAllRuns(false)}
             partial={!allRuns}
@@ -207,6 +300,30 @@ export function FactoryPage() {
       header={
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <h1 className="min-w-0 truncate text-sm font-medium">Factory</h1>
+          <div className="ml-auto flex min-w-0 items-center gap-2">
+            {/* A filter that is on keeps its select, so it can be cleared. */}
+            {environments.length > 1 || environmentFilter !== null ? (
+              <FilterSelect
+                all="All environments"
+                label="Environment"
+                onChange={(value) => setSearch(withFilter(search, "environment", value))}
+                options={environments.map(({ environmentId, label }) => ({
+                  value: environmentId,
+                  label,
+                }))}
+                value={environmentFilter}
+              />
+            ) : null}
+            {repos.length > 1 || repoFilter !== null ? (
+              <FilterSelect
+                all="All repos"
+                label="Repo"
+                onChange={(value) => setSearch(withFilter(search, "repo", value))}
+                options={repos.map((repo) => ({ value: repo, label: repo }))}
+                value={repoFilter}
+              />
+            ) : null}
+          </div>
         </div>
       }
     >

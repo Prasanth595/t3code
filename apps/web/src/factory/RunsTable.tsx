@@ -142,6 +142,7 @@ export function RunsTable({
   partial,
   onShowAll,
   onShowRecent,
+  onClearFilters,
 }: {
   runs: ReadonlyArray<EnvironmentRun>;
   /** Whether several environments are listed, so a run says which one it is from. */
@@ -150,6 +151,8 @@ export function RunsTable({
   partial: boolean;
   onShowAll: () => void;
   onShowRecent: () => void;
+  /** Set when the page's filters hid every run listed: the empty state says so and offers this. */
+  onClearFilters?: (() => void) | undefined;
 }) {
   const cards = useMediaQuery("max-sm");
   const sorted = [...runs].sort(newestFirst);
@@ -169,9 +172,24 @@ export function RunsTable({
     return (
       <Empty size="compact">
         <EmptyHeader>
-          <EmptyTitle>{partial ? "No runs in the last week" : "No runs yet"}</EmptyTitle>
+          <EmptyTitle>
+            {onClearFilters
+              ? "No runs match the filter"
+              : partial
+                ? "No runs in the last week"
+                : "No runs yet"}
+          </EmptyTitle>
         </EmptyHeader>
-        {showAll}
+        {onClearFilters ? (
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <Button onClick={onClearFilters} size="sm" variant="outline">
+              Clear filters
+            </Button>
+            {showAll}
+          </div>
+        ) : (
+          showAll
+        )}
       </Empty>
     );
   }
