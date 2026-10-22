@@ -161,7 +161,6 @@ import {
 } from "./pendingUserInputLayout";
 import {
   COMPOSER_COLLAPSED_CHROME,
-  COMPOSER_TRANSITION_DURATION_MS,
   THREAD_COMPOSER_BOTTOM_GUTTER,
   ThreadComposer,
 } from "./ThreadComposer";
@@ -875,7 +874,9 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     composerOverlayRef,
     Math.max(0, estimatedOverlayHeight - nativeInsetOvercount),
     -nativeInsetOvercount,
-    Platform.OS === "ios" ? COMPOSER_TRANSITION_DURATION_MS : 0,
+    // The composer already reports its animated height on each layout.
+    // Easing these samples again makes the feed trail behind it.
+    0,
   );
   // Android lays the screen out below its opaque header and reports a zero
   // header height, so the window height overstates the room by the header.
