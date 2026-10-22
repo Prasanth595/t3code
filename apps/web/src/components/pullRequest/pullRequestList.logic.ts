@@ -727,7 +727,10 @@ export function rankPullRequestsByMergeReadiness<Entry extends PullRequestListEn
   });
 }
 
-function comparePullRequestsByRecency(left: PullRequestListEntry, right: PullRequestListEntry) {
+export function comparePullRequestsByRecency(
+  left: PullRequestListEntry,
+  right: PullRequestListEntry,
+) {
   const leftUpdated = toSortableTimestamp(left.updatedAt);
   const rightUpdated = toSortableTimestamp(right.updatedAt);
   const measured = Number(leftUpdated === null) - Number(rightUpdated === null);

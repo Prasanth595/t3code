@@ -515,9 +515,11 @@ describe("merging the environments' own listings", () => {
         partitionsWanted: true,
       });
       expect
-        .soft(sortPullRequestGroups(groups, "updated", "").flatMap((group) =>
-          group.entries.map((row) => row.number),
-        ))
+        .soft(
+          sortPullRequestGroups(groups, "updated", "").flatMap((group) =>
+            group.entries.map((row) => row.number),
+          ),
+        )
         .toEqual([3, 2, 1]);
     }
   });
