@@ -1714,7 +1714,7 @@ export function NewTaskDraftScreen(props: {
             paddingBottom={0}
             paddingHorizontal={0}
             paddingTop={0}
-            style={{ gap: 0 }}
+            style={{ gap: 0, alignItems: "flex-end" }}
           >
             <ComposerDictationCancelAction
               presentation={voicePresentation}
@@ -1733,10 +1733,11 @@ export function NewTaskDraftScreen(props: {
               style={
                 isVoiceInputPresented
                   ? { display: "none" }
-                  : { flex: 1, flexDirection: "row", alignItems: "center" }
+                  : { flex: 1, flexDirection: "row", alignItems: "flex-end" }
               }
             >
               <ComposerAttachmentButton
+                size={hasSidebarTabBar ? "large" : "regular"}
                 disabled={isComposerInteractionLocked}
                 supportsFiles={Boolean(
                   selectedEnvironmentServerConfig?.environment.capabilities.fileAttachments,
@@ -1753,6 +1754,7 @@ export function NewTaskDraftScreen(props: {
               <View className="min-w-0 shrink flex-row items-center gap-2">
                 <View className="min-w-0 shrink">
                   <ComposerModelControl
+                    size={hasSidebarTabBar ? "large" : "regular"}
                     iconOnly={flow.prompt.length > 0}
                     modelOption={flow.selectedModelOption}
                     selection={flow.selectedModel}

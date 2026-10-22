@@ -797,6 +797,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const modelControl = (
     <View className="min-w-0 shrink">
       <ComposerModelControl
+        size={hasSidebarTabBar ? "large" : "regular"}
         modelOption={currentModelOption}
         selection={currentModelSelection}
         provider={selectedProviderStatus?.driver}
@@ -891,11 +892,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         >
           {isExpanded ? editingAttachments : null}
           <ComposerDictationDraftContent
-            className="flex-row items-center"
+            className="flex-row items-end"
             compact
             hidden={showsCompactDictation}
           >
             <ComposerAttachmentButton
+              size={hasSidebarTabBar ? "large" : "regular"}
               disabled={isSubmissionLocked}
               supportsFiles={Boolean(props.serverConfig?.environment.capabilities.fileAttachments)}
               onPickMedia={props.onPickDraftMedia}
@@ -1124,6 +1126,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 ) : (
                   <View className="min-w-0 flex-1 flex-row items-center justify-between">
                     <ComposerAttachmentButton
+                      size={hasSidebarTabBar ? "large" : "regular"}
                       disabled={isSubmissionLocked}
                       supportsFiles={Boolean(
                         props.serverConfig?.environment.capabilities.fileAttachments,
