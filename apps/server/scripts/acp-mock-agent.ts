@@ -1088,7 +1088,8 @@ const program = Effect.gen(function* () {
               );
             }),
         );
-        return yield* Effect.never;
+        // The native ACP parent can report success after its local harness has failed.
+        return yield* finishPrompt(requestedSessionId, "end_turn");
       }
       if (
         process.env.T3_ACP_CRASH_PROMPT === "1" &&

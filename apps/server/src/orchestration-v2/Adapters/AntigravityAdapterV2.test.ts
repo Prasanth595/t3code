@@ -125,7 +125,7 @@ const layerSession = Layer.mergeAll(
 );
 
 describe("AntigravityAdapterV2 harness recovery", () => {
-  it.effect("fails a broken harness and resumes the same thread in a fresh process", () =>
+  it.effect("fails despite end_turn and resumes the saved session in a fresh process", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
