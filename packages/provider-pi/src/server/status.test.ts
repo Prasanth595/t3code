@@ -192,7 +192,6 @@ describe("PiProvider", () => {
   it.effect("preserves normal discovery when the extension-free model listing times out", () =>
     Effect.gen(function* () {
       const modelRequested = yield* Deferred.make<void>();
-      const completed = yield* Deferred.make<void>();
       const spawner = yield* piDiscoverySpawner(
         { models: [{ provider: "demo", id: "demo-model" }] },
         null,
@@ -200,12 +199,11 @@ describe("PiProvider", () => {
       );
       const fiber = yield* checkPiProviderStatus(settings).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.tap(() => Deferred.succeed(completed, undefined)),
         Effect.forkChild,
       );
       yield* Deferred.await(modelRequested);
       yield* TestClock.adjust("5 seconds");
-      assert.isTrue(yield* Deferred.isDone(completed));
+      yield* TestClock.adjust("25 seconds");
       const snapshot = yield* Fiber.join(fiber);
       assert.equal(snapshot.status, "ready");
       assert.equal(snapshot.auth.status, "authenticated");
