@@ -31,6 +31,14 @@ function Harness({ input, ready }: { input: ImportInput; ready: (value: Importer
   return null;
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((fulfill) => {
+    resolve = fulfill;
+  });
+  return { promise, resolve };
+}
+
 it.each([
   { kind: "file", edit: "delete" },
   { kind: "image", edit: "delete" },
@@ -55,9 +63,9 @@ it.each([
     [Symbol.dispose]: () => rememberCopiedComposerAttachments(sourceEnvironmentId, new Map()),
   };
   const promptRef = { current: "" };
-  const downloaded = Promise.withResolvers<Response>();
-  const requested = Promise.withResolvers<void>();
-  const settled = Promise.withResolvers<void>();
+  const downloaded = deferred<Response>();
+  const requested = deferred<void>();
+  const settled = deferred<void>();
   const end = pendingDraftWork.end.bind(pendingDraftWork);
   using _settled = vi.spyOn(pendingDraftWork, "end").mockImplementation((key) => {
     end(key);
@@ -69,7 +77,7 @@ it.each([
   });
   const input = {
     environmentId: EnvironmentId.make("clipboard-target"),
-    activeThread: null,
+    activeThread: undefined,
     activeThreadId: null,
     composerDraftTarget: target,
     attachmentDraftTarget: target,
@@ -96,16 +104,20 @@ it.each([
     />,
   );
   const contextId = ComposerContextId.make(`${kind}_source`);
-  const attachment = {
-    version: 1,
-    kind,
+  const attachmentFields = {
+    version: 1 as const,
     contextId,
     label: "notes.txt",
     attachmentId: "source-attachment",
     name: "notes.txt",
     mimeType: kind === "file" ? "text/plain" : "image/png",
     sizeBytes: 5,
-  } satisfies ComposerContextRecord;
+  };
+  const attachment = (
+    kind === "file"
+      ? { ...attachmentFields, kind: "file" as const }
+      : { ...attachmentFields, kind: "image" as const }
+  ) satisfies ComposerContextRecord;
   const annotation = {
     version: 1,
     kind: "preview-annotation",
