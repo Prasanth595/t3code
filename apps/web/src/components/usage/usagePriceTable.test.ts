@@ -154,5 +154,4 @@ describe("price table edits", () => {
       { model: "example", price: { inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 8 } },
     ]);
   });
-
 });
