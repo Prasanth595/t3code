@@ -488,7 +488,12 @@ describe("pools", () => {
     ]);
 
     const accounts = collectLimitAccounts(input);
-    expect(accounts).toHaveLength(3);
+    expect(accounts.map(({ key }) => key)).toEqual([
+      "worker-a:codex",
+      `${source.id}:account-b:business`,
+      `${source.id}:account-c:plus`,
+    ]);
+    expect(accounts[0]?.email).toBe("same@example.com");
     expect(accounts[0]?.environments.map((environment) => environment.environmentId)).toEqual([
       "worker-a",
       "worker-b",
@@ -501,9 +506,9 @@ describe("pools", () => {
         expect.objectContaining({ window: expect.objectContaining({ usedPercent: 1 }) }),
       ]),
     });
-    expect(
-      collectProviderUsageLimits(native.instanceId, [native], [hub], now)?.accounts,
-    ).toHaveLength(3);
+    const report = collectProviderUsageLimits(native.instanceId, [native], [hub], now);
+    expect(report?.accounts).toHaveLength(3);
+    expect(report?.accounts[0]?.email).toBe("same@example.com");
   });
 
   it("does not infer an email-less account from an ambiguous workspace or another driver", () => {
@@ -518,7 +523,7 @@ describe("pools", () => {
       workspaceId: "shared-workspace",
       usageLimits: native.usageLimits!,
     }));
-    const collect = (hubAccounts: typeof accounts) =>
+    const collect = (hubAccounts: typeof accounts, nativeProvider = native) =>
       collectLimitAccounts(
         new Map([
           [
@@ -526,7 +531,7 @@ describe("pools", () => {
             {
               ...laptop,
               serverConfig: {
-                providers: [native],
+                providers: [nativeProvider],
                 usageLimitSources: [{ ...source, accounts: hubAccounts }],
               },
             },
@@ -537,6 +542,17 @@ describe("pools", () => {
     expect(collect(accounts)).toHaveLength(3);
     expect(collect([{ ...accounts[0]!, driver: claude }])).toHaveLength(2);
     expect(collect([{ ...accounts[0]!, workspaceId: "another-workspace" }])).toHaveLength(2);
+    const claudeNative = { ...native, driver: claude };
+    const claudeAccounts = [{ ...accounts[0]!, driver: claude }];
+    expect(collect(claudeAccounts, claudeNative)).toHaveLength(2);
+    expect(
+      collectProviderUsageLimits(
+        claudeNative.instanceId,
+        [claudeNative],
+        [{ ...source, accounts: claudeAccounts }],
+        now,
+      )?.accounts,
+    ).toHaveLength(2);
   });
 
   it("joins a report without a workspace to the only workspace signed in with its email", () => {
