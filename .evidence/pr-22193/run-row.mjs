@@ -4,10 +4,10 @@
 // Stops the worktree's dev server (only the group this script family started), seeds
 // settings.json, starts `vp run dev`, records the scripted steps, and logs the persisted
 // defaultModelSelection before and after. The server is left running for stills; stop it with stop.mjs.
-import { execFileSync } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeTimersPromises from "node:timers/promises";
 import { caption, gotoSettingsGeneral, modelRow, openApp, webOriginFromLog } from "./lib.mjs";
 import { startServer, stopServer } from "./server.mjs";
 import { openNewThread } from "./new-thread.mjs";
@@ -30,42 +30,46 @@ if (!spec || !label || !worktree) {
   process.exit(2);
 }
 
-mkdirSync(outDir, { recursive: true });
-const settingsFile = join(worktree, ".t3/userdata/settings.json");
-const pidFile = join(outDir, `${label}.pgid`);
-const logFile = join(outDir, `${label}-${row}-dev.log`);
-const persistedLog = join(outDir, "persisted.log");
+NodeFS.mkdirSync(outDir, { recursive: true });
+const settingsFile = NodePath.join(worktree, ".t3/userdata/settings.json");
+const pidFile = NodePath.join(outDir, `${label}.pgid`);
+const logFile = NodePath.join(outDir, `${label}-${row}-dev.log`);
+const persistedLog = NodePath.join(outDir, "persisted.log");
 const base = `${row}-${label}`;
 
 function persisted() {
   try {
-    return execFileSync("jq", ["-c", ".defaultModelSelection", settingsFile], {
+    return NodeChildProcess.execFileSync("jq", ["-c", ".defaultModelSelection", settingsFile], {
       encoding: "utf8",
     }).trim();
   } catch {
     return JSON.stringify(
-      JSON.parse(readFileSync(settingsFile, "utf8")).defaultModelSelection ?? null,
+      JSON.parse(NodeFS.readFileSync(settingsFile, "utf8")).defaultModelSelection ?? null,
     );
   }
 }
 function logPersisted(phase) {
   const line = `${new Date().toISOString()} ${label} ${row} ${phase} ${persisted()}`;
-  appendFileSync(persistedLog, `${line}\n`);
+  NodeFS.appendFileSync(persistedLog, `${line}\n`);
   console.log(line);
 }
 
 await stopServer(pidFile);
-execFileSync("node", [join(import.meta.dirname, "seed.mjs"), worktree, spec.seed], {
-  stdio: "inherit",
-});
+NodeChildProcess.execFileSync(
+  "node",
+  [NodePath.join(import.meta.dirname, "seed.mjs"), worktree, spec.seed],
+  {
+    stdio: "inherit",
+  },
+);
 logPersisted(`seeded:${spec.seed}`);
 await startServer({ worktree, pidFile, logFile });
 logPersisted("server-started");
 
-const videoDir = join(outDir, `video-${base}`);
+const videoDir = NodePath.join(outDir, `video-${base}`);
 const app = await openApp({
   worktree,
-  authFile: join(outDir, `auth-${label}.json`),
+  authFile: NodePath.join(outDir, `auth-${label}.json`),
   webOrigin: webOriginFromLog(logFile),
   videoDir,
 });
@@ -77,14 +81,14 @@ const say = async (text, hold = 1800) => {
     `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")} ${text}`,
   );
   await caption(app.page, `[${label}] ${row}: ${text}`).catch(() => {});
-  await sleep(hold);
+  await NodeTimersPromises.setTimeout(hold);
 };
 const ctx = {
   ...app,
   say,
   persisted,
   logPersisted,
-  shot: (n) => app.page.screenshot({ path: join(outDir, `${base}-${n}.png`) }),
+  shot: (n) => app.page.screenshot({ path: NodePath.join(outDir, `${base}-${n}.png`) }),
 };
 
 try {
@@ -99,7 +103,7 @@ try {
   await app.context.close();
   await app.browser.close();
   const webm = await video.path();
-  execFileSync("ffmpeg", [
+  NodeChildProcess.execFileSync("ffmpeg", [
     "-y",
     "-loglevel",
     "error",
@@ -111,13 +115,11 @@ try {
     "yuv420p",
     "-movflags",
     "+faststart",
-    join(outDir, `${base}.mp4`),
+    NodePath.join(outDir, `${base}.mp4`),
   ]);
-  writeFileSync(join(outDir, `${base}.steps.txt`), `${steps.join("\n")}\n`);
+  NodeFS.writeFileSync(NodePath.join(outDir, `${base}.steps.txt`), `${steps.join("\n")}\n`);
   console.log(steps.join("\n"));
 }
-
-// ---- scenarios ----
 
 function traitsTrigger(page) {
   // Every row button that is not the model picker, the source badge, or the reset button.
@@ -149,7 +151,7 @@ async function reloadAndShow({ page, say, persisted }) {
       { timeout: 30_000 },
     )
     .catch(() => {});
-  await sleep(2000);
+  await NodeTimersPromises.setTimeout(2000);
   await say(
     `After reload. Row: "${(await modelRow(page).innerText()).split("\n").filter(Boolean).slice(2).join(" · ")}"`,
     2500,
@@ -171,11 +173,11 @@ function settingsEffort(target) {
         600,
       );
       await trigger.first().click();
-      await sleep(1200);
+      await NodeTimersPromises.setTimeout(1200);
       await shot("menu");
       await say(`Choose ${target}`, 600);
       await page.getByRole("menuitemradio", { name: target, exact: true }).click();
-      await sleep(1500);
+      await NodeTimersPromises.setTimeout(1500);
       await say(`Picked ${target}. settings.json now ${ctx.persisted()}`, 2500);
     }
     await reloadAndShow(ctx);
@@ -193,11 +195,11 @@ async function composerEffort(ctx) {
     600,
   );
   await effort.click();
-  await sleep(1200);
+  await NodeTimersPromises.setTimeout(1200);
   await shot("composer-menu");
   await say("Choose Low", 600);
   await page.getByRole("menuitemradio", { name: "Low", exact: true }).click();
-  await sleep(1500);
+  await NodeTimersPromises.setTimeout(1500);
   await say(
     `Composer effort now "${(await effort.innerText()).trim()}". settings.json = ${ctx.persisted()}`,
     2500,
@@ -208,7 +210,7 @@ async function composerEffort(ctx) {
     .locator('[data-composer-shortcut="composer.effort"]')
     .first()
     .waitFor({ timeout: 90_000 });
-  await sleep(2500);
+  await NodeTimersPromises.setTimeout(2500);
   await say(
     `After reload composer effort "${(await page.locator('[data-composer-shortcut="composer.effort"]').first().innerText()).trim()}"`,
     2000,
@@ -232,39 +234,39 @@ async function unsupportedEffort(ctx) {
     600,
   );
   await trigger.click();
-  await sleep(1200);
+  await NodeTimersPromises.setTimeout(1200);
   await shot("menu");
   await say("Close it with Escape (no choice made)", 600);
   await page.keyboard.press("Escape");
-  await sleep(1000);
+  await NodeTimersPromises.setTimeout(1000);
   await say(`settings.json = ${ctx.persisted()}`, 2500);
   await reloadAndShow(ctx);
   await say("Now choose Max", 600);
   await traitsTrigger(page).first().click();
-  await sleep(1000);
+  await NodeTimersPromises.setTimeout(1000);
   await page.getByRole("menuitemradio", { name: "Max", exact: true }).click();
-  await sleep(1500);
+  await NodeTimersPromises.setTimeout(1500);
   await reloadAndShow(ctx);
   await shot("after-reload");
 }
 
 async function pickModel(page, say, query, optionName) {
   await modelRow(page).locator('[data-chat-provider-model-picker="true"]').click();
-  await sleep(1000);
+  await NodeTimersPromises.setTimeout(1000);
   const claudeTab = page
     .locator("[data-model-picker-content]")
     .getByRole("toolbar")
     .getByRole("button", { name: /claude/i });
   if (await claudeTab.count()) await claudeTab.first().click();
   await page.locator("[data-model-picker-content]").getByRole("combobox").fill(query);
-  await sleep(1000);
+  await NodeTimersPromises.setTimeout(1000);
   await say(`Model picker: search "${query}"`, 1200);
   await page
     .locator("[data-model-picker-content]")
     .getByRole("option", { name: optionName })
     .first()
     .click();
-  await sleep(1500);
+  await NodeTimersPromises.setTimeout(1500);
 }
 
 async function noEffortModel(ctx) {

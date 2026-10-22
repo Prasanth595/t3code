@@ -3,10 +3,10 @@
 // Usage: node stills.mjs <label> <worktree> <seed> [outDir] [variants]
 // variants: comma list of <width>-<theme>, default 1440-light,1440-dark,390-light,390-dark.
 // Reseeds and restarts the worktree's dev server like run-row.mjs.
-import { execFileSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeTimersPromises from "node:timers/promises";
 import { gotoSettingsGeneral, openApp, webOriginFromLog } from "./lib.mjs";
 import { startServer, stopServer } from "./server.mjs";
 import { openNewThread } from "./new-thread.mjs";
@@ -21,17 +21,21 @@ const variants = (variantList ?? "1440-light,1440-dark,390-light,390-dark").spli
   return { width: Number(width), height: Number(width) >= 1000 ? 900 : 844, theme };
 });
 
-const stillsDir = join(outDir, "stills");
-mkdirSync(stillsDir, { recursive: true });
-const pidFile = join(outDir, `${label}.pgid`);
-const logFile = join(outDir, `${label}-stills-${seed}-dev.log`);
+const stillsDir = NodePath.join(outDir, "stills");
+NodeFS.mkdirSync(stillsDir, { recursive: true });
+const pidFile = NodePath.join(outDir, `${label}.pgid`);
+const logFile = NodePath.join(outDir, `${label}-stills-${seed}-dev.log`);
 await stopServer(pidFile);
-execFileSync("node", [join(import.meta.dirname, "seed.mjs"), worktree, seed], { stdio: "inherit" });
+NodeChildProcess.execFileSync(
+  "node",
+  [NodePath.join(import.meta.dirname, "seed.mjs"), worktree, seed],
+  { stdio: "inherit" },
+);
 await startServer({ worktree, pidFile, logFile });
 
 const { browser, context, page, origin } = await openApp({
   worktree,
-  authFile: join(outDir, `auth-${label}.json`),
+  authFile: NodePath.join(outDir, `auth-${label}.json`),
   webOrigin: webOriginFromLog(logFile),
 });
 await openNewThread(page, origin);
@@ -40,11 +44,12 @@ const draftUrl = page.url();
 for (const { width, height, theme } of variants) {
   await page.setViewportSize({ width, height });
   await page.emulateMedia({ colorScheme: theme });
-  const name = (surface) => join(stillsDir, `${seed}-${surface}-${width}-${theme}-${label}.png`);
+  const name = (surface) =>
+    NodePath.join(stillsDir, `${seed}-${surface}-${width}-${theme}-${label}.png`);
 
   await gotoSettingsGeneral(page, origin);
   await page.mouse.move(0, height - 1);
-  await sleep(800);
+  await NodeTimersPromises.setTimeout(800);
   await page.screenshot({ path: name("settings") });
 
   await page.goto(draftUrl);
@@ -52,7 +57,7 @@ for (const { width, height, theme } of variants) {
     .locator('[data-composer-shortcut="composer.effort"], [data-chat-provider-model-picker="true"]')
     .first()
     .waitFor({ timeout: 90_000 });
-  await sleep(3000);
+  await NodeTimersPromises.setTimeout(3000);
   await page.mouse.move(0, height - 1);
   await page.screenshot({ path: name("composer") });
   console.log(`${seed} ${width} ${theme} ${label} done`);

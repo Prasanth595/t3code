@@ -1,4 +1,4 @@
-import { setTimeout as sleep } from "node:timers/promises";
+import * as NodeTimersPromises from "node:timers/promises";
 
 // Opens a fresh draft on the new-thread screen, picking the first project when asked.
 export async function openNewThread(page, origin) {
@@ -7,13 +7,13 @@ export async function openNewThread(page, origin) {
     .getByRole("button", { name: "New thread", exact: true })
     .first()
     .waitFor({ timeout: 90_000 });
-  await sleep(1500);
+  await NodeTimersPromises.setTimeout(1500);
   await page.getByRole("button", { name: "New thread", exact: true }).first().click();
   // New thread asks for a project; take the first one.
   const picker = page.locator('[data-slot="command-dialog-backdrop"]');
   await picker.waitFor({ timeout: 5000 }).catch(() => {});
   if (await picker.count()) {
-    await sleep(800);
+    await NodeTimersPromises.setTimeout(800);
     await page.keyboard.press("Enter");
     await picker.waitFor({ state: "detached", timeout: 10_000 }).catch(() => {});
   }
@@ -21,5 +21,5 @@ export async function openNewThread(page, origin) {
     .locator('[data-composer-shortcut="composer.effort"], [data-chat-provider-model-picker="true"]')
     .first()
     .waitFor({ timeout: 30_000 });
-  await sleep(2500);
+  await NodeTimersPromises.setTimeout(2500);
 }

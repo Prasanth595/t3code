@@ -2,8 +2,8 @@
 // Writes a matrix seed into <worktree>/.t3/userdata/settings.json.
 // Only run while that worktree's dev server is stopped.
 // Usage: node seed.mjs <worktree> <seed>
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 const [worktree, seedName] = process.argv.slice(2);
 if (!worktree || !seedName) {
@@ -55,12 +55,12 @@ if (!seed) {
   process.exit(2);
 }
 
-const dir = join(worktree, ".t3", "userdata");
-const file = join(dir, "settings.json");
-mkdirSync(dir, { recursive: true });
-const current = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+const dir = NodePath.join(worktree, ".t3", "userdata");
+const file = NodePath.join(dir, "settings.json");
+NodeFS.mkdirSync(dir, { recursive: true });
+const current = NodeFS.existsSync(file) ? JSON.parse(NodeFS.readFileSync(file, "utf8")) : {};
 for (const key of ["defaultModelSelection", "providerInstances", "providerModelPreferences"]) {
   delete current[key];
 }
-writeFileSync(file, `${JSON.stringify({ ...current, ...seed }, null, 2)}\n`);
+NodeFS.writeFileSync(file, `${JSON.stringify({ ...current, ...seed }, null, 2)}\n`);
 console.log(`${seedName} -> ${file}`);

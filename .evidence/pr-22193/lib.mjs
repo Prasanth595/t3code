@@ -1,13 +1,13 @@
 // Shared browser helpers for the PR #22193 evidence drivers.
-import { createRequire } from "node:module";
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import * as NodeModule from "node:module";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
-const here = dirname(fileURLToPath(import.meta.url));
+const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 // Playwright comes from apps/web's dev dependencies in this checkout.
-const require = createRequire(join(here, "../../apps/web/package.json"));
+const require = NodeModule.createRequire(NodePath.join(here, "../../apps/web/package.json"));
 export const { chromium } = require("playwright");
 
 // Web origin from the newest [dev-runner] line of a dev server log.
@@ -20,13 +20,13 @@ export function webOriginFromLog(logFile) {
 // Mints a short-lived pairing URL for the dev server that owns <worktree>/.t3.
 // The token is never logged; the resulting session is cached in authFile.
 export function mintPairingUrl(worktree) {
-  const out = execFileSync(
+  const out = NodeChildProcess.execFileSync(
     "node",
     [
-      join(worktree, "apps/server/src/bin.ts"),
+      NodePath.join(worktree, "apps/server/src/bin.ts"),
       "pair",
       "--base-dir",
-      join(worktree, ".t3"),
+      NodePath.join(worktree, ".t3"),
       "--ttl",
       "10m",
     ],
@@ -54,7 +54,7 @@ export async function openApp({
     ...(videoDir ? { recordVideo: { dir: videoDir, size: { width, height } } } : {}),
   };
   let pairing = null;
-  if (!existsSync(authFile)) {
+  if (!NodeFS.existsSync(authFile)) {
     pairing = mintPairingUrl(worktree);
     const context = await browser.newContext({ viewport: { width, height } });
     const page = await context.newPage();
