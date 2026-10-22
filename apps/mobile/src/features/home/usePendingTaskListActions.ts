@@ -5,7 +5,12 @@ import { useCallback } from "react";
 import { removeThreadOutboxMessage } from "../../state/thread-outbox-removal";
 import { clearComposerDraftContent } from "../../state/use-composer-drafts";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
-import { releaseEditingQueuedMessage } from "../../state/use-thread-outbox";
+import { appAtomRegistry } from "../../state/atom-registry";
+import {
+  editingQueuedMessageIdsAtom,
+  holdEditingQueuedMessage,
+  releaseEditingQueuedMessage,
+} from "../../state/use-thread-outbox";
 import { withThreadDismissal } from "./thread-dismissal";
 
 export function usePendingTaskListActions(): {
@@ -61,16 +66,25 @@ export function usePendingTaskListActions(): {
           text: "Delete",
           style: "destructive",
           onPress: () => {
-            // Release the edit lock only after removal succeeds, and only if
-            // it is held for THIS task — clearing it up front (or for another
-            // task) would let the drain deliver a mid-edit payload.
+            // The row animates out before removal runs, so hold delivery from
+            // confirmation on: a reconnect must not send a task being deleted.
+            // A lock the editor already held stays held unless removal succeeds.
+            const messageId = pendingTask.message.messageId;
+            const heldByEditor = appAtomRegistry.get(editingQueuedMessageIdsAtom)[messageId];
+            holdEditingQueuedMessage(messageId);
+            const releaseUnlessEditing = () => {
+              if (!heldByEditor) releaseEditingQueuedMessage(messageId);
+            };
             void withThreadDismissal(
               pendingTask.key,
-              () => removeThreadOutboxMessage(pendingTask.message).then(() => true),
-              () => true,
+              () => removeThreadOutboxMessage(pendingTask.message),
+              (removed) => removed,
             )
-              .then(() => releaseEditingQueuedMessage(pendingTask.message.messageId))
+              .then((removed) =>
+                removed ? releaseEditingQueuedMessage(messageId) : releaseUnlessEditing(),
+              )
               .catch((error) => {
+                releaseUnlessEditing();
                 Dialog.alert(
                   "Could not delete pending task",
                   error instanceof Error ? error.message : "The pending task could not be removed.",
