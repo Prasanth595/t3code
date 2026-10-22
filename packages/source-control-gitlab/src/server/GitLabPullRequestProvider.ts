@@ -116,13 +116,13 @@ export const make = Effect.gen(function* () {
     kind: SourceControlProviderKind.make("gitlab"),
     capabilities: CAPABILITIES,
 
-    getViewer: (input) =>
-      cli.getViewerUsername({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
+    getViewer: (input) => cli.getViewerUsername(input).pipe(Effect.mapError(fail("getViewer"))),
 
     listChangeRequests: (input) =>
       cli
         .listMergeRequests({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           state: input.state,
           involvement: input.involvement,
@@ -143,13 +143,9 @@ export const make = Effect.gen(function* () {
       ),
 
     getChangeRequest: (input) =>
-      Effect.all(
-        [
-          cli.getMergeRequestDetail(input),
-          cli.getProjectMergeCapabilities({ cwd: input.cwd, repository: input.repository }),
-        ],
-        { concurrency: 2 },
-      ).pipe(
+      Effect.all([cli.getMergeRequestDetail(input), cli.getProjectMergeCapabilities(input)], {
+        concurrency: 2,
+      }).pipe(
         Effect.mapError(fail("getChangeRequest")),
         Effect.map(([mergeRequest, mergeCapabilities]): ProviderChangeRequestDetail => ({
           ...mergeRequest,
@@ -226,6 +222,7 @@ export const make = Effect.gen(function* () {
       cli
         .listReviewerCandidates({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
         })
@@ -235,6 +232,7 @@ export const make = Effect.gen(function* () {
       cli
         .setReviewerRequest({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           reviewers: input.reviewers,
@@ -246,6 +244,7 @@ export const make = Effect.gen(function* () {
       cli
         .runMergeRequestAction({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           action: input.action,
@@ -257,6 +256,7 @@ export const make = Effect.gen(function* () {
       cli
         .updateMergeRequest({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           ...(input.title === undefined ? {} : { title: input.title }),
@@ -270,6 +270,7 @@ export const make = Effect.gen(function* () {
       cli
         .updateNote({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           noteId: input.commentId,
@@ -283,6 +284,7 @@ export const make = Effect.gen(function* () {
       cli
         .replyToDiscussion({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           discussionId: input.threadId,
@@ -294,6 +296,7 @@ export const make = Effect.gen(function* () {
       cli
         .setReaction({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           ...(input.subjectId === undefined ? {} : { noteId: input.subjectId }),
@@ -306,6 +309,7 @@ export const make = Effect.gen(function* () {
       cli
         .setDiscussionResolution({
           cwd: input.cwd,
+          host: input.host,
           repository: input.repository,
           number: input.number,
           discussionId: input.threadId,
