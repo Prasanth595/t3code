@@ -7332,6 +7332,33 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("cancels a settled subagent approval when Claude aborts its callback", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeIdlePermissionHarness();
+      yield* harness.start();
+      yield* harness.offer(harness.taskStarted());
+      yield* harness.settle();
+      const abort = new AbortController();
+      const permission = yield* harness.request("auditor", abort.signal).pipe(Effect.forkScoped);
+      const { runtimeRequest } = yield* Queue.take(harness.runtimeRequestReceipts);
+      abort.abort();
+      assert.equal((yield* Fiber.join(permission))?.behavior, "deny");
+      const cancelled = (yield* Queue.take(harness.runtimeRequestReceipts)).runtimeRequest;
+      assert.equal(cancelled.id, runtimeRequest.id);
+      assert.equal(cancelled.status, "cancelled");
+      assert.equal(cancelled.responseCapability.type, "not_resumable");
+      const node = harness.events.findLast(
+        (event) => event.type === "node.updated" && event.node.id === runtimeRequest.nodeId,
+      );
+      assert.equal(node?.type === "node.updated" ? node.node.status : undefined, "cancelled");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect("denies settled subagent callbacks while stopping and after process replacement", () =>
     Effect.gen(function* () {
       const closeStarted = yield* Deferred.make<void>();

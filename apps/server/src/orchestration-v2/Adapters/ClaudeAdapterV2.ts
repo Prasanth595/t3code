@@ -6506,6 +6506,47 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return { node, request, turnItem };
         });
 
+        // After the root result no run is left for the orchestrator to interrupt, so an
+        // aborted settled-path request must be closed here or it stays pending forever.
+        const emitCancelledRuntimeRequest = Effect.fnUntraced(function* (
+          artifacts: Effect.Success<ReturnType<typeof buildApprovalRequestArtifacts>>,
+        ) {
+          const now = yield* DateTime.now;
+          yield* Effect.all(
+            [
+              emitProviderEvent({
+                type: "node.updated",
+                driver: CLAUDE_PROVIDER,
+                node: { ...artifacts.node, status: "cancelled", completedAt: now },
+              }),
+              emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: {
+                  ...artifacts.turnItem,
+                  status: "cancelled",
+                  completedAt: now,
+                  updatedAt: now,
+                },
+              }),
+              emitProviderEvent({
+                type: "runtime_request.updated",
+                driver: CLAUDE_PROVIDER,
+                runtimeRequest: {
+                  ...artifacts.request,
+                  status: "cancelled",
+                  responseCapability: {
+                    type: "not_resumable",
+                    reason: "Claude cancelled this request before it was resolved.",
+                  },
+                  resolvedAt: now,
+                },
+              }),
+            ],
+            { concurrency: 1 },
+          );
+        });
+
         const ensureReasoningBlock = Effect.fnUntraced(function* (
           context: ActiveClaudeTurnContext,
           itemId: string,
@@ -8811,7 +8852,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           toolName: Parameters<CanUseTool>[0],
           toolInput: Parameters<CanUseTool>[1],
           callbackOptions: Parameters<CanUseTool>[2],
-          owningQueryClosed?: Deferred.Deferred<void, never>,
+          owningQueryClosed: Deferred.Deferred<void, never> | undefined,
         ) {
           let context = yield* Ref.get(activeTurn);
           const settled = context === null;
@@ -8945,6 +8986,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
               ),
             );
+            if (settled && !(yield* Deferred.isDone(answers))) {
+              yield* emitCancelledRuntimeRequest(artifacts);
+            }
             return callbackOptions.signal.aborted
               ? ({
                   behavior: "deny",
@@ -9063,6 +9107,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }),
             ),
           );
+          if (settled && !(yield* Deferred.isDone(decision))) {
+            yield* emitCancelledRuntimeRequest(artifacts);
+          }
 
           return permissionResultFromDecision({
             toolName,
@@ -9139,6 +9186,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   requestId: callbackOptions.requestId,
                   toolUseID: request.toolUseID ?? callbackOptions.requestId,
                 },
+                undefined,
               );
               if (result.behavior !== "allow") return { behavior: "cancelled" as const };
               const answers =
