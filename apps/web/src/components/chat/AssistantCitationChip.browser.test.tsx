@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { useState, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import "~/index.css";
@@ -20,7 +20,7 @@ vi.mock(import("./AssistantCitationSource"), async (importOriginal) => ({
 vi.mock(import("@tanstack/react-router"), async (importOriginal) => ({
   ...(await importOriginal()),
   useNavigate: () => vi.fn(),
-  Link: (({ children }: { children: ReactNode }) => <a>{children}</a>) as never,
+  Link: (({ children }: { children: ReactNode }) => <a href="#source">{children}</a>) as never,
 }));
 
 import { AssistantCitationChip } from "./AssistantCitationChip";
@@ -50,14 +50,23 @@ function setup() {
   return { sourceAnchor, [Symbol.dispose]: () => source.remove() };
 }
 
-function mount(sourceAnchor: AssistantCitationSourceAnchor, onSave: () => boolean) {
+function mount(
+  sourceAnchor: AssistantCitationSourceAnchor,
+  onSave: () => boolean,
+  onCancel?: () => void,
+) {
   function Composer() {
     const [open, setOpen] = useState(true);
     return (
       <AssistantCitationChip
         citation={citation}
-        composer
-        commentEditor={{ open, sourceAnchor, onOpenChange: setOpen, onSave }}
+        commentEditor={{
+          open,
+          sourceAnchor,
+          onOpenChange: setOpen,
+          onSave,
+          ...(onCancel ? { onCancel } : {}),
+        }}
       />
     );
   }
@@ -83,12 +92,10 @@ async function removeSource() {
   await act(async () => onUnavailable());
 }
 
-async function clickButton(label: string) {
-  const button = [...document.querySelectorAll("button")].find(
-    (element) => element.textContent?.trim() === label,
-  );
-  expect(button, `button ${label}`).toBeDefined();
-  await act(async () => button!.click());
+// Once the source is gone the popup moves to the chip, which saves with Enter.
+async function pressEnter() {
+  textarea()!.focus();
+  await userEvent.keyboard("{Enter}");
 }
 
 describe("citation comment source disappearance", () => {
@@ -107,7 +114,7 @@ describe("citation comment source disappearance", () => {
     expect(mocks.observeSource).toHaveBeenCalledTimes(1);
 
     await typeComment("shortened comment");
-    await clickButton("Save");
+    await pressEnter();
     expect(onSave).toHaveBeenCalledWith("shortened comment");
     expect(textarea()).toBeNull();
   });
@@ -122,9 +129,25 @@ describe("citation comment source disappearance", () => {
     expect(onSave).toHaveBeenCalledWith("keep this draft");
     expect(textarea()?.value).toBe("keep this draft");
     onSave.mockReturnValue(true);
-    await clickButton("Save");
+    await pressEnter();
     expect(onSave).toHaveBeenLastCalledWith("keep this draft");
     expect(textarea()).toBeNull();
+  });
+
+  it("removes a just-inserted quote on Escape from Go to source", async () => {
+    using source = setup();
+    const onCancel = vi.fn();
+    await using _screen = await mount(
+      source.sourceAnchor,
+      vi.fn(() => true),
+      onCancel,
+    );
+    await typeComment("x".repeat(ASSISTANT_CITATION_MAX_COMMENT_LENGTH + 1));
+    await removeSource();
+
+    page.getByRole("link", { name: "Go to source" }).element().focus();
+    await userEvent.keyboard("{Escape}");
+    expect(onCancel).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -173,5 +196,59 @@ describe("citation comment popup position", () => {
     const rect = popup()!.getBoundingClientRect();
     expect(rect.left).toBeGreaterThanOrEqual(0);
     expect(rect.right).toBeLessThanOrEqual(window.innerWidth);
+  });
+});
+
+describe("draft citation chip", () => {
+  it("opens the quote with an editable comment, ready to type at its end", async () => {
+    using _source = setup();
+    const onSave = vi.fn(() => true);
+    function Composer() {
+      const [open, setOpen] = useState(false);
+      return (
+        <AssistantCitationChip
+          citation={{ ...citation, comment: "note" }}
+          commentEditor={{ open, onOpenChange: setOpen, onSave }}
+        />
+      );
+    }
+    await using _screen = await render(<Composer />);
+
+    await page.getByRole("button", { name: "Edit citation comment" }).click();
+
+    await expect.element(page.getByRole("blockquote")).toHaveTextContent("hello");
+    await expect.element(page.getByText("Go to source")).toBeVisible();
+    await vi.waitFor(() => expect(document.activeElement).toBe(textarea()));
+    expect(textarea()?.selectionStart).toBe("note".length);
+    expect(page.getByRole("button", { name: "Save" }).query()).toBeNull();
+
+    await userEvent.keyboard(" again{Enter}");
+    expect(onSave).toHaveBeenCalledWith("note again");
+    expect(textarea()).toBeNull();
+  });
+
+  it("keeps the comment field and its caret in view under a long quote and comment", async () => {
+    using _source = setup();
+    function Composer() {
+      const [open, setOpen] = useState(false);
+      return (
+        <AssistantCitationChip
+          citation={{
+            ...citation,
+            text: "long line\n".repeat(80),
+            comment: "long comment\n".repeat(40),
+          }}
+          commentEditor={{ open, onOpenChange: setOpen, onSave: () => true }}
+        />
+      );
+    }
+    await using _screen = await render(<Composer />);
+
+    await page.getByRole("button", { name: "Edit citation comment" }).click();
+
+    await vi.waitFor(() => expect(document.activeElement).toBe(textarea()));
+    await expect.element(page.getByLabelText("Comment on selected text")).toBeInViewport();
+    const input = textarea()!;
+    expect(input.scrollTop + input.clientHeight).toBeGreaterThanOrEqual(input.scrollHeight - 1);
   });
 });
