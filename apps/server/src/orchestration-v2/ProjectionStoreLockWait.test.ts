@@ -25,6 +25,9 @@ import * as ProjectionStore from "./ProjectionStore.ts";
  */
 const FIXED_EPOCH = "2026-01-01T00:00:00.000Z";
 
+/** How many rows the writer inserts while the read runs. */
+const WRITE_ROWS = 400;
+
 /**
  * The lock wait a read pays, and the connection it pays it on.
  *
@@ -167,12 +170,24 @@ const measureReadUnderWriteLoad = Effect.fn("measureReadUnderWriteLoad")(functio
 
   // A writer, inserting rows the whole time the read runs. It signals when it
   // has written enough for the read to meet a busy writer.
+  //
+  // The columns are the table's own. A row that does not insert is a failed
+  // row, not write load, so the insert is not allowed to fail quietly: the
+  // rows are counted afterwards and the count is asserted.
   const writing = yield* Deferred.make<void>();
+  let written = 0;
   const writer = yield* Effect.repeat(
-    sql`INSERT INTO orchestration_v2_projection_checkpoints (checkpoint_id, scope_id, thread_id, run_id, checkpoint_version, checkpoint_kind, payload_json, created_at) VALUES (${crypto.randomUUID()}, ${"scope"}, ${threadId}, ${"run"}, 1, 'test', '{}', ${FIXED_EPOCH})`.pipe(
-      Effect.ignore,
-    ),
-    { times: 400 },
+    Effect.gen(function* () {
+      yield* sql`INSERT INTO orchestration_v2_projection_checkpoints (
+        checkpoint_id, thread_id, scope_id, run_id, node_id, ordinal_within_scope,
+        status, captured_at, payload_json
+      ) VALUES (
+        ${crypto.randomUUID()}, ${threadId}, ${`lockwait-scope-${written}`}, ${"run"}, ${"node"},
+        ${written}, 'captured', ${FIXED_EPOCH}, '{}'
+      )`;
+      written += 1;
+    }),
+    { times: WRITE_ROWS },
   ).pipe(
     Effect.andThen(Deferred.succeed(writing, undefined)),
     Effect.forkChild({ startImmediately: true }),
@@ -187,7 +202,7 @@ const measureReadUnderWriteLoad = Effect.fn("measureReadUnderWriteLoad")(functio
   const elapsedMs = (yield* Clock.currentTimeMillis) - started;
   yield* Fiber.join(writer);
 
-  return { acquired, elapsedMs };
+  return { acquired, elapsedMs, written };
 });
 
 /**
@@ -218,12 +233,24 @@ const measureReadOnWriter = Effect.fn("measureReadOnWriter")(function* (threadId
   });
 
   // A writer inserting rows the whole time the read runs.
+  //
+  // The columns are the table's own. A row that does not insert is a failed
+  // row, not write load, so the insert is not allowed to fail quietly: the
+  // rows are counted afterwards and the count is asserted.
   const writing = yield* Deferred.make<void>();
+  let written = 0;
   const writer = yield* Effect.repeat(
-    sql`INSERT INTO orchestration_v2_projection_checkpoints (checkpoint_id, scope_id, thread_id, run_id, checkpoint_version, checkpoint_kind, payload_json, created_at) VALUES (${crypto.randomUUID()}, ${"scope"}, ${threadId}, ${"run"}, 1, 'test', '{}', ${FIXED_EPOCH})`.pipe(
-      Effect.ignore,
-    ),
-    { times: 400 },
+    Effect.gen(function* () {
+      yield* sql`INSERT INTO orchestration_v2_projection_checkpoints (
+        checkpoint_id, thread_id, scope_id, run_id, node_id, ordinal_within_scope,
+        status, captured_at, payload_json
+      ) VALUES (
+        ${crypto.randomUUID()}, ${threadId}, ${`lockwait-scope-${written}`}, ${"run"}, ${"node"},
+        ${written}, 'captured', ${FIXED_EPOCH}, '{}'
+      )`;
+      written += 1;
+    }),
+    { times: WRITE_ROWS },
   ).pipe(
     Effect.andThen(Deferred.succeed(writing, undefined)),
     Effect.forkChild({ startImmediately: true }),
@@ -240,7 +267,7 @@ const measureReadOnWriter = Effect.fn("measureReadOnWriter")(function* (threadId
   const elapsedMs = (yield* Clock.currentTimeMillis) - started;
   yield* Fiber.join(writer);
 
-  return { acquired, elapsedMs };
+  return { acquired, elapsedMs, written };
 });
 
 it.effect("the projection read does not wait for the writer's lock", () =>
@@ -256,10 +283,25 @@ it.effect("the projection read does not wait for the writer's lock", () =>
     );
 
     const threadId = ThreadId.make("thread:lockwait:load");
-    const { acquired, elapsedMs } = yield* Effect.gen(function* () {
+    const { acquired, elapsedMs, written } = yield* Effect.gen(function* () {
       yield* createThread(threadId);
       return yield* measureReadUnderWriteLoad(threadId);
     }).pipe(Effect.provide(storeLayer), TestClock.withLive);
+
+    // The writer really wrote. A writer whose rows are rejected is not write
+    // load, and the measurement would be measuring nothing.
+    assert.isAbove(written, 1);
+    const rows = yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      return yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count
+        FROM orchestration_v2_projection_checkpoints
+        WHERE scope_id LIKE 'lockwait-scope-%'
+      `;
+    }).pipe(Effect.provide(storeLayer));
+    // Every row the writer reported is on disk, so the inserts were not
+    // rejected.
+    assert.equal(rows[0]?.count, written);
 
     // The read ran on the reader, so the writer's lock did not make it wait:
     // the reader has its own connection and its own lock.
@@ -267,9 +309,12 @@ it.effect("the projection read does not wait for the writer's lock", () =>
       acquired.map((entry) => entry.connection),
       ["reader"],
     );
+    // The lock wait is reported, so the before/after can be compared on the
+    // same measure the server logs.
     assert.equal(acquired.length, 1);
+    assert.isAtLeast(acquired[0]?.lockWaitMs ?? -1, 0);
     console.log(
-      `MEASURE read-under-write-load: connection=${acquired[0]?.connection} lock_wait_ms=${acquired[0]?.lockWaitMs} elapsed_ms=${elapsedMs}`,
+      `MEASURE read-under-write-load: connection=${acquired[0]?.connection} lock_wait_ms=${acquired[0]?.lockWaitMs} elapsed_ms=${elapsedMs} rows_written=${written}`,
     );
   }).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -287,15 +332,31 @@ it.effect("the same read on the writer connection waits for the writer's lock", 
     );
 
     const threadId = ThreadId.make("thread:lockwait:writer");
-    const { acquired, elapsedMs } = yield* Effect.gen(function* () {
+    const { acquired, elapsedMs, written } = yield* Effect.gen(function* () {
       yield* createThread(threadId);
       return yield* measureReadOnWriter(threadId);
     }).pipe(Effect.provide(storeLayer), TestClock.withLive);
+
+    // The writer really wrote, so the comparison is against real write load.
+    assert.isAbove(written, 1);
+    const rows = yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      return yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count
+        FROM orchestration_v2_projection_checkpoints
+        WHERE scope_id LIKE 'lockwait-scope-%'
+      `;
+    }).pipe(Effect.provide(storeLayer));
+    assert.equal(rows[0]?.count, written);
 
     assert.deepEqual(
       acquired.map((entry) => entry.connection),
       ["writer"],
     );
+    // The lock wait is reported on the writer's acquisition too, so the two
+    // measurements are comparable.
+    assert.equal(acquired.length, 1);
+    assert.isAtLeast(acquired[0]?.lockWaitMs ?? -1, 0);
     console.log(
       `MEASURE read-on-writer: connection=${acquired[0]?.connection} lock_wait_ms=${acquired[0]?.lockWaitMs} elapsed_ms=${elapsedMs}`,
     );
