@@ -65,6 +65,7 @@ import {
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
+  gitHubApiHostForRemote,
   parseGitHubRepositorySelector,
   resolveGitHubRepository,
 } from "@t3tools/source-control-github/server/gitHubRepositoryResolution";
@@ -2746,6 +2747,140 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  // A pull request read may borrow any checkout on its host, and a link can name a renamed
+  // repository, so the URL the host answers with is the one compared. Checking out anywhere but a
+  // checkout of the base or head repository would fetch its history into an unrelated one. Both
+  // raw config and `git remote -v` count: a local `insteadOf` mirror only shows in the first, and
+  // shorthand like `gh:` only names the repository after rewriting.
+  const ensurePullRequestBelongsToCheckout = Effect.fn("ensurePullRequestBelongsToCheckout")(
+    function* (cwd: string, pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo) {
+      const provider = yield* sourceControlProvider(cwd);
+      const baseKey = pullRequestRepositoryKey(pullRequest.url);
+      const headRepository = resolvePullRequestHeadRepositoryNameWithOwner(pullRequest);
+      // The head is named without the installation mount (Forgejo under `/git`) its web URL
+      // carries, so it lives under the base's serving root. The same path at the host's root can be
+      // another server; SSH remotes that omit the mount match through provider refinement below.
+      const baseName =
+        baseKey === null
+          ? null
+          : parseRepositoryNameWithOwnerFromRemoteUrl(
+              `https://${baseKey}`,
+              provider,
+            )?.toLowerCase();
+      const headRoot =
+        baseKey === null
+          ? null
+          : baseName && baseKey.endsWith(`/${baseName}`)
+            ? baseKey.slice(0, -baseName.length - 1)
+            : baseKey.split("/")[0];
+      const repositoryKeys = new Set(
+        baseKey === null
+          ? []
+          : [
+              canonicalRepositoryKey(baseKey),
+              ...(headRepository
+                ? [canonicalRepositoryKey(`${headRoot}/${headRepository.toLowerCase()}`)]
+                : []),
+            ],
+      );
+      const listRemoteUrls = (args: ReadonlyArray<string>) =>
+        gitCore
+          .execute({
+            operation: "GitManager.preparePullRequestThread.remotes",
+            cwd,
+            args,
+            allowNonZeroExit: true,
+          })
+          .pipe(
+            Effect.map((result) =>
+              result.stdout.split("\n").flatMap((line) => {
+                // `key url` from config, `name\turl (fetch)` from `remote -v`; URLs may hold spaces.
+                const separator = line.search(/\s/);
+                if (separator === -1) return [];
+                const name = line.slice(0, separator).replace(/^remote\.(.*)\.url$/, "$1");
+                const url = line
+                  .slice(separator + 1)
+                  .replace(/ \((?:fetch|push)\)$/, "")
+                  .trim();
+                return name && url ? [{ name, url }] : [];
+              }),
+            ),
+          );
+      const remotes = new Map(
+        [
+          ...(yield* listRemoteUrls(["config", "--get-regexp", "^remote\\..*\\.url$"])),
+          ...(yield* listRemoteUrls(["remote", "-v"])),
+        ].map(({ name, url }) => [url, name]),
+      );
+      // An SSH alias such as `git@github-work:owner/repo` names a github.com repository.
+      const remoteRepositoryKey = (remoteUrl: string) => {
+        const key = normalizeGitRemoteUrl(remoteUrl);
+        const path = key.indexOf("/");
+        return canonicalRepositoryKey(
+          path !== -1 && gitHubApiHostForRemote(remoteUrl) === "github.com"
+            ? `github.com${key.slice(path)}`
+            : key,
+        );
+      };
+      // Keys drop the port, but two servers can share a hostname; an HTTP URL names its server.
+      const httpPort = (value: string) => {
+        try {
+          const url = new URL(value);
+          return url.protocol === "http:" || url.protocol === "https:" ? url.port : null;
+        } catch {
+          return null;
+        }
+      };
+      const pullRequestPort = httpPort(pullRequest.url);
+      const samePort = (url: string) => {
+        const port = httpPort(url);
+        return port === null || pullRequestPort === null || port === pullRequestPort;
+      };
+      if (
+        [...remotes.keys()].some(
+          (remoteUrl) => repositoryKeys.has(remoteRepositoryKey(remoteUrl)) && samePort(remoteUrl),
+        )
+      ) {
+        return;
+      }
+      // Forgejo serves SSH from a host only its provider maps to the web host links are on.
+      const refine = provider.refineRepositoryIdentity;
+      const webUrls =
+        refine === undefined
+          ? []
+          : yield* Effect.forEach(remotes, ([remoteUrl, remoteName]) =>
+              refine({
+                identity: {
+                  canonicalKey: normalizeGitRemoteUrl(remoteUrl),
+                  locator: { source: "git-remote", remoteName, remoteUrl },
+                  rootPath: cwd,
+                },
+                resolveContext: (input) =>
+                  sourceControlProviders
+                    .resolveHandle(input)
+                    .pipe(Effect.map((handle) => handle.context)),
+              }).pipe(
+                Effect.map((identity) => identity.webUrl),
+                Effect.orElseSucceed(() => undefined),
+              ),
+            );
+      if (
+        !webUrls.some(
+          (webUrl) =>
+            webUrl !== undefined &&
+            repositoryKeys.has(canonicalRepositoryKey(normalizeGitRemoteUrl(webUrl))) &&
+            samePort(webUrl),
+        )
+      ) {
+        return yield* new GitManagerError({
+          operation: "preparePullRequestThread",
+          cwd,
+          detail: `Pull request #${pullRequest.number} belongs to ${baseKey ?? pullRequest.url}, and this project is not a checkout of it.`,
+        });
+      }
+    },
+  );
+
   // Some hosts only switch branches on checkout; use the existing lossless refresh to advance them.
   const moveToPullRequestHead = (cwd: string, headSha: string | undefined) =>
     headSha === undefined || !/^[0-9a-f]{7,64}$/i.test(headSha)
@@ -2789,6 +2924,10 @@ export const make = Effect.gen(function* () {
         reference: normalizedReference,
       });
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
+      yield* ensurePullRequestBelongsToCheckout(input.cwd, {
+        ...pullRequest,
+        ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+      });
 
       if (input.mode === "local") {
         yield* ensureNoTrackedChanges(input.cwd, pullRequest.number);
