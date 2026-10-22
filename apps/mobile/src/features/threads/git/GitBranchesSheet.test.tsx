@@ -40,7 +40,9 @@ vi.mock("../../../components/ui/AppText", () => ({
   },
 }));
 vi.mock("../../../state/query", () => ({
-  useEnvironmentQuery: () => ({ data: state.refName === null ? undefined : { refName: state.refName } }),
+  useEnvironmentQuery: () => ({
+    data: state.refName === null ? undefined : { refName: state.refName },
+  }),
 }));
 vi.mock("../../../state/use-thread-selection", () => ({
   useThreadSelection: () => ({
@@ -48,7 +50,10 @@ vi.mock("../../../state/use-thread-selection", () => ({
   }),
 }));
 vi.mock("../../../state/use-selected-thread-worktree", () => ({
-  useSelectedThreadWorktree: () => ({ selectedThreadCwd: "/repo", selectedThreadWorktreePath: null }),
+  useSelectedThreadWorktree: () => ({
+    selectedThreadCwd: "/repo",
+    selectedThreadWorktreePath: null,
+  }),
 }));
 vi.mock("../../../state/use-selected-thread-git-state", () => ({
   useSelectedThreadGitState: () => ({
@@ -86,7 +91,11 @@ function setup(branch: string | null = null) {
   const root = createRoot(document.createElement("div"));
   const render = () =>
     act(() => {
-      root.render(<GitBranchesSheet route={{ params: { environmentId: "environment", threadId: "thread" } }} />);
+      root.render(
+        <GitBranchesSheet
+          route={{ params: { environmentId: "environment", threadId: "thread" } }}
+        />,
+      );
     });
   render();
   return {
