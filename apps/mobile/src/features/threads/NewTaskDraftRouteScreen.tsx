@@ -1,7 +1,13 @@
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import * as Dialog from "../../components/ui/Dialog";
-import { useNavigation, usePreventRemove, type StaticScreenProps } from "@react-navigation/native";
+import {
+  useNavigation,
+  useRoute,
+  usePreventRemove,
+  usePreventRemoveContext,
+  type StaticScreenProps,
+} from "@react-navigation/native";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { View } from "react-native";
 import {
@@ -24,6 +30,7 @@ import type { NewTaskDraftRouteParams } from "./thread-route-state";
 export type { NewTaskDraftRouteParams } from "./thread-route-state";
 
 export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraftRouteParams>) {
+  const currentRoute = useRoute();
   const params = useMemo(() => route.params ?? {}, [route.params]);
   const { reset } = useNewTaskFlow();
   const { deferThreadSelectionUntil } = useAdaptiveWorkspaceLayout();
@@ -130,12 +137,14 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
   // A replaced request must settle too before the shared checkout is left behind.
   const checkoutPending = pendingCheckouts > 0 || (needsPreparation && result === null);
   usePreventRemove(checkoutPending, () => undefined);
+  const { preventedRoutes } = usePreventRemoveContext();
+  const removalBlocked = preventedRoutes[currentRoute.key]?.preventRemove === true;
   useEffect(() => {
-    if (checkoutPending) return;
-    // The removal guard must commit disabled before queued navigation can run.
+    if (checkoutPending || removalBlocked) return;
+    // Native-stack reads the provider state, which commits after the hook updates its registry.
     for (const release of committedCheckoutReleases.current) release();
     committedCheckoutReleases.current.clear();
-  }, [checkoutPending]);
+  }, [checkoutPending, removalBlocked]);
   useEffect(() => {
     const releases = committedCheckoutReleases.current;
     return () => {

@@ -598,6 +598,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
   const { setComposerEditing } = useAdaptiveWorkspaceLayout();
   const hasSidebarTabBar = useSidebarWorkspaceTabs() === "picker";
+  const [compactRowWidth, setCompactRowWidth] = useState(0);
+  const compactAttachmentLimit = compactRowWidth >= 500 ? 3 : 1;
   const compactEditor = useCompactComposerEditor(bodyText, draftMessage);
   const showsCompactDictation = isVoiceInputPresented;
   const isToolbarVisible = isVoiceInputPresented;
@@ -858,7 +860,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         reportedSelection={props.reportedModelSelection}
         prompt={draftMessage}
         surfaceColor={composerPanel}
-        iconOnly={draftMessage.length > 0 && !compactEditor.isExpanded}
+        iconOnly={
+          (draftMessage.length > 0 || stripAttachments.length > 0) && !compactEditor.isExpanded
+        }
         onPress={openSettings}
       />
     </View>
@@ -943,7 +947,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
           }}
         >
           {isExpanded ? editingAttachments : null}
-          <View onLayout={compactEditor.onRowLayout}>
+          <View
+            onLayout={(event) => {
+              compactEditor.onRowLayout(event);
+              setCompactRowWidth(event.nativeEvent.layout.width);
+            }}
+          >
             <ComposerDictationDraftContent
               className="flex-row items-end"
               compact
@@ -962,14 +971,19 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 className="min-w-0 flex-1"
                 onLayout={compactEditor.onEditorLayout}
                 style={[
-                  { minWidth: compactEditor.isExpanded ? 0 : INLINE_EDITOR_MIN_WIDTH },
+                  {
+                    minWidth:
+                      compactEditor.isExpanded || stripAttachments.length > 0
+                        ? 0
+                        : INLINE_EDITOR_MIN_WIDTH,
+                  },
                   compactEditor.containerStyle,
                   compactEditor.isExpanded ? { flex: 0, width: 0 } : undefined,
                 ]}
               ></Animated.View>
               {!isExpanded && stripAttachments.length > 0 ? (
                 <View className="h-[44px] shrink-0 flex-row items-center gap-1 pl-1">
-                  {stripAttachments.slice(0, 3).map((attachment) => (
+                  {stripAttachments.slice(0, compactAttachmentLimit).map((attachment) => (
                     <ComposerAttachmentThumbnail
                       environmentId={props.environmentId}
                       key={attachment.id}
@@ -981,10 +995,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                       onPressVideo={isSubmissionLocked ? undefined : onPressVideo}
                     />
                   ))}
-                  {stripAttachments.length > 3 ? (
+                  {stripAttachments.length > compactAttachmentLimit ? (
                     <View className="size-[30px] items-center justify-center rounded-lg bg-subtle-strong">
                       <Text className="text-foreground-muted text-2xs font-t3-bold">
-                        +{stripAttachments.length - 3}
+                        +{stripAttachments.length - compactAttachmentLimit}
                       </Text>
                     </View>
                   ) : null}
