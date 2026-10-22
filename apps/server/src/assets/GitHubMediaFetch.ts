@@ -1,7 +1,16 @@
 import * as Mime from "effect/http/Mime";
-import { githubMediaFileName } from "@t3tools/shared/githubMedia";
+import {
+  githubMediaFileName,
+  githubMediaFetchUrl,
+  githubMarkdownRepository,
+} from "@t3tools/shared/githubMedia";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
+import type { ResolvedAsset } from "./AssetAccess.ts";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import {
@@ -66,6 +75,9 @@ const fetchFollowingRedirects = Effect.fn("GitHubMediaFetch.fetchFollowingRedire
   for (let hop = 0; ; hop += 1) {
     const authorization =
       token !== null && isCredentialedHost(target) ? `Bearer ${Redacted.value(token)}` : null;
+    const scope = yield* Scope.make();
+    yield* Effect.addFinalizer((exit) => Scope.close(scope, exit));
+    const release = Scope.close(scope, Exit.void);
     const response: HttpClientResponse.HttpClientResponse = yield* httpClient
       .execute(
         HttpClientRequest.get(target).pipe(
@@ -77,9 +89,14 @@ const fetchFollowingRedirects = Effect.fn("GitHubMediaFetch.fetchFollowingRedire
           }),
         ),
       )
-      .pipe(Effect.provideService(FetchHttpClient.RequestInit, MANUAL_REDIRECT));
+      .pipe(
+        Effect.provideService(FetchHttpClient.RequestInit, MANUAL_REDIRECT),
+        Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
+        Effect.provideService(Scope.Scope, scope),
+      );
     const location = response.headers.location;
-    if (response.status < 300 || response.status >= 400) return response;
+    if (response.status < 300 || response.status >= 400) return { response, release };
+    yield* release;
     if (!location || hop >= MAX_REDIRECTS) return null;
     const next = new URL(location, target);
     if (next.protocol !== "https:") return null;
@@ -87,8 +104,53 @@ const fetchFollowingRedirects = Effect.fn("GitHubMediaFetch.fetchFollowingRedire
   }
 });
 
+function signedMediaSource(html: string): string | null {
+  const image = /<img\b[^>]*>/i.exec(html)?.[0];
+  const source = image && /\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(image);
+  const attribute = source?.[1] ?? source?.[2];
+  if (!attribute) return null;
+  const entities: Record<string, string> = { amp: "&", quot: '"', apos: "'", lt: "<", gt: ">" };
+  const decoded = attribute.replace(
+    /&(#x[\da-f]+|#\d+|amp|quot|apos|lt|gt);/gi,
+    (entity, name: string) => {
+      if (!name.startsWith("#")) return entities[name.toLowerCase()] ?? entity;
+      const code =
+        name[1]?.toLowerCase() === "x" ? Number.parseInt(name.slice(2), 16) : Number(name.slice(1));
+      return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : entity;
+    },
+  );
+  try {
+    const url = new URL(decoded);
+    return url.protocol === "https:" &&
+      url.hostname === "private-user-images.githubusercontent.com" &&
+      url.username === "" &&
+      url.password === "" &&
+      url.port === ""
+      ? url.href
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+const resolveAttachment = Effect.fn("GitHubMediaFetch.resolveAttachment")(function* (
+  url: string,
+  context: string,
+) {
+  const github = yield* GitHubRest.GitHubRest;
+  const rendered = yield* github.rest({
+    host: "github.com",
+    operation: "resolve pull request attachment",
+    method: "POST",
+    path: "markdown",
+    body: { mode: "gfm", text: `![](<${url}>)`, context },
+    maxResponseBytes: 64 * 1024,
+  });
+  return rendered.truncated || rendered.invalidUtf8 ? null : signedMediaSource(rendered.body);
+});
+
 export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaResponse")(function* (
-  asset: { readonly url: string; readonly cwd: string; readonly expiresAt: number },
+  asset: Omit<Extract<ResolvedAsset, { kind: "github-media" }>, "kind">,
   requestHeaders: Record<string, string | undefined>,
 ) {
   // Both media hosts are served by github.com's account, which is the host `gh` stores it under.
@@ -98,7 +160,34 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
     const value = requestHeaders[name];
     if (value !== undefined) forwarded[name] = value;
   }
-  const response = yield* fetchFollowingRedirects(asset.url, forwarded, token);
+  let fetched = yield* fetchFollowingRedirects(asset.url, forwarded, token);
+  const context =
+    asset.repositoryUrl === undefined ? null : githubMarkdownRepository(asset.repositoryUrl);
+  const canonical = githubMediaFetchUrl(asset.url);
+  const attachment = canonical !== null && new URL(canonical).hostname === "github.com";
+  if (
+    fetched &&
+    context &&
+    attachment &&
+    ([401, 403, 404].includes(fetched.response.status) ||
+      (fetched.response.status >= 200 &&
+        fetched.response.status < 300 &&
+        /^(?:text\/html|application\/xhtml\+xml)(?:;|$)/i.test(
+          fetched.response.headers["content-type"] ?? "",
+        )))
+  ) {
+    yield* fetched.release;
+    const signed = yield* resolveAttachment(canonical, context).pipe(
+      Effect.orElseSucceed(() => null),
+    );
+    fetched =
+      signed === null
+        ? null
+        : yield* fetchFollowingRedirects(signed, forwarded, null).pipe(
+            Effect.orElseSucceed(() => null),
+          );
+  }
+  const response = fetched?.response ?? null;
   const remainingSeconds = Math.floor((asset.expiresAt - (yield* Clock.currentTimeMillis)) / 1000);
   const headers: Record<string, string> = {
     "cache-control":
@@ -116,9 +205,12 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
   }
   const upstreamType =
     response.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-  const contentType = MEDIA_CONTENT_TYPE_PATTERN.test(upstreamType)
-    ? upstreamType
-    : Option.getOrElse(Mime.getType(githubMediaFileName(asset.url)), () => "").toLowerCase();
+  const contentType =
+    upstreamType === "text/html" || upstreamType === "application/xhtml+xml"
+      ? ""
+      : MEDIA_CONTENT_TYPE_PATTERN.test(upstreamType)
+        ? upstreamType
+        : Option.getOrElse(Mime.getType(githubMediaFileName(asset.url)), () => "").toLowerCase();
   if (!MEDIA_CONTENT_TYPE_PATTERN.test(contentType)) {
     return HttpServerResponse.empty({ status: 415, headers });
   }
@@ -130,9 +222,12 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
   if (contentType === SVG_CONTENT_TYPE) {
     headers["content-security-policy"] = SVG_CONTENT_SECURITY_POLICY;
   }
-  return HttpServerResponse.stream(response.stream, {
-    status: response.status,
-    headers,
-    contentType,
-  });
+  return HttpServerResponse.stream(
+    response.stream.pipe(Stream.mapError(() => new Error("GitHub media stream failed."))),
+    {
+      status: response.status,
+      headers,
+      contentType,
+    },
+  );
 });

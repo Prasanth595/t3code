@@ -222,11 +222,12 @@ describe("AssetAccess", () => {
           );
         }),
       ),
+      Effect.provide(Layer.mock(GitHubRest.GitHubRest)({})),
       Effect.scoped,
     );
   });
 
-  for (const media of [
+  it.effect.each([
     { name: "PNG", type: "image/png", bytes: screenshotPng, status: 200, headers: {} },
     {
       name: "MP4 range",
@@ -235,100 +236,161 @@ describe("AssetAccess", () => {
       status: 206,
       headers: { range: "bytes=0-7", "if-range": '"video-version"' },
     },
-  ]) {
-    it.effect(
-      `resolves canonical sign-in HTML to ${media.name} bytes in the displayed repository`,
-      () => {
-        const canonical = "https://github.com/user-attachments/assets/example-attachment";
-        const signed =
-          "https://private-user-images.githubusercontent.com/123/example?fixture=one&part=two";
-        const requests: string[] = [];
-        return Effect.gen(function* () {
-          const asset = {
+  ])("resolves canonical sign-in HTML to $name bytes in the displayed repository", (media) => {
+    const canonical = "https://github.com/user-attachments/assets/example-attachment";
+    const signed =
+      "https://private-user-images.githubusercontent.com/123/example?fixture=one&part=two";
+    const requests: string[] = [];
+    let canonicalSignal: AbortSignal | undefined;
+    return Effect.gen(function* () {
+      const asset = {
+        url: canonical,
+        cwd: "/different-checkout",
+        repositoryUrl: "https://github.com/displayed/repository",
+        expiresAt: Number.MAX_SAFE_INTEGER,
+      };
+      const response = HttpServerResponse.toWeb(yield* githubMediaResponse(asset, media.headers));
+      expect(response.status).toBe(media.status);
+      expect(response.headers.get("content-type")).toBe(media.type);
+      expect(new Uint8Array(yield* Effect.promise(() => response.arrayBuffer()))).toEqual(
+        media.bytes,
+      );
+      if (media.status === 206) {
+        expect(response.headers.get("content-range")).toBe("bytes 0-7/100");
+        expect(response.headers.get("accept-ranges")).toBe("bytes");
+        expect(response.headers.get("etag")).toBe('"video-version"');
+      }
+      expect(requests).toEqual([canonical, signed]);
+    }).pipe(
+      Effect.provide([
+        Layer.mock(GitHubRest.GitHubRest)({
+          rest: (input) => {
+            expect(canonicalSignal?.aborted).toBe(true);
+            expect(input).toMatchObject({
+              host: "github.com",
+              method: "POST",
+              path: "markdown",
+              body: {
+                mode: "gfm",
+                text: `![](<${canonical}>)`,
+                context: "displayed/repository",
+              },
+            });
+            return Effect.succeed({
+              status: 200,
+              headers: {},
+              truncated: false,
+              invalidUtf8: false,
+              body: `<p><a href="${canonical}"><img src="${signed.replaceAll("&", "&amp;")}" data-canonical-src="${canonical}"></a></p>`,
+            });
+          },
+        }),
+        Layer.mock(GitHubCredentials.GitHubCredentials)({
+          get: (host) =>
+            Effect.succeed({
+              host,
+              token: Redacted.make("api-token"),
+              source: "gh",
+              fingerprint: "test",
+            }),
+        }),
+      ]),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request, _url, signal) => {
+          requests.push(request.url);
+          if (request.url === canonical) {
+            canonicalSignal = signal;
+            expect(request.headers.authorization).toBe("Bearer api-token");
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response("<html>Sign in</html>", {
+                  headers: { "content-type": "text/html; charset=utf-8" },
+                }),
+              ),
+            );
+          }
+          expect(request.url).toBe(signed);
+          expect(request.headers.authorization).toBeUndefined();
+          expect(request.headers.range).toBe(media.headers.range);
+          expect(request.headers["if-range"]).toBe(media.headers["if-range"]);
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(media.bytes, {
+                status: media.status,
+                headers: {
+                  "content-type": media.type,
+                  "accept-ranges": "bytes",
+                  "content-range": "bytes 0-7/100",
+                  etag: '"video-version"',
+                },
+              }),
+            ),
+          );
+        }),
+      ),
+      Effect.scoped,
+    );
+  });
+
+  it.effect("rejects untrusted or incomplete Markdown media sources without fetching them", () =>
+    Effect.gen(function* () {
+      const canonical = "https://github.com/user-attachments/assets/example-attachment";
+      for (const rendered of [
+        { body: '<img src="https://unrelated.example/image.png">' },
+        { body: '<img src="http://private-user-images.githubusercontent.com/image.png">' },
+        {
+          body: '<img src="https://credential@private-user-images.githubusercontent.com/image.png">',
+        },
+        { body: '<img src="https://private-user-images.githubusercontent.com:8443/image.png">' },
+        { body: `<img src="${canonical}">` },
+        { body: '<a href="https://private-user-images.githubusercontent.com/image.png">image</a>' },
+        { body: '<img data-src="https://private-user-images.githubusercontent.com/image.png">' },
+        {
+          body: '<img src="https://private-user-images.githubusercontent.com/image.png">',
+          truncated: true,
+        },
+        {
+          body: '<img src="https://private-user-images.githubusercontent.com/image.png">',
+          invalidUtf8: true,
+        },
+      ]) {
+        const fetches: string[] = [];
+        const response = yield* githubMediaResponse(
+          {
             url: canonical,
-            cwd: "/different-checkout",
+            cwd: "/other-checkout",
             repositoryUrl: "https://github.com/displayed/repository",
             expiresAt: Number.MAX_SAFE_INTEGER,
-          };
-          const response = HttpServerResponse.toWeb(
-            yield* githubMediaResponse(asset, media.headers),
-          );
-          expect(response.status).toBe(media.status);
-          expect(response.headers.get("content-type")).toBe(media.type);
-          expect(new Uint8Array(yield* Effect.promise(() => response.arrayBuffer()))).toEqual(
-            media.bytes,
-          );
-          if (media.status === 206) {
-            expect(response.headers.get("content-range")).toBe("bytes 0-7/100");
-            expect(response.headers.get("accept-ranges")).toBe("bytes");
-            expect(response.headers.get("etag")).toBe('"video-version"');
-          }
-          expect(requests).toEqual([canonical, signed]);
-        }).pipe(
-          Effect.provide(
+          },
+          {},
+        ).pipe(
+          Effect.provide([
             Layer.mock(GitHubRest.GitHubRest)({
-              rest: (input) => {
-                expect(input).toMatchObject({
-                  host: "github.com",
-                  method: "POST",
-                  path: "markdown",
-                  body: {
-                    mode: "gfm",
-                    text: `![](<${canonical}>)`,
-                    context: "displayed/repository",
-                  },
-                });
-                return Effect.succeed({
+              rest: () =>
+                Effect.succeed({
                   status: 200,
                   headers: {},
                   truncated: false,
                   invalidUtf8: false,
-                  body: `<p><a href="${canonical}"><img src="${signed.replaceAll("&", "&amp;")}" data-canonical-src="${canonical}"></a></p>`,
-                });
-              },
-            }),
-          ),
-          Effect.provide(
-            Layer.mock(GitHubCredentials.GitHubCredentials)({
-              get: (host) =>
-                Effect.succeed({
-                  host,
-                  token: Redacted.make("api-token"),
-                  source: "gh",
-                  fingerprint: "test",
+                  ...rendered,
                 }),
             }),
-          ),
+            Layer.mock(GitHubCredentials.GitHubCredentials)({
+              get: (host) => Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host })),
+            }),
+          ]),
           Effect.provideService(
             HttpClient.HttpClient,
             HttpClient.make((request) => {
-              requests.push(request.url);
-              if (request.url === canonical) {
-                expect(request.headers.authorization).toBe("Bearer api-token");
-                return Effect.succeed(
-                  HttpClientResponse.fromWeb(
-                    request,
-                    new Response("<html>Sign in</html>", {
-                      headers: { "content-type": "text/html; charset=utf-8" },
-                    }),
-                  ),
-                );
-              }
-              expect(request.url).toBe(signed);
-              expect(request.headers.authorization).toBeUndefined();
-              expect(request.headers.range).toBe(media.headers.range);
-              expect(request.headers["if-range"]).toBe(media.headers["if-range"]);
+              fetches.push(request.url);
               return Effect.succeed(
                 HttpClientResponse.fromWeb(
                   request,
-                  new Response(media.bytes, {
-                    status: media.status,
-                    headers: {
-                      "content-type": media.type,
-                      "accept-ranges": "bytes",
-                      "content-range": "bytes 0-7/100",
-                      etag: '"video-version"',
-                    },
+                  new Response("<html>Sign in</html>", {
+                    headers: { "content-type": "text/html" },
                   }),
                 ),
               );
@@ -336,9 +398,128 @@ describe("AssetAccess", () => {
           ),
           Effect.scoped,
         );
-      },
-    );
-  }
+        expect(response.status).toBe(502);
+        expect(fetches).toEqual([canonical]);
+      }
+    }),
+  );
+
+  it.effect(
+    "resolves only contextual attachment HTML and eligible errors, never a range refusal",
+    () =>
+      Effect.gen(function* () {
+        const canonical = "https://github.com/user-attachments/assets/example-attachment";
+        for (const scenario of [
+          { url: canonical, status: 401, context: true, renders: 1, expected: 200 },
+          { url: canonical, status: 403, context: true, renders: 1, expected: 200 },
+          { url: canonical, status: 404, context: true, renders: 1, expected: 200 },
+          { url: canonical, status: 416, context: true, renders: 0, expected: 416 },
+          { url: canonical, status: 200, context: false, renders: 0, expected: 415 },
+          {
+            url: "https://raw.githubusercontent.com/owner/repo/main/image.png",
+            status: 200,
+            context: true,
+            renders: 0,
+            expected: 415,
+          },
+        ]) {
+          let renders = 0;
+          const response = yield* githubMediaResponse(
+            {
+              url: scenario.url,
+              cwd: "/repo",
+              ...(scenario.context
+                ? { repositoryUrl: "https://github.com/displayed/repository" }
+                : {}),
+              expiresAt: Number.MAX_SAFE_INTEGER,
+            },
+            {},
+          ).pipe(
+            Effect.provide([
+              Layer.mock(GitHubRest.GitHubRest)({
+                rest: () => {
+                  renders += 1;
+                  return Effect.succeed({
+                    status: 200,
+                    headers: {},
+                    truncated: false,
+                    invalidUtf8: false,
+                    body: '<img src="https://private-user-images.githubusercontent.com/image.png?one=1&#38;two=2">',
+                  });
+                },
+              }),
+              Layer.mock(GitHubCredentials.GitHubCredentials)({
+                get: (host) => Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host })),
+              }),
+            ]),
+            Effect.provideService(
+              HttpClient.HttpClient,
+              HttpClient.make((request) =>
+                Effect.succeed(
+                  HttpClientResponse.fromWeb(
+                    request,
+                    request.url === scenario.url
+                      ? new Response("<html>Sign in</html>", {
+                          status: scenario.status,
+                          headers: { "content-type": "text/html" },
+                        })
+                      : new Response(screenshotPng, { headers: { "content-type": "image/png" } }),
+                  ),
+                ),
+              ),
+            ),
+            Effect.scoped,
+          );
+          expect(response.status).toBe(scenario.expected);
+          expect(renders).toBe(scenario.renders);
+        }
+      }),
+  );
+
+  it.effect("signs the displayed repository context and rejects context tampering", () =>
+    Effect.gen(function* () {
+      const resource = {
+        _tag: "github-media" as const,
+        cwd: "/different-checkout",
+        url: "https://github.com/user-attachments/assets/example-attachment",
+        repositoryUrl: "https://github.com/displayed/repository",
+      };
+      const result = yield* issueAssetUrl({ resource });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      const token = suffix.slice(0, separator);
+      const file = suffix.slice(separator + 1);
+      expect(yield* resolveAsset(token, file)).toMatchObject({
+        kind: "github-media",
+        cwd: resource.cwd,
+        url: resource.url,
+        repositoryUrl: resource.repositoryUrl,
+      });
+      const [payload, signature] = token.split(".");
+      if (!payload || !signature) throw new Error("Expected a signed asset token.");
+      const tampered = Buffer.from(
+        Buffer.from(payload, "base64url")
+          .toString("utf8")
+          .replace("displayed/repository", "other/repository"),
+      ).toString("base64url");
+      expect(yield* resolveAsset(`${tampered}.${signature}`, file)).toBeNull();
+      for (const repositoryUrl of [
+        "https://evil.example/owner/repo",
+        "http://github.com/owner/repo",
+        "https://token@github.com/owner/repo",
+        "https://github.com:8443/owner/repo",
+        "https://github.com/owner/repo/pull/1",
+        "https://github.com/owner/repo?query=1",
+        "https://github.com/owner/repo#fragment",
+        "https://github.com/owner/..",
+      ]) {
+        const error = yield* issueAssetUrl({ resource: { ...resource, repositoryUrl } }).pipe(
+          Effect.flip,
+        );
+        expect(error._tag).toBe("AssetGitHubMediaUrlValidationError");
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
 
   it.effect("serves an image a tool returned inline from the stored item", () =>
     Effect.gen(function* () {
