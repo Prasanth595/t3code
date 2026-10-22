@@ -374,6 +374,9 @@ export const serverStartedMs = (): number => Math.round(performance.timeOrigin);
  */
 const SERVER_STARTS_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+/** How often a pass reads the whole ledger again for threads on a broken worktree it could not settle. */
+const UNSETTLED_REREAD_MS = 5 * 60 * 1000;
+
 /**
  * The pass over this machine: GitHub through `gh`, the ledger under `dataDir`, the wall clock.
  * It does not know which repos are watched or where the worktrees are: `startFactory` adds
@@ -403,6 +406,9 @@ export const liveWorld = (
     Effect.provideService(effect, FactoryProcess, process);
   // Threads on a broken worktree that no run's session was on: a person's, never archived.
   const notFactory = new Set<string>();
+  // The threads the last ledger read could not settle (a run still going, or a run file that
+  // could not be read), and when it read: they alone read the ledger again only every five minutes.
+  let unsettled = { threadIds: new Set<string>(), atMs: 0 };
   const githubFor = (watched: WatchedRepo) =>
     makeGitHub({ repo: watched.repo, ghConfigDir: machine.ghConfigDir });
   const trackerFor = (watched: WatchedRepo) => bindProcess(githubFor(watched), process);
@@ -659,18 +665,26 @@ export const liveWorld = (
         Effect.flatMap((found) => {
           const broken = found.filter((thread) => !notFactory.has(thread.threadId));
           if (broken.length === 0) return Effect.succeed([]);
+          const now = clock();
+          const recent = now - unsettled.atMs < UNSETTLED_REREAD_MS;
+          if (recent && broken.every((thread) => unsettled.threadIds.has(thread.threadId))) {
+            return Effect.succeed([]);
+          }
           return ledger(() => runsByThread(dataDir)).pipe(
             Effect.mapError(asPassError("ledger")),
             Effect.map(({ runs, complete }) => {
               const byPath = new Map<string, { run: RunId; threadIds: Array<string> }>();
+              const threadIds = new Set<string>();
               for (const { threadId, worktreePath, threadsOnPath } of broken) {
                 const owner = threadsOnPath.map((id) => runs.get(id)).find((r) => r !== undefined);
                 if (owner === undefined && complete) notFactory.add(threadId);
+                else if (owner?.stopped !== true) threadIds.add(threadId);
                 if (owner?.stopped !== true) continue;
                 const entry = byPath.get(worktreePath) ?? { run: owner.run, threadIds: [] };
                 entry.threadIds.push(threadId);
                 byPath.set(worktreePath, entry);
               }
+              unsettled = { threadIds, atMs: now };
               return [...byPath].map(([worktreePath, entry]) => ({ worktreePath, ...entry }));
             }),
           );
