@@ -1,4 +1,10 @@
-import { EnvironmentId, MessageId, RunId, ScheduledTaskId } from "@t3tools/contracts";
+import {
+  ChatAttachmentId,
+  EnvironmentId,
+  MessageId,
+  RunId,
+  ScheduledTaskId,
+} from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
 import { createRef, Profiler, type ComponentProps, type ReactElement } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -9,6 +15,7 @@ import { act, render } from "../../../test/render";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { remarkThoughtPreview } from "./TimelineWorkEntryRow.logic";
 import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import { collectThreadFindRanges } from "./threadFindHighlights";
 
 const environmentQuery = vi.hoisted(() => ({
@@ -307,6 +314,53 @@ describe("MessagesTimeline automation prompts", () => {
     expect(screen.buttons("Edit from here")).toHaveLength(0);
     await click(screen.button(/^Automation/));
     expect(screen.buttons("Edit from here")).toHaveLength(1);
+  });
+});
+
+describe("MessagesTimeline attachment-only messages", () => {
+  const photo = {
+    type: "image" as const,
+    id: ChatAttachmentId.make("attachment-1"),
+    name: "photo.png",
+    mimeType: "image/png",
+    sizeBytes: 1024,
+    previewUrl:
+      "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='180'><rect width='240' height='180' fill='%23888'/></svg>",
+  };
+
+  it("stands in for the bootstrap prompt with a caption that reveals it on click", async () => {
+    setup();
+    await using screen = await renderTimeline([
+      message(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, { attachments: [photo] }),
+    ]);
+    expect(screen.text()).not.toContain("without additional text");
+    expect(screen.container.querySelector("[data-user-message-body]")).toBeNull();
+    expect(screen.buttons(/^Copy message$/i)).toHaveLength(0);
+    expect(screen.buttons(/^Copy prompt link$/)).toHaveLength(0);
+
+    const caption = screen.button("Image only");
+    expect(caption.getAttribute("aria-expanded")).toBe("false");
+    const photoRight = () => screen.container.querySelector("img")?.getBoundingClientRect().right;
+    const rightBefore = photoRight();
+    expect(rightBefore).toBeDefined();
+    await click(caption);
+    // The bubble grows with the text, but the photo stays where it was.
+    expect(photoRight()).toBe(rightBefore);
+    expect(screen.text()).toContain(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT);
+    await click(screen.button("Hide"));
+    expect(screen.text()).not.toContain("without additional text");
+    expect(screen.buttons("Image only")).toHaveLength(1);
+  });
+
+  it("keeps a message that adds text to the bootstrap prompt as a full bubble", async () => {
+    setup();
+    await using screen = await renderTimeline([
+      message(`${ATTACHMENT_ONLY_BOOTSTRAP_PROMPT} Also check the colors.`, {
+        attachments: [photo],
+      }),
+    ]);
+    expect(screen.text()).not.toContain("Sent without text");
+    expect(screen.text()).toContain("Also check the colors.");
   });
 });
 

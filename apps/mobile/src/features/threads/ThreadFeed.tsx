@@ -51,6 +51,7 @@ import {
   collectComposerContextReferences,
   replaceComposerContextReferences,
   formatComposerContextReference,
+  isAttachmentOnlyBootstrapText,
 } from "@t3tools/shared/composerContextReferences";
 import { ComposerContextSheet } from "../../components/ComposerContextSheet";
 import { writeComposerContextClipboard } from "../../lib/composerContextClipboard";
@@ -1361,6 +1362,8 @@ function renderFeedEntry(
     if (isUser) {
       const enterAnimated = isFreshTimestamp(message.createdAt);
       const intentBadge = resolveUserMessageIntentBadge(message.inputIntent);
+      // The bootstrap prompt is for the agent, not the reader: the bubble shows only the attachments.
+      const attachmentOnly = isAttachmentOnlyBootstrapText(message.text);
       const referenceIds = new Set(
         collectComposerContextReferences(message.text).map((reference) => reference.contextId),
       );
@@ -1467,7 +1470,8 @@ function renderFeedEntry(
                 })}
               </View>
             ) : null}
-            {message.text.trim().length > 0 ? (
+            {attachmentOnly ? <AttachmentOnlyCaption instruction={message.text.trim()} /> : null}
+            {message.text.trim().length > 0 && !attachmentOnly ? (
               <MarkdownImageAvailableWidthContext
                 value={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
               >
@@ -1529,7 +1533,7 @@ function renderFeedEntry(
                 <SymbolView name="pencil" size={14} tintColor={iconSubtleColor} />
               </Pressable>
             ) : null}
-            {presentation.text.trim().length > 0 ? (
+            {presentation.text.trim().length > 0 && !attachmentOnly ? (
               <UserMessageCopyButton
                 text={presentation.text}
                 onCopy={
@@ -1693,6 +1697,31 @@ type UserMessageContentProps = {
   readonly linkHandlers: MarkdownLinkHandlers;
   readonly renderImage: MarkdownImageRenderer;
 };
+
+/** Sent with no text: a quiet caption stands in for the agent's bootstrap prompt, and a tap reveals it. */
+function AttachmentOnlyCaption(props: { readonly instruction: string }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <View className="gap-1">
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={expanded ? "Hide agent instruction" : "Image only"}
+        accessibilityState={{ expanded }}
+        hitSlop={8}
+        onPress={() => setExpanded((value) => !value)}
+      >
+        <Text className="text-xs italic text-user-bubble-foreground-muted">
+          {expanded ? "Hide" : "Image only"}
+        </Text>
+      </Pressable>
+      {expanded ? (
+        <Text className="text-xs leading-relaxed text-user-bubble-foreground-muted">
+          {props.instruction}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
 
 function UserMessageContent(props: UserMessageContentProps) {
   const [selected, setSelected] = useState<{ contextId: string; label: string } | null>(null);
