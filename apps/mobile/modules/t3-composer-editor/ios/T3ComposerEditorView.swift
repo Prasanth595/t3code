@@ -449,6 +449,8 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private var tokensNeedRebuild = false
   private var chipsNeedMeasuredWidth = false
   private var hasDeferredForcedRebuild = false
+  private var pendingContentOffset: CGPoint?
+  private var needsSelectionReveal = false
 
   let onComposerChange = EventDispatcher()
   let onComposerSelectionChange = EventDispatcher()
@@ -583,10 +585,26 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
 
   public override func layoutSubviews() {
     super.layoutSubviews()
+    let previousSize = textView.bounds.size
     textView.frame = bounds
     if chipsNeedMeasuredWidth, bounds.width > 0 {
       chipsNeedMeasuredWidth = false
       applyControlledDocument(force: true)
+    }
+    if textView.isScrollEnabled, bounds.width > 0, bounds.height > 0 {
+      textView.layoutIfNeeded()
+      if let offset = pendingContentOffset {
+        let minY = -textView.adjustedContentInset.top
+        let maxY = max(minY, textView.contentSize.height - bounds.height + textView.adjustedContentInset.bottom)
+        textView.setContentOffset(CGPoint(x: offset.x, y: min(maxY, max(minY, offset.y))), animated: false)
+        pendingContentOffset = nil
+      }
+      if needsSelectionReveal || (previousSize != bounds.size && textView.isFirstResponder) {
+        needsSelectionReveal = false
+        if let selection = textView.selectedTextRange {
+          textView.scrollRectToVisible(textView.caretRect(for: selection.end), animated: false)
+        }
+      }
     }
     let placeholderX = textView.textContainerInset.left + textView.textContainer.lineFragmentPadding
     let placeholderY = textView.textContainerInset.top
@@ -694,7 +712,16 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   func setScrollEnabled(_ scrollEnabled: Bool) {
+    guard textView.isScrollEnabled != scrollEnabled else { return }
+    if !scrollEnabled {
+      // Disabling scrolling discards UITextView's offset. Restore it after
+      // expansion has laid out the text, regardless of prop update order.
+      pendingContentOffset = pendingContentOffset ?? textView.contentOffset
+    }
     textView.isScrollEnabled = scrollEnabled
+    if scrollEnabled {
+      revealSelectionAfterLayout()
+    }
   }
 
   func setAutoFocus(_ autoFocus: Bool) {
@@ -811,6 +838,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   public func textViewDidBeginEditing(_ textView: UITextView) {
+    revealSelectionAfterLayout()
     onComposerFocus()
   }
 
@@ -836,6 +864,9 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     hasDeferredForcedRebuild = false
 
     let previousSelection = sourceSelection()
+    if textView.isScrollEnabled {
+      pendingContentOffset = pendingContentOffset ?? textView.contentOffset
+    }
     isApplyingControlledValue = true
     textView.attributedText = makeAttributedDocument()
     let targetSelection = requestedSelection ?? previousSelection
@@ -843,6 +874,11 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     textView.selectedRange = displayRange(for: targetSelection)
     restoreBaseTypingAttributes()
     isApplyingControlledValue = false
+    if currentSource != value || previousSelection.start != targetSelection.start || previousSelection.end != targetSelection.end {
+      revealSelectionAfterLayout()
+    } else {
+      setNeedsLayout()
+    }
     updatePlaceholderVisibility()
     emitContentSizeIfNeeded()
   }
@@ -1053,6 +1089,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       return
     }
     value = textView.serializedText()
+    revealSelectionAfterLayout()
     let selection = sourceSelection()
     nativeEventCount += 1
     onComposerChange([
@@ -1122,6 +1159,12 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     isApplyingControlledValue = true
     textView.selectedRange = nextRange
     isApplyingControlledValue = false
+    revealSelectionAfterLayout()
+  }
+
+  private func revealSelectionAfterLayout() {
+    needsSelectionReveal = true
+    setNeedsLayout()
   }
 
   private func updatePlaceholderVisibility() {
