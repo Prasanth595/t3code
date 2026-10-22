@@ -26,13 +26,16 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
@@ -54,6 +57,24 @@ const layerTest = Layer.mergeAll(
     { name: "control-reads" },
     ProviderAdapterRegistry.layerFromAdapters([adapter]),
     { databaseLayer: layerDatabase, runEffectWorker: false },
+  ),
+);
+const layerQuestionSettings = ServerSettings.layerTest();
+const layerQuestionThreadManagement = ThreadManagementService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerTest,
+      layerQuestionSettings,
+      CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase)),
+    ),
+  ),
+);
+const layerQuestionTest = Layer.mergeAll(
+  layerTest,
+  layerQuestionSettings,
+  layerQuestionThreadManagement,
+  DelegatedTaskQuestionReactor.layer.pipe(
+    Layer.provide(Layer.merge(layerTest, layerQuestionThreadManagement)),
   ),
 );
 
@@ -744,12 +765,14 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const reactor = yield* DelegatedTaskQuestionReactor.DelegatedTaskQuestionReactor;
+    const settings = yield* ServerSettings.ServerSettingsService;
     const parentThreadId = ThreadId.make("thread:question-parent");
+    const projectId = ProjectId.make("project:question");
     yield* orchestrator.dispatch({
       type: "thread.create",
       commandId: CommandId.make("create-question-parent"),
       threadId: parentThreadId,
-      projectId: ProjectId.make("project:question"),
+      projectId,
       title: "Parent",
       modelSelection,
       runtimeMode: "full-access",
@@ -831,6 +854,23 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
         (message) => message.notification !== undefined,
       ),
     );
+    yield* settings.updateSettings({
+      projectSettingsOverrides: {
+        [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
+      },
+    });
+    yield* reactor.handle(asyncQuestion);
+    assert.equal(
+      (yield* projections.getThreadProjection(parentThreadId)).messages.filter(
+        (message) => message.notification !== undefined,
+      ).length,
+      0,
+    );
+    yield* settings.updateSettings({
+      projectSettingsOverrides: {
+        [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
+      },
+    });
     yield* reactor.handle(asyncQuestion);
     assert.equal(
       (yield* projections.getThreadProjection(parentThreadId)).messages.filter(
@@ -1069,7 +1109,7 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       taskIds: [followup.delegatedTaskId],
       childThreadId: task.childThreadId!,
     });
-  }).pipe(Effect.provide(DelegatedTaskQuestionReactor.layer.pipe(Layer.provideMerge(layerTest)))),
+  }).pipe(Effect.provide(layerQuestionTest)),
 );
 
 it.effect.each([false, true])("rejects thread.create for an existing id (deleted: %s)", (deleted) =>
