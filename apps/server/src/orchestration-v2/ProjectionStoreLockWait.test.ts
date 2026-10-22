@@ -1,9 +1,12 @@
 import { assert, it } from "@effect/vitest";
 import { EventId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Result from "effect/Result";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -14,6 +17,7 @@ import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -34,6 +38,15 @@ const FIXED_EPOCH = "2026-01-01T00:00:00.000Z";
 
 /** How long a blocked read is given before it is called blocked. */
 const BLOCKED_TIMEOUT = "3 seconds";
+
+/**
+ * The scope the writer's row is written under.
+ *
+ * The writer's transaction is open while the read runs, so its row is
+ * uncommitted and invisible to the reader. That is how the test knows the
+ * write was still in flight when the read ran.
+ */
+const HELD_WRITE_SCOPE = "lockwait-held-write";
 
 /**
  * A writer that HOLDS the write lock while the read runs.
@@ -65,7 +78,7 @@ const withWriteLockHeld = <A, E, R>(
             checkpoint_id, thread_id, scope_id, run_id, node_id, ordinal_within_scope,
             status, captured_at, payload_json
           ) VALUES (
-            ${crypto.randomUUID()}, ${"lockwait-thread"}, ${"lockwait-scope"}, ${"run"}, ${"node"},
+            ${crypto.randomUUID()}, ${"lockwait-thread"}, ${HELD_WRITE_SCOPE}, ${"run"}, ${"node"},
             1, 'captured', ${FIXED_EPOCH}, '{}'
           )`;
           yield* Deferred.succeed(lockHeld, undefined);
@@ -78,9 +91,17 @@ const withWriteLockHeld = <A, E, R>(
     const started = yield* Clock.currentTimeMillis;
     const value = yield* effect;
     const heldForMs = (yield* Clock.currentTimeMillis) - started;
+    // The writer's row is still uncommitted, so the reader cannot see it. That
+    // is the proof that the write was in flight for the whole read - the
+    // elapsed time cannot show it, because the clock has 1 ms resolution.
+    const uncommittedRows = yield* sql<{ readonly count: number }>`
+      SELECT COUNT(*) AS count
+      FROM orchestration_v2_projection_checkpoints
+      WHERE scope_id = ${HELD_WRITE_SCOPE}
+    `.pipe(NodeSqliteClient.readOnly);
     yield* Deferred.succeed(release, undefined);
     yield* Fiber.join(writer);
-    return { value, heldForMs };
+    return { value, heldForMs, uncommittedRows: uncommittedRows[0]?.count ?? -1 };
   });
 
 const createThread = (threadId: ThreadId) =>
@@ -156,7 +177,12 @@ const measureReadUnderWriteLock = Effect.fn("measureReadUnderWriteLock")(functio
       ),
   );
 
-  return { acquired, heldForMs: measured.heldForMs, value: measured.value };
+  return {
+    acquired,
+    heldForMs: measured.heldForMs,
+    uncommittedRows: measured.uncommittedRows,
+    value: measured.value,
+  };
 });
 
 /**
@@ -226,7 +252,7 @@ it.effect("the projection read completes while a writer holds the write lock", (
     );
 
     const threadId = ThreadId.make("thread:lockwait:reader");
-    const { acquired, heldForMs } = yield* Effect.gen(function* () {
+    const { acquired, heldForMs, uncommittedRows } = yield* Effect.gen(function* () {
       yield* createThread(threadId);
       return yield* measureReadUnderWriteLock(threadId);
     }).pipe(Effect.provide(storeLayer), TestClock.withLive);
@@ -242,10 +268,16 @@ it.effect("the projection read completes while a writer holds the write lock", (
     // The lock wait is reported, so the before/after can be compared on the
     // same measure the server logs.
     assert.isAtLeast(acquired[0]?.lockWaitMs ?? -1, 0);
-    // The write lock really was held for the whole read.
-    assert.isAbove(heldForMs, 0);
+    // The write lock was held for the whole read. That is true by
+    // construction - the writer holds its transaction until the read has
+    // finished - and the elapsed time does not prove it, because the clock has
+    // 1 ms resolution and a fast read can finish inside the same
+    // millisecond. What proves it is that the writer's row was still
+    // uncommitted, and so invisible to the reader, when the read finished.
+    assert.isAtLeast(heldForMs, 0);
+    assert.equal(uncommittedRows, 0);
     console.log(
-      `MEASURE read-on-reader: connection=${acquired[0]?.connection} lock_wait_ms=${acquired[0]?.lockWaitMs} lock_held_for_ms=${heldForMs}`,
+      `MEASURE read-on-reader: connection=${acquired[0]?.connection} lock_wait_ms=${acquired[0]?.lockWaitMs} lock_held_for_ms=${heldForMs} uncommitted_rows_visible=${uncommittedRows}`,
     );
   }).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -268,17 +300,24 @@ it.effect("the same read on the writer connection is blocked by the write lock",
       return yield* measureReadOnWriterConnection(threadId);
     }).pipe(Effect.provide(storeLayer), TestClock.withLive);
 
-    // It did not complete: the value is the timeout, not the rows. The read
-    // could not even ACQUIRE the connection, because the writer held the
-    // write lock, so there is no `db.connection` span to report - the
-    // acquisition never finished. That is the "before" the change fixes.
-    const outcome = value as { readonly _tag: string };
-    assert.equal(outcome._tag, "Failure");
+    // It did not complete, and the failure is the TIMEOUT and not some other
+    // SQL error: the read could not even ACQUIRE the connection, because the
+    // writer held the write lock, so there is no `db.connection` span to
+    // report - the acquisition never finished. That is the "before" the
+    // change fixes.
+    const exit = value as Exit.Exit<unknown, unknown>;
+    assert.equal(exit._tag, "Failure");
+    // A read that failed for some other reason would not have waited for the
+    // bound, so the failure has to BE the timeout.
+    const found = Cause.findError(exit.cause);
+    assert.isTrue(Result.isSuccess(found), "expected a typed failure, got " + String(found));
+    const error = found.success;
+    assert.isTrue(Cause.isTimeoutError(error), "expected a timeout, got " + String(error));
+    // It waited for the bound, with the lock held the whole time.
+    assert.isAtLeast(heldForMs, 2_000);
     assert.deepEqual(acquired, []);
-    // It waited for the whole bound, with the lock held the whole time.
-    assert.isAbove(heldForMs, 0);
     console.log(
-      `MEASURE read-on-writer: outcome=${outcome._tag} lock_held_for_ms=${heldForMs} connections_acquired=${acquired.length}`,
+      `MEASURE read-on-writer: outcome=TimeoutError lock_held_for_ms=${heldForMs} connections_acquired=${acquired.length}`,
     );
   }).pipe(Effect.provide(NodeServices.layer)),
 );
