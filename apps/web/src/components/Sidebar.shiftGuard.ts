@@ -8,6 +8,18 @@ const OWN_INPUT_WINDOW_MS = 500;
 
 const PRESS_FOLLOW_UPS = ["click", "auxclick", "dblclick", "contextmenu"] as const;
 
+// Editing text cannot move rows. Enter and modified keys in a field can, such as
+// sending a message or a shortcut.
+function editsText(event: KeyboardEvent) {
+  const target = event.target;
+  const editable =
+    target instanceof HTMLElement &&
+    (target.isContentEditable ||
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement);
+  return editable && event.key !== "Enter" && !event.ctrlKey && !event.metaKey && !event.altKey;
+}
+
 function readTops(list: HTMLElement) {
   const tops = new Map<Element, number>();
   for (const child of list.children) {
@@ -53,9 +65,9 @@ export function createSidebarShiftGuard(list: HTMLElement) {
     }
     lastInputAt = performance.now();
   };
-  const onKeyDown = () => {
+  const onKeyDown = (event: KeyboardEvent) => {
     pressDropped = false;
-    lastInputAt = performance.now();
+    if (!editsText(event)) lastInputAt = performance.now();
   };
   const onPressFollowUp = (event: Event) => {
     if (pressDropped && rowOf(event.target) !== null) swallow(event);
