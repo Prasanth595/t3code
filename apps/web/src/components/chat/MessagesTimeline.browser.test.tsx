@@ -169,6 +169,7 @@ describe("MessagesTimeline messages", () => {
         viewport.dispatchEvent(new Event("scroll"));
       });
       expect(screen.text().includes("Reply 0")).toBe(true);
+      expect(props.listRef.current!.getState().sizeAtIndex(0)).toBeGreaterThan(0);
     });
     expect(maxNestedCommits).toBeLessThan(20);
   });
