@@ -149,6 +149,16 @@ function currentLine(value: string, cursor: number): { start: number; end: numbe
   return { start, end, text: value.slice(start, end) };
 }
 
+function* listMarkersAbove(value: string, start: number) {
+  while (start > 0) {
+    const previous = currentLine(value, start - 1);
+    const parsed = parseListMarker(previous.text);
+    if (!parsed) return;
+    yield parsed.marker;
+    start = previous.start;
+  }
+}
+
 export function listContinuationForEnter(value: string, cursor: number): ComposerListEdit | null {
   if (!Number.isInteger(cursor) || cursor < 0 || cursor > value.length) return null;
   const line = currentLine(value, cursor);
@@ -159,11 +169,23 @@ export function listContinuationForEnter(value: string, cursor: number): Compose
   const tokens = inlineTokenRanges(value);
   if (isInsideInlineToken(tokens, cursor)) return null;
   if (value.slice(markerEnd, line.end).trim() === "") {
+    // An empty nested item lifts to its parent's level before leaving the list.
+    const { indent } = parsed.marker;
+    let parent: ListMarker | undefined;
+    if (indent !== "") {
+      for (const above of listMarkersAbove(value, line.start)) {
+        if (above.indent.length < indent.length && indent.startsWith(above.indent)) {
+          parent = above;
+          break;
+        }
+      }
+    }
+    const replacement = parent ? nextMarkerText(parent) : "";
     return {
       start: line.start,
       end: Math.max(cursor, markerEnd),
-      replacement: "",
-      cursorAfter: line.start,
+      replacement,
+      cursorAfter: line.start + replacement.length,
     };
   }
   const insertion = `\n${nextMarkerText(parsed.marker)}`;
@@ -190,7 +212,44 @@ export function listIndentForTab(
 ): ComposerListEdit | null {
   if (!Number.isInteger(start) || start !== end || start < 0 || start > value.length) return null;
   const line = currentLine(value, start);
-  if (!parseListMarker(line.text)) return null;
-  if (isInsideInlineToken(inlineTokenRanges(value), start)) return null;
+  const parsed = parseListMarker(line.text);
+  if (!parsed || isInsideInlineToken(inlineTokenRanges(value), start)) return null;
+  const { marker } = parsed;
+  let lastChild: ListMarker | undefined;
+  for (const above of listMarkersAbove(value, line.start)) {
+    if (above.indent.length > marker.indent.length && above.indent.startsWith(marker.indent)) {
+      if (!lastChild || above.indent.length < lastChild.indent.length) lastChild = above;
+      continue;
+    }
+    if (above.indent !== marker.indent) break;
+
+    // CommonMark children must reach the parent's content column. A task's box is content.
+    const markerWidth = above.kind === "ordered" ? above.numberText.length + 1 : 1;
+    const space = above.space.length;
+    const childWidth =
+      above.kind === "task" ? 2 : markerWidth + (space >= 1 && space <= 4 ? space : 1);
+    const indent = lastChild?.indent ?? above.indent + " ".repeat(childWidth);
+    const sibling =
+      marker.kind === "ordered" &&
+      lastChild?.kind === "ordered" &&
+      lastChild.delimiter === marker.delimiter
+        ? lastChild
+        : null;
+    const numberText = sibling
+      ? nextOrderedMarkerText(sibling.numberText + sibling.delimiter).slice(0, -1)
+      : "1";
+    const editEnd =
+      line.start +
+      marker.indent.length +
+      (marker.kind === "ordered" ? marker.numberText.length : 0);
+    const replacement = indent + (marker.kind === "ordered" ? numberText : "");
+    const shift = replacement.length - (editEnd - line.start);
+    return {
+      start: line.start,
+      end: editEnd,
+      replacement,
+      cursorAfter: start >= editEnd ? start + shift : line.start + indent.length,
+    };
+  }
   return { start: line.start, end: line.start, replacement: "  ", cursorAfter: start + 2 };
 }
