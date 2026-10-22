@@ -387,3 +387,46 @@ it.effect("a launch into a new worktree creates nothing when its base ref has no
     expect(launched).toHaveLength(1);
   }),
 );
+
+it.effect("a retried worktree launch replays after its base ref is gone", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const base = { exists: true };
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+      checkWorktreeBase: ({ projectId, workspaceStrategy }) =>
+        base.exists || workspaceStrategy.type !== "worktree"
+          ? Effect.void
+          : Effect.fail(
+              new ThreadLaunch.ThreadLaunchBaseRefError({
+                projectId,
+                projectTitle: "Client target",
+                workspaceRoot: "/projects/client-target",
+                baseRef: workspaceStrategy.baseRef,
+              }),
+            ),
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const launch = toolkit
+      .handle("t3_thread_launch", {
+        title: "Fix",
+        projectId,
+        clientRequestId: "fix-worktree",
+        workspaceStrategy: { type: "worktree", baseRef: "feature", startFromOrigin: false },
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    yield* launch;
+    base.exists = false;
+    expect((yield* launch).at(-1)?.result).toMatchObject({ projectId });
+    expect(launched.map((input) => input.threadId)).toEqual([
+      launched[0]?.threadId,
+      launched[0]?.threadId,
+    ]);
+  }),
+);
