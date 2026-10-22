@@ -34,9 +34,9 @@ Below the status rows, the Factory page lists what needs a person, and the sideb
 - the machine config failed to load,
 - free disk space is below `min_free_gib`, so nothing is claimed or gated until there is room,
 - three passes in a row failed,
-- a finished session's worktree was deleted or is no longer a git checkout, so the factory archived the threads still on it.
+- a stopped session's worktree was deleted or is no longer a git checkout, so the factory archived the threads still on it.
 
-Each item links to its run, or to Settings → Factory for a config problem. Each new item also posts a macOS notification, as does a run abandoned because its issue was closed, on the server's Mac, unless `notify` is `false` in the [machine config](/guide/machine-config).
+An item for a stuck or held run links to it, and one for a config problem links to Settings → Factory; the archived-worktree item names its run in the message. Each new item also posts a macOS notification, as does a run abandoned because its issue was closed, on the server's Mac, unless `notify` is `false` in the [machine config](/guide/machine-config).
 
 An item clears itself when its cause goes away: the config loads, a pass succeeds, the issue is claimed again, the disk has room again. An archived-worktree item stays until its issue is claimed again, so dismiss it once you've looked. Dismiss an item to hide it once you've dealt with it. A dismissed item stays hidden until its cause clears and comes back.
 

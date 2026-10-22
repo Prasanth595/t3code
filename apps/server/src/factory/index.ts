@@ -658,7 +658,8 @@ export const liveWorld = (
     handPause: () => loadHandPause(dataDir),
     // Only threads on the worktree of a run's session are the factory's to archive, and only once
     // that session is stopped: until then the run's own stop archives what is on its worktree.
-    // The ledger is read only while T3 has such a thread it has not ruled out before.
+    // The ledger is read only while T3 has such a thread it has not ruled out before, and for a
+    // thread it could not settle, at most every five minutes.
     brokenWorktrees: () =>
       sessions.brokenWorktrees.pipe(
         Effect.mapError(asPassError("t3")),
