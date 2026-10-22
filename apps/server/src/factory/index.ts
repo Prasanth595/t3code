@@ -401,8 +401,10 @@ export const liveWorld = (
 ): Omit<PassWorld, "watchedRepos" | "freeSpace"> => {
   const withProcess = <A, E>(effect: Effect.Effect<A, E, FactoryProcess>) =>
     Effect.provideService(effect, FactoryProcess, process);
-  // Threads on a broken worktree that no run's session was on: a person's, never archived.
+  // Threads on a broken worktree that no run's session was on (a person's, never archived), and
+  // threads the pass archived there: one a person unarchives stays theirs until a restart.
   const notFactory = new Set<string>();
+  const archivedOnce = new Set<string>();
   const githubFor = (watched: WatchedRepo) =>
     makeGitHub({ repo: watched.repo, ghConfigDir: machine.ghConfigDir });
   const trackerFor = (watched: WatchedRepo) => bindProcess(githubFor(watched), process);
@@ -657,15 +659,17 @@ export const liveWorld = (
       sessions.brokenWorktrees.pipe(
         Effect.mapError(asPassError("t3")),
         Effect.flatMap((found) => {
-          const broken = found.filter((thread) => !notFactory.has(thread.threadId));
+          const broken = found.filter(
+            (thread) => !notFactory.has(thread.threadId) && !archivedOnce.has(thread.threadId),
+          );
           if (broken.length === 0) return Effect.succeed([]);
           return ledger(() => runsByThread(dataDir)).pipe(
             Effect.mapError(asPassError("ledger")),
-            Effect.map((runs) => {
+            Effect.map(({ runs, complete }) => {
               const byPath = new Map<string, { run: RunId; threadIds: Array<string> }>();
               for (const { threadId, worktreePath, threadsOnPath } of broken) {
                 const owner = threadsOnPath.map((id) => runs.get(id)).find((r) => r !== undefined);
-                if (owner === undefined) notFactory.add(threadId);
+                if (owner === undefined && complete) notFactory.add(threadId);
                 if (owner?.stopped !== true) continue;
                 const entry = byPath.get(worktreePath) ?? { run: owner.run, threadIds: [] };
                 entry.threadIds.push(threadId);
@@ -677,7 +681,10 @@ export const liveWorld = (
         }),
       ),
     archiveThread: (threadId) =>
-      sessions.archive(threadId).pipe(Effect.mapError(asPassError("t3"))),
+      sessions.archive(threadId).pipe(
+        Effect.tap(() => Effect.sync(() => archivedOnce.add(threadId))),
+        Effect.mapError(asPassError("t3")),
+      ),
     nowMs: clock,
     attention,
     record: (event: MachineEvent) =>

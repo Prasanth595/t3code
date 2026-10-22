@@ -374,14 +374,20 @@ export const listRuns = (
 /**
  * The run each session thread was launched for, and whether that session is stopped: the run is
  * finished, a later session replaced it, or its worktree step (`worktree_removed` or
- * `worktree_remove_failed`) is written. Every run file is read whole, so it is for the rare pass
- * that found a thread on a broken worktree.
+ * `worktree_remove_failed`) is written. `complete` is false when a run file could not be read, so a
+ * thread missing from the map may still be a session's. Every run file is read whole, so it is for
+ * the rare pass that found a thread on a broken worktree.
  */
 export const runsByThread = (
   dataDir: string,
-): Map<string, { readonly run: RunId; readonly stopped: boolean }> => {
+): {
+  readonly runs: Map<string, { readonly run: RunId; readonly stopped: boolean }>;
+  readonly complete: boolean;
+} => {
   const runs = new Map<string, { readonly run: RunId; readonly stopped: boolean }>();
+  let complete = true;
   for (const { record, seen, summary } of readRuns(dataDir)) {
+    if (summary.unreadable) complete = false;
     for (const entry of record?.entries ?? []) {
       if (entry.event !== "session_launched") continue;
       const threadId = dataText(entry.data, "thread_id");
@@ -390,5 +396,5 @@ export const runsByThread = (
       runs.set(threadId, { run: summary.id, stopped: summary.finished || !current });
     }
   }
-  return runs;
+  return { runs, complete };
 };
