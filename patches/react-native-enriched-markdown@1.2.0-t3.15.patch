@@ -295,29 +295,26 @@ index 8c88475..d0bf53b 100644
  
      if (type != null) {
 diff --git a/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt b/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt
-index e04b33d..be564e4 100644
+index e04b33d..b7767db 100644
 --- a/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt
 +++ b/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt
-@@ -118,7 +118,8 @@ class TableContainerView(
-   override val segmentMarginTop: Int get() = tableStyle.marginTop.toInt()
+@@ -119,6 +119,7 @@ class TableContainerView(
    override val segmentMarginBottom: Int get() = tableStyle.marginBottom.toInt()
    private val density = resources.displayMetrics.density
--  private val isRtl = resources.isLayoutRTL()
-+  private var isRtl = resources.isLayoutRTL()
+   private val isRtl = resources.isLayoutRTL()
 +  private var wordMajority = false
  
    var allowFontScaling = true
    var maxFontSizeMultiplier = 0f
-@@ -188,6 +189,8 @@ class TableContainerView(
+@@ -188,6 +189,7 @@ class TableContainerView(
    }
  
    fun applyTableNode(tableNode: MarkdownASTNode) {
 +    wordMajority = tableNode.attributes["_enrmProseDirection"] != null
-+    isRtl = !wordMajority && resources.isLayoutRTL()
      rows =
        tableNode.children.flatMap { section ->
          val isSectionHead = section.type == NodeType.TableHead
-@@ -223,7 +226,10 @@ class TableContainerView(
+@@ -223,7 +225,10 @@ class TableContainerView(
      isHeader: Boolean,
      alignment: Layout.Alignment,
    ): Spannable {
@@ -329,7 +326,7 @@ index e04b33d..be564e4 100644
      val cellParagraphStyle = styleConfig.tableCellParagraphStyle(tableStyle, isHeader)
      return styleConfig
        .withParagraphOverride(cellParagraphStyle) {
-@@ -231,7 +237,7 @@ class TableContainerView(
+@@ -231,7 +236,7 @@ class TableContainerView(
        }.apply {
          if (isNotEmpty()) {
            if (isHeader) setSpan(HeaderTypefaceSpan(styleConfig.tableHeaderTypeface ?: Typeface.DEFAULT_BOLD), 0, length, 33)
@@ -338,7 +335,7 @@ index e04b33d..be564e4 100644
          }
        }
    }
-@@ -245,11 +251,11 @@ class TableContainerView(
+@@ -245,11 +250,11 @@ class TableContainerView(
        node.content + node.children.joinToString("") { extractPlainText(it) }
      }
  
@@ -353,7 +350,7 @@ index e04b33d..be564e4 100644
        else -> Layout.Alignment.ALIGN_NORMAL
      }
  
-@@ -353,6 +359,7 @@ class TableContainerView(
+@@ -353,6 +358,7 @@ class TableContainerView(
    ) {
      val cellTextView =
        CellTextView(context).apply {
@@ -361,7 +358,7 @@ index e04b33d..be564e4 100644
          text = data.attributedText
          textSize = tableStyle.fontSize / resources.displayMetrics.scaledDensity
          typeface = if (data.isHeader) styleConfig.tableHeaderTypeface else styleConfig.tableTypeface
-@@ -594,7 +601,7 @@ class TableContainerView(
+@@ -594,7 +600,7 @@ class TableContainerView(
            section.children.filter { it.type == NodeType.TableRow }.map { row ->
              row.children.map { cell ->
                val isHeader = section.type == NodeType.TableHead || cell.type == NodeType.TableHeaderCell
@@ -635,12 +632,13 @@ index fd78a94..7489b46 100644
    serializedProps["allowFontScaling"] = props.allowFontScaling;
 diff --git a/android/src/test/java/com/swmansion/enriched/markdown/utils/text/view/DirectionClipboardTest.kt b/android/src/test/java/com/swmansion/enriched/markdown/utils/text/view/DirectionClipboardTest.kt
 new file mode 100644
-index 0000000..94c5348
+index 0000000..bb59ca6
 --- /dev/null
 +++ b/android/src/test/java/com/swmansion/enriched/markdown/utils/text/view/DirectionClipboardTest.kt
-@@ -0,0 +1,201 @@
+@@ -0,0 +1,221 @@
 +package com.swmansion.enriched.markdown.utils.text.view
 +
++import android.content.res.Configuration
 +import android.graphics.Paint
 +import android.text.Html
 +import android.text.Layout
@@ -669,6 +667,7 @@ index 0000000..94c5348
 +import com.swmansion.enriched.markdown.utils.text.conversion.HTMLGenerator
 +import com.swmansion.enriched.markdown.utils.text.conversion.MarkdownExtractor
 +import com.swmansion.enriched.markdown.utils.text.withWordMajority
++import java.util.Locale
 +import org.junit.Assert.assertEquals
 +import org.junit.Test
 +import org.junit.runner.RunWith
@@ -772,7 +771,23 @@ index 0000000..94c5348
 +  }
 +
 +  @Test fun tableAlignmentUsesEachCellDirectionWithoutReorderingColumns() {
-+    val context = RuntimeEnvironment.getApplication()
++    assertTableAlignment(false)
++  }
++
++  @Test
++  fun rtlLocaleKeepsColumnOrderWhileCellsResolveTheirOwnDirection() {
++    assertTableAlignment(true)
++  }
++
++  private fun assertTableAlignment(rtlColumns: Boolean) {
++    val application = RuntimeEnvironment.getApplication()
++    val locale = if (rtlColumns) Locale.forLanguageTag("ar") else Locale.ENGLISH
++    val configuration = Configuration(application.resources.configuration).apply {
++      setLocale(locale)
++      setLayoutDirection(locale)
++    }
++    val context = application.createConfigurationContext(configuration)
++    assertEquals(rtlColumns, context.resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL)
 +    val style = style()
 +    val alignments = listOf("left", "right", "center", "")
 +    val cells = listOf("ltr", "rtl").flatMap { direction ->
@@ -808,7 +823,9 @@ index 0000000..94c5348
 +      if (index > 0) {
 +        val previous = (views[index - 1].parent as View).layoutParams as android.widget.FrameLayout.LayoutParams
 +        val current = (cell.parent as View).layoutParams as android.widget.FrameLayout.LayoutParams
-+        org.junit.Assert.assertTrue(current.leftMargin > previous.leftMargin)
++        org.junit.Assert.assertTrue(
++          if (rtlColumns) current.leftMargin < previous.leftMargin else current.leftMargin > previous.leftMargin,
++        )
 +      }
 +    }
 +  }
