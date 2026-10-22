@@ -59,12 +59,7 @@ import {
 } from "../tracker/github.ts";
 import { advance, forward, timeLimit } from "./building.ts";
 import { interruptible } from "./testSupport.ts";
-import {
-  FEEDBACK_READ_EVERY_MS,
-  feedback,
-  type FeedbackContext,
-  type FeedbackStep,
-} from "./feedback.ts";
+import { feedback, type FeedbackContext, type FeedbackStep } from "./feedback.ts";
 import { gate, lastPass, regate, type GateContext } from "./gating.ts";
 import { SESSION_MAY_EXIST, feedbackMessage } from "./messages.ts";
 import { nextGateAttempt, readProgress } from "./progress.ts";
@@ -665,6 +660,7 @@ interface Rig {
   readonly t3: FakeT3;
   readonly ws: FakeGate;
   project: ProjectConfig;
+  feedbackSeconds: number;
   readonly clock: { now: number };
   ctx: FeedbackContext;
 }
@@ -689,6 +685,9 @@ const seed = (dataDir: string, id: RunId, events: ReadonlyArray<RunEvent>) => {
   }
 };
 
+/** The machine's default `feedback_seconds`, which the rig's context starts with. */
+const FEEDBACK_SECONDS = 600;
+
 const rigFor = (events: ReadonlyArray<RunEvent> = STARTED): Rig => {
   const dataDir = tempDir();
   seed(dataDir, run10, events);
@@ -704,6 +703,7 @@ const rigFor = (events: ReadonlyArray<RunEvent> = STARTED): Rig => {
     t3,
     ws,
     project,
+    feedbackSeconds: FEEDBACK_SECONDS,
     clock,
     ctx: undefined as unknown as FeedbackContext,
   };
@@ -721,6 +721,9 @@ const rigFor = (events: ReadonlyArray<RunEvent> = STARTED): Rig => {
     sessions: t3.sessions,
     gate: ws.gate,
     maxConcurrentGates: 2,
+    get feedbackSeconds() {
+      return rig.feedbackSeconds;
+    },
     gateOptions: { clock: () => clock.now },
     clock: () => clock.now,
   };
@@ -901,7 +904,7 @@ const secondBefore = (ms: number) =>
 
 /** The moment the fake's feedback is read from when the run reached `pr-open` at the rig's first instant. */
 const SINCE_THE_PASS = secondBefore(T0);
-const TEN_MINUTES = FEEDBACK_READ_EVERY_MS;
+const TEN_MINUTES = FEEDBACK_SECONDS * 1000;
 
 /** The two reads a pass makes of the feedback from the starting point, paging the reviews back only to `floor`. */
 const feedbackReads = (floor = SINCE_THE_PASS, since = SINCE_THE_PASS, instructors = "rawphp") => [
@@ -1163,6 +1166,38 @@ describe("feedback: the step", () => {
       assert.deepStrictEqual(yield* feedbackIn(rig), NONE);
       assert.deepStrictEqual(rig.gh.calls, feedbackReads());
       assert.strictEqual(readTime(rig), `${T0 + TEN_MINUTES}\n${T0 + TEN_MINUTES}`);
+    }),
+  );
+
+  it.effect("feedback_seconds of 0 reads on every pass", () =>
+    Effect.gen(function* () {
+      const rig = yield* prOpenRun();
+      rig.feedbackSeconds = 0;
+      assert.deepStrictEqual(yield* feedbackIn(rig), NONE);
+      assert.deepStrictEqual(rig.gh.calls, feedbackReads());
+      clearCalls(rig);
+      rig.clock.now = T0 + 60_000;
+      assert.deepStrictEqual(yield* feedbackIn(rig), NONE);
+      assert.deepStrictEqual(rig.gh.calls, feedbackReads());
+      assert.strictEqual(readTime(rig), `${T0 + 60_000}\n${T0 + 60_000}`);
+    }),
+  );
+
+  it.effect("feedback_seconds of 120 waits 120 seconds between reads", () =>
+    Effect.gen(function* () {
+      const rig = yield* prOpenRun();
+      rig.feedbackSeconds = 120;
+      assert.deepStrictEqual(yield* feedbackIn(rig), NONE);
+      assert.deepStrictEqual(rig.gh.calls, feedbackReads());
+      clearCalls(rig);
+      rig.clock.now = T0 + 119_000;
+      assert.deepStrictEqual(yield* feedbackIn(rig), NONE);
+      assert.deepStrictEqual(rig.gh.calls, []);
+      assert.strictEqual(readTime(rig), `${T0}\n${T0}`);
+      rig.clock.now = T0 + 120_000;
+      assert.deepStrictEqual(yield* feedbackIn(rig), NONE);
+      assert.deepStrictEqual(rig.gh.calls, feedbackReads());
+      assert.strictEqual(readTime(rig), `${T0 + 120_000}\n${T0 + 120_000}`);
     }),
   );
 

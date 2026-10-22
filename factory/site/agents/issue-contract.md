@@ -59,10 +59,10 @@ A claim needs all of:
 
 ## Instructors after the claim
 
-| State                | Instructor comment                                                                                                             | Instructor body edit                       | Non-instructor body or title edit   |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------ | ----------------------------------- |
-| `triage`, `building` | Forwarded to the session (max 20,000 characters).                                                                              | Sent whole; session restarts its contract. | `factory:stuck`                     |
-| `pr-open`            | On issue or PR, or a PR review: new session on the PR branch, PR to draft, label to `building`. Read at most every 10 minutes. | Not read as feedback; comment instead.     | `factory:stuck` when next acted on. |
+| State                | Instructor comment                                                                                                                                             | Instructor body edit                       | Non-instructor body or title edit   |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ----------------------------------- |
+| `triage`, `building` | Forwarded to the session (max 20,000 characters).                                                                                                              | Sent whole; session restarts its contract. | `factory:stuck`                     |
+| `pr-open`            | On issue or PR, or a PR review: new session on the PR branch, PR to draft, label to `building`. Read at most every `feedback_seconds` (10 minutes by default). | Not read as feedback; comment instead.     | `factory:stuck` when next acted on. |
 
 An instructor comment whose edit history includes a non-instructor is not forwarded; the factory comments that it did not send it.
 

@@ -447,6 +447,7 @@ describe("machine config", () => {
       pollSeconds: 60,
       maxConcurrentRuns: 1,
       maxConcurrentGates: 2,
+      feedbackSeconds: 600,
       notify: true,
       minFreeGib: 10,
     });
@@ -532,6 +533,23 @@ describe("machine config", () => {
     for (const bad of ['"ten"', "-1", "1.5"]) {
       const errs = machineErr(edit(MACHINE, (t) => set(t, "min_free_gib", bad)));
       assertOne(errs, "min_free_gib", MFILE);
+    }
+  });
+
+  it("machine feedback_seconds defaults to 600 and can be zero or more", () => {
+    expect(machine(MACHINE).feedbackSeconds).toBe(600);
+    for (const given of [0, 120]) {
+      expect(
+        machine(edit(MACHINE, (t) => set(t, "feedback_seconds", String(given)))).feedbackSeconds,
+      ).toBe(given);
+    }
+  });
+
+  it("machine feedback_seconds must be an integer of at least zero", () => {
+    for (const bad of ["-1", "1.5"]) {
+      const errs = machineErr(edit(MACHINE, (t) => set(t, "feedback_seconds", bad)));
+      assertOne(errs, "feedback_seconds", MFILE);
+      expect(errs[0]!.message).toBe("must be an integer of at least 0");
     }
   });
 
@@ -754,6 +772,7 @@ describe("loaders", () => {
             pollSeconds: 60,
             maxConcurrentRuns: 1,
             maxConcurrentGates: 1,
+            feedbackSeconds: 600,
             notify: true,
             minFreeGib: 10,
           },

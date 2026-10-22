@@ -72,6 +72,28 @@ describe("editMachineConfig", () => {
       pollSeconds: 90,
       maxConcurrentRuns: 3,
       maxConcurrentGates: 2,
+      feedbackSeconds: 600,
+      notify: false,
+      minFreeGib: 10,
+    });
+  });
+
+  it("writes feedback_seconds and keeps the other keys and every comment", () => {
+    const text = edited(COMMENTED, { feedback_seconds: 30 });
+    for (const line of commentLines(COMMENTED).map((l) => l.trim())) {
+      const comment = line.includes(" # ") ? `# ${line.split(" # ")[1]}` : line;
+      assert.ok(
+        text.split("\n").some((l) => l.includes(comment)),
+        `lost: ${comment}\n${text}`,
+      );
+    }
+    const parsed = parseMachineConfig(text, FILE);
+    assert.deepStrictEqual(Result.isSuccess(parsed) && parsed.success.config, {
+      ghConfigDir: "/gh",
+      pollSeconds: 60,
+      maxConcurrentRuns: 1,
+      maxConcurrentGates: 2,
+      feedbackSeconds: 30,
       notify: false,
       minFreeGib: 10,
     });
@@ -214,6 +236,7 @@ const DEFAULTS = {
   poll_seconds: 60,
   max_concurrent_runs: 1,
   max_concurrent_gates: 2,
+  feedback_seconds: 600,
 };
 
 describe("readMachineConfigReport", () => {
@@ -333,6 +356,15 @@ describe("readMachineConfigReport", () => {
         { repo: "c/d", path: "/d", title: "Dee", factory: null, errors: null },
         { repo: "acme/widgets", path: "/two", title: "Two", factory: null, errors: ambiguous },
       ]);
+    }),
+  );
+
+  it.effect("reports feedback_seconds from the file, and the default for a file without it", () =>
+    Effect.gen(function* () {
+      const without = yield* report(COMMENTED);
+      assert.strictEqual(without.report.config?.feedback_seconds, 600);
+      const set = yield* report(`${COMMENTED}feedback_seconds: 0\n`);
+      assert.strictEqual(set.report.config?.feedback_seconds, 0);
     }),
   );
 

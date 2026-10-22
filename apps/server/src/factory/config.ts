@@ -57,6 +57,14 @@ const DEFAULT_INTERRUPTION_RESUMES = 2;
 export const DEFAULT_POLL_SECONDS = 60;
 export const DEFAULT_MAX_CONCURRENT_GATES = 2;
 /**
+ * How often the feedback of one `pr-open` run is read at most, in seconds. Each read costs about
+ * 3 GraphQL points (the pull request's reviews and comments, and the issue's activity) and the
+ * pass runs every `poll_seconds`, so at 40 `pr-open` runs a 60 second poll would spend 7,200
+ * points an hour of the 5,000 a login has on feedback alone. At one read in 10 minutes it is
+ * about 720.
+ */
+export const DEFAULT_FEEDBACK_SECONDS = 600;
+/**
  * Installed versions autodeploy.sh keeps besides `current`. The script reads the key itself and
  * has its own copy of this default in `prune_versions`; change both together.
  */
@@ -145,6 +153,8 @@ export interface MachineConfig {
    */
   readonly maxConcurrentRuns: number;
   readonly maxConcurrentGates: number;
+  /** Seconds between reads of a `pr-open` run's feedback; 0 reads on every pass. */
+  readonly feedbackSeconds: number;
   /** Whether a new attention item posts a macOS notification. The list is kept either way. */
   readonly notify: boolean;
   /**
@@ -426,6 +436,7 @@ const MACHINE_KEYS = [
   "poll_seconds",
   "max_concurrent_runs",
   "max_concurrent_gates",
+  "feedback_seconds",
   "notify",
   "keep_versions",
   "min_free_gib",
@@ -473,6 +484,7 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     DEFAULT_MAX_CONCURRENT_GATES,
     1,
   );
+  const feedbackSeconds = c.optionalUint(root, "", "feedback_seconds", DEFAULT_FEEDBACK_SECONDS, 0);
   const notify = c.optionalBoolean(root, "", "notify", true);
   // Only checked here, so a bad value fails the load where a person sees it: autodeploy.sh reads
   // keep_versions from the file and the server has no use for it.
@@ -485,6 +497,7 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     pollSeconds === undefined ||
     maxConcurrentRuns === undefined ||
     maxConcurrentGates === undefined ||
+    feedbackSeconds === undefined ||
     notify === undefined ||
     keepVersions === undefined ||
     minFreeGib === undefined
@@ -496,6 +509,7 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     pollSeconds,
     maxConcurrentRuns,
     maxConcurrentGates,
+    feedbackSeconds,
     notify,
     minFreeGib,
   };
