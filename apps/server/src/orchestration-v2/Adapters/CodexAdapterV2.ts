@@ -1153,6 +1153,7 @@ interface ActiveCodexTurnContext {
   closedCommandItemIds?: ReadonlySet<string>;
   latestProviderFailure?: {
     readonly nativeMessage: string;
+    readonly nativeCode: string | null;
     readonly failure: OrchestrationV2ProviderFailure;
   };
   readonly nativeStartReady?: Deferred.Deferred<void>;
@@ -1182,6 +1183,7 @@ interface ActiveCodexTurnContext {
 
 interface ActiveCodexProviderRetry {
   readonly nativeMessage: string;
+  readonly nativeCode: string | null;
   readonly retry: OrchestrationV2ProviderRetry;
   readonly failure: OrchestrationV2ProviderFailure;
   readonly startedAt: DateTime.Utc;
@@ -4578,6 +4580,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (!payload.willRetry) {
               context.latestProviderFailure = {
                 nativeMessage: payload.error.message,
+                nativeCode: notificationCode,
                 failure: withCodexManagedFailure(
                   makeProviderFailure({
                     message: payload.error.additionalDetails?.trim() || payload.error.message,
@@ -4622,6 +4625,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               (yield* resolveItemOrdinal(context, `terminal-failure:${context.providerTurnId}`));
             const state: ActiveCodexProviderRetry = {
               nativeMessage: payload.error.message,
+              nativeCode: code,
               retry,
               failure,
               startedAt: previous?.startedAt ?? updatedAt,
@@ -5677,7 +5681,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 previousFailure !== undefined &&
                 (input.failureMessage === undefined ||
                   input.failureMessage === previousFailure.nativeMessage) &&
-                (failureCode === undefined || failureCode === previousFailure.failure.code) &&
+                (failureCode === undefined || failureCode === previousFailure.nativeCode) &&
                 (exhaustionStatus === null || previousFailure.failure.class === failureClass)
                   ? previousFailure.failure
                   : withCodexManagedFailure(
