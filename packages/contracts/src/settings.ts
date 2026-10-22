@@ -1044,6 +1044,13 @@ export const ProjectSettingsOverrides = Schema.Struct({
 } satisfies Record<ProjectScopedServerSettingKey | "providerInstances", unknown>);
 export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
 
+const ProjectSettingsOverridesPatch = Schema.Struct({
+  ...ProjectSettingsOverrides.fields,
+  sourceControlWritingStyle: Schema.optionalKey(SourceControlWritingStyleSettings),
+  pullRequestCreationEnabled: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
+});
+export type ProjectSettingsOverridesPatch = typeof ProjectSettingsOverridesPatch.Type;
+
 /**
  * Whether `null` is a stored override value for this key rather than "unset".
  * Clients writing a project override treat null for every other key as a
@@ -1546,20 +1553,12 @@ export const ServerSettingsPatch = Schema.Struct({
    * Per-project entry replacement: each entry replaces that project's whole
    * override set and `null` removes it.
    *
-   * `providerInstances` is the one exception: an entry that omits the key keeps
-   * the stored value instead of clearing it, so a client built before that
-   * field existed cannot wipe it by editing another key.
+   * Omitted `providerInstances` and `pullRequestCreationEnabled` keep their stored
+   * values so older clients cannot wipe them by editing another key. An empty
+   * map clears provider overrides; null clears the PR creation override.
    */
   projectSettingsOverrides: Schema.optionalKey(
-    Schema.Record(
-      ProjectId,
-      Schema.NullOr(
-        Schema.Struct({
-          ...ProjectSettingsOverrides.fields,
-          sourceControlWritingStyle: Schema.optionalKey(SourceControlWritingStyleSettings),
-        }),
-      ),
-    ),
+    Schema.Record(ProjectId, Schema.NullOr(ProjectSettingsOverridesPatch)),
   ),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),

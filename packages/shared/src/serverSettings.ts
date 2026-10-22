@@ -15,6 +15,7 @@ import {
   type ProjectId,
   type ProjectScopedServerSettingKey,
   type ProjectSettingsOverrides,
+  type ProjectSettingsOverridesPatch,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -261,14 +262,13 @@ function mergeSettingsEntries<Value>(
 
 /**
  * `projectSettingsOverrides` entries otherwise replace whole (see the field's
- * doc comment in contracts), but `providerInstances` was added after clients
- * already round-trip a project's entry on every edit. A client built before
- * that addition sends an entry that never mentions the key, and a whole replace
- * would silently wipe it.
+ * doc comment in contracts), but older clients round-trip entries without
+ * `providerInstances` or `pullRequestCreationEnabled`. Keep those fields unless
+ * explicitly cleared so editing an unrelated setting cannot reset them.
  */
 function mergeProjectSettingsOverridesPatch(
   current: Readonly<Record<string, ProjectSettingsOverrides>>,
-  patch: Readonly<Record<string, ProjectSettingsOverrides | null>>,
+  patch: Readonly<Record<string, ProjectSettingsOverridesPatch | null>>,
 ): Record<string, ProjectSettingsOverrides> {
   const next = new Map(Object.entries(current));
   for (const [projectId, entry] of Object.entries(patch)) {
@@ -277,8 +277,14 @@ function mergeProjectSettingsOverridesPatch(
       continue;
     }
     const storedProviderInstances = current[projectId]?.providerInstances;
+    const { pullRequestCreationEnabled: requestedPrCreation, ...rest } = entry;
+    const pullRequestCreationEnabled =
+      requestedPrCreation === undefined
+        ? current[projectId]?.pullRequestCreationEnabled
+        : requestedPrCreation;
     next.set(projectId, {
-      ...entry,
+      ...rest,
+      ...(pullRequestCreationEnabled == null ? {} : { pullRequestCreationEnabled }),
       ...(Object.hasOwn(entry, "providerInstances") || storedProviderInstances === undefined
         ? {}
         : { providerInstances: storedProviderInstances }),
@@ -329,7 +335,7 @@ function translateLegacyProjectOverridePatch(
   }
   const currentEntries: Readonly<Record<string, ProjectSettingsOverrides>> =
     current.projectSettingsOverrides;
-  const entries = new Map<string, ProjectSettingsOverrides | null>(
+  const entries = new Map<string, ProjectSettingsOverridesPatch | null>(
     Object.entries(rest.projectSettingsOverrides ?? {}),
   );
   // A canonical entry in the same patch is the newer representation; a legacy
@@ -342,7 +348,7 @@ function translateLegacyProjectOverridePatch(
     if (map === undefined) return;
     for (const [projectId, value] of Object.entries(map)) {
       if (canonicalProjectIds.has(projectId)) continue;
-      const entry: ProjectSettingsOverrides = {
+      const entry: ProjectSettingsOverridesPatch = {
         ...(entries.get(projectId) ?? currentEntries[projectId] ?? {}),
       };
       if (value === null || value === undefined) {

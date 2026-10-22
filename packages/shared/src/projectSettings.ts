@@ -6,6 +6,7 @@ import {
   type ProjectId,
   type ProjectScopedServerSettingKey,
   type ProjectSettingsOverrides,
+  type ProjectSettingsOverridesPatch,
   resolveProjectProviderInstanceEnabled,
   type ResolvedServerSettings,
   type ServerSettings,
@@ -216,12 +217,16 @@ export function clearProjectSettingsOverrides(
   settings: Pick<ServerSettings, "projectSettingsOverrides">,
   projectId: ProjectId,
   keys: readonly ProjectScopedServerSettingKey[],
-): ProjectSettingsOverrides | null {
+): ProjectSettingsOverridesPatch | null {
   const current = settings.projectSettingsOverrides[projectId];
   if (current === undefined) return null;
   const next = { ...current };
   for (const key of keys) delete next[key];
-  return Object.keys(next).length === 0 ? null : next;
+  if (Object.keys(next).length === 0) return null;
+  // Omission preserves this field for older clients; a reset must be explicit.
+  return keys.includes("pullRequestCreationEnabled")
+    ? { ...next, pullRequestCreationEnabled: null }
+    : next;
 }
 
 export function resolveWorktreeCleanup(
