@@ -530,11 +530,13 @@ it.live("keeps nested submodule files protected by the current keep rule", () =>
       const { service, fs, worktree, submodule, child, command, setPolicy } =
         yield* submoduleCleanupFixture();
       setPolicy("tracked-changes");
+      yield* command(child, ["update-index", "--assume-unchanged", "tracked.txt"]);
       yield* fs.writeFileString(`${child}/tracked.txt`, "local edit\n");
       expect(
         (yield* service.runNow).entries.find((entry) => entry.path === worktree),
       ).toMatchObject({ outcome: "kept" });
       expect(yield* fs.readFileString(`${child}/tracked.txt`)).toBe("local edit\n");
+      yield* command(child, ["update-index", "--no-assume-unchanged", "tracked.txt"]);
       yield* fs.writeFileString(`${child}/tracked.txt`, "original\n");
       setPolicy("any-local-files");
       yield* fs.writeFileString(`${child}/.env`, "local secret\n");
@@ -1654,6 +1656,61 @@ describe("storage cleanup reports and local file policies", () => {
           reason: "Has uncommitted changes (1 file)",
         });
         expect(yield* fs.exists(worktree)).toBe(true);
+      }),
+    ),
+  );
+  it.live.each(["assume-unchanged", "skip-worktree"] as const)(
+    "preserves tracked edits hidden by %s",
+    (flag) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, fs, worktree, command } = yield* cleanupFixture();
+          yield* command(worktree, ["update-index", `--${flag}`, "tracked.txt"]);
+          yield* fs.writeFileString(`${worktree}/tracked.txt`, "local configuration\n");
+
+          const report = yield* service.runNow;
+
+          expect(report.entries[0]?.outcome).toBe("kept");
+          expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("local configuration\n");
+        }),
+      ),
+  );
+  it.live.each([false, true])("cleans sparse worktrees safely, excluded edit=%s", (edited) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, command } = yield* cleanupFixture();
+        yield* fs.makeDirectory(`${worktree}/excluded`);
+        yield* fs.writeFileString(`${worktree}/excluded/local.txt`, "original\n");
+        yield* command(worktree, ["add", "."]);
+        yield* command(worktree, ["commit", "-m", "add excluded file"]);
+        yield* command(worktree, ["sparse-checkout", "set", "--cone", "included"]);
+        yield* command(worktree, ["config", "sparse.expectFilesOutsideOfPatterns", "true"]);
+        if (edited) {
+          yield* fs.makeDirectory(`${worktree}/excluded`);
+          yield* fs.writeFileString(`${worktree}/excluded/local.txt`, "hidden edit\n");
+        }
+
+        const report = yield* service.runNow;
+
+        expect(report.entries[0]?.outcome).toBe(edited ? "kept" : "removed");
+        if (edited)
+          expect(yield* fs.readFileString(`${worktree}/excluded/local.txt`)).toBe("hidden edit\n");
+        else expect(yield* fs.exists(worktree)).toBe(false);
+      }),
+    ),
+  );
+  it.live("preserves a dangling tracked link hidden by skip-worktree", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, command } = yield* cleanupFixture();
+        yield* command(worktree, ["update-index", "--skip-worktree", "tracked.txt"]);
+        yield* fs.remove(`${worktree}/tracked.txt`);
+        yield* fs.symlink("missing-target", `${worktree}/tracked.txt`);
+
+        const report = yield* service.runNow;
+
+        expect(report.entries[0]?.outcome).toBe("kept");
+        expect(yield* fs.readLink(`${worktree}/tracked.txt`)).toBe("missing-target");
       }),
     ),
   );

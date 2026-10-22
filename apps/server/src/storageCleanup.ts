@@ -560,6 +560,28 @@ const make = Effect.gen(function* () {
       if (/^[RC]|^.[RC]/.test(records[i]!)) i++;
     }
     if (count > 0) return `has uncommitted changes (${count} ${count === 1 ? "file" : "files"})`;
+    // Both status and worktree remove trust index flags that can hide tracked edits.
+    const index = yield* git.execute({
+      operation: "StorageCleanup.indexFlags",
+      cwd,
+      args: ["ls-files", "-v", "-z"],
+      maxOutputBytes: 16 * 1024 * 1024,
+    });
+    if (index.stdoutTruncated) return "index flags exceed the inspection limit";
+    for (const entry of index.stdout.split("\0")) {
+      if (/^[a-z] /.test(entry)) return "tracked files have assume-unchanged flags";
+      if (!entry.startsWith("S ")) continue;
+      if (entry.includes("\uFFFD")) return "skipped tracked paths could not be inspected";
+      const target = path.join(cwd, entry.slice(2));
+      // Sparse exclusions may be absent; dangling links still contain local data.
+      const present =
+        (yield* fs.exists(target)) ||
+        (yield* fs.readLink(target).pipe(
+          Effect.as(true),
+          Effect.catch((error) => Effect.succeed(error.reason._tag !== "NotFound")),
+        ));
+      if (present) return "tracked files have skip-worktree flags";
+    }
     if (rules.worktreeKeepWhen !== "any-local-files") return null;
     const ignored = yield* git.execute({
       operation: "StorageCleanup.ignoredFiles",
