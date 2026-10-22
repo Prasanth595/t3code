@@ -1215,25 +1215,16 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   private func emitContentSizeIfNeeded() {
-    // Report text bounds without insets, bounded by the composer's four visible lines.
-    // A trailing newline's empty line only exists as the extra fragment.
-    let layout = textView.layoutManager
-    let container = textView.textContainer
-    var lines = 0
-    var width: CGFloat = 0
-    var height: CGFloat = 0
-    let glyphs = NSRange(location: 0, length: layout.numberOfGlyphs)
-    layout.enumerateLineFragments(forGlyphRange: glyphs) { _, used, _, _, stop in
-      lines += 1
-      width = used.width
-      height = used.maxY
-      if lines >= 4 { stop.pointee = true }
-    }
-    if lines < 4, layout.extraLineFragmentTextContainer === container {
-      lines += 1
-      height = max(height, layout.extraLineFragmentUsedRect.maxY)
-    }
-    let nextSize = CGSize(width: lines == 1 ? ceil(width) : 0, height: ceil(height))
+    guard bounds.width > 0 else { return }
+    // Fit independently of the animated viewport: when scrolling is disabled,
+    // its current height can clip TextKit's laid-out line fragments.
+    let fittedHeight = textView.sizeThatFits(CGSize(width: bounds.width, height: .greatestFiniteMagnitude)).height
+      - textView.textContainerInset.top - textView.textContainerInset.bottom
+    let measuredHeight = min(lineHeight * 4, fittedHeight)
+    let width = fittedHeight <= lineHeight + 0.5
+      ? textView.layoutManager.usedRect(for: textView.textContainer).width
+      : 0
+    let nextSize = CGSize(width: ceil(width), height: ceil(measuredHeight))
     guard abs(nextSize.width - lastContentSize.width) > 0.5 ||
       abs(nextSize.height - lastContentSize.height) > 0.5 else {
       return

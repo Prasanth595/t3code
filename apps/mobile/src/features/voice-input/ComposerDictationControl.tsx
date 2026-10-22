@@ -1,16 +1,8 @@
 import type { VoiceInputPhase, VoiceInputState } from "@t3tools/client-runtime/voice-input";
 import { memo, useCallback, useLayoutEffect, useState, type ReactNode } from "react";
-import {
-  Linking,
-  Platform,
-  Pressable,
-  Text as SystemText,
-  View,
-  type LayoutChangeEvent,
-} from "react-native";
+import { Linking, Pressable, Text as SystemText, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
   Easing,
-  LinearTransition,
   ReduceMotion,
   useAnimatedStyle,
   useReducedMotion,
@@ -32,10 +24,6 @@ const DICTATION_TIMING = {
   easing: Easing.out(Easing.cubic),
   reduceMotion: ReduceMotion.System,
 } as const;
-const DICTATION_LAYOUT =
-  Platform.OS === "android"
-    ? undefined
-    : LinearTransition.duration(DICTATION_TIMING.duration).reduceMotion(ReduceMotion.System);
 const TOOLBAR_FLIP_TIMING = {
   duration: 260,
   easing: Easing.inOut(Easing.cubic),
@@ -122,7 +110,6 @@ export function ComposerDictationDraftContent(props: {
       importantForAccessibility={props.hidden ? "no-hide-descendants" : "auto"}
       collapsable={false}
       className={props.className}
-      layout={DICTATION_LAYOUT}
       pointerEvents={props.hidden ? "none" : "auto"}
       style={[animatedStyle, { backfaceVisibility: "hidden" }]}
     >

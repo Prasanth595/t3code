@@ -148,14 +148,26 @@ export function useCompactComposerEditor(text: ScaledTextRole) {
     minimum,
     Math.min(text.lineHeight * 4 + 2 * inset, contentHeight + 2 * inset),
   );
+  const animatedHeight = useSharedValue(height);
+  useLayoutEffect(() => {
+    animatedHeight.set(
+      Platform.OS === "android"
+        ? height
+        : withTiming(height, { duration: 180, reduceMotion: ReduceMotion.System }),
+    );
+  }, [animatedHeight, height]);
+  const containerStyle = useAnimatedStyle(() => ({ height: animatedHeight.value }));
   return {
+    containerStyle,
     isMultiline: contentHeight > text.lineHeight * 1.5,
     editorProps: {
       singleLineCentered: false,
+      // Let the container grow before UIKit starts scrolling to reveal the caret.
+      scrollEnabled: Platform.OS === "android" || contentHeight >= text.lineHeight * 4,
       contentInsetVertical: inset,
       onContentSizeChange: (size: { width: number; height: number }) =>
         setContentHeight(size.height),
-      style: { height },
+      style: { flex: 1 },
     },
   };
 }
@@ -868,6 +880,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         ) : null}
 
         <ComposerSurface
+          animateLayout={false}
           capsule={hasSidebarTabBar && !compactEditor.isMultiline}
           style={{
             borderRadius: hasSidebarTabBar ? 31 : 27,
@@ -888,7 +901,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               onPickMedia={props.onPickDraftMedia}
               onPickFiles={props.onPickDraftFiles}
             />
-            <View className="min-w-0 flex-1 px-[4px]" style={{ minWidth: INLINE_EDITOR_MIN_WIDTH }}>
+            <Animated.View
+              className="min-w-0 flex-1 px-[4px]"
+              style={[{ minWidth: INLINE_EDITOR_MIN_WIDTH }, compactEditor.containerStyle]}
+            >
               <ComposerEditor
                 hidden={props.hidden}
                 draftKey={composerDraftKey}
@@ -1009,14 +1025,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     ? sendPresentation.label
                     : FOLLOW_UP_ACTION_LABEL[sendPresentation.alternate]
                 }
-                scrollEnabled={isExpanded}
                 {...compactEditor.editorProps}
                 textStyle={{
                   ...bodyText,
                   color: foregroundColor,
                 }}
               />
-            </View>
+            </Animated.View>
             {!isExpanded && stripAttachments.length > 0 ? (
               <View className="flex-row gap-1 pl-1">
                 {stripAttachments.slice(0, 3).map((attachment) => (
@@ -1081,7 +1096,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             accessibilityElementsHidden={!isToolbarVisible}
             collapsable={false}
             importantForAccessibility={isToolbarVisible ? "auto" : "no-hide-descendants"}
-            layout={COMPOSER_LAYOUT_TRANSITION}
             pointerEvents={isToolbarVisible ? "auto" : "none"}
             style={{ position: "absolute", bottom: 2, left: 0, right: 0 }}
           >

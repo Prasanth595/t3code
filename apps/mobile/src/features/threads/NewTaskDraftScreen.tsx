@@ -73,11 +73,7 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContextReferences";
-import {
-  COMPOSER_LAYOUT_TRANSITION,
-  ComposerSurface,
-  useCompactComposerEditor,
-} from "./ThreadComposer";
+import { ComposerSurface, useCompactComposerEditor } from "./ThreadComposer";
 import { useSidebarWorkspaceTabs } from "../workspace/useSystemWorkspaceTabBar";
 import { useDuoBottomBarInset } from "../../native/native-layout-metrics";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
@@ -1436,7 +1432,6 @@ export function NewTaskDraftScreen(props: {
         editable={!isIncomingShareTransferPending && !flow.submitting}
         readOnly={voiceInput.freezesEditor}
         multiline
-        scrollEnabled
         value={flow.prompt}
         skills={composerMenu.skills}
         selection={composerMenu.selection}
@@ -1672,6 +1667,7 @@ export function NewTaskDraftScreen(props: {
       ) : null}
 
       <ComposerSurface
+        animateLayout={false}
         capsule={hasSidebarTabBar && !compactEditor.isMultiline}
         style={{
           borderRadius: hasSidebarTabBar ? 31 : 27,
@@ -1748,7 +1744,12 @@ export function NewTaskDraftScreen(props: {
                 onPickMedia={handlePickMedia}
                 onPickFiles={handlePickFiles}
               />
-              <View className="min-w-0 flex-1 px-[4px]">{promptEditor}</View>
+              <Animated.View
+                className="min-w-0 flex-1 px-[4px]"
+                style={compactEditor.containerStyle}
+              >
+                {promptEditor}
+              </Animated.View>
               <View className="min-w-0 shrink flex-row items-center gap-2">
                 <View className="min-w-0 shrink">
                   <ComposerModelControl
@@ -1870,13 +1871,12 @@ export function NewTaskDraftScreen(props: {
         style={{ position: "absolute", top: 0, bottom: 0, left: 0, right: 0 }}
         offset={{ closed: 0, opened: keyboardOpenedOffset }}
       >
-        <Animated.View
-          layout={COMPOSER_LAYOUT_TRANSITION}
+        <View
           pointerEvents="box-none"
           style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
         >
           {composerDock}
-        </Animated.View>
+        </View>
       </KeyboardStickyView>
     </View>
   );
