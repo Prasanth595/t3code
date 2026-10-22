@@ -335,6 +335,18 @@ const readImageDimensionsFromOpenFile = (filePath: string, file: OpenMediaFile) 
     Effect.orElseSucceed((): ImageDimensions | null => null),
   );
 
+/** Changes whenever the file's bytes may have, so a client can keep an unchanged file loaded. */
+const fileRevisionOf = (file: OpenMediaFile) =>
+  `${file.info.dev}:${file.info.ino}:${file.info.size}:${file.info.mtimeNs}:${file.info.ctimeNs}`;
+
+/** Opens through `openMediaFile` for the same reason as `readImageDimensionsFromHeader`. */
+const readFileRevision = (filePath: string) =>
+  openMediaFile(filePath).pipe(
+    Effect.map((file) => (file === null ? undefined : fileRevisionOf(file))),
+    Effect.scoped,
+    Effect.orElseSucceed((): string | undefined => undefined),
+  );
+
 /**
  * Opens through `openMediaFile` so a path swapped for a FIFO cannot block the
  * request; a regular open would wait for a writer that never comes.
@@ -396,7 +408,7 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
                 : Effect.succeed(null),
               (dimensions) => ({
                 identity: { device: file.info.dev.toString(), inode: file.info.ino.toString() },
-                fileRevision: `${file.info.dev}:${file.info.ino}:${file.info.size}:${file.info.mtimeNs}:${file.info.ctimeNs}`,
+                fileRevision: fileRevisionOf(file),
                 dimensions,
               }),
             ),
@@ -487,6 +499,7 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
     )
       ? yield* readImageDimensionsFromHeader(canonicalFile)
       : null;
+    const fileRevision = yield* readFileRevision(canonicalFile);
     return {
       claims: isWorkspaceImagePreviewPath(resolved.relativePath)
         ? {
@@ -505,6 +518,7 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
           },
       fileName: path.basename(resolved.relativePath),
       imageDimensions,
+      fileRevision,
     };
   },
 );
@@ -579,6 +593,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       claims = finalized.claims;
       fileName = finalized.fileName;
       imageDimensions = finalized.imageDimensions;
+      fileRevision = finalized.fileRevision;
       break;
     }
     case "draft-workspace-file": {
@@ -617,6 +632,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       claims = finalized.claims;
       fileName = finalized.fileName;
       imageDimensions = finalized.imageDimensions;
+      fileRevision = finalized.fileRevision;
       break;
     }
     case "attachment": {
