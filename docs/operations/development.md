@@ -2,8 +2,8 @@
 
 ## First checkout
 
-Install `vp` using the [root README](../../README.md#install-vp). The checkout requires Node 24;
-Bun is optional. From the repository root:
+Install `vp` using the [root README](../../README.md#install-vp). The checkout requires Node 24.
+From the repository root:
 
 ```sh
 vp i
@@ -30,7 +30,8 @@ git remote set-url origin https://git.cafe/pingdotgg/t3code.git
 git remote add github https://github.com/pingdotgg/t3code.git
 # The GitHub remote you push to: `github`, or your fork's remote.
 git config remote.pushDefault github
-bun install -g @gitcafe/cli   # `cafe` runs under Bun
+gh repo set-default pingdotgg/t3code
+bun install -g @gitcafe/cli   # `cafe` needs Bun 1.2 or newer
 cafe auth login && cafe auth http setup
 cafe skills install --global  # optional: cafe-* skills for coding agents
 ```
@@ -52,8 +53,8 @@ With `origin` on git.cafe:
 - PR and issue numbers can differ between the forges. Name PRs by branch
   (`cafe pr list --head <branch>`, `gh pr view <branch>`), and write `Fixes #<GitHub number>`.
 - `cafe` flags differ from `gh`: `--repo` not `-R`, `cafe issue comments <n>` not `--comments`,
-  `cafe pr status` not `pr checks`. `cafe ci` only lists GitCafe Actions runs, which this repo
-  doesn't have, so it comes back empty here. `cafe api` paths omit `/api` (`cafe api /repos/...`).
+  `cafe pr status` not `pr checks`. This repository's CI is GitHub Actions on GitHub, so `cafe ci`
+  has no runs for it; read logs with `gh run view`. `cafe api` paths omit `/api` (`cafe api /repos/...`).
 
 ## Choosing a dev process
 
