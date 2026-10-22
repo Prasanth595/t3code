@@ -2272,6 +2272,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           baselineModel = null;
           baselineThinking = null;
           contextWindow = null;
+          if (needsNewSession) {
+            lastPlanSteps.delete(`${threadInput.threadId}:todo_list`);
+          }
           const result = yield* lifecycleRequest(
             resumeId != null
               ? { type: "switch_session", sessionPath: resumeId }
@@ -3046,6 +3049,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       appliedSessionName = null;
                       lastKnownLeaf = leafId;
                       leafCursorStale = entriesData === undefined;
+                      if (state.providerThread.appThreadId !== null) {
+                        lastPlanSteps.delete(`${state.providerThread.appThreadId}:todo_list`);
+                      }
                       yield* updateProviderThread(state, {
                         nativeThreadRef: providerRef(forkSessionFile),
                         nativeConversationHeadRef: leafId === null ? null : providerRef(leafId),
