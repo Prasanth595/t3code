@@ -1,5 +1,7 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  AuthSettingsWriteScope,
+  requiredScopesForServerSettingsPatch,
   EnvironmentAuthorizationError,
   EnvironmentId,
   ProjectId,
@@ -144,6 +146,45 @@ describe("scoped settings targets", () => {
 });
 
 describe("scoped settings writes", () => {
+  it("keeps settings-only edits and resets independent of concurrent provider overrides", () => {
+    const overridden = environment("Server", {
+      settings: {
+        projectSettingsOverrides: {
+          [projectId]: {
+            defaultAutoPull: true,
+            providerInstances: { [ProviderInstanceId.make("codex")]: { enabled: false } },
+          },
+        },
+      },
+    });
+    const plans = [
+      planScopedSettingsPatch(checkout, [overridden], { defaultAutoPull: false }),
+      planScopedSettingsClear(checkout, [overridden], ["defaultAutoPull"]),
+      planProjectOverridesClear(
+        [overridden],
+        [{ environmentId: server.environmentId, projectId }],
+        ["defaultAutoPull"],
+      ),
+    ];
+    const current = applyServerSettingsPatch(overridden.serverConfig!.settings, {
+      projectSettingsOverrides: {
+        [projectId]: {
+          defaultAutoPull: true,
+          providerInstances: { [ProviderInstanceId.make("codex")]: { enabled: true } },
+        },
+      },
+    });
+    for (const plan of plans) {
+      const patch = plan.serverWrites[0]!.patch;
+      expect(requiredScopesForServerSettingsPatch(patch)).toEqual([AuthSettingsWriteScope]);
+      expect(patch.projectSettingsOverrides![projectId]).not.toHaveProperty("providerInstances");
+      expect(
+        applyServerSettingsPatch(current, patch).projectSettingsOverrides[projectId]
+          ?.providerInstances,
+      ).toEqual({ codex: { enabled: true } });
+    }
+    expect(plans[1]!.serverWrites[0]!.patch.projectSettingsOverrides![projectId]).toEqual({});
+  });
   it("edits the effective machine policy without changing other machines' rules", () => {
     const custom = environment("Laptop", {
       settings: {
@@ -496,7 +537,7 @@ describe("scoped settings writes", () => {
         [laptop, withOverrides],
         ["defaultAutoPull", "enableAgentBrowserAccess"],
       ).serverWrites[0]?.patch,
-    ).toEqual({ projectSettingsOverrides: { [projectId]: null } });
+    ).toEqual({ projectSettingsOverrides: { [projectId]: {} } });
   });
 
   it("never substitutes an environment-default write for an invalid scope", () => {
@@ -599,7 +640,7 @@ describe("project overrides at environment scope", () => {
         label: laptop,
         previous: expect.anything(),
         patch: {
-          projectSettingsOverrides: { [fleet]: { defaultThreadEnvMode: "local" }, [t3]: null },
+          projectSettingsOverrides: { [fleet]: { defaultThreadEnvMode: "local" }, [t3]: {} },
         },
       },
     ]);

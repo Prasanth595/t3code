@@ -200,7 +200,9 @@ function projectOverrideWrites(
       continue;
     }
     const settings = environment.serverConfig.settings;
-    const entry = update(settings.projectSettingsOverrides[member.id] ?? {}, settings, member.id);
+    const { providerInstances: _providers, ...current } =
+      settings.projectSettingsOverrides[member.id] ?? {};
+    const entry = update(current, settings, member.id);
     const existing = writes.get(member.environmentId);
     writes.set(member.environmentId, {
       environmentId: member.environmentId,

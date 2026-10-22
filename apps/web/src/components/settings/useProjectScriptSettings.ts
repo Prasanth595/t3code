@@ -113,6 +113,9 @@ export function useProjectScriptSettings(
         : settings.defaultProjectScripts;
       const nextScripts = transform(current);
       const effectiveScripts = nextScripts ?? settings.defaultProjectScripts;
+      const { providerInstances: _providers, ...currentOverrides } = project
+        ? (settings.projectSettingsOverrides[project.id] ?? {})
+        : {};
       const result = await updateSettings({
         environmentId,
         input: {
@@ -125,7 +128,7 @@ export function useProjectScriptSettings(
                           "defaultProjectScripts",
                         ])
                       : {
-                          ...settings.projectSettingsOverrides[project.id],
+                          ...currentOverrides,
                           defaultProjectScripts: nextScripts,
                         },
                 },

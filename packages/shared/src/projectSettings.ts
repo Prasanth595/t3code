@@ -216,12 +216,12 @@ export function clearProjectSettingsOverrides(
   settings: Pick<ServerSettings, "projectSettingsOverrides">,
   projectId: ProjectId,
   keys: readonly ProjectScopedServerSettingKey[],
-): ProjectSettingsOverrides | null {
-  const current = settings.projectSettingsOverrides[projectId];
-  if (current === undefined) return null;
-  const next = { ...current };
+): ProjectSettingsOverrides {
+  // Omission preserves the server's current provider overrides without requiring provider access.
+  const { providerInstances: _providers, ...next } =
+    settings.projectSettingsOverrides[projectId] ?? {};
   for (const key of keys) delete next[key];
-  return Object.keys(next).length === 0 ? null : next;
+  return next;
 }
 
 export function resolveWorktreeCleanup(

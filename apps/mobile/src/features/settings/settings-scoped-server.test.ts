@@ -1,10 +1,14 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  AuthSettingsWriteScope,
+  ProviderInstanceId,
+  requiredScopesForServerSettingsPatch,
   type EnvironmentId,
   type ProjectId,
   type ServerSettings,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import type { SettingsTarget } from "./settings-environment-filter";
 import {
@@ -66,6 +70,42 @@ function environment(environmentId: EnvironmentId, settings: ServerSettings): Se
 }
 
 describe("mobile project settings scope", () => {
+  it("keeps settings edits and resets provider-free while preserving newer provider state", () => {
+    const settings: ServerSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [firstProject]: {
+          defaultAutoPull: true,
+          providerInstances: { [ProviderInstanceId.make("codex")]: { enabled: false } },
+        },
+      },
+    };
+    const targets = resolveMobileSettingsTargets(
+      [environment(firstId, settings)],
+      [{ environmentId: firstId, id: firstProject }],
+    );
+    const writes = [
+      ...planMobileScopedSettingsPatch(targets, true, { defaultAutoPull: false }),
+      ...planMobileScopedSettingsClear(targets, ["defaultAutoPull"]),
+    ];
+    const current = applyServerSettingsPatch(settings, {
+      projectSettingsOverrides: {
+        [firstProject]: {
+          defaultAutoPull: true,
+          providerInstances: { [ProviderInstanceId.make("codex")]: { enabled: true } },
+        },
+      },
+    });
+    for (const { patch } of writes) {
+      expect(requiredScopesForServerSettingsPatch(patch)).toEqual([AuthSettingsWriteScope]);
+      expect(patch.projectSettingsOverrides![firstProject]).not.toHaveProperty("providerInstances");
+      expect(
+        applyServerSettingsPatch(current, patch).projectSettingsOverrides[firstProject]
+          ?.providerInstances,
+      ).toEqual({ codex: { enabled: true } });
+    }
+    expect(writes[1]!.patch.projectSettingsOverrides![firstProject]).toEqual({});
+  });
   it("edits each checkout's own override without changing either environment default", () => {
     const firstSettings: ServerSettings = {
       ...DEFAULT_SERVER_SETTINGS,
