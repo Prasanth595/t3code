@@ -259,13 +259,19 @@ describe("DesktopLifecycle", () => {
           } as Electron.Event;
           appListeners.get("before-quit")?.(event);
           appListeners.get("before-quit")?.(event);
-          assert.deepEqual(exitCodes, [], "a quick repeat must not cut a normal shutdown short");
+          yield* TestClock.adjust("9999 millis");
+          appListeners.get("before-quit")?.(event);
+          assert.deepEqual(
+            exitCodes,
+            [],
+            "a repeat before the threshold must not cut shutdown short",
+          );
 
-          yield* TestClock.adjust("10 seconds");
+          yield* TestClock.adjust("1 millis");
           appListeners.get("before-quit")?.(event);
 
           assert.deepEqual(exitCodes, [0]);
-          assert.equal(prevented, 3);
+          assert.equal(prevented, 4);
         }),
       ).pipe(Effect.provide(layer));
     }),

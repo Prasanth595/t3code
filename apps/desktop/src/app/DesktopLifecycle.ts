@@ -98,18 +98,20 @@ const requestDesktopShutdownAndWait = Effect.fn("desktop.lifecycle.requestShutdo
 
 interface QuitState {
   phase: "running" | "waiting" | "allowed";
-  waitingSince: number;
+  waitingSinceNanos: bigint;
 }
 
 // Longer than a backend's stop budget (SIGTERM, 5s grace, SIGKILL, 1s wait),
-// so a repeated Cmd-Q during a normal quit cannot orphan the backend.
+// so a double Cmd-Q at the start of a normal quit cannot cut the backend stop
+// short and orphan it.
 const SHUTDOWN_STALL_THRESHOLD = Duration.seconds(10);
 
-const startWaitingForShutdown = (quit: QuitState) =>
-  Effect.map(Clock.currentTimeMillis, (now) => {
-    quit.phase = "waiting";
-    quit.waitingSince = now;
-  });
+const startWaitingForShutdown = Effect.fn("desktop.lifecycle.startWaitingForShutdown")(function* (
+  quit: QuitState,
+) {
+  quit.phase = "waiting";
+  quit.waitingSinceNanos = yield* Clock.monotonicTimeNanos;
+});
 
 // While a quit waits on shutdown, `quitting` makes activation open nothing. If
 // that shutdown stalls, a repeated Quit or SIGTERM is the user's only way out
@@ -118,7 +120,9 @@ const exitIfShutdownStalled = Effect.fn("desktop.lifecycle.exitIfShutdownStalled
   quit: QuitState,
   source: string,
 ) {
-  const pendingMs = (yield* Clock.currentTimeMillis) - quit.waitingSince;
+  const pendingMs = Number(
+    ((yield* Clock.monotonicTimeNanos) - quit.waitingSinceNanos) / 1_000_000n,
+  );
   if (pendingMs < Duration.toMillis(SHUTDOWN_STALL_THRESHOLD)) {
     yield* logLifecycleInfo("quit already in progress", { source, pendingMs });
     return;
@@ -241,7 +245,7 @@ export const make = DesktopLifecycle.of({
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const context = yield* Effect.context<DesktopLifecycleRegistrationServices>();
     const runEffect = Effect.runPromiseWith(context);
-    const quit: QuitState = { phase: "running", waitingSince: 0 };
+    const quit: QuitState = { phase: "running", waitingSinceNanos: 0n };
     yield* electronTheme.onUpdated(() => {
       void runEffect(
         desktopWindow.syncAppearance.pipe(Effect.withSpan("desktop.lifecycle.themeUpdated")),
