@@ -895,6 +895,55 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect.skipIf(!symlinksSupported)(
+      "excludes scratch folders under a symlinked T3 home while keeping sibling projects",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const fixtureDir = yield* fileSystem.realPath(yield* makeTempDir("t3code-scanner-home-"));
+          const realBaseDir = path.join(fixtureDir, "t3-home");
+          const configBaseDir = path.join(fixtureDir, "linked-home");
+          yield* fileSystem.makeDirectory(realBaseDir);
+          yield* fileSystem.symlink(realBaseDir, configBaseDir);
+
+          const scratchCwd = path.join(realBaseDir, "scratch", "2026-01-01-quiet-fox");
+          const ordinaryProjects = [
+            `${realBaseDir}-project`,
+            `${configBaseDir}-project`,
+            path.join(fixtureDir, "scratch", "ordinary-project"),
+          ];
+          for (const [index, cwd] of [scratchCwd, ...ordinaryProjects].entries()) {
+            yield* fileSystem.makeDirectory(cwd, { recursive: true });
+            yield* writeTranscript({
+              filePath: path.join(claudeHomePath, "projects", `-slug-${index}`, "a.jsonl"),
+              contents: claudeSessionLine(cwd),
+              mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+            });
+            yield* writeTranscript({
+              filePath: path.join(
+                codexHomePath,
+                "sessions",
+                "2026",
+                "01",
+                "01",
+                `rollout-${index}.jsonl`,
+              ),
+              contents: codexRolloutLine(cwd),
+              mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+            });
+          }
+
+          const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir });
+
+          expect(result.candidates.map((candidate) => candidate.path).toSorted()).toEqual(
+            ordinaryProjects.toSorted(),
+          );
+        }),
+    );
+
     it.effect("finds the cwd on a later line when the first records carry none", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
