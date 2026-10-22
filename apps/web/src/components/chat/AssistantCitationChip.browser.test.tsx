@@ -4,7 +4,7 @@ import {
   MessageId,
   ThreadId,
 } from "@t3tools/contracts";
-import { useState, type ReactNode } from "react";
+import { useState, type MouseEventHandler, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -12,15 +12,19 @@ import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection
 import "~/index.css";
 import { act, render } from "../../../test/render";
 
-const mocks = vi.hoisted(() => ({ observeSource: vi.fn(), dispose: vi.fn() }));
+const mocks = vi.hoisted(() => ({ observeSource: vi.fn(), dispose: vi.fn(), navigate: vi.fn() }));
 vi.mock(import("./AssistantCitationSource"), async (importOriginal) => ({
   ...(await importOriginal()),
   observeAssistantCitationCommentSource: mocks.observeSource,
 }));
 vi.mock(import("@tanstack/react-router"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useNavigate: () => vi.fn(),
-  Link: (({ children }: { children: ReactNode }) => <a href="#source">{children}</a>) as never,
+  useNavigate: () => mocks.navigate,
+  Link: (({ children, onClick }: { children: ReactNode; onClick?: MouseEventHandler }) => (
+    <a href="#source" onClick={onClick}>
+      {children}
+    </a>
+  )) as never,
 }));
 
 import { AssistantCitationChip } from "./AssistantCitationChip";
@@ -41,6 +45,7 @@ const citation = {
 function setup() {
   mocks.observeSource.mockReset().mockReturnValue(mocks.dispose);
   mocks.dispose.mockClear();
+  mocks.navigate.mockClear();
   const source = document.createElement("p");
   source.textContent = "hello";
   document.body.append(source);
@@ -214,7 +219,7 @@ describe("draft citation chip", () => {
     }
     await using _screen = await render(<Composer />);
 
-    await page.getByRole("button", { name: "Edit citation comment" }).click();
+    await page.getByRole("button", { name: /^Edit citation comment:/ }).click();
 
     await expect.element(page.getByRole("blockquote")).toHaveTextContent("hello");
     await expect.element(page.getByText("Go to source")).toBeVisible();
@@ -244,11 +249,36 @@ describe("draft citation chip", () => {
     }
     await using _screen = await render(<Composer />);
 
-    await page.getByRole("button", { name: "Edit citation comment" }).click();
+    await page.getByRole("button", { name: /^Edit citation comment:/ }).click();
 
     await vi.waitFor(() => expect(document.activeElement).toBe(textarea()));
     await expect.element(page.getByLabelText("Comment on selected text")).toBeInViewport();
     const input = textarea()!;
     expect(input.scrollTop + input.clientHeight).toBeGreaterThanOrEqual(input.scrollHeight - 1);
+  });
+
+  it("stays on the page while the draft is too long to save", async () => {
+    using _source = setup();
+    function Composer() {
+      const [open, setOpen] = useState(false);
+      return (
+        <AssistantCitationChip
+          citation={citation}
+          commentEditor={{ open, onOpenChange: setOpen, onSave: () => true }}
+        />
+      );
+    }
+    await using _screen = await render(<Composer />);
+    await page.getByRole("button", { name: /^Add comment to citation:/ }).click();
+    await vi.waitFor(() => expect(textarea()).not.toBeNull());
+
+    await typeComment("x".repeat(ASSISTANT_CITATION_MAX_COMMENT_LENGTH + 1));
+    await page.getByRole("link", { name: "Go to source" }).click();
+    expect(mocks.navigate).not.toHaveBeenCalled();
+    expect(textarea()).not.toBeNull();
+
+    await typeComment("short");
+    await page.getByRole("link", { name: "Go to source" }).click();
+    expect(mocks.navigate).toHaveBeenCalledTimes(1);
   });
 });

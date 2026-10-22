@@ -173,7 +173,7 @@ export function AssistantCitationChip({
             data-assistant-citation-chip="true"
             data-markdown-copy={serializeAssistantCitation(citation)}
             data-citation-comment-trigger="true"
-            aria-label={citation.comment ? "Edit citation comment" : "Add comment to citation"}
+            aria-label={`${citation.comment ? "Edit citation comment" : "Add comment to citation"}: ${label}`}
           />
         }
       >
@@ -213,7 +213,7 @@ export function AssistantCitationChip({
               : undefined
           }
           ref={commentPopupRef}
-          aria-label="Edit citation comment"
+          aria-label={`Edit citation comment: ${label}`}
           width={activeSourceAnchor ? "md" : "lg"}
           padding="compact"
           onPointerDown={(event) => event.stopPropagation()}
@@ -233,6 +233,14 @@ export function AssistantCitationChip({
           <AssistantCitationDetails
             citation={citation}
             editor={editor}
+            // An over-length draft keeps the popup open, so the page must stay too.
+            canLeave={() =>
+              resolveAssistantCitationCommentDismissal({
+                reason: "close-press",
+                draft: draftCommentRef.current,
+                savedComment: citation.comment,
+              }).kind !== "keep-open"
+            }
             showQuote={!activeSourceAnchor}
           />
         </PopoverPopup>
@@ -245,10 +253,12 @@ function AssistantCitationDetails({
   citation,
   editor,
   showQuote = true,
+  canLeave,
 }: {
   citation: AssistantCitation;
   editor?: ReactNode;
   showQuote?: boolean;
+  canLeave?: () => boolean;
 }) {
   const navigate = useNavigate();
   return (
@@ -285,6 +295,7 @@ function AssistantCitationDetails({
                       return;
                     }
                     event.preventDefault();
+                    if (canLeave && !canLeave()) return;
                     void navigate(assistantCitationNavigation(citation));
                   }}
                 />
