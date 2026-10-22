@@ -8,7 +8,7 @@ import { act, render } from "../../../../test/render";
 const state = vi.hoisted(() => ({
   pages: new Map<string | null, Atom.Writable<AsyncResult.AsyncResult<PullRequestDiffResult>>>(),
 }));
-vi.mock(import("~/state/pullRequests"), () => ({
+vi.mock("~/state/pullRequests", () => ({
   pullRequestEnvironment: {
     diff: ({ input }: { input: { cursor?: string } }) => state.pages.get(input.cursor ?? null)!,
   },
