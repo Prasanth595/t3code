@@ -9,6 +9,8 @@ import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { OpenCodeSettings } from "../settings.ts";
 import { makeOpenCodeAdapterV2 } from "./adapter.ts";
@@ -72,7 +74,36 @@ it.live.each([true, false])("opens an authenticated OpenCode session (external=%
     assert.isNotNull(address);
     if (!address || typeof address === "string") return;
     const url = `http://127.0.0.1:${address.port}`;
-    const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    let managedStarts = 0;
+    const runtimeLayer = OpenCodeRuntime.layer.pipe(
+      Layer.provide(
+        Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            assert.isTrue(ChildProcess.isStandardCommand(command));
+            if (!ChildProcess.isStandardCommand(command)) return Effect.die("Unexpected pipeline");
+            assert.include(command.args, "serve");
+            assert.equal(command.options.env?.OPENCODE_SERVER_PASSWORD, password);
+            managedStarts += 1;
+            // Keep the real startup parser and process cleanup, replacing only the provider binary.
+            return spawner.spawn(
+              ChildProcess.make(
+                process.execPath,
+                [
+                  "-e",
+                  `console.log("server listening on " + process.argv[1]); setInterval(() => {}, 1000)`,
+                  url,
+                ],
+                command.options,
+              ),
+            );
+          }),
+        ),
+      ),
+      Layer.provide(OpenCodeServerLedger.layerTest),
+      Layer.provideMerge(NodeServices.layer),
+    );
     const instanceId = ProviderInstanceId.make("opencode-auth");
     const adapter = yield* makeOpenCodeAdapterV2({
       instanceId,
@@ -81,28 +112,7 @@ it.live.each([true, false])("opens an authenticated OpenCode session (external=%
         ...(external ? { serverPassword: password } : {}),
       }),
       environment: { OPENCODE_SERVER_PASSWORD: "environment-password" },
-    }).pipe(
-      Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, {
-        ...runtime,
-        // Replace managed process startup only; both cases use the real SDK and HTTP auth.
-        connectToOpenCodeServer: external
-          ? runtime.connectToOpenCodeServer
-          : (input) =>
-              Effect.succeed({
-                url,
-                external: false,
-                version: "1.14.19",
-                exitCode: null,
-                serverPassword: OpenCodeRuntime.resolveOpenCodeServerPassword({
-                  external: false,
-                  ...(input.serverPassword !== undefined
-                    ? { serverPassword: input.serverPassword }
-                    : {}),
-                  ...(input.environment !== undefined ? { environment: input.environment } : {}),
-                }),
-              }),
-      }),
-    );
+    }).pipe(Effect.provide(runtimeLayer));
     const session = yield* adapter.openSession({
       threadId: ThreadId.make("thread-opencode-auth"),
       providerSessionId: ProviderSessionId.make("session-opencode-auth"),
@@ -118,14 +128,12 @@ it.live.each([true, false])("opens an authenticated OpenCode session (external=%
     assert.include(requests, "/session");
     yield* Effect.promise(() => eventRequest);
     assert.include(requests, "/event");
-    if (external) assert.include(requests, "/global/health");
+    assert.include(requests, "/global/health");
+    assert.equal(managedStarts, external ? 0 : 1);
   }).pipe(
     Effect.scoped,
     Effect.provide([
-      OpenCodeRuntime.layer.pipe(
-        Layer.provide(OpenCodeServerLedger.layerTest),
-        Layer.provideMerge(NodeServices.layer),
-      ),
+      NodeServices.layer,
       TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
       IdAllocator.layer,
       McpProviderSessions.layer,
