@@ -20,6 +20,7 @@ import * as PreviewPasskeys from "../preview/Passkeys.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopHomeOwnership from "./DesktopHomeOwnership.ts";
 import * as DesktopLegacyLocalStorage from "./DesktopLegacyLocalStorage.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
@@ -236,14 +237,12 @@ const bootstrap = Effect.gen(function* () {
       ownedByThisDesktop,
     });
     const electronDialog = yield* ElectronDialog.ElectronDialog;
-    const electronApp = yield* ElectronApp.ElectronApp;
-    yield* electronDialog.showErrorBox(
-      "This T3 home is already in use",
-      responding
-        ? `A T3 Code server is already running for this T3 home (${owner.record.origin}). The desktop did not start a second server for the same home, so it cannot open the local environment.\n\nTo use that server, turn off Settings > Connections > Local environment and add it as a saved environment. To let the desktop run its own server instead, stop that server and reopen T3 Code.`
-        : `Another T3 Code server owns this T3 home and is not responding (${owner.record.origin}). The desktop did not start a second server for the same home.\n\nStop that server and reopen T3 Code, or turn off Settings > Connections > Local environment and add a running server as a saved environment.`,
-    );
-    yield* electronApp.quit;
+    yield* DesktopHomeOwnership.reportHomeOwnedByAnotherServer({
+      owner,
+      showErrorBox: (title, content) => electronDialog.showErrorBox(title, content),
+      openMainWindow: desktopWindow.createMain,
+      isQuitting: Ref.get(state.quitting),
+    });
     return;
   }
 
