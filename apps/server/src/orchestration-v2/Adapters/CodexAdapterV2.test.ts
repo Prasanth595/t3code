@@ -2617,7 +2617,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             text: "Reply with the requested recovery marker.",
           }),
         );
-        yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
+        yield* harness.awaitTerminal(1);
         assert.deepEqual(
           assistantMessages(harness.events).map((event) => event.message.text),
           ["CODEX_RECOVERY_OK", "CODEX_RECOVERY_OK"],
