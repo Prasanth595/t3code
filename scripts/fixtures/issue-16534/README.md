@@ -1,31 +1,31 @@
-Synthetic projection fixture for sidebar navigation evidence. No provider starts,
-event history, copied user data, or auth values are included. `plain.json` is the
-plain generated fixture; regenerate it with:
+These fixtures reconstruct synthetic sidebar projections and client reset inputs.
+They never start a provider or read personal application data. Projection-only
+fixtures prove rendering/navigation, not event-sourced backend behavior.
 
-```sh
-python3 scripts/fixtures/issue-16534/seed.py --output /tmp/sidebar-seed
-```
+Generate with `python3 scripts/fixtures/issue-16534/seed.py --output /tmp/sidebar-seed
+--variant all`. Stop the isolated server before applying reset-threads.sql,
+archive-unrelated-threads.sql, hide-v1-threads.sql, hide-unrelated-projects.sql,
+projects.sql, threads.sql and messages.sql, in that order, with the documented
+`t3-sqlite-state.ts exec` helper, once per file. Never target the live T3 home.
 
-Use `--variant` for spacers (40 additional stopped threads), pinned, snoozed,
-settled (16 settled A threads, beyond the ten-row tail), lineage, archived, or
-orphan. Add `--legacy` to select the legacy sidebar. Generated timestamps and
-hashes are deterministic. JSON payloads use OrchestrationV2AppThreadJson.
+`all` includes two eight-thread projects, forty spacers, child/grandchild/fork
+lineage and synthetic markdown navigation messages. Other variants isolate shelf,
+archive and lineage states. `fixture.json` records deterministic clock/settings.
+The replay option records stopped synthetic shell representations for working,
+status and delayed arrival without spawning providers. `replay.js` transforms
+only real shell frames before the real RPC decoder/reducer receives them; delayed
+shell frames are released explicitly through `__sidebarReplay.release()`.
 
-Only after the isolated server owner stops it, apply the generated files in
-order: reset-threads.sql, hide-unrelated-projects.sql, projects.sql, threads.sql.
-Use `node apps/server/scripts/t3-sqlite-state.ts exec --base-dir <isolated-home>
---file <file>`, once per file. The helper backs up each mutation. Never use the
-live home. Restart through the owner. These writes intentionally do not create
-event history and cannot prove backend behavior.
+Install bootstrap.js and replay.js as identical pre-module scripts in the served
+HTML only for capture. Remove both before committing or switching checkouts.
+Use a fresh navigation, never document.write over an evaluated module graph.
+Configure `sessionStorage['sidebar-capture-config']` with `{storage, replay}`.
+Clear only projection caches (shell/thread/vcs-refs in t3code:connection-runtime)
+from a same-origin inert document before navigating to the app. Preserve auth.
+Timers and performance.now remain native; only Date is frozen. Record the exact
+injection externally with the artifacts.
 
-Client settings and UI reset inputs are in fixture.json. Environment-scoped keys,
-project order, initial route/history, shelf/list expansion, search, scroll offsets,
-and keyboard bindings must be measured and recorded for each scenario before
-capture. The generated empty scoped-key maps are starting inputs, not a claim
-that all matrix scenarios are initialized. UI interactions establish those states.
-
-Working/status/grouping and delayed protocol replay variants are not implemented
-here. Record those segments as blocked until valid fixtures exist. `bootstrap.js`
-is a proposed capture-tab document reboot for pre-module clock/storage setup;
-validate it in the real app before accepting any frozen-clock evidence. It does
-not change the served source or any timer API. Server clock is not frozen.
+For grouping, initialize the three synthetic /tmp/triage-16534-{A,B,Spacer}
+paths as git repositories with the same synthetic origin, then use repository
+grouping and an explicit separate override for Spacer. No network fetch needed.
+All navigation links are synthetic t3-thread links rendered by the real client.
