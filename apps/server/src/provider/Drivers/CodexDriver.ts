@@ -83,7 +83,10 @@ function makeCodexMaintenanceResolver(sharedHomePath: string) {
       isCommandPath: (commandPath) => codexStandaloneHome(commandPath) !== null,
       requiresCommandPath: true,
       env: (context) => ({
-        CODEX_HOME: codexStandaloneHome(context.realCommandPath) ?? sharedHomePath,
+        CODEX_HOME:
+          codexStandaloneHome(context.realCommandPath) ??
+          codexStandaloneHome(context.resolvedCommandPath) ??
+          sharedHomePath,
       }),
     },
   });

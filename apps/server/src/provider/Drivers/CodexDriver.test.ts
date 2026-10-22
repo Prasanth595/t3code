@@ -392,37 +392,45 @@ it.layer(layerTest)("CodexDriver", (it) => {
       ),
   );
 
-  it.effect.skipIf(windowsHost)("preserves root homes in the standalone update environment", () =>
+  it.effect.skipIf(windowsHost)("derives the standalone update home from either command path", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-root-home-" });
-      const binaryPath = NodePath.join(tempDir, "codex");
-      yield* fs.writeFileString(binaryPath, "#!/bin/sh\n");
-      yield* fs.chmod(binaryPath, 0o755);
+      const tempDir = yield* fs
+        .makeTempDirectoryScoped({ prefix: "t3-codex-update-home-" })
+        .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+      const linkedInstallHome = NodePath.join(tempDir, "install");
+      const fixtures = [
+        { binary: "codex", realPath: "/packages/standalone/bin/codex", home: "/" },
+        { binary: "codex", realPath: "C:\\Packages\\Standalone\\bin\\codex.exe", home: "C:\\" },
+        // The standalone tree itself is a symlink, so only the resolved path names its home.
+        {
+          binary: NodePath.join("install", "packages", "standalone", "bin", "codex"),
+          realPath: "/disk/codex/releases/0.163.0/bin/codex",
+          home: linkedInstallHome,
+        },
+      ];
 
-      for (const installHome of ["/", "C:\\"]) {
+      for (const fixture of fixtures) {
+        const binaryPath = NodePath.join(tempDir, fixture.binary);
+        yield* fs.makeDirectory(NodePath.dirname(binaryPath), { recursive: true });
+        yield* fs.writeFileString(binaryPath, "#!/bin/sh\n");
+        yield* fs.chmod(binaryPath, 0o755);
         const instance = yield* CodexDriver.create({
-          instanceId: ProviderInstanceId.make("codex-root-home"),
-          displayName: "Codex root home",
+          instanceId: ProviderInstanceId.make("codex-update-home"),
+          displayName: "Codex update home",
           enabled: false,
           environment: [],
           config: { ...CodexDriver.defaultConfig(), binaryPath, homePath: tempDir },
         }).pipe(
-          // Virtualize only the executable target: neither root tree belongs to this test.
+          // Virtualize only the executable target: these trees do not belong to this test.
           Effect.provideService(FileSystem.FileSystem, {
             ...fs,
             realPath: (path) =>
-              path === binaryPath
-                ? Effect.succeed(
-                    installHome === "/"
-                      ? "/packages/standalone/bin/codex"
-                      : "C:\\Packages\\Standalone\\bin\\codex.exe",
-                  )
-                : fs.realPath(path),
+              path === binaryPath ? Effect.succeed(fixture.realPath) : fs.realPath(path),
           }),
         );
         expect((yield* instance.snapshot.resolveMaintenance()).update?.env).toEqual({
-          CODEX_HOME: installHome,
+          CODEX_HOME: fixture.home,
         });
       }
     }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn), Effect.scoped),
