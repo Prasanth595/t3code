@@ -117,7 +117,9 @@ const isComplete = (dir) => {
  * folder, so a complete install another launcher (or `t3 update`) published
  * first is kept, never deleted from under a running process. Only a folder
  * without the completion marker, left by an interrupted older installer, is
- * cleared before trying again.
+ * cleared before trying again. It is moved aside first: another launcher can
+ * publish between the check and the delete, and a rename takes exactly the
+ * folder that is there, so a complete one is put back instead.
  */
 function publish(staging, dir) {
   try {
@@ -125,8 +127,18 @@ function publish(staging, dir) {
   } catch (error) {
     if (isComplete(dir)) return;
     if (!fs.existsSync(dir)) throw error;
-    fs.rmSync(dir, { recursive: true, force: true });
-    fs.renameSync(staging, dir);
+    const stale = `${staging}.stale`;
+    try {
+      fs.renameSync(dir, stale);
+    } catch (moveError) {
+      if (isComplete(dir)) return;
+      if (fs.existsSync(dir)) throw moveError;
+    }
+    try {
+      publish(isComplete(stale) ? stale : staging, dir);
+    } finally {
+      if (!isComplete(stale)) fs.rmSync(stale, { recursive: true, force: true });
+    }
   }
 }
 
