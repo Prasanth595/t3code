@@ -29,8 +29,9 @@ export function MiddleTruncate({
     >
       {split ? (
         <>
-          <span className="min-w-0 truncate">{split.head}</span>
-          <span className="shrink-0">{split.tail}</span>
+          {/* whitespace-pre keeps a space at the cut; flex items would otherwise collapse it. */}
+          <span className="min-w-0 overflow-hidden text-ellipsis whitespace-pre">{split.head}</span>
+          <span className="shrink-0 whitespace-pre">{split.tail}</span>
         </>
       ) : (
         <span className="min-w-0 truncate">{value}</span>
