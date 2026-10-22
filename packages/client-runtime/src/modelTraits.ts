@@ -122,7 +122,11 @@ export function buildTraitsTriggerDisplay(input: {
       fastModeFallbackLabel = speedLabel ?? "Normal";
       continue;
     }
-    if (descriptor.id === "thinking" && descriptor.type === "boolean") {
+    if (
+      input.provider === "claudeAgent" &&
+      descriptor.id === "thinking" &&
+      descriptor.type === "boolean"
+    ) {
       if (descriptor.currentValue === false) {
         labels.push("Thinking Off");
       } else {

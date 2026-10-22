@@ -3,9 +3,12 @@ import { ProviderDriverKind, type ProviderOptionDescriptor } from "@t3tools/cont
 import { buildTraitsTriggerDisplay } from "./modelTraits.ts";
 
 describe("thinking trait label", () => {
-  const display = (descriptors: ProviderOptionDescriptor[]) =>
+  const display = (
+    descriptors: ProviderOptionDescriptor[],
+    provider = ProviderDriverKind.make("claudeAgent"),
+  ) =>
     buildTraitsTriggerDisplay({
-      provider: ProviderDriverKind.make("claudeAgent"),
+      provider,
       descriptors,
       primarySelectDescriptorId: "effort",
       ultrathinkPromptControlled: false,
@@ -41,5 +44,30 @@ describe("thinking trait label", () => {
     expect(
       display([{ id: "thinking", label: "Thinking", type: "boolean", currentValue: false }]),
     ).toBe("Thinking Off");
+  });
+
+  it.each([true, false])("shows Cursor's thinking selection when it is %s", (thinking) => {
+    const descriptor: ProviderOptionDescriptor = {
+      id: "thinking",
+      label: "Thinking",
+      type: "boolean",
+      currentValue: thinking,
+    };
+    const label = thinking ? "Thinking On" : "Thinking Off";
+    expect(display([descriptor], ProviderDriverKind.make("cursor"))).toBe(label);
+    expect(
+      display(
+        [
+          {
+            id: "effort",
+            label: "Reasoning",
+            type: "select",
+            options: [{ id: "high", label: "High", isDefault: true }],
+          },
+          descriptor,
+        ],
+        ProviderDriverKind.make("cursor"),
+      ),
+    ).toBe(`High · ${label}`);
   });
 });
