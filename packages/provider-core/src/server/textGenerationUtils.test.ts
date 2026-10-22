@@ -15,13 +15,8 @@ describe("sanitizeCommitSubject", () => {
   });
 });
 
-
 describe("sanitizeThreadTitle", () => {
-  it("keeps the seed title when the model returns the schema placeholder", () => {
-    const generatedTitle = sanitizeThreadTitle("title");
-    const previousTitle = "Implement issue #140";
-
-    expect(generatedTitle.toLowerCase() === "title" ? sanitizeThreadTitle(previousTitle) : generatedTitle)
-      .toBe("Implement issue #140");
+  it("normalizes generated titles", () => {
+    expect(sanitizeThreadTitle("  Implement issue #140  ")).toBe("Implement issue #140");
   });
 });
