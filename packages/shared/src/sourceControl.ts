@@ -180,7 +180,7 @@ function hasDnsLabel(host: string, label: string): boolean {
 }
 
 /** `*.ghe.com` is GitHub Enterprise Cloud with data residency, one subdomain per enterprise. */
-function isGitHubHost(host: string): boolean {
+export function isGitHubHost(host: string): boolean {
   return host === "github.com" || host.endsWith(".ghe.com") || hasDnsLabel(host, "github");
 }
 
