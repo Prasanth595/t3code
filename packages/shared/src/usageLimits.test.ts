@@ -164,6 +164,91 @@ describe("pools", () => {
     });
   });
 
+  it("keeps a workspace-less hub credential apart from a different workspace credential", () => {
+    const accounts = [
+      {
+        id: "workspace.json",
+        driver: claude,
+        email: "same@example.com",
+        workspaceId: "workspace-a",
+        usageLimits: {
+          checkedAt,
+          windows: [{ ...window, usedPercent: 20 }],
+        },
+      },
+      {
+        id: "personal.json",
+        driver: claude,
+        email: "same@example.com",
+        usageLimits: {
+          checkedAt,
+          windows: [{ ...window, usedPercent: 70 }],
+        },
+      },
+    ];
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: { providers: [], usageLimitSources: [{ ...source, accounts }] },
+        },
+      ],
+    ]);
+
+    const limitAccounts = collectLimitAccounts(input);
+    expect(limitAccounts.map((account) => account.key)).toEqual([
+      "hub:workspace.json:workspace-a",
+      "hub:personal.json",
+    ]);
+    expect(limitAccounts.map((account) => account.limits.windows[0]?.usedPercent)).toEqual([
+      20, 70,
+    ]);
+  });
+
+  it("deduplicates native reports without joining source credentials", () => {
+    const native = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      auth: { status: "authenticated", email: "same@example.com" },
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 30 }] },
+    });
+    const accounts = ["first.json", "second.json"].map((id, index) => ({
+      id,
+      driver: claude,
+      email: "same@example.com",
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: index === 0 ? 10 : 90 }] },
+    }));
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: { providers: [native], usageLimitSources: [{ ...source, accounts }] },
+        },
+      ],
+      [
+        EnvironmentId.make("env-b"),
+        {
+          entry: { target: { label: "Desktop" } },
+          serverConfig: {
+            providers: [{ ...native, instanceId: ProviderInstanceId.make("codex-2") }],
+          },
+        },
+      ],
+    ]);
+
+    expect(collectLimitAccounts(input).map((account) => account.key)).toEqual([
+      "env-a:claude",
+      "hub:first.json",
+      "hub:second.json",
+    ]);
+    expect(collectLimitAccounts(input)[0]?.environments).toEqual([
+      { environmentId: "env-a", label: "Laptop" },
+      { environmentId: "env-b", label: "Desktop" },
+    ]);
+  });
+
   it("merges OpenCode Go limits from machines with the same API key", () => {
     const go = provider({
       driver: ProviderDriverKind.make("opencode"),

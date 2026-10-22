@@ -36,9 +36,18 @@ describe("codexUsageProbeDisabled", () => {
   it("recognizes an external provider that does not use OpenAI auth", () => {
     NodeAssert.equal(
       codexUsageProbeDisabled(
-        "-c model_providers.local_pool.requires_openai_auth=false --strict-config",
+        "-c model_provider=local_pool -c model_providers.local_pool.requires_openai_auth=false --strict-config",
       ),
       true,
+    );
+  });
+
+  it("ignores auth settings for providers that are not selected", () => {
+    NodeAssert.equal(
+      codexUsageProbeDisabled(
+        "-c model_provider=openai -c model_providers.local_pool.requires_openai_auth=false",
+      ),
+      false,
     );
   });
 

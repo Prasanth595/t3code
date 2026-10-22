@@ -192,9 +192,16 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
     }
     // Multiple source credentials share this email but are distinct accounts. Keep a
     // native provider without a workspace separate instead of attaching it to all of them.
-    if (!sourceIdentity && (sourceAccounts.get(key)?.size ?? 0) > 1) return null;
+    if (!sourceIdentity && (sourceAccounts.get(key)?.size ?? 0) > 1) return `${key}:native`;
     const known = workspaces.get(key);
     if (!known) return key;
+    if (sourceIdentity && known.size === 1) {
+      const workspaceId = [...known][0];
+      const workspaceSources = sourceWorkspaceAccounts.get(`${key}:${workspaceId}`);
+      if (workspaceSources && !workspaceSources.has(sourceIdentity)) {
+        return `${key}:source:${sourceIdentity}`;
+      }
+    }
     return known.size === 1 ? `${key}:${[...known][0]}` : null;
   };
 }

@@ -569,7 +569,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       ),
       // Usage is an enrichment: a failure or a slow answer degrades to "no
       // usage this probe" rather than costing the account and models.
-      input.skipNativeUsage
+      input.skipNativeUsage || !accountResponse.requiresOpenaiAuth
         ? Effect.succeed(undefined)
         : withCodexDiscoveryDeadline(
             client.request("account/rateLimits/read", null),
@@ -717,7 +717,8 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const emptyModels = emptyCodexModelsFromSettings(codexSettings);
   const launchArgs = resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment);
-  const skipNativeUsage = managedAuth !== undefined || codexUsageProbeDisabled(launchArgs);
+  const skipNativeUsageBeforeProbe =
+    managedAuth !== undefined || codexUsageProbeDisabled(launchArgs);
 
   if (!codexSettings.enabled) {
     return buildServerProvider({
@@ -742,7 +743,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     launchArgs,
     cwd: process.cwd(),
     environment: resolvedEnvironment,
-    ...(skipNativeUsage ? { skipNativeUsage: true } : {}),
+    ...(skipNativeUsageBeforeProbe ? { skipNativeUsage: true } : {}),
   }).pipe(
     // Process teardown can outlast the work budget without discarding a completed snapshot.
     Effect.timeoutOption(Duration.millis(CODEX_AUTH_PROBE_TIMEOUT_MS)),
@@ -792,6 +793,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   }
 
   const snapshot = probeResult.success.value;
+  const skipNativeUsage = skipNativeUsageBeforeProbe || !snapshot.account.requiresOpenaiAuth;
   const accountStatus = managedAuth
     ? { status: "ready" as const, auth: managedAuth, message: undefined }
     : accountProbeStatus(snapshot);

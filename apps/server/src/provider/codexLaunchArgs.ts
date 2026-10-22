@@ -24,16 +24,33 @@ function configValue(
   return undefined;
 }
 
+function configAssignment(value: string | undefined): readonly [string, string] | undefined {
+  if (!value) return undefined;
+  const separator = value.indexOf("=");
+  if (separator < 0) return undefined;
+  const key = value.slice(0, separator).trim();
+  const assignment = value.slice(separator + 1).trim();
+  if (!key || !assignment) return undefined;
+  return [key, assignment.replace(/^(['"])(.*)\1$/, "$2")];
+}
+
 /**
  * External model providers do not implement Codex's OpenAI account quota RPC.
  * A provider can opt out explicitly with `requires_openai_auth=false`.
  */
 export const codexUsageProbeDisabled = (launchArgs?: string): boolean => {
   const args = codexAppServerArgs(launchArgs);
-  return args.some((argument, index) => {
-    const value = configValue(argument, args[index + 1]);
-    return /^model_providers\.[^.]+\.requires_openai_auth\s*=\s*false$/i.test(value ?? "");
-  });
+  const assignments = new Map<string, string>();
+  for (let index = 0; index < args.length; index++) {
+    const value = configValue(args[index], args[index + 1]);
+    const assignment = configAssignment(value);
+    if (assignment) assignments.set(assignment[0], assignment[1]);
+  }
+  const selectedProvider = assignments.get("model_provider") ?? "openai";
+  return (
+    assignments.get(`model_providers.${selectedProvider}.requires_openai_auth`)?.toLowerCase() ===
+    "false"
+  );
 };
 
 export const codexExecLaunchArgs = (launchArgs?: string) => {

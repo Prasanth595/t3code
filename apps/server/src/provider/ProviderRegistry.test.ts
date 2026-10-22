@@ -382,7 +382,8 @@ it.layer(
         let skipNativeUsage: boolean | undefined;
         const settings: CodexSettings = {
           ...defaultCodexSettings,
-          launchArgs: "-c model_providers.local_pool.requires_openai_auth=false",
+          launchArgs:
+            "-c model_provider=local_pool -c model_providers.local_pool.requires_openai_auth=false",
         };
         const status = yield* checkCodexProviderStatus(settings, (input) => {
           skipNativeUsage = input.skipNativeUsage;
@@ -391,6 +392,35 @@ it.layer(
 
         assert.strictEqual(skipNativeUsage, true);
         assert.isUndefined(status.usageLimits);
+      }),
+    );
+
+    it.effect("does not skip native usage for an unselected external provider", () =>
+      Effect.gen(function* () {
+        let skipNativeUsage: boolean | undefined;
+        const settings: CodexSettings = {
+          ...defaultCodexSettings,
+          launchArgs:
+            "-c model_provider=openai -c model_providers.local_pool.requires_openai_auth=false",
+        };
+        const status = yield* checkCodexProviderStatus(settings, (input) => {
+          skipNativeUsage = input.skipNativeUsage;
+          return Effect.succeed(
+            makeCodexProbeSnapshot({
+              account: {
+                account: {
+                  type: "chatgpt",
+                  email: "test@example.com",
+                  planType: "pro",
+                },
+                requiresOpenaiAuth: true,
+              },
+            }),
+          );
+        });
+
+        assert.notStrictEqual(skipNativeUsage, true);
+        assert.isDefined(status.usageLimits);
       }),
     );
 
