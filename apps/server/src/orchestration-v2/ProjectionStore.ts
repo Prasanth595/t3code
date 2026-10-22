@@ -87,7 +87,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type * as Statement from "effect/sql/Statement";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
-import { threadHtmlRenderAttachmentIds, threadOwnedAttachmentIds } from "../attachmentStore.ts";
+import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import {
   isThreadHistoryUserTurn,
   isConversationHistoryItem,
@@ -5212,6 +5212,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       FROM orchestration_v2_projection_messages AS message,
         json_each(message.payload_json, '$.attachments') AS attachment
       WHERE message.thread_id = ${threadId}
+        AND NOT EXISTS (
+          SELECT 1
+          FROM orchestration_v2_projection_threads AS remaining_thread
+          JOIN orchestration_v2_projection_messages AS remaining_message
+            ON remaining_message.thread_id = remaining_thread.thread_id,
+            json_each(remaining_message.payload_json, '$.attachments') AS remaining_attachment
+          WHERE remaining_thread.thread_id != ${threadId}
+            AND remaining_thread.deleted_at IS NULL
+            AND json_extract(remaining_attachment.value, '$.id') = json_extract(attachment.value, '$.id')
+        )
     `,
         sql<{ payload_json: string }>`
       SELECT payload_json
@@ -5223,10 +5233,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       ]).pipe(
         Effect.map(([messages, renders]) => [
           ...new Set([
-            ...threadOwnedAttachmentIds(
-              threadId,
-              messages.map((row) => row.id),
-            ),
+            ...messages.map((row) => row.id),
             ...threadHtmlRenderAttachmentIds(
               threadId,
               renders.map((row) => {
@@ -6813,15 +6820,26 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               state.projections.get(threadId)?.turnItems.find((item) => item.id === itemId) ?? null,
           ),
         ),
-      getThreadAttachmentIds: (threadId) =>
-        service.getThreadProjection(threadId).pipe(
-          Effect.map((projection) => [
+      getThreadAttachmentIds: Effect.fn("ProjectionStore.getThreadAttachmentIds")(
+        function* (threadId) {
+          const projection = yield* service.getThreadProjection(threadId);
+          const state = yield* Ref.get(replayState);
+          // Relaunched threads reuse uploads, including legacy ids without an ownership prefix.
+          const referencedIds = new Set(
+            Array.from(state.projections.values()).flatMap((other) =>
+              other.thread.id !== threadId && other.thread.deletedAt === null
+                ? other.messages.flatMap((message) =>
+                    message.attachments.map((attachment) => attachment.id),
+                  )
+                : [],
+            ),
+          );
+          return [
             ...new Set([
-              ...threadOwnedAttachmentIds(
-                threadId,
-                projection.messages.flatMap((message) =>
-                  message.attachments.map((attachment) => attachment.id),
-                ),
+              ...projection.messages.flatMap((message) =>
+                message.attachments
+                  .map((attachment) => attachment.id)
+                  .filter((id) => !referencedIds.has(id)),
               ),
               ...threadHtmlRenderAttachmentIds(
                 threadId,
@@ -6830,8 +6848,9 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 ),
               ),
             ]),
-          ]),
-        ),
+          ];
+        },
+      ),
       getThreadRecords: Effect.fn("ProjectionStore.getThreadRecords")(
         function* (threadId, fields, filter) {
           const projection = (yield* Ref.get(replayState)).projections.get(threadId);

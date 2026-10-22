@@ -131,31 +131,23 @@ export function parseThreadSegmentFromAttachmentId(attachmentId: string): string
 }
 
 /**
- * Ids minted for another thread are excluded, so deleting a fork or a relaunched
- * thread never removes files its source still references. Legacy ids without a
- * thread segment still count, so their files are cleaned up as before.
+ * Only ids minted for this thread count, so deleting a fork never removes its
+ * source's pages.
  */
-export function threadOwnedAttachmentIds(threadId: string, attachmentIds: Iterable<string>) {
-  const segment = toSafeThreadAttachmentSegment(threadId);
-  if (segment === null) return [];
-  return Array.from(attachmentIds).filter((attachmentId) => {
-    const owner = parseThreadSegmentFromAttachmentId(attachmentId);
-    return owner === null || owner === segment;
-  });
-}
-
 export function threadHtmlRenderAttachmentIds(
   threadId: string,
   items: Iterable<{ readonly toolName: string | null | undefined; readonly output?: unknown }>,
 ) {
-  return threadOwnedAttachmentIds(
-    threadId,
-    Array.from(items).flatMap((item) => {
-      const attachmentId =
-        htmlRenderFromToolItem(item)?.attachmentId ?? mcpAppFromToolItem(item)?.attachmentId;
-      return attachmentId === undefined ? [] : [attachmentId];
-    }),
-  );
+  const segment = toSafeThreadAttachmentSegment(threadId);
+  if (segment === null) return [];
+  return Array.from(items).flatMap((item) => {
+    const attachmentId =
+      htmlRenderFromToolItem(item)?.attachmentId ?? mcpAppFromToolItem(item)?.attachmentId;
+    return attachmentId !== undefined &&
+      parseThreadSegmentFromAttachmentId(attachmentId) === segment
+      ? [attachmentId]
+      : [];
+  });
 }
 
 export function attachmentRelativePath(attachment: ChatAttachment): string | null {
