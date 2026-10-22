@@ -1844,10 +1844,15 @@ export function NewTaskDraftScreen(props: {
         options={{
           headerBackVisible: false,
           headerShadowVisible: false,
-          title: "",
+          title: "New thread",
+          unstable_navigationItemStyle: "editor",
         }}
       />
-      <SheetHeader title="" onCancel={closeNewTask} accessibilityLabel="Cancel new task" />
+      <SheetHeader
+        title="New thread"
+        onCancel={closeNewTask}
+        accessibilityLabel="Cancel new task"
+      />
 
       {heroViewport}
       <KeyboardStickyView
