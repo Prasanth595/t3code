@@ -12,6 +12,7 @@ import {
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
+  type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -24,6 +25,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 
 it.effect("expires orphaned runtime requests before command readiness", () => {
   const threadId = ThreadId.make("thread_recovery_requests");
@@ -130,6 +132,178 @@ it.effect("preserves async questions across startup and shutdown", () => {
     assert.isFalse(commitCommand.mock.calls.length > 0);
   }).pipe(Effect.provide(layer));
 });
+
+const questionProjection = () => {
+  const threadId = ThreadId.make("thread_restart_question");
+  const providerInstanceId = ProviderInstanceId.make("codex");
+  const driver = ProviderDriverKind.make("codex");
+  const providerSessionId = ProviderSessionId.make("session_restart_question");
+  const providerThreadId = ProviderThreadId.make("provider_thread_restart_question");
+  const runId = RunId.make("run_restart_question");
+  const nodeId = NodeId.make("node_restart_question");
+  const requestId = RuntimeRequestId.make("request_restart_question");
+  return {
+    thread: {
+      id: threadId,
+      providerInstanceId,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      deletedAt: null,
+      archivedAt: null,
+    },
+    runs: [{ id: runId, status: "running", providerInstanceId, providerThreadId }],
+    attempts: [],
+    nodes: [{ id: nodeId, runId, providerThreadId, status: "waiting" }],
+    subagents: [],
+    providerSessions: [
+      {
+        id: providerSessionId,
+        driver,
+        providerInstanceId,
+        status: "ready",
+        capabilities: CodexProviderCapabilitiesV2 as OrchestrationV2ProviderCapabilities,
+      },
+    ],
+    providerThreads: [
+      {
+        id: providerThreadId,
+        driver,
+        providerInstanceId,
+        providerSessionId,
+        appThreadId: threadId,
+        ownerNodeId: null,
+        status: "active",
+        nativeThreadRef: { driver, nativeId: "native_restart_question", strength: "strong" },
+        pendingBackgroundTasks: [],
+      },
+    ],
+    providerTurns: [],
+    runtimeRequests: [
+      {
+        id: requestId,
+        nodeId,
+        providerTurnId: null,
+        kind: "user_input",
+        status: "pending",
+        responseCapability: { type: "live", providerSessionId },
+      },
+    ],
+    messages: [],
+    turnItems: [
+      {
+        id: TurnItemId.make("item_restart_question"),
+        type: "user_input_request",
+        requestId,
+        runId,
+        nodeId,
+        status: "waiting",
+        questions: [{ id: "choice", header: "Choice", question: "Alpha or Beta?", options: [] }],
+      },
+    ],
+  };
+};
+type QuestionProjection = ReturnType<typeof questionProjection>;
+
+const recoveredQuestion = (projection: QuestionProjection) => {
+  let committed: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | undefined;
+  const layer = ProviderRuntimeRecovery.layer.pipe(
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getRecoveryThreadIds: () => Effect.succeed([projection.thread.id]),
+          getRuntimeRecoveryProjection: () =>
+            Effect.succeed(projection as unknown as OrchestrationV2ThreadProjection),
+        }),
+        Layer.mock(EventSink.EventSinkV2)({
+          commitCommand: (input) => {
+            committed = input;
+            return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
+          },
+        }),
+        IdAllocator.layer,
+        Layer.mock(EffectOutbox.EffectOutboxV2)({
+          reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+        }),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
+    return committed?.events.flatMap((event) =>
+      event.type === "runtime-request.updated" ? [event.payload] : [],
+    );
+  }).pipe(Effect.provide(layer));
+};
+
+it.effect("keeps a root Codex question answerable as a reply after restart", () =>
+  Effect.gen(function* () {
+    const [request] = (yield* recoveredQuestion(questionProjection())) ?? [];
+    assert.equal(request?.status, "pending");
+    assert.deepEqual(request?.responseCapability, { type: "message" });
+  }),
+);
+
+it.effect.each<[string, (projection: QuestionProjection) => QuestionProjection]>([
+  [
+    "a provider-native subagent",
+    (projection) => ({
+      ...projection,
+      providerThreads: projection.providerThreads.map((thread) => ({
+        ...thread,
+        ownerNodeId: NodeId.make("node_parent_tool_call") as never,
+      })),
+    }),
+  ],
+  [
+    "a delegated task thread",
+    (projection) => ({
+      ...projection,
+      thread: {
+        ...projection.thread,
+        lineage: { ...projection.thread.lineage, relationshipToParent: "subagent" as never },
+      },
+    }),
+  ],
+  [
+    "a provider that cannot resume from a reply",
+    (projection) => ({
+      ...projection,
+      providerSessions: projection.providerSessions.map((session) => ({
+        ...session,
+        capabilities: {
+          ...session.capabilities,
+          sessions: { ...session.capabilities.sessions, questionsAnswerableAfterRestart: false },
+        },
+      })),
+    }),
+  ],
+  [
+    "a conversation without a strong native identity",
+    (projection) => ({
+      ...projection,
+      providerThreads: projection.providerThreads.map((thread) => ({
+        ...thread,
+        nativeThreadRef: { ...thread.nativeThreadRef, strength: "weak" },
+      })),
+    }),
+  ],
+  [
+    "an approval",
+    (projection) => ({
+      ...projection,
+      runtimeRequests: projection.runtimeRequests.map((request) => ({
+        ...request,
+        kind: "command",
+      })),
+    }),
+  ],
+])("expires the question of %s after restart", ([, change]) =>
+  Effect.gen(function* () {
+    const [request] = (yield* recoveredQuestion(change(questionProjection()))) ?? [];
+    assert.equal(request?.status, "expired");
+    assert.equal(request?.responseCapability.type, "not_resumable");
+  }),
+);
 
 it.effect(
   "preserves a replayable waiting run while cancelling its process-bound background work",
