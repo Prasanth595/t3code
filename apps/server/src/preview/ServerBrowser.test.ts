@@ -533,6 +533,9 @@ it.live("reports a stalled snapshot capture without losing the tab or its contro
           _tag: "PreviewAutomationExecutionError",
           message: expect.stringContaining("show or restore the T3 Code window"),
         });
+        expect(
+          session.send.mock.calls.filter(([method]) => method === "Page.captureScreenshot"),
+        ).toHaveLength(2);
         expect(yield* Fiber.join(evaluating)).toBe("evaluated");
         const status = yield* broker.invoke<PreviewAutomationStatus>({
           scope,
