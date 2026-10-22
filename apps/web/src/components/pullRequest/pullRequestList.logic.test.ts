@@ -482,12 +482,12 @@ describe("merging the environments' own listings", () => {
 
     expect.soft(merged?.entries.map((row) => row.number)).toEqual([3, 2, 1]);
     expect.soft(groups[0]?.entries.map((row) => row.number)).toEqual([3, 2, 1]);
-    expect.soft(rankPullRequestMatches(entries, "pull").map((row) => row.number)).toEqual([
-      3, 2, 1,
-    ]);
-    expect.soft(rankPullRequestsByMergeReadiness(entries).map((row) => row.number)).toEqual([
-      3, 2, 1,
-    ]);
+    expect
+      .soft(rankPullRequestMatches(entries, "pull").map((row) => row.number))
+      .toEqual([3, 2, 1]);
+    expect
+      .soft(rankPullRequestsByMergeReadiness(entries).map((row) => row.number))
+      .toEqual([3, 2, 1]);
   });
 
   it("tags every row with the environment that read it, newest first", () => {

@@ -317,12 +317,8 @@ describe("pull request timeline", () => {
     const events = buildPullRequestTimeline({
       ...TIMELINE_SOURCE,
       createdAt: "2026-07-05T01:00:00+02:00",
-      commits: [
-        { oid: "commit", messageHeadline: "", committedDate: "2026-07-05T00:30:00Z" },
-      ],
-      comments: [
-        { ...TIMELINE_SOURCE.comments[0]!, createdAt: "2026-07-05T00:30:00.5Z" },
-      ],
+      commits: [{ oid: "commit", messageHeadline: "", committedDate: "2026-07-05T00:30:00Z" }],
+      comments: [{ ...TIMELINE_SOURCE.comments[0]!, createdAt: "2026-07-05T00:30:00.5Z" }],
       mergedAt: null,
       closedAt: null,
     });

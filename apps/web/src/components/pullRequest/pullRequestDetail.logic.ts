@@ -762,7 +762,7 @@ export function buildPullRequestTimeline(
           },
         ]
       : []),
-  ].toSorted((left, right) => right.at.localeCompare(left.at));
+  ].toSorted((left, right) => instant(right.at) - instant(left.at));
 }
 
 const FINDING_LIMIT = 20;
