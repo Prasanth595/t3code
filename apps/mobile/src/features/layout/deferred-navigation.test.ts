@@ -21,6 +21,24 @@ describe("workspace mutation navigation", () => {
     expect(selected).toEqual(["latest draft", "thread"]);
   });
 
+  it("waits for the removal guard commit after checkout completes", async () => {
+    const navigation = createDeferredNavigation();
+    const checkout = Promise.withResolvers<void>();
+    const guardCommit = Promise.withResolvers<void>();
+    let selected = false;
+    const ready = Promise.allSettled([checkout.promise, guardCommit.promise]);
+    navigation.waitFor(ready);
+    navigation.run(() => {
+      selected = true;
+    });
+    checkout.resolve();
+    await checkout.promise;
+    expect(selected).toBe(false);
+    guardCommit.resolve();
+    await ready;
+    expect(selected).toBe(true);
+  });
+
   it("releases selection after a failed checkout", async () => {
     const navigation = createDeferredNavigation();
     const checkout = Promise.withResolvers<void>();

@@ -71,6 +71,7 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
 
   const [pendingCheckouts, setPendingCheckouts] = useState(0);
   const checkoutTail = useRef(Promise.resolve());
+  const committedCheckoutReleases = useRef(new Set<() => void>());
   const waitingForProject =
     !project &&
     (catalogState.isLoadingConnections ||
@@ -104,7 +105,9 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
       setPendingCheckouts((count) => count - 1);
       if (active) setPreparation({ request: initialProjectRef, result, workspaceRoot });
     });
-    deferThreadSelectionUntil(checkoutTail.current);
+    const committed = Promise.withResolvers<void>();
+    committedCheckoutReleases.current.add(committed.resolve);
+    deferThreadSelectionUntil(Promise.allSettled([checkoutTail.current, committed.promise]));
     return () => {
       active = false;
     };
@@ -127,6 +130,19 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
   // A replaced request must settle too before the shared checkout is left behind.
   const checkoutPending = pendingCheckouts > 0 || (needsPreparation && result === null);
   usePreventRemove(checkoutPending, () => undefined);
+  useEffect(() => {
+    if (checkoutPending) return;
+    // The removal guard must commit disabled before queued navigation can run.
+    for (const release of committedCheckoutReleases.current) release();
+    committedCheckoutReleases.current.clear();
+  }, [checkoutPending]);
+  useEffect(() => {
+    const releases = committedCheckoutReleases.current;
+    return () => {
+      for (const release of releases) release();
+      releases.clear();
+    };
+  }, []);
   useEffect(() => {
     if (checkoutPending || result?._tag !== "Failure") return;
     if (!isAtomCommandInterrupted(result)) {
