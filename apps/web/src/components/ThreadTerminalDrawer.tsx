@@ -1169,7 +1169,7 @@ interface ThreadTerminalDrawerProps {
   newShortcutLabel?: string | undefined;
   closeShortcutLabel?: string | undefined;
   onActiveTerminalChange: (terminalId: string) => void;
-  onCloseTerminal: (terminalId: string) => void;
+  onCloseTerminal: (terminalId: string, threadRef?: ScopedThreadRef) => void;
   onHeightChange: (height: number) => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   keybindings: ResolvedKeybindingsConfig;
@@ -1644,7 +1644,7 @@ export default function ThreadTerminalDrawer({
     const label = terminalLabelById.get(terminalId) ?? getTerminalLabel(terminalId);
     void confirmTerminalClose([label]).then((confirmed) => {
       if (confirmed && readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)) {
-        onCloseTerminal(terminalId);
+        onCloseTerminal(terminalId, threadRef);
       }
     });
   };
