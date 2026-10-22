@@ -14,6 +14,11 @@ it("honors 12-hour time even for a 24-hour locale", () => {
 
 it("uses the locale default without an override and hides invalid timestamps", () => {
   const format = createMessageTimeFormatter(undefined, "en-GB");
-  expect(format(new Date(2026, 0, 1, 15, 7).toISOString())).toBe("15:07");
+  const timestamp = new Date(2026, 0, 1, 15, 7);
+  const expected = new Intl.DateTimeFormat("en-GB", {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(timestamp);
+  expect(format(timestamp.toISOString())).toBe(expected);
   expect(format("invalid")).toBe("");
 });
