@@ -1136,6 +1136,7 @@ export function NewTaskDraftScreen(props: {
           }}
         />
         <View className="flex-1 justify-end gap-3 p-4">
+          {environmentControl}
           <Text className="text-foreground-muted">
             Your draft is saved on this device. Connect to an environment to choose its first model.
           </Text>

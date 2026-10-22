@@ -467,7 +467,8 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   public required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
 
-    clipsToBounds = false
+    clipsToBounds = true
+    textView.clipsToBounds = true
     textView.delegate = self
     textView.textDropDelegate = self
     textView.backgroundColor = .clear
