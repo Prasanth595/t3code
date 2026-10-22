@@ -23,4 +23,16 @@ describe("MiddleTruncate", () => {
     }
     expect(spans[0]?.[1]).toContain("text-ellipsis");
   });
+
+  it("keeps the split label on one line when the value contains line breaks", () => {
+    const value = "From new\r\ndesign-x\nlong-name";
+    expect(splitForMiddleTruncate(value)).not.toBeNull();
+    const html = renderToStaticMarkup(<MiddleTruncate value={value} />);
+    const spans = [...html.matchAll(/<span class="[^"]*whitespace-pre[^"]*">([^<]*)<\/span>/g)];
+    expect(spans).toHaveLength(2);
+    for (const match of spans) {
+      expect(match[1]).not.toMatch(/[\r\n]/);
+    }
+    expect(spans.map((match) => match[1]).join("")).toBe("From new  design-x long-name");
+  });
 });
