@@ -365,7 +365,7 @@ export function NewTaskDraftScreen(props: {
     // route, otherwise the transfer guard can swallow the fallback action.
     const frame = requestAnimationFrame(() => {
       navigation.dispatch(
-        CommonActions.navigate("NewTaskProject", { incomingShareId: props.incomingShareId }),
+        StackActions.replace("NewTaskProject", { incomingShareId: props.incomingShareId }),
       );
     });
     return () => cancelAnimationFrame(frame);
@@ -1259,7 +1259,7 @@ export function NewTaskDraftScreen(props: {
           flow.setSelectedModelKey(`${selection.instanceId}:${selection.model}`, selection.options)
         }
         onUpdateThreadRuntimeMode={flow.setRuntimeMode}
-        onUpdateThreadInteractionMode={flow.setInteractionMode}
+        onUpdateThreadInteractionMode={flow.planModeEnabled ? flow.setInteractionMode : undefined}
         onRespondToApproval={async () => {}}
         onSelectUserInputOption={() => {}}
         onChangeUserInputCustomAnswer={() => {}}

@@ -5,9 +5,12 @@ import { isDraftThreadRoute, submittedThreadParams } from "./thread-route-state"
 const requireNavigation = NodeModule.createRequire(
   NodeModule.createRequire(import.meta.url).resolve("@react-navigation/native/package.json"),
 );
-const { StackRouter, CommonActions } = requireNavigation("@react-navigation/routers") as {
+const { StackRouter, CommonActions, StackActions } = requireNavigation(
+  "@react-navigation/routers",
+) as {
   StackRouter: typeof import("@react-navigation/native").StackRouter;
   CommonActions: typeof import("@react-navigation/native").CommonActions;
+  StackActions: typeof import("@react-navigation/native").StackActions;
 };
 
 describe("draft thread handoff", () => {
@@ -37,5 +40,42 @@ describe("draft thread handoff", () => {
       threadId: "thread",
     });
     expect(isDraftThreadRoute(submitted.routes.at(-1))).toBe(false);
+  });
+});
+
+describe("missing shared-content project recovery", () => {
+  it("replaces the stale draft before selecting the replacement project", () => {
+    const router = StackRouter({});
+    const options = {
+      routeNames: ["Home", "Thread", "NewTaskProject"],
+      routeParamList: {},
+      routeGetIdList: {},
+    };
+    const initial = router.getInitialState(options);
+    const staleDraft = router.getStateForAction(
+      initial,
+      CommonActions.navigate("Thread", {
+        draft: { environmentId: "environment", projectId: "deleted", incomingShareId: "share" },
+      }),
+      options,
+    )!;
+    const picker = router.getStateForAction(
+      staleDraft,
+      StackActions.replace("NewTaskProject", { incomingShareId: "share" }),
+      options,
+    )!;
+    expect(picker.routes.some(isDraftThreadRoute)).toBe(false);
+    expect(picker.routes.at(-1)?.params).toEqual({ incomingShareId: "share" });
+    const recovered = router.getStateForAction(
+      picker,
+      CommonActions.navigate("Thread", {
+        draft: { environmentId: "environment", projectId: "replacement", incomingShareId: "share" },
+      }),
+      options,
+    )!;
+    expect(recovered.routes.filter(isDraftThreadRoute)).toHaveLength(1);
+    expect(recovered.routes.at(-1)?.params).toEqual({
+      draft: { environmentId: "environment", projectId: "replacement", incomingShareId: "share" },
+    });
   });
 });
