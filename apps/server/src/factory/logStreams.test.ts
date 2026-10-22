@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - the guard patches real Node streams, and a child process proves it.
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off - the guard patches real Node streams, which a Node Console writes to, and a child process proves it.
 import * as NodeChildProcess from "node:child_process";
 import { Console } from "node:console";
 import * as NodeFS from "node:fs";
@@ -78,11 +78,14 @@ describe("guardLogStream", () => {
   it("drops lines while the disk is full and says how many on the first write that succeeds", async () => {
     const { state, stream, log } = fakeLog();
     log.log("zero");
-    assert.deepEqual(state.streamed, ["zero\n"]);
+    assert.notExists(await new Promise((resolve) => stream.write("ok\n", resolve)));
+    assert.notExists(await new Promise((resolve) => stream.write("6f6b320a", "hex", resolve)));
+    assert.deepEqual(state.streamed, ["zero\n", "ok\n", "ok2\n"]);
 
     state.full = true;
-    log.log("one");
+    const failed = new Promise<unknown>((resolve) => stream.write("one\n", resolve));
     log.log("two");
+    assert.propertyVal(await failed, "code", "ENOSPC");
     await nextMacrotask();
     log.log("three");
     await nextMacrotask();
@@ -95,8 +98,8 @@ describe("guardLogStream", () => {
 
     state.full = false;
     log.log("back");
-    log.log("again");
-    assert.deepEqual(state.streamed, ["zero\n"]);
+    stream.write("616761696e0a", "hex");
+    assert.deepEqual(state.streamed, ["zero\n", "ok\n", "ok2\n"]);
     assert.deepEqual(state.fd, ["5 log lines dropped (ENOSPC)\n", "back\n", "again\n"]);
   });
 
