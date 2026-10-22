@@ -310,6 +310,104 @@ describe("MessagesTimeline automation prompts", () => {
   });
 });
 
+// Real presses fire pointer then compatibility mouse events; Chromium pastes
+// PRIMARY into the focused editable on a middle mouseup it is not told to skip.
+function middleButton(target: Element, type: "down" | "move" | "up", clientY: number) {
+  const init = { bubbles: true, cancelable: true, button: 1, clientX: 200, clientY };
+  const buttons = type === "up" ? 0 : 4;
+  const pointer = new PointerEvent(`pointer${type}`, {
+    ...init,
+    buttons,
+    pointerId: 1,
+    pointerType: "mouse",
+    isPrimary: true,
+  });
+  const mouse = new MouseEvent(`mouse${type}`, { ...init, buttons });
+  target.dispatchEvent(pointer);
+  target.dispatchEvent(mouse);
+  return mouse;
+}
+
+describe("MessagesTimeline middle button", () => {
+  it.each([
+    ["Linux x86_64", true],
+    ["FreeBSD amd64", true],
+    ["MacIntel", false],
+    ["Win32", false],
+  ])("on %s, cancels the primary-selection paste: %s", async (platform, cancelsPaste) => {
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+    await using screen = await renderTimeline([]);
+    const placeholder = [...screen.container.querySelectorAll("p")].find(
+      (node) => node.textContent === "Send a message to start the conversation.",
+    )!;
+    const press = middleButton(placeholder, "down", 300);
+    const release = middleButton(placeholder, "up", 300);
+    expect(release.defaultPrevented).toBe(cancelsPaste);
+    // macOS and Windows start native autoscroll from the press.
+    if (!cancelsPaste) expect(press.defaultPrevented).toBe(false);
+  });
+
+  // A new draft shows the blank loading surface before history settles.
+  it("cancels the primary-selection paste on the blank loading surface", async () => {
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    await using screen = await renderTimeline([], { hideEmptyPlaceholder: true });
+    const blank = screen.container.querySelector("[data-timeline-loading]")!;
+    middleButton(blank, "down", 300);
+    expect(middleButton(document.body, "up", 300).defaultPrevented).toBe(true);
+  });
+
+  it("pans the timeline while the middle button is held on Linux", async () => {
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    const listRef = createRef<LegendListRef | null>();
+    const entries = Array.from({ length: 40 }, (_, index) =>
+      message(`Line ${index}\n\n${"Filler text. ".repeat(40)}`, {}, `message-${index}`),
+    );
+    await using screen = await renderTimeline(entries, { listRef });
+    const scroller = listRef.current!.getScrollableNode() as HTMLElement;
+    await vi.waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(400));
+    const start = scroller.scrollTop;
+    const target = screen.container.querySelector("[data-timeline-root]")!;
+
+    middleButton(target, "down", 300);
+    await act(async () => {
+      middleButton(target, "move", 420);
+    });
+    middleButton(target, "up", 420);
+
+    expect(scroller.scrollTop).toBeCloseTo(start - 120, 0);
+  });
+
+  // The release can land outside the browser window, where no pointerup reaches us.
+  it.each([
+    ["the window loses focus", () => window.dispatchEvent(new Event("blur"))],
+    ["the pointer returns without the middle button", () => {}],
+  ])("stops panning once %s", async (_case, leave) => {
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    const listRef = createRef<LegendListRef | null>();
+    const entries = Array.from({ length: 40 }, (_, index) =>
+      message(`Line ${index}\n\n${"Filler text. ".repeat(40)}`, {}, `message-${index}`),
+    );
+    await using screen = await renderTimeline(entries, { listRef });
+    const scroller = listRef.current!.getScrollableNode() as HTMLElement;
+    await vi.waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(400));
+    const start = scroller.scrollTop;
+    const target = screen.container.querySelector("[data-timeline-root]")!;
+
+    middleButton(target, "down", 300);
+    leave();
+    await act(async () => {
+      target.dispatchEvent(
+        new PointerEvent("pointermove", { bubbles: true, buttons: 0, clientY: 420 }),
+      );
+      target.dispatchEvent(
+        new PointerEvent("pointermove", { bubbles: true, buttons: 4, clientY: 540 }),
+      );
+    });
+
+    expect(scroller.scrollTop).toBe(start);
+  });
+});
+
 describe("compact reasoning math", () => {
   it("keeps formulas while flattening compact reasoning previews", () => {
     const tree = parseMarkdownWithMath("## Reasoning\n\nUse **norm** $|x|$ and \\[x^2\\]");
