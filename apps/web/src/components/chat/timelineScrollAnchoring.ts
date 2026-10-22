@@ -188,7 +188,7 @@ const TIMELINE_END_PIN_QUIET_FRAMES = 6;
 const TIMELINE_END_PIN_MAX_FRAMES = 180;
 const TIMELINE_END_PIN_INTERRUPTS = ["wheel", "touchmove"] as const;
 
-export function isTimelineScrolledAwayFromEnd(element: HTMLElement): boolean {
+function isTimelineScrolledAwayFromEnd(element: HTMLElement): boolean {
   return (
     element.scrollHeight - element.clientHeight - element.scrollTop > TIMELINE_END_PIN_TOLERANCE_PX
   );
