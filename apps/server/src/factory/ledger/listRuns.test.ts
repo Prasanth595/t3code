@@ -13,7 +13,7 @@ import {
   listUnfinishedRuns,
   readRuns,
   runInfoOf,
-  runsByWorktree,
+  runsByThread,
 } from "./listRuns.ts";
 import { lastLineIsFinished } from "./read.ts";
 import { RUNS_DIR, runIdFileName, type RunId } from "./runId.ts";
@@ -914,23 +914,22 @@ describe("readRuns: skipFinishedBefore", () => {
   });
 });
 
-describe("runsByWorktree", () => {
-  const launched = (worktree: string | null, ms = T0) =>
-    line("session_launched", { thread_id: "t", worktree, branch: "b" }, ms);
+describe("runsByThread", () => {
+  const launched = (threadId: string, ms = T0) =>
+    line("session_launched", { thread_id: threadId, worktree: null, branch: null }, ms);
 
-  it("maps each worktree a session was launched on to its run, the later run when two were", () => {
+  it("maps each session thread to its run and whether the run is finished", () => {
     const dataDir = tempDir();
-    writeRun(dataDir, rid(1), launched("/wt/t3-a", T0) + finishedLine);
-    writeRun(dataDir, rid(2), launched("/wt/t3-b", T0 + 1000) + launched("/wt/t3-c", T0 + 2000));
-    writeRun(dataDir, rid(3), launched("/wt/t3-a", T0 + 3000) + launched(null, T0 + 4000));
-    expect(Object.fromEntries(runsByWorktree(dataDir))).toEqual({
-      "/wt/t3-a": rid(3),
-      "/wt/t3-b": rid(2),
-      "/wt/t3-c": rid(2),
+    writeRun(dataDir, rid(1), launched("session-a", T0) + finishedLine);
+    writeRun(dataDir, rid(2), launched("session-b", T0 + 1000) + launched("session-c", T0 + 2000));
+    expect(Object.fromEntries(runsByThread(dataDir))).toEqual({
+      "session-a": { run: rid(1), finished: true },
+      "session-b": { run: rid(2), finished: false },
+      "session-c": { run: rid(2), finished: false },
     });
   });
 
   it("is empty without a runs directory", () => {
-    expect(runsByWorktree(tempDir()).size).toBe(0);
+    expect(runsByThread(tempDir()).size).toBe(0);
   });
 });

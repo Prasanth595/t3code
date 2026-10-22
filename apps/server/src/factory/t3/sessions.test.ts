@@ -1733,7 +1733,7 @@ describe("FactorySessions.brokenWorktrees", () => {
   });
 
   it.effect(
-    "names the live threads whose worktree is gone or is not a git checkout, and no other",
+    "names the live threads whose worktree is gone or is not a git checkout, with every thread on that path",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -1743,20 +1743,62 @@ describe("FactorySessions.brokenWorktrees", () => {
           yield* fs.makeDirectory(`${dir}/whole`);
           yield* fs.writeFileString(`${dir}/whole/.git`, "gitdir: /repo/.git/worktrees/whole\n");
           yield* fs.makeDirectory(`${dir}/remnant/source`, { recursive: true });
-          const bound = [
+          const live = [
             { threadId: ThreadId.make("whole"), worktreePath: `${dir}/whole` },
-            { threadId: ThreadId.make("remnant"), worktreePath: `${dir}/remnant` },
+            { threadId: ThreadId.make("child"), worktreePath: `${dir}/remnant` },
             { threadId: ThreadId.make("deleted"), worktreePath: `${dir}/deleted` },
           ];
+          // The archived session keeps its path, so the ledger's thread id is on it.
+          const all = [
+            ...live,
+            { threadId: ThreadId.make("session"), worktreePath: `${dir}/remnant` },
+          ];
           const broken = yield* listBroken.pipe(
-            Effect.provide(layerSessions({ getThreadWorktreePaths: () => Effect.succeed(bound) })),
+            Effect.provide(
+              layerSessions({
+                getThreadWorktreePaths: (options) =>
+                  Effect.succeed(options?.includeArchived === true ? all : live),
+              }),
+            ),
           );
           assert.deepStrictEqual(broken, [
-            { threadId: "remnant", worktreePath: `${dir}/remnant` },
-            { threadId: "deleted", worktreePath: `${dir}/deleted` },
+            {
+              threadId: "child",
+              worktreePath: `${dir}/remnant`,
+              threadsOnPath: ["child", "session"],
+            },
+            { threadId: "deleted", worktreePath: `${dir}/deleted`, threadsOnPath: ["deleted"] },
           ]);
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not call a worktree broken when its .git cannot be checked", () =>
+    Effect.gen(function* () {
+      const bound = [{ threadId: ThreadId.make("t"), worktreePath: "/wt/t3-locked" }];
+      const broken = yield* listBroken.pipe(
+        Effect.provide(
+          layerSessions(
+            { getThreadWorktreePaths: () => Effect.succeed(bound) },
+            {},
+            {},
+            {},
+            FileSystem.layerNoop({
+              exists: (path) =>
+                Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "exists",
+                    pathOrDescriptor: path,
+                  }),
+                ),
+            }),
+          ),
+        ),
+      );
+      assert.deepStrictEqual(broken, []);
+    }),
   );
 
   it.effect("fails as a sessions error when the projection cannot be read", () =>

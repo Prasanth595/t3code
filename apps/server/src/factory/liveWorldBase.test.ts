@@ -148,40 +148,82 @@ describe("liveWorld: threads on a broken worktree", () => {
       );
     });
 
-  it.effect("are the factory's only on a worktree a run launched, each named with that run", () =>
+  /** A run whose session is `threadId`, launched before T3 had made its worktree. */
+  const launched = (dataDir: string, issue: string, threadId: string, finish: boolean) => {
+    const run = newRunId("rawphp/softfac", issue, 1);
+    const ledger = Ledger.create(dataDir, run, { clock: ticking(T0, 1000) });
+    ledger.append(
+      {
+        event: "session_launched",
+        data: {
+          thread_id: threadId,
+          worktree: null,
+          branch: null,
+          model_instance: null,
+          model: null,
+          model_options: null,
+          resumed_from: null,
+        },
+      },
+      makeCause("start", "session-launched"),
+    );
+    if (finish) ledger.finish("stuck", null, null, makeCause("start", "stuck"));
+    ledger.close();
+    return run;
+  };
+
+  it.effect(
+    "are the factory's only when a finished run's session was on the worktree, each named with that run",
+    () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        const finished = launched(dataDir, "187", "session-1", true);
+        launched(dataDir, "188", "session-2", false);
+        let reads = 0;
+        const world = yield* worldOver(
+          dataDir,
+          Sessions.FactorySessions.of({
+            ...stubSessions,
+            brokenWorktrees: Effect.sync(() => {
+              reads += 1;
+              return [
+                // A subagent left on the finished run's worktree.
+                {
+                  threadId: "child-1",
+                  worktreePath: "/wt/t3-a",
+                  threadsOnPath: ["child-1", "session-1"],
+                },
+                // The session of a run still going: its own stop handles it.
+                { threadId: "session-2", worktreePath: "/wt/t3-b", threadsOnPath: ["session-2"] },
+                // A person's thread.
+                { threadId: "someone", worktreePath: "/wt/t3-c", threadsOnPath: ["someone"] },
+              ];
+            }),
+          }),
+        );
+        const expected = [{ threadId: "child-1", worktreePath: "/wt/t3-a", run: finished }];
+        assert.deepStrictEqual(yield* world.brokenWorktrees(), expected);
+        assert.deepStrictEqual(yield* world.brokenWorktrees(), expected);
+        assert.strictEqual(reads, 2);
+      }),
+  );
+
+  it.effect("reads the ledger once for a thread that is not the factory's", () =>
     Effect.gen(function* () {
       const dataDir = tempDir();
-      const run = newRunId("rawphp/softfac", "187", 1);
-      const ledger = Ledger.create(dataDir, run, { clock: ticking(T0, 1000) });
-      ledger.append(
-        {
-          event: "session_launched",
-          data: {
-            thread_id: "session-1",
-            worktree: "/wt/t3-factory",
-            branch: "t3/factory-issue-187",
-            model_instance: null,
-            model: null,
-            model_options: null,
-            resumed_from: null,
-          },
-        },
-        makeCause("start", "launched"),
-      );
-      ledger.close();
       const world = yield* worldOver(
         dataDir,
         Sessions.FactorySessions.of({
           ...stubSessions,
           brokenWorktrees: Effect.succeed([
-            { threadId: "child-1", worktreePath: "/wt/t3-factory" },
-            { threadId: "someone-else", worktreePath: "/wt/t3-person" },
+            { threadId: "someone", worktreePath: "/wt/t3-c", threadsOnPath: ["someone"] },
           ]),
         }),
       );
-      assert.deepStrictEqual(yield* world.brokenWorktrees(), [
-        { threadId: "child-1", worktreePath: "/wt/t3-factory", run },
-      ]);
+      assert.deepStrictEqual(yield* world.brokenWorktrees(), []);
+      // Any read of the ledger now fails: the runs folder is a file.
+      NodeFS.writeFileSync(NodePath.join(dataDir, "runs"), "not a folder");
+      assert.deepStrictEqual(yield* world.brokenWorktrees(), []);
     }),
   );
 
