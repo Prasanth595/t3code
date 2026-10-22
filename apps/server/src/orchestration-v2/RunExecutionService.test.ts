@@ -2487,7 +2487,7 @@ it.effect("refreshes pull requests after a provider stream exits with an error",
   }),
 );
 
-it.effect.each(["failure", "defect", "interrupt-failure"] as const)(
+it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as const)(
   "stops the live provider before settling an ingestion %s",
   (failureMode) =>
     Effect.gen(function* () {
@@ -2498,9 +2498,10 @@ it.effect.each(["failure", "defect", "interrupt-failure"] as const)(
         ReadonlyArray<ProviderAdapter.ProviderAdapterV2InterruptInput>
       >([]);
       const ids = backgroundScenarioIds(`ingestion:${failureMode}`);
-      const { observed } = yield* captureRootRunTermination({
+      const { observed, finalEvents } = yield* captureRootRunTermination({
         key: `ingestion:${failureMode}`,
         initialProviderTurnId: null,
+        rejectTerminalWrite: failureMode === "ownership-lost",
         shouldFinalizeRun: () => Effect.succeed(true),
         startTurn: () =>
           Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(stopped))),
@@ -2559,7 +2560,20 @@ it.effect.each(["failure", "defect", "interrupt-failure"] as const)(
             return true;
           }),
       });
-      assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+      if (failureMode === "ownership-lost") {
+        assert.deepEqual(finalEvents, []);
+        assert.deepEqual(observed, []);
+      } else {
+        assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+        const repaired = finalEvents.find((event) => event.type === "provider-turn.updated");
+        if (failureMode === "interrupt-failure") {
+          assert.isUndefined(repaired);
+        } else {
+          assert.equal(repaired?.payload.id, ids.rootProviderTurnId);
+          assert.equal(repaired?.payload.status, "interrupted");
+          assert.isNotNull(repaired?.payload.completedAt);
+        }
+      }
     }),
 );
 

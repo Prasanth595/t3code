@@ -274,7 +274,7 @@ function makeLocalCommandHarness(input: {
   readonly failReadsAfterRunning?: boolean;
   readonly previousTurn?: {
     readonly runStatus: "failed" | "completed";
-    readonly turnStatus: "running" | "completed";
+    readonly turnStatus: "running" | "completed" | "interrupted";
     readonly differentThread?: boolean;
     readonly liveSession?: boolean;
     readonly interruptFailure?: boolean;
@@ -507,7 +507,7 @@ function makeLocalCommandHarness(input: {
           nativeTurnRef: null,
           status: input.previousTurn.turnStatus,
           startedAt: now,
-          completedAt: input.previousTurn.turnStatus === "completed" ? now : null,
+          completedAt: input.previousTurn.turnStatus === "running" ? null : now,
         },
       ],
     };
@@ -801,6 +801,7 @@ effectIt.effect.each([
   { runStatus: "completed", turnStatus: "completed" },
   { runStatus: "failed", turnStatus: "running", differentThread: true },
   { runStatus: "failed", turnStatus: "running", liveSession: false },
+  { runStatus: "failed", turnStatus: "interrupted", interruptFailure: true },
 ] as const)("continues without interrupting when recovery does not apply: %j", (previousTurn) =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({ text: "Continue", previousTurn });
