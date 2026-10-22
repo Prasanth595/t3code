@@ -47,37 +47,41 @@ function cloudEnvironment(environmentId: string): RelayClientEnvironmentRecord {
   };
 }
 
-function savedEnvironment(
-  environmentId: string,
-  options: { readonly learnedLan: boolean; readonly relayFirst?: boolean },
-): ConnectedEnvironmentSummary {
-  const id = EnvironmentId.make(environmentId);
-  const lan: ConnectionRoute = {
-    target: new BearerConnectionTarget({
-      environmentId: id,
-      label: "Mac mini",
-      connectionId: "lan",
-    }),
+const MINI = EnvironmentId.make("environment-mini");
+
+function bearerRoute(connectionId: string, httpBaseUrl: string, learned: boolean): ConnectionRoute {
+  return {
+    target: new BearerConnectionTarget({ environmentId: MINI, label: "Mac mini", connectionId }),
     profile: Option.some(
       new BearerConnectionProfile({
-        connectionId: "lan",
-        environmentId: id,
+        connectionId,
+        environmentId: MINI,
         label: "Mac mini",
-        httpBaseUrl: "http://192.168.1.106:3773/",
-        wsBaseUrl: "ws://192.168.1.106:3773/",
-        ...(options.learnedLan ? { learned: true } : {}),
+        httpBaseUrl,
+        wsBaseUrl: httpBaseUrl.replace(/^http/, "ws"),
+        ...(learned ? { learned: true } : {}),
       }),
     ),
   };
-  const relay: ConnectionRoute = {
-    target: new RelayConnectionTarget({ environmentId: id, label: "Mac mini" }),
+}
+
+const ROUTES = {
+  paired: bearerRoute("lan", "http://192.168.1.106:3773/", false),
+  learned: bearerRoute("learned-lan", "http://192.168.1.107:3773/", true),
+  relay: {
+    target: new RelayConnectionTarget({ environmentId: MINI, label: "Mac mini" }),
     profile: Option.none(),
-  };
+  },
+} satisfies Record<string, ConnectionRoute>;
+
+function savedEnvironment(
+  ...routes: ReadonlyArray<keyof typeof ROUTES>
+): ConnectedEnvironmentSummary {
   const entry = entryWithRoutes(
-    { target: relay.target, profile: relay.profile, enabled: true },
-    options.relayFirst === true ? [relay, lan] : [lan, relay],
+    { target: ROUTES.relay.target, profile: ROUTES.relay.profile, enabled: true },
+    routes.map((route) => ROUTES[route]),
   );
-  return projectEnvironmentConnectionSummary(id, {
+  return projectEnvironmentConnectionSummary(MINI, {
     entry,
     connection: presentEnvironmentConnection(AVAILABLE_CONNECTION_STATE),
     serverConfig: null,
@@ -86,7 +90,7 @@ function savedEnvironment(
 
 describe("mobile environment settings sections", () => {
   it("keeps a LAN-paired environment local after T3 Connect is added to it", () => {
-    const paired = savedEnvironment("environment-mini", { learnedLan: false });
+    const paired = savedEnvironment("paired", "relay");
 
     const sections = splitEnvironmentSections({
       connectedEnvironments: [paired],
@@ -98,20 +102,22 @@ describe("mobile environment settings sections", () => {
     expect(sections.availableCloudEnvironments).toEqual([]);
   });
 
-  it("shows the paired address when T3 Connect is ordered first", () => {
-    const paired = savedEnvironment("environment-mini", { learnedLan: false, relayFirst: true });
+  it("shows the paired address when T3 Connect or a learned route comes first", () => {
+    const relayFirst = savedEnvironment("relay", "paired");
+    const learnedFirst = savedEnvironment("learned", "paired", "relay");
 
     const sections = splitEnvironmentSections({
-      connectedEnvironments: [paired],
+      connectedEnvironments: [relayFirst, learnedFirst],
       cloudEnvironments: null,
     });
 
-    expect(sections.localEnvironments).toEqual([paired]);
-    expect(paired.displayUrl).toBe("http://192.168.1.106:3773/");
+    expect(sections.localEnvironments).toEqual([relayFirst, learnedFirst]);
+    expect(relayFirst.displayUrl).toBe("http://192.168.1.106:3773/");
+    expect(learnedFirst.displayUrl).toBe("http://192.168.1.106:3773/");
   });
 
   it("keeps a T3 Connect environment under T3 Connect after it learns a LAN address", () => {
-    const relay = savedEnvironment("environment-mini", { learnedLan: true });
+    const relay = savedEnvironment("learned", "relay");
 
     const sections = splitEnvironmentSections({
       connectedEnvironments: [relay],
