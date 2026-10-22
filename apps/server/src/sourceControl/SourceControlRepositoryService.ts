@@ -431,9 +431,8 @@ export const make = Effect.gen(function* () {
     destinationPath: string,
   ) {
     const normalized = yield* normalizeDestinationPath(destinationPath);
-    // Only what git left behind may go. The destination was empty when the
-    // clone started, so anything without a `.git` inside was put there by
-    // someone else since; refuse rather than delete their files.
+    // A failed clone may have been recovered outside T3. A `.git` entry alone
+    // cannot establish ownership of its files or history.
     // A missing destination is already discarded; any other read failure
     // (a file in its place, permissions) is not something to remove through.
     const entries = yield* fileSystem.readDirectory(normalized).pipe(
@@ -451,19 +450,80 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    if (entries.length > 0 && !entries.includes(".git")) {
+    if (entries.some((entry) => entry !== ".git")) {
       return yield* new SourceControlRepositoryError({
         operation: "discardClone",
         provider: SourceControlProviderKind.make("unknown"),
-        detail: "Destination path contains files that are not from the clone.",
+        detail:
+          "Destination path contains files that may not be from the clone. Move them before retrying.",
       });
     }
-    // The directory itself is the project's workspace root and must stay;
-    // only git's partial contents go. An interrupted git may still be closing
-    // files, so removal retries briefly.
-    yield* fileSystem.remove(normalized, { recursive: true, force: true }).pipe(
+    const metadataPath = path.join(normalized, ".git");
+    if (entries.length > 0) {
+      yield* Effect.gen(function* () {
+        const metadata = yield* fileSystem.stat(metadataPath);
+        const canonicalRoot = yield* fileSystem.realPath(normalized);
+        const canonicalMetadata = yield* fileSystem.realPath(metadataPath);
+        if (
+          metadata.type !== "Directory" ||
+          canonicalMetadata !== path.join(canonicalRoot, ".git")
+        ) {
+          return yield* new SourceControlRepositoryError({
+            operation: "discardClone",
+            provider: SourceControlProviderKind.make("unknown"),
+            detail: "The clone destination no longer contains its own Git metadata.",
+          });
+        }
+        // Even an empty working tree can retain staged work or commits.
+        // Include unborn refs, detached HEAD, and reflog-only history.
+        for (const args of [
+          ["ls-files", "--stage"],
+          ["for-each-ref", "--count=1", "--format=%(objectname)"],
+          ["rev-list", "--all", "--reflog", "--max-count=1"],
+        ]) {
+          const result = yield* git.execute({
+            operation: "SourceControlRepositoryService.discardClone.inspect",
+            cwd: normalized,
+            args: ["--git-dir", metadataPath, ...args],
+            timeoutMs: 5_000,
+            maxOutputBytes: 4_096,
+          });
+          if (
+            result.stdout.trim().length > 0 ||
+            result.stderr.trim().length > 0 ||
+            result.stdoutTruncated ||
+            result.stderrTruncated
+          ) {
+            return yield* new SourceControlRepositoryError({
+              operation: "discardClone",
+              provider: SourceControlProviderKind.make("unknown"),
+              detail: "The clone destination may contain Git history. Move it before retrying.",
+            });
+          }
+        }
+      }).pipe(
+        Effect.mapError((cause) =>
+          isSourceControlRepositoryError(cause)
+            ? cause
+            : new SourceControlRepositoryError({
+                operation: "discardClone",
+                provider: SourceControlProviderKind.make("unknown"),
+                detail: "The clone metadata could not be inspected safely.",
+                cause,
+              }),
+        ),
+      );
+    }
+    // Keep the workspace directory and files added after inspection. Only
+    // incomplete Git metadata is disposable; checkout files require manual cleanup.
+    yield* (
+      entries.length === 0
+        ? Effect.void
+        : fileSystem
+            .remove(metadataPath, { recursive: true, force: true })
+            .pipe(Effect.retry({ schedule: Schedule.spaced("200 millis"), times: 5 }))
+    ).pipe(
       Effect.andThen(fileSystem.makeDirectory(normalized, { recursive: true })),
-      Effect.retry({ schedule: Schedule.spaced("200 millis"), times: 5 }),
       Effect.mapError(
         (cause) =>
           new SourceControlRepositoryError({

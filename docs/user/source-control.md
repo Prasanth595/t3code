@@ -137,6 +137,8 @@ are in place. A toast tracks progress and lets you cancel; if the clone fails, r
 toast or from the banner above the composer. When the host refuses the machine's SSH key, T3 Code
 clones over HTTPS with Git's credentials for that host instead, and the project's remote uses the
 HTTPS URL.
+Cleanup preserves checkout files and Git history after a failed clone; move them out of the
+destination before retrying.
 
 For a local Git repository without a remote, **Publish Repository** creates a hosted repository,
 adds it as `origin`, and pushes your commits. If there are no commits yet, it creates the remote;
