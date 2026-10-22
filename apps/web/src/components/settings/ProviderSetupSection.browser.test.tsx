@@ -209,9 +209,7 @@ describe("Antigravity setup", () => {
       .element(screen.getByRole("button", { name: "Cancel installation" }))
       .toBeDisabled();
     await act(async () => command.resolve({ _tag: "Success", value: undefined }));
-    await expect
-      .element(screen.getByRole("button", { name: "Cancel installation" }))
-      .toBeEnabled();
+    await expect.element(screen.getByRole("button", { name: "Cancel installation" })).toBeEnabled();
     await expect
       .element(screen.getByRole("status").filter({ hasText: "Downloading 1.0 MB of 2.0 MB." }))
       .toBeVisible();
