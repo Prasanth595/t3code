@@ -170,17 +170,17 @@ describe("DesktopLocalEnvironmentAuth", () => {
       },
     ]),
   } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]);
-  const makeExchange = (failures: number, failure: () => Response) =>
+  const makeExchange = (failures: number, failure: () => Effect.Effect<Response>) =>
     Effect.gen(function* () {
       const requestCount = yield* Ref.make(0);
       const layerHttpClient = Layer.succeed(
         HttpClient.HttpClient,
         HttpClient.make((request) =>
           Ref.updateAndGet(requestCount, (count) => count + 1).pipe(
-            Effect.map((count) =>
+            Effect.flatMap((count) =>
               count <= failures
-                ? HttpClientResponse.fromWeb(request, failure())
-                : tokenResponse(request),
+                ? Effect.map(failure(), (response) => HttpClientResponse.fromWeb(request, response))
+                : Effect.succeed(tokenResponse(request)),
             ),
           ),
         ),
@@ -197,24 +197,7 @@ describe("DesktopLocalEnvironmentAuth", () => {
 
   it.effect("keeps retrying while the backend is too busy to answer", () =>
     Effect.gen(function* () {
-      const requestCount = yield* Ref.make(0);
-      const layerHttpClient = Layer.succeed(
-        HttpClient.HttpClient,
-        HttpClient.make((request) =>
-          Ref.updateAndGet(requestCount, (count) => count + 1).pipe(
-            Effect.flatMap((count) =>
-              count <= 2 ? Effect.never : Effect.succeed(tokenResponse(request)),
-            ),
-          ),
-        ),
-      );
-      const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth.pipe(
-        Effect.provide(
-          DesktopLocalEnvironmentAuth.layer.pipe(
-            Layer.provide(Layer.mergeAll(layerPool, layerHttpClient)),
-          ),
-        ),
-      );
+      const { auth, requestCount } = yield* makeExchange(2, () => Effect.never);
 
       const fiber = yield* auth.getBearerToken.pipe(Effect.forkChild);
       yield* TestClock.adjust(Duration.seconds(30));
@@ -225,17 +208,32 @@ describe("DesktopLocalEnvironmentAuth", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("gives up after a minute when the backend never answers", () =>
+    Effect.gen(function* () {
+      const { auth, requestCount } = yield* makeExchange(Infinity, () => Effect.never);
+
+      const fiber = yield* auth.getBearerToken.pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust(Duration.seconds(60));
+      const error = yield* Fiber.join(fiber);
+
+      assert.strictEqual(error._tag, "DesktopLocalEnvironmentAuthSessionBootstrapError");
+      assert.isAbove(yield* Ref.get(requestCount), 1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("does not retry a rejected bootstrap credential", () =>
     Effect.gen(function* () {
       const { auth, requestCount } = yield* makeExchange(1, () =>
-        Response.json(
-          {
-            _tag: "EnvironmentAuthInvalidError",
-            code: "auth_invalid",
-            reason: "invalid_credential",
-            traceId: "trace-1",
-          },
-          { status: 401 },
+        Effect.succeed(
+          Response.json(
+            {
+              _tag: "EnvironmentAuthInvalidError",
+              code: "auth_invalid",
+              reason: "invalid_credential",
+              traceId: "trace-1",
+            },
+            { status: 401 },
+          ),
         ),
       );
 
