@@ -548,8 +548,8 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
   const [submittedMessageId, setSubmittedMessageId] = useState<MessageId | null>(null);
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
-  // Android Back hides the keyboard without blurring. Keep its safe-area padding
-  // fixed through the animation and cancel it with matching composer/list offsets.
+  // Keep the bottom padding fixed while the keyboard animates. Changing it at
+  // keyboardDidHide makes the composer land low, then jump back above the safe area.
   const bottomBarInset = useDuoBottomBarInset();
   const hasSidebarTabBar = useSidebarWorkspaceTabs() === "picker";
   // A pushed screen temporarily inherits the outgoing tab bar's safe area.
@@ -562,14 +562,11 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     (Platform.OS === "ios" && Platform.isPad
       ? Math.max(bottomSafeArea, 12) - (hasSidebarTabBar ? 5 : 0)
       : undefined);
-  // A hardware keyboard can focus the editor without occupying any screen height.
   const composerBottomInset =
-    Platform.OS === "ios" && liveKeyboardHeight > 0
-      ? 0
-      : alignedBottomInset !== undefined
-        ? Math.max(0, alignedBottomInset - THREAD_COMPOSER_BOTTOM_GUTTER)
-        : Math.max(bottomSafeArea, 12);
-  const composerKeyboardOffset = Platform.OS === "android" ? composerBottomInset : 0;
+    alignedBottomInset !== undefined
+      ? Math.max(0, alignedBottomInset - THREAD_COMPOSER_BOTTOM_GUTTER)
+      : Math.max(bottomSafeArea, 12);
+  const composerKeyboardOffset = composerBottomInset;
   const contentPresentationKind = props.contentPresentation.kind;
   const realThreadSyncLabel = (() => {
     switch (props.threadSyncStatus) {
