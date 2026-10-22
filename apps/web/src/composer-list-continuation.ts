@@ -67,14 +67,14 @@ function nextMarkerText(marker: ListMarker): string {
 }
 
 // Markdown tabs advance to the next four-column stop.
-function indentWidth(line: string): number {
-  let width = 0;
+function indentWidth(line: string, fromColumn = 0): number {
+  let column = fromColumn;
   for (const char of line) {
-    if (char === " ") width += 1;
-    else if (char === "\t") width += 4 - (width % 4);
+    if (char === " ") column += 1;
+    else if (char === "\t") column += 4 - (column % 4);
     else break;
   }
-  return width;
+  return column - fromColumn;
 }
 
 function renumberFollowingItems(
@@ -225,7 +225,7 @@ export function listIndentForTab(
 
     // CommonMark children must reach the parent's content column. A task's box is content.
     const markerWidth = above.kind === "ordered" ? above.numberText.length + 1 : 1;
-    const space = above.space.length;
+    const space = indentWidth(above.space, indentWidth(above.indent) + markerWidth);
     const childWidth =
       above.kind === "task" ? 2 : markerWidth + (space >= 1 && space <= 4 ? space : 1);
     const indent = lastChild?.indent ?? above.indent + " ".repeat(childWidth);

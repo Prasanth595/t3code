@@ -38,6 +38,7 @@ describe("composer list continuation", () => {
   // regression: #17124 Tab must nest a numbered item under its parent's content column
   it.each([
     ["1. parent\n2. child", "1. parent\n   1. child"],
+    ["1.\tparent\n2. child", "1.\tparent\n    1. child"],
     [
       "2. parent\n   1. sibling\n      1. grandchild\n3. child",
       "2. parent\n   1. sibling\n      1. grandchild\n   2. child",
