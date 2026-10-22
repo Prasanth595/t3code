@@ -146,15 +146,24 @@
 
   globalThis.WebSocket = class extends NativeWebSocket {
     send(data) {
-      super.send(data);
-      if (!options.enabled || typeof data !== "string") return;
+      if (!options.enabled || typeof data !== "string") return super.send(data);
       try {
-        const { value } = parseFrame(data);
+        const { value, ndjson } = parseFrame(data);
+        let changed = false;
         for (const request of Array.isArray(value) ? value : [value]) {
           if (request?._tag === "Request" && request.tag === "orchestration.subscribeShell") {
+            const afterSequence = request.payload?.afterSequence;
+            // Foreground resumes reuse this socket's client cursor. A new RPC
+            // session owns a new socket and reloads the authoritative HTTP shell.
+            const offset =
+              typeof afterSequence === "number" ? (this.latestShellStream?.offset ?? 0) : 0;
+            if (offset !== 0) {
+              request.payload.afterSequence -= offset;
+              changed = true;
+            }
             const stream = {
-              sequence: shellSequence,
-              offset: 0,
+              sequence: afterSequence ?? shellSequence,
+              offset,
               emit: (node) =>
                 this.replayDeliver({
                   _tag: "Chunk",
@@ -163,6 +172,7 @@
                 }),
             };
             this.shellStreams.set(request.id, stream);
+            this.latestShellStream = stream;
             latestShellStream = stream;
             if (delayedThread && !delayedStream) delayedStream = stream;
           } else if (
@@ -172,10 +182,16 @@
             this.threadRequests.add(request.id);
           }
         }
+        if (changed)
+          data = ndjson
+            ? value.map((item) => JSON.stringify(item)).join("\n") + "\n"
+            : JSON.stringify(value);
       } catch {
         // Non-JSON socket traffic belongs to the native protocol handler.
       }
+      super.send(data);
     }
+    latestShellStream = null;
     shellStreams = new Map();
     threadRequests = new Set();
     replayDeliver;
