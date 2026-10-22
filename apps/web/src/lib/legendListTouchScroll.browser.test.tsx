@@ -17,23 +17,31 @@ const { LegendList } = await import("@legendapp/list/react");
 const ROW_COUNT = 60;
 const ROW_HEIGHT = 80;
 
+interface Row {
+  readonly height: number;
+  // Bumping it replaces the row's content element, as a re-keyed child would.
+  readonly version: number;
+}
+
 function Rows({
   ref,
-  heights,
+  rows,
 }: {
   readonly ref: Ref<LegendListRef>;
-  readonly heights: ReadonlyArray<number>;
+  readonly rows: ReadonlyArray<Row>;
 }) {
   return (
     <LegendList
       ref={ref}
-      data={heights.map((height, index) => ({ id: `row-${index}`, height }))}
+      data={rows.map((row, index) => ({ id: `row-${index}`, ...row }))}
       keyExtractor={(item) => item.id}
       estimatedItemSize={ROW_HEIGHT}
       maintainVisibleContentPosition={{ data: true, size: true }}
       renderItem={({ item }) => (
         <div data-row={item.id} style={{ height: item.height }}>
-          {item.id}
+          <div key={item.version} data-row-content={item.id}>
+            {item.id}
+          </div>
         </div>
       )}
       style={{ height: 400 }}
@@ -53,8 +61,15 @@ async function advanceFrames(count = 4) {
 async function mountScrolledToRow(index: number) {
   await using stack = new AsyncDisposableStack();
   const listRef = createRef<LegendListRef>();
-  let heights = Array.from({ length: ROW_COUNT }, () => ROW_HEIGHT);
-  const screen = stack.use(await render(<Rows ref={listRef} heights={heights} />));
+  let rows: ReadonlyArray<Row> = Array.from({ length: ROW_COUNT }, () => ({
+    height: ROW_HEIGHT,
+    version: 0,
+  }));
+  const screen = stack.use(await render(<Rows ref={listRef} rows={rows} />));
+  const updateRow = async (index: number, update: (row: Row) => Row) => {
+    rows = rows.map((row, i) => (i === index ? update(row) : row));
+    await screen.rerender(<Rows ref={listRef} rows={rows} />);
+  };
 
   const scroller = (): HTMLElement => {
     const element = screen.container.querySelector<HTMLElement>(
@@ -97,25 +112,32 @@ async function mountScrolledToRow(index: number) {
       if (!match) throw new Error(`No held correction: "${contentNode().style.transform}".`);
       return -Number(match[1]);
     },
-    // Dispatches a touch event on the scroller: `changed` are the fingers this event
-    // is about, `down` every finger on the screen afterwards (TouchEvent.touches).
+    rowContent(id: string): HTMLElement {
+      const element = screen.container.querySelector<HTMLElement>(`[data-row-content="${id}"]`);
+      if (!element) throw new Error(`Row ${id} has no content element.`);
+      return element;
+    },
+    // Dispatches a touch event at the element the fingers started on (the scroller
+    // unless given), as a browser does: `changed` are the fingers this event is
+    // about, `down` every finger on the screen afterwards (TouchEvent.touches).
     touch(
       type: "touchstart" | "touchend",
       changed: ReadonlyArray<number>,
       down: ReadonlyArray<number>,
+      target: Element = scroller(),
     ) {
-      const touches = (ids: ReadonlyArray<number>) => ids.map((identifier) => ({ identifier }));
-      scroller().dispatchEvent(
-        Object.assign(new Event(type), {
+      const touches = (ids: ReadonlyArray<number>) =>
+        ids.map((identifier) => ({ identifier, target }));
+      target.dispatchEvent(
+        Object.assign(new Event(type, { bubbles: true }), {
           changedTouches: touches(changed),
           touches: touches(down),
         }),
       );
     },
-    async growRow(row: number, height: number) {
-      heights = heights.map((value, i) => (i === row ? height : value));
-      await screen.rerender(<Rows ref={listRef} heights={heights} />);
-    },
+    growRow: (row: number, height: number) => updateRow(row, (value) => ({ ...value, height })),
+    replaceRowContent: (row: number) =>
+      updateRow(row, (value) => ({ ...value, version: value.version + 1 })),
     [Symbol.asyncDispose]: () => environment.disposeAsync(),
   };
 }
@@ -218,6 +240,54 @@ describe("LegendList scroll corrections during a touch scroll", () => {
     expect(list.heldCorrection()).toBe(held);
 
     list.touch("touchend", [2], []);
+    await advanceFrames();
+
+    expect(list.scroller().scrollTop).toBeCloseTo(scrollTop + held, 0);
+    expect(list.contentNode().style.transform).toBe("");
+  });
+
+  // A touch's later events go to the element it started on, even after that element
+  // leaves the document, and from there they no longer bubble to the scroller.
+  it("ends the hold when the element a finger started on is replaced before it lifts", async () => {
+    await using list = await mountScrolledToRow(30);
+    const scrollTop = list.scroller().scrollTop;
+    const content = list.rowContent("row-31");
+
+    list.touch("touchstart", [1], [1], content);
+    await list.growRow(28, ROW_HEIGHT + 120);
+    await vi.waitFor(() => expect(list.heldCorrection()).toBeGreaterThanOrEqual(120));
+    const held = list.heldCorrection();
+    await list.replaceRowContent(31);
+    expect(content.isConnected).toBe(false);
+
+    using _timers = fakeTimers();
+    list.touch("touchend", [1], [], content);
+    await advanceFrames();
+
+    expect(list.scroller().scrollTop).toBeCloseTo(scrollTop + held, 0);
+    expect(list.contentNode().style.transform).toBe("");
+  });
+
+  it("holds corrections until both fingers on a replaced element lift", async () => {
+    await using list = await mountScrolledToRow(30);
+    const scrollTop = list.scroller().scrollTop;
+    const content = list.rowContent("row-31");
+
+    list.touch("touchstart", [1], [1], content);
+    list.touch("touchstart", [2], [1, 2], content);
+    await list.growRow(28, ROW_HEIGHT + 120);
+    await vi.waitFor(() => expect(list.heldCorrection()).toBeGreaterThanOrEqual(120));
+    const held = list.heldCorrection();
+    await list.replaceRowContent(31);
+    expect(content.isConnected).toBe(false);
+
+    using _timers = fakeTimers();
+    list.touch("touchend", [1], [2], content);
+    await advanceFrames();
+    expect(list.scroller().scrollTop).toBe(scrollTop);
+    expect(list.heldCorrection()).toBe(held);
+
+    list.touch("touchend", [2], [], content);
     await advanceFrames();
 
     expect(list.scroller().scrollTop).toBeCloseTo(scrollTop + held, 0);
