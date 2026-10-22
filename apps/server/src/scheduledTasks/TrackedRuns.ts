@@ -106,6 +106,10 @@ export function makeTrackedRuns() {
       });
     },
     forgetTask,
+    /** Drops one run only, for a caller whose task may have started a newer run since. */
+    forgetMessage: (messageId: MessageId) => {
+      runs.delete(messageId);
+    },
     /**
      * Marks the dispatch bookkeeping as saved, and returns the outcome if the
      * run already ended while that was happening.

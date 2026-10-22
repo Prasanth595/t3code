@@ -503,6 +503,7 @@ const makeTurnHarness = (
     const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
     const dispatched = yield* Queue.unbounded<MessageId>();
     const subscriptions = yield* Ref.make(0);
+    const failedReads = yield* Queue.unbounded<void>();
     const layer = ScheduledTaskService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -515,8 +516,10 @@ const makeTurnHarness = (
               ),
             getThreadRecords: (_threadId, fields: ReadonlyArray<string>, filter) =>
               Effect.gen(function* () {
-                if (options.recordsUnreadable)
+                if (options.recordsUnreadable) {
+                  yield* Queue.offer(failedReads, undefined);
                   return yield* Effect.fail(new Error("no records") as never);
+                }
                 if (fields.includes("runs")) yield* options.duringRunsRead?.(events) ?? Effect.void;
                 return {
                   thread: { deletedAt: options.threadDeleted ? epoch : null },
@@ -551,7 +554,7 @@ const makeTurnHarness = (
         ),
       ),
     );
-    return { events, dispatched, subscriptions, layer };
+    return { events, dispatched, subscriptions, failedReads, layer };
   });
 
 const upsertBoundTask = (
@@ -876,6 +879,27 @@ it.effect("a thread deleted while the stream was down fails its run on catch-up"
       yield* untilStatus(service, task.id, "failed");
       const [settled] = (yield* service.list()).tasks;
       assert.equal(settled?.lastRunError, "The thread was deleted.");
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("giving up on a catch-up read leaves a newer run of the same task tracked", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeTurnHarness({ recordsUnreadable: true });
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      yield* service.runNow({ id: task.id });
+      yield* Queue.take(harness.dispatched);
+      // The listener's catch-up for that run starts, fails its first read and backs off.
+      yield* Queue.take(harness.failedReads);
+      yield* TestClock.adjust("1 second");
+      yield* service.runNow({ id: task.id });
+      const newer = yield* Queue.take(harness.dispatched);
+      // The catch-up for the first run runs out of retries and gives up.
+      yield* TestClock.adjust("30 seconds");
+      yield* Queue.offer(harness.events, runEvent(runOf("run:newer", newer, "completed")));
+      yield* untilStatus(service, task.id, "succeeded");
     }).pipe(Effect.provide(harness.layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

@@ -1196,7 +1196,7 @@ export const layer = Layer.effect(
                 cause,
               }).pipe(
                 Effect.andThen(
-                  Effect.sync(() => trackedRuns.forgetTask(pending.taskId)).pipe(
+                  Effect.sync(() => trackedRuns.forgetMessage(pending.messageId)).pipe(
                     Effect.andThen(releaseRun(pending, "Could not read how the run ended.")),
                   ),
                 ),
