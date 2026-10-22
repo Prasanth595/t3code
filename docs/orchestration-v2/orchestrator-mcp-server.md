@@ -301,6 +301,9 @@ type DelegateTaskResult = {
     runId: string;
   } | null;
   waitTimedOut: boolean;
+  lastActivityAt: string | null;
+  idleForMs: number | null;
+  hasRunningItem: boolean;
 };
 ```
 
@@ -314,6 +317,12 @@ finishes. Its published `summary` and result transfer then remain stable across
 later follow-ups. `hasPendingChildRuns` reports later queued or executing turns;
 `latestTerminal*` exposes later executed, non-monitor results without replacing
 the published task result.
+
+While the task is running or waiting, `lastActivityAt` and `idleForMs` give the
+time of the last recorded change to the child thread (e.g. provider output,
+run/attempt changes, the parent's sends), and `hasRunningItem` reports an open
+item in an active run's current attempt. A provider that stops emitting events
+leaves the task running with growing `idleForMs`; nothing times it out.
 
 ### `task_cancel`
 

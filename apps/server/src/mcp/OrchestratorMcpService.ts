@@ -545,6 +545,29 @@ function pendingTaskApproval(
   return approval;
 }
 
+const IN_PROGRESS_ITEM_STATUSES = ["pending", "running", "waiting"] as const;
+const isInProgressItemStatus = (status: OrchestrationV2TurnItem["status"]) =>
+  (IN_PROGRESS_ITEM_STATUSES as ReadonlyArray<string>).includes(status);
+
+/**
+ * A restart supersedes an attempt without closing its items, so only active-attempt items count.
+ * Without a known active attempt or turn, nothing is known to be superseded.
+ */
+function hasRunningAttemptItem(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  providerTurns: OrchestrationV2ThreadProjection["providerTurns"],
+  items: ReadonlyArray<Pick<OrchestrationV2TurnItem, "runId" | "providerTurnId" | "status">>,
+): boolean {
+  return items.some((item) => {
+    const run = runs.find((candidate) => candidate.id === item.runId);
+    if (run === undefined || !ThreadManagementService.isActiveRun(run)) return false;
+    if (!isInProgressItemStatus(item.status)) return false;
+    if (item.providerTurnId === null) return true;
+    const attemptId = providerTurns.find((turn) => turn.id === item.providerTurnId)?.runAttemptId;
+    return attemptId == null || run.activeAttemptId === null || attemptId === run.activeAttemptId;
+  });
+}
+
 function directAppOwnedChildTasks(
   parent: Pick<OrchestrationV2ThreadProjection, "thread" | "subagents">,
   target: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
@@ -1616,6 +1639,28 @@ const make = Effect.gen(function* () {
         instanceId: task.providerInstanceId,
         model: task.model,
       };
+    // thread.updatedAt is the last recorded change to the child thread (e.g. provider output,
+    // run/attempt changes, the parent's sends), so a silent provider leaves it unchanged.
+    const tracksActivity = status === "running" || status === "waiting";
+    const activeRunIds = childControls.runs
+      .filter(ThreadManagementService.isActiveRun)
+      .map((run) => run.id);
+    const openItems =
+      tracksActivity && activeRunIds.length > 0
+        ? (yield* threadManagement
+            .getThreadRecords(task.childThreadId, ["turnItems"], {
+              turnItemRunIds: activeRunIds,
+              turnItemStatuses: IN_PROGRESS_ITEM_STATUSES,
+            })
+            .pipe(Effect.mapError(threadManagementFailure))).turnItems
+        : [];
+    const providerTurns = openItems.some((item) => item.providerTurnId !== null)
+      ? (yield* threadManagement
+          .getThreadRecords(task.childThreadId, ["providerTurns"])
+          .pipe(Effect.mapError(threadManagementFailure))).providerTurns
+      : [];
+    const lastActivityAt = tracksActivity ? childControls.thread.updatedAt : null;
+    const nowMs = yield* Clock.currentTimeMillis;
     const response = {
       taskId: task.id,
       childThreadId: task.childThreadId,
@@ -1650,6 +1695,12 @@ const make = Effect.gen(function* () {
           ? null
           : pendingTaskApproval(childControls, task.id, childRun),
       waitTimedOut,
+      lastActivityAt: lastActivityAt === null ? null : DateTime.formatIso(lastActivityAt),
+      idleForMs:
+        lastActivityAt === null
+          ? null
+          : Math.max(0, nowMs - DateTime.toEpochMillis(lastActivityAt)),
+      hasRunningItem: hasRunningAttemptItem(childControls.runs, providerTurns, openItems),
     } satisfies OrchestratorMcpDelegateTaskResult;
     if (
       acknowledgeTerminal &&

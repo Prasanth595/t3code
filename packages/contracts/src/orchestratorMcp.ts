@@ -227,6 +227,17 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
     description:
       "True only on that mode=wait call when timeoutMs elapsed. The timeout does not cancel the child. Later task_status reads return false and use status for liveness.",
   }),
+  lastActivityAt: Schema.NullOr(IsoDateTime).annotate({
+    description:
+      "Time of the last recorded change to the child thread (e.g. provider output, run/attempt changes, the parent's sends), while the task is running or waiting. Null when queued or terminal.",
+  }),
+  idleForMs: Schema.NullOr(NonNegativeInt).annotate({
+    description: "Milliseconds since lastActivityAt at read time. Null when lastActivityAt is.",
+  }),
+  hasRunningItem: Schema.Boolean.annotate({
+    description:
+      "An item of the child's active attempt is still in progress, such as a command, which can run silently for a long time.",
+  }),
 });
 export type OrchestratorMcpDelegateTaskResult = typeof OrchestratorMcpDelegateTaskResult.Type;
 

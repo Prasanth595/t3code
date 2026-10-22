@@ -42,6 +42,9 @@ describe("orchestrator MCP contracts", () => {
       hasPendingQuestion: false,
       pendingApproval: null,
       waitTimedOut: false,
+      lastActivityAt: null,
+      idleForMs: null,
+      hasRunningItem: false,
     });
 
     expect(request.target?.providerInstanceId).toBe("claudeAgent");

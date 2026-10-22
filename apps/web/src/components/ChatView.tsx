@@ -1,5 +1,6 @@
 import { ScrollToEndButton, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
+import { deriveActiveTurnLastActivityAt } from "./chat/TimelineWorkGroupRows.logic";
 import {
   deriveAvailableRevertTurnCounts,
   deriveThreadPendingBackgroundTasks,
@@ -1415,6 +1416,15 @@ export default function ChatView(props: ChatViewProps) {
   const activeWorkStartedAt =
     deriveActiveWorkStartedAt(activeActivityRun, activeRuntime, localDispatchStartedAt) ??
     runlessWorkStartedAt;
+  const activeTurnLastActivityAt =
+    serverProjection === null || activeActivityRun === null || !isWorking
+      ? null
+      : deriveActiveTurnLastActivityAt({
+          projection: serverProjection,
+          runId: activeActivityRun.runId,
+          workStartedAt: activeWorkStartedAt,
+          items: serverVisibleTurnItems,
+        });
   const activeRunPreparing = activeActivityRun?.status === "preparing";
   const sendQueuesBehindSetup =
     isServerThread && (activeRunPreparing || activeActivityRun?.status === "starting");
@@ -3282,6 +3292,9 @@ export default function ChatView(props: ChatViewProps) {
                     activeThreadShell?.hasPendingUserInput === true)
                 }
                 activeTurnStartedAt={paintOnlyDisplayedTimeline ? null : activeWorkStartedAt}
+                activeTurnLastActivityAt={
+                  paintOnlyDisplayedTimeline ? null : activeTurnLastActivityAt
+                }
                 worktreeSetup={paintOnlyDisplayedTimeline ? null : worktreeSetup}
                 onCancelWorktreeSetup={onCancelWorktreeSetupStable}
                 {...(paintOnlyDisplayedTimeline

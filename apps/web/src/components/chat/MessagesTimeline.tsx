@@ -184,6 +184,7 @@ interface MessagesTimelineProps {
   runlessWorkActive?: boolean;
   activeTurnInProgress: boolean;
   activeTurnStartedAt?: string | null;
+  activeTurnLastActivityAt?: string | null;
   worktreeSetup?: WorktreeSetupSnapshot | null;
   onCancelWorktreeSetup?: () => void;
   retryableWorkspacePreparationRunIds?: ReadonlySet<RunId>;
@@ -290,6 +291,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   runlessWorkActive = false,
   activeTurnInProgress,
   activeTurnStartedAt = null,
+  activeTurnLastActivityAt = null,
   worktreeSetup = null,
   footer = null,
   onCancelWorktreeSetup,
@@ -948,6 +950,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     backgroundWorktreeSetup,
     activeTurnInProgress,
     awaitingUser,
+    activeTurnLastActivityAt,
     isPreparingWorktree,
     latestRunId: latestRun?.runId ?? null,
   };
