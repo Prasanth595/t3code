@@ -1,3 +1,4 @@
+import { useActiveNewTask } from "../../state/active-new-task";
 import * as Dialog from "../../components/ui/Dialog";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { useEnvironmentPresentation } from "../../state/presentation";
@@ -435,6 +436,13 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       }),
     );
   }, [activeDraftKey, editingPendingTask, selectedProject]);
+  useActiveNewTask(
+    editingPendingTask
+      ? `pending-task:${editingPendingTask.messageId}`
+      : selectedProjectDraftKey
+        ? `draft-task:${selectedProjectDraftKey}`
+        : null,
+  );
   const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
   const prompt = selectedProjectDraft.text;
   const attachments = selectedProjectDraft.attachments;

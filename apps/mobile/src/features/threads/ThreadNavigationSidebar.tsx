@@ -1,3 +1,4 @@
+import { activeNewTaskAtom } from "../../state/active-new-task";
 import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { resolveScratchProjectScopeKey } from "@t3tools/client-runtime/state/project-grouping";
@@ -157,6 +158,7 @@ function ThreadNavigationSidebarPane(
     regenerateThreadTitle,
   } = useThreadListActions();
   const pendingTasks = usePendingNewTasks();
+  const activeNewTask = useAtomValue(activeNewTaskAtom);
   const queuedThreadKeys = useQueuedThreadKeys();
   const { confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = Object.values(savedConnectionsById)
@@ -528,6 +530,7 @@ function ThreadNavigationSidebarPane(
   // clock deliberately stays out: its per-row text lives on the items, so a
   // tick only re-renders rows whose displayed text actually moved.
   const listExtraData = {
+    activeNewTask,
     selectedThreadKey: props.selectedThreadKey ?? "",
     projectByKey,
     projectTitleByProjectKey,
@@ -574,6 +577,7 @@ function ThreadNavigationSidebarPane(
         return (
           <ThreadListV2PendingRow
             pendingTask={item.pendingTask}
+            selected={activeNewTask?.pendingKey === item.pendingTask.key}
             project={projectByKey.get(pendingScopeKey) ?? null}
             projectTitle={projectTitleByProjectKey.get(pendingScopeKey)}
             environmentLabel={
@@ -626,7 +630,10 @@ function ThreadNavigationSidebarPane(
             )}
             searchQuery={props.searchQuery}
             pane="sidebar"
-            selected={scopedThreadKey(thread.environmentId, thread.id) === props.selectedThreadKey}
+            selected={
+              !activeNewTask &&
+              scopedThreadKey(thread.environmentId, thread.id) === props.selectedThreadKey
+            }
             fullSwipeWidth={props.width - 20}
             onSelectThread={handleSelectThread}
             onOpenThreadPullRequests={handleOpenThreadPullRequests}
