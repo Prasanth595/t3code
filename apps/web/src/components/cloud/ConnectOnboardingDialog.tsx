@@ -175,7 +175,7 @@ function ConfiguredConnectOnboardingDialog() {
       title: "T3 Connect enabled",
       description: exposeEnvironment
         ? "This environment is available to your other devices through T3 Connect."
-        : "This environment publishes agent activity to your mobile clients.",
+        : "This environment sends agent activity to your mobile devices.",
     });
     setStep("devices");
   };
@@ -191,10 +191,7 @@ function ConfiguredConnectOnboardingDialog() {
         <WizardHeader
           title="Set up T3 Connect"
           description={
-            <>
-              Mesh your devices together. Publish this environment and connect the rest, all in one
-              place.
-            </>
+            <>Use T3 Code on your other devices. Choose what to share and which hosts to connect.</>
           }
         >
           {steps.length > 1 ? (
@@ -279,7 +276,7 @@ function ConfiguredConnectOnboardingDialog() {
 }
 
 const STEP_LABELS: Record<OnboardingStep, string> = {
-  publish: "Publish",
+  publish: "Access and activity",
   devices: "Connect devices",
 };
 
@@ -302,15 +299,15 @@ function PublishStep({
     <div className="space-y-3">
       <div className="rounded-lg border">
         <OnboardingToggleRow
-          title="Publish this environment"
-          description="Make this environment available to your other devices through T3 Connect."
+          title="Allow access to this environment through T3 Connect"
+          description="Connect to this host from other devices signed in to your account."
           checked={exposeEnvironment}
           disabled={disabled}
           onCheckedChange={onExposeEnvironmentChange}
         />
         <OnboardingToggleRow
-          title="Publish agent activity"
-          description="Send activity from this environment to your mobile clients for push notifications and Live Activities."
+          title="Send agent activity to mobile devices"
+          description="Use agent activity in push notifications or Live Activities on your phone."
           checked={publishAgentActivity}
           disabled={disabled}
           onCheckedChange={onPublishAgentActivityChange}
