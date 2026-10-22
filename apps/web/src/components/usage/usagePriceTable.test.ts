@@ -4,6 +4,7 @@ import {
   usageAliasCell,
   usagePriceCell,
   usagePriceTableChanges,
+  usagePriceTableErrors,
   type UsagePriceDraft,
 } from "./usagePriceTable";
 import type { UsagePriceTarget } from "./usagePriceTargets";
@@ -133,4 +134,25 @@ describe("price table edits", () => {
       ),
     ).toEqual({ value: "", placeholder: "Mixed" });
   });
+
+  it("requires clearing a mapping before a price edit can apply to every environment", () => {
+    const mapped = target("mapped", {}, { example: "example-model" });
+    const priced = target("priced", { example: price });
+    const edit = draft({ inputCostPerMillionTokens: "3", outputCostPerMillionTokens: "8" });
+    expect(usagePriceTableErrors([mapped, priced], [edit]).get(edit.id)).toBe(
+      'Clear "Map to" to edit prices on mapped.',
+    );
+    expect(usagePriceTableChanges(mapped, [edit]).changes).toEqual([]);
+
+    const cleared = { ...edit, alias: "" };
+    expect(usagePriceTableErrors([mapped, priced], [cleared]).size).toBe(0);
+    expect(usagePriceTableChanges(mapped, [cleared]).changes).toEqual([
+      { model: "example", alias: null },
+      { model: "example", price: { inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 8 } },
+    ]);
+    expect(usagePriceTableChanges(priced, [cleared]).changes).toEqual([
+      { model: "example", price: { inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 8 } },
+    ]);
+  });
+
 });
