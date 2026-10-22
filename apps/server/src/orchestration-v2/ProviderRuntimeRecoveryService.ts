@@ -590,7 +590,7 @@ export const make = Effect.gen(function* () {
       for (const session of projection.providerSessions.filter(
         (candidate) =>
           (candidate.status !== "stopped" && candidate.status !== "error") ||
-          (candidate.extensionStatuses?.length ?? 0) > 0,
+          (candidate.status === "error" && (candidate.extensionStatuses?.length ?? 0) > 0),
       )) {
         events.push({
           id: yield* allocateEventId(),

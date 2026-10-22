@@ -655,7 +655,7 @@ function needsRecovery(
         projection.providerSessions.some(
           (session) =>
             (session.status !== "stopped" && session.status !== "error") ||
-            (session.extensionStatuses?.length ?? 0) > 0,
+            (session.status === "error" && (session.extensionStatuses?.length ?? 0) > 0),
         ) ||
         projection.providerThreads.some(
           (thread) =>
@@ -3965,17 +3965,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 CROSS JOIN orchestration_v2_projection_provider_session_bindings AS bindings
                   ON bindings.provider_session_id = sessions.provider_session_id
                 WHERE sessions.status NOT IN ('stopped', 'error')
-                  OR CASE WHEN json_valid(sessions.payload_json)
+                  OR (sessions.status = 'error' AND CASE WHEN json_valid(sessions.payload_json)
                     THEN json_array_length(sessions.payload_json, '$.extensionStatuses') > 0
-                    ELSE 0 END
+                    ELSE 0 END)
                 UNION
                 -- A detach drops the binding but keeps the session's status.
                 SELECT sessions.thread_id
                 FROM orchestration_v2_projection_provider_sessions AS sessions
                 WHERE (sessions.status NOT IN ('stopped', 'error')
-                  OR CASE WHEN json_valid(sessions.payload_json)
+                  OR (sessions.status = 'error' AND CASE WHEN json_valid(sessions.payload_json)
                     THEN json_array_length(sessions.payload_json, '$.extensionStatuses') > 0
-                    ELSE 0 END)
+                    ELSE 0 END))
                   AND sessions.thread_id IS NOT NULL
                   AND NOT EXISTS (
                     SELECT 1 FROM orchestration_v2_projection_provider_session_bindings AS bindings
@@ -4454,9 +4454,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   )
                   AND (
                     session.status NOT IN ('stopped', 'error')
-                    OR CASE WHEN json_valid(session.payload_json)
+                    OR (session.status = 'error' AND CASE WHEN json_valid(session.payload_json)
                       THEN json_array_length(session.payload_json, '$.extensionStatuses') > 0
-                      ELSE 0 END
+                      ELSE 0 END)
                     OR session.provider_session_id IN (
                       SELECT provider_thread.provider_session_id
                       FROM orchestration_v2_projection_provider_threads AS provider_thread
@@ -4474,9 +4474,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 OR (
                   session.thread_id = ${threadId}
                   AND (session.status NOT IN ('stopped', 'error')
-                    OR CASE WHEN json_valid(session.payload_json)
+                    OR (session.status = 'error' AND CASE WHEN json_valid(session.payload_json)
                       THEN json_array_length(session.payload_json, '$.extensionStatuses') > 0
-                      ELSE 0 END)
+                      ELSE 0 END))
                   AND NOT EXISTS (
                     SELECT 1 FROM orchestration_v2_projection_provider_session_bindings AS binding
                     WHERE binding.provider_session_id = session.provider_session_id
