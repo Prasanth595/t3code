@@ -1,19 +1,9 @@
-import {
-  ClientSettingsSchema,
-  DEFAULT_CLIENT_SETTINGS,
-  type ClientSettings,
-} from "@t3tools/contracts";
+import { ClientSettingsSchema, type ClientSettings } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import {
-  parseThemeFile,
-  serializeThemeFile,
-  type ThemeDefinition,
-  type ThemeHalves,
-  type ThemePreferenceMode,
-} from "./themePalette";
+import type { ThemePreferenceMode } from "./themePalette";
 
 /**
  * Whether each client setting goes in the device settings file. Settings that describe how someone
@@ -104,29 +94,36 @@ export type DeviceSettingKey = {
 const DEVICE_SETTINGS_FILE_KEYS = (
   Object.keys(DEVICE_SETTINGS_FILE_SCOPE) as Array<keyof typeof DEVICE_SETTINGS_FILE_SCOPE>
 ).filter((key): key is DeviceSettingKey => DEVICE_SETTINGS_FILE_SCOPE[key]);
+
 export type DeviceSettings = Pick<ClientSettings, DeviceSettingKey>;
+
+/** The theme used for each half of the system mode; null means that half has none. */
+export interface ThemePair {
+  readonly light: string | null;
+  readonly dark: string | null;
+}
 
 export interface DeviceAppearance {
   readonly theme: string;
   readonly appearanceMode: ThemePreferenceMode;
-  readonly themeHalves: ThemeHalves | null;
+  readonly themeHalves: ThemePair;
   readonly advancedTypography: boolean;
 }
-
-export const DEFAULT_DEVICE_APPEARANCE: DeviceAppearance = {
-  theme: "system",
-  appearanceMode: "system",
-  themeHalves: null,
-  advancedTypography: false,
-};
 
 export interface DeviceSettingsSnapshot {
   readonly settings: DeviceSettings;
   readonly appearance: DeviceAppearance;
 }
 
-export interface DeviceSettingsFileImport extends DeviceSettingsSnapshot {
-  readonly customThemes: ReadonlyArray<ThemeDefinition>;
+/** Only the values a file sets validly; everything else keeps its current value on import. */
+export interface DeviceSettingsFileImport {
+  readonly settings: Partial<DeviceSettings>;
+  readonly appearance: {
+    readonly theme?: string;
+    readonly appearanceMode?: ThemePreferenceMode;
+    readonly themeHalves?: Partial<ThemePair>;
+    readonly advancedTypography?: boolean;
+  };
   readonly warnings: ReadonlyArray<string>;
 }
 
@@ -136,13 +133,6 @@ export interface DeviceSettingChange {
   readonly to: unknown;
 }
 
-const APPEARANCE_FILE_KEYS = new Set([
-  "theme",
-  "appearanceMode",
-  "themeHalves",
-  "advancedTypography",
-  "customThemes",
-]);
 const DEVICE_SETTING_KEY_SET: ReadonlySet<string> = new Set(DEVICE_SETTINGS_FILE_KEYS);
 const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 
@@ -164,42 +154,18 @@ export function pickDeviceSettings(settings: ClientSettings): DeviceSettings {
   ) as DeviceSettings;
 }
 
-function selectedThemeIds(appearance: DeviceAppearance): ReadonlySet<string> {
-  return new Set(
-    [appearance.theme, appearance.themeHalves?.light, appearance.themeHalves?.dark].filter(
-      (themeId) => themeId !== undefined,
-    ),
-  );
-}
-
-/** Only values that differ from their defaults are written, so later default changes still apply. */
+/** Every value is written, so importing the file makes another browser match this one. */
 export function serializeDeviceSettingsFile(input: {
   readonly settings: ClientSettings;
   readonly appearance: DeviceAppearance;
-  readonly customThemes: ReadonlyArray<ThemeDefinition>;
 }): string {
   const encoded: Readonly<Record<string, unknown>> = encodeClientSettings(input.settings);
   const file: Record<string, unknown> = {};
-  for (const key of DEVICE_SETTINGS_FILE_KEYS) {
-    if (!Equal.equals(input.settings[key], DEFAULT_CLIENT_SETTINGS[key])) {
-      file[key] = encoded[key];
-    }
-  }
-
-  const { appearance } = input;
-  if (appearance.theme !== DEFAULT_DEVICE_APPEARANCE.theme) file.theme = appearance.theme;
-  if (appearance.appearanceMode !== DEFAULT_DEVICE_APPEARANCE.appearanceMode) {
-    file.appearanceMode = appearance.appearanceMode;
-  }
-  if (appearance.themeHalves !== null) file.themeHalves = appearance.themeHalves;
-  if (appearance.advancedTypography) file.advancedTypography = true;
-
-  const selected = selectedThemeIds(appearance);
-  const customThemes = input.customThemes.filter((theme) => selected.has(theme.id));
-  if (customThemes.length > 0) {
-    file.customThemes = customThemes.map((theme): unknown => JSON.parse(serializeThemeFile(theme)));
-  }
-
+  for (const key of DEVICE_SETTINGS_FILE_KEYS) file[key] = encoded[key];
+  file.theme = input.appearance.theme;
+  file.appearanceMode = input.appearance.appearanceMode;
+  file.themeHalves = input.appearance.themeHalves;
+  file.advancedTypography = input.appearance.advancedTypography;
   return `${JSON.stringify(file, null, 2)}\n`;
 }
 
@@ -211,24 +177,12 @@ function isThemePreferenceMode(value: unknown): value is ThemePreferenceMode {
   return value === "light" || value === "dark" || value === "system";
 }
 
-function readAppearanceValue<T>(
-  file: Readonly<Record<string, unknown>>,
-  key: string,
-  accept: (value: unknown) => value is T,
-  fallback: T,
-  warnings: string[],
-): T {
-  if (!(key in file)) return fallback;
-  const value = file[key];
-  if (accept(value)) return value;
-  warnings.push(`${key}: invalid value, reset to its default`);
-  return fallback;
-}
+const invalidValue = (key: string) => `${key}: invalid value, kept the current one`;
 
 /**
- * Import replaces every value the file covers: keys the file omits go back to their defaults.
- * Unknown keys and values that fail their schema become warnings instead of failing the file,
- * so a file written by another version still applies everything it can.
+ * Import merges: each value that passes its check replaces the current one, and every other
+ * value stays as it is. Unknown keys and invalid values become warnings instead of failing the
+ * file, so a file written by another version still applies everything it can.
  */
 export function parseDeviceSettingsFile(
   value: unknown,
@@ -239,87 +193,64 @@ export function parseDeviceSettingsFile(
   }
 
   const warnings: string[] = [];
-  const settings: Record<string, unknown> = pickDeviceSettings(DEFAULT_CLIENT_SETTINGS);
+  const settings: Record<string, unknown> = {};
+  const appearance: {
+    theme?: string;
+    appearanceMode?: ThemePreferenceMode;
+    themeHalves?: Partial<ThemePair>;
+    advancedTypography?: boolean;
+  } = {};
+  const isTheme = (themeId: unknown): themeId is string =>
+    typeof themeId === "string" && isKnownTheme(themeId);
+
   for (const [key, rawValue] of Object.entries(value)) {
-    if (APPEARANCE_FILE_KEYS.has(key)) continue;
-    if (!isDeviceSettingKey(key)) {
+    if (key === "theme") {
+      if (isTheme(rawValue)) appearance.theme = rawValue;
+      else warnings.push(invalidValue(key));
+    } else if (key === "appearanceMode") {
+      if (isThemePreferenceMode(rawValue)) appearance.appearanceMode = rawValue;
+      else warnings.push(invalidValue(key));
+    } else if (key === "advancedTypography") {
+      if (typeof rawValue === "boolean") appearance.advancedTypography = rawValue;
+      else warnings.push(invalidValue(key));
+    } else if (key === "themeHalves") {
+      if (!isRecord(rawValue)) {
+        warnings.push(invalidValue(key));
+        continue;
+      }
+      const themeHalves: { light?: string | null; dark?: string | null } = {};
+      for (const half of ["light", "dark"] as const) {
+        if (!(half in rawValue)) continue;
+        const themeId = rawValue[half];
+        if (themeId === null || isTheme(themeId)) themeHalves[half] = themeId;
+        else warnings.push(invalidValue(`themeHalves.${half}`));
+      }
+      appearance.themeHalves = themeHalves;
+    } else if (!isDeviceSettingKey(key)) {
       warnings.push(`${key}: not a device setting, ignored`);
-      continue;
-    }
-    const decoded = DEVICE_SETTING_DECODERS[key](rawValue);
-    if (Option.isNone(decoded)) {
-      warnings.push(`${key}: invalid value, reset to its default`);
-      continue;
-    }
-    settings[key] = decoded.value;
-  }
-
-  const customThemes: ThemeDefinition[] = [];
-  if ("customThemes" in value) {
-    if (Array.isArray(value.customThemes)) {
-      value.customThemes.forEach((entry: unknown, index) => {
-        try {
-          const theme = parseThemeFile(entry);
-          if (customThemes.some((existing) => existing.id === theme.id)) {
-            warnings.push(
-              `customThemes[${index}]: the theme id "${theme.id}" appears earlier. Ignored.`,
-            );
-            return;
-          }
-          customThemes.push(theme);
-        } catch (cause) {
-          const reason = cause instanceof Error ? cause.message : "invalid theme";
-          warnings.push(`customThemes[${index}]: ${reason} Ignored.`);
-        }
-      });
     } else {
-      warnings.push("customThemes: expected a list, ignored");
+      const decoded = DEVICE_SETTING_DECODERS[key](rawValue);
+      if (Option.isSome(decoded)) settings[key] = decoded.value;
+      else warnings.push(invalidValue(key));
     }
   }
 
-  const isAvailableTheme = (themeId: unknown): themeId is string =>
-    typeof themeId === "string" &&
-    (isKnownTheme(themeId) || customThemes.some((theme) => theme.id === themeId));
-  const isThemeHalves = (halves: unknown): halves is ThemeHalves | null =>
-    halves === null ||
-    (isRecord(halves) &&
-      (halves.light !== undefined || halves.dark !== undefined) &&
-      (halves.light === undefined || isAvailableTheme(halves.light)) &&
-      (halves.dark === undefined || isAvailableTheme(halves.dark)));
-  const isBoolean = (flag: unknown): flag is boolean => typeof flag === "boolean";
+  return { settings: settings as Partial<DeviceSettings>, appearance, warnings };
+}
 
-  const appearance: DeviceAppearance = {
-    theme: readAppearanceValue(
-      value,
-      "theme",
-      isAvailableTheme,
-      DEFAULT_DEVICE_APPEARANCE.theme,
-      warnings,
-    ),
-    appearanceMode: readAppearanceValue(
-      value,
-      "appearanceMode",
-      isThemePreferenceMode,
-      DEFAULT_DEVICE_APPEARANCE.appearanceMode,
-      warnings,
-    ),
-    themeHalves: readAppearanceValue(
-      value,
-      "themeHalves",
-      isThemeHalves,
-      DEFAULT_DEVICE_APPEARANCE.themeHalves,
-      warnings,
-    ),
-    advancedTypography: readAppearanceValue(
-      value,
-      "advancedTypography",
-      isBoolean,
-      DEFAULT_DEVICE_APPEARANCE.advancedTypography,
-      warnings,
-    ),
+export function mergeDeviceSettings(
+  current: DeviceSettingsSnapshot,
+  imported: DeviceSettingsFileImport,
+): DeviceSettingsSnapshot {
+  const { themeHalves, ...appearance } = imported.appearance;
+  return {
+    settings: { ...current.settings, ...imported.settings },
+    appearance: {
+      ...current.appearance,
+      ...appearance,
+      themeHalves: { ...current.appearance.themeHalves, ...themeHalves },
+    },
   };
-
-  return { settings: settings as DeviceSettings, appearance, customThemes, warnings };
 }
 
 export function diffDeviceSettings(
@@ -327,33 +258,25 @@ export function diffDeviceSettings(
   next: DeviceSettingsSnapshot,
 ): ReadonlyArray<DeviceSettingChange> {
   const changes: DeviceSettingChange[] = [];
+  const compare = (key: string, from: unknown, to: unknown) => {
+    if (!Equal.equals(from, to)) changes.push({ key, from, to });
+  };
   for (const key of DEVICE_SETTINGS_FILE_KEYS) {
-    if (!Equal.equals(current.settings[key], next.settings[key])) {
-      changes.push({ key, from: current.settings[key], to: next.settings[key] });
-    }
+    compare(key, current.settings[key], next.settings[key]);
   }
-  for (const key of ["theme", "appearanceMode", "themeHalves", "advancedTypography"] as const) {
-    if (!Equal.equals(current.appearance[key], next.appearance[key])) {
-      changes.push({ key, from: current.appearance[key], to: next.appearance[key] });
-    }
+  compare("theme", current.appearance.theme, next.appearance.theme);
+  compare("appearanceMode", current.appearance.appearanceMode, next.appearance.appearanceMode);
+  for (const half of ["light", "dark"] as const) {
+    compare(
+      `themeHalves.${half}`,
+      current.appearance.themeHalves[half],
+      next.appearance.themeHalves[half],
+    );
   }
+  compare(
+    "advancedTypography",
+    current.appearance.advancedTypography,
+    next.appearance.advancedTypography,
+  );
   return changes;
-}
-
-/** A local theme with the same id is replaced only when its definition differs. */
-export function planCustomThemeImport(
-  imported: ReadonlyArray<ThemeDefinition>,
-  existing: ReadonlyArray<ThemeDefinition>,
-): {
-  readonly added: ReadonlyArray<ThemeDefinition>;
-  readonly replaced: ReadonlyArray<ThemeDefinition>;
-} {
-  const added: ThemeDefinition[] = [];
-  const replaced: ThemeDefinition[] = [];
-  for (const theme of imported) {
-    const local = existing.find((candidate) => candidate.id === theme.id);
-    if (local === undefined) added.push(theme);
-    else if (serializeThemeFile(local) !== serializeThemeFile(theme)) replaced.push(theme);
-  }
-  return { added, replaced };
 }

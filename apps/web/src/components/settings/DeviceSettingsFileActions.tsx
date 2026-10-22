@@ -6,30 +6,28 @@ import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "r
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import {
   diffDeviceSettings,
+  mergeDeviceSettings,
   parseDeviceSettingsFile,
   pickDeviceSettings,
-  planCustomThemeImport,
   serializeDeviceSettingsFile,
   type DeviceAppearance,
   type DeviceSettingChange,
-  type DeviceSettingsFileImport,
+  type DeviceSettingsSnapshot,
 } from "../../deviceSettingsFile";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import {
   ensureClientSettingsHydrated,
   getClientSettings,
-  persistClientSettingsPatch,
+  persistClientSettingsUpdate,
 } from "../../hooks/useSettings";
-import { readThemeHalves, readThemePreference, useTheme } from "../../hooks/useTheme";
-import { cn } from "../../lib/utils";
 import {
-  getCustomThemes,
-  installCustomTheme,
-  isKnownThemePreference,
-  removeCustomThemes,
-  updateCustomTheme,
-  type ThemeDefinition,
-} from "../../themePalette";
+  readAppearanceModePreference,
+  readThemeHalvesRaw,
+  readThemePreference,
+  useTheme,
+} from "../../hooks/useTheme";
+import { cn } from "../../lib/utils";
+import { isKnownThemePreference } from "../../themePalette";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import {
@@ -51,30 +49,35 @@ const MAX_DEVICE_SETTINGS_FILE_BYTES = 1024 * 1024;
 
 interface ImportPreview {
   readonly fileName: string;
-  readonly imported: DeviceSettingsFileImport;
+  readonly next: DeviceSettingsSnapshot;
   readonly changes: ReadonlyArray<DeviceSettingChange>;
-  readonly addedThemes: ReadonlyArray<ThemeDefinition>;
-  readonly replacedThemes: ReadonlyArray<ThemeDefinition>;
+  readonly warnings: ReadonlyArray<string>;
 }
 
 function formatSettingValue(value: unknown): string {
   return value === undefined ? "default" : JSON.stringify(value);
 }
 
-function useDeviceAppearance() {
-  const theme = useTheme();
-  const [advancedTypography, setAdvancedTypography] = useLocalStorage(
-    TYPOGRAPHY_ADVANCED_STORAGE_KEY,
-    false,
-    Schema.Boolean,
-  );
-  const appearance: DeviceAppearance = {
-    theme: theme.theme,
-    appearanceMode: theme.appearanceMode,
-    themeHalves: theme.themeHalves,
+/**
+ * Reads the stored values, not the resolved ones: a half that names a theme an environment has not
+ * sent yet still counts, so neither export nor import drops it.
+ */
+function readDeviceAppearance(advancedTypography: boolean): DeviceAppearance {
+  let theme = "system";
+  try {
+    theme = readThemePreference();
+  } catch {}
+  const halves = readThemeHalvesRaw();
+  return {
+    theme,
+    appearanceMode: readAppearanceModePreference(theme),
+    themeHalves: { light: halves.light ?? null, dark: halves.dark ?? null },
     advancedTypography,
   };
-  return { appearance, theme, setAdvancedTypography };
+}
+
+function useAdvancedTypography() {
+  return useLocalStorage(TYPOGRAPHY_ADVANCED_STORAGE_KEY, false, Schema.Boolean);
 }
 
 function notifySettingsUnavailable() {
@@ -86,7 +89,7 @@ function notifySettingsUnavailable() {
 }
 
 export function ExportDeviceSettingsButton() {
-  const { appearance } = useDeviceAppearance();
+  const [advancedTypography] = useAdvancedTypography();
 
   const exportSettings = async () => {
     const hydrated = await settlePromise(ensureClientSettingsHydrated);
@@ -98,8 +101,7 @@ export function ExportDeviceSettingsButton() {
       DEVICE_SETTINGS_FILE_NAME,
       serializeDeviceSettingsFile({
         settings: getClientSettings(),
-        appearance,
-        customThemes: getCustomThemes(),
+        appearance: readDeviceAppearance(advancedTypography),
       }),
     );
   };
@@ -140,7 +142,8 @@ export function DeviceSettingsImportDialog({
   const [isReading, setIsReading] = useState(false);
   const [isDropTarget, setIsDropTarget] = useState(false);
   const readRequestRef = useRef(0);
-  const { appearance, theme, setAdvancedTypography } = useDeviceAppearance();
+  const theme = useTheme();
+  const [advancedTypography, setAdvancedTypography] = useAdvancedTypography();
 
   const [renderedOpen, setRenderedOpen] = useState(open);
   if (renderedOpen !== open) {
@@ -184,16 +187,16 @@ export function DeviceSettingsImportDialog({
     }
     try {
       const imported = parseDeviceSettingsFile(JSON.parse(text.value), isKnownThemePreference);
-      const { added, replaced } = planCustomThemeImport(imported.customThemes, getCustomThemes());
+      const current = {
+        settings: pickDeviceSettings(getClientSettings()),
+        appearance: readDeviceAppearance(advancedTypography),
+      };
+      const next = mergeDeviceSettings(current, imported);
       setPreview({
         fileName: file.name,
-        imported,
-        changes: diffDeviceSettings(
-          { settings: pickDeviceSettings(getClientSettings()), appearance },
-          imported,
-        ),
-        addedThemes: added,
-        replacedThemes: replaced,
+        next,
+        changes: diffDeviceSettings(current, next),
+        warnings: imported.warnings,
       });
       setError(null);
     } catch (cause) {
@@ -220,73 +223,47 @@ export function DeviceSettingsImportDialog({
     if (file) void readFile(file);
   };
 
+  // setTheme clears the light and dark pair, so after a theme change both halves are rewritten.
+  const writeAppearance = (from: DeviceAppearance, to: DeviceAppearance): boolean => {
+    const themeChanged = from.theme !== to.theme;
+    if (themeChanged && !theme.setTheme(to.theme)) return false;
+    if (from.appearanceMode !== to.appearanceMode && !theme.setAppearanceMode(to.appearanceMode)) {
+      return false;
+    }
+    for (const half of ["light", "dark"] as const) {
+      const before = themeChanged ? null : from.themeHalves[half];
+      if (before !== to.themeHalves[half] && !theme.setThemeHalf(half, to.themeHalves[half])) {
+        return false;
+      }
+    }
+    if (from.advancedTypography !== to.advancedTypography) {
+      setAdvancedTypography(to.advancedTypography);
+    }
+    return true;
+  };
+
   const applyImport = async (accepted: ImportPreview) => {
-    // Planned again on each attempt, so the library as it is now decides what to add or replace.
-    const localThemes = getCustomThemes();
-    const { added, replaced } = planCustomThemeImport(accepted.imported.customThemes, localThemes);
-    let previousTheme = theme.theme;
-    try {
-      previousTheme = readThemePreference();
-    } catch {}
-    const previousAppearanceMode = theme.appearanceMode;
-    const previousHalves = readThemeHalves();
-    const installedIds: string[] = [];
-    const overwrittenThemes: ThemeDefinition[] = [];
-    // Undoes this attempt: themes first, then the base theme (which clears any mix), then the mix.
-    const rollback = () => {
-      try {
-        removeCustomThemes(installedIds);
-        for (const local of overwrittenThemes) updateCustomTheme(local);
-      } catch {}
-      theme.setTheme(previousTheme);
-      theme.setAppearanceMode(previousAppearanceMode);
-      if (previousHalves?.light) theme.setThemeHalf("light", previousHalves.light);
-      if (previousHalves?.dark) theme.setThemeHalf("dark", previousHalves.dark);
+    // Read again: the stored values may have changed since the preview was built.
+    const previous = readDeviceAppearance(advancedTypography);
+    const next = accepted.next.appearance;
+    const fail = () => {
+      writeAppearance(next, previous);
+      setError("The settings could not be saved. Nothing was changed. Try again.");
     };
-
-    try {
-      for (const customTheme of added) {
-        installCustomTheme(customTheme);
-        installedIds.push(customTheme.id);
-      }
-      for (const customTheme of replaced) {
-        const local = localThemes.find((candidate) => candidate.id === customTheme.id);
-        updateCustomTheme(customTheme);
-        if (local) overwrittenThemes.push(local);
-      }
-    } catch (cause) {
-      rollback();
-      const reason = cause instanceof Error ? cause.message : "Could not save the custom themes.";
-      setError(`${reason} Nothing was changed. Try again.`);
+    if (!writeAppearance(previous, next)) {
+      fail();
       return;
     }
-
-    const next = accepted.imported.appearance;
-    // setTheme drops any light and dark mix, so the mix is written after it.
-    const appearanceSaved =
-      theme.setTheme(next.theme) &&
-      theme.setAppearanceMode(next.appearanceMode) &&
-      (next.themeHalves === null
-        ? theme.clearThemeHalves()
-        : theme.setThemeHalf("light", next.themeHalves.light ?? null) &&
-          theme.setThemeHalf("dark", next.themeHalves.dark ?? null));
-    if (!appearanceSaved) {
-      rollback();
-      setError("The theme could not be saved. Nothing was changed. Try again.");
+    const saved = await settlePromise(() =>
+      persistClientSettingsUpdate((current) => ({ ...current, ...accepted.next.settings })),
+    );
+    if (saved._tag === "Failure") {
+      fail();
       return;
     }
-    setAdvancedTypography(next.advancedTypography);
-    await persistClientSettingsPatch(accepted.imported.settings);
     onImported();
     onOpenChange(false);
   };
-
-  const themeChanges = preview
-    ? [
-        ...preview.addedThemes.map((customTheme) => `Add custom theme ${customTheme.id}`),
-        ...preview.replacedThemes.map((customTheme) => `Replace custom theme ${customTheme.id}`),
-      ]
-    : [];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -294,7 +271,7 @@ export function DeviceSettingsImportDialog({
         <DialogHeader>
           <DialogTitle>Import device settings</DialogTitle>
           <DialogDescription>
-            Every device setting the file leaves out goes back to its default.
+            Settings the file leaves out, or that fail their check, keep their current value.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -345,7 +322,7 @@ export function DeviceSettingsImportDialog({
           ) : (
             <div className="space-y-3">
               <p className="truncate text-xs text-muted-foreground">{preview.fileName}</p>
-              {preview.changes.length === 0 && themeChanges.length === 0 ? (
+              {preview.changes.length === 0 ? (
                 <p className="text-sm">This file matches the current device settings.</p>
               ) : (
                 <ul
@@ -358,18 +335,15 @@ export function DeviceSettingsImportDialog({
                       {formatSettingValue(change.to)}
                     </li>
                   ))}
-                  {themeChanges.map((line) => (
-                    <li key={line}>{line}</li>
-                  ))}
                 </ul>
               )}
-              {preview.imported.warnings.length > 0 ? (
+              {preview.warnings.length > 0 ? (
                 <Alert variant="warning" controlAlignment="first-line">
                   <TriangleAlertIcon />
                   <AlertTitle>Warnings</AlertTitle>
                   <AlertDescription>
                     <ul aria-label="Warnings" className="space-y-1 text-xs">
-                      {preview.imported.warnings.map((warning) => (
+                      {preview.warnings.map((warning) => (
                         <li key={warning}>{warning}</li>
                       ))}
                     </ul>
@@ -397,7 +371,7 @@ export function DeviceSettingsImportDialog({
               <Button variant="outline" onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
-              <Button onClick={() => void applyImport(preview)}>Replace settings</Button>
+              <Button onClick={() => void applyImport(preview)}>Apply settings</Button>
             </>
           )}
         </DialogFooter>

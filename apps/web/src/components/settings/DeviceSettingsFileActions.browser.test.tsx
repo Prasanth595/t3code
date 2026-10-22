@@ -16,7 +16,7 @@ function setup() {
   return { [Symbol.dispose]: () => localStorage.clear() };
 }
 
-it("shows the changes a file makes and applies them on confirmation", async () => {
+it("shows the changes a file makes and merges them on confirmation", async () => {
   using _storage = setup();
   const onImported = vi.fn();
   const onOpenChange = vi.fn();
@@ -33,24 +33,23 @@ it("shows the changes a file makes and applies them on confirmation", async () =
 
   const changes = page.getByRole("list", { name: "Changes" });
   await expect.element(changes.getByText('chatWidth: "comfortable" → "wide"')).toBeVisible();
-  await expect.element(changes.getByText("wordWrap: false → true")).toBeVisible();
   const warnings = page.getByRole("list", { name: "Warnings" });
   await expect
-    .element(warnings.getByText("sendShortcut: invalid value, reset to its default"))
+    .element(warnings.getByText("sendShortcut: invalid value, kept the current one"))
     .toBeVisible();
   await expect
     .element(warnings.getByText("addedInALaterVersion: not a device setting, ignored"))
     .toBeVisible();
 
   await act(async () =>
-    (page.getByRole("button", { name: "Replace settings" }).element() as HTMLButtonElement).click(),
+    (page.getByRole("button", { name: "Apply settings" }).element() as HTMLButtonElement).click(),
   );
 
   await vi.waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
   expect(onImported).toHaveBeenCalledOnce();
   expect(getClientSettings()).toMatchObject({
     chatWidth: "wide",
-    wordWrap: true,
+    wordWrap: false,
     sendShortcut: "enter",
     onboardingCompletedAt: ONBOARDED_AT,
   });
