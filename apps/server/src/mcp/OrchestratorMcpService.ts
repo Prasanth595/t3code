@@ -127,6 +127,11 @@ import { isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
+import {
+  readStructuredResult,
+  resultSchemaOf,
+} from "./delegatedTaskResultFormat.ts";
+import { validateJsonSchema } from "./jsonSchemaValidation.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
@@ -728,6 +733,13 @@ function threadTitle(input: {
   const detail = input.title?.trim() || input.prompt?.trim();
   if (!detail) return `${input.parentTitle} thread ${input.index + 1}`;
   return detail.length > 80 ? `${detail.slice(0, 77)}...` : detail;
+}
+
+function structuredResultFor(prompt: string, summary: string | null) {
+  const schema = summary === null ? undefined : resultSchemaOf(prompt);
+  return schema === undefined || summary === null
+    ? {}
+    : readStructuredResult(summary, (value) => validateJsonSchema(schema, value));
 }
 
 function threadSettlement(
@@ -1552,6 +1564,7 @@ const make = Effect.gen(function* () {
       model: modelSelection.model,
       options: modelSelection.options ?? [],
       summary: derivedResult,
+      ...structuredResultFor(task.prompt, isTerminalTaskStatus(status) ? derivedResult : null),
       resultContextTransferId,
       latestTerminalRunId: terminalRun?.id ?? null,
       latestTerminalStatus:
@@ -2567,6 +2580,12 @@ const make = Effect.gen(function* () {
             childThreadId: result.childThreadId,
             status: result.status,
             summary: result.summary,
+            ...(result.structuredResult === undefined
+              ? {}
+              : { structuredResult: result.structuredResult }),
+            ...(result.structuredResultError === undefined
+              ? {}
+              : { structuredResultError: result.structuredResultError }),
             hasPendingQuestion: result.hasPendingQuestion,
             pendingApproval: result.pendingApproval,
           };

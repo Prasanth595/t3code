@@ -9,6 +9,8 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
+import { withResultSchema } from "./delegatedTaskResultFormat.ts";
+
 /** How much a runtime mode allows, narrowest first. */
 export function runtimeModeRank(mode: RuntimeMode): number {
   switch (mode) {
