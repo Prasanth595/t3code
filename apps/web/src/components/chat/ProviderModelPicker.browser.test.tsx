@@ -71,17 +71,17 @@ it("keeps composition keys out of model selection and dismissal", async () => {
       await act(() => search.element().dispatchEvent(event));
       expect(event.defaultPrevented).toBe(false);
       await expect.element(search).toBeVisible();
-      await expect.element(screen.getByRole("status", { name: "Selected model" })).toHaveTextContent(
-        "original",
-      );
+      await expect
+        .element(screen.getByRole("status", { name: "Selected model" }))
+        .toHaveTextContent("original");
     }
   }
 
   await userEvent.keyboard("{Enter}");
   await expect.element(search).not.toBeInTheDocument();
-  await expect.element(screen.getByRole("status", { name: "Selected model" })).toHaveTextContent(
-    "target",
-  );
+  await expect
+    .element(screen.getByRole("status", { name: "Selected model" }))
+    .toHaveTextContent("target");
   await page.getByRole("button", { name: "Choose model" }).click();
   await expect.element(search).toBeVisible();
   await userEvent.keyboard("{Escape}");
