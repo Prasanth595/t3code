@@ -1014,8 +1014,8 @@ export const FactoryRuntime = factoryRuntime();
 
 /**
  * The factory's root layer. server.ts merges it into the runtime; nothing else imports it. It
- * guards stdout and stderr before the factory starts, so a full disk under launchd drops log lines instead of
- * ending the server.
+ * guards stdout and stderr before the factory starts, so a full disk under launchd drops log
+ * lines instead of ending the server.
  */
 export const FactoryLayer = FactoryRuntime.pipe(
   Layer.provideMerge(Layer.effectDiscard(Effect.sync(guardLogStreams))),
