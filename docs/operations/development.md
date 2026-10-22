@@ -38,7 +38,7 @@ cafe skills install --global  # optional: cafe-* skills for coding agents
 
 With `origin` on git.cafe:
 
-- Use `cafe` for PRs, issues, comments, reviews, and labels, both reading and writing. Check status
+- Use `cafe` for existing PRs, issues, comments, reviews, and labels, both reading and writing. Check status
   comes from `cafe pr status <n> --json`.
 - Create PRs on GitHub: `git push` (to the `pushDefault` remote), then `gh pr create` or `gh stack`.
   A PR opened with `cafe pr create` or `cafe stack submit` can get a different number on each forge,
