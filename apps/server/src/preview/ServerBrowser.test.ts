@@ -1148,3 +1148,36 @@ it.live(
       }),
     ).pipe(Effect.provide(layer)),
 );
+
+it.live("an agent opens a reported profile after a restart, before any client reports again", () =>
+  Effect.gen(function* () {
+    yield* Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      yield* browser.reportProfiles({
+        profiles: [{ id: "profile-work", name: "Work", kind: "persistent" }],
+        defaultProfileId: "profile-work",
+      });
+    }).pipe(Effect.provide(Layer.fresh(ServerBrowser.layer)));
+
+    const restarted = yield* Effect.gen(function* () {
+      const broker = yield* Broker.PreviewAutomationBroker;
+      yield* ServerBrowser.ServerBrowser;
+      yield* Effect.yieldNow;
+      return yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false, profileId: "Work" },
+      });
+    }).pipe(Effect.provide(Layer.fresh(ServerBrowser.layer)));
+
+    expect(contextRequests).toEqual([{ profileId: "profile-work", isolated: false }]);
+    expect(restarted).toMatchObject({
+      defaultProfileId: "profile-work",
+      profiles: [
+        { id: "default", name: "Default" },
+        { id: "incognito", name: "Incognito", incognito: true },
+        { id: "profile-work", name: "Work" },
+      ],
+    });
+  }).pipe(Effect.provide(dependencies)),
+);
