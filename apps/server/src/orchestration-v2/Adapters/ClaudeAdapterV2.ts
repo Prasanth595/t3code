@@ -8793,6 +8793,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           toolName: Parameters<CanUseTool>[0],
           toolInput: Parameters<CanUseTool>[1],
           callbackOptions: Parameters<CanUseTool>[2],
+          options?: { readonly startToolCall?: boolean },
         ) {
           const context = yield* Ref.get(activeTurn);
           if (context === null) {
@@ -8806,6 +8807,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const nativeRequestId = callbackOptions.toolUseID;
           const nativeToolInput = claudeNativeToolInputFromRecord(toolInput);
           const heldForEcho = context.heldRootFrames.length > 0;
+          const startToolCall = toolName !== "Agent" && options?.startToolCall !== false;
           if (toolName === "Agent") {
             rememberClaudeSubagentLaunch(
               subagentModelCatalog,
@@ -8815,7 +8817,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               nativeToolInput,
               null,
             );
-          } else if (!heldForEcho) {
+          } else if (startToolCall && !heldForEcho) {
             yield* ensureToolCallStarted({
               context,
               nativeItemId: nativeRequestId,
@@ -8836,7 +8838,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // did before this turn was held. ExitPlanMode is answered at once
             // below, so its frames stay held.
             yield* releaseHeldRootFrames(context);
-            if (toolName !== "Agent") {
+            if (startToolCall) {
               yield* ensureToolCallStarted({
                 context,
                 nativeItemId: nativeRequestId,
@@ -9094,6 +9096,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   requestId: callbackOptions.requestId,
                   toolUseID: request.toolUseID ?? callbackOptions.requestId,
                 },
+                // The dialog is a control request, not a tool call, so no
+                // tool_result would ever settle a tool row started for it.
+                { startToolCall: false },
               );
               if (result.behavior !== "allow") return { behavior: "cancelled" as const };
               const answers =
