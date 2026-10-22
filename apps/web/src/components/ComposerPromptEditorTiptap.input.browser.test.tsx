@@ -9,6 +9,7 @@ import {
 
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import type { Editor } from "@tiptap/core";
+import { closeHistory } from "@tiptap/pm/history";
 import { createElement, createRef, useEffect, useState } from "react";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -176,6 +177,56 @@ it("lets composition replace selected text without surrounding it", async () => 
     typeText(editor, 1, 5, '"');
   });
   expect(serializeEditorDoc(editor.state.doc).value).toBe('"');
+});
+
+it("chips a hand-typed skill on its completing space without changing the prompt or undo", async () => {
+  await using screen = await mountEditor("", true, [babysit]);
+  const { editor } = screen;
+  const prefix = "echo $HOME `$babysit` $babysit";
+  await act(async () => {
+    editor.commands.focus("end");
+    for (const char of prefix) {
+      const { from, to } = editor.state.selection;
+      typeText(editor, from, to, char);
+    }
+  });
+  expect(editor.state.doc.textContent).toBe("echo $HOME $babysit $babysit");
+  await act(async () => {
+    editor.view.dispatch(closeHistory(editor.state.tr));
+    const { from, to } = editor.state.selection;
+    typeText(editor, from, to, " ");
+  });
+  expect(editor.state.doc.firstChild?.maybeChild(3)?.type.name).toBe("composer-skill");
+  expect(editor.state.doc.lastChild?.lastChild?.text).toBe(" ");
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(`${prefix} `);
+  expect(editor.state.selection.from).toBe(editor.state.doc.content.size - 1);
+  await act(async () => {
+    editor.commands.undo();
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(prefix);
+  expect(editor.state.doc.textContent).toBe("echo $HOME $babysit $babysit");
+  await act(async () => {
+    editor.commands.redo();
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(`${prefix} `);
+  expect(editor.state.doc.firstChild?.maybeChild(3)?.type.name).toBe("composer-skill");
+});
+
+it("leaves a composing skill as text until the next edit", async () => {
+  await using screen = await mountEditor("$babysit", true, [babysit]);
+  const { editor } = screen;
+  await act(async () => {
+    editor.view.focus();
+    editor.view.dom.dispatchEvent(new CompositionEvent("compositionstart"));
+    editor.view.dispatch(editor.state.tr.insertText(" ", 9));
+  });
+  expect(editor.state.doc.textContent).toBe("$babysit ");
+  await act(async () => {
+    editor.view.dom.dispatchEvent(new CompositionEvent("compositionend", { data: "$babysit " }));
+    editor.view.dispatch(editor.state.tr.insertText("x", 10));
+  });
+  expect(editor.state.doc.firstChild?.firstChild?.type.name).toBe("composer-skill");
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("$babysit x");
 });
 
 it("keeps unknown dollar names editable when restoring and pasting a draft", async () => {
