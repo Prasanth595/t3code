@@ -37,8 +37,8 @@ export function evaluatePullRequestWatch(
 ): PullRequestWatchReport {
   const changes: Array<PullRequestWatchChange> = [];
   const headSha = detail.headSha ?? null;
-  // Only a read with a head can persist a fresh watch's baseline. Remarks use startedAt.
-  const baseline = watch.headSha === null && headSha !== null;
+  // Remarks already have their baseline in startedAt.
+  const baseline = watch.awaitingBaseline === true;
   const headMoved = headSha !== watch.headSha;
 
   // An empty list keeps the last state: a host can answer with one when its check read fails.
