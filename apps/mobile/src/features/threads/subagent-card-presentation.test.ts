@@ -7,6 +7,7 @@ describe("subagent card", () => {
     ["![screenshot](screenshots/shot.png) Verified", "screenshot Verified"],
     ["[docs](https://en.wikipedia.org/wiki/T3_(protocol))", "docs"],
     ["[report](outputs/report%20(final).md)", "report"],
+    ["[report](outputs/report\\(final.md)", "report"],
   ])("strips image and link markup from %s", (detail, expected) => {
     expect(subagentCardDetail(detail)).toBe(expected);
   });
