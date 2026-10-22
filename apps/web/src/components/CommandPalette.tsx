@@ -1394,7 +1394,9 @@ function OpenCommandPaletteDialog(props: {
         value: "action:move-thread-project",
         searchTerms: ["move", "project", "reassign", "no project"],
         title: "Move to project…",
-        disabled: !threadRuntimeCanArchive(thread.runtime),
+        disabled:
+          !threadRuntimeCanArchive(thread.runtime) ||
+          !readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope),
         icon: <FolderIcon className={ITEM_ICON_CLASS} />,
         addonIcon: <FolderIcon className={ADDON_ICON_CLASS} />,
         groups: [
