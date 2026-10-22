@@ -14,10 +14,7 @@ it("keeps keyboard scrolling available as a streamed equation outgrows its viewp
       <button>After equation</button>
     </div>
   );
-  const container = document.createElement("div");
-  // App CSS clips body overflow, so keep the fixture inside the viewport.
-  container.style.cssText = "position: fixed; inset: 0";
-  await using screen = await render(equation("x"), { container });
+  await using screen = await render(equation("x"));
   await screen.getByRole("button", { name: "Before equation" }).click();
   await userEvent.keyboard("{Tab}");
   await expect.element(screen.getByRole("button", { name: "After equation" })).toHaveFocus();
