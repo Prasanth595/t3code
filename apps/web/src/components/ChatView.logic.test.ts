@@ -6,6 +6,7 @@ import {
   snapshotComposerSend,
   withMessageContext,
   deriveAvailableRevertTurnCounts,
+  deriveThreadPendingBackgroundTasks,
   deriveWorkspaceMutationId,
 } from "./ChatView.logic";
 import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
@@ -1211,6 +1212,38 @@ describe("deriveAvailableRevertTurnCounts", () => {
   it("offers nothing without a provider session to rewind", () => {
     expect(deriveAvailableRevertTurnCounts(projection({ providerSessionId: null })).size).toBe(0);
     expect(deriveAvailableRevertTurnCounts(null).size).toBe(0);
+  });
+});
+
+describe("deriveThreadPendingBackgroundTasks", () => {
+  function projection(subagentRunOrdinal: number) {
+    const base = makeThreadProjectionFixture();
+    return {
+      ...base,
+      runs: [
+        { id: RunId.make("run-1"), ordinal: 1, status: "completed" },
+        { id: RunId.make("run-2"), ordinal: 2, status: "running" },
+      ],
+      turnItems: [
+        {
+          id: TurnItemId.make("subagent"),
+          runId: RunId.make(`run-${subagentRunOrdinal}`),
+          type: "subagent",
+          status: "running",
+          title: "Review",
+        },
+      ],
+    } as unknown as ReturnType<typeof makeThreadProjectionFixture>;
+  }
+
+  it("keeps an earlier turn's subagent while a follow-up turn runs", () => {
+    expect(deriveThreadPendingBackgroundTasks(projection(1))).toEqual([
+      { taskId: "subagent", kind: "subagent", description: "Review" },
+    ]);
+  });
+
+  it("leaves the running turn's own subagents to the timeline", () => {
+    expect(deriveThreadPendingBackgroundTasks(projection(2))).toEqual([]);
   });
 });
 
