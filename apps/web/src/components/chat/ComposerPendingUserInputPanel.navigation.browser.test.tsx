@@ -138,6 +138,24 @@ it("retains answers, selections and question position after leaving chat, includ
   expect(requests).toMatchObject(expected);
 });
 
+it("stays on an unanswered question when the composer submits", async () => {
+  using _timers = fakeTimers();
+  const environmentId = EnvironmentId.make("unanswered-environment");
+  await using _screen = await render(
+    <PendingRequestsProbe
+      environmentId={environmentId}
+      projection={questionProjection(threadRef.threadId)}
+    />,
+  );
+  // Enter in the composer reaches the same advance as the disabled Next button.
+  await act(() => requests.onAdvanceActivePendingUserInput());
+  expect(requests.activePendingQuestionIndex).toBe(0);
+
+  await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
+  await act(() => requests.onAdvanceActivePendingUserInput());
+  expect(requests.activePendingQuestionIndex).toBe(1);
+});
+
 it("isolates drafts by environment, thread and request and discards only resolved requests", async () => {
   using _timers = fakeTimers();
   const environmentId = EnvironmentId.make("scope-environment");
