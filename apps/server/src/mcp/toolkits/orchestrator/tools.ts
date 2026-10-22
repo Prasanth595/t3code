@@ -72,7 +72,7 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
 
 const UsageLimitsTool = Tool.make("t3_usage_limits", {
   description:
-    "Read each enabled provider instance's subscription limits, such as Codex and Claude, to compare headroom before choosing where to start or delegate work. Each window gives usedPercent, remainingPercent, and resetsAt. When unavailable is set, that provider's windows do not show its headroom: an API key or Bedrock account has no subscription limits (unsupported), the last read failed (probeFailed), the provider has not reported limits (notReported), or it is not installed, signed in, or healthy (providerUnavailable). Limits can be old while no T3 client is open; checkedAt says when each was read. pooledAccounts lists accounts from usage limit sources such as a CLI Proxy hub. For token and dollar spend, use t3_usage_spend.",
+    "Read each enabled provider instance's subscription limits, such as Codex and Claude, to compare headroom before choosing where to start or delegate work. Each window gives remainingPercent and resetsInMins; a label such as 'Weekly · Fable' marks a window that applies to one model. unavailable explains an empty windows list: no subscription limits (API key or Bedrock), a failed read, or a provider that is not installed, signed in, or healthy. Limits can be old while no T3 client is open; ageMins says how old. pooledAccounts lists accounts from usage limit sources such as a CLI Proxy hub. For token and dollar spend, use t3_usage_spend.",
   parameters: OrchestratorMcpUsageLimitsInput,
   success: OrchestratorMcpUsageLimitsResult,
   failure: OrchestratorMcpFailure,
@@ -86,7 +86,7 @@ const UsageLimitsTool = Tool.make("t3_usage_limits", {
 
 const UsageSpendTool = Tool.make("t3_usage_spend", {
   description:
-    "Read the token and API-priced USD spend the Usage tab calculates from this environment's provider transcripts, split by provider, model, token type, and day (or hour for days=1) in the server's time zone. notices say when a source is missing or still loading. For remaining quota and reset times, use t3_usage_limits.",
+    "Read the token and API-priced USD spend the Usage tab calculates from this environment's provider transcripts: totals, then cost and tokens by provider and model, and cost by day (or hour for days=1) in the server's time zone. notices say when a source is missing or still loading. For remaining quota and reset times, use t3_usage_limits.",
   parameters: OrchestratorMcpUsageSpendInput,
   success: OrchestratorMcpUsageSpendResult,
   failure: OrchestratorMcpFailure,

@@ -234,6 +234,12 @@ server's time zone. The tool reports the environment that serves it, every
 provider, and days in the server's zone; the tab can merge environments, hide
 providers, and uses the viewer's zone.
 
+Both answer what an agent decides with, not everything the tab draws: reset
+and read times as minutes from now, no account email, and spend without the
+tab's token-type, category, speed, and per-period provider splits. Every agent
+pays for a tool's output schema on every turn, so there is no `detail` switch
+for the rest; the tab shows it.
+
 `t3 usage limits` and `t3 usage spend` print the same results.
 
 ### `delegate_task`

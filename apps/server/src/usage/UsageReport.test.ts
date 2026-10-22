@@ -154,6 +154,7 @@ const readSpend = (dependencies: Dependencies, days: 1 | 7 | 30 | 90) =>
 
 it.effect("reads limits from the provider registry and limit hubs", () =>
   Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-10-21T12:00:00Z"));
     const report = yield* readLimits({
       registry: ProviderRegistryMock.layer([
         provider("claudeAgent", {
@@ -184,35 +185,16 @@ it.effect("reads limits from the provider registry and limit hubs", () =>
       {
         providerInstanceId: ProviderInstanceId.make("claudeAgent"),
         driverKind: ProviderDriverKind.make("claudeAgent"),
-        displayName: "Claude",
-        email: "dev@example.com",
-        plan: "Max",
-        checkedAt,
+        ageMins: 120,
         windows: [
-          {
-            id: "five_hour",
-            kind: "session",
-            label: "5h",
-            usedPercent: 27.6,
-            remainingPercent: 72,
-            resetsAt: "2026-10-21T12:00:00.000Z",
-            windowDurationMins: 300,
-          },
-          {
-            id: "seven_day",
-            kind: "weekly",
-            label: "Weekly",
-            usedPercent: 60,
-            remainingPercent: 40,
-            resetsAt: null,
-            windowDurationMins: null,
-          },
+          { kind: "session", label: "5h", remainingPercent: 72, resetsInMins: 0 },
+          { kind: "weekly", label: "Weekly", remainingPercent: 40, resetsInMins: null },
         ],
         unavailable: null,
       },
     ]);
     assert.deepStrictEqual(
-      report.pooledAccounts.map((account) => [account.sourceLabel, account.accountId]),
+      report.pooledAccounts.map((account) => [account.source, account.accountId]),
       [["Team hub", "codex-1.json"]],
     );
   }),

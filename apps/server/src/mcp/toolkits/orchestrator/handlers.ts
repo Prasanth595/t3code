@@ -27,7 +27,10 @@ const handlers = {
     Effect.gen(function* () {
       const report = yield* UsageReport.UsageReport;
       return yield* report
-        .readSpend({ days: input.days ?? 30, refresh: input.refresh === true })
+        .readSpend({
+          days: input.days ?? 30,
+          refresh: input.refresh === true,
+        })
         .pipe(
           Effect.mapError(
             (error) =>

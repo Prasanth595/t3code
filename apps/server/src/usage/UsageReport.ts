@@ -6,7 +6,6 @@ import {
   type OrchestratorMcpUsageSpendResult,
   type ServerProvider,
   type ServerProviderUsageLimits,
-  type UsageProviderKind,
   type UsageSummary,
   type UsageTokenTotals,
   type UsageLimitSourceSnapshot,
@@ -27,31 +26,24 @@ import * as UsageService from "./UsageService.ts";
 
 type Reading = Pick<
   OrchestratorMcpUsageLimitsResult["providers"][number],
-  "checkedAt" | "windows" | "unavailable"
+  "ageMins" | "windows" | "unavailable"
 >;
 type SpendDays = OrchestratorMcpUsageSpendResult["window"]["days"];
 
-const reading = (limits: ServerProviderUsageLimits): Reading => {
-  const notice = limitsNotice(limits);
-  return {
-    checkedAt: limits.checkedAt,
-    windows: limits.windows.map((window) => ({
-      id: window.id,
-      kind: window.kind,
-      label: window.label,
-      usedPercent: window.usedPercent,
-      remainingPercent: remainingPercent(window),
-      resetsAt: window.resetsAt ?? null,
-      windowDurationMins: window.windowDurationMins ?? null,
-    })),
-    unavailable:
-      notice === null
-        ? null
-        : { reason: limits.unavailable?.reason ?? "notReported", message: notice },
-  };
-};
+const minutes = (milliseconds: number) => Math.max(0, Math.round(milliseconds / 60_000));
 
-const providerReading = (provider: ServerProvider): Reading => {
+const reading = (limits: ServerProviderUsageLimits, now: number): Reading => ({
+  ageMins: minutes(now - Date.parse(limits.checkedAt)),
+  windows: limits.windows.map((window) => ({
+    kind: window.kind,
+    label: window.label,
+    remainingPercent: remainingPercent(window),
+    resetsInMins: window.resetsAt === undefined ? null : minutes(Date.parse(window.resetsAt) - now),
+  })),
+  unavailable: limitsNotice(limits),
+});
+
+const providerReading = (provider: ServerProvider, now: number): Reading => {
   const unusable = !provider.installed
     ? "This provider is not installed."
     : !isProviderAvailable(provider)
@@ -62,49 +54,36 @@ const providerReading = (provider: ServerProvider): Reading => {
           ? "This provider is not signed in."
           : null;
   if (unusable !== null) {
-    return {
-      checkedAt: provider.usageLimits?.checkedAt ?? null,
-      windows: [],
-      unavailable: { reason: "providerUnavailable", message: unusable },
-    };
+    return { ageMins: null, windows: [], unavailable: unusable };
   }
   if (provider.usageLimits === undefined) {
     return {
-      checkedAt: null,
+      ageMins: null,
       windows: [],
-      unavailable: {
-        reason: "notReported",
-        message: "This provider has not reported usage limits.",
-      },
+      unavailable: "This provider has not reported usage limits.",
     };
   }
-  return reading(provider.usageLimits);
+  return reading(provider.usageLimits, now);
 };
 
 const summarizeLimits = (
   providers: ReadonlyArray<ServerProvider>,
   sources: ReadonlyArray<UsageLimitSourceSnapshot>,
-  now: DateTime.Utc,
+  now: number,
 ): OrchestratorMcpUsageLimitsResult => ({
-  createdAt: DateTime.formatIso(now),
   providers: providers
     .filter((provider) => provider.enabled)
     .map((provider) => ({
       providerInstanceId: provider.instanceId,
       driverKind: provider.driver,
-      displayName: provider.displayName?.trim() || null,
-      email: provider.auth.email ?? null,
-      plan: provider.auth.label ?? null,
-      ...providerReading(provider),
+      ...providerReading(provider, now),
     })),
   pooledAccounts: sources.flatMap((source) =>
     source.accounts.map((account) => ({
-      sourceLabel: source.label,
+      source: source.label,
       accountId: account.id,
       driverKind: account.driver,
-      email: account.email ?? null,
-      plan: account.plan ?? null,
-      ...reading(account.usageLimits),
+      ...reading(account.usageLimits, now),
     })),
   ),
   notices: sources.flatMap((source) =>
@@ -115,69 +94,29 @@ const summarizeLimits = (
 const CENTS = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2, useGrouping: false });
 const usd = (value: number) => Number(CENTS.format(value));
 
-const tokens = (totals: UsageTokenTotals) => ({
-  total:
-    totals.uncachedInputTokens +
-    totals.cachedInputTokens +
-    totals.cacheCreationTokens +
-    totals.outputTokens,
-  uncachedInput: totals.uncachedInputTokens,
-  cachedInput: totals.cachedInputTokens,
-  cacheCreation: totals.cacheCreationTokens,
-  output: totals.outputTokens,
-  reasoning: totals.reasoningTokens,
-});
-
-const periodProviders = (
-  byProvider: ReadonlyMap<UsageProviderKind, { costUsd: number; totalTokens: number }>,
-) =>
-  [...byProvider].map(([provider, amount]) => ({
-    provider,
-    costUsd: usd(amount.costUsd),
-    totalTokens: amount.totalTokens,
-  }));
+const totalTokens = (totals: UsageTokenTotals) =>
+  totals.uncachedInputTokens +
+  totals.cachedInputTokens +
+  totals.cacheCreationTokens +
+  totals.outputTokens;
 
 const summarizeSpend = (
   summary: UsageSummary,
   environment: { readonly environmentId: EnvironmentId; readonly label: string },
   days: SpendDays,
-  now: DateTime.Utc,
 ): OrchestratorMcpUsageSpendResult => {
   const merged = mergeUsage([{ ...environment, summary }], USAGE_CONTRACT_VERSION);
-  const hourly = days === 1;
   return {
-    createdAt: DateTime.formatIso(now),
     window: {
       days,
-      resolution: hourly ? "hour" : "day",
       sinceDay: summary.sinceDay,
       untilDay: summary.untilDay,
       timeZone: summary.timeZone,
     },
     costUsd: usd(merged.costUsd),
-    cacheSavingsUsd: usd(merged.costQuality.cacheSavingsUsd),
-    unpricedShare: merged.costQuality.unpricedShare,
+    totalTokens: totalTokens(merged),
     sessions: merged.sessions,
-    tokens: tokens({
-      uncachedInputTokens: merged.uncachedInputTokens,
-      cachedInputTokens: merged.cachedInputTokens,
-      cacheCreationTokens: merged.cacheCreationTokens,
-      outputTokens: merged.outputTokens,
-      reasoningTokens: merged.reasoningTokens,
-    }),
-    costByCategoryUsd: {
-      input: usd(merged.categoryCost.input),
-      cacheRead: usd(merged.categoryCost.cacheRead),
-      cacheWrite: usd(merged.categoryCost.cacheWrite),
-      output: usd(merged.categoryCost.output),
-      unsplit: usd(merged.categoryCost.unsplit),
-    },
-    costBySpeedUsd: {
-      standard: usd(merged.speedCost.standard),
-      fast: usd(merged.speedCost.fast),
-      ultrafast: usd(merged.speedCost.ultrafast),
-      premium: usd(merged.speedCost.premium),
-    },
+    unpricedShare: Math.round(merged.costQuality.unpricedShare * 1000) / 1000,
     providers: merged.providers.map((provider) => ({
       provider: provider.provider,
       costUsd: usd(provider.costUsd),
@@ -188,22 +127,12 @@ const summarizeSpend = (
       provider: model.provider,
       model: model.model,
       costUsd: isModelCostUnknown(model) ? null : usd(model.costUsd),
-      tokens: tokens(model.tokens),
+      totalTokens: totalTokens(model.tokens),
     })),
-    periods: hourly
-      ? merged.hourly.map((period) => ({
-          start: period.hourStart,
-          costUsd: usd(period.costUsd),
-          totalTokens: period.totalTokens,
-          providers: periodProviders(period.byProvider),
-        }))
-      : merged.daily.map((period) => ({
-          start: period.day,
-          costUsd: usd(period.costUsd),
-          totalTokens: period.totalTokens,
-          providers: periodProviders(period.byProvider),
-        })),
-    pricing: { status: summary.pricing.status, fetchedAt: summary.pricing.fetchedAt },
+    periods:
+      days === 1
+        ? merged.hourly.map((period) => ({ start: period.hourStart, costUsd: usd(period.costUsd) }))
+        : merged.daily.map((period) => ({ start: period.day, costUsd: usd(period.costUsd) })),
     notices: summary.sources.flatMap((source) => [
       ...(source.message !== null &&
       (source.status === "partial" ||
@@ -252,7 +181,7 @@ const make = Effect.gen(function* () {
       providerRegistry.getProviders,
       usageLimitSources.current,
     ]);
-    return summarizeLimits(providers, sources, yield* DateTime.now);
+    return summarizeLimits(providers, sources, DateTime.toEpochMillis(yield* DateTime.now));
   });
 
   const readSpend = Effect.fn("UsageReport.readSpend")(function* (input: {
@@ -270,7 +199,7 @@ const make = Effect.gen(function* () {
       ...(input.refresh ? { awaitRefresh: true } : {}),
     });
     const environment = yield* serverEnvironment.getDescriptor;
-    return summarizeSpend(summary, environment, input.days, now);
+    return summarizeSpend(summary, environment, input.days);
   });
 
   return UsageReport.of({ readLimits, readSpend });

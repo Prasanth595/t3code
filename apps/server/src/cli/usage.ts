@@ -6,7 +6,6 @@ import {
 import { formatCount, formatPercent, formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
 import { formatDuration } from "@t3tools/shared/usageLimits";
 import * as Console from "effect/Console";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { Command, Flag } from "effect/cli";
 
@@ -15,56 +14,45 @@ import { printJson, reportThreadErrors, withThreadTools } from "./thread.ts";
 
 type Reading = Pick<
   OrchestratorMcpUsageLimitsResult["providers"][number],
-  "email" | "plan" | "checkedAt" | "windows" | "unavailable"
+  "ageMins" | "windows" | "unavailable"
 >;
 
-const formatWindow = (window: OrchestratorMcpUsageWindow, now: number) => {
-  const resetsAt = window.resetsAt === null ? null : Date.parse(window.resetsAt);
+const MINUTE = 60_000;
+
+const formatWindow = (window: OrchestratorMcpUsageWindow) => {
   const reset =
-    resetsAt === null || !Number.isFinite(resetsAt)
+    window.resetsInMins === null
       ? ""
-      : resetsAt <= now
+      : window.resetsInMins === 0
         ? " · resets now"
-        : ` · resets in ${formatDuration(resetsAt - now)}`;
+        : ` · resets in ${formatDuration(window.resetsInMins * MINUTE)}`;
   return `  ${window.label.padEnd(16)} ${String(window.remainingPercent).padStart(3)}% left${reset}`;
 };
 
-const formatReading = (title: string, reading: Reading, now: number) => {
-  const checkedAt = reading.checkedAt === null ? null : Date.parse(reading.checkedAt);
-  const header = [
-    title,
-    reading.plan,
-    reading.email,
-    checkedAt === null ? null : `read ${formatDuration(now - checkedAt)} ago`,
-  ]
-    .filter((part) => part !== null)
-    .join(" · ");
-  return [
-    header,
-    ...(reading.unavailable === null
-      ? reading.windows.map((window) => formatWindow(window, now))
-      : [`  ${reading.unavailable.message}`]),
-  ];
-};
+const formatReading = (title: string, reading: Reading) => [
+  reading.ageMins === null
+    ? title
+    : `${title} · read ${formatDuration(reading.ageMins * MINUTE)} ago`,
+  ...(reading.unavailable === null
+    ? reading.windows.map(formatWindow)
+    : [`  ${reading.unavailable}`]),
+];
 
 const formatNotices = (notices: ReadonlyArray<string>) =>
   notices.length === 0 ? [] : ["Notices", ...notices.map((notice) => `  ${notice}`)];
 
-const formatLimits = (limits: OrchestratorMcpUsageLimitsResult, now: number) => {
+const formatLimits = (limits: OrchestratorMcpUsageLimitsResult) => {
   const lines = [
     ...limits.providers.flatMap((provider) =>
       formatReading(
-        `${provider.displayName ?? provider.driverKind} [${provider.providerInstanceId}]`,
+        String(provider.providerInstanceId) === String(provider.driverKind)
+          ? provider.providerInstanceId
+          : `${provider.providerInstanceId} [${provider.driverKind}]`,
         provider,
-        now,
       ),
     ),
     ...limits.pooledAccounts.flatMap((account) =>
-      formatReading(
-        `${account.sourceLabel} · ${account.accountId} [${account.driverKind}]`,
-        account,
-        now,
-      ),
+      formatReading(`${account.source} · ${account.accountId} [${account.driverKind}]`, account),
     ),
   ];
   return [
@@ -76,14 +64,8 @@ const formatLimits = (limits: OrchestratorMcpUsageLimitsResult, now: number) => 
 const amount = (costUsd: number | null, totalTokens: number) =>
   `${(costUsd === null ? "unpriced" : formatUsd(costUsd)).padStart(11)}  ${formatTokens(totalTokens).padStart(6)} tokens`;
 
-const joinNonZero = (parts: ReadonlyArray<readonly [string, number]>) =>
-  parts
-    .filter(([, value]) => value > 0)
-    .map(([label, value]) => `${label} ${formatUsd(value)}`)
-    .join(" · ");
-
 const formatSpend = (spend: OrchestratorMcpUsageSpendResult) => {
-  const { window, tokens } = spend;
+  const { window } = spend;
   const range =
     window.days === 1
       ? "past 24 hours"
@@ -96,26 +78,11 @@ const formatSpend = (spend: OrchestratorMcpUsageSpendResult) => {
       ...spend.periods.map((period) => period.start),
     ].map((label) => label.length),
   );
-  const byCategory = joinNonZero([
-    ["input", spend.costByCategoryUsd.input],
-    ["cache read", spend.costByCategoryUsd.cacheRead],
-    ["cache write", spend.costByCategoryUsd.cacheWrite],
-    ["output", spend.costByCategoryUsd.output],
-    ["unsplit", spend.costByCategoryUsd.unsplit],
-  ]);
-  const bySpeed = joinNonZero([
-    ["fast", spend.costBySpeedUsd.fast],
-    ["ultrafast", spend.costBySpeedUsd.ultrafast],
-    ["premium", spend.costBySpeedUsd.premium],
-  ]);
   return [
     `Spend · ${range} (${window.timeZone}) · API estimate`,
-    `  ${formatUsd(spend.costUsd)} · ${formatTokens(tokens.total)} tokens · ${formatCount(spend.sessions)} sessions${
-      spend.cacheSavingsUsd > 0 ? ` · cache saved ${formatUsd(spend.cacheSavingsUsd)}` : ""
-    }${spend.unpricedShare > 0 ? ` · ${formatPercent(spend.unpricedShare)} unpriced` : ""}`,
-    `  Tokens: input ${formatTokens(tokens.uncachedInput)} · cache read ${formatTokens(tokens.cachedInput)} · cache write ${formatTokens(tokens.cacheCreation)} · output ${formatTokens(tokens.output)} (reasoning ${formatTokens(tokens.reasoning)})`,
-    ...(byCategory === "" ? [] : [`  Cost: ${byCategory}`]),
-    ...(bySpeed === "" ? [] : [`  Speed: ${bySpeed}`]),
+    `  ${formatUsd(spend.costUsd)} · ${formatTokens(spend.totalTokens)} tokens · ${formatCount(spend.sessions)} sessions${
+      spend.unpricedShare > 0 ? ` · ${formatPercent(spend.unpricedShare)} unpriced` : ""
+    }`,
     "  By provider",
     ...spend.providers.map(
       (provider) =>
@@ -123,12 +90,11 @@ const formatSpend = (spend: OrchestratorMcpUsageSpendResult) => {
     ),
     "  By model",
     ...spend.models.map(
-      (model) => `    ${model.model.padEnd(width)}  ${amount(model.costUsd, model.tokens.total)}`,
+      (model) => `    ${model.model.padEnd(width)}  ${amount(model.costUsd, model.totalTokens)}`,
     ),
     window.days === 1 ? "  By hour" : "  By day",
     ...spend.periods.map(
-      (period) =>
-        `    ${period.start.padEnd(width)}  ${amount(period.costUsd, period.totalTokens)}`,
+      (period) => `    ${period.start.padEnd(width)}  ${formatUsd(period.costUsd).padStart(11)}`,
     ),
     ...formatNotices(spend.notices),
   ].join("\n");
@@ -164,7 +130,7 @@ const usageLimitsCommand = Command.make("limits", {
         if (flags.json) {
           return yield* printJson(limits);
         }
-        yield* Console.log(formatLimits(limits, DateTime.toEpochMillis(yield* DateTime.now)));
+        yield* Console.log(formatLimits(limits));
       }),
       usageClient,
     ).pipe(reportThreadErrors),
