@@ -489,6 +489,14 @@ const makeTurnHarness = (
     readonly streamFailures?: number;
     /** Reads the thread as deleted, which the projection keeps as a flagged record. */
     readonly threadDeleted?: boolean;
+    /**
+     * The first stream subscription fails only when the test releases `dropStream`.
+     * The listener's first catch-up can run before or after a dispatch, so the drop
+     * guarantees one resubscribe catch-up that sees the dispatched run.
+     */
+    readonly dropStreamOnCommand?: boolean;
+    /** Reads about the first dispatched message fail; later messages read normally. */
+    readonly firstMessageUnreadable?: boolean;
     /** Makes every projection read fail, as for a thread whose records are gone. */
     readonly recordsUnreadable?: boolean;
     /** Makes the stream a live tail: events from before it was opened are not delivered. */
@@ -504,19 +512,28 @@ const makeTurnHarness = (
     const dispatched = yield* Queue.unbounded<MessageId>();
     const subscriptions = yield* Ref.make(0);
     const failedReads = yield* Queue.unbounded<void>();
+    const dropStream = yield* Deferred.make<void>();
+    const firstMessage = yield* Ref.make<MessageId | null>(null);
     const layer = ScheduledTaskService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             sendToThread: (input) =>
-              Queue.offer(dispatched, input.messageId).pipe(
+              Ref.update(firstMessage, (first) => first ?? input.messageId).pipe(
+                Effect.andThen(Queue.offer(dispatched, input.messageId)),
                 Effect.andThen(options.duringDispatch?.(events, input.messageId) ?? Effect.void),
                 Effect.as(undefined as never),
               ),
             getThreadRecords: (_threadId, fields: ReadonlyArray<string>, filter) =>
               Effect.gen(function* () {
-                if (options.recordsUnreadable) {
+                const first = yield* Ref.get(firstMessage);
+                if (
+                  options.recordsUnreadable ||
+                  (options.firstMessageUnreadable &&
+                    first !== null &&
+                    filter?.messageIds?.includes(first))
+                ) {
                   yield* Queue.offer(failedReads, undefined);
                   return yield* Effect.fail(new Error("no records") as never);
                 }
@@ -535,8 +552,10 @@ const makeTurnHarness = (
             streamDomainEvents: Stream.unwrap(
               Ref.getAndUpdate(subscriptions, (n) => n + 1).pipe(
                 Effect.flatMap((attempt) =>
-                  attempt < (options.streamFailures ?? 0)
-                    ? Effect.succeed(Stream.fail(new Error("event stream dropped") as never))
+                  attempt < (options.streamFailures ?? (options.dropStreamOnCommand ? 1 : 0))
+                    ? (options.dropStreamOnCommand ? Deferred.await(dropStream) : Effect.void).pipe(
+                        Effect.as(Stream.fail(new Error("event stream dropped") as never)),
+                      )
                     : (options.liveTail ? Queue.clear(events) : Effect.void).pipe(
                         Effect.as(Stream.fromQueue(events)),
                       ),
@@ -554,7 +573,7 @@ const makeTurnHarness = (
         ),
       ),
     );
-    return { events, dispatched, subscriptions, failedReads, layer };
+    return { events, dispatched, subscriptions, failedReads, dropStream, layer };
   });
 
 const upsertBoundTask = (
@@ -885,13 +904,19 @@ it.effect("a thread deleted while the stream was down fails its run on catch-up"
 
 it.effect("giving up on a catch-up read leaves a newer run of the same task tracked", () =>
   Effect.gen(function* () {
-    const harness = yield* makeTurnHarness({ recordsUnreadable: true });
+    const harness = yield* makeTurnHarness({
+      dropStreamOnCommand: true,
+      firstMessageUnreadable: true,
+    });
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
       const { task } = yield* upsertBoundTask(service);
       yield* service.runNow({ id: task.id });
       yield* Queue.take(harness.dispatched);
-      // The listener's catch-up for that run starts, fails its first read and backs off.
+      // Dropping the stream makes the resubscribe catch up the dispatched run, whose
+      // first read fails and backs off.
+      yield* Deferred.succeed(harness.dropStream, undefined);
+      yield* TestClock.adjust("1 second");
       yield* Queue.take(harness.failedReads);
       yield* TestClock.adjust("1 second");
       yield* service.runNow({ id: task.id });
