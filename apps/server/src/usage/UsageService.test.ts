@@ -49,6 +49,7 @@ import * as ProviderHostLive from "../provider/ProviderHostLive.ts";
 import { totalTokens, type UsageRecord } from "@t3tools/provider-core/server/usage";
 import * as UsageService from "./UsageService.ts";
 import * as MuseSdk from "../../../../packages/provider-muse/src/server/sdk.ts";
+import { MuseUsageHome } from "@t3tools/provider-muse/server";
 import { encodeScanCache, SCAN_CACHE_FILE_NAME } from "./usageScanCache.ts";
 
 vi.mock("node:fs/promises", { spy: true });
@@ -146,6 +147,7 @@ const layerService = (input: {
     CursorAccountReader.layer.pipe(Layer.provide(CursorKeychain.layer)),
   ).pipe(
     Layer.provideMerge(AntigravityUsage.layer),
+    Layer.provideMerge(MuseUsageHome.layer),
     Layer.provideMerge(ProviderHostLive.layer),
     Layer.provideMerge(CodexUsageHistory.layer.pipe(Layer.provideMerge(Sqlite.layerMemory))),
     Layer.provideMerge(Layer.mock(BackgroundPolicy.BackgroundPolicy)({})),
@@ -852,6 +854,12 @@ describe("UsageService", () => {
               ...parent.payload.event,
               kind: "automated_review_completed",
               model: { model_id: "priced-model" },
+              usage: {
+                input_tokens: 100,
+                cached_input_tokens: 60,
+                output_tokens: 20,
+                reasoning_tokens: 8,
+              },
             },
           },
         };
@@ -928,7 +936,7 @@ describe("UsageService", () => {
           });
           const priced = buckets.find((b) => b.model === "priced-model");
           assert.strictEqual(priced?.costSource, "modelPriced");
-          assert.closeTo(priced?.costUsd ?? NaN, 0.000154, 1e-12);
+          assert.closeTo(priced?.costUsd ?? NaN, 0.000172, 1e-12);
           assert.closeTo(priced?.cacheSavingsUsd ?? NaN, 0.000108, 1e-12);
           const sources = first.sources.filter((source) => source.fingerprint.provider === "muse");
           assert.strictEqual(sources.length, 1);

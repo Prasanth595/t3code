@@ -124,8 +124,7 @@ describe("large usage records", () => {
           model: { model_id: "review-model" },
           usage: {
             input_tokens: 100,
-            cache_read_tokens: 60,
-            cache_write_tokens: 10,
+            cached_input_tokens: 60,
             output_tokens: 20,
             reasoning_tokens: 8,
           },
@@ -133,6 +132,10 @@ describe("large usage records", () => {
       },
     };
     const small = await scan([entry], "muse", "small-muse");
+    expect(small.records[0]?.totals).toMatchObject({
+      uncachedInputTokens: 40,
+      cachedInputTokens: 60,
+    });
     const path = NodePath.join(dir, "large-muse.jsonl");
     await NodeFSP.writeFile(path, JSON.stringify({ ...entry, discarded: { content } }) + "\n");
     const large = await readTranscriptRecords(path, "muse");

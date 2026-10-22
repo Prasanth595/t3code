@@ -14,7 +14,8 @@ import {
 } from "@t3tools/provider-core/server/usage";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { MuseSettings } from "../settings.ts";
-import { createMuseSdkHostEffect, makeMuseEnvironment } from "./sdk.ts";
+import { makeMuseEnvironment } from "./sdk.ts";
+import * as MuseUsageHome from "./MuseUsageHome.ts";
 
 const Entry = Schema.Struct({
   schema_version: Schema.Literal(1),
@@ -37,6 +38,7 @@ const Entry = Schema.Struct({
         input_tokens: Schema.optional(Schema.Unknown),
         output_tokens: Schema.optional(Schema.Unknown),
         cached_tokens: Schema.optional(Schema.Unknown),
+        cached_input_tokens: Schema.optional(Schema.Unknown),
         cache_read_tokens: Schema.optional(Schema.Unknown),
         cache_write_tokens: Schema.optional(Schema.Unknown),
         reasoning_tokens: Schema.optional(Schema.Unknown),
@@ -56,7 +58,7 @@ function parseRecord(parsed: unknown): readonly UsageRecord[] {
   const input = tokenCount(usage.input_tokens);
   const cachedInputTokens = Math.min(
     input,
-    tokenCount(usage.cache_read_tokens ?? usage.cached_tokens),
+    tokenCount(usage.cache_read_tokens ?? usage.cached_input_tokens ?? usage.cached_tokens),
   );
   const cacheCreationTokens = Math.min(
     input - cachedInputTokens,
@@ -112,38 +114,27 @@ export const museUsageFormat: TranscriptUsageFormat<unknown> = {
   parseProjected: parseRecord,
 };
 
-export const museUsageReader: ProviderUsageReader<MuseSettings, Path.Path> = {
+export const museUsageReader: ProviderUsageReader<
+  MuseSettings,
+  Path.Path | MuseUsageHome.MuseUsageHome
+> = {
   kind: "transcripts",
   provider: "muse",
   format: museUsageFormat,
   directories: Effect.fn("museUsageReader.directories")(function* ({ config, environment }) {
     const path = yield* Path.Path;
     const home = yield* HostProcess.HomeDirectory;
+    const usageHome = yield* MuseUsageHome.MuseUsageHome;
     const processEnvironment = yield* mergeProviderInstanceEnvironment(
       Object.entries(environment).flatMap(([name, value]) =>
         value === undefined ? [] : [{ name, value, sensitive: false }],
       ),
       yield* HostProcess.Environment,
     );
-    // Initialize only: no session or model turn is needed to resolve Muse's
-    // configured home, including XDG overrides and native platform defaults.
-    return yield* Effect.scoped(
-      Effect.gen(function* () {
-        const host = yield* Effect.acquireRelease(
-          createMuseSdkHostEffect({
-            binaryPath: expandHomePath(config?.binaryPath ?? "muse", home),
-            environment: makeMuseEnvironment(processEnvironment),
-            readOnly: true,
-            startupTimeoutMs: 5_000,
-          }),
-          (host) => Effect.promise(() => host.close()),
-          { interruptible: true },
-        );
-        const museHome = host.initializeResult.museHome;
-        return museHome
-          ? [{ dir: path.join(museHome, "sessions"), fileName: "session.jsonl" }]
-          : [];
-      }),
-    ).pipe(Effect.orElseSucceed(() => []));
+    const museHome = yield* usageHome.resolve({
+      binaryPath: expandHomePath(config?.binaryPath ?? "muse", home),
+      environment: makeMuseEnvironment(processEnvironment),
+    });
+    return museHome ? [{ dir: path.join(museHome, "sessions"), fileName: "session.jsonl" }] : [];
   }),
 };

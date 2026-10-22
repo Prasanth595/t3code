@@ -23,6 +23,7 @@ import { makeManagedServerProvider } from "@t3tools/provider-core/server/managed
 import { enrichMuseSnapshot, latestMuseVersion, museMaintenance } from "./maintenance.ts";
 import { makeMuseEnvironment } from "./sdk.ts";
 import { museUsageReader } from "./usage.ts";
+import type * as MuseUsageHome from "./MuseUsageHome.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -54,7 +55,11 @@ export type MuseDriverEnv =
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers;
 
-export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv, Path.Path> = {
+export const MuseDriver: ProviderDriver<
+  MuseSettings,
+  MuseDriverEnv,
+  Path.Path | MuseUsageHome.MuseUsageHome
+> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: "Muse Code", supportsMultipleInstances: true },
   usage: museUsageReader,
