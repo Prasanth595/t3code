@@ -12,33 +12,30 @@
     frames,
     held,
     release() {
-      if (delayedThread && shellSocket && shellRequestId !== null) {
-        shellSocket.dispatchEvent(
-          new MessageEvent("message", {
-            data: JSON.stringify({
-              _tag: "Chunk",
-              requestId: shellRequestId,
-              values: [
-                {
-                  kind: "thread.updated",
-                  sequence: shellSequence + 1,
-                  location: "active",
-                  thread: delayedThread,
-                },
-              ],
-            }),
-          }),
-        );
+      if (delayedThread && delayedStream) {
+        releaseThread(delayedStream, delayedThread);
         delayedThread = null;
+        delayedStream = null;
       }
       for (const run of held.splice(0)) run();
     },
   };
 
   let delayedThread = null;
-  let shellSocket = null;
-  let shellRequestId = null;
+  let delayedStream = null;
+  let latestShellStream = null;
   let shellSequence = 0;
+  const releaseThread = (stream, thread, emit = stream.emit) => {
+    // Insert one fixture event into this subscription's sequence space; later
+    // server events must carry the same offset or the reducer drops the next one.
+    stream.offset++;
+    emit({
+      kind: "thread.updated",
+      sequence: ++stream.sequence,
+      location: "active",
+      thread,
+    });
+  };
   const parseFrame = (data) => {
     try {
       const value = JSON.parse(data);
@@ -76,7 +73,6 @@
         });
     }
     snapshot.projects = snapshot.projects?.filter((p) => p.id?.startsWith("triage-")) || [];
-    shellSequence = snapshot.snapshotSequence;
     for (const thread of snapshot.threads) {
       if (thread.id === "triage-A-1" && options.shelf) {
         Object.assign(thread, {
@@ -135,7 +131,12 @@
       count: value.threads.length,
       sequence: value.snapshotSequence,
     });
+    shellSequence = value.snapshotSequence;
     transformSnapshot(value);
+    if (delayedThread && latestShellStream) {
+      delayedStream = latestShellStream;
+      delayedStream.sequence = Math.max(delayedStream.sequence, shellSequence);
+    }
     return new Response(JSON.stringify(value), {
       status: response.status,
       headers: { "content-type": "application/json" },
@@ -150,17 +151,44 @@
         const { value } = parseFrame(data);
         for (const request of Array.isArray(value) ? value : [value]) {
           if (request?._tag === "Request" && request.tag === "orchestration.subscribeShell") {
-            shellSocket = this;
-            shellRequestId = request.id;
+            const stream = {
+              sequence: shellSequence,
+              offset: 0,
+              emit: (node) =>
+                this.replayDeliver({
+                  _tag: "Chunk",
+                  requestId: request.id,
+                  values: [node],
+                }),
+            };
+            this.shellStreams.set(request.id, stream);
+            latestShellStream = stream;
+            if (delayedThread && !delayedStream) delayedStream = stream;
+          } else if (
+            request?._tag === "Request" &&
+            request.tag === "orchestration.subscribeThread"
+          ) {
+            this.threadRequests.add(request.id);
           }
         }
       } catch {
         // Non-JSON socket traffic belongs to the native protocol handler.
       }
     }
+    shellStreams = new Map();
+    threadRequests = new Set();
+    replayDeliver;
     constructor(...args) {
       super(...args);
       let replaying = false;
+      this.replayDeliver = (data) => {
+        replaying = true;
+        try {
+          this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(data) }));
+        } finally {
+          replaying = false;
+        }
+      };
       this.addEventListener("message", (event) => {
         if (replaying) return;
         frames.push({
@@ -203,8 +231,26 @@
         if (options.enabled) {
           for (const chunk of Array.isArray(value) ? value : [value]) {
             if (chunk?._tag !== "Chunk" || !Array.isArray(chunk.values)) continue;
+            if (this.threadRequests.has(chunk.requestId)) continue;
+            let stream = this.shellStreams.get(chunk.requestId);
+            if (!stream && chunk.values.some((node) => Array.isArray(node?.snapshot?.threads))) {
+              stream = { sequence: 0, offset: 0 };
+              this.shellStreams.set(chunk.requestId, stream);
+            }
+            if (!stream) continue;
+            stream.emit = (node) => {
+              const update = { ...chunk, values: [node] };
+              deliver(Array.isArray(value) ? [update] : update);
+            };
             for (const node of chunk.values) {
+              if (typeof node?.sequence === "number") {
+                node.sequence += stream.offset;
+                stream.sequence = Math.max(stream.sequence, node.sequence);
+                changed ||= stream.offset !== 0;
+              }
               if (node?.kind !== "snapshot" || !Array.isArray(node.snapshot?.threads)) continue;
+              node.snapshot.snapshotSequence += stream.offset;
+              stream.sequence = Math.max(stream.sequence, node.snapshot.snapshotSequence);
               const snapshot = node.snapshot;
               frames.push({
                 kind: "shell.snapshot",
@@ -212,18 +258,8 @@
                 sequence: snapshot.snapshotSequence,
               });
               transformSnapshot(snapshot, (thread) => {
-                const update = {
-                  ...chunk,
-                  values: [
-                    {
-                      kind: "thread.updated",
-                      sequence: snapshot.snapshotSequence + 1,
-                      location: "active",
-                      thread,
-                    },
-                  ],
-                };
-                held.push(() => deliver(Array.isArray(value) ? [update] : update));
+                const emit = stream.emit;
+                held.push(() => releaseThread(stream, thread, emit));
               });
               changed = true;
             }
