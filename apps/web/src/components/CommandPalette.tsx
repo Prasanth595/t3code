@@ -107,6 +107,7 @@ import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useScratchProject } from "../hooks/useScratchProject";
 import { useNewProject } from "../hooks/useNewProject";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { ProjectFavicon } from "./ProjectFavicon";
 import {
   useEnvironmentProviders,
   useEnvironments,
@@ -161,7 +162,6 @@ import {
   findHighlightedCommandPaletteItem,
   type CommandPaletteActionItem,
   type CommandPaletteOpenIntent,
-  type CommandPaletteProject,
   type CommandPaletteReturnContext,
   type CommandPaletteSubmenuItem,
   type CommandPaletteView,
@@ -853,7 +853,7 @@ function OpenCommandPaletteDialog(props: {
   });
 
   const projectThreadItems = (() => {
-    const isScratch = (project: CommandPaletteProject) =>
+    const isScratch = (project: (typeof projects)[number]) =>
       isScratchProject(project, scratchWorkspaceRootFor(project.environmentId));
     const projectItems = enumerateCommandPaletteItems(
       buildNewThreadInProjectItems({
@@ -879,6 +879,9 @@ function OpenCommandPaletteDialog(props: {
     );
     if (scratchTargetEnvironmentId === null) return projectItems;
 
+    const scratchProject = projects.find(
+      (project) => project.environmentId === scratchTargetEnvironmentId && isScratch(project),
+    );
     const noProjectIndex = pickerProjects[0] !== undefined && isScratch(pickerProjects[0]) ? 0 : 1;
     return [
       ...projectItems.slice(0, noProjectIndex),
@@ -886,8 +889,12 @@ function OpenCommandPaletteDialog(props: {
         kind: "action" as const,
         value: "new-thread-in:no-project",
         searchTerms: ["no project", "without project", "none"],
-        title: "No project",
-        icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
+        title: scratchProject?.title ?? "No project",
+        icon: scratchProject ? (
+          <ProjectFavicon project={scratchProject} className={ITEM_ICON_CLASS} />
+        ) : (
+          <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />
+        ),
         shortcutCommand: "chat.newWithoutProject" as const,
         run: () => startScratchThread(scratchTargetEnvironmentId),
       },
