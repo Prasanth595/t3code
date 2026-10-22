@@ -7,6 +7,8 @@ import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import type { RateTable } from "./usagePricing.ts";
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 
+const decodeSummary = Schema.decodeSync(UsageSummary);
+
 const rates: RateTable = new Map([
   [
     "claude-fable-5",
@@ -95,7 +97,7 @@ describe("UsageAggregator", () => {
         },
       }),
     ];
-    const summary = Schema.decodeUnknownSync(UsageSummary)({
+    const summary = decodeSummary({
       contractVersion: USAGE_CONTRACT_VERSION,
       readAt: "2026-08-07T00:00:00.000Z",
       timeZone: "UTC",
@@ -129,6 +131,7 @@ describe("UsageAggregator", () => {
     expect(merged.models[0]).toMatchObject({
       totalTokens: 10_000,
       unpricedTokens: 9900,
+      unpricedTokensEstimated: false,
       costUsd: 1,
       records: 2,
       unpricedRecords: 1,
