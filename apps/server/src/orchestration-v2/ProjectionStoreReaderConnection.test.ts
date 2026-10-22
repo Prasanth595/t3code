@@ -160,3 +160,43 @@ it.effect("the shell-snapshot read runs on the reader connection", () =>
     assert.deepEqual(connections, ["reader"]);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("the startup-recovery read runs on the reader connection", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:reader:recovery");
+    yield* createThread(threadId);
+    const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+    const { connections, tracer } = makeConnectionRecorder();
+    connections.length = 0;
+
+    yield* projectionStore
+      .getRecoveryThreadIds("queued-runs")
+      .pipe(
+        Effect.provideService(Statement.SpanPropagationEnabled, true),
+        Effect.withTracer(tracer),
+      );
+
+    // Startup recovery must not take the write lock.
+    assert.deepEqual(connections, ["reader"]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("the settlement-sweep read runs on the reader connection", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:reader:settlement");
+    yield* createThread(threadId);
+    const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+    const { connections, tracer } = makeConnectionRecorder();
+    connections.length = 0;
+
+    yield* projectionStore
+      .getSettlementCandidates(threadId)
+      .pipe(
+        Effect.provideService(Statement.SpanPropagationEnabled, true),
+        Effect.withTracer(tracer),
+      );
+
+    // The auto-settlement sweep must not take the write lock.
+    assert.deepEqual(connections, ["reader"]);
+  }).pipe(Effect.provide(layerTest)),
+);

@@ -4015,7 +4015,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND thread_id IN (${candidates})
             ${kind === "queued-runs" ? sql`AND archived_at IS NULL` : sql``}
           ORDER BY updated_at ASC, thread_id ASC
-        `;
+        `.pipe(
+          // A pure read, on the reader connection: startup recovery must not
+          // take the write lock.
+          NodeSqliteClient.readOnly,
+        );
         return rows.map((row) => ThreadId.make(row.thread_id));
       },
       Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
@@ -6084,7 +6088,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             );
           }),
         )
-        .pipe(Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })));
+        .pipe(
+          // A pure read, on the reader connection: the settlement sweep must
+          // not take the write lock.
+          NodeSqliteClient.readOnly,
+          Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+        );
 
     const getThreadsWithPullRequests: ProjectionStoreV2Shape["getThreadsWithPullRequests"] =
       Effect.fn("ProjectionStore.getThreadsWithPullRequests")(
