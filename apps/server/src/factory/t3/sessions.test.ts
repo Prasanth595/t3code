@@ -1842,6 +1842,30 @@ describe("FactorySessions.brokenWorktrees", () => {
       }),
   );
 
+  it.effect("leaves out a thread that was already archived when the factory archived it", () =>
+    Effect.gen(function* () {
+      const bound = [{ threadId, worktreePath: "/tmp/factory-sessions-test-no-such-dir/a" }];
+      const found = yield* Effect.gen(function* () {
+        const sessions = yield* Sessions.FactorySessions;
+        yield* sessions.archive(threadId);
+        return yield* sessions.brokenWorktrees;
+      }).pipe(
+        Effect.provide(
+          layerSessions({
+            // Archived when the factory asks, live again (a person unarchived it) when it looks.
+            getThread: () =>
+              Effect.succeed({
+                ...thread("t3/abc", "/x"),
+                archivedAt: DateTime.makeUnsafe("2026-10-05T00:00:00Z"),
+              } as never),
+            getThreadWorktreePaths: () => Effect.succeed(bound),
+          }),
+        ),
+      );
+      assert.deepStrictEqual(found, []);
+    }),
+  );
+
   it.effect("fails as a sessions error when the projection cannot be read", () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(listBroken).pipe(
