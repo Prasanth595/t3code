@@ -39,7 +39,27 @@
   let shellSocket = null;
   let shellRequestId = null;
   let shellSequence = 0;
-  const transformSnapshot = (snapshot) => {
+  const parseFrame = (data) => {
+    try {
+      const value = JSON.parse(data);
+      const ndjson = data.endsWith("\n") && !Array.isArray(value);
+      return { value: ndjson ? [value] : value, ndjson };
+    } catch {
+      return {
+        value: data
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line)),
+        ndjson: true,
+      };
+    }
+  };
+  const transformSnapshot = (
+    snapshot,
+    hold = (thread) => {
+      delayedThread = thread;
+    },
+  ) => {
     snapshot.threads = snapshot.threads.filter(
       (t) =>
         t.id.startsWith("triage-") && (options.lineage || !/^triage-A-(9|10|11|12)$/.test(t.id)),
@@ -57,10 +77,6 @@
     }
     snapshot.projects = snapshot.projects?.filter((p) => p.id?.startsWith("triage-")) || [];
     shellSequence = snapshot.snapshotSequence;
-    if (options.delay) {
-      delayedThread = snapshot.threads.find((t) => t.id === "triage-A-1");
-      snapshot.threads = snapshot.threads.filter((t) => t.id !== "triage-A-1");
-    }
     for (const thread of snapshot.threads) {
       if (thread.id === "triage-A-1" && options.shelf) {
         Object.assign(thread, {
@@ -99,6 +115,11 @@
         });
       }
     }
+    if (options.delay) {
+      const target = snapshot.threads.find((t) => t.id === "triage-A-1");
+      if (target) hold(target);
+      snapshot.threads = snapshot.threads.filter((t) => t.id !== "triage-A-1");
+    }
     return snapshot;
   };
   const nativeFetch = fetch;
@@ -122,6 +143,21 @@
   };
 
   globalThis.WebSocket = class extends NativeWebSocket {
+    send(data) {
+      super.send(data);
+      if (!options.enabled || typeof data !== "string") return;
+      try {
+        const { value } = parseFrame(data);
+        for (const request of Array.isArray(value) ? value : [value]) {
+          if (request?._tag === "Request" && request.tag === "orchestration.subscribeShell") {
+            shellSocket = this;
+            shellRequestId = request.id;
+          }
+        }
+      } catch {
+        // Non-JSON socket traffic belongs to the native protocol handler.
+      }
+    }
     constructor(...args) {
       super(...args);
       let replaying = false;
@@ -135,31 +171,14 @@
         });
         if (typeof event.data !== "string") return;
         let value;
-        let ndjson = false;
+        let ndjson;
         try {
-          value = JSON.parse(event.data);
+          ({ value, ndjson } = parseFrame(event.data));
         } catch {
-          try {
-            value = event.data
-              .trim()
-              .split("\n")
-              .map((line) => JSON.parse(line));
-            ndjson = true;
-          } catch {
-            frames.push({ kind: "unparsed", length: event.data.length });
-            return;
-          }
+          frames.push({ kind: "unparsed", length: event.data.length });
+          return;
         }
         globalThis.__sidebarWire.push(value);
-        if (
-          value._tag === "Chunk" &&
-          value.values?.some(
-            (x) => x?.kind === "synchronized" || (x?.kind === "snapshot" && x.snapshot?.threads),
-          )
-        ) {
-          shellSocket = this;
-          shellRequestId = value.requestId;
-        }
         frames.push({
           kind: "parsed",
           tag: value?._tag,
@@ -167,90 +186,6 @@
           count: Array.isArray(value) ? value.length : undefined,
         });
         let changed = false;
-        const visit = (node) => {
-          if (!node || typeof node !== "object") return;
-          if (node.kind === "snapshot" && node.snapshot && Array.isArray(node.snapshot.threads)) {
-            const snapshot = node.snapshot;
-            frames.push({
-              kind: "shell.snapshot",
-              count: snapshot.threads.length,
-              sequence: snapshot.snapshotSequence,
-            });
-            snapshot.threads = snapshot.threads.filter(
-              (t) =>
-                t.id.startsWith("triage-") &&
-                (options.lineage || !/^triage-A-(9|10|11|12)$/.test(t.id)),
-            );
-            changed = true;
-            const target = snapshot.threads.find((t) => t.id === "triage-A-1");
-            if (options.delay && target) {
-              snapshot.threads = snapshot.threads.filter((t) => t !== target);
-              const original = JSON.parse(JSON.stringify(value));
-              const replace = (n) => {
-                if (!n || typeof n !== "object") return;
-                if (n.kind === "snapshot" && n.snapshot && Array.isArray(n.snapshot.threads)) {
-                  delete n.snapshot;
-                  n.kind = "thread.updated";
-                  n.sequence = snapshot.snapshotSequence + 1;
-                  n.location = "active";
-                  n.thread = target;
-                } else Object.values(n).forEach(replace);
-              };
-              replace(original);
-              held.push(() => deliver(original));
-              changed = true;
-            }
-            for (const thread of snapshot.threads) {
-              if (thread.id === "triage-A-1" && options.shelf) {
-                Object.assign(thread, {
-                  pinnedAt: null,
-                  snoozedUntil: null,
-                  settledOverride: null,
-                  settledAt: null,
-                });
-                if (options.shelf === "pinned")
-                  Object.assign(thread, {
-                    pinnedAt: "2026-10-22T00:00:00.000Z",
-                    pinOrderKey: "a0",
-                  });
-                if (options.shelf === "snoozed")
-                  Object.assign(thread, {
-                    snoozedUntil: "2099-01-01T00:00:00.000Z",
-                    snoozedAt: "2026-10-22T00:00:00.000Z",
-                  });
-                if (options.shelf === "working")
-                  Object.assign(thread, {
-                    status: "running",
-                    activeRunId: "triage-run-working",
-                    latestRunId: "triage-run-working",
-                    activityRunStatus: "running",
-                    latestRunRequestedAt: "2026-10-21T23:00:00.000Z",
-                    latestRunStartedAt: "2026-10-21T23:00:00.000Z",
-                  });
-                changed = true;
-              }
-              if (options.shelf === "settled" && thread.projectId === "triage-project-A") {
-                Object.assign(thread, { settledOverride: "settled", settledAt: thread.createdAt });
-                changed = true;
-              }
-              if (options.status && ["triage-A-1", "triage-A-2"].includes(thread.id)) {
-                Object.assign(thread, {
-                  status: thread.id === "triage-A-1" ? "failed" : "completed",
-                  latestRunId: "triage-run-" + thread.id,
-                  latestRunRequestedAt: "2026-10-21T23:00:00.000Z",
-                  latestRunCompletedAt: "2026-10-21T23:01:00.000Z",
-                  lastVisitedAt: null,
-                });
-                changed = true;
-              }
-            }
-          }
-          Object.values(node).forEach((v) => {
-            if (!v || typeof v !== "object") return;
-            if (Array.isArray(v)) v.forEach(visit);
-            else visit(v);
-          });
-        };
         const deliver = (data) => {
           replaying = true;
           try {
@@ -265,7 +200,35 @@
             replaying = false;
           }
         };
-        visit(value);
+        if (options.enabled) {
+          for (const chunk of Array.isArray(value) ? value : [value]) {
+            if (chunk?._tag !== "Chunk" || !Array.isArray(chunk.values)) continue;
+            for (const node of chunk.values) {
+              if (node?.kind !== "snapshot" || !Array.isArray(node.snapshot?.threads)) continue;
+              const snapshot = node.snapshot;
+              frames.push({
+                kind: "shell.snapshot",
+                count: snapshot.threads.length,
+                sequence: snapshot.snapshotSequence,
+              });
+              transformSnapshot(snapshot, (thread) => {
+                const update = {
+                  ...chunk,
+                  values: [
+                    {
+                      kind: "thread.updated",
+                      sequence: snapshot.snapshotSequence + 1,
+                      location: "active",
+                      thread,
+                    },
+                  ],
+                };
+                held.push(() => deliver(Array.isArray(value) ? [update] : update));
+              });
+              changed = true;
+            }
+          }
+        }
         if (changed) {
           event.stopImmediatePropagation();
           deliver(value);
