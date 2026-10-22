@@ -129,12 +129,9 @@ export type FxAdapterV2DriverEnv =
   | ProviderEventLoggers.ProviderEventLoggers
   | ProviderHost.ProviderHost;
 
-/**
- * `defaultModel` reads fx's id for "Default" from the provider snapshot;
- * without one (the bare V2 adapter registry) "Default" writes no model.
- */
+/** `defaultModel` reads fx's id for "Default" from the provider snapshot. */
 export const makeFxAdapterV2Driver = (
-  defaultModel?: Effect.Effect<string | undefined>,
+  defaultModel: Effect.Effect<string | undefined>,
 ): ProviderAdapterDriver<FxSettings, FxAdapterV2DriverEnv> => ({
   driverKind: FX_DRIVER_KIND,
   configSchema: FxSettings,
@@ -150,7 +147,7 @@ export const makeFxAdapterV2Driver = (
         settings: { ...input.config, enabled: input.enabled },
         environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
         selfInvocation,
-        ...(defaultModel === undefined ? {} : { defaultModel }),
+        defaultModel,
         nativeLogging: (threadId) =>
           makeNativeLogger({
             nativeEventLogger: providerEventLoggers.native,
@@ -173,5 +170,3 @@ export const makeFxAdapterV2Driver = (
       ),
   ),
 });
-
-export const FxAdapterV2Driver = makeFxAdapterV2Driver();
