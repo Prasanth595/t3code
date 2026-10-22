@@ -47,6 +47,9 @@ const ownerScript = (statePath: string, home: string) =>
     `  Layer.succeed(HostProcess.HomeDirectory, ${JSON.stringify(home)}),`,
     `  Layer.succeed(HostProcess.Environment, {}),`,
     `).pipe(Layer.provideMerge(NodeServices.layer));`,
+    // A fiber waiting on Effect.never holds no handle, so without this the child would exit, and
+    // release the lock, on its own.
+    `setInterval(() => {}, 2 ** 30);`,
     `Effect.runFork(Effect.scoped(Effect.gen(function* () {`,
     `  const owner = yield* acquireServerOwnership(${JSON.stringify(statePath)});`,
     `  yield* owner.publish(yield* makePersistedServerRuntimeState({`,
@@ -84,6 +87,7 @@ const killed = (child: NodeChildProcess.ChildProcess) =>
   Effect.promise(
     () =>
       new Promise<NodeJS.Signals | null>((resolve) => {
+        if (child.exitCode !== null || child.signalCode !== null) return resolve(child.signalCode);
         child.on("exit", (_code, signal) => resolve(signal));
         child.kill("SIGKILL");
       }),
