@@ -80,7 +80,10 @@ vi.mock(
       stackedThreadToast: (value: unknown) => value,
     }) as never,
 );
-vi.mock(import("../chat/ProviderModelPicker"), () => ({ ProviderModelPicker: () => <></> }));
+vi.mock(import("../chat/ProviderModelPicker"), async () => {
+  const { memo } = await import("react");
+  return { ProviderModelPicker: memo(() => <></>) };
+});
 vi.mock(import("../WorktreeBaseBranchPicker"), () => ({ WorktreeBaseBranchPicker: () => <></> }));
 // Keep layout independent of live settings state; exercise the real permission gate and editor.
 vi.mock(
