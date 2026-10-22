@@ -4,6 +4,7 @@ import {
   CommandId,
   type OrchestrationV2DomainEvent,
   type ProviderThreadId,
+  type RunId,
   type OrchestrationV2RestartCancelledBackgroundWork,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
@@ -555,6 +556,47 @@ export const make = Effect.gen(function* () {
         });
       }
       const recoveredNonterminalRunIds = new Set(runs.map((run) => run.id));
+      // A request ended here whose run was not cut (missing, or kept to replay
+      // its checkpoint) would otherwise leave its card waiting.
+      const isLeftOpen = (status: string, runId: RunId | null) =>
+        isNonterminalTurnItemStatus(status) &&
+        (runId === null || !recoveredNonterminalRunIds.has(runId));
+      for (const request of requests) {
+        const item = (projection.turnItems ?? []).find(
+          (candidate) =>
+            (candidate.type === "approval_request" || candidate.type === "user_input_request") &&
+            candidate.requestId === request.id,
+        );
+        const providerInstanceId =
+          item === undefined
+            ? projection.thread.providerInstanceId
+            : resolveStaleBackgroundItemProviderInstanceId(item, projection);
+        if (item !== undefined && isLeftOpen(item.status, item.runId)) {
+          events.push({
+            id: yield* allocateEventId(),
+            type: "turn-item.updated",
+            threadId: projection.thread.id,
+            ...(item.runId === null ? {} : { runId: item.runId }),
+            ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+            providerInstanceId,
+            occurredAt: now,
+            payload: cancelledItem(item, now),
+          });
+        }
+        const node = projection.nodes.find((candidate) => candidate.id === request.nodeId);
+        if (node !== undefined && isLeftOpen(node.status, node.runId)) {
+          events.push({
+            id: yield* allocateEventId(),
+            type: "node.updated",
+            threadId: projection.thread.id,
+            ...(node.runId === null ? {} : { runId: node.runId }),
+            nodeId: node.id,
+            providerInstanceId,
+            occurredAt: now,
+            payload: { ...node, status: "cancelled", completedAt: now },
+          });
+        }
+      }
       const cancelledStaleNodeIds = new Set<string>();
       for (const item of projection.turnItems ?? []) {
         if (item.runId !== null && recoveredNonterminalRunIds.has(item.runId)) {

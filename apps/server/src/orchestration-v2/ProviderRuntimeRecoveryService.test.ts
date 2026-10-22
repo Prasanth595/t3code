@@ -203,7 +203,10 @@ const questionProjection = () => {
 };
 type QuestionProjection = ReturnType<typeof questionProjection>;
 
-const recoveredQuestion = (projection: QuestionProjection) => {
+const recoveryEvents = (
+  projection: QuestionProjection,
+  trigger: "startup" | "shutdown" = "startup",
+) => {
   let committed: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | undefined;
   const layer = ProviderRuntimeRecovery.layer.pipe(
     Layer.provide(ServerSettings.layerTest()),
@@ -222,24 +225,43 @@ const recoveredQuestion = (projection: QuestionProjection) => {
         }),
         IdAllocator.layer,
         Layer.mock(EffectOutbox.EffectOutboxV2)({
+          // A waiting run with a checkpoint still to capture is replayed, not cut.
+          listByCommandId: () =>
+            Effect.succeed(
+              projection.runs.map((run) => ({
+                request: { type: "checkpoint.capture", runId: run.id },
+                status: "pending",
+              })) as never,
+            ),
           reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
         }),
       ),
     ),
   );
   return Effect.gen(function* () {
-    yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
-    return committed?.events.flatMap((event) =>
-      event.type === "runtime-request.updated" ? [event.payload] : [],
-    );
+    yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile(trigger);
+    return committed?.events ?? [];
   }).pipe(Effect.provide(layer));
 };
 
+const recoveredQuestion = (projection: QuestionProjection) =>
+  recoveryEvents(projection).pipe(
+    Effect.map((events) =>
+      events.flatMap((event) => (event.type === "runtime-request.updated" ? [event.payload] : [])),
+    ),
+  );
+
 it.effect("keeps a root Codex question answerable as a reply after restart", () =>
   Effect.gen(function* () {
-    const [request] = (yield* recoveredQuestion(questionProjection())) ?? [];
+    const events = yield* recoveryEvents(questionProjection());
+    const [request] = events.flatMap((event) =>
+      event.type === "runtime-request.updated" ? [event.payload] : [],
+    );
     assert.equal(request?.status, "pending");
     assert.deepEqual(request?.responseCapability, { type: "message" });
+    assert.isFalse(
+      events.some((event) => event.type === "turn-item.updated" || event.type === "node.updated"),
+    );
   }),
 );
 
@@ -299,9 +321,31 @@ it.effect.each<[string, (projection: QuestionProjection) => QuestionProjection]>
   ],
 ])("expires the question of %s after restart", ([, change]) =>
   Effect.gen(function* () {
-    const [request] = (yield* recoveredQuestion(change(questionProjection()))) ?? [];
+    const [request] = yield* recoveredQuestion(change(questionProjection()));
     assert.equal(request?.status, "expired");
     assert.equal(request?.responseCapability.type, "not_resumable");
+  }),
+);
+
+it.effect.each<[string, (projection: QuestionProjection) => QuestionProjection]>([
+  ["whose run is missing", (projection) => ({ ...projection, runs: [] })],
+  [
+    "whose run is kept for a replayable checkpoint",
+    (projection) => ({
+      ...projection,
+      runs: projection.runs.map((run) => ({ ...run, status: "waiting" })),
+    }),
+  ],
+])("closes the card of a question %s when shutdown cancels it", ([, change]) =>
+  Effect.gen(function* () {
+    const events = yield* recoveryEvents(change(questionProjection()), "shutdown");
+    const request = events.find((event) => event.type === "runtime-request.updated");
+    assert.equal(request?.payload.status, "cancelled");
+    const item = events.find((event) => event.type === "turn-item.updated");
+    assert.equal(item?.payload.status, "cancelled");
+    const node = events.find((event) => event.type === "node.updated");
+    assert.equal(node?.payload.status, "cancelled");
+    assert.isFalse(events.some((event) => event.type === "run.updated"));
   }),
 );
 
