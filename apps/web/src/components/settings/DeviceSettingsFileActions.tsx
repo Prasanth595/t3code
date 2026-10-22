@@ -12,7 +12,7 @@ import {
   serializeDeviceSettingsFile,
   type DeviceAppearance,
   type DeviceSettingChange,
-  type DeviceSettingsSnapshot,
+  type DeviceSettingsFileImport,
 } from "../../deviceSettingsFile";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import {
@@ -49,9 +49,8 @@ const MAX_DEVICE_SETTINGS_FILE_BYTES = 1024 * 1024;
 
 interface ImportPreview {
   readonly fileName: string;
-  readonly next: DeviceSettingsSnapshot;
+  readonly imported: DeviceSettingsFileImport;
   readonly changes: ReadonlyArray<DeviceSettingChange>;
-  readonly warnings: ReadonlyArray<string>;
 }
 
 function formatSettingValue(value: unknown): string {
@@ -165,11 +164,13 @@ export function DeviceSettingsImportDialog({
   }, [open]);
 
   const readFile = async (file: File) => {
+    // Every new file drops a read still in flight, including one this file replaces with an error.
+    const requestId = ++readRequestRef.current;
     if (file.size > MAX_DEVICE_SETTINGS_FILE_BYTES) {
+      setIsReading(false);
       setError("That file is larger than 1 MB, so it is not a device settings file.");
       return;
     }
-    const requestId = ++readRequestRef.current;
     setIsReading(true);
     const [text, hydrated] = await Promise.all([
       settlePromise(() => file.text()),
@@ -191,12 +192,10 @@ export function DeviceSettingsImportDialog({
         settings: pickDeviceSettings(getClientSettings()),
         appearance: readDeviceAppearance(advancedTypography),
       };
-      const next = mergeDeviceSettings(current, imported);
       setPreview({
         fileName: file.name,
-        next,
-        changes: diffDeviceSettings(current, next),
-        warnings: imported.warnings,
+        imported,
+        changes: diffDeviceSettings(current, mergeDeviceSettings(current, imported)),
       });
       setError(null);
     } catch (cause) {
@@ -243,9 +242,13 @@ export function DeviceSettingsImportDialog({
   };
 
   const applyImport = async (accepted: ImportPreview) => {
-    // Read again: the stored values may have changed since the preview was built.
+    // Merged again onto the current values, so anything the file leaves out that changed while
+    // the preview was open keeps its new value.
     const previous = readDeviceAppearance(advancedTypography);
-    const next = accepted.next.appearance;
+    const next = mergeDeviceSettings(
+      { settings: pickDeviceSettings(getClientSettings()), appearance: previous },
+      accepted.imported,
+    ).appearance;
     const fail = () => {
       writeAppearance(next, previous);
       setError("The settings could not be saved. Nothing was changed. Try again.");
@@ -255,7 +258,7 @@ export function DeviceSettingsImportDialog({
       return;
     }
     const saved = await settlePromise(() =>
-      persistClientSettingsUpdate((current) => ({ ...current, ...accepted.next.settings })),
+      persistClientSettingsUpdate((current) => ({ ...current, ...accepted.imported.settings })),
     );
     if (saved._tag === "Failure") {
       fail();
@@ -337,13 +340,13 @@ export function DeviceSettingsImportDialog({
                   ))}
                 </ul>
               )}
-              {preview.warnings.length > 0 ? (
+              {preview.imported.warnings.length > 0 ? (
                 <Alert variant="warning" controlAlignment="first-line">
                   <TriangleAlertIcon />
                   <AlertTitle>Warnings</AlertTitle>
                   <AlertDescription>
                     <ul aria-label="Warnings" className="space-y-1 text-xs">
-                      {preview.warnings.map((warning) => (
+                      {preview.imported.warnings.map((warning) => (
                         <li key={warning}>{warning}</li>
                       ))}
                     </ul>
