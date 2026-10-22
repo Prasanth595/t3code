@@ -243,15 +243,16 @@ describe("AssetAccess", () => {
     };
     const objectUrl = "https://release-assets.githubusercontent.com/shot.png?signature=test";
 
-    it.effect(
-      "downloads the exact release image through the API without leaking auth on redirect",
-      () => {
+    it.effect.each(["v1%2Btest", "release%2Fv1"])(
+      "downloads the exact release image for tag %s through the API without leaking auth on redirect",
+      (tag) => {
+        const releaseAsset = { ...asset, url: asset.url.replace("v1%2Btest", tag) };
         const requests: Array<{ url: string; authorization: string | undefined }> = [];
         const lookup = vi.fn((input: GitHubRest.GitHubRestInput) => {
           expect(input).toMatchObject({
             host: "github.com",
             operation: "getReleaseByTag",
-            path: "repos/owner/private/releases/tags/v1%2Btest",
+            path: `repos/owner/private/releases/tags/${tag}`,
           });
           return Effect.succeed({
             status: 200,
@@ -268,7 +269,7 @@ describe("AssetAccess", () => {
         });
         const downloadUrl = "https://api.github.com/repos/owner/private/releases/assets/42";
         return Effect.gen(function* () {
-          const response = HttpServerResponse.toWeb(yield* githubMediaResponse(asset, {}));
+          const response = HttpServerResponse.toWeb(yield* githubMediaResponse(releaseAsset, {}));
           expect(response.status).toBe(200);
           expect(response.headers.get("content-type")).toBe("image/png");
           expect(new Uint8Array(yield* Effect.promise(() => response.arrayBuffer()))).toEqual(
@@ -1149,6 +1150,17 @@ describe("AssetAccess", () => {
       });
       const awkward = yield* issue("https://raw.githubusercontent.com/o/r/main/100%.png");
       expect(awkward.relativeUrl.endsWith("/100%25.png")).toBe(true);
+      for (const [variant, canonical] of [
+        ["https://www.github.com/owner/repo/releases/download/v1/shot.png", "v1"],
+        ["https://GITHUB.COM/owner/repo/releases/download/v1/shot.png", "v1"],
+        ["https://github.com:443/owner/repo/releases/download/v1/shot.png", "v1"],
+        ["https://github.com/owner/repo/releases/download/release%2Fv1/shot.png", "release%2Fv1"],
+      ] as const) {
+        const issued = yield* issue(variant);
+        expect(yield* resolve(issued.relativeUrl)).toMatchObject({
+          url: `https://github.com/owner/repo/releases/download/${canonical}/shot.png`,
+        });
+      }
 
       for (const url of [
         "https://example.com/shot.png",
@@ -1157,6 +1169,7 @@ describe("AssetAccess", () => {
         "https://github.com/owner/repo/pull/1",
         "https://github.com/owner/repo/blob/main/",
         "https://user:password@github.com/owner/repo/releases/download/v1/shot.png",
+        "https://github.com:8443/owner/repo/releases/download/v1/shot.png",
         "https://github.com/owner/repo/releases/download/v1/shot%2Fprivate.png",
       ]) {
         const error = yield* issue(url).pipe(Effect.flip);

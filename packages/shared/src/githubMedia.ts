@@ -8,8 +8,7 @@ const RAW_HOST = "raw.githubusercontent.com";
 const LFS_HOST = "media.githubusercontent.com";
 const ATTACHMENT_PATH_PATTERN = /^\/user-attachments\/assets\/[\w-]+$/u;
 const LEGACY_ATTACHMENT_PATH_PATTERN = /^\/[^/]+\/[^/]+\/assets\/\d+\/[\w-]+$/u;
-const RELEASE_DOWNLOAD_PATTERN =
-  /^https:\/\/github\.com\/([^/?#]+)\/([^/?#]+)\/releases\/download\/([^/?#]+)\/([^/?#]+)(?:[?#].*)?$/u;
+const RELEASE_DOWNLOAD_PATH_PATTERN = /^\/([^/]+)\/([^/]+)\/releases\/download\/([^/]+)\/([^/]+)$/u;
 /** `blob` and `raw` both address file bytes; `raw` is the one the token is honoured on. */
 const REPOSITORY_FILE_PATTERN = /^\/([^/]+)\/([^/]+)\/(?:raw|blob)\/(.*[^/])$/u;
 
@@ -49,7 +48,16 @@ interface GitHubReleaseAsset {
 }
 
 export function githubReleaseAsset(source: string): GitHubReleaseAsset | null {
-  const match = RELEASE_DOWNLOAD_PATTERN.exec(source);
+  let url: URL;
+  try {
+    url = new URL(source);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" || url.username !== "" || url.password !== "" || url.port !== "")
+    return null;
+  if (url.hostname !== "github.com" && url.hostname !== "www.github.com") return null;
+  const match = RELEASE_DOWNLOAD_PATH_PATTERN.exec(url.pathname);
   if (match === null) return null;
   try {
     const owner = decodeURIComponent(match[1]!);
@@ -60,7 +68,8 @@ export function githubReleaseAsset(source: string): GitHubReleaseAsset | null {
       [owner, repo, tag, name].some((part) => part === "." || part === "..") ||
       !/^[\w.-]+$/u.test(owner) ||
       !/^[\w.-]+$/u.test(repo) ||
-      /[\p{Cc}\p{Cf}\\/]/u.test(tag) ||
+      // Tags may contain "/" (git allows refs/tags/release/v1); the API lookup re-encodes it.
+      /[\p{Cc}\p{Cf}\\]/u.test(tag) ||
       /[\p{Cc}\p{Cf}\\/]/u.test(name)
     )
       return null;
