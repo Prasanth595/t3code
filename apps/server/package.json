@@ -57,6 +57,7 @@
     "@t3tools/source-control-gitcafe": "workspace:*",
     "@t3tools/source-control-github": "workspace:*",
     "@t3tools/source-control-gitlab": "workspace:*",
+    "ajv": "8.20.0",
     "character-entities": "2.0.2",
     "effect": "catalog:",
     "jose": "catalog:",
