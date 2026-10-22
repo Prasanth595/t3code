@@ -31,6 +31,7 @@ import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { nextPastedTextFileName, pastedTextDisposition } from "@t3tools/client-runtime/text-paste";
 import {
+  EMPTY_THREAD_HISTORY_META,
   parseCodexFeedbackCommand,
   submitCodexFeedback,
   type CodexFeedbackSubmission,
@@ -122,6 +123,7 @@ const EMPTY_QUEUE_WORKFLOW_ATOM = Atom.make<null>(null).pipe(
   Atom.withLabel("mobile-thread-queue-workflow:empty"),
 );
 const EMPTY_CHECKPOINT_SUMMARIES_ATOM = Atom.make<ReadonlyArray<ThreadCheckpointSummary>>([]);
+const EMPTY_THREAD_HISTORY_ATOM = Atom.make(EMPTY_THREAD_HISTORY_META);
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -245,6 +247,16 @@ export function useThreadComposerState() {
   const selectedThreadMessages = selectedThreadProjection?.projection.messages;
   const selectedThreadAttempts = selectedThreadProjection?.projection.attempts;
   const selectedThreadNodes = selectedThreadProjection?.projection.nodes;
+  const selectedThreadHistory = useAtomValue(
+    selectedThreadDetailRef === null
+      ? EMPTY_THREAD_HISTORY_ATOM
+      : environmentThreadDetails.historyAtom(selectedThreadDetailRef),
+  );
+  const echoedIds = new Set(selectedThreadMessages?.map((message) => message.id));
+  const acknowledgmentHistory =
+    selectedThreadDetailRef === null
+      ? undefined
+      : { ...selectedThreadDetailRef, ...selectedThreadHistory };
   const checkpointSummaries = useAtomValue(
     selectedThreadDetailRef === null
       ? EMPTY_CHECKPOINT_SUMMARIES_ATOM
@@ -269,7 +281,11 @@ export function useThreadComposerState() {
       checkpointSummaries,
       cache: feedCache,
     });
-    const pendingAcknowledgments = acknowledgedMessages.filter(
+    const pendingAcknowledgments = unsettledAcknowledgedThreadMessages(
+      acknowledgedMessages,
+      echoedIds,
+      acknowledgmentHistory,
+    ).filter(
       (message) =>
         scopedThreadKey(message.environmentId, message.threadId) === selectedThreadKey &&
         !selectedThreadQueuedMessages.some((queued) => queued.messageId === message.messageId),
@@ -280,17 +296,23 @@ export function useThreadComposerState() {
     );
   })();
   useEffect(() => {
-    const echoedIds = new Set(selectedThreadMessages?.map((message) => message.id));
-    if (acknowledgedMessages.some((message) => echoedIds.has(message.messageId))) {
-      appAtomRegistry.set(
-        acknowledgedThreadMessagesAtom,
-        unsettledAcknowledgedThreadMessages(
-          appAtomRegistry.get(acknowledgedThreadMessagesAtom),
-          echoedIds,
-        ),
-      );
+    const current = appAtomRegistry.get(acknowledgedThreadMessagesAtom);
+    const unsettled = unsettledAcknowledgedThreadMessages(
+      current,
+      new Set(selectedThreadMessages?.map((message) => message.id)),
+      selectedThreadDetailRef === null
+        ? undefined
+        : { ...selectedThreadDetailRef, ...selectedThreadHistory },
+    );
+    if (unsettled.length !== current.length) {
+      appAtomRegistry.set(acknowledgedThreadMessagesAtom, unsettled);
     }
-  }, [acknowledgedMessages, selectedThreadMessages]);
+  }, [
+    acknowledgedMessages,
+    selectedThreadMessages,
+    selectedThreadDetailRef,
+    selectedThreadHistory,
+  ]);
 
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const followUpBehavior = AsyncResult.isSuccess(preferencesResult)

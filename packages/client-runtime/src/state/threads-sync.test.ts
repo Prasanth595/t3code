@@ -641,6 +641,7 @@ describe("EnvironmentThreads", () => {
           value.status === "live" && value.history.historyCursor === "socket-history-cursor",
       );
       expect(state.history).toMatchObject({
+        snapshotSequence: 14,
         historyCursor: "socket-history-cursor",
         hasMoreHistory: true,
         loading: false,
@@ -665,6 +666,7 @@ describe("EnvironmentThreads", () => {
         Option.getOrThrow(expanded.data).turnItems.some((item) => item.id === olderItem.id),
       ).toBe(true);
       expect(expanded.history.hasMoreHistory).toBe(false);
+      expect(expanded.history.snapshotSequence).toBe(14);
     }),
   );
 
@@ -933,6 +935,7 @@ describe("EnvironmentThreads", () => {
       );
 
       expect(state.history).toMatchObject({
+        snapshotSequence: 11,
         historyCursor: "opaque-cursor",
         hasMoreHistory: true,
         loading: false,
@@ -950,6 +953,7 @@ describe("EnvironmentThreads", () => {
       const harness = yield* makeHarness({ cached: BASE_PROJECTION });
       const state = yield* awaitThreadState(harness.observed, (value) => Option.isSome(value.data));
       expect(state.history).toMatchObject({
+        snapshotSequence: CACHED_SNAPSHOT_SEQUENCE,
         historyCursor: null,
         hasMoreHistory: false,
         expanded: false,
