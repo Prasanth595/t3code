@@ -1,8 +1,8 @@
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { act } from "react";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import { act, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 
@@ -30,13 +30,21 @@ vi.mock("./query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));
 vi.mock("./queries", () => ({
   useBranches: ({ cwd }: { cwd: string }) => ({
     data: {
-      refs: execFileSync("git", ["for-each-ref", "--format=%(refname:short) %(HEAD)", "refs/heads"], {
-        cwd,
-        encoding: "utf8",
-      })
+      refs: NodeChildProcess.execFileSync(
+        "git",
+        ["for-each-ref", "--format=%(refname:short) %(HEAD)", "refs/heads"],
+        {
+          cwd,
+          encoding: "utf8",
+        },
+      )
         .trim()
         .split("\n")
-        .map((line) => ({ name: line.split(" ")[0], current: line.endsWith("*"), isRemote: false })),
+        .map((line) => ({
+          name: line.split(" ")[0],
+          current: line.endsWith("*"),
+          isRemote: false,
+        })),
     },
     isPending: false,
   }),
@@ -45,9 +53,9 @@ vi.mock("./queries", () => ({
 import { useSelectedThreadGitState } from "./use-selected-thread-git-state";
 
 it("marks the selected checkout's branch current when switching threads in one project", () => {
-  const directory = mkdtempSync(join(tmpdir(), "mobile-branches-"));
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mobile-branches-"));
   const git = (...args: string[]) =>
-    execFileSync("git", ["-c", "commit.gpgsign=false", ...args], {
+    NodeChildProcess.execFileSync("git", ["-c", "commit.gpgsign=false", ...args], {
       cwd: directory,
       encoding: "utf8",
       stdio: "pipe",
@@ -56,9 +64,12 @@ it("marks the selected checkout's branch current when switching threads in one p
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   let currentBranches: string[] = [];
   function Consumer() {
-    currentBranches = useSelectedThreadGitState()
-      .selectedThreadBranches.filter((branch) => branch.current)
-      .map((branch) => branch.name);
+    const { selectedThreadBranches } = useSelectedThreadGitState();
+    useLayoutEffect(() => {
+      currentBranches = selectedThreadBranches
+        .filter((branch) => branch.current)
+        .map((branch) => branch.name);
+    }, [selectedThreadBranches]);
     return null;
   }
 
@@ -74,7 +85,7 @@ it("marks the selected checkout's branch current when switching threads in one p
       "-m",
       "initial",
     );
-    const worktree = join(directory, "linked");
+    const worktree = NodePath.join(directory, "linked");
     git("worktree", "add", "-b", "feature/mobile", worktree);
     harness.root = directory;
     harness.cwd = directory;
@@ -90,6 +101,6 @@ it("marks the selected checkout's branch current when switching threads in one p
     expect(currentBranches).toEqual(["main"]);
   } finally {
     act(() => root.unmount());
-    rmSync(directory, { recursive: true, force: true });
+    NodeFS.rmSync(directory, { recursive: true, force: true });
   }
 });
