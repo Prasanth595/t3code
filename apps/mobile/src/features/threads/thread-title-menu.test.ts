@@ -80,6 +80,19 @@ describe("thread title actions", () => {
       ids({ thread: { ...thread, settledOverride: "settled" }, hasQueuedMessages: true }),
     ).not.toContain("unsettle");
   });
+  it("offers Un-settle for a settled timestamp without an override, as the server treats it", () => {
+    const settled = presentThreadShell(
+      EnvironmentId.make("environment-test"),
+      makeRawThreadShell({
+        settledOverride: null,
+        settledAt: DateTime.makeUnsafe("2026-10-18T11:00:00.000Z"),
+      }),
+    );
+    expect(ids({ thread: settled })).toContain("unsettle");
+    expect(ids({ thread: settled })).not.toContain("settle");
+    expect(ids({ thread: settled, hasQueuedMessages: true })).toContain("settle");
+    expect(ids({ thread: settled, hasQueuedMessages: true })).not.toContain("unsettle");
+  });
   it("cannot snooze a thread waiting for a response", () => {
     expect(ids({ thread: { ...thread, hasPendingApprovals: true } })).not.toContain("snooze");
     expect(ids({ thread: { ...thread, hasPendingUserInput: true } })).not.toContain("snooze");
@@ -113,6 +126,19 @@ describe("thread title header content", () => {
     ).toEqual(version);
     expect(threadTitleMenuVersion({ ...thread, title: "Renamed" })).not.toEqual(version);
     expect(threadTitleMenuVersion({ ...thread, settledOverride: "settled" })).not.toEqual(version);
+  });
+
+  it("re-renders when only the settled timestamp arrives or clears", () => {
+    const shell = (settledAt: OrchestrationV2ThreadShell["settledAt"]) =>
+      presentThreadShell(
+        EnvironmentId.make("environment-test"),
+        makeRawThreadShell({ settledOverride: null, settledAt }),
+      );
+    const active = shell(null);
+    const settled = shell(DateTime.makeUnsafe("2026-10-18T11:00:00.000Z"));
+    expect(settled.settledOverride).toBe(active.settledOverride);
+    expect(threadTitleMenuVersion(settled)).not.toEqual(threadTitleMenuVersion(active));
+    expect(threadTitleMenuVersion(shell(null))).toEqual(threadTitleMenuVersion(active));
   });
 
   it("re-renders when a nonblocking question arrives or clears during a run", () => {

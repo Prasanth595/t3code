@@ -25,7 +25,8 @@ export function buildThreadTitleMenu(input: {
   if (input.canOperate) {
     if (capabilities?.threadSettlement) {
       actions.push(
-        thread.settledOverride === "settled" && !input.hasQueuedMessages
+        (thread.settledOverride === "settled" || thread.settledAt != null) &&
+          !input.hasQueuedMessages
           ? { id: "unsettle", title: "Un-settle", image: "arrow.uturn.backward" }
           : { id: "settle", title: "Settle", image: "checkmark" },
       );
@@ -83,6 +84,7 @@ export function threadTitleMenuVersion(thread: EnvironmentThreadShell | null) {
     thread.id,
     thread.title,
     thread.settledOverride,
+    thread.settledAt,
     thread.pinnedAt,
     thread.snoozedAt,
     thread.snoozedUntil,
