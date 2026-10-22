@@ -181,6 +181,7 @@ export interface ThreadDetailScreenProps {
     readonly controls: React.ReactNode;
     readonly editorRef: React.RefObject<ComposerEditorHandle | null>;
     readonly sendBlockedReason: string | null;
+    readonly interactionLocked: boolean;
   };
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
   readonly setupWorkingStartedAt?: string | null;
@@ -1662,6 +1663,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                               ? "Starting the task…"
                               : null
                         }
+                        interactionLocked={props.draftMode?.interactionLocked}
                         draftKey={props.composerDraftKey ?? undefined}
                         followUpBehavior={
                           props.activePendingApprovals.length > 0 &&

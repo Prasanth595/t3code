@@ -819,7 +819,14 @@ export function NewTaskDraftScreen(props: {
   async function handleStart(): Promise<import("@t3tools/contracts").MessageId | null> {
     const selectedProject = flow.selectedProject;
     const draftKey = flow.draftKey;
-    if (!selectedProject || !draftKey) {
+    if (
+      !selectedProject ||
+      !draftKey ||
+      cloneBlocksStart ||
+      !isIncomingShareReady ||
+      isImportingShare ||
+      isComposerInteractionLocked
+    ) {
       return null;
     }
     if (
@@ -1183,6 +1190,7 @@ export function NewTaskDraftScreen(props: {
           ),
           editorRef: promptInputRef,
           sendBlockedReason: setupBlockReason,
+          interactionLocked: isComposerInteractionLocked,
         }}
         canOperateThread={canOperate}
         selectedThread={thread}
