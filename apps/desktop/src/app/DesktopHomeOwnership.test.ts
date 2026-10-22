@@ -173,6 +173,11 @@ describe("DesktopHomeOwnership", () => {
         unknownOwner.recordPath,
         "the dialog must name the record the user has to deal with",
       );
+      assert.include(
+        result.dialogs[0]?.[1] ?? "",
+        "Make sure no T3 Code server is running",
+        "the dialog must ask the user to stop the server first: a record removed while its server still holds the lock leaves the next launch just as stuck",
+      );
     }),
   );
 

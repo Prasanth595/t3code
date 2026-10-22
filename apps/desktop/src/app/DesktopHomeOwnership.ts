@@ -74,7 +74,7 @@ export const openDesktopWithExistingOwner = Effect.fn(
       : "This T3 home is already in use";
   const content =
     input.owner._tag === "unknown"
-      ? `The record that says who owns this T3 home (${input.owner.recordPath}) could not be read, so the desktop cannot tell whether the home is free. The desktop did not start a server for a home it cannot place.\n\nRemove that file to let the desktop start its own server, then reopen T3 Code.`
+      ? `The record that says who owns this T3 home (${input.owner.recordPath}) could not be read, so the desktop cannot tell whether the home is free or which server owns it. The desktop did not start a server for a home it cannot place.\n\nMake sure no T3 Code server is running for this T3 home, then remove that file to let the desktop start its own server, and reopen T3 Code.`
       : input.owner._tag === "healthy"
         ? `A T3 Code server is already running for this T3 home (${input.owner.record.origin}). The desktop did not start a second server for the same home, so it cannot open the local environment.\n\nTo use that server, turn off Settings > Connections > Local environment and add it as a saved environment. To let the desktop run its own server instead, stop that server and reopen T3 Code.`
         : input.owner._tag === "stranded"
