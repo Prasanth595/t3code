@@ -197,14 +197,14 @@ describe("DesktopLocalEnvironmentAuth", () => {
 
   it.effect("keeps retrying while the backend is too busy to answer", () =>
     Effect.gen(function* () {
-      const { auth, requestCount } = yield* makeExchange(2, () => Effect.never);
+      const { auth, requestCount } = yield* makeExchange(3, () => Effect.never);
 
       const fiber = yield* auth.getBearerToken.pipe(Effect.forkChild);
-      yield* TestClock.adjust(Duration.seconds(30));
+      yield* TestClock.adjust(Duration.seconds(40));
       const token = yield* Fiber.join(fiber);
 
       assert.strictEqual(token, "desktop-bearer-token");
-      assert.strictEqual(yield* Ref.get(requestCount), 3);
+      assert.strictEqual(yield* Ref.get(requestCount), 4);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
