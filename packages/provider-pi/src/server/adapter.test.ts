@@ -2509,6 +2509,36 @@ describe("PiAdapterV2", () => {
       }
       assert.equal(completedPlan.plan.id, endPlan.plan.id);
       assert.isTrue(completedPlan.plan.steps.every((s) => s.status === "completed"));
+
+      // Third tool call: removal resulting in an empty task list clears cached steps and publishes empty plan
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "call_todo_3",
+        toolName: "todo",
+        args: { action: "clear" },
+      });
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "call_todo_3",
+        toolName: "todo",
+        isError: false,
+        result: {
+          content: [{ type: "text", text: "Cleared tasks" }],
+          details: { action: "clear", tasks: [] },
+        },
+      });
+
+      const emptyPlan = yield* takeEvent(
+        (event) =>
+          event.type === "plan.updated" &&
+          event.plan.kind === "todo_list" &&
+          event.plan.steps.length === 0,
+      );
+      if (emptyPlan.type !== "plan.updated" || emptyPlan.plan.kind !== "todo_list") {
+        return assert.fail("expected plan.updated with empty steps");
+      }
+      assert.equal(emptyPlan.plan.id, endPlan.plan.id);
+      assert.equal(emptyPlan.plan.steps.length, 0);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

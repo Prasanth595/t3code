@@ -1039,20 +1039,38 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         } as const;
         if (toolName === "todo") {
           const planKey = `${turn.turnInput.threadId}:todo_list`;
+          const details = recordField(resultRecord, "details");
+          const structuredContent = recordField(resultRecord, "structuredContent");
+          const hasExplicitResultTasks =
+            Array.isArray(recordField(details, "tasks")) ||
+            Array.isArray(recordField(structuredContent, "todos")) ||
+            Array.isArray(recordField(details, "todos"));
+
           const todoArgs = completed && !isError ? args : { todos: recordField(args, "todos") };
           const derived = piTodoSteps(todoArgs, resultRecord);
-          if (completed && !isError && derived.length > 0) {
-            lastPlanSteps.set(planKey, derived);
+
+          let steps: ReadonlyArray<OrchestrationV2PlanStep>;
+          if (
+            completed &&
+            !isError &&
+            (hasExplicitResultTasks || recordString(args, "action") === "clear")
+          ) {
+            if (derived.length > 0) {
+              lastPlanSteps.set(planKey, derived);
+            } else {
+              lastPlanSteps.delete(planKey);
+            }
+            steps = derived;
+          } else {
+            steps = derived.length > 0 ? derived : (lastPlanSteps.get(planKey) ?? []);
           }
-          if (completed && !isError && recordString(args, "action") === "clear") {
-            lastPlanSteps.delete(planKey);
-          }
-          const steps = derived.length > 0 ? derived : (lastPlanSteps.get(planKey) ?? []);
 
           if (
             completed &&
             !isError &&
-            (derived.length > 0 || recordString(args, "action") === "clear")
+            (hasExplicitResultTasks ||
+              derived.length > 0 ||
+              recordString(args, "action") === "clear")
           ) {
             const planId = yield* resolvePlanId(turn, planKey);
             const allCompleted =
