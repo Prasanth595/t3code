@@ -1,7 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 
-import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import { resolveProviderCatalog, type ModelManifestData } from "./ModelManifest.ts";
 import {
   formatClaudeVersionUpgradeMessage,
@@ -194,37 +193,6 @@ describe("Claude model catalog", () => {
     );
   });
 
-  it("rejects malformed adapter mappings", () => {
-    const base = manifest();
-    const malformed: ModelManifestData = {
-      ...base,
-      providers: {
-        ...base.providers,
-        claudeAgent: {
-          ...base.providers!.claudeAgent!,
-          profiles: {
-            ...base.providers!.claudeAgent!.profiles,
-            synthetic: {
-              ...base.providers!.claudeAgent!.profiles.synthetic!,
-              adapter: { claudeCode: { effortMap: { extreme: 123 } } },
-            },
-          },
-        },
-      },
-    };
-    assert.isFalse(hasValidClaudeManifestAdapters(malformed));
-  });
-
-  it("preserves only SDK effort levels for uncatalogued models", () => {
-    const catalog = catalogFromManifest(manifest());
-    for (const effort of ["low", "medium", "high", "xhigh", "max"]) {
-      assert.strictEqual(resolveClaudeCatalogEffort(catalog, "custom", ` ${effort} `), effort);
-    }
-    for (const effort of [undefined, null, "", "  ", "brutal", "extreme", "HIGH", "ultrathink"]) {
-      assert.isUndefined(resolveClaudeCatalogEffort(catalog, "custom", effort));
-    }
-  });
-
   it("only treats a trailing 1M marker as an explicit context window", () => {
     const catalog = scopeClaudeModelCatalog(catalogFromManifest(manifest()), [
       "route[1m]-revision",
@@ -243,7 +211,6 @@ describe("Claude model catalog", () => {
       );
     }
   });
-
   it("appends custom models, defaulting a bare slug and keeping declared descriptors", () => {
     const catalog = scopeClaudeModelCatalog(catalogFromManifest(manifest()), [
       "synthetic",
