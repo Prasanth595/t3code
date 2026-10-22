@@ -484,6 +484,8 @@ const NewTaskSheetStack = createNativeStackNavigator({
       linking: "draft",
       options: {
         headerBackVisible: false,
+        // Android draws its own sheet header; hide the native header before the first layout.
+        headerShown: Platform.OS !== "android",
         title: "",
       },
     }),
