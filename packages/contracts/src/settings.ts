@@ -75,7 +75,7 @@ const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repos
 export const MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 1;
 export const MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 90;
 /** Environment-wide cap on delegated child tasks that run at once; later ones wait to start. */
-export const DEFAULT_MAX_RUNNING_DELEGATED_TASKS = 16;
+const DEFAULT_MAX_RUNNING_DELEGATED_TASKS = 16;
 export const MaxRunningDelegatedTasks = Schema.Int.check(
   Schema.isBetween({ minimum: 1, maximum: 256 }),
 );
