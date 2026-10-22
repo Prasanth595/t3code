@@ -133,10 +133,7 @@ function NewTaskHeader(props: {
                 {
                   accessibilityLabel: "Add project",
                   icon: "plus",
-                  onPress: () =>
-                    navigation.getState()?.routeNames.includes("NewTaskProject")
-                      ? navigation.navigate("NewTaskSheet", { screen: "AddProject" })
-                      : navigation.dispatch(StackActions.push("AddProject")),
+                  onPress: () => navigation.dispatch(StackActions.push("AddProject")),
                 },
               ]
             : []
@@ -400,9 +397,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                     tone="primary"
                     onPress={() =>
                       catalogState.hasReadyEnvironment
-                        ? navigation.getState()?.routeNames.includes("NewTaskProject")
-                          ? navigation.navigate("NewTaskSheet", { screen: "AddProject" })
-                          : navigation.dispatch(StackActions.push("AddProject"))
+                        ? navigation.dispatch(StackActions.push("AddProject"))
                         : navigation.navigate("ConnectionsNew")
                     }
                   />
@@ -428,11 +423,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                     <Button
                       label="Add new project"
                       tone="primary"
-                      onPress={() =>
-                        navigation.getState()?.routeNames.includes("NewTaskProject")
-                          ? navigation.navigate("NewTaskSheet", { screen: "AddProject" })
-                          : navigation.dispatch(StackActions.push("AddProject"))
-                      }
+                      onPress={() => navigation.dispatch(StackActions.push("AddProject"))}
                     />
                   </View>
                   {canStartScratch ? (

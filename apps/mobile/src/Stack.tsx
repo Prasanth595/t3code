@@ -563,6 +563,12 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "GitOverview",
   "NewTaskSheet",
   "NewTaskProject",
+  "NewTaskFile",
+  "AddProject",
+  "AddProjectRepository",
+  "AddProjectDestination",
+  "AddProjectLocal",
+  "AddProjectNew",
   "NewTaskEnvironment",
   "NewTaskBranch",
   "SettingsLegal",
@@ -805,6 +811,34 @@ const RootStackConfig = createWorkspaceStackNavigator({
     NewTaskBranch: createNativeStackScreen({
       screen: NewTaskBranchPickerRouteScreen,
       options: { ...GLASS_HEADER_OPTIONS, title: "Branch" },
+    }),
+    AddProject: createNativeStackScreen({
+      screen: AddProjectSourceRoute,
+
+      options: {
+        ...GLASS_HEADER_OPTIONS,
+        title: "Add project",
+      },
+    }),
+    AddProjectRepository: createNativeStackScreen({
+      screen: AddProjectRepositoryRoute,
+      options: GLASS_HEADER_OPTIONS,
+    }),
+    AddProjectDestination: createNativeStackScreen({
+      screen: AddProjectDestinationRoute,
+      options: GLASS_HEADER_OPTIONS,
+    }),
+    AddProjectLocal: createNativeStackScreen({
+      screen: AddProjectLocalRoute,
+      options: GLASS_HEADER_OPTIONS,
+    }),
+    AddProjectNew: createNativeStackScreen({
+      screen: AddProjectNewRoute,
+      options: GLASS_HEADER_OPTIONS,
+    }),
+    NewTaskFile: createNativeStackScreen({
+      screen: ThreadFileScreen,
+      options: SOLID_HEADER_OPTIONS,
     }),
     ThreadTerminal: createNativeStackScreen({
       screen: ThreadTerminalRouteScreen,

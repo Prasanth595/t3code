@@ -1041,13 +1041,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 onOpenMention={(path) => {
                   Keyboard.dismiss();
                   if (props.isDraft) {
-                    navigation.navigate("NewTaskSheet", {
-                      screen: "NewTaskFile",
-                      params: {
-                        environmentId: String(props.environmentId),
-                        cwd: props.projectCwd ?? undefined,
-                        path: fileRoutePathSegments(path),
-                      },
+                    navigation.navigate("NewTaskFile", {
+                      environmentId: String(props.environmentId),
+                      cwd: props.projectCwd ?? undefined,
+                      path: fileRoutePathSegments(path),
                     });
                   } else {
                     navigation.navigate("ThreadFile", {
