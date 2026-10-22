@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  ServerSelfUpdateError,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
@@ -261,7 +262,9 @@ describe("accepted server update recovery", () => {
                         ? Effect.interrupt
                         : Effect.fail(
                             loss === "server_error"
-                              ? new Error("Archive verification failed.")
+                              ? new ServerSelfUpdateError({
+                                  reason: "Archive verification failed.",
+                                })
                               : new RpcClientError.RpcClientError({
                                   reason: new Socket.SocketCloseError({ code: 1006 }),
                                 }),
