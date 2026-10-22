@@ -67,10 +67,7 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { ComposerAttachmentButton } from "./ComposerAttachmentButton";
-import {
-  ComposerAttachmentStrip,
-  ComposerAttachmentThumbnail,
-} from "../../components/ComposerAttachmentStrip";
+import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
@@ -805,7 +802,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     <>
       {queuedEdit !== null && queuedEdit.existingAttachments.length > 0 ? (
         <Animated.View
-          className="px-[14px] pb-2.5"
+          className="px-[14px] pb-2.5 pt-2"
           entering={COMPOSER_ATTACHMENT_ENTERING}
           exiting={FadeOut.duration(120)}
         >
@@ -819,7 +816,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       ) : null}
       {stripAttachments.length > 0 ? (
         <Animated.View
-          className="px-[14px] pb-2.5"
+          className="px-[14px] pb-2.5 pt-2"
           entering={COMPOSER_ATTACHMENT_ENTERING}
           exiting={FadeOut.duration(120)}
         >
@@ -942,7 +939,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             paddingVertical: hasSidebarTabBar ? 9 : 2,
           }}
         >
-          {isExpanded ? editingAttachments : null}
+          {editingAttachments}
           <View onLayout={compactEditor.onRowLayout}>
             <ComposerDictationDraftContent
               className="flex-row items-end"
@@ -967,29 +964,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   compactEditor.isExpanded ? { flex: 0, width: 0 } : undefined,
                 ]}
               ></Animated.View>
-              {!isExpanded && stripAttachments.length > 0 ? (
-                <View className="flex-row gap-1 pl-1">
-                  {stripAttachments.slice(0, 3).map((attachment) => (
-                    <ComposerAttachmentThumbnail
-                      environmentId={props.environmentId}
-                      key={attachment.id}
-                      attachment={attachment}
-                      size={30}
-                      borderRadius={8}
-                      compact
-                      onPressPreview={isSubmissionLocked ? undefined : onPressPreview}
-                      onPressVideo={isSubmissionLocked ? undefined : onPressVideo}
-                    />
-                  ))}
-                  {stripAttachments.length > 3 ? (
-                    <View className="size-[30px] items-center justify-center rounded-lg bg-subtle-strong">
-                      <Text className="text-foreground-muted text-2xs font-t3-bold">
-                        +{stripAttachments.length - 3}
-                      </Text>
-                    </View>
-                  ) : null}
-                </View>
-              ) : null}
               <View
                 className="min-w-0 shrink flex-row items-center"
                 style={
@@ -998,6 +972,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               >
                 {modelControl}
                 <ComposerDictationStartAction
+                  size={hasSidebarTabBar ? "large" : "regular"}
                   state={voiceInput.state}
                   isAvailable={voiceInput.isAvailable}
                   disabled={isSubmissionLocked}
@@ -1179,7 +1154,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             collapsable={false}
             importantForAccessibility={isToolbarVisible ? "auto" : "no-hide-descendants"}
             pointerEvents={isToolbarVisible ? "auto" : "none"}
-            style={{ position: "absolute", bottom: 2, left: 0, right: 0 }}
+            style={{ position: "absolute", bottom: hasSidebarTabBar ? 9 : 2, left: 0, right: 0 }}
           >
             <ComposerDictationToolbar
               showsDictation={isVoiceInputPresented}
@@ -1192,6 +1167,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 style={{ gap: 0 }}
               >
                 <ComposerDictationCancelAction
+                  size={hasSidebarTabBar ? "large" : "regular"}
                   presentation={voicePresentation}
                   onCancel={voiceInput.cancel}
                 />
@@ -1219,6 +1195,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 )}
                 <View className="shrink-0 flex-row items-center">
                   <ComposerDictationPrimaryAction
+                    size={hasSidebarTabBar ? "large" : "regular"}
                     state={voiceInput.state}
                     presentation={voicePresentation}
                     isAvailable={voiceInput.isAvailable}

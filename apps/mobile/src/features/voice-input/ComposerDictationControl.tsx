@@ -255,6 +255,7 @@ export function DictationElapsedTime(props: {
 }
 
 function VoiceActionButton(props: {
+  readonly size?: "regular" | "large";
   readonly accessibilityLabel: string;
   readonly disabled?: boolean;
   readonly icon: AppSymbolName;
@@ -282,7 +283,11 @@ function VoiceActionButton(props: {
       <View
         className={cn(
           "items-center justify-center",
-          variant === "primary" ? "size-[30px] rounded-full bg-subtle" : "size-[44px]",
+          variant === "primary"
+            ? props.size === "large"
+              ? "size-[44px] rounded-full bg-subtle"
+              : "size-[30px] rounded-full bg-subtle"
+            : "size-[44px]",
         )}
       >
         {variant === "primary" ? (
@@ -297,7 +302,7 @@ function VoiceActionButton(props: {
           ) : (
             <SymbolView
               name={props.icon}
-              size={variant === "primary" ? 16 : 20}
+              size={props.size === "large" ? 24 : variant === "primary" ? 16 : 20}
               weight={variant === "primary" ? "semibold" : "regular"}
               tintColorClassName={
                 variant === "primary" ? "accent-primary-foreground" : "accent-icon"
@@ -382,12 +387,14 @@ export function ComposerDictationStatus(props: {
 }
 
 export function ComposerDictationCancelAction(props: {
+  readonly size?: "regular" | "large";
   readonly presentation: VoiceComposerPresentation;
   readonly onCancel: () => void;
 }) {
   if (props.presentation.leadingAction !== "cancel") return null;
   return (
     <VoiceActionButton
+      size={props.size}
       accessibilityLabel="Cancel dictation"
       icon="xmark"
       onPress={props.onCancel}
@@ -396,6 +403,7 @@ export function ComposerDictationCancelAction(props: {
 }
 
 export function ComposerDictationPrimaryAction(props: {
+  readonly size?: "regular" | "large";
   readonly state: VoiceInputState;
   readonly presentation: VoiceComposerPresentation;
   readonly isAvailable: boolean;
@@ -407,6 +415,7 @@ export function ComposerDictationPrimaryAction(props: {
   if (props.presentation.trailingAction === "confirm") {
     return (
       <VoiceActionButton
+        size={props.size}
         accessibilityLabel={
           props.presentation.confirmationEnabled
             ? "Finish dictation"
@@ -425,6 +434,7 @@ export function ComposerDictationPrimaryAction(props: {
 }
 
 export function ComposerDictationStartAction(props: {
+  readonly size?: "regular" | "large";
   readonly state: VoiceInputState;
   readonly isAvailable: boolean;
   readonly disabled?: boolean;
@@ -435,6 +445,7 @@ export function ComposerDictationStartAction(props: {
   const openSettings = props.state.phase === "error" && props.state.errorAction === "settings";
   return (
     <VoiceActionButton
+      size={props.size}
       accessibilityLabel={openSettings ? "Open microphone settings" : "Start dictation"}
       disabled={props.disabled}
       icon="mic"
