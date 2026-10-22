@@ -9,6 +9,7 @@ import {
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { CodexProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
@@ -79,15 +80,9 @@ it.effect("a full database fails the command with the SQLite code kept on the ap
       })
       .pipe(Effect.flip);
 
-    const append = findCause(
-      failure,
-      (value): value is EventStoreAppendEventsError => value instanceof EventStoreAppendEventsError,
-    );
+    const append = findCause(failure, Schema.is(EventStoreAppendEventsError));
     assert.ok(append, `no EventStoreAppendEventsError in ${String(failure)}`);
-    const sqlError = findCause(
-      append.cause,
-      (value): value is PersistenceSqlError => value instanceof PersistenceSqlError,
-    );
+    const sqlError = findCause(append.cause, Schema.is(PersistenceSqlError));
     assert.equal(sqlError?.operation, "OrchestrationEventStore.appendAgentEvents:insert");
     assert.equal(sqlError?.detail, "SQLITE(13) database or disk is full");
     assert.isNull(yield* projections.getThreadShell(threadId));
