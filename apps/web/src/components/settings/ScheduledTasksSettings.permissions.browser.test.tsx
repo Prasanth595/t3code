@@ -27,38 +27,65 @@ vi.mock(import("../../state/server"), async () => {
     },
   } as never;
 });
-vi.mock(import("./SettingsScopeContext"), () => ({
-  useSettingsScope: () => ({
-    scope: { kind: "all", environmentIds: state.environments.map((env) => env.environmentId) },
-    environments: state.environments,
-    connectedEnvironments: state.environments,
-    environment: state.environments[0],
-    targets: [],
-    target: null,
-  }),
-}) as never);
-vi.mock(import("../../state/environments"), () => ({
-  useEnvironment: (id: string) => state.environments.find((env) => env.environmentId === id),
-}) as never);
+vi.mock(
+  import("./SettingsScopeContext"),
+  () =>
+    ({
+      useSettingsScope: () => ({
+        scope: { kind: "all", environmentIds: state.environments.map((env) => env.environmentId) },
+        environments: state.environments,
+        connectedEnvironments: state.environments,
+        environment: state.environments[0],
+        targets: [],
+        target: null,
+      }),
+    }) as never,
+);
+vi.mock(
+  import("../../state/environments"),
+  () =>
+    ({
+      useEnvironment: (id: string) => state.environments.find((env) => env.environmentId === id),
+    }) as never,
+);
 vi.mock(import("../../state/entities"), () => ({ useProjects: () => [] }) as never);
-vi.mock(import("../../hooks/useSettings"), () => ({
-  useEnvironmentSettings: () => DEFAULT_SERVER_SETTINGS,
-}) as never);
-vi.mock(import("../../state/use-atom-command"), () => ({
-  useAtomCommand: () => vi.fn(),
-}) as never);
-vi.mock(import("../../cloud/primaryCloudLinkState"), () => ({
-  usePrimaryCloudLinkState: () => null,
-}) as never);
+vi.mock(
+  import("../../hooks/useSettings"),
+  () =>
+    ({
+      useEnvironmentSettings: () => DEFAULT_SERVER_SETTINGS,
+    }) as never,
+);
+vi.mock(
+  import("../../state/use-atom-command"),
+  () =>
+    ({
+      useAtomCommand: () => vi.fn(),
+    }) as never,
+);
+vi.mock(
+  import("../../cloud/primaryCloudLinkState"),
+  () =>
+    ({
+      usePrimaryCloudLinkState: () => null,
+    }) as never,
+);
 vi.mock(import("../chat/ProviderModelPicker"), () => ({ ProviderModelPicker: () => null }));
 vi.mock(import("../WorktreeBaseBranchPicker"), () => ({ WorktreeBaseBranchPicker: () => null }));
-vi.mock(import("./settingsLayout"), async (original) => ({
-  ...(await original()),
-  SettingsPageContainer: ({ children }: { children: ReactNode }) => children,
-  SettingsRow: ({ title, description }: { title: string; description: string }) => (
-    <div>{title}{description}</div>
-  ),
-}) as never);
+vi.mock(
+  import("./settingsLayout"),
+  async (original) =>
+    ({
+      ...(await original()),
+      SettingsPageContainer: ({ children }: { children: ReactNode }) => children,
+      SettingsRow: ({ title, description }: { title: string; description: string }) => (
+        <div>
+          {title}
+          {description}
+        </div>
+      ),
+    }) as never,
+);
 
 import { ScheduledTasksSettings } from "./ScheduledTasksSettings";
 
