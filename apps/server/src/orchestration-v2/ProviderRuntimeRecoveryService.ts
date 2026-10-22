@@ -106,16 +106,18 @@ function isAppOwnedDelegation(task: {
   readonly origin: OrchestrationV2Subagent["origin"];
   readonly childThreadId: ThreadId | null;
   readonly remoteChild?: OrchestrationV2Subagent["remoteChild"];
+  readonly workflow?: OrchestrationV2Subagent["workflow"];
 }): boolean {
   return (
-    task.origin === "app_owned" && (task.childThreadId !== null || task.remoteChild !== undefined)
+    task.origin === "app_owned" &&
+    (task.childThreadId !== null || task.remoteChild !== undefined || task.workflow !== undefined)
   );
 }
 
 function isAppOwnedDelegationItem(
   item: OrchestrationV2ThreadProjection["turnItems"][number],
 ): boolean {
-  return item.type === "subagent" && isAppOwnedDelegation(item);
+  return item.type === "subagent" && item.origin === "app_owned";
 }
 
 function providerThreadHasPendingBackgroundTasks(
