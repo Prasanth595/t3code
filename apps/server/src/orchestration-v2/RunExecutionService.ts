@@ -1464,13 +1464,14 @@ export const layer: Layer.Layer<
                 if (yield* Ref.get(rootRunFinalized)) return;
                 const providerThread = yield* Ref.get(latestProviderThread);
                 const routing = yield* Ref.get(eventRouting);
-                // The failed consumer cannot persist the adapter's terminal event.
+                // Stop background work too; the failed consumer cannot persist terminal events.
                 const interruptedProviderTurn =
                   routing.rootProviderTurnId !== null && !routing.rootTurnEnded
                     ? yield* input.session
                         .interruptTurn({
                           providerThread,
                           providerTurnId: routing.rootProviderTurnId,
+                          requestRuntimeRestart: true,
                         })
                         .pipe(
                           Effect.as(yield* Ref.get(latestRootProviderTurn)),

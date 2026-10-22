@@ -2488,11 +2488,13 @@ it.effect("refreshes pull requests after a provider stream exits with an error",
 );
 
 it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as const)(
-  "stops the live provider before settling an ingestion %s",
+  "stops the live provider and background work before settling an ingestion %s",
   (failureMode) =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
       const stopped = yield* Deferred.make<void>();
+      const backgroundWorkRunning = yield* Ref.make(true);
+      const backgroundWorkAtFinalization = yield* Ref.make<boolean | null>(null);
       const now = yield* DateTime.now;
       const interrupts = yield* Ref.make<
         ReadonlyArray<ProviderAdapter.ProviderAdapterV2InterruptInput>
@@ -2537,6 +2539,11 @@ it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as c
         },
         interruptTurn: (input) =>
           Ref.update(interrupts, (current) => [...current, input]).pipe(
+            Effect.andThen(
+              input.requestRuntimeRestart === true && failureMode !== "interrupt-failure"
+                ? Ref.set(backgroundWorkRunning, false)
+                : Effect.void,
+            ),
             Effect.andThen(Deferred.succeed(stopped, undefined)),
             Effect.andThen(
               failureMode === "interrupt-failure"
@@ -2557,6 +2564,7 @@ it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as c
             assert.equal(calls.length, 1);
             assert.equal(calls[0]?.providerTurnId, ids.rootProviderTurnId);
             assert.equal(calls[0]?.providerThread.id, ids.providerThreadId);
+            yield* Ref.set(backgroundWorkAtFinalization, yield* Ref.get(backgroundWorkRunning));
             return true;
           }),
       });
@@ -2564,6 +2572,10 @@ it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as c
         assert.deepEqual(finalEvents, []);
         assert.deepEqual(observed, []);
       } else {
+        assert.equal(
+          yield* Ref.get(backgroundWorkAtFinalization),
+          failureMode === "interrupt-failure",
+        );
         assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
         const repaired = finalEvents.find((event) => event.type === "provider-turn.updated");
         if (failureMode === "interrupt-failure") {
