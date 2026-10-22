@@ -3438,6 +3438,32 @@ it.effect("reports a file pushed to since it was cleared as changed", () =>
   }),
 );
 
+it.effect("clears a file against what the head has now, not what it had a moment ago", () =>
+  Effect.gen(function* () {
+    const revisions = new Map([["src/a.ts", "blob-a"]]);
+    const service = yield* environmentViewedService(revisions, []);
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    revisions.set("src/a.ts", "blob-a-again");
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: false }],
+    });
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    yield* service.invalidate({ reference: GITLAB_REFERENCE });
+
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "viewed" },
+    ]);
+  }),
+);
+
 it.effect("keeps a deleted file cleared, which the head has no version of at all", () =>
   Effect.gen(function* () {
     const service = yield* environmentViewedService(new Map(), []);
