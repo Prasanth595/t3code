@@ -147,3 +147,74 @@ it.effect("keeps hosts independent when serials collide and another host fails",
     ),
   ),
 );
+
+it.effect("starts other hosts while one host is still starting", () =>
+  Effect.gen(function* () {
+    const slowStarted = yield* Deferred.make<void>();
+    const finishSlow = yield* Deferred.make<void>();
+    const stops: string[] = [];
+    const host = (id: string, start: Effect.Effect<void>): DeviceHost.DeviceHost["Service"] => {
+      const run = () => Effect.succeed({ stdout: "", stderr: "", code: 0 });
+      const ready: DeviceHost.DeviceHostAgentReady = {
+        nodePath: process.execPath,
+        hub: { origin: `http://${id}` },
+        devices: makeDeviceHubOperations({
+          hostId: id,
+          origin: `http://${id}`,
+          http: HttpClient.make(() => Effect.die("unused")),
+          run,
+          androidAvailable: Effect.succeed(false),
+        }),
+        agentDevice: null,
+        run,
+        helpers: { serveSimAxSettings: null, serveSimCli: null },
+      };
+      return {
+        id,
+        label: id,
+        summary: Effect.succeed({
+          id,
+          label: id,
+          kind: "ssh",
+          hubInstalled: true,
+          agentDeviceInstalled: true,
+          platforms: [],
+        }),
+        platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+        ensureReady: () => start.pipe(Effect.as(ready)),
+        ensureAgentReady: () => start.pipe(Effect.as(ready)),
+        current: Effect.succeed(null),
+        stopAgent: Effect.void,
+        stop: Effect.sync(() => {
+          stops.push(id);
+        }),
+      };
+    };
+    const hosts = new Map([
+      [
+        "slow",
+        host(
+          "slow",
+          Deferred.succeed(slowStarted, undefined).pipe(Effect.andThen(Deferred.await(finishSlow))),
+        ),
+      ],
+      ["fast", host("fast", Effect.void)],
+    ]);
+    const service = yield* DeviceService.makeWithHosts(hosts).pipe(
+      Effect.provide(NodeCrypto.layer),
+    );
+    const slow = yield* service.readiness("slow").pipe(Effect.flip, Effect.forkChild);
+    yield* Deferred.await(slowStarted);
+    expect((yield* service.readiness("fast")).hostId).toBe("fast");
+    expect((yield* service.state).hostStatuses.fast?.status).toBe("ready");
+    // Turning device support off while a host starts stops that host once it is up.
+    yield* service.configure({ enabled: false });
+    yield* Deferred.succeed(finishSlow, undefined);
+    const error = yield* Fiber.join(slow);
+    expect(error._tag === "DeviceHostUnavailableError" && error.reason).toBe(
+      "Device support was turned off while the host was starting.",
+    );
+    expect(stops).toEqual(["slow", "fast", "slow"]);
+    expect((yield* service.state).hostStatuses).toEqual({});
+  }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true }))),
+);

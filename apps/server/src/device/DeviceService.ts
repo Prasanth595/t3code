@@ -262,6 +262,30 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           })),
     );
 
+  // A host can take minutes to start (an SSH host may be installing its hub),
+  // so starting runs outside the lifecycle lock; each host serializes its own
+  // starts and stops. Under the lock, a start that is no longer wanted stops.
+  const confirmStarted = Effect.fn("DeviceService.confirmStarted")(function* (
+    host: DeviceHost.DeviceHost["Service"],
+    agent: boolean,
+  ) {
+    const current = yield* readDeviceSettings;
+    if (!current.enabled || (agent && !current.agentAccessEnabled)) {
+      yield* current.enabled ? host.stopAgent : host.stop;
+      return yield* new DeviceHostUnavailableError({
+        hostId: host.id,
+        hostLabel: host.label,
+        reason: `${current.enabled ? "Agent device access" : "Device support"} was turned off while the host was starting.`,
+      });
+    }
+    if (hosts.get(host.id) !== host)
+      return yield* new DeviceHostUnavailableError({
+        hostId: host.id,
+        hostLabel: host.label,
+        reason: "Host configuration changed. Retry the operation.",
+      });
+  });
+
   const readiness: DeviceService["Service"]["readiness"] = Effect.fn("DeviceService.readiness")(
     function* (hostId) {
       const host = yield* resolveHost(hostId);
@@ -302,19 +326,17 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               }),
           ),
         );
-      if (hosts.get(host.id) !== host)
-        return yield* new DeviceHostUnavailableError({
-          hostId: host.id,
-          hostLabel: host.label,
-          reason: "Host configuration changed. Retry the operation.",
-        });
-      const { state } = yield* SynchronizedRef.get(stateRef);
-      if (state.hostStatuses[host.id]?.status !== "ready") {
-        yield* setHostStatus(host.id, { status: "ready" });
-      }
-      return { hostId: host.id, ...ready };
+      return yield* lifecycleLock.withPermit(
+        Effect.gen(function* () {
+          yield* confirmStarted(host, false);
+          const { state } = yield* SynchronizedRef.get(stateRef);
+          if (state.hostStatuses[host.id]?.status !== "ready") {
+            yield* setHostStatus(host.id, { status: "ready" });
+          }
+          return { hostId: host.id, ...ready };
+        }),
+      );
     },
-    lifecycleLock.withPermit,
   );
 
   const readinessIfSupported: DeviceService["Service"]["readinessIfSupported"] = Effect.fn(
@@ -369,11 +391,19 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               }),
           ),
         );
-      const hostSummaries = yield* Effect.forEach(hosts.values(), (candidate) => candidate.summary);
-      yield* publish((state) => ({ ...state, hosts: hostSummaries }));
-      yield* setHostStatus(host.id, { status: "ready" });
-      return { hostId: host.id, ...ready };
-    }, lifecycleLock.withPermit);
+      return yield* lifecycleLock.withPermit(
+        Effect.gen(function* () {
+          yield* confirmStarted(host, true);
+          const hostSummaries = yield* Effect.forEach(
+            hosts.values(),
+            (candidate) => candidate.summary,
+          );
+          yield* publish((state) => ({ ...state, hosts: hostSummaries }));
+          yield* setHostStatus(host.id, { status: "ready" });
+          return { hostId: host.id, ...ready };
+        }),
+      );
+    });
 
   const currentReadiness: DeviceService["Service"]["currentReadiness"] = (hostId) =>
     resolveHost(hostId).pipe(
