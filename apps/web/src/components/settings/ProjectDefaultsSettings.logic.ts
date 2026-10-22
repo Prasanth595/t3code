@@ -1,6 +1,5 @@
 import type { ModelSelection, ServerProvider } from "@t3tools/contracts";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
-import { createModelSelection } from "@t3tools/shared/model";
 
 import { resolveEffectiveDefaultModelSelection } from "../../modelSelection";
 import {
@@ -44,15 +43,6 @@ export function resolveDefaultModelSettingsPresentation(input: {
     effortLocked: false,
     note: null,
   };
-}
-
-export function modelSelectionForEffortChange(
-  saved: ModelSelection | null | undefined,
-  displayed: ModelSelection,
-  options: ModelSelection["options"],
-): ModelSelection {
-  const base = saved && saved.instanceId !== displayed.instanceId ? saved : displayed;
-  return createModelSelection(base.instanceId, base.model, options);
 }
 
 function isUsableProviderEntry(entry: ProviderInstanceEntry | undefined): boolean {

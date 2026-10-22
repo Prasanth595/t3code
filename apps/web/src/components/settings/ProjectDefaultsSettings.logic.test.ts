@@ -8,10 +8,7 @@ import {
   deriveProviderInstanceEntries,
   sortProviderInstanceEntries,
 } from "../../providerInstances";
-import {
-  modelSelectionForEffortChange,
-  resolveDefaultModelSettingsPresentation,
-} from "./ProjectDefaultsSettings.logic";
+import { resolveDefaultModelSettingsPresentation } from "./ProjectDefaultsSettings.logic";
 
 const claudeId = ProviderInstanceId.make("claudeAgent");
 const codexId = ProviderInstanceId.make("codex");
@@ -161,28 +158,5 @@ describe("resolveDefaultModelSettingsPresentation", () => {
     });
     expect(row.effortLocked).toBe(false);
     expect(row.selection).toMatchObject({ instanceId: claudeId, model: "claude-sonnet-5" });
-  });
-});
-
-describe("modelSelectionForEffortChange", () => {
-  it("writes effort onto the saved model when another instance is displayed", () => {
-    const displayed = createModelSelection(codexId, "gpt-5.6");
-    expect(modelSelectionForEffortChange(savedClaude, displayed, high)).toEqual(
-      createModelSelection(claudeId, "claude-opus-4-8", high),
-    );
-  });
-
-  it("writes effort onto the displayed model when it is the saved instance", () => {
-    const displayed = createModelSelection(claudeId, "claude-sonnet-5");
-    expect(
-      modelSelectionForEffortChange(savedClaude, displayed, [{ id: "effort", value: "low" }]),
-    ).toEqual(createModelSelection(claudeId, "claude-sonnet-5", [{ id: "effort", value: "low" }]));
-  });
-
-  it("pins the displayed automatic model when nothing is saved", () => {
-    const displayed = createModelSelection(codexId, "gpt-5.6");
-    expect(modelSelectionForEffortChange(null, displayed, high)).toEqual(
-      createModelSelection(codexId, "gpt-5.6", high),
-    );
   });
 });
