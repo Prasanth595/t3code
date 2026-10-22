@@ -31,7 +31,12 @@ function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
 describe("when: local changes are behind upstream", () => {
   it("keeps the commit action available without pushing, with or without an open PR", () => {
     const behind = status({ hasWorkingTreeChanges: true, behindCount: 2 });
-    const commit = { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
+    const commit = {
+      label: "Commit",
+      disabled: false,
+      kind: "run_action",
+      action: "commit",
+    } as const;
     assert.deepEqual(resolveQuickAction(behind, false), commit);
     assert.deepEqual(
       resolveQuickAction(
