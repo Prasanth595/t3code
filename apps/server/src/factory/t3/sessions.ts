@@ -544,7 +544,8 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  // The threads `archive` archived in this process: `brokenWorktrees` leaves them out.
+  // The threads `archive` was asked for and left archived in this process: `brokenWorktrees`
+  // leaves them out.
   const archivedHere = new Set<string>();
 
   // A thread that cannot be read is archived anyway, so it is never left
@@ -555,6 +556,7 @@ export const make = Effect.gen(function* () {
       const id = yield* Effect.option(decodeThreadId(threadId));
       if (Option.isNone(id)) return;
       const before = yield* archiveState(id.value);
+      if (before === "archived") archivedHere.add(id.value);
       if (before === "archived" || before === "unknown") return;
       const commandId = yield* archiveCommandId(id.value).pipe(
         Effect.mapError((cause) => new SessionsError({ operation: "archive", cause })),
