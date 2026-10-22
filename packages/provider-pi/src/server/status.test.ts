@@ -54,7 +54,7 @@ function piProbeSpawner(version: string) {
   });
 }
 
-const piDiscoverySpawner = (
+const piRpcProcess = (
   inventory: unknown,
   slowStartup?: {
     readonly delay: Duration.Input;
@@ -93,21 +93,32 @@ const piDiscoverySpawner = (
         }
       }),
     );
-    return ChildProcessSpawner.make((command) => {
-      const args = ChildProcess.isStandardCommand(command) ? command.args : [];
-      return Effect.succeed(
-        args.includes("--version")
-          ? processHandle({ stdout: "pi 0.84.3\n" })
-          : ChildProcessSpawner.makeHandle({
-              ...processHandle({}),
-              exitCode: Effect.never,
-              isRunning: Effect.succeed(true),
-              stdin,
-              stdout: Stream.fromQueue(stdout),
-            }),
-      );
+    return ChildProcessSpawner.makeHandle({
+      ...processHandle({}),
+      exitCode: Effect.never,
+      isRunning: Effect.succeed(true),
+      stdin,
+      stdout: Stream.fromQueue(stdout),
     });
   });
+
+// Text generation lists models with --no-extensions, so its inventory can differ.
+const piDiscoverySpawner = (
+  inventory: unknown,
+  slowStartup?: Parameters<typeof piRpcProcess>[1],
+  extensionFreeInventory: unknown = inventory,
+) =>
+  Effect.succeed(
+    ChildProcessSpawner.make((command) => {
+      const args = ChildProcess.isStandardCommand(command) ? command.args : [];
+      return args.includes("--version")
+        ? Effect.succeed(processHandle({ stdout: "pi 0.84.3\n" }))
+        : piRpcProcess(
+            args.includes("--no-extensions") ? extensionFreeInventory : inventory,
+            slowStartup,
+          );
+    }),
+  );
 
 const settings = {
   enabled: true,
@@ -154,6 +165,32 @@ describe("PiProvider", () => {
       assert.deepEqual(
         snapshot.models.map((model) => model.slug),
         ["default"],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("marks models that only load with Pi extensions as unusable for text generation", () =>
+    Effect.gen(function* () {
+      const spawner = yield* piDiscoverySpawner(
+        {
+          models: [
+            { provider: "anthropic", id: "claude-sonnet-4" },
+            { provider: "demo", id: "demo-model" },
+          ],
+        },
+        undefined,
+        { models: [{ provider: "anthropic", id: "claude-sonnet-4" }] },
+      );
+      const snapshot = yield* checkPiProviderStatus(settings).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      assert.deepEqual(
+        snapshot.models.map((model) => [model.slug, model.supportsTextGeneration]),
+        [
+          ["default", undefined],
+          ["anthropic/claude-sonnet-4", undefined],
+          ["demo/demo-model", false],
+        ],
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );

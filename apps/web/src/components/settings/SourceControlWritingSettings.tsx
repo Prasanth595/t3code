@@ -26,6 +26,7 @@ import {
 } from "../../providerInstances";
 import {
   getCustomModelOptionsByInstance,
+  getTextGenerationProviders,
   resolveAppModelSelectionState,
   selectsPlanAgent,
 } from "../../modelSelection";
@@ -107,9 +108,7 @@ export function SourceControlWritingSettingsSection() {
     style.mode !== defaults.mode ||
     style.customInstructions !== defaults.customInstructions;
 
-  const textGenerationProviders = serverProviders.filter(
-    (provider) => provider.supportsTextGeneration !== false,
-  );
+  const textGenerationProviders = getTextGenerationProviders(serverProviders);
   const instanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(
       deriveProviderInstanceEntries(textGenerationProviders),

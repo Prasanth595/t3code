@@ -93,6 +93,7 @@ import { useThreadActions } from "../../hooks/useThreadActions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
   getCustomModelOptionsByInstance,
+  getTextGenerationProviders,
   resolveAppModelSelectionState,
   selectsPlanAgent,
 } from "../../modelSelection";
@@ -2107,9 +2108,7 @@ export function GeneralSettingsPanel() {
       (target) => target.serverConfig?.environment.capabilities.threadRestartContinuation === true,
     );
 
-  const textGenerationProviders = serverProviders.filter(
-    (provider) => provider.supportsTextGeneration !== false,
-  );
+  const textGenerationProviders = getTextGenerationProviders(serverProviders);
   const textGenerationModelSelection = resolveAppModelSelectionState(
     settings,
     textGenerationProviders,

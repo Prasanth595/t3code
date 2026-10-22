@@ -11,6 +11,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as HttpClient from "effect/http/HttpClient";
@@ -134,6 +135,7 @@ const makePiDiscoveryConnection = Effect.fnUntraced(function* (
   environment: NodeJS.ProcessEnv,
   launchArgs: ReadonlyArray<string>,
   cwd?: string,
+  textGenerationLaunch = false,
 ) {
   const launch = buildPiRpcLaunch({
     launchArgs,
@@ -141,6 +143,8 @@ const makePiDiscoveryConnection = Effect.fnUntraced(function* (
     mcpSession: undefined,
     extensionPath: undefined,
     ephemeral: true,
+    disableExtensions: textGenerationLaunch,
+    disableTools: textGenerationLaunch,
   });
   const connection = yield* makePiRpcConnection({
     command: piSettings.binaryPath || "pi",
@@ -156,12 +160,45 @@ const makePiDiscoveryConnection = Effect.fnUntraced(function* (
   return connection;
 });
 
+// Text generation runs Pi with --no-extensions, so it cannot load models that an
+// extension or package registers. Listing models with that launch tells them apart.
+const discoverPiTextGenerationModelSlugs = Effect.fn(
+  "PiProviderStatus.discoverPiTextGenerationModelSlugs",
+)(function* (
+  piSettings: PiSettings,
+  environment: NodeJS.ProcessEnv,
+  launchArgs: ReadonlyArray<string>,
+  cwd?: string,
+) {
+  const connection = yield* makePiDiscoveryConnection(
+    piSettings,
+    environment,
+    launchArgs,
+    cwd,
+    true,
+  );
+  const modelsData = yield* connection.request({ type: "get_available_models" });
+  const models = yield* Effect.fromResult(parseDiscoveredModels(modelsData, undefined));
+  return new Set(models.map((model) => model.slug));
+}, Effect.scoped);
+
 const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function* (
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv,
   launchArgs: ReadonlyArray<string>,
   cwd?: string,
 ) {
+  // Without this list every model stays offered, and text generation still
+  // explains a rejected extension model.
+  const textGenerationModelSlugsFiber = yield* discoverPiTextGenerationModelSlugs(
+    piSettings,
+    environment,
+    launchArgs,
+    cwd,
+  ).pipe(
+    Effect.orElseSucceed(() => undefined),
+    Effect.forkScoped,
+  );
   const connection = yield* makePiDiscoveryConnection(piSettings, environment, launchArgs, cwd);
   const stateData = yield* connection.request({ type: "get_state" });
   const modelsData = yield* connection.request({ type: "get_available_models" });
@@ -170,8 +207,16 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
     .pipe(Effect.orElseSucceed(() => undefined));
   const discoveredModels = yield* Effect.fromResult(parseDiscoveredModels(modelsData, stateData));
   const { slashCommands, skills } = parsePiDiscoveredCommands(commandsData);
+  const textGenerationModelSlugs = yield* Fiber.join(textGenerationModelSlugsFiber);
   return {
-    models: discoveredModels,
+    models:
+      textGenerationModelSlugs === undefined
+        ? discoveredModels
+        : discoveredModels.map((model) =>
+            textGenerationModelSlugs.has(model.slug)
+              ? model
+              : { ...model, supportsTextGeneration: false },
+          ),
     slashCommands: withPiBuiltinSlashCommands(slashCommands),
     skills,
     authenticated: discoveredModels.length > 0,

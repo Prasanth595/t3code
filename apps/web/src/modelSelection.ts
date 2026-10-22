@@ -317,6 +317,21 @@ export function getCustomModelOptionsByInstance(
   return out;
 }
 
+/**
+ * Providers and models that application text generation can run. An absent
+ * `supportsTextGeneration` on either one means supported.
+ */
+export function getTextGenerationProviders(
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<ServerProvider> {
+  return providers
+    .filter((provider) => provider.supportsTextGeneration !== false)
+    .map((provider) => {
+      const models = provider.models.filter((model) => model.supportsTextGeneration !== false);
+      return models.length === provider.models.length ? provider : { ...provider, models };
+    });
+}
+
 export function selectsPlanAgent(options: ModelSelection["options"]): boolean {
   return options?.some((option) => option.id === "agent" && option.value === "plan") ?? false;
 }
@@ -329,9 +344,7 @@ export function resolveAppModelSelectionState(
     instanceId: DEFAULT_TEXT_GENERATION_INSTANCE_ID,
     model: DEFAULT_TEXT_GENERATION_MODEL,
   };
-  const supportedProviders = providers.filter(
-    (provider) => provider.supportsTextGeneration !== false,
-  );
+  const supportedProviders = getTextGenerationProviders(providers);
   const entries = deriveProviderInstanceEntries(supportedProviders);
   const selectedEntry = entries.find(
     (entry) => entry.instanceId === selection.instanceId && entry.enabled && entry.isAvailable,
