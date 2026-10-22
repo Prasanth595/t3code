@@ -516,7 +516,10 @@ describe("terminalLinkAtPositionWithRange", () => {
     (text) => {
       const cells = Array.from(text).flatMap((character) =>
         /[日本🙂]/u.test(character)
-          ? [{ ...cell(character), wide: 1 }, { ...cell(""), wide: 2 }]
+          ? [
+              { ...cell(character), wide: 1 },
+              { ...cell(""), wide: 2 },
+            ]
           : [cell(character)],
       );
       const row: GhosttyRow = { cells, text, isWrapContinuation: false, wrapsToNext: false };
@@ -539,7 +542,12 @@ describe("terminalLinkAtPositionWithRange", () => {
         wrapsToNext: true,
       },
       {
-        cells: [{ ...cell("日"), wide: 1 }, { ...cell(""), wide: 2 }, cell(""), ...Array.from("next", cell)],
+        cells: [
+          { ...cell("日"), wide: 1 },
+          { ...cell(""), wide: 2 },
+          cell(""),
+          ...Array.from("next", cell),
+        ],
         text: "日 next",
         isWrapContinuation: true,
         wrapsToNext: false,
