@@ -2464,6 +2464,342 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each([
+    { status: "success" as const, fingerprint: true },
+    { status: "failure" as const, fingerprint: false },
+  ])(
+    "post-merge watch survives automatic settlement and wakes once for $status",
+    ({ status, fingerprint }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        const threadId = ThreadId.make(`post-merge-${status}`);
+        const projectId = ProjectId.make(`post-merge-${status}`);
+        yield* seedProject({
+          projectId,
+          title: "Post merge",
+          workspaceRoot: "/workspace/post-merge",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`post-merge-create-${status}`),
+          threadId,
+          projectId,
+          title: "Post merge",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        const key = { host: "github.com", repository: "pingdotgg/t3code", number: 12 };
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`post-merge-start-${status}`),
+          threadId,
+          ...key,
+          watching: true,
+          postMergeCheck: "Main",
+          link: { url: "https://github.com/pingdotgg/t3code/pull/12", source: "agent" },
+        });
+        let detail: PullRequestDetail = {
+          ...watchedPullRequestDetail({ projectId, number: 12, at: "2026-10-02T12:00:00.000Z" }),
+          headSha: "exact-pr-head",
+          checks: [
+            {
+              name: "Label",
+              status: "success" as const,
+              required: true,
+              description: null,
+              url: null,
+            },
+          ],
+        };
+        let reads = 0;
+        let invalidations = 0;
+        const host = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(PullRequestService.PullRequestService)({
+            watchFingerprint: () =>
+              Effect.succeed(fingerprint ? { status: "unchanged", remarks: "unchanged" } : null),
+            invalidate: () =>
+              Effect.sync(() => {
+                invalidations += 1;
+              }),
+            detail: () =>
+              Effect.sync(() => {
+                reads += 1;
+                return detail;
+              }),
+            activity: () =>
+              Effect.succeed({
+                comments: [],
+                commentCount: 0,
+                commentsTruncated: false,
+                reviewThreads: [],
+                commits: [],
+              }),
+          }),
+        );
+        const watchOf = Effect.map(
+          orchestrator.getThreadShell(threadId),
+          (thread) => thread?.pullRequests?.[0]?.watch,
+        );
+        const summaries = Effect.map(
+          orchestrator.getThreadRecords(threadId, ["messages"]),
+          ({ messages }) => messages.flatMap((message) => message.notification?.summary ?? []),
+        );
+        const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+        yield* reactor.sweep;
+        assert.deepEqual(yield* summaries, ["#12: checks passed"]);
+        const eventSink = yield* EventSink.EventSinkV2;
+        const run = (yield* orchestrator.getThreadRecords(threadId, ["runs"])).runs[0];
+        assert.isDefined(run);
+        const now = yield* DateTime.now;
+        yield* eventSink.commitCommand({
+          commandId: CommandId.make(`post-merge-turn-completed-${status}`),
+          threadId,
+          commandType: "provider-runtime.reconcile",
+          acceptedAt: now,
+          events: [
+            {
+              id: EventId.make(`post-merge-turn-completed-${status}`),
+              type: "run.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status: "completed", completedAt: now },
+            },
+          ],
+          effects: [],
+        });
+        detail = { ...detail, state: "merged" };
+        const before = yield* orchestrator.getThreadShell(threadId);
+        assert.isNotNull(before);
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-link.sync",
+          commandId: CommandId.make(`post-merge-snapshot-${status}`),
+          threadId,
+          ...key,
+          snapshot: {
+            state: "merged",
+            title: "Post merge",
+            isDraft: false,
+            headBranch: "feature",
+            baseBranch: "main",
+            checksState: "passing",
+            mergeability: "mergeable",
+            reviewDecision: null,
+            updatedAt: "2026-10-02T12:00:00.000Z",
+            mergedAt: "2026-10-02T12:00:00.000Z",
+            closedAt: null,
+            syncedAt: "2026-10-02T12:00:00.000Z",
+          },
+          stack: null,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.auto-settle",
+          commandId: CommandId.make(`post-merge-settle-${status}`),
+          threadId,
+          snapshotAt: before.updatedAt,
+        });
+        assert.isDefined(yield* watchOf);
+        assert.isTrue((yield* maintenance.rebuild).valid);
+        assert.equal((yield* watchOf)?.postMergeCheck, "Main");
+        const restarted = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+        yield* restarted.sweep;
+        assert.isDefined(yield* watchOf);
+        assert.deepEqual(yield* summaries, ["#12: checks passed"]);
+        detail = {
+          ...detail,
+          checks: [
+            ...detail.checks,
+            {
+              name: "Main",
+              status: "pending",
+              description: null,
+              url: "https://example.com/release",
+            },
+          ],
+        };
+        yield* restarted.sweep;
+        assert.isDefined(yield* watchOf);
+        detail = {
+          ...detail,
+          headSha: "another-head",
+          checks: detail.checks.map((check) =>
+            check.name === "Main" ? { ...check, status } : check,
+          ),
+        };
+        yield* restarted.sweep;
+        assert.isDefined(yield* watchOf);
+        assert.deepEqual(yield* summaries, ["#12: checks passed"]);
+        detail = { ...detail, headSha: "exact-pr-head" };
+        yield* restarted.sweep;
+        assert.isUndefined(yield* watchOf);
+        const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+        assert.lengthOf(messages, 2);
+        const terminal = messages.find((message) => message.notification?.summary.includes("Main"));
+        assert.equal(
+          terminal?.notification?.outcome,
+          status === "success" ? "completed" : "failed",
+        );
+        assert.include(terminal?.text ?? "", "exact-pr-head");
+        assert.include(terminal?.text ?? "", "https://example.com/release");
+        const readsAtEnd = reads;
+        yield* restarted.sweep;
+        assert.equal(reads, readsAtEnd);
+        assert.lengthOf(yield* summaries, 2);
+        assert.equal(invalidations, fingerprint ? reads : reads - 1);
+      }),
+  );
+
+  it.effect.each([
+    "timeout-missing",
+    "timeout-pending",
+    "unwatch",
+    "manual-settle",
+    "archive",
+    "stop",
+    "closed",
+    "default",
+  ] as const)("post-merge watch termination: %s", (mode) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const threadId = ThreadId.make(`post-merge-end-${mode}`);
+      const projectId = ProjectId.make(`post-merge-end-${mode}`);
+      yield* seedProject({
+        projectId,
+        title: "Post merge",
+        workspaceRoot: "/workspace/post-merge",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`post-merge-end-create-${mode}`),
+        threadId,
+        projectId,
+        title: "Post merge",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 12 };
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make(`post-merge-end-start-${mode}`),
+        threadId,
+        ...key,
+        watching: true,
+        ...(mode === "default" ? {} : { postMergeCheck: "Release verdict" }),
+        link: { url: "https://github.com/pingdotgg/t3code/pull/12", source: "agent" },
+      });
+      let reads = 0;
+      const host = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(PullRequestService.PullRequestService)({
+          watchFingerprint: () => Effect.succeed(null),
+          invalidate: () => Effect.void,
+          detail: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return {
+                ...watchedPullRequestDetail({
+                  projectId,
+                  number: 12,
+                  at: "2026-10-02T12:00:00.000Z",
+                }),
+                state: mode === "closed" ? ("closed" as const) : ("merged" as const),
+                headSha: "pr-head",
+                checks:
+                  mode === "timeout-pending"
+                    ? [
+                        {
+                          name: "Release verdict",
+                          status: "pending" as const,
+                          description: null,
+                          url: null,
+                        },
+                      ]
+                    : [],
+              };
+            }),
+          activity: () =>
+            Effect.succeed({
+              comments: [],
+              commentCount: 0,
+              commentsTruncated: false,
+              reviewThreads: [],
+              commits: [],
+            }),
+        }),
+      );
+      const watchOf = Effect.map(
+        orchestrator.getThreadShell(threadId),
+        (thread) => thread?.pullRequests?.[0]?.watch,
+      );
+      const messagesOf = Effect.map(
+        orchestrator.getThreadRecords(threadId, ["messages"]),
+        ({ messages }) => messages,
+      );
+      const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+      yield* reactor.sweep;
+      if (mode === "closed" || mode === "default") {
+        assert.isUndefined(yield* watchOf);
+        assert.lengthOf(yield* messagesOf, mode === "closed" ? 1 : 0);
+      } else {
+        const watch = yield* watchOf;
+        assert.isDefined(watch?.postMerge);
+        if (mode.startsWith("timeout")) {
+          assert.isTrue((yield* maintenance.rebuild).valid);
+          const restarted = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+          yield* TestClock.adjust("23 hours");
+          yield* restarted.sweep;
+          assert.equal((yield* watchOf)?.postMerge?.deadlineAt, watch?.postMerge?.deadlineAt);
+          assert.lengthOf(yield* messagesOf, 0);
+          const beforeTimeoutReads = reads;
+          yield* TestClock.adjust("1 hour");
+          yield* restarted.sweep;
+          assert.equal(reads, beforeTimeoutReads);
+          assert.isUndefined(yield* watchOf);
+          const messages = yield* messagesOf;
+          assert.lengthOf(messages, 1);
+          assert.include(messages[0]?.text ?? "", "inconclusive");
+          assert.equal(messages[0]?.notification?.outcome, "failed");
+          yield* restarted.sweep;
+          assert.lengthOf(yield* messagesOf, 1);
+        } else {
+          yield* orchestrator.dispatch({
+            ...(mode === "unwatch"
+              ? { type: "thread.pull-request.watch" as const, ...key, watching: false }
+              : mode === "manual-settle"
+                ? { type: "thread.settle" as const }
+                : mode === "archive"
+                  ? { type: "thread.archive" as const }
+                  : { type: "thread.stop" as const }),
+            commandId: CommandId.make(`post-merge-end-${mode}`),
+            threadId,
+          });
+          assert.isUndefined(yield* watchOf);
+          assert.lengthOf(yield* messagesOf, 0);
+        }
+      }
+      const endedReads = reads;
+      yield* reactor.sweep;
+      assert.equal(reads, endedReads);
+    }),
+  );
+
   it.effect("ends a watch it cannot read, and tells the agent", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

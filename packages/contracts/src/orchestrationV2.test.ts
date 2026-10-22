@@ -34,6 +34,27 @@ const decodeOrchestrationV2ProviderCapabilities = Schema.decodeUnknownSync(
 );
 
 describe("orchestration V2 contracts", () => {
+  it("accepts an optional post-merge check through the watch RPC", () => {
+    const decode = Schema.decodeUnknownSync(
+      Schema.toCodecJson(OrchestrationV2RpcSchemas.dispatchCommand.input),
+    );
+    const watch = {
+      type: "thread.pull-request.watch",
+      commandId: "watch-post-merge",
+      threadId: "thread-1",
+      host: "github.com",
+      repository: "owner/repository",
+      number: 1,
+      watching: true,
+    };
+    expect(decode(watch)).toEqual(watch);
+    expect(decode({ ...watch, postMergeCheck: "Main" })).toEqual({
+      ...watch,
+      postMergeCheck: "Main",
+    });
+    expect(() => decode({ ...watch, postMergeCheck: " " })).toThrow();
+  });
+
   it("decodes thread event types from a newer server as skippable items", () => {
     const decodeWireItems = Schema.decodeUnknownSync(
       Schema.toCodecJson(Schema.Array(OrchestrationV2RpcSchemas.subscribeThread.output)),

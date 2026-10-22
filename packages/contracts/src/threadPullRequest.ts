@@ -83,6 +83,13 @@ export type ThreadPullRequestKey = typeof ThreadPullRequestKey.Type;
 
 export const ThreadPullRequestWatch = Schema.Struct({
   startedAt: IsoDateTime,
+  postMergeCheck: Schema.optional(TrimmedNonEmptyString),
+  postMerge: Schema.optional(
+    Schema.Struct({
+      headSha: Schema.NullOr(TrimmedNonEmptyString),
+      deadlineAt: IsoDateTime,
+    }),
+  ),
   headSha: Schema.NullOr(TrimmedNonEmptyString),
   failedChecks: Schema.Array(TrimmedNonEmptyString),
   passed: Schema.Boolean,
