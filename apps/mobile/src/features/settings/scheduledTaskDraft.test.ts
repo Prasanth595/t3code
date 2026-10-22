@@ -87,6 +87,22 @@ describe("scheduleFromDraft", () => {
     expect(scheduleFromDraft({ ...DEFAULT_SCHEDULE, weekdays: [] })).toBeNull();
   });
 
+  it("keeps a fixed time's zone, clears it when blank, and rejects an unknown one", () => {
+    const draft = scheduleDraftForTask({
+      schedule: { type: "fixed_time", timeOfDay: "09:00", timeZone: "America/Chicago" },
+    });
+    expect(scheduleFromDraft(draft)).toEqual({
+      type: "fixed_time",
+      timeOfDay: "09:00",
+      timeZone: "America/Chicago",
+    });
+    expect(scheduleFromDraft({ ...draft, timeZone: "america/chicago" })).toMatchObject({
+      timeZone: "America/Chicago",
+    });
+    expect(scheduleFromDraft({ ...draft, timeZone: "" })).toMatchObject({ timeZone: null });
+    expect(scheduleFromDraft({ ...draft, timeZone: "Chicago" })).toBeNull();
+  });
+
   it.each([
     ["1.5", 90_000],
     [String(60_001 / 60_000), 60_001],
