@@ -217,6 +217,7 @@ export function NewTaskDraftScreen(props: {
   } = useIncomingShare();
   const insets = useSafeAreaInsets();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
+  const keyboardHeight = useKeyboardState((state) => state.height);
   const hasSidebarTabBar = useSidebarWorkspaceTabs() === "picker";
   const bottomBarInset = useDuoBottomBarInset();
   const controlsBottomPadding =
@@ -224,7 +225,9 @@ export function NewTaskDraftScreen(props: {
     (Platform.OS === "ios" && Platform.isPad
       ? Math.max(insets.bottom, 12) - (hasSidebarTabBar ? 5 : 0)
       : Math.max(insets.bottom, 10));
-  const keyboardOpenedOffset = Math.max(0, controlsBottomPadding - 8);
+  // Hardware keyboards can report open progress with no keyboard covering the screen.
+  const keyboardOpenedOffset =
+    keyboardHeight > controlsBottomPadding ? Math.max(0, controlsBottomPadding - 8) : 0;
   const { projectScopes, selectedProject, selectedProjectKey, setProject } = flow;
   const selectedProjectLabel = (() => {
     if (!selectedProject) return null;
