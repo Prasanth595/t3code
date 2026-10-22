@@ -816,7 +816,7 @@ it.effect("admits provider and OAuth client credentials and points only clients 
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("accepts case-insensitive MCP bearer schemes and rejects unusable credentials", () => {
+it.effect("accepts case-insensitive MCP bearer schemes and diagnoses rejected credentials", () => {
   const messages: Array<unknown> = [];
   const logger = Logger.make(({ message }) => messages.push(message));
   const layerAuth = Layer.mergeAll(EnvironmentAuth.layer, McpSessionRegistry.layer).pipe(
@@ -873,8 +873,8 @@ it.effect("accepts case-insensitive MCP bearer schemes and rejects unusable cred
       }
       messages.length = 0;
       for (const [authorization, reason] of [
-        [undefined, "missing_bearer_token"],
-        [`Basic ${providerToken}`, "missing_bearer_token"],
+        [undefined, "missing_authorization_header"],
+        [`Basic ${providerToken}`, "unsupported_scheme"],
         ["Bearer", "missing_bearer_token"],
         ["bEaReR ", "missing_bearer_token"],
         [`bearer ${providerToken.toUpperCase()}`, "unknown_or_expired_token"],

@@ -168,7 +168,14 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
         : undefined);
     if (!invocation) {
       yield* Effect.logWarning("rejected MCP request with an unusable credential", {
-        reason: token.length === 0 ? "missing_bearer_token" : "unknown_or_expired_token",
+        reason:
+          authorization === undefined
+            ? "missing_authorization_header"
+            : authorization.split(" ", 1)[0]?.toLowerCase() !== "bearer"
+              ? "unsupported_scheme"
+              : token.length === 0
+                ? "missing_bearer_token"
+                : "unknown_or_expired_token",
       });
       return unauthorized({
         request,
