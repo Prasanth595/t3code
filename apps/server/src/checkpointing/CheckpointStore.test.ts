@@ -18,12 +18,16 @@ import * as CheckpointStore from "./CheckpointStore.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const layerServerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-checkpoint-store-test-",
 });
 const layerVcsProcessTest = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
-const layerVcsDriverTest = VcsDriverRegistry.layer.pipe(Layer.provide(layerVcsProcessTest));
+const layerVcsDriverTest = VcsDriverRegistry.layer.pipe(
+  Layer.provide(layerVcsProcessTest),
+  Layer.provide(ServerSettings.layerTest()),
+);
 const layerCheckpointStoreTest = CheckpointStore.layer.pipe(
   Layer.provideMerge(layerVcsDriverTest),
   Layer.provideMerge(NodeServices.layer),
@@ -100,6 +104,35 @@ function buildLargeText(lineCount = 5_000): string {
     .join("\n")
     .concat("\n");
 }
+
+it.effect("captures no checkpoint while source control is off", () =>
+  Effect.gen(function* () {
+    const tmp = yield* makeTmpDir();
+    yield* initRepoWithCommit(tmp);
+    const checkpointStore = yield* CheckpointStore.CheckpointStore;
+    const checkpointRef = checkpointRefForThreadTurn(ThreadId.make("thread-source-control-off"), 1);
+
+    expect(yield* checkpointStore.isGitRepository(tmp)).toBe(false);
+    const error = yield* checkpointStore
+      .captureCheckpoint({ cwd: tmp, checkpointRef })
+      .pipe(Effect.flip);
+    expect(error._tag).toBe("VcsUnsupportedOperationError");
+    expect(yield* git(tmp, ["for-each-ref", "refs/t3"])).toBe("");
+  }).pipe(
+    Effect.provide(
+      CheckpointStore.layer.pipe(
+        Layer.provide(
+          VcsDriverRegistry.layer.pipe(
+            Layer.provide(layerVcsProcessTest),
+            Layer.provide(ServerSettings.layerTest({ sourceControlEnabled: false })),
+          ),
+        ),
+        Layer.provideMerge(layerVcsProcessTest),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
+  ),
+);
 
 it.layer(layerTest)("CheckpointStore.layer", (it) => {
   it.effect("detects a nested workspace without its own .git entry", () =>

@@ -2683,6 +2683,8 @@ export const make = Effect.gen(function* () {
   const branchPullRequest: GitManager["Service"]["branchPullRequest"] = Effect.fn(
     "branchPullRequest",
   )(function* ({ cwd, branch }, options) {
+    // Settlement and discovery sweeps ask about every thread's branch directly.
+    if (!(yield* ServerSettings.sourceControlEnabled(serverSettingsService))) return null;
     const cacheCwd = yield* normalizeStatusCacheKey(cwd);
     const refresh = options?.refresh === true;
     const freshGitState = refresh || options?.freshGitState === true;

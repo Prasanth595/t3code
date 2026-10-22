@@ -718,6 +718,8 @@ const make = Effect.gen(function* () {
     now: number,
     entries: StorageCleanupReportEntry[],
   ) {
+    // Deciding whether a checkout is safe to remove takes Git.
+    if (!serverSettings.sourceControlEnabled) return;
     if (!anyWorktreePolicy(serverSettings, worktreeCleanupEnabled)) return;
     const roots: Array<string> = [];
     for (const directory of managedWorktreesDirectories(

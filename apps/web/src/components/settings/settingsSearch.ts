@@ -817,6 +817,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
   },
   {
+    id: "git-integration",
+    title: "Git integration",
+    to: "/settings/source-control",
+    searchTerms: [
+      "source control version control turn off disable checkpoints status diffs branches repository",
+    ],
+    environmentOnly: true,
+  },
+  {
     id: "worktree-branch-naming",
     title: "Worktree branch naming",
     to: "/settings/source-control",

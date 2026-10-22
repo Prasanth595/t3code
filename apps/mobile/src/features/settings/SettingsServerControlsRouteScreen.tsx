@@ -356,6 +356,16 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
 
               {props.page === "source-control" ? (
                 <>
+                  <SettingsSection title="Git">
+                    <SettingsSwitchRow
+                      icon="arrow.triangle.branch"
+                      label="Git integration"
+                      subtitle="When off, T3 Code treats every folder as having no Git repository: no checkpoints, status checks, diffs, or branch and pull request controls."
+                      value={uniform("sourceControlEnabled")}
+                      disabled={disabledFor("sourceControlEnabled")}
+                      onValueChange={(value) => write({ sourceControlEnabled: value })}
+                    />
+                  </SettingsSection>
                   <BranchNamingSettings
                     key={targetsKey}
                     mode={uniform("branchNamingMode")}

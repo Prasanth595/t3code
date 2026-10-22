@@ -9,6 +9,7 @@ import * as PlatformError from "effect/PlatformError";
 import { vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
@@ -23,6 +24,7 @@ const layerTest = Layer.empty.pipe(
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
   Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsProcess.layer),
+  Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provide(
     ServerConfig.ServerConfig.layerTest(process.cwd(), {
       prefix: "t3-workspace-entries-test-",
@@ -129,6 +131,35 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           entries: [],
           truncated: false,
         });
+      }),
+    );
+
+    it.effect("leaves entries unlabelled while source control is off", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        yield* writeTextFile(cwd, ".gitignore", "node_modules/\n.env\n");
+        yield* writeTextFile(cwd, ".env", "secret=value");
+        yield* writeTextFile(cwd, "node_modules/pkg/index.js");
+        const settings = yield* ServerSettings.ServerSettingsService;
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+
+        yield* Effect.gen(function* () {
+          yield* settings.updateSettings({ sourceControlEnabled: false });
+          const root = yield* workspaceEntries.list({ cwd, directoryPath: "" });
+          expect(root.entries).toEqual(
+            expect.arrayContaining([
+              { path: ".env", kind: "file" },
+              { path: "node_modules", kind: "directory" },
+            ]),
+          );
+          expect(root.entries.some((entry) => entry.ignored)).toBe(false);
+          expect(yield* workspaceEntries.listIgnoredFiles({ cwd })).toEqual({
+            files: [],
+            truncated: false,
+          });
+        }).pipe(
+          Effect.ensuring(Effect.ignore(settings.updateSettings({ sourceControlEnabled: true }))),
+        );
       }),
     );
 

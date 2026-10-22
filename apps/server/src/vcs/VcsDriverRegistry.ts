@@ -9,6 +9,7 @@ import * as Path from "effect/Path";
 
 import type { VcsDriverKind, VcsError, VcsRepositoryIdentity } from "@t3tools/contracts";
 import { VcsUnsupportedOperationError } from "@t3tools/contracts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import * as VcsProjectConfig from "./VcsProjectConfig.ts";
 import * as VcsDriver from "./VcsDriver.ts";
@@ -69,6 +70,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const projectConfig = yield* VcsProjectConfig.VcsProjectConfig;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const git = yield* GitVcsDriver.makeVcsDriver;
   const drivers: Partial<Record<VcsDriverKind, VcsDriver.VcsDriver["Service"]>> = {
     git,
@@ -163,8 +165,13 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // Off reads every folder as having no repository, so checkpoints, status,
+  // and diffs degrade as they do outside Git and no Git process starts.
+  const sourceControlEnabled = ServerSettings.sourceControlEnabled(serverSettings);
+
   const detect: VcsDriverRegistry["Service"]["detect"] = Effect.fn("VcsDriverRegistry.detect")(
     function* (input) {
+      if (!(yield* sourceControlEnabled)) return null;
       const requestedKind = yield* projectConfig.resolveKind(input);
       const key = detectionCacheKey({ cwd: input.cwd, requestedKind });
       const cached = yield* Cache.get(detectionCache, key);
@@ -193,8 +200,9 @@ export const make = Effect.gen(function* () {
       return yield* new VcsUnsupportedOperationError({
         operation: "VcsDriverRegistry.resolve",
         kind: requestedKind === "auto" ? "unknown" : requestedKind,
-        detail:
-          requestedKind === "auto"
+        detail: !(yield* sourceControlEnabled)
+          ? "Source control is turned off in this environment's settings."
+          : requestedKind === "auto"
             ? `No supported VCS repository was detected at ${input.cwd}.`
             : `No ${requestedKind} repository was detected at ${input.cwd}.`,
       });

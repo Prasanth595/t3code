@@ -1329,6 +1329,17 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live("leaves worktrees untouched while source control is off", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, setSettings } = yield* cleanupFixture();
+        setSettings({ sourceControlEnabled: false });
+        const report = yield* service.runNow;
+        expect(report.entries.some((entry) => entry.kind === "worktree")).toBe(false);
+        expect(yield* fs.exists(worktree)).toBe(true);
+      }),
+    ),
+  );
   it.live("still removes a worktree when measuring its size fails", () =>
     runCleanupTest(
       Effect.gen(function* () {

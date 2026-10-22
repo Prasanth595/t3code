@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as ServerSettings from "../serverSettings.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 import * as VcsProjectConfig from "./VcsProjectConfig.ts";
 import * as VcsDriverRegistry from "./VcsDriverRegistry.ts";
@@ -24,6 +25,7 @@ const normalizeGitArgs = (args: ReadonlyArray<string>): ReadonlyArray<string> =>
 describe("VcsDriverRegistry", () => {
   const makeDiskBackedLayer = (rootDir: string, calls: string[]) =>
     Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make).pipe(
+      Layer.provideMerge(ServerSettings.layerTest()),
       Layer.provide(NodeServices.layer),
       Layer.provide(
         Layer.mock(VcsProjectConfig.VcsProjectConfig)({
@@ -119,6 +121,31 @@ describe("VcsDriverRegistry", () => {
 
         assert.equal((yield* registry.detect({ cwd: repoDir }))?.repository.rootPath, repoDir);
         assert.equal(calls.filter((call) => call === "rev-parse --is-inside-work-tree").length, 2);
+      }).pipe(Effect.provide(makeDiskBackedLayer(repoDir, calls)));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reads every folder as having no repository while source control is off", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const repoDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-registry-" });
+      yield* fs.makeDirectory(path.join(repoDir, ".git"));
+      const calls: string[] = [];
+
+      yield* Effect.gen(function* () {
+        const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        yield* settings.updateSettings({ sourceControlEnabled: false });
+
+        assert.equal(yield* registry.detect({ cwd: repoDir }), null);
+        assert.equal(yield* registry.detect({ cwd: repoDir, requestedKind: "git" }), null);
+        const error = yield* registry.resolve({ cwd: repoDir }).pipe(Effect.flip);
+        assert.equal(error._tag, "VcsUnsupportedOperationError");
+        assert.deepEqual(calls, []);
+
+        yield* settings.updateSettings({ sourceControlEnabled: true });
+        assert.equal((yield* registry.detect({ cwd: repoDir }))?.repository.rootPath, repoDir);
       }).pipe(Effect.provide(makeDiskBackedLayer(repoDir, calls)));
     }).pipe(Effect.provide(NodeServices.layer)),
   );
