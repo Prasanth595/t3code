@@ -55,7 +55,7 @@ it.each(["leadingItems", "trailingItems", "toolbarItems"] as const)(
             />,
           ),
         );
-        const nativeItems = bridge.ios?.[placement];
+        const nativeItems = (bridge.ios as StackHeaderConfigProps["ios"])?.[placement];
         expect(nativeItems).toHaveLength(2);
         for (const item of nativeItems ?? []) {
           if (item.type !== "item") throw new Error("Expected a native bar item");
