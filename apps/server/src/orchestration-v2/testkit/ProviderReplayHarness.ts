@@ -195,6 +195,7 @@ export function runOrchestratorV2ProviderReplayScenario<
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
+    readonly awaitCommandEffects?: boolean;
   } = {},
 ): Effect.Effect<
   OrchestratorV2ScenarioResult,
@@ -222,7 +223,7 @@ export function runOrchestratorV2ProviderReplayScenario<
     const outbox = yield* EffectOutbox.EffectOutboxV2;
     const result = yield* runOrchestratorV2Scenario(scenario, {
       replayGate,
-      ...(options.runEffectWorker === false
+      ...(options.runEffectWorker === false || options.awaitCommandEffects !== true
         ? {}
         : {
             afterSteps: Effect.gen(function* () {

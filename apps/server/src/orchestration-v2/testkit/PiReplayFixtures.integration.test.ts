@@ -51,6 +51,7 @@ describe("Pi replay fixtures", () => {
         driver: {
           ...pi,
           runContinuationWorker: true,
+          awaitCommandEffects: true,
           assertOutput: (result, transcript) => {
             const projection = projectionFor(result, transcript.scenario);
             assert.deepEqual(
