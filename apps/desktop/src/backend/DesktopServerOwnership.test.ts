@@ -192,18 +192,27 @@ describe("DesktopServerOwnership", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("does not name an owner it cannot read the record for", () =>
+  it.effect("cannot establish the owner when the record cannot be read", () =>
     Effect.gen(function* () {
-      // The ownership lock is the authority, not the record. The server
-      // reads the record with `orElseSucceed(() => Option.none())` and takes
-      // the home over when the lock is free, so a record the desktop cannot
-      // decode must not strand a home the server could have taken over.
+      // A record the desktop cannot read is not evidence that the home is
+      // free, so the desktop establishes nothing and starts nothing.
       const { ownership } = yield* makeHarness({
         baseDir: "/tmp/t3-ownership-unreadable",
         rawRecord: "{ this is not a runtime record",
       });
       const owner = yield* ownership.inspect;
-      assert.equal(owner._tag, "none");
+      assert.equal(owner._tag, "unknown");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("cannot establish the owner when the record is empty", () =>
+    Effect.gen(function* () {
+      const { ownership } = yield* makeHarness({
+        baseDir: "/tmp/t3-ownership-empty-record",
+        rawRecord: "   \n",
+      });
+      const owner = yield* ownership.inspect;
+      assert.equal(owner._tag, "unknown");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

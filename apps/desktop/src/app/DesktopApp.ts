@@ -224,17 +224,26 @@ const bootstrap = Effect.gen(function* () {
         "bootstrap could not stop the stranded server owning this T3 home",
       );
     }
-  } else if (owner._tag === "healthy" || owner._tag === "foreign") {
-    // A server already owns this T3 home. Starting a second one would fail on
-    // the same ownership lock, so the desktop does not try: it reports the
-    // owner instead.
-    const responding = owner._tag === "healthy";
-    const ownedByThisDesktop = owner._tag === "healthy" && owner.ownedByThisDesktop;
+  } else if (owner._tag === "healthy" || owner._tag === "foreign" || owner._tag === "unknown") {
+    // The desktop cannot start a server for this home: either another server
+    // owns it, or its ownership record cannot be read. Starting a second one
+    // would fail on the same ownership lock, so the desktop does not try: it
+    // reports the state instead.
+    if (owner._tag === "unknown") {
+      const recordPath = yield* serverOwnership.runtimeStatePath;
+      yield* logBootstrapWarning("bootstrap could not establish who owns this T3 home", {
+        path: recordPath,
+      });
+      yield* DesktopHomeOwnership.openDesktopWithExistingOwner({
+        owner: { _tag: "unknown", recordPath },
+      });
+      return;
+    }
     yield* logBootstrapInfo("bootstrap found a server already owning this T3 home", {
       pid: owner.record.pid,
       origin: owner.record.origin,
-      responding,
-      ownedByThisDesktop,
+      responding: owner._tag === "healthy",
+      ownedByThisDesktop: owner._tag === "healthy" && owner.ownedByThisDesktop,
     });
     yield* DesktopHomeOwnership.openDesktopWithExistingOwner({ owner });
     return;

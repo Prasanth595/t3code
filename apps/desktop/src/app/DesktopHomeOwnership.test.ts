@@ -33,6 +33,11 @@ const foreignOwner: DesktopHomeOwnership.DesktopHomeOwner = {
   },
 };
 
+const unknownOwner: DesktopHomeOwnership.DesktopHomeOwner = {
+  _tag: "unknown",
+  recordPath: "/tmp/t3-home/userdata/server-runtime.json",
+};
+
 interface OpenResult {
   readonly dialogs: ReadonlyArray<readonly [string, string]>;
   readonly windowsOpened: number;
@@ -129,6 +134,21 @@ describe("DesktopHomeOwnership", () => {
       assert.equal(result.windowsOpened, 1);
       assert.equal(result.controlSocketsStarted, 1);
       assert.include(result.dialogs[0]?.[1] ?? "", "is not responding");
+    }),
+  );
+
+  it.effect("reports a home whose ownership it cannot establish", () =>
+    Effect.gen(function* () {
+      const result = yield* open(unknownOwner);
+
+      assert.equal(result.windowsOpened, 1, "the app stays open so the user can act");
+      assert.equal(result.controlSocketsStarted, 1);
+      assert.equal(result.dialogs[0]?.[0], "This T3 home's ownership could not be read");
+      assert.include(
+        result.dialogs[0]?.[1] ?? "",
+        unknownOwner.recordPath,
+        "the dialog must name the record the user has to deal with",
+      );
     }),
   );
 

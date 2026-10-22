@@ -51,6 +51,10 @@ const decodeServerRuntimeRecord = Schema.decodeUnknownEffect(
  *   earlier desktop run and can be recovered.
  * - `foreign`: a server owns the home and this desktop cannot prove it
  *   started that server. It is left alone.
+ * - `unknown`: the home's ownership record exists but cannot be read, so the
+ *   desktop cannot establish who owns the home. It starts nothing and reports
+ *   the state, because a record it cannot read is not evidence that the home
+ *   is free.
  */
 export type DesktopServerOwner =
   | { readonly _tag: "none" }
@@ -67,7 +71,8 @@ export type DesktopServerOwner =
   | {
       readonly _tag: "foreign";
       readonly record: DesktopServerRuntimeRecord;
-    };
+    }
+  | { readonly _tag: "unknown" };
 
 export class DesktopServerOwnership extends Context.Service<
   DesktopServerOwnership,
@@ -174,9 +179,29 @@ const recordedProcessStillOwns = Effect.fn("desktop.serverOwnership.recordedProc
   },
 );
 
+/**
+ * The outcome of reading the home's ownership record.
+ *
+ * - `missing`: no server has written a record for this home, so the home is
+ *   free.
+ * - `unreadable`: a record exists but cannot be read or decoded. The desktop
+ *   cannot establish who owns the home.
+ * - `read`: the record names the owner.
+ */
+/** What the file read produced, before the record is decoded. */
+type RecordContents =
+  | { readonly _tag: "missing" }
+  | { readonly _tag: "unreadable" }
+  | { readonly _tag: "contents"; readonly contents: string };
+
+type RuntimeRecordRead =
+  | { readonly _tag: "missing" }
+  | { readonly _tag: "unreadable" }
+  | { readonly _tag: "read"; readonly record: DesktopServerRuntimeRecord };
+
 const readRuntimeRecord = Effect.fn("desktop.serverOwnership.readRuntimeRecord")(function* (
   path: string,
-): Effect.fn.Return<Option.Option<DesktopServerRuntimeRecord>, never, FileSystem.FileSystem> {
+): Effect.fn.Return<RuntimeRecordRead, never, FileSystem.FileSystem> {
   const fileSystem = yield* FileSystem.FileSystem;
   const raw = yield* fileSystem.readFileString(path).pipe(
     Effect.matchEffect({
@@ -185,29 +210,34 @@ const readRuntimeRecord = Effect.fn("desktop.serverOwnership.readRuntimeRecord")
       // server whose record we could not read.
       onFailure: (cause) =>
         cause.reason._tag === "NotFound"
-          ? Effect.succeed(Option.none<string>())
+          ? Effect.succeed<RecordContents>({ _tag: "missing" })
           : logOwnershipWarning("could not read the server runtime record", {
               path,
               cause,
-            }).pipe(Effect.as(Option.none<string>())),
-      onSuccess: (contents) => Effect.succeed(Option.some(contents)),
+            }).pipe(Effect.as<RecordContents>({ _tag: "unreadable" })),
+      onSuccess: (contents) => Effect.succeed<RecordContents>({ _tag: "contents", contents }),
     }),
   );
-  if (Option.isNone(raw)) {
-    return Option.none<DesktopServerRuntimeRecord>();
+  if (raw._tag === "missing") {
+    return { _tag: "missing" };
   }
-  const trimmed = raw.value.trim();
+  if (raw._tag === "unreadable") {
+    // The read failed for a reason other than a missing file, so the home may
+    // be owned and the desktop cannot tell.
+    return { _tag: "unreadable" };
+  }
+  const trimmed = raw.contents.trim();
   if (trimmed.length === 0) {
     yield* logOwnershipWarning("the server runtime record is empty", { path });
-    return Option.none<DesktopServerRuntimeRecord>();
+    return { _tag: "unreadable" };
   }
   const decoded = yield* decodeServerRuntimeRecord(trimmed).pipe(
-    Effect.map(Option.some),
+    Effect.map((record): RuntimeRecordRead => ({ _tag: "read", record })),
     Effect.catchCause((cause) =>
       logOwnershipWarning("could not decode the server runtime record", {
         path,
         cause,
-      }).pipe(Effect.as(Option.none<DesktopServerRuntimeRecord>())),
+      }).pipe(Effect.as<RuntimeRecordRead>({ _tag: "unreadable" })),
     ),
   );
   return decoded;
@@ -282,14 +312,22 @@ export const make = Effect.gen(function* () {
     never,
     ChildProcessSpawner.ChildProcessSpawner
   > {
-    const record = yield* readRuntimeRecord(runtimeStatePath).pipe(
+    const read = yield* readRuntimeRecord(runtimeStatePath).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
     );
-    if (Option.isNone(record)) {
+    if (read._tag === "missing") {
       return { _tag: "none" } as const;
     }
+    if (read._tag === "unreadable") {
+      // A record the desktop cannot read is not evidence that the home is
+      // free, so the desktop establishes nothing and starts nothing.
+      yield* logOwnershipWarning("the server runtime record could not be read", {
+        path: runtimeStatePath,
+      });
+      return { _tag: "unknown" } as const;
+    }
 
-    const value = record.value;
+    const value = read.record;
     if (!isProcessAlive(value.pid)) {
       // The recorded server is gone. Its lock is released with it, so the
       // home is free.
