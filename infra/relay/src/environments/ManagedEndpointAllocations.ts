@@ -505,7 +505,11 @@ export const make = Effect.gen(function* () {
               .pipe(
                 Effect.map((rows) =>
                   rows.map(
-                    ({ recoveryEnvironmentPublicKey, linkedEnvironmentPublicKey, ...allocation }) => ({
+                    ({
+                      recoveryEnvironmentPublicKey,
+                      linkedEnvironmentPublicKey,
+                      ...allocation
+                    }) => ({
                       ...allocation,
                       recoveryEnabled:
                         allocation.recoveryEnabledAt !== null &&
