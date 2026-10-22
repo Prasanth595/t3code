@@ -7220,9 +7220,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       );
     const offer = (message: SDKMessage) => Queue.offer(harness.processQueues.at(-1)!, message);
-    const taskStarted = (toolUseId = "launch", background = true) =>
+    const taskStarted = (toolUseId = "launch", background = true, taskId = "auditor") =>
       claudeSdkFrame({
-        ...makeSubagentTaskStartedFrame({ taskId: "auditor", toolUseId, uuid: uuid() }),
+        ...makeSubagentTaskStartedFrame({ taskId, toolUseId, uuid: uuid() }),
         is_backgrounded: background,
       });
     const settle = Effect.fnUntraced(function* () {
@@ -7250,6 +7250,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     const approve = Effect.fnUntraced(function* (
       agentID: string | undefined,
       decision: "accept" | "decline",
+      providerTurnId = harness.terminalEvents().at(-1)!.providerTurnId,
     ) {
       const permission = yield* request(agentID).pipe(Effect.forkScoped);
       const { runtimeRequest } = yield* Effect.raceFirst(
@@ -7260,7 +7261,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       );
-      assert.equal(runtimeRequest.providerTurnId, harness.terminalEvents().at(-1)!.providerTurnId);
+      assert.equal(runtimeRequest.providerTurnId, providerTurnId);
       const node = harness.events.findLast(
         (event) => event.type === "node.updated" && event.node.id === runtimeRequest.nodeId,
       );
@@ -7301,7 +7302,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect(
-    "limits full-access settled permissions to an eligible subagent of the latest run",
+    "limits full-access settled permissions to an eligible subagent of a completed run",
     () =>
       Effect.gen(function* () {
         const harness = yield* makeIdlePermissionHarness("full-access");
@@ -7310,19 +7311,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal((yield* harness.request(undefined))?.behavior, "deny");
         yield* harness.start();
         yield* harness.offer(harness.taskStarted());
-        yield* harness.settle();
+        const launchTurn = (yield* harness.settle()).providerTurnId;
         // Under bypass, the CLI forwards only requests that need a person's decision.
         yield* harness.approve("auditor", "accept");
         assert.equal((yield* harness.request("another-agent"))?.behavior, "deny");
         assert.equal((yield* harness.request("auditor", AbortSignal.abort()))?.behavior, "deny");
         yield* harness.start();
         yield* harness.settle();
-        // Older runs still stream work, but only the latest settled run ingests approvals.
-        assert.equal((yield* harness.request("auditor"))?.behavior, "deny");
-        assert.equal((yield* harness.request(undefined))?.behavior, "deny");
+        yield* harness.approve("auditor", "accept", launchTurn);
+        assert.equal((yield* harness.request("another-agent"))?.behavior, "deny");
         assert.equal(
-          harness.events.filter((event) => event.type === "runtime_request.updated").length,
-          1,
+          new Set(
+            harness.events.flatMap((event) =>
+              event.type === "runtime_request.updated" ? [event.runtimeRequest.id] : [],
+            ),
+          ).size,
+          2,
         );
       }).pipe(
         Effect.scoped,
@@ -7330,6 +7334,34 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
         ),
       ),
+  );
+
+  it.effect("asks for a subagent of an earlier run after a wake continuation settles", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeIdlePermissionHarness();
+      yield* harness.start();
+      yield* harness.offer(harness.taskStarted("launch-auditor", true, "auditor"));
+      yield* harness.offer(harness.taskStarted("launch-reviewer", true, "reviewer"));
+      const launchTurn = (yield* harness.settle()).providerTurnId;
+      yield* harness.offer(
+        makeSubagentNotificationFrame({
+          taskId: "auditor",
+          toolUseId: "launch-auditor",
+          summary: "Audit done.",
+          uuid: "auditor-done",
+        }),
+      );
+      yield* harness.offer(wakeTurnInit);
+      yield* harness.awaitContinuation(1);
+      yield* harness.start();
+      assert.notEqual((yield* harness.settle()).providerTurnId, launchTurn);
+      yield* harness.approve("reviewer", "accept", launchTurn);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
   );
 
   it.effect("cancels a settled subagent approval when Claude aborts its callback", () =>

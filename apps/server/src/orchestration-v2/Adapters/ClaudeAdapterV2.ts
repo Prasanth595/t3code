@@ -4144,6 +4144,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const subagentToolCalls = new Map<string, ActiveClaudeToolCall>();
         const pendingSubagentLaunchesByToolUseId = new Map<string, PendingClaudeSubagentLaunch>();
         const settledTurnByNativeThread = new Map<string, ActiveClaudeTurnContext>();
+        // A running subagent stays with the run that launched it, and that run keeps ingesting
+        // its events after a later run settles, so its approvals need that run's context.
+        const settledTurnsByRunId = new Map<RunId, ActiveClaudeTurnContext>();
         const subagentStopOutcomes = new Map<
           string,
           Deferred.Deferred<ProviderAdapter.ProviderAdapterV2SubagentOutcome>
@@ -6933,8 +6936,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* Ref.update(activeTurn, (current) =>
             current?.providerTurnId === input.context.providerTurnId ? null : current,
           );
+          const runningSubagentRunIds = new Set(
+            [...(yield* Ref.get(sessionSubagentsByTaskId)).values()].flatMap((subagent) =>
+              subagent.task.status === "running" ? [subagent.task.runId] : [],
+            ),
+          );
+          for (const [runId, settled] of settledTurnsByRunId) {
+            if (
+              settled.nativeThreadId === input.context.nativeThreadId &&
+              (input.status !== "completed" || !runningSubagentRunIds.has(runId))
+            ) {
+              settledTurnsByRunId.delete(runId);
+            }
+          }
           if (input.status === "completed") {
             settledTurnByNativeThread.set(input.context.nativeThreadId, input.context);
+            settledTurnsByRunId.set(input.context.input.runId, input.context);
           } else {
             settledTurnByNativeThread.delete(input.context.nativeThreadId);
           }
@@ -8858,24 +8875,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const settled = context === null;
           if (settled && !callbackOptions.signal.aborted) {
             const live = yield* Ref.get(queryContext);
-            const previous =
-              live === null ? undefined : settledTurnByNativeThread.get(live.nativeThreadId);
-            if (
-              live !== null &&
-              !live.stopping &&
-              live.closed === owningQueryClosed &&
-              previous !== undefined
-            ) {
-              // Only this run still ingests its subagent's approval after the root result.
-              const subagents = yield* Ref.get(sessionSubagentsByTaskId);
-              const running = [...subagents].some(
-                ([taskId, subagent]) =>
-                  (callbackOptions.agentID === undefined || callbackOptions.agentID === taskId) &&
-                  subagent.task.status === "running" &&
-                  subagent.task.runId === previous.input.runId &&
-                  !live.subagentsFromEarlierProcesses.has(subagent),
+            if (live !== null && !live.stopping && live.closed === owningQueryClosed) {
+              const owners = [...(yield* Ref.get(sessionSubagentsByTaskId))].flatMap(
+                ([taskId, subagent]) => {
+                  const owner =
+                    subagent.task.runId === null
+                      ? undefined
+                      : settledTurnsByRunId.get(subagent.task.runId);
+                  return (callbackOptions.agentID === undefined ||
+                    callbackOptions.agentID === taskId) &&
+                    subagent.task.status === "running" &&
+                    !live.subagentsFromEarlierProcesses.has(subagent) &&
+                    owner?.nativeThreadId === live.nativeThreadId
+                    ? [owner]
+                    : [];
+                },
               );
-              if (running) context = previous;
+              const latest = settledTurnByNativeThread.get(live.nativeThreadId);
+              context = owners.find((owner) => owner === latest) ?? owners[0] ?? null;
             }
           }
           if (context === null) {
