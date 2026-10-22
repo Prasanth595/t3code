@@ -233,14 +233,13 @@ export function AssistantCitationChip({
           <AssistantCitationDetails
             citation={citation}
             editor={editor}
-            // An over-length draft keeps the popup open, so the page must stay too.
-            canLeave={() =>
-              resolveAssistantCitationCommentDismissal({
-                reason: "close-press",
-                draft: draftCommentRef.current,
-                savedComment: citation.comment,
-              }).kind !== "keep-open"
-            }
+            // Save before leaving. A draft that cannot be saved keeps the popup open, so the
+            // page must stay too.
+            canLeave={() => {
+              const settled = settleDraftOnClose("close-press");
+              if (settled) draftCommentRef.current = null;
+              return settled;
+            }}
             showQuote={!activeSourceAnchor}
           />
         </PopoverPopup>

@@ -281,4 +281,27 @@ describe("draft citation chip", () => {
     await page.getByRole("link", { name: "Go to source" }).click();
     expect(mocks.navigate).toHaveBeenCalledTimes(1);
   });
+
+  it("stays on the page when saving the draft fails", async () => {
+    using _source = setup();
+    const onSave = vi.fn(() => false);
+    function Composer() {
+      const [open, setOpen] = useState(false);
+      return (
+        <AssistantCitationChip
+          citation={citation}
+          commentEditor={{ open, onOpenChange: setOpen, onSave }}
+        />
+      );
+    }
+    await using _screen = await render(<Composer />);
+    await page.getByRole("button", { name: /^Add comment to citation:/ }).click();
+    await vi.waitFor(() => expect(textarea()).not.toBeNull());
+
+    await typeComment("changed");
+    await page.getByRole("link", { name: "Go to source" }).click();
+    expect(onSave).toHaveBeenCalledWith("changed");
+    expect(mocks.navigate).not.toHaveBeenCalled();
+    expect(textarea()?.value).toBe("changed");
+  });
 });
