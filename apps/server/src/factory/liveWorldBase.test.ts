@@ -247,20 +247,6 @@ describe("liveWorld: threads on a broken worktree", () => {
     ]),
   });
 
-  it.effect("archives a thread at most once, so a person's unarchive sticks", () =>
-    Effect.gen(function* () {
-      const dataDir = tempDir();
-      const run = launched(dataDir, "187", "session-1", true);
-      const world = yield* worldOver(dataDir, childOnBroken);
-      assert.deepStrictEqual(yield* world.brokenWorktrees(), [
-        { worktreePath: "/wt/t3-a", run, threadIds: ["child-1"] },
-      ]);
-      yield* world.archiveThread("child-1");
-      // The stub finds it live again, as after a person unarchived it.
-      assert.deepStrictEqual(yield* world.brokenWorktrees(), []);
-    }),
-  );
-
   it.effect("fails when the ledger cannot be read, and finds the thread once it can", () =>
     Effect.gen(function* () {
       const dataDir = tempDir();

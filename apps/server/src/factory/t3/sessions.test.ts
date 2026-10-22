@@ -1801,6 +1801,47 @@ describe("FactorySessions.brokenWorktrees", () => {
     }),
   );
 
+  it.effect(
+    "leaves out a thread this server archived, so a person's unarchive sticks, but not one whose archive failed",
+    () =>
+      Effect.gen(function* () {
+        const archived = ThreadId.make("archived-then-unarchived");
+        const failed = ThreadId.make("archive-failed");
+        // Both are live and on a deleted folder whatever the archive did, as after an unarchive.
+        const bound = [
+          { threadId: archived, worktreePath: "/tmp/factory-sessions-test-no-such-dir/a" },
+          { threadId: failed, worktreePath: "/tmp/factory-sessions-test-no-such-dir/b" },
+        ];
+        const found = yield* Effect.gen(function* () {
+          const sessions = yield* Sessions.FactorySessions;
+          yield* sessions.archive(archived);
+          yield* Effect.flip(sessions.archive(failed));
+          return yield* sessions.brokenWorktrees;
+        }).pipe(
+          Effect.provide(
+            layerSessions(
+              {
+                getThreadWorktreePaths: () => Effect.succeed(bound),
+                getThread: () =>
+                  Effect.succeed({ ...thread("t3/abc", "/x"), archivedAt: null } as never),
+              },
+              {},
+              {
+                dispatch: (command) =>
+                  "threadId" in command && command.threadId === failed
+                    ? Effect.fail(new DispatchRejected({ message: "dispatch failed" }) as never)
+                    : (Effect.succeed({}) as never),
+              },
+            ),
+          ),
+        );
+        assert.deepStrictEqual(
+          found.map((thread) => thread.threadId),
+          [failed],
+        );
+      }),
+  );
+
   it.effect("fails as a sessions error when the projection cannot be read", () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(listBroken).pipe(
