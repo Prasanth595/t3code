@@ -1078,6 +1078,18 @@ const program = Effect.gen(function* () {
         );
         return {};
       }
+      if (process.env.T3_ACP_ANTIGRAVITY_HARNESS_FAILURE === "1") {
+        yield* Effect.promise(
+          () =>
+            new Promise<void>((resolve) => {
+              process.stderr.write(
+                "I1022 11:04:37.910207 1865358 local_connection.py:551] harness stderr: Agent run failed: failed to handle call hook response: no pending hook for ID hook_request_2\n",
+                () => resolve(),
+              );
+            }),
+        );
+        return yield* Effect.never;
+      }
       if (
         process.env.T3_ACP_CRASH_PROMPT === "1" &&
         request.prompt.some((part) => part.type === "text" && part.text === "crash now")
