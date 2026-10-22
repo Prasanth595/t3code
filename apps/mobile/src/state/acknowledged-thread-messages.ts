@@ -1,6 +1,14 @@
 import { Atom } from "effect/reactivity";
 import { appAtomRegistry } from "./atom-registry";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
+import type { MessageId } from "@t3tools/contracts";
+
+export function unsettledAcknowledgedThreadMessages(
+  messages: ReadonlyArray<QueuedThreadMessage>,
+  echoedIds: ReadonlySet<MessageId>,
+): ReadonlyArray<QueuedThreadMessage> {
+  return messages.filter((message) => !echoedIds.has(message.messageId));
+}
 
 // A command acknowledgment can precede its message in the subscribed timeline.
 // Keep the visible row until that projection arrives, independently of outbox cleanup.

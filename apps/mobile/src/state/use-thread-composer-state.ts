@@ -57,7 +57,10 @@ import {
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildThreadFeed, createThreadFeedCache } from "../lib/threadActivity";
-import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
+import {
+  acknowledgedThreadMessagesAtom,
+  unsettledAcknowledgedThreadMessages,
+} from "./acknowledged-thread-messages";
 import { appendPendingThreadMessages } from "../features/threads/pending-thread-feed";
 import { threadAllowsProviderSwitch } from "./thread-provider-switching";
 import { appAtomRegistry } from "../state/atom-registry";
@@ -281,9 +284,10 @@ export function useThreadComposerState() {
     if (acknowledgedMessages.some((message) => echoedIds.has(message.messageId))) {
       appAtomRegistry.set(
         acknowledgedThreadMessagesAtom,
-        appAtomRegistry
-          .get(acknowledgedThreadMessagesAtom)
-          .filter((message) => !echoedIds.has(message.messageId)),
+        unsettledAcknowledgedThreadMessages(
+          appAtomRegistry.get(acknowledgedThreadMessagesAtom),
+          echoedIds,
+        ),
       );
     }
   }, [acknowledgedMessages, selectedThreadMessages]);
