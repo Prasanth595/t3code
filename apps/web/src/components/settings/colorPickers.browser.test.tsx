@@ -73,7 +73,7 @@ function ControlledThemeField() {
 
 describe("theme color field", () => {
   it("jumps hue to both endpoints without changing saturation or brightness", async () => {
-    await using screen = await render(<ControlledThemeField />);
+    await using _screen = await render(<ControlledThemeField />);
     await open("Choose Accent color color");
 
     await press(HUE, "Home");
