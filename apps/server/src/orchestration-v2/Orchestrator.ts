@@ -2757,6 +2757,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} is no longer empty.`,
         });
     }
+    // A project move with no worktree runs the next turn in the destination
+    // project. That is a workspace change even though worktreePath stays null,
+    // so the live provider session has to detach. keepWorktree leaves the
+    // checkout, and the session, where they are.
+    let moveChangesWorkspace = false;
     if (
       command.type === "thread.metadata.update" &&
       command.projectId !== undefined &&
@@ -2823,6 +2828,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} has a worktree at ${thread.worktreePath}. Pass keepWorktree to move it without changing that checkout.`,
         });
       }
+      moveChangesWorkspace = thread.worktreePath === null;
     }
     if (command.type === "thread.archive" && thread.archivedAt !== null) {
       return yield* new OrchestratorDispatchError({
@@ -2989,8 +2995,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.type === "thread.archive" ||
       command.type === "thread.settle" ||
       (command.type === "thread.metadata.update" &&
-        command.worktreePath !== undefined &&
-        command.worktreePath !== thread.worktreePath);
+        ((command.worktreePath !== undefined && command.worktreePath !== thread.worktreePath) ||
+          moveChangesWorkspace));
     const providerContext = needsProviderState
       ? yield* projectionStore
           .getThreadProviderContext(
@@ -3738,8 +3744,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.type === "thread.archive" || command.type === "thread.settle"
         ? (providerContext?.providerSessions ?? []).map((session) => session.id)
         : command.type === "thread.metadata.update" &&
-            command.worktreePath !== undefined &&
-            command.worktreePath !== thread.worktreePath
+            ((command.worktreePath !== undefined && command.worktreePath !== thread.worktreePath) ||
+              moveChangesWorkspace)
           ? (providerContext?.providerSessions ?? []).map((session) => session.id)
           : command.type === "thread.runtime-mode.set"
             ? (providerContext?.providerSessions ?? [])

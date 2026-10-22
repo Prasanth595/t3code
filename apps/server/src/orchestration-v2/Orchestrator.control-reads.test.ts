@@ -1495,3 +1495,114 @@ it.effect("refuses to move a subagent thread", () =>
     assert.equal((yield* projections.getThread(threadId)).projectId, sourceId);
   }).pipe(Effect.provide(layerTest)),
 );
+
+const attachReadySession = (threadId: ThreadId, sessionId: string, cwd: string) =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    yield* projections.apply({
+      id: EventId.make(`attach:${sessionId}`),
+      type: "provider-session.attached",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: ProviderSessionId.make(sessionId),
+        driver: adapter.driver,
+        providerInstanceId: instanceId,
+        status: "ready",
+        cwd,
+        model: "gpt-5.1-codex",
+        capabilities: CodexProviderCapabilitiesV2,
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      },
+    });
+  });
+
+const detachReasons = (commandId: CommandId) =>
+  Effect.gen(function* () {
+    const events = yield* EventSink.EventSinkV2;
+    const committed = yield* events.readByCommandId({ commandId }).pipe(Stream.runCollect);
+    return [...committed].flatMap((stored) =>
+      stored.event.type === "provider-session.detached" ? [stored.event.payload.reason] : [],
+    );
+  });
+
+it.effect("detaches the provider session only when a project move changes the workspace", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sourceId = ProjectId.make("project:session-source");
+    const destinationId = ProjectId.make("project:session-destination");
+    const threadId = ThreadId.make("thread:session-move");
+    yield* createProject(sourceId, "/work/session-source");
+    yield* createProject(destinationId, "/work/session-destination");
+    yield* createThread({ threadId, projectId: sourceId });
+    yield* attachReadySession(threadId, "session:move-workspace", "/work/session-source");
+
+    const moveId = CommandId.make("move-detaches-session");
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: moveId,
+      threadId,
+      projectId: destinationId,
+    });
+    assert.deepEqual(yield* detachReasons(moveId), ["Workspace changed."]);
+    assert.equal(
+      (yield* projections.getThreadProviderContext(threadId)).providerSessions.length,
+      0,
+    );
+    assert.equal((yield* projections.getThread(threadId)).projectId, destinationId);
+
+    const keptSourceId = ProjectId.make("project:session-kept-source");
+    const keptDestinationId = ProjectId.make("project:session-kept-destination");
+    const keptThreadId = ThreadId.make("thread:session-keep-worktree");
+    yield* createProject(keptSourceId, "/work/session-kept-source");
+    yield* createProject(keptDestinationId, "/work/session-kept-destination");
+    yield* createThread({
+      threadId: keptThreadId,
+      projectId: keptSourceId,
+      worktreePath: "/work/session-kept-source/wt",
+    });
+    yield* attachReadySession(
+      keptThreadId,
+      "session:keep-worktree",
+      "/work/session-kept-source/wt",
+    );
+    const keptId = CommandId.make("move-keeps-session");
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: keptId,
+      threadId: keptThreadId,
+      projectId: keptDestinationId,
+      keepWorktree: true,
+    });
+    assert.deepEqual(yield* detachReasons(keptId), []);
+    assert.equal(
+      (yield* projections.getThreadProviderContext(keptThreadId)).providerSessions.length,
+      1,
+    );
+
+    const sharedSourceId = ProjectId.make("project:session-shared-source");
+    const sharedDestinationId = ProjectId.make("project:session-shared-destination");
+    const sharedThreadId = ThreadId.make("thread:session-shared-root");
+    yield* createProject(sharedSourceId, "/work/session-shared");
+    yield* createProject(sharedDestinationId, "/work/session-shared");
+    yield* createThread({ threadId: sharedThreadId, projectId: sharedSourceId });
+    yield* attachReadySession(sharedThreadId, "session:shared-root", "/work/session-shared");
+    const sharedId = CommandId.make("move-same-workspace");
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: sharedId,
+      threadId: sharedThreadId,
+      projectId: sharedDestinationId,
+    });
+    assert.deepEqual(yield* detachReasons(sharedId), ["Workspace changed."]);
+    assert.equal(
+      (yield* projections.getThreadProviderContext(sharedThreadId)).providerSessions.length,
+      0,
+    );
+    assert.equal((yield* projections.getThread(sharedThreadId)).projectId, sharedDestinationId);
+  }).pipe(Effect.provide(layerTest)),
+);

@@ -118,8 +118,11 @@ Move an idle thread into another project with `t3 thread move <thread-id> <proje
 The project is an id or a path inside that project. Stop a running turn first.
 A thread that has its own worktree stays put unless you pass `--keep-worktree`,
 and then the next turn still runs in that checkout rather than the destination
-folder. A subagent stays with its parent, and a thread that still has a
-subagent in the current project cannot be moved.
+folder. A move without a worktree ends the thread's provider session, so the next
+turn starts in the destination project. `--keep-worktree` leaves that session
+in place because the checkout does not change. A subagent stays with
+its parent, and a thread that still has a subagent in the current project
+cannot be moved.
 
 ## Remove an agent
 
