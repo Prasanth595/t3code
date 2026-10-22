@@ -46,6 +46,7 @@ vi.mock(
   () =>
     ({
       useEnvironment: (id: string) => state.environments.find((env) => env.environmentId === id),
+      useEnvironmentHttpBaseUrl: () => null,
     }) as never,
 );
 vi.mock(import("../../state/entities"), () => ({ useProjects: () => [] }) as never);
@@ -70,14 +71,39 @@ vi.mock(
       usePrimaryCloudLinkState: () => null,
     }) as never,
 );
+vi.mock(import("../../state/session"), () => ({ readEnvironmentScope: () => true }) as never);
+vi.mock(
+  import("../ui/toast"),
+  () =>
+    ({
+      toastManager: { add: vi.fn() },
+      stackedThreadToast: (value: unknown) => value,
+    }) as never,
+);
 vi.mock(import("../chat/ProviderModelPicker"), () => ({ ProviderModelPicker: () => null }));
 vi.mock(import("../WorktreeBaseBranchPicker"), () => ({ WorktreeBaseBranchPicker: () => null }));
+// Keep layout independent of live settings state; exercise the real permission gate and editor.
 vi.mock(
   import("./settingsLayout"),
-  async (original) =>
+  () =>
     ({
-      ...(await original()),
+      SETTINGS_PICKER_TRIGGER_CLASSNAME: "",
       SettingsPageContainer: ({ children }: { children: ReactNode }) => children,
+      SettingsSection: ({
+        title,
+        headerAction,
+        children,
+      }: {
+        title: string;
+        headerAction: ReactNode;
+        children: ReactNode;
+      }) => (
+        <section>
+          <h2>{title}</h2>
+          {headerAction}
+          {children}
+        </section>
+      ),
       SettingsRow: ({ title, description }: { title: string; description: string }) => (
         <div>
           {title}
