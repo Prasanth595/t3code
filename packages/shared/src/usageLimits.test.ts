@@ -133,6 +133,37 @@ describe("pools", () => {
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
   });
 
+  it("keeps duplicate hub credentials with one email as separate pool members", () => {
+    const accounts = ["first.json", "second.json"].map((id, index) => ({
+      id,
+      driver: claude,
+      email: "same@example.com",
+      usageLimits: {
+        checkedAt,
+        windows: [{ ...window, usedPercent: index === 0 ? 10 : 80 }],
+      },
+    }));
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: { providers: [], usageLimitSources: [{ ...source, accounts }] },
+        },
+      ],
+    ]);
+
+    const limitAccounts = collectLimitAccounts(input);
+    expect(limitAccounts.map((account) => account.key)).toEqual([
+      "hub:first.json",
+      "hub:second.json",
+    ]);
+    expect(collectLimitPools(limitAccounts, now)[0]?.windows[0]).toMatchObject({
+      usedPercent: 45,
+      members: [{ account: { key: "hub:first.json" } }, { account: { key: "hub:second.json" } }],
+    });
+  });
+
   it("merges OpenCode Go limits from machines with the same API key", () => {
     const go = provider({
       driver: ProviderDriverKind.make("opencode"),

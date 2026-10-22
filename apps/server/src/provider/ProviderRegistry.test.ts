@@ -377,6 +377,23 @@ it.layer(
       }),
     );
 
+    it.effect("skips native usage probing for an external model provider", () =>
+      Effect.gen(function* () {
+        let skipNativeUsage: boolean | undefined;
+        const settings: CodexSettings = {
+          ...defaultCodexSettings,
+          launchArgs: "-c model_providers.local_pool.requires_openai_auth=false",
+        };
+        const status = yield* checkCodexProviderStatus(settings, (input) => {
+          skipNativeUsage = input.skipNativeUsage;
+          return Effect.succeed(makeCodexProbeSnapshot());
+        });
+
+        assert.strictEqual(skipNativeUsage, true);
+        assert.isUndefined(status.usageLimits);
+      }),
+    );
+
     it.effect("returns unauthenticated when app-server requires OpenAI auth", () =>
       Effect.gen(function* () {
         const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>

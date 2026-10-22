@@ -2,7 +2,11 @@ import * as NodeAssert from "node:assert/strict";
 
 import { describe, it } from "vite-plus/test";
 
-import { codexAppServerArgs, codexExecLaunchArgs } from "./codexLaunchArgs.ts";
+import {
+  codexAppServerArgs,
+  codexExecLaunchArgs,
+  codexUsageProbeDisabled,
+} from "./codexLaunchArgs.ts";
 
 describe("codexAppServerArgs", () => {
   it("preserves escaped TOML quotes in config values", () => {
@@ -25,5 +29,20 @@ describe("codexExecLaunchArgs", () => {
     NodeAssert.deepStrictEqual(codexExecLaunchArgs("--config --strict-config --enable --disable"), [
       "--strict-config",
     ]);
+  });
+});
+
+describe("codexUsageProbeDisabled", () => {
+  it("recognizes an external provider that does not use OpenAI auth", () => {
+    NodeAssert.equal(
+      codexUsageProbeDisabled(
+        "-c model_providers.local_pool.requires_openai_auth=false --strict-config",
+      ),
+      true,
+    );
+  });
+
+  it("keeps native usage probing enabled by default", () => {
+    NodeAssert.equal(codexUsageProbeDisabled('-c model="gpt-6.1-sol"'), false);
   });
 });

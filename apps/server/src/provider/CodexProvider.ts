@@ -34,7 +34,11 @@ import {
   formatCodexModelName,
 } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import {
+  codexAppServerArgs,
+  codexUsageProbeDisabled,
+  resolveCodexLaunchArgs,
+} from "./codexLaunchArgs.ts";
 import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
@@ -712,6 +716,8 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const emptyModels = emptyCodexModelsFromSettings(codexSettings);
+  const launchArgs = resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment);
+  const skipNativeUsage = managedAuth !== undefined || codexUsageProbeDisabled(launchArgs);
 
   if (!codexSettings.enabled) {
     return buildServerProvider({
@@ -733,10 +739,10 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const probeResult = yield* probe({
     binaryPath: codexSettings.binaryPath,
     homePath: codexSettings.homePath,
-    launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
+    launchArgs,
     cwd: process.cwd(),
     environment: resolvedEnvironment,
-    ...(managedAuth ? { skipNativeUsage: true } : {}),
+    ...(skipNativeUsage ? { skipNativeUsage: true } : {}),
   }).pipe(
     // Process teardown can outlast the work budget without discarding a completed snapshot.
     Effect.timeoutOption(Duration.millis(CODEX_AUTH_PROBE_TIMEOUT_MS)),
@@ -789,8 +795,9 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const accountStatus = managedAuth
     ? { status: "ready" as const, auth: managedAuth, message: undefined }
     : accountProbeStatus(snapshot);
-  const usageLimits =
-    snapshot.account.account?.type === "apiKey"
+  const usageLimits = skipNativeUsage
+    ? undefined
+    : snapshot.account.account?.type === "apiKey"
       ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
       : snapshot.rateLimits === undefined || "failure" in snapshot.rateLimits
         ? makeUnavailableUsageLimits({
@@ -839,7 +846,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         : snapshot.models === undefined
           ? { message: "Codex did not return its model catalog in time." }
           : {}),
-      ...(managedAuth ? {} : { usageLimits }),
+      ...(usageLimits ? { usageLimits } : {}),
     },
   });
 });

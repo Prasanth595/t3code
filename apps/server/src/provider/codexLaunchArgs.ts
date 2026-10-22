@@ -14,6 +14,28 @@ export const codexAppServerArgs = (launchArgs?: string) => [
   ...codexLaunchArgv(launchArgs),
 ];
 
+function configValue(
+  argument: string | undefined,
+  nextArgument: string | undefined,
+): string | undefined {
+  if (argument === "-c" || argument === "--config") return nextArgument;
+  if (argument?.startsWith("-c=")) return argument.slice(3);
+  if (argument?.startsWith("--config=")) return argument.slice("--config=".length);
+  return undefined;
+}
+
+/**
+ * External model providers do not implement Codex's OpenAI account quota RPC.
+ * A provider can opt out explicitly with `requires_openai_auth=false`.
+ */
+export const codexUsageProbeDisabled = (launchArgs?: string): boolean => {
+  const args = codexAppServerArgs(launchArgs);
+  return args.some((argument, index) => {
+    const value = configValue(argument, args[index + 1]);
+    return /^model_providers\.[^.]+\.requires_openai_auth\s*=\s*false$/i.test(value ?? "");
+  });
+};
+
 export const codexExecLaunchArgs = (launchArgs?: string) => {
   const args = codexLaunchArgv(launchArgs);
   const execArgs: Array<string> = [];
