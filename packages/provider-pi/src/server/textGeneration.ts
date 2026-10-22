@@ -7,7 +7,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { TextGenerationError } from "@t3tools/contracts";
 import type { PiSettings } from "../settings.ts";
 
-import { makePiRpcConnection, parsePiModelSlug } from "./rpc.ts";
+import { makePiRpcConnection, parsePiModelSlug, piRecordString } from "./rpc.ts";
 import { buildPiRpcLaunch, resolvePiLaunchArgs } from "./mcpInjection.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 
@@ -81,10 +81,20 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
       }
 
       yield* connection.request({ type: "prompt", message: prompt });
+      // Provider failures (bad key, rate limit, 5xx) arrive on the assistant
+      // `message_end`. Keep only the latest, since Pi can retry and still answer.
+      let turnError: string | undefined;
       yield* Effect.gen(function* () {
         while (true) {
           const event = yield* Queue.take(connection.events);
           if (event["type"] === "agent_settled") return;
+          const message = event["message"];
+          if (event["type"] === "message_end" && piRecordString(message, "role") === "assistant") {
+            turnError =
+              piRecordString(message, "stopReason") === "error"
+                ? (piRecordString(message, "errorMessage") ?? "Pi reported a model error.")
+                : undefined;
+          }
         }
       });
       const data = yield* connection.request({ type: "get_last_assistant_text" });
@@ -97,7 +107,10 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
       if (!text) {
         return yield* new TextGenerationError({
           operation,
-          detail: "Pi returned empty output.",
+          detail:
+            turnError === undefined
+              ? "Pi returned empty output."
+              : `Pi could not generate text: ${turnError.slice(0, 1_000)}`,
         });
       }
       return yield* TextGenerationOperations.decodeJsonReply(request, "Pi", text);
