@@ -796,15 +796,15 @@ const RootStackConfig = createWorkspaceStackNavigator({
     NewTaskProject: createNativeStackScreen({
       screen: NewTaskRouteScreen,
       linking: "new/project",
-      options: { ...SHEET_GLASS_HEADER_OPTIONS, title: "Choose project" },
+      options: { ...GLASS_HEADER_OPTIONS, title: "Choose project" },
     }),
     NewTaskEnvironment: createNativeStackScreen({
       screen: NewTaskEnvironmentPickerRouteScreen,
-      options: { ...SHEET_GLASS_HEADER_OPTIONS, title: "Environment" },
+      options: { ...GLASS_HEADER_OPTIONS, title: "Environment" },
     }),
     NewTaskBranch: createNativeStackScreen({
       screen: NewTaskBranchPickerRouteScreen,
-      options: { ...SHEET_GLASS_HEADER_OPTIONS, title: "Branch" },
+      options: { ...GLASS_HEADER_OPTIONS, title: "Branch" },
     }),
     ThreadTerminal: createNativeStackScreen({
       screen: ThreadTerminalRouteScreen,
