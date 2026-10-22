@@ -10,10 +10,12 @@ import {
   revealInFileExplorerLabelForKind,
   revealInFileExplorerLabelForOs,
 } from "~/components/preview/fileExplorerLabel";
+import { usePreferredEditor } from "./editorPreferences";
 import { readLocalApi } from "./localApi";
 import { serverEnvironment } from "./state/server";
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
+import { isTerminalLinkActivation } from "./terminal-links";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { toastManager } from "./components/ui/toast";
 import { useAtomValue } from "@effect/atom-react";
@@ -46,6 +48,23 @@ export function resolveFileContextMenuAbsolutePath(target: FileContextMenuTarget
       : null;
   }
   return resolvePathLinkTarget(workspaceFilePath, target.workspaceRoot);
+}
+
+export type FileModifierClickAction = "open-in-editor" | "reveal";
+
+/**
+ * Mod-click opens the preferred editor, matching chat and terminal links, and
+ * Mod+Alt-click reveals in the file manager. Trees that use Mod-click for
+ * multi-select take Mod+Shift-click for the editor instead.
+ */
+export function resolveFileModifierClickAction(
+  event: Pick<MouseEvent, "metaKey" | "ctrlKey" | "altKey" | "shiftKey">,
+  options: { readonly modClickSelects: boolean },
+  platform?: string,
+): FileModifierClickAction | null {
+  if (!isTerminalLinkActivation(event, platform)) return null;
+  if (event.altKey) return event.shiftKey ? null : "reveal";
+  return event.shiftKey === options.modClickSelects ? "open-in-editor" : null;
 }
 
 const EDITOR_LABEL_BY_ID = new Map(EDITORS.map((editor) => [editor.id, editor.label]));
@@ -91,6 +110,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
 
   const availableEditors = serverConfig?.availableEditors ?? [];
+  const [preferredEditor] = usePreferredEditor(availableEditors);
   const capabilities: FileContextMenuCapabilities = {
     // The reveal wording comes from the server because on WSL the reveal can
     // run through Windows File Explorer even though the host reports Linux.
@@ -152,6 +172,24 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
     await activate(clicked as FileContextMenuAction, target);
   };
 
+  /** Returns false when the action is unavailable, so the caller can fall back to a plain click. */
+  const activateModifierClick = (
+    action: FileModifierClickAction,
+    target: FileContextMenuTarget,
+  ): boolean => {
+    const menuAction: FileContextMenuAction | null =
+      action === "reveal"
+        ? capabilities.revealLabel === undefined
+          ? null
+          : "reveal-in-folder"
+        : preferredEditor === null
+          ? null
+          : `editor:${preferredEditor}`;
+    if (menuAction === null || resolveFileContextMenuAbsolutePath(target) === null) return false;
+    void activate(menuAction, target);
+    return true;
+  };
+
   return {
     buildItems: (target: FileContextMenuTarget) =>
       buildFileContextMenuItems({
@@ -160,13 +198,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
       }),
     capabilities,
     activate,
+    activateModifierClick,
     show,
-  };
-}
-
-export function useFileContextMenuHandler(environmentId: EnvironmentId | null) {
-  const contextMenu = useFileContextMenu(environmentId);
-  return (target: FileContextMenuTarget, event?: { clientX: number; clientY: number }) => {
-    void contextMenu.show(target, event ? { x: event.clientX, y: event.clientY } : undefined);
   };
 }
