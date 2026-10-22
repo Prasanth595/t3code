@@ -129,15 +129,28 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
  */
 function accountKeyResolver(reports: Iterable<AccountReport>) {
   const workspaces = new Map<string, Set<string>>();
+  const accountKeysByWorkspace = new Map<string, Set<string>>();
   for (const report of reports) {
     const key = accountKey(report.driver, report.email, report.usageLimits);
     if (key && report.workspaceId) {
       workspaces.set(key, (workspaces.get(key) ?? new Set()).add(report.workspaceId));
+      const workspaceKey = `${report.driver}:${report.workspaceId}`;
+      accountKeysByWorkspace.set(
+        workspaceKey,
+        (accountKeysByWorkspace.get(workspaceKey) ?? new Set()).add(key),
+      );
     }
   }
   return (report: AccountReport): string | null => {
     const key = accountKey(report.driver, report.email, report.usageLimits);
-    if (!key) return null;
+    if (!key) {
+      const matchingAccountKeys = report.workspaceId
+        ? accountKeysByWorkspace.get(`${report.driver}:${report.workspaceId}`)
+        : undefined;
+      if (matchingAccountKeys?.size !== 1) return null;
+      const [uniqueAccountKey] = matchingAccountKeys;
+      return `${uniqueAccountKey}:${report.workspaceId}`;
+    }
     if (report.workspaceId) return `${key}:${report.workspaceId}`;
     const known = workspaces.get(key);
     if (!known) return key;

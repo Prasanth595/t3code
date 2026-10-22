@@ -463,6 +463,82 @@ describe("pools", () => {
     ]);
   });
 
+  it("merges email-less Codex workers with their hub account without merging personal and business", () => {
+    const native = provider({
+      auth: { status: "unknown", workspaceId: "personal" },
+      usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: 28 }] },
+    });
+    const hubAccounts = [
+      { id: "account-a", email: "same@example.com", workspaceId: "personal", usedPercent: 28 },
+      { id: "account-b", email: "same@example.com", workspaceId: "business", usedPercent: 0 },
+      { id: "account-c", email: "other@example.com", workspaceId: "plus", usedPercent: 1 },
+    ].map(({ usedPercent, ...account }) => ({
+      ...account,
+      driver: native.driver,
+      usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent }] },
+    }));
+    const hub = { ...source, accounts: hubAccounts };
+    const input = new Map([
+      [EnvironmentId.make("worker-a"), { ...laptop, serverConfig: { providers: [native] } }],
+      [EnvironmentId.make("worker-b"), { ...laptop, serverConfig: { providers: [native] } }],
+      [
+        EnvironmentId.make("controller"),
+        { ...laptop, serverConfig: { providers: [], usageLimitSources: [hub] } },
+      ],
+    ]);
+
+    const accounts = collectLimitAccounts(input);
+    expect(accounts).toHaveLength(3);
+    expect(accounts[0]?.environments.map((environment) => environment.environmentId)).toEqual([
+      "worker-a",
+      "worker-b",
+    ]);
+    expect(collectLimitPools(accounts, now)[0]?.windows[0]).toMatchObject({
+      remainingPercent: 90,
+      members: expect.arrayContaining([
+        expect.objectContaining({ window: expect.objectContaining({ usedPercent: 28 }) }),
+        expect.objectContaining({ window: expect.objectContaining({ usedPercent: 0 }) }),
+        expect.objectContaining({ window: expect.objectContaining({ usedPercent: 1 }) }),
+      ]),
+    });
+    expect(
+      collectProviderUsageLimits(native.instanceId, [native], [hub], now)?.accounts,
+    ).toHaveLength(3);
+  });
+
+  it("does not infer an email-less account from an ambiguous workspace or another driver", () => {
+    const native = provider({
+      auth: { status: "unknown", workspaceId: "shared-workspace" },
+      usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: 28 }] },
+    });
+    const accounts = ["first@example.com", "second@example.com"].map((email) => ({
+      id: email,
+      driver: native.driver,
+      email,
+      workspaceId: "shared-workspace",
+      usageLimits: native.usageLimits!,
+    }));
+    const collect = (hubAccounts: typeof accounts) =>
+      collectLimitAccounts(
+        new Map([
+          [
+            EnvironmentId.make("env-a"),
+            {
+              ...laptop,
+              serverConfig: {
+                providers: [native],
+                usageLimitSources: [{ ...source, accounts: hubAccounts }],
+              },
+            },
+          ],
+        ]),
+      );
+
+    expect(collect(accounts)).toHaveLength(3);
+    expect(collect([{ ...accounts[0]!, driver: claude }])).toHaveLength(2);
+    expect(collect([{ ...accounts[0]!, workspaceId: "another-workspace" }])).toHaveLength(2);
+  });
+
   it("joins a report without a workspace to the only workspace signed in with its email", () => {
     const native = provider({
       driver: claude,
