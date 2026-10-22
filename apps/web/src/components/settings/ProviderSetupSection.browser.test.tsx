@@ -188,8 +188,11 @@ describe("Antigravity setup", () => {
     setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });
     const idleInstallation = setup.installation!;
     setup.installation = null;
-    const command = Promise.withResolvers<{ _tag: "Success"; value: undefined }>();
-    setup.startInstall.mockReturnValueOnce(command.promise);
+    let resolveStart!: () => void;
+    const command = new Promise<{ _tag: "Success"; value: undefined }>((resolve) => {
+      resolveStart = () => resolve({ _tag: "Success", value: undefined });
+    });
+    setup.startInstall.mockReturnValueOnce(command);
     await using screen = await renderSetup({ provider: { ...provider, installed: false } });
 
     await screen.click("Install Antigravity");
@@ -208,7 +211,7 @@ describe("Antigravity setup", () => {
     await expect
       .element(screen.getByRole("button", { name: "Cancel installation" }))
       .toBeDisabled();
-    await act(async () => command.resolve({ _tag: "Success", value: undefined }));
+    await act(async () => resolveStart());
     await expect.element(screen.getByRole("button", { name: "Cancel installation" })).toBeEnabled();
     await expect
       .element(screen.getByRole("status").filter({ hasText: "Downloading 1.0 MB of 2.0 MB." }))
