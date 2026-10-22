@@ -47,4 +47,29 @@ describe("adding usage limit sources", () => {
       },
     ]);
   });
+
+  it("updates a saved hub when its URL is added again", () => {
+    let settings: ServerSettings = DEFAULT_SERVER_SETTINGS;
+    for (const managementKey of ["old-key", "new-key"]) {
+      const url = "http://proxy.test:8318/hub-a";
+      settings = applyServerSettingsPatch(settings, {
+        usageLimitSources: {
+          [sourceIdFromUrl(url, new Set(Object.keys(settings.usageLimitSources)))]: {
+            kind: "cliproxy",
+            url,
+            managementKey,
+            enabled: true,
+          },
+        },
+      });
+    }
+    expect(Object.values(settings.usageLimitSources)).toEqual([
+      {
+        kind: "cliproxy",
+        url: "http://proxy.test:8318/hub-a",
+        managementKey: "new-key",
+        enabled: true,
+      },
+    ]);
+  });
 });
