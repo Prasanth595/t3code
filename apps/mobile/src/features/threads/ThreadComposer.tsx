@@ -184,6 +184,7 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
       (compactRowHeight - minimum) / 2 + expansion.value * (52 - (compactRowHeight - minimum) / 2),
   }));
   return {
+    isExpanded,
     containerStyle,
     editorStyle,
     onRowLayout: (event: { nativeEvent: { layout: { width: number } } }) => {
@@ -833,7 +834,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         reportedSelection={props.reportedModelSelection}
         prompt={draftMessage}
         surfaceColor={composerPanel}
-        iconOnly={draftMessage.length > 0}
+        iconOnly={draftMessage.length > 0 && !compactEditor.isExpanded}
         showSummary={false}
         onPress={openSettings}
       />

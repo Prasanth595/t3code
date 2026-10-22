@@ -1753,7 +1753,7 @@ export function NewTaskDraftScreen(props: {
                 <View className="min-w-0 shrink">
                   <ComposerModelControl
                     size={hasSidebarTabBar ? "large" : "regular"}
-                    iconOnly={flow.prompt.length > 0}
+                    iconOnly={flow.prompt.length > 0 && !compactEditor.isExpanded}
                     modelOption={flow.selectedModelOption}
                     selection={flow.selectedModel}
                     provider={flow.selectedProviderStatus?.driver}
