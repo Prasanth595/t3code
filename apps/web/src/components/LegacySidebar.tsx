@@ -1211,13 +1211,17 @@ function useProjectThreadPanel(input: {
       ) ?? null)
     : null;
   const pinnedCollapsedThread = projectExpanded ? null : activeThread;
-  const hasOverflowingThreads = visibleProjectThreads.length > sidebarThreadPreviewCount;
+  // The open thread stays listed past the preview cut, as it does in a
+  // collapsed project, so it alone does not overflow the preview.
+  const hasOverflowingThreads = visibleProjectThreads.some(
+    (thread, index) =>
+      index >= sidebarThreadPreviewCount &&
+      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) !== activeThreadKey,
+  );
   const previewThreads =
     isThreadListExpanded || !hasOverflowingThreads
       ? visibleProjectThreads
       : visibleProjectThreads.slice(0, sidebarThreadPreviewCount);
-  // The open thread stays listed past the preview cut, as it does in a
-  // collapsed project.
   const visibleThreadKeys = new Set(
     [...previewThreads, ...(activeThread ? [activeThread] : [])].map((thread) =>
       scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),

@@ -1065,6 +1065,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     routeThreadRef,
   });
 
+  const isSearchingThreads = threadSearchQuery.trim().length > 0;
+
   // History, the command palette, and links can open a thread the project
   // scope hides or the list has scrolled away. A remount starts the list at
   // the top, so each mount also scrolls to the open thread once, without
@@ -1072,6 +1074,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const mountRevealOwed = useRef(true);
   const revealRouteRow = useStableCallback(() => {
     const pendingKey = pendingSidebarRouteReveal(routeReveal, routeRowThreadKey);
+    // Search results replace the thread list; reveal once the list returns.
+    if (isSearchingThreads) return;
     const revealKey = pendingKey ?? (mountRevealOwed.current ? routeRowThreadKey : null);
     if (revealKey === null) return;
     const thread = threads.find((candidate) => threadShellKey(candidate) === revealKey);
@@ -1086,15 +1090,20 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       setProjectScopeKey(null);
       return;
     }
+    const activeRow = document.querySelector('[data-sidebar="content"] [aria-current="page"]');
+    if (!activeRow) return;
     completeSidebarRouteReveal(routeReveal);
     mountRevealOwed.current = false;
-    document
-      .querySelector('[data-sidebar="content"] [aria-current="page"]')
-      ?.scrollIntoView({ block: "nearest" });
+    activeRow.scrollIntoView({ block: "nearest" });
   });
-  useEffect(revealRouteRow, [revealRouteRow, routeRowThreadKey, threads, projectScopeKey]);
+  useEffect(revealRouteRow, [
+    revealRouteRow,
+    routeRowThreadKey,
+    threads,
+    projectScopeKey,
+    isSearchingThreads,
+  ]);
 
-  const isSearchingThreads = threadSearchQuery.trim().length > 0;
   const threadSearchMatchByKey = new Map(
     threadSearch.matches.map((match) => [threadSearchMatchKey(match), match] as const),
   );
