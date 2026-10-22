@@ -15,10 +15,6 @@ const encodePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 const encodeManifest = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
 const isTextGenerationError = Schema.is(TextGenerationError);
 
-// GIT_NO_LAZY_FETCH is newer than some supported Git installations. The empty protocol
-// allowlist also prevents older Git from reaching a promisor remote for missing objects.
-const REVIEW_GUIDE_GIT_ENV = { GIT_NO_LAZY_FETCH: "1", GIT_ALLOW_PROTOCOL: "" };
-
 export const REVIEW_GUIDE_DIFF_ARGS = [
   "--no-pager",
   "-c",
@@ -110,7 +106,6 @@ export const prepareReviewGuideEvidence = Effect.fn(
           operation: "PullRequestReviewGuideService.readEvidence",
           cwd: input.path,
           args,
-          env: REVIEW_GUIDE_GIT_ENV,
           timeoutMs: 60_000,
           maxOutputBytes: Math.max(1, MAX_EVIDENCE_BYTES - bytesWritten),
         })
@@ -153,7 +148,8 @@ export const prepareReviewGuideEvidence = Effect.fn(
       compared.add(layer.headSha);
       yield* writeStream(
         "stackComparison",
-        yield* read([...REVIEW_GUIDE_DIFF_ARGS, input.headCommit, layer.headSha, "--"]),
+        // A stale layer contributes its branch changes, without reversing unrelated main drift.
+        yield* read([...REVIEW_GUIDE_DIFF_ARGS, `${input.headCommit}...${layer.headSha}`, "--"]),
         layer.headSha,
       );
     }

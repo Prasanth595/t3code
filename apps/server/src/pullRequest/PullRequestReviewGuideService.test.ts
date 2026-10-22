@@ -183,6 +183,29 @@ const decodeManifest = Schema.decodeUnknownEffect(
   ),
 );
 
+const readEvidenceStreams = Effect.fn("test.readEvidenceStreams")(function* (manifestPath: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const manifest = yield* decodeManifest(yield* fs.readFileString(manifestPath));
+  const directory = manifestPath.slice(0, -"manifest.json".length);
+  const streams = new Map<string, string>();
+  for (const stream of manifest.streams) {
+    const chunks = yield* Effect.forEach(stream.chunks, (chunk) =>
+      fs
+        .readFile(`${directory}${chunk.file}`)
+        .pipe(
+          Effect.map((bytes) =>
+            bytes.subarray(chunk.payloadOffset, chunk.payloadOffset + chunk.bytes),
+          ),
+        ),
+    );
+    streams.set(
+      `${stream.kind}:${stream.headCommit ?? ""}`,
+      Buffer.concat(chunks).toString("utf8"),
+    );
+  }
+  return streams;
+});
+
 const assertCleaned = Effect.fn("test.assertReviewGuideCleaned")(function* (
   workspace: string,
   paths: ReadonlyArray<string>,
@@ -567,16 +590,24 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
                             cwd: call.cwd,
                             detail: "Missing local object",
                           });
-                        if (failure === "missing" && call.args.includes(repositories.upperSha)) {
+                        if (
+                          failure === "missing" &&
+                          call.args.some((arg) => arg.includes(repositories.upperSha))
+                        ) {
                           yield* fs
                             .remove(
                               `${repositories.workspace}/.git/objects/${missingBlob.slice(0, 2)}/${missingBlob.slice(2)}`,
                             )
                             .pipe(Effect.orDie);
+                          yield* fs
+                            .remove(
+                              `${repositories.remote}/.git/objects/${missingBlob.slice(0, 2)}/${missingBlob.slice(2)}`,
+                            )
+                            .pipe(Effect.orDie);
                         }
                         if (
                           (failure === "size" || failure === "framing-size") &&
-                          call.args.includes(repositories.upperSha)
+                          call.args.some((arg) => arg.includes(repositories.upperSha))
                         ) {
                           const result = yield* driver.execute(call);
                           // The 430 KiB margin covers the index, but cannot also cover chunk preambles.
@@ -621,7 +652,7 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
                 `${repositories.workspace}/.git/objects/${missingBlob.slice(0, 2)}/${missingBlob.slice(2)}`,
               ),
             );
-            assert.isTrue(
+            assert.isFalse(
               yield* fs.exists(
                 `${repositories.remote}/.git/objects/${missingBlob.slice(0, 2)}/${missingBlob.slice(2)}`,
               ),
@@ -802,7 +833,7 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
                   for (const head of [repositories.lowerSha, repositories.upperSha]) {
                     assert.equal(
                       reconstructed.get(`stackComparison:${head}`),
-                      yield* raw(input.cwd, [...diff, repositories.headSha, head, "--"]),
+                      yield* raw(input.cwd, [...diff, `${repositories.headSha}...${head}`, "--"]),
                     );
                   }
                   assert.equal(
@@ -899,6 +930,177 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           yield* assertCleaned(repositories.workspace, paths);
         }),
       ),
+  );
+
+  it.effect(
+    "keeps stale merged and closed stack changes separate from main drift and coverage",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const original = yield* makeRepositories;
+          const fs = yield* FileSystem.FileSystem;
+          const { remote } = original;
+          const staleBase = yield* git(remote, ["rev-parse", "main~1"]);
+          const neighbors = yield* Effect.forEach(["merged", "closed"] as const, (state) =>
+            Effect.gen(function* () {
+              yield* git(remote, ["checkout", "--quiet", "-b", state, staleBase]);
+              yield* fs.writeFileString(`${remote}/${state}.txt`, `${state} contribution\n`);
+              yield* git(remote, ["add", "."]);
+              yield* git(remote, ["commit", "--quiet", "-m", `${state} neighbor`]);
+              return {
+                number: state === "merged" ? 4 : 5,
+                title: state,
+                headBranch: state,
+                headSha: yield* git(remote, ["rev-parse", "HEAD"]),
+                state,
+              };
+            }),
+          );
+          yield* git(remote, ["checkout", "--quiet", "-B", "stack-base", "main"]);
+          const lowerSha = yield* git(remote, ["rev-parse", "HEAD"]);
+          yield* git(remote, ["checkout", "--quiet", "-B", "feature"]);
+          yield* fs.writeFileString(`${remote}/feature.txt`, "current implementation\n");
+          yield* git(remote, ["add", "."]);
+          yield* git(remote, ["commit", "--quiet", "-m", "Current change"]);
+          const headSha = yield* git(remote, ["rev-parse", "HEAD"]);
+          yield* git(remote, ["checkout", "--quiet", "-B", "upper"]);
+          yield* fs.writeFileString(`${remote}/consumer.ts`, 'import "./feature.txt";\n');
+          yield* git(remote, ["add", "."]);
+          yield* git(remote, ["commit", "--quiet", "-m", "Upper consumer"]);
+          const upperSha = yield* git(remote, ["rev-parse", "HEAD"]);
+          const repositories = { ...original, lowerSha, headSha, upperSha };
+          const layers = stack(repositories);
+          const stored = yield* Deferred.make<void>();
+          const runs = yield* watchRuns;
+          const paths: Array<string> = [];
+          const context = yield* Layer.build(
+            makeLayer({
+              ...repositories,
+              stack: { ...layers, layers: [...neighbors, ...layers.layers] },
+              stored,
+              generate: (input) =>
+                Effect.gen(function* () {
+                  assert(input.evidence);
+                  const evidence = yield* input.evidence;
+                  paths.push(input.cwd, evidence.manifestPath);
+                  const streams = yield* readEvidenceStreams(evidence.manifestPath);
+                  assert.equal(streams.get("changedPaths:"), '"feature.txt"\n');
+                  for (const neighbor of neighbors) {
+                    const comparison = streams.get(`stackComparison:${neighbor.headSha}`) ?? "";
+                    assert.include(comparison, `+${neighbor.state} contribution`);
+                    assert.notInclude(comparison, "unrelated.txt");
+                    assert.notInclude(comparison, "feature.txt");
+                  }
+                  assert.equal(streams.get(`stackComparison:${lowerSha}`), "");
+                  assert.include(
+                    streams.get(`stackComparison:${upperSha}`) ?? "",
+                    '+import "./feature.txt"',
+                  );
+                  assert.isFalse(yield* fs.exists(`${input.cwd}/consumer.ts`));
+                  return {
+                    stops: [
+                      {
+                        title: "Current feature",
+                        summary: "The upper layer consumes the feature.",
+                        attention: null,
+                        excerpts: [],
+                        files: ["feature.txt", "merged.txt", "closed.txt", "consumer.ts"].map(
+                          (path) => ({ path, note: "" }),
+                        ),
+                        notes: [],
+                        questions: [],
+                      },
+                    ],
+                  };
+                }).pipe(Effect.provideService(FileSystem.FileSystem, fs), Effect.orDie),
+            }),
+          );
+          const service = Context.get(
+            context,
+            PullRequestReviewGuideService.PullRequestReviewGuideService,
+          );
+          yield* runs.generate(service, reference);
+          const result = yield* runs.settled(service, reference);
+          assert.equal(result.run, null);
+          assert.isTrue(yield* Deferred.isDone(stored));
+          assert.deepEqual(result.guide?.stops[0]?.files, [{ path: "feature.txt" }]);
+          yield* assertCleaned(original.workspace, paths);
+        }),
+      ),
+  );
+
+  it.effect("fetches missing upper-only promisor blobs and stores the complete guide", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const original = yield* makeEvidenceRepositories;
+        const fs = yield* FileSystem.FileSystem;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const { remote } = original;
+        const workspace = `${original.root}/partial-workspace`;
+        yield* git(remote, ["config", "uploadpack.allowFilter", "true"]);
+        yield* git(remote, ["config", "uploadpack.allowAnySHA1InWant", "true"]);
+        yield* git(original.root, [
+          "clone",
+          "--quiet",
+          "--no-local",
+          "--filter=blob:none",
+          "--branch",
+          "main",
+          remote,
+          workspace,
+        ]);
+        const missingBlob = yield* git(remote, ["rev-parse", `${original.upperSha}:consumer.ts`]);
+        const localObjects = git(workspace, ["cat-file", "--batch-check", "--batch-all-objects"]);
+        assert.notInclude(yield* localObjects, missingBlob);
+        const stored = yield* Deferred.make<void>();
+        const runs = yield* watchRuns;
+        const paths: Array<string> = [];
+        const context = yield* Layer.build(
+          makeLayer({
+            ...original,
+            workspace,
+            stored,
+            generate: (input) =>
+              Effect.gen(function* () {
+                assert(input.evidence);
+                assert.notInclude(yield* localObjects, missingBlob);
+                const [evidence, cached] = yield* Effect.all([input.evidence, input.evidence], {
+                  concurrency: "unbounded",
+                });
+                assert.strictEqual(evidence, cached);
+                paths.push(input.cwd, evidence.manifestPath);
+                const streams = yield* readEvidenceStreams(evidence.manifestPath);
+                assert.include(
+                  streams.get(`stackComparison:${original.upperSha}`) ?? "",
+                  "+use(feature)",
+                );
+                assert.notInclude(streams.get("changedPaths:") ?? "", "consumer.ts");
+                assert.include(yield* localObjects, missingBlob);
+                return { stops: [] };
+              }).pipe(
+                Effect.provideService(FileSystem.FileSystem, fs),
+                Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+                Effect.orDie,
+              ),
+          }),
+        );
+        const service = Context.get(
+          context,
+          PullRequestReviewGuideService.PullRequestReviewGuideService,
+        );
+        yield* runs.generate(service, reference);
+        const result = yield* runs.settled(service, reference);
+        assert.equal(result.run, null);
+        assert.isTrue(yield* Deferred.isDone(stored));
+        assert.equal(result.guide?.headSha, original.headSha);
+        assert.isFalse(
+          result.guide?.stops
+            .flatMap((stop) => stop.files)
+            .some((file) => file.path === "consumer.ts"),
+        );
+        yield* assertCleaned(workspace, paths);
+      }),
+    ),
   );
 
   it.effect("stores a guide when shared change reads need a missing promisor blob", () =>

@@ -169,6 +169,9 @@ it.effect("generates a repository-aware review guide with Pi", () =>
     const prompt = pi.received.find((record) => record["type"] === "prompt");
     assert.include(prompt?.["message"], "/fixture/evidence/manifest.json");
     assert.include(prompt?.["message"], reviewInput.baseCommit);
+    assert.include(prompt?.["message"], "payloadOffset");
+    assert.include(prompt?.["message"], "git diff <pinnedHead>...<layerHead> --");
+    assert.include(prompt?.["message"], "An ancestor layer has an empty comparison");
     assert.deepEqual(pi.launches[0]?.slice(-5), [
       "--no-extensions",
       "--no-tools",
