@@ -1,5 +1,6 @@
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { AgentElapsed } from "./AgentElapsed";
+import { AppWorkflowTimelineBlock } from "./AppWorkflowTimelineBlock";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { ReactNode } from "react";
 import { useThreadShell, useProject } from "../../state/entities";
@@ -136,7 +137,7 @@ export function V2LifecycleRow(props: {
     );
   }
   if (item.type === "subagent") {
-    return (
+    const link = (
       <SubagentTimelineLink
         parentRef={scopeThreadRef(props.environmentId, item.threadId)}
         subagentId={item.subagentId}
@@ -153,6 +154,16 @@ export function V2LifecycleRow(props: {
         remote={item.remoteChild}
         onOpenThread={props.onOpenThread}
       />
+    );
+    return item.origin === "app_owned" && item.childThreadId === null ? (
+      <AppWorkflowTimelineBlock
+        parentRef={scopeThreadRef(props.environmentId, item.threadId)}
+        subagentId={item.subagentId}
+        onOpenThread={props.onOpenThread}
+        fallback={link}
+      />
+    ) : (
+      link
     );
   }
   return null;
