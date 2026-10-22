@@ -162,7 +162,6 @@ export function useCompactComposerEditor(text: ScaledTextRole) {
   }));
   return {
     containerStyle,
-    isMultiline: contentHeight > text.lineHeight * 1.5,
     editorProps: {
       singleLineCentered: false,
       // Let the container grow before UIKit starts scrolling to reveal the caret.
@@ -325,7 +324,6 @@ export function ComposerSurface(props: {
   readonly children: ReactNode;
   readonly style: ViewStyle;
   readonly animateLayout?: boolean;
-  readonly capsule?: boolean;
 }) {
   const colors = useUniwindTheme();
   const targetBorderRadius =
@@ -370,11 +368,7 @@ export function ComposerSurface(props: {
         pointerEvents="none"
         tintColor="transparent"
         layout={layoutTransition}
-        style={[
-          { position: "absolute", inset: 0 },
-          animatedShapeStyle,
-          props.capsule ? { borderRadius: 999 } : undefined,
-        ]}
+        style={[{ position: "absolute", inset: 0 }, animatedShapeStyle]}
       >
         {null}
       </AnimatedGlassSurface>
@@ -885,7 +879,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
 
         <ComposerSurface
           animateLayout={false}
-          capsule={hasSidebarTabBar && !compactEditor.isMultiline}
           style={{
             borderRadius: hasSidebarTabBar ? 31 : 27,
             borderCurve: "circular",

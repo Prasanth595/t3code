@@ -1668,7 +1668,6 @@ export function NewTaskDraftScreen(props: {
 
       <ComposerSurface
         animateLayout={false}
-        capsule={hasSidebarTabBar && !compactEditor.isMultiline}
         style={{
           borderRadius: hasSidebarTabBar ? 31 : 27,
           borderCurve: "circular",
