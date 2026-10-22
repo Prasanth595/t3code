@@ -45,20 +45,25 @@ export const make = Effect.fn("ProviderLatestVersions.make")(function* (
     const inFlight = yield* Deferred.make<Option.Option<string | null>>();
     // Replacing or invalidating this entry retires any lookup still in flight.
     const pending: Entry = { version: null, expiresAt: 0, inFlight };
-    const existing = yield* Ref.modify(entries, (current) => {
-      const entry = current.get(key);
-      return !options?.fresh && entry && (entry.expiresAt > now || entry.inFlight)
-        ? [entry, current]
-        : [undefined, new Map(current).set(key, pending)];
-    });
-    if (existing?.inFlight) {
-      const shared = yield* Deferred.await(existing.inFlight);
-      // A failed lookup has already removed its entry, so this call starts over.
-      return Option.isSome(shared) ? shared.value : yield* cached(key, lookup, options);
-    }
-    if (existing) return existing.version;
-    return yield* lookup.pipe(
-      Effect.onExit((exit) => {
+    // No interrupt can land between claiming the entry and installing its
+    // release, so a claimed entry is always completed or removed.
+    return yield* Effect.acquireUseRelease(
+      Ref.modify(entries, (current) => {
+        const entry = current.get(key);
+        return !options?.fresh && entry && (entry.expiresAt > now || entry.inFlight)
+          ? [entry, current]
+          : [undefined, new Map(current).set(key, pending)];
+      }),
+      (existing) =>
+        Effect.gen(function* () {
+          if (!existing) return yield* lookup;
+          if (!existing.inFlight) return existing.version;
+          const shared = yield* Deferred.await(existing.inFlight);
+          // A failed lookup has already removed its entry, so this call starts over.
+          return Option.isSome(shared) ? shared.value : yield* cached(key, lookup, options);
+        }),
+      (existing, exit) => {
+        if (existing) return Effect.void;
         const version = Exit.isSuccess(exit) ? Option.some(exit.value) : Option.none();
         return Ref.update(entries, (current) => {
           if (current.get(key) !== pending) return current;
@@ -69,8 +74,8 @@ export const make = Effect.fn("ProviderLatestVersions.make")(function* (
           }
           const ttl = version.value === null ? MISSING_TTL : FOUND_TTL;
           return next.set(key, { version: version.value, expiresAt: now + Duration.toMillis(ttl) });
-        }).pipe(Effect.andThen(Deferred.succeed(inFlight, version)));
-      }),
+        }).pipe(Effect.andThen(Deferred.succeed(inFlight, version)), Effect.asVoid);
+      },
     );
   });
   return ProviderLatestVersions.of({
