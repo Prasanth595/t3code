@@ -78,6 +78,10 @@ export function usagePriceTableChanges(
     }
     const alias = (draft.alias ?? currentAlias ?? "").trim();
     if (alias !== "") {
+      if (draft.alias === undefined && Object.keys(draft.values).length > 0) {
+        errors.set(draft.id, `Clear "Map to" to edit prices on ${target.label}.`);
+        continue;
+      }
       if (model === "") errors.set(draft.id, "Enter a model ID.");
       else if (alias === model) errors.set(draft.id, "Map to a different model.");
       else {
