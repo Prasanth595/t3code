@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  ChatAttachmentId,
   CommandId,
   MessageId,
   EventId,
@@ -1229,5 +1230,68 @@ it.effect("explicit settle clears snooze atomically and stays idempotent after r
     } as const;
     assert.deepInclude(yield* projections.getThreadShell(threadId), active);
     assert.deepInclude((yield* projections.getThreadProjection(threadId)).thread, active);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("cleans the last attachment reference when threads are deleted concurrently", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    const ids = [ThreadId.make("concurrent-delete-a"), ThreadId.make("concurrent-delete-b")];
+    const attachmentId = ChatAttachmentId.make("legacy_shared");
+    for (const threadId of ids) {
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${threadId}`),
+        threadId,
+        projectId: ProjectId.make("shared-attachment"),
+        title: "Shared",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`message:${threadId}`),
+        threadId,
+        messageId: MessageId.make(`message:${threadId}`),
+        text: "Shared file",
+        attachments: [
+          {
+            type: "file",
+            id: attachmentId,
+            name: "file.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 10,
+          },
+        ],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+    }
+    yield* Effect.forEach(
+      ids,
+      (threadId) =>
+        orchestrator.dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make(`delete:${threadId}`),
+          threadId,
+        }),
+      { concurrency: "unbounded" },
+    );
+    const effects = (yield* Effect.forEach(ids, (threadId) =>
+      outbox.listByCommandId(CommandId.make(`delete:${threadId}`)),
+    )).flat();
+    assert.deepEqual(
+      effects.flatMap(({ request }) =>
+        request.type === "attachment.cleanup" ? request.attachmentIds : [],
+      ),
+      [attachmentId],
+    );
   }).pipe(Effect.provide(layerTest)),
 );

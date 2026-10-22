@@ -71,6 +71,7 @@ import {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Semaphore from "effect/Semaphore";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -897,6 +898,7 @@ function lastDeliveredRunForProviderThread(
 }
 
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
+  const attachmentDeletionLock = yield* Semaphore.make(1);
   const checkpointService = yield* CheckpointServiceV2;
   const commandPolicy = yield* CommandPolicyV2;
   const contextHandoffService = yield* ContextHandoffServiceV2;
@@ -11782,7 +11784,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchWithReceipt = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
     const dispatch = threadDispatch.withLock(
       commandThreadId(command),
-      dispatchWithReceiptEffect(command),
+      // Shared attachment references cross thread boundaries. Hold this through planning and
+      // commit so simultaneous deletions cannot both leave cleanup to the other thread.
+      command.type === "thread.delete"
+        ? attachmentDeletionLock.withPermits(1)(dispatchWithReceiptEffect(command))
+        : dispatchWithReceiptEffect(command),
     );
     if (
       command.type !== "message.dispatch" ||
