@@ -113,32 +113,18 @@ const isComplete = (dir) => {
 };
 
 /**
- * Moves a finished staging folder to `dir`. Rename never replaces an existing
+ * Moves a finished staging folder to `dir`. Rename cannot replace a nonempty
  * folder, so a complete install another launcher (or `t3 update`) published
- * first is kept, never deleted from under a running process. Only a folder
- * without the completion marker, left by an interrupted older installer, is
- * cleared before trying again. It is moved aside first: another launcher can
- * publish between the check and the delete, and a rename takes exactly the
- * folder that is there, so a complete one is put back instead.
+ * first stays available at its original path. Refuse to clear an incomplete
+ * folder: another publisher can complete it between the marker check and
+ * removing or moving it.
  */
 function publish(staging, dir) {
   try {
     fs.renameSync(staging, dir);
   } catch (error) {
     if (isComplete(dir)) return;
-    if (!fs.existsSync(dir)) throw error;
-    const stale = `${staging}.stale`;
-    try {
-      fs.renameSync(dir, stale);
-    } catch (moveError) {
-      if (isComplete(dir)) return;
-      if (fs.existsSync(dir)) throw moveError;
-    }
-    try {
-      publish(isComplete(stale) ? stale : staging, dir);
-    } finally {
-      if (!isComplete(stale)) fs.rmSync(stale, { recursive: true, force: true });
-    }
+    throw error;
   }
 }
 
