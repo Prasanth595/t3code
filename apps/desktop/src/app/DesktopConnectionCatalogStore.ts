@@ -12,6 +12,7 @@ import {
 } from "@t3tools/client-runtime/platform";
 import type { PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -20,6 +21,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
@@ -45,6 +47,9 @@ const RuntimeConnectionCatalogDocumentJson = Schema.fromJsonString(
 const encodeRuntimeConnectionCatalogDocumentJson = Schema.encodeEffect(
   RuntimeConnectionCatalogDocumentJson,
 );
+const decodeRuntimeConnectionCatalogDocumentJson = Schema.decodeEffect(
+  RuntimeConnectionCatalogDocumentJson,
+);
 
 const DesktopConnectionCatalogStoreWriteOperation = Schema.Literals([
   "create-temporary-file-name",
@@ -52,6 +57,7 @@ const DesktopConnectionCatalogStoreWriteOperation = Schema.Literals([
   "create-directory",
   "write-temporary-file",
   "replace-catalog-file",
+  "keep-unreadable-catalog",
 ]);
 
 const DesktopConnectionCatalogStoreMigrationOperation = Schema.Literals([
@@ -430,6 +436,51 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  const isReadableCatalog = (raw: string) =>
+    decodeEncryptedConnectionCatalogDocumentJson(raw).pipe(
+      Effect.flatMap((document) => decodeSecretBytes(catalogPath, document.encryptedCatalog)),
+      Effect.flatMap(safeStorage.decryptString),
+      Effect.flatMap(decodeRuntimeConnectionCatalogDocumentJson),
+      Effect.match({ onFailure: () => false, onSuccess: () => true }),
+    );
+
+  // The renderer replaces a catalog it cannot use with an empty one. Only this store still has
+  // the original ciphertext, which the previous safe-storage key or a fixed build can recover.
+  const keepUnreadableCatalog = Effect.fn("desktop.connectionCatalogStore.keepUnreadableCatalog")(
+    function* () {
+      const raw = yield* fileSystem.readFileString(catalogPath).pipe(
+        Effect.map(Option.some),
+        Effect.catch((error) =>
+          error.reason._tag === "NotFound"
+            ? Effect.succeedNone
+            : Effect.fail(
+                new DesktopConnectionCatalogStoreWriteError({
+                  operation: "keep-unreadable-catalog",
+                  path: catalogPath,
+                  cause: error,
+                }),
+              ),
+        ),
+      );
+      if (Option.isNone(raw) || (yield* isReadableCatalog(raw.value))) {
+        return;
+      }
+      const keptPath = `${catalogPath}.unreadable-${yield* Clock.currentTimeMillis}`;
+      yield* fileSystem.rename(catalogPath, keptPath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new DesktopConnectionCatalogStoreWriteError({
+              operation: "keep-unreadable-catalog",
+              path: keptPath,
+              cause,
+            }),
+        ),
+      );
+      yield* Effect.logWarning("Kept an unreadable desktop connection catalog.", { keptPath });
+    },
+  );
+  const existingCatalogChecked = yield* Ref.make(false);
+
   const migrateLegacyCatalog = Effect.gen(function* () {
     if (!(yield* encryptionAvailable)) {
       return Option.none<string>();
@@ -499,6 +550,10 @@ export const make = Effect.gen(function* () {
     set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog) {
       if (!(yield* encryptionAvailable)) {
         return false;
+      }
+      if (!(yield* Ref.get(existingCatalogChecked))) {
+        yield* keepUnreadableCatalog();
+        yield* Ref.set(existingCatalogChecked, true);
       }
       yield* writeCatalog(catalog);
       return true;
