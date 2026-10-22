@@ -40,16 +40,18 @@ vi.mock("../state/use-atom-query-runner", () => ({
 vi.mock("../state/environments", async (original) => ({
   ...(await original<typeof import("../state/environments")>()),
   useEnvironments: () => ({
-    environments: [{
-      environmentId: "local",
-      label: "Local",
-      connection: { phase: "connected" },
-      entry: { target: { _tag: "PrimaryConnectionTarget" } },
-      serverConfig: {
-        environment: { platform: { os: "linux" }, capabilities: { projectCloneTracking: true } },
-        settings: { addProjectBaseDirectory: "/workspace/" },
+    environments: [
+      {
+        environmentId: "local",
+        label: "Local",
+        connection: { phase: "connected" },
+        entry: { target: { _tag: "PrimaryConnectionTarget" } },
+        serverConfig: {
+          environment: { platform: { os: "linux" }, capabilities: { projectCloneTracking: true } },
+          settings: { addProjectBaseDirectory: "/workspace/" },
+        },
       },
-    }],
+    ],
   }),
   usePrimaryEnvironmentId: () => "local",
   useEnvironmentProviders: () => new Map(),
@@ -99,14 +101,19 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
     const value = step === "repository" ? "https://example.com/team/計画.git" : "/workspace/計画";
     await input().fill(value);
     const event = new KeyboardEvent("keydown", {
-      key: "Enter", bubbles: true, cancelable: true, ...composition,
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+      ...composition,
     });
     await act(() => input().element().dispatchEvent(event));
     expect(event.defaultPrevented).toBe(false);
     await expect.element(input()).toHaveValue(value);
     if (step === "repository") {
       await userEvent.keyboard("{Enter}");
-      await expect.element(page.getByText("Choose a destination path and press Enter to clone.")).toBeVisible();
+      await expect
+        .element(page.getByText("Choose a destination path and press Enter to clone."))
+        .toBeVisible();
     } else {
       await userEvent.keyboard("{Enter}");
       await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
