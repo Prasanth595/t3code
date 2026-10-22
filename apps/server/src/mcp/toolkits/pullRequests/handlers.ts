@@ -97,7 +97,17 @@ const resolveTarget = Effect.fn("PullRequestsToolkit.resolveTarget")(function* (
       repository,
       input.number,
       project?.repositoryIdentity?.locator.remoteUrl,
-    ) ?? `https://${host}/${repository}/pull/${input.number}`;
+    ) ??
+    (/(?:^|\/)_git\/[^/]+$/u.test(repository)
+      ? changeRequestUrlFor(
+          "azure-devops",
+          host,
+          repository,
+          input.number,
+          project?.repositoryIdentity?.locator.remoteUrl,
+        )
+      : null) ??
+    `https://${host}/${repository}/pull/${input.number}`;
   return {
     ...normalizeThreadPullRequestKey({ host, repository, number: input.number, url }),
     url,
@@ -114,7 +124,7 @@ function entryOf(
     if (chain.layers.length < 2) continue;
     const index = chain.layers.findIndex((layer) => threadPullRequestKeyOf(layer) === key);
     if (index !== -1) {
-      stack = { kind: chain.kind, position: index + 1, size: chain.layers.length };
+      stack = { kind: chain.kind, position: chain.depths[index]! + 1, size: chain.layers.length };
       break;
     }
   }
