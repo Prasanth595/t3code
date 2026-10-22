@@ -208,15 +208,21 @@ describe("observability", () => {
 
   it("keeps an object that appears twice without marking it circular", () => {
     const shared = { cwd: "/repo" };
+    const sharedMap = new Map([["cwd", "/repo"]]);
+    const sharedSet = new Set(["/repo"]);
 
     assert.deepStrictEqual(
       compactTraceAttributes({
         ctx: { first: shared, second: shared },
         list: [shared, shared],
+        maps: [sharedMap, sharedMap],
+        sets: [sharedSet, sharedSet],
       }),
       {
         ctx: { first: { cwd: "/repo" }, second: { cwd: "/repo" } },
         list: [{ cwd: "/repo" }, { cwd: "/repo" }],
+        maps: [{ cwd: "/repo" }, { cwd: "/repo" }],
+        sets: [["/repo"], ["/repo"]],
       },
     );
   });
