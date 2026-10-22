@@ -269,7 +269,7 @@ index ce1fe00001c9e5aee6c6ea8bb2d4757d4586d002..ca6e596aa53327a097a388ffd545a4c6
       * Number of columns to render items in.
       * @default 1
 diff --git a/react-native.js b/react-native.js
-index b3c5a306b293f797a8b338adfca3060c0f6db22b..3c67a536d850d8c508336cf0f10c0c898ea67f12 100644
+index b3c5a306b293f797a8b338adfca3060c0f6db22b..d7f59b63cd4982dfc9c347732caa77e0974864df 100644
 --- a/react-native.js
 +++ b/react-native.js
 @@ -717,6 +717,15 @@ function hasActiveInitialScroll(state) {
@@ -909,7 +909,7 @@ index b3c5a306b293f797a8b338adfca3060c0f6db22b..3c67a536d850d8c508336cf0f10c0c89
        recycleItems,
        refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2__namespace.cloneElement(refreshControlElement, {
 diff --git a/react-native.mjs b/react-native.mjs
-index 40e87cda8c9bc79a889e5542f29af429a24b24d4..c1b68df0f53d566c98a4820b39079396a09f1208 100644
+index 40e87cda8c9bc79a889e5542f29af429a24b24d4..c2ca39bab6ea1ebaaed25190a01e8cf2e395ece9 100644
 --- a/react-native.mjs
 +++ b/react-native.mjs
 @@ -696,6 +696,15 @@ function hasActiveInitialScroll(state) {
@@ -1619,7 +1619,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..d7cbe1cb43449cc29822b2646deabbdd
      }
    }
 diff --git a/react.js b/react.js
-index 914d2dafaafa001c9ab6791a0a0581659295e333..7606d2af2149d530a24e8c1b76907eda6aac5d85 100644
+index 914d2dafaafa001c9ab6791a0a0581659295e333..0ca344ca60cbc96bea690e622ea5622370ab3347 100644
 --- a/react.js
 +++ b/react.js
 @@ -4702,7 +4702,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
@@ -1655,7 +1655,39 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..7606d2af2149d530a24e8c1b76907eda
        setContainerLayoutBaseline(element, rect);
        measurements.push({
          containerId,
-@@ -5651,6 +5659,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
+@@ -4978,12 +4986,26 @@ var ContainerLayoutCoordinator = typedMemo(function ContainerLayoutCoordinatorCo
+ }) {
+   const ctx = useStateContext();
+   const [containerLayoutEpoch] = useArr$(["containerLayoutEpoch"]);
++  const layoutPasses = React3__namespace.useRef(0);
+   React3__namespace.useLayoutEffect(() => {
+-    {
+-      const targetContainerIds = getContainerLayoutEffectScope(ctx);
+-      if (targetContainerIds !== void 0) {
+-        measureContainersInLayoutEffect(ctx, targetContainerIds);
+-      }
++    const targetContainerIds = getContainerLayoutEffectScope(ctx);
++    if (targetContainerIds === void 0) return;
++    if (layoutPasses.current === 0) {
++      queueMicrotask(() => { layoutPasses.current = 0; });
++    }
++    // Correcting large estimates can mount one row per commit. Bound the
++    // synchronous chain below React's nested-update limit, then keep measuring
++    // the latest pending rows on the next frame. Idle lists schedule no work.
++    if (layoutPasses.current++ < 8) {
++      measureContainersInLayoutEffect(ctx, targetContainerIds);
++    } else {
++      ctx.pendingContainerIds = targetContainerIds;
++      ctx.state.scheduledWork.frame(() => {
++        const pendingIds = getContainerLayoutEffectScope(ctx);
++        if (pendingIds !== void 0) {
++          measureContainersInLayoutEffect(ctx, pendingIds);
++        }
++      }, "containerLayout");
+     }
+   }, [ctx, containerLayoutEpoch]);
+   return children;
+@@ -5651,6 +5673,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
  });
  
  // src/utils/reordering.ts
@@ -1674,7 +1706,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..7606d2af2149d530a24e8c1b76907eda
  function sortDOMElements(container, indexByElement) {
    const elements = Array.from(container.children);
    if (elements.length <= 1) return elements;
-@@ -5690,9 +5710,9 @@ function sortDOMElements(container, indexByElement) {
+@@ -5690,9 +5724,9 @@ function sortDOMElements(container, indexByElement) {
          }
        }
        if (nextStableElement) {
@@ -1686,7 +1718,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..7606d2af2149d530a24e8c1b76907eda
        }
      }
    }
-@@ -6092,10 +6112,11 @@ var ListComponentScrollView = React3.forwardRef(function ListComponentScrollView
+@@ -6092,10 +6126,11 @@ var ListComponentScrollView = React3.forwardRef(function ListComponentScrollView
      if (!scrollElement) {
        return 0;
      }
@@ -1700,7 +1732,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..7606d2af2149d530a24e8c1b76907eda
        const scrollElement = scrollRef.current;
        const target = getScrollTarget();
        if (!target || typeof target.scrollTo !== "function") {
-@@ -6123,7 +6144,7 @@ var ListComponentScrollView = React3.forwardRef(function ListComponentScrollView
+@@ -6123,7 +6158,7 @@ var ListComponentScrollView = React3.forwardRef(function ListComponentScrollView
        }
        target.scrollTo(options);
      },
@@ -1709,7 +1741,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..7606d2af2149d530a24e8c1b76907eda
    );
    React3.useImperativeHandle(ref, () => {
      const api = {
-@@ -6137,6 +6158,7 @@ var ListComponentScrollView = React3.forwardRef(function ListComponentScrollView
+@@ -6137,6 +6172,7 @@ var ListComponentScrollView = React3.forwardRef(function ListComponentScrollView
        getScrollResponder: () => resolveScrollableNode(scrollRef.current, isWindowScroll),
        isWindowScroll: () => isWindowScroll,
        scrollBy: (x, y) => {
@@ -1717,7 +1749,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..7606d2af2149d530a24e8c1b76907eda
          const target = getScrollTarget();
          if (!target || typeof target.scrollBy !== "function") {
            return;
-@@ -6237,6 +6259,122 @@ var ListComponentScrollView = React3.forwardRef(function ListComponentScrollView
+@@ -6237,6 +6273,122 @@ var ListComponentScrollView = React3.forwardRef(function ListComponentScrollView
        scrollEventCoalescer.cancel();
      };
    }, [emitScrollEnd, getScrollTarget, handleScroll, scrollEventCoalescer]);
@@ -1840,7 +1872,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..7606d2af2149d530a24e8c1b76907eda
    React3.useEffect(() => {
      const doScroll = () => {
        if (contentOffset) {
-@@ -6404,6 +6542,53 @@ function getScrollAdjustTarget(ctx, contentNode) {
+@@ -6404,6 +6556,53 @@ function getScrollAdjustTarget(ctx, contentNode) {
    }
    return scrollElement ? { contentNode: resolvedContentNode, scrollElement } : null;
  }
@@ -1894,7 +1926,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..7606d2af2149d530a24e8c1b76907eda
  function scrollAdjustBy(el, left, top) {
    el.scrollBy({ behavior: "auto", left, top });
  }
-@@ -6414,6 +6599,48 @@ function ScrollAdjust() {
+@@ -6414,6 +6613,48 @@ function ScrollAdjust() {
    const resetPaddingRafRef = React3__namespace.useRef(void 0);
    const temporaryPaddingRef = React3__namespace.useRef(void 0);
    const contentNodeRef = React3__namespace.useRef(null);
@@ -1943,7 +1975,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..7606d2af2149d530a24e8c1b76907eda
    const callback = React3__namespace.useCallback(() => {
      const scrollAdjust = peek$(ctx, "scrollAdjust");
      const scrollAdjustUserOffset = peek$(ctx, "scrollAdjustUserOffset");
-@@ -6423,55 +6650,53 @@ function ScrollAdjust() {
+@@ -6423,55 +6664,53 @@ function ScrollAdjust() {
        const target = getScrollAdjustTarget(ctx, contentNodeRef.current);
        if (target) {
          const horizontal = !!ctx.state.props.horizontal;
@@ -2035,7 +2067,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..7606d2af2149d530a24e8c1b76907eda
    useValueListener$("scrollAdjustUserOffset", callback);
    return null;
 diff --git a/react.mjs b/react.mjs
-index 95465f2ab89ce41a10553f58af83618f7310e83c..5d8e5188efe0ea8924f77a67f8bfbb3c845d4dca 100644
+index 95465f2ab89ce41a10553f58af83618f7310e83c..7a52a2302c01ba66695585d26ac7b561be157df3 100644
 --- a/react.mjs
 +++ b/react.mjs
 @@ -4681,7 +4681,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
@@ -2071,7 +2103,39 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..5d8e5188efe0ea8924f77a67f8bfbb3c
        setContainerLayoutBaseline(element, rect);
        measurements.push({
          containerId,
-@@ -5630,6 +5638,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
+@@ -4957,12 +4965,26 @@ var ContainerLayoutCoordinator = typedMemo(function ContainerLayoutCoordinatorCo
+ }) {
+   const ctx = useStateContext();
+   const [containerLayoutEpoch] = useArr$(["containerLayoutEpoch"]);
++  const layoutPasses = React3.useRef(0);
+   React3.useLayoutEffect(() => {
+-    {
+-      const targetContainerIds = getContainerLayoutEffectScope(ctx);
+-      if (targetContainerIds !== void 0) {
+-        measureContainersInLayoutEffect(ctx, targetContainerIds);
+-      }
++    const targetContainerIds = getContainerLayoutEffectScope(ctx);
++    if (targetContainerIds === void 0) return;
++    if (layoutPasses.current === 0) {
++      queueMicrotask(() => { layoutPasses.current = 0; });
++    }
++    // Correcting large estimates can mount one row per commit. Bound the
++    // synchronous chain below React's nested-update limit, then keep measuring
++    // the latest pending rows on the next frame. Idle lists schedule no work.
++    if (layoutPasses.current++ < 8) {
++      measureContainersInLayoutEffect(ctx, targetContainerIds);
++    } else {
++      ctx.pendingContainerIds = targetContainerIds;
++      ctx.state.scheduledWork.frame(() => {
++        const pendingIds = getContainerLayoutEffectScope(ctx);
++        if (pendingIds !== void 0) {
++          measureContainersInLayoutEffect(ctx, pendingIds);
++        }
++      }, "containerLayout");
+     }
+   }, [ctx, containerLayoutEpoch]);
+   return children;
+@@ -5630,6 +5652,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
  });
  
  // src/utils/reordering.ts
@@ -2090,7 +2154,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..5d8e5188efe0ea8924f77a67f8bfbb3c
  function sortDOMElements(container, indexByElement) {
    const elements = Array.from(container.children);
    if (elements.length <= 1) return elements;
-@@ -5669,9 +5689,9 @@ function sortDOMElements(container, indexByElement) {
+@@ -5669,9 +5703,9 @@ function sortDOMElements(container, indexByElement) {
          }
        }
        if (nextStableElement) {
@@ -2102,7 +2166,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..5d8e5188efe0ea8924f77a67f8bfbb3c
        }
      }
    }
-@@ -6071,10 +6091,11 @@ var ListComponentScrollView = forwardRef(function ListComponentScrollView2({
+@@ -6071,10 +6105,11 @@ var ListComponentScrollView = forwardRef(function ListComponentScrollView2({
      if (!scrollElement) {
        return 0;
      }
@@ -2116,7 +2180,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..5d8e5188efe0ea8924f77a67f8bfbb3c
        const scrollElement = scrollRef.current;
        const target = getScrollTarget();
        if (!target || typeof target.scrollTo !== "function") {
-@@ -6102,7 +6123,7 @@ var ListComponentScrollView = forwardRef(function ListComponentScrollView2({
+@@ -6102,7 +6137,7 @@ var ListComponentScrollView = forwardRef(function ListComponentScrollView2({
        }
        target.scrollTo(options);
      },
@@ -2125,7 +2189,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..5d8e5188efe0ea8924f77a67f8bfbb3c
    );
    useImperativeHandle(ref, () => {
      const api = {
-@@ -6116,6 +6137,7 @@ var ListComponentScrollView = forwardRef(function ListComponentScrollView2({
+@@ -6116,6 +6151,7 @@ var ListComponentScrollView = forwardRef(function ListComponentScrollView2({
        getScrollResponder: () => resolveScrollableNode(scrollRef.current, isWindowScroll),
        isWindowScroll: () => isWindowScroll,
        scrollBy: (x, y) => {
@@ -2133,7 +2197,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..5d8e5188efe0ea8924f77a67f8bfbb3c
          const target = getScrollTarget();
          if (!target || typeof target.scrollBy !== "function") {
            return;
-@@ -6216,6 +6238,122 @@ var ListComponentScrollView = forwardRef(function ListComponentScrollView2({
+@@ -6216,6 +6252,122 @@ var ListComponentScrollView = forwardRef(function ListComponentScrollView2({
        scrollEventCoalescer.cancel();
      };
    }, [emitScrollEnd, getScrollTarget, handleScroll, scrollEventCoalescer]);
@@ -2256,7 +2320,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..5d8e5188efe0ea8924f77a67f8bfbb3c
    useEffect(() => {
      const doScroll = () => {
        if (contentOffset) {
-@@ -6383,6 +6521,53 @@ function getScrollAdjustTarget(ctx, contentNode) {
+@@ -6383,6 +6535,53 @@ function getScrollAdjustTarget(ctx, contentNode) {
    }
    return scrollElement ? { contentNode: resolvedContentNode, scrollElement } : null;
  }
@@ -2310,7 +2374,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..5d8e5188efe0ea8924f77a67f8bfbb3c
  function scrollAdjustBy(el, left, top) {
    el.scrollBy({ behavior: "auto", left, top });
  }
-@@ -6393,6 +6578,48 @@ function ScrollAdjust() {
+@@ -6393,6 +6592,48 @@ function ScrollAdjust() {
    const resetPaddingRafRef = React3.useRef(void 0);
    const temporaryPaddingRef = React3.useRef(void 0);
    const contentNodeRef = React3.useRef(null);
@@ -2359,7 +2423,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..5d8e5188efe0ea8924f77a67f8bfbb3c
    const callback = React3.useCallback(() => {
      const scrollAdjust = peek$(ctx, "scrollAdjust");
      const scrollAdjustUserOffset = peek$(ctx, "scrollAdjustUserOffset");
-@@ -6402,55 +6629,53 @@ function ScrollAdjust() {
+@@ -6402,55 +6643,53 @@ function ScrollAdjust() {
        const target = getScrollAdjustTarget(ctx, contentNodeRef.current);
        if (target) {
          const horizontal = !!ctx.state.props.horizontal;
