@@ -321,6 +321,21 @@ it.effect("reports both failures when the HTTPS retry fails too", () =>
   }),
 );
 
+it.effect("retries an Azure SSH clone using its HTTPS host and repository path", () =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    const result = yield* cloneInTemporaryDirectory(rejectingSsh(urls, false), {
+      remoteUrl: "git@ssh.dev.azure.com:v3/Fabrikam/Project1/fab_repo",
+    });
+
+    assert.deepStrictEqual(urls, [
+      "git@ssh.dev.azure.com:v3/Fabrikam/Project1/fab_repo",
+      "https://dev.azure.com/Fabrikam/Project1/_git/fab_repo",
+    ]);
+    assert.strictEqual(result.remoteUrl, "https://dev.azure.com/Fabrikam/Project1/_git/fab_repo");
+  }),
+);
+
 it.effect.each([
   ["the caller asked for SSH", "ssh", "authentication_failed"],
   ["git failed for another reason", undefined, "remote_unreachable"],
