@@ -2,8 +2,8 @@
 
 ## First checkout
 
-Install `vp` using the [root README](../../README.md#install-vp). The checkout requires Node 24.
-From the repository root:
+Install `vp` using the [root README](../../README.md#install-vp). It provides the Node version
+pinned in `package.json` (Node 26), so no separate Node install is needed. From the repository root:
 
 ```sh
 vp i
@@ -68,7 +68,9 @@ Add `--browser` to open a browser automatically.
 ### State and ports
 
 Linked worktrees default to their own `.t3/userdata`, even when `T3CODE_HOME` is set.
-The main checkout defaults to `~/.t3/dev/userdata`. An explicit `--home-dir` wins in both cases.
+The main checkout defaults to `~/.t3/dev`. An explicit `--home-dir` wins in both cases.
+The first start in a worktree seeds its empty database from a read-only copy of
+`~/.t3/userdata`; `--no-seed` or `T3CODE_DEV_SEED=0` skips that.
 Never run a development server against the live `~/.t3/userdata`.
 See [test data](../../AGENTS.md#test-data) for copying a consistent database snapshot.
 
@@ -173,7 +175,6 @@ and runs in headless Chromium with the React Compiler on, like the app. There is
 TypeScript workspaces typecheck with `tsc`. The `typescript` catalog entry is
 `@tsc-rs/typescript`, the tsc-rs drop-in, with Effect diagnostics, quick fixes, and
 refactors built in. VS Code uses it through `js/ts.tsdk.path` in `.vscode/settings.json`.
-Marketing keeps `astro check` for Astro files.
 
 Use `vp run lint:mobile` for native mobile changes. CI owns the full suite; see
 [ci.yml](../../.github/workflows/ci.yml) for its current jobs.
