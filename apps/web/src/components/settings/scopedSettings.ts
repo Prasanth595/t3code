@@ -2,8 +2,10 @@ import {
   ClientSettingsSchema,
   type ClientSettingsPatch,
   type EnvironmentId,
+  globalIdleCompaction,
   idleCompactionPatch,
   isNullableProjectSettingsOverride,
+  readsIdleCompactionModes,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type ProjectId,
   type ProjectScopedServerSettingKey,
@@ -137,6 +139,19 @@ export function scopedSettingsAreMixed(
       keys.some((key) => !Equal.equals(first.settings[key], candidate.settings[key])),
     )
   );
+}
+
+/**
+ * Servers store the idle compaction mode differently by version, so selected
+ * environments are compared by the mode each resolves to, and "Never" is offered
+ * only when every one of them can store it.
+ */
+export function scopedIdleCompaction(targets: readonly Pick<ScopedSettingsTarget, "settings">[]) {
+  const modes = targets.map((candidate) => globalIdleCompaction(candidate.settings));
+  return {
+    mixed: modes.some((mode) => mode !== modes[0]),
+    neverAvailable: targets.every((candidate) => readsIdleCompactionModes(candidate.settings)),
+  };
 }
 
 export type ScopedSettingSource = ProjectSettingSource | "mixed";

@@ -17,6 +17,7 @@ import {
   planProjectOverridesClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
+  scopedIdleCompaction,
   resolveScopedSettingsTargets,
   scopedSettingsAreMixed,
   scopedSettingsSource,
@@ -190,6 +191,26 @@ describe("scoped settings writes", () => {
         worktreeKeepWhen: "uncommitted-changes",
       },
     ]);
+  });
+
+  it("compares idle compaction by mode, and offers Never only where every server stores it", () => {
+    const fixed = {
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        compactIdleThreads: false,
+        idleCompaction: "onReturn" as const,
+      },
+    };
+    const modes = {
+      settings: { ...DEFAULT_SERVER_SETTINGS, compactIdleThreads: "onReturn" as const },
+    };
+    const legacy = { settings: { ...DEFAULT_SERVER_SETTINGS, compactIdleThreads: false } };
+    expect(scopedIdleCompaction([fixed, modes])).toEqual({ mixed: false, neverAvailable: true });
+    expect(scopedIdleCompaction([fixed, legacy])).toEqual({ mixed: false, neverAvailable: false });
+    expect(
+      scopedIdleCompaction([fixed, { settings: { ...fixed.settings, idleCompaction: "off" } }])
+        .mixed,
+    ).toBe(true);
   });
 
   it("sends an idle compaction mode in the form each environment's server reads", () => {
