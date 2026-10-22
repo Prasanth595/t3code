@@ -237,10 +237,18 @@ const bootstrap = Effect.gen(function* () {
       ownedByThisDesktop,
     });
     const electronDialog = yield* ElectronDialog.ElectronDialog;
-    yield* DesktopHomeOwnership.reportHomeOwnedByAnotherServer({
+    yield* DesktopHomeOwnership.openDesktopWithExistingOwner({
       owner,
       showErrorBox: (title, content) => electronDialog.showErrorBox(title, content),
       openMainWindow: desktopWindow.createMain,
+      // The desktop app stays open, so the control socket it exposes to
+      // `t3 app` has to be listening as well.
+      startControlSocket: appActivation.start.pipe(
+        Effect.tap(() => logBootstrapInfo("desktop app control socket ready")),
+        Effect.catch((error) =>
+          logStartupError("desktop app control socket unavailable", { error }),
+        ),
+      ),
       isQuitting: Ref.get(state.quitting),
     });
     return;

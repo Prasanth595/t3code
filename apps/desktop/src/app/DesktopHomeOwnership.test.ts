@@ -29,36 +29,50 @@ const foreignOwner: DesktopHomeOwnership.DesktopHomeOwner = {
   },
 };
 
-interface ReportResult {
+interface OpenResult {
   readonly dialogs: ReadonlyArray<readonly [string, string]>;
   readonly windowsOpened: number;
+  readonly controlSocketsStarted: number;
 }
 
-const report = (
+const open = (
   owner: DesktopHomeOwnership.DesktopHomeOwner,
   options?: { readonly quitting?: boolean },
-): Effect.Effect<ReportResult, DesktopWindowError> =>
-  Effect.gen(function* () {
-    const dialogs: Array<readonly [string, string]> = [];
-    const windows = yield* Ref.make(0);
-    yield* DesktopHomeOwnership.reportHomeOwnedByAnotherServer({
-      owner,
-      showErrorBox: (title, content) =>
-        Effect.sync(() => {
-          dialogs.push([title, content]);
-        }),
-      openMainWindow: Ref.updateAndGet(windows, (count) => count + 1),
-      isQuitting: Effect.succeed(options?.quitting ?? false),
-    });
-    return { dialogs, windowsOpened: yield* Ref.get(windows) };
-  });
+): Effect.Effect<OpenResult, DesktopWindowError> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const dialogs: Array<readonly [string, string]> = [];
+      const windows = yield* Ref.make(0);
+      const sockets = yield* Ref.make(0);
+      yield* DesktopHomeOwnership.openDesktopWithExistingOwner({
+        owner,
+        showErrorBox: (title, content) =>
+          Effect.sync(() => {
+            dialogs.push([title, content]);
+          }),
+        openMainWindow: Ref.updateAndGet(windows, (count) => count + 1),
+        startControlSocket: Ref.updateAndGet(sockets, (count) => count + 1),
+        isQuitting: Effect.succeed(options?.quitting ?? false),
+      });
+      return {
+        dialogs,
+        windowsOpened: yield* Ref.get(windows),
+        controlSocketsStarted: yield* Ref.get(sockets),
+      };
+    }),
+  );
 
 describe("DesktopHomeOwnership", () => {
   it.effect("keeps the app open when another server owns the T3 home", () =>
     Effect.gen(function* () {
-      const result = yield* report(healthyOwner);
+      const result = yield* open(healthyOwner);
 
       assert.equal(result.windowsOpened, 1, "the window must open so Settings stays reachable");
+      assert.equal(
+        result.controlSocketsStarted,
+        1,
+        "the control socket must listen, or `t3 app` cannot reach the open app",
+      );
       assert.equal(result.dialogs.length, 1, "the owner must be reported");
       assert.equal(result.dialogs[0]?.[0], "This T3 home is already in use");
       assert.include(
@@ -71,18 +85,20 @@ describe("DesktopHomeOwnership", () => {
 
   it.effect("keeps the app open when the owner does not answer", () =>
     Effect.gen(function* () {
-      const result = yield* report(foreignOwner);
+      const result = yield* open(foreignOwner);
 
       assert.equal(result.windowsOpened, 1);
+      assert.equal(result.controlSocketsStarted, 1);
       assert.include(result.dialogs[0]?.[1] ?? "", "is not responding");
     }),
   );
 
-  it.effect("does not open a window while the app is quitting", () =>
+  it.effect("does not open a window or a control socket while the app is quitting", () =>
     Effect.gen(function* () {
-      const result = yield* report(healthyOwner, { quitting: true });
+      const result = yield* open(healthyOwner, { quitting: true });
 
       assert.equal(result.windowsOpened, 0, "a quitting app must not open a window");
+      assert.equal(result.controlSocketsStarted, 0, "a quitting app must not listen");
       assert.equal(result.dialogs.length, 1, "the owner must still be reported");
     }),
   );
