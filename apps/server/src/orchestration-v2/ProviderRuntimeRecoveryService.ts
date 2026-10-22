@@ -597,7 +597,13 @@ export const make = Effect.gen(function* () {
           driver: session.driver,
           providerInstanceId: session.providerInstanceId,
           occurredAt: now,
-          payload: { ...session, status: "stopped", updatedAt: now, lastError: null },
+          payload: {
+            ...session,
+            status: "stopped",
+            ...(session.extensionStatuses === undefined ? {} : { extensionStatuses: [] }),
+            updatedAt: now,
+            lastError: null,
+          },
         });
       }
       for (const [providerThreadId, work] of cancelledBackgroundWork) {

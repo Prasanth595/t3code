@@ -615,6 +615,9 @@ export const layerWithOptions = (
         const payload: OrchestrationV2ProviderSession = {
           ...input.entry.runtime.providerSession,
           status: releaseStatusFor(input.reason),
+          ...(input.entry.runtime.providerSession.extensionStatuses === undefined
+            ? {}
+            : { extensionStatuses: [] }),
           updatedAt: now,
           lastError:
             input.reason === "runtime_error" ? (input.detail ?? "Provider runtime failed.") : null,
