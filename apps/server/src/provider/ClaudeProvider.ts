@@ -209,16 +209,17 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly environment: NodeJS.ProcessEnv;
   readonly cwd: string | undefined;
   readonly managedMcpConfig: boolean;
+  readonly runHooks?: boolean;
 }): ClaudeQueryOptions {
   return {
     persistSession: false,
     pathToClaudeCodeExecutable: input.executablePath,
     abortController: input.abortController,
     settingSources: [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES],
-    // The probe keeps filesystem setting sources for slash-command discovery,
-    // but must not run the user's hooks: it fires every few minutes, so
-    // SessionStart hooks would run on every health check.
-    settings: { disableAllHooks: true },
+    // The health check fires every few minutes, so it must not run the user's
+    // SessionStart hooks. Workspace command discovery runs them because mods
+    // register their slash commands from a session.start hook.
+    ...(input.runHooks ? {} : { settings: { disableAllHooks: true } }),
     allowedTools: [],
     // Ignore MCP definitions from every filesystem setting source above. The
     // SDK combines this empty explicit map with --strict-mcp-config, which
@@ -350,7 +351,8 @@ const probeClaudeCapabilities = (
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
-  includeUsage = true,
+  healthCheck = true,
+  runHooks = false,
 ) => {
   const abort = new AbortController();
   return Effect.gen(function* () {
@@ -374,8 +376,11 @@ const probeClaudeCapabilities = (
           environment: claudeEnvironment,
           cwd,
           managedMcpConfig,
+          runHooks,
         }),
       });
+      // Claude Code answers initialize only after session.start hooks finish,
+      // so init already lists the commands mods register there.
       const init = await q.initializationResult();
       return { q, init };
     });
@@ -387,7 +392,7 @@ const probeClaudeCapabilities = (
         // Only the rate limits are read, so skip the local transcript scan that fills
         // `behaviors`: with a few GB of transcripts it outlasts the deadline.
         const usageCheckedAt = DateTime.formatIso(yield* DateTime.now);
-        const usageResult = includeUsage
+        const usageResult = healthCheck
           ? yield* Effect.tryPromise(() =>
               q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }),
             ).pipe(Effect.timeout(DEFAULT_TIMEOUT_MS), Effect.result)
@@ -454,22 +459,31 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
   claudeSettings: ClaudeSettings,
   machineSnapshot: ServerProvider,
   cwd: string,
-  environment?: NodeJS.ProcessEnv,
+  environment: NodeJS.ProcessEnv | undefined,
+  runHooks: boolean,
 ): Effect.fn.Return<ProviderWorkspaceSnapshot, never, FileSystem.FileSystem | Path.Path> {
   if (!claudeSettings.enabled) return machineSnapshot;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, environment);
-  const probeResult = yield* probeClaudeCapabilities(claudeSettings, environment, cwd, false).pipe(
-    Effect.result,
-  );
+  const probeResult = yield* probeClaudeCapabilities(
+    claudeSettings,
+    environment,
+    cwd,
+    false,
+    runHooks,
+  ).pipe(Effect.result);
   const capabilities = Result.isSuccess(probeResult) ? probeResult.success : undefined;
+  // A hook can outlast the probe deadline. Retrying would rerun it every few
+  // seconds, so settle on the health check's hook-free commands instead.
+  const settled = capabilities !== undefined || runHooks;
   return {
     ...machineSnapshot,
     skills,
     slashCommands: dedupeSlashCommands([
       COMPACT_SLASH_COMMAND,
-      ...(capabilities?.slashCommands ?? []),
+      ...(capabilities?.slashCommands ?? (runHooks ? machineSnapshot.slashCommands : [])),
     ]),
-    slashCommandsPending: !capabilities,
+    slashCommandsPending: !settled,
+    hooksSkipped: !runHooks,
   };
 });
 

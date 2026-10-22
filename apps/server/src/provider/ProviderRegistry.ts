@@ -25,6 +25,7 @@ import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderL
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ServerConfig from "../config.ts";
+import { WorkspaceScanRunsHooks } from "./WorkspaceScanHooks.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import {
   hydrateCachedProvider,
@@ -140,6 +141,9 @@ export function upsertProviderWorkspaceSnapshot(
       ? (previousSnapshot?.slashCommands ?? scopedSnapshot.slashCommands)
       : scopedSnapshot.slashCommands,
     ...(scopedSnapshot.slashCommandsPending ? { slashCommandsPending: true } : {}),
+    ...(scopedSnapshot.hooksSkipped === undefined
+      ? {}
+      : { hooksSkipped: scopedSnapshot.hooksSkipped }),
     skills: scopedSnapshot.skills,
     ...(optionDescriptors === undefined ? {} : { optionDescriptors }),
   } satisfies NonNullable<ServerProvider["workspaceSnapshots"]>[number];
@@ -423,7 +427,7 @@ export const layer = Layer.effect(
       cachedProviders.map((provider) => classifyCompatibility(provider, initialManifest)),
     );
     const workspaceRefreshesRef = yield* Ref.make<
-      ReadonlyMap<ProviderInstance, ReadonlyMap<string, symbol>>
+      ReadonlyMap<ProviderInstance, ReadonlyMap<string, { readonly runHooks: boolean }>>
     >(new Map());
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
@@ -932,13 +936,22 @@ export const layer = Layer.effect(
       const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
         candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
       const scannedFrom = workspaceSnapshotOf(provider);
+      const runHooks = yield* WorkspaceScanRunsHooks;
       const now = yield* DateTime.now;
       if (
         !provider ||
         !provider.enabled ||
+        // A hook-free scan would replace commands that hooks registered with
+        // fewer, so a read-only caller keeps the full inventory, even stale.
+        // Only drivers whose scans run hooks report `hooksSkipped: false`.
+        (!runHooks &&
+          scannedFrom &&
+          !scannedFrom.slashCommandsPending &&
+          scannedFrom.hooksSkipped === false) ||
         (!input.fresh &&
           scannedFrom &&
           !scannedFrom.slashCommandsPending &&
+          !(runHooks && scannedFrom.hooksSkipped) &&
           isProviderWorkspaceSnapshotCurrent(scannedFrom, DateTime.toEpochMillis(now)))
       ) {
         return providers;
@@ -948,10 +961,16 @@ export const layer = Layer.effect(
       const scannedAt = DateTime.formatIso(now);
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
       if (!instance?.snapshotForCwd) return providers;
-      const token = Symbol();
+      const token = { runHooks };
       const claimed = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
         const current = refreshes.get(instance);
-        if (!input.fresh && current?.has(input.cwd)) return [false, refreshes] as const;
+        const inFlight = current?.get(input.cwd);
+        // Join a scan unless it skips hooks this caller may run. A hook-free
+        // caller never replaces a scan that runs hooks, even when fresh.
+        const joins = inFlight?.runHooks ? !input.fresh || !runHooks : !input.fresh && !runHooks;
+        if (inFlight && joins) {
+          return [false, refreshes] as const;
+        }
         const next = new Map(refreshes);
         next.set(instance, new Map(current).set(input.cwd, token));
         return [true, next] as const;
@@ -975,20 +994,23 @@ export const layer = Layer.effect(
                 if (Ref.getUnsafe(workspaceRefreshesRef).get(instance)?.get(input.cwd) !== token) {
                   return currentProviders;
                 }
-                return currentProviders.map((candidate) =>
-                  candidate.instanceId === input.instanceId &&
-                  Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
-                    ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
-                        ...scopedSnapshot,
-                        checkedAt: scannedAt,
-                        // Unless the driver reports its own command discovery,
-                        // commands come from the health check. A failed check
-                        // leaves them unknown, so keep the last ones and retry.
-                        slashCommandsPending:
-                          scopedSnapshot.slashCommandsPending ?? scopedSnapshot.status === "error",
-                      })
-                    : candidate,
-                );
+                return currentProviders.map((candidate) => {
+                  if (
+                    candidate.instanceId !== input.instanceId ||
+                    !Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
+                  ) {
+                    return candidate;
+                  }
+                  return upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
+                    ...scopedSnapshot,
+                    checkedAt: scannedAt,
+                    // Unless the driver reports its own command discovery,
+                    // commands come from the health check. A failed check
+                    // leaves them unknown, so keep the last ones and retry.
+                    slashCommandsPending:
+                      scopedSnapshot.slashCommandsPending ?? scopedSnapshot.status === "error",
+                  });
+                });
               });
             }),
           ),
