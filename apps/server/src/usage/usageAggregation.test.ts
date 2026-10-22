@@ -1,4 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
+import { USAGE_CONTRACT_VERSION, UsageSummary, type EnvironmentId } from "@t3tools/contracts";
+import { mergeUsage } from "@t3tools/shared/usageMerge";
+import * as Schema from "effect/Schema";
 
 import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import type { RateTable } from "./usagePricing.ts";
@@ -68,6 +71,70 @@ function aggregate(
 }
 
 describe("UsageAggregator", () => {
+  it("preserves unpriced tokens through aggregation, wire decoding and merging", () => {
+    const records = [
+      record({
+        model: "custom-model",
+        reportedCostUsd: 1,
+        totals: {
+          uncachedInputTokens: 100,
+          cachedInputTokens: 0,
+          cacheCreationTokens: 0,
+          outputTokens: 0,
+          reasoningTokens: 0,
+        },
+      }),
+      record({
+        model: "custom-model",
+        totals: {
+          uncachedInputTokens: 1000,
+          cachedInputTokens: 2000,
+          cacheCreationTokens: 3000,
+          outputTokens: 3900,
+          reasoningTokens: 900,
+        },
+      }),
+    ];
+    const summary = Schema.decodeUnknownSync(UsageSummary)({
+      contractVersion: USAGE_CONTRACT_VERSION,
+      readAt: "2026-08-07T00:00:00.000Z",
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      buckets: aggregate(records).buckets,
+      sources: [
+        {
+          fingerprint: {
+            hostId: "test",
+            provider: "claude",
+            resolvedHomePath: "/test",
+            volumeId: "test",
+          },
+          status: "ok",
+          scannedFiles: 1,
+          skippedFiles: 0,
+          malformedRecords: 0,
+          distinctSessions: 1,
+          message: null,
+        },
+      ],
+      pricing: { status: "fresh", source: "litellm", fetchedAt: null, knownModels: 1 },
+      scanDurationMs: 0,
+    });
+    const merged = mergeUsage(
+      [{ environmentId: "env-a" as EnvironmentId, label: "Test", summary }],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.models[0]).toMatchObject({
+      totalTokens: 10_000,
+      unpricedTokens: 9900,
+      costUsd: 1,
+      records: 2,
+      unpricedRecords: 1,
+    });
+  });
+
   it("splits a bucket's cost by category and speed", () => {
     const [bucket] = aggregate([record(), record({ speed: "fast" })]).buckets;
 
