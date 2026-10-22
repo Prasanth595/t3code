@@ -2739,6 +2739,7 @@ describe("PiAdapterV2", () => {
       assert.lengthOf([...final.values()], 3);
       for (const row of final.values()) {
         assert.equal(row.status, "completed");
+        assert.isUndefined(row.progress);
         assert.equal(row.runId, ownerRunId);
         assert.isNotNull(row.completedAt);
         assert.isTrue(
@@ -2758,6 +2759,7 @@ describe("PiAdapterV2", () => {
         ),
       );
       assert.lengthOf([...items.values()], 3);
+      for (const item of items.values()) assert.isUndefined(item.progress);
       yield* fake.emit({ type: "agent_settled" });
       yield* takeEvent((event) => event.type === "turn.terminal");
     }).pipe(Effect.scoped, Effect.provide(layerTest)),

@@ -1173,6 +1173,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           ...previous,
           ...patch,
           status,
+          progress: active(status) ? (patch.progress ?? previous?.progress) : undefined,
           startedAt,
           completedAt: active(status) ? null : (previous?.completedAt ?? emittedAt),
           updatedAt: emittedAt,
