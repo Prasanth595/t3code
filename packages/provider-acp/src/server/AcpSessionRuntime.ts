@@ -1676,6 +1676,14 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
 
   const acpContext = yield* Layer.build(
     EffectAcpClient.layerChildProcess(child, {
+      isRequestCancelled: (method) => {
+        const active = Ref.getUnsafe(activePromptRef);
+        return (
+          method === "session/prompt" &&
+          Option.isSome(active) &&
+          active.value.queueState.cancelRequested
+        );
+      },
       ...(options.transformStdout ? { transformStdout: options.transformStdout } : {}),
       ...(options.transformSessionUpdate
         ? { transformSessionUpdate: options.transformSessionUpdate }
@@ -2625,6 +2633,13 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
                   if (Result.isSuccess(result)) return result.success;
                   const error = result.failure;
                   if (
+                    queueState.cancelRequested &&
+                    error._tag === "AcpRequestError" &&
+                    error.code === -32800
+                  ) {
+                    return { stopReason: "cancelled" } satisfies EffectAcpSchema.PromptResponse;
+                  }
+                  if (
                     error._tag !== "AcpRequestError" ||
                     error.code !== -32603 ||
                     error.errorMessage !==
@@ -2696,10 +2711,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
             }),
         ),
       ),
-    cancel:
-      options.cancelBehavior === "wait-for-prompt"
-        ? promptDispatchSemaphore.withPermit(cancel)
-        : cancel,
+    cancel: promptDispatchSemaphore.withPermit(cancel),
     ...(options.ownDetachedProcessGroup === true ? { terminateProcessGroup } : {}),
     // A session's mode is its `category: "mode"` config option. ACP v1 agents
     // that only advertise `modes` (gemini-cli) take `session/set_mode`

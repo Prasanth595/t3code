@@ -33,7 +33,9 @@ const { values } = NodeUtil.parseArgs({
 });
 const root = NodePath.resolve(values.root);
 const evidence =
-  values.output ?? NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-acp-busy-"));
+  values.output !== undefined
+    ? NodePath.resolve(values.output)
+    : NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-acp-busy-"));
 NodeFS.mkdirSync(evidence, { recursive: true });
 const home = NodePath.join(evidence, "home");
 const project = NodePath.join(evidence, "project");
