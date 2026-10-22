@@ -112,6 +112,50 @@ it.effect("leaves a newer service unchanged during onboarding without prompting"
   }),
 );
 
+const withoutTerminal = Effect.acquireRelease(
+  Effect.sync(() =>
+    [process.stdin, process.stdout].map((stream) => {
+      const descriptor = Object.getOwnPropertyDescriptor(stream, "isTTY");
+      Object.defineProperty(stream, "isTTY", { configurable: true, value: false });
+      return { stream, descriptor };
+    }),
+  ),
+  (saved) =>
+    Effect.sync(() => {
+      for (const { stream, descriptor } of saved) {
+        if (descriptor === undefined) Reflect.deleteProperty(stream, "isTTY");
+        else Object.defineProperty(stream, "isTTY", descriptor);
+      }
+    }),
+);
+
+it.effect("skips the onboarding service prompt when there is no terminal", () =>
+  Effect.gen(function* () {
+    yield* withoutTerminal;
+    const { service, installOptions } = makeTestService({
+      ...status,
+      installed: false,
+      current: false,
+    });
+    const terminal = Terminal.make({
+      columns: Effect.succeed(80),
+      rows: Effect.succeed(24),
+      readInput: Effect.die("Onboarding must not prompt without a terminal."),
+      readLine: Effect.die("Onboarding must not prompt without a terminal."),
+      display: () => Effect.die("Onboarding must not prompt without a terminal."),
+    });
+
+    const ready = yield* offerServiceDuringOnboarding.pipe(
+      Effect.provideService(BootService.BootService, service),
+      Effect.provideService(Terminal.Terminal, terminal),
+      Effect.provide(NodeServices.layer),
+    );
+
+    expect(ready).toBe("skipped");
+    expect(installOptions).toEqual([]);
+  }),
+);
+
 // regression: #9602 diagnose incomplete headless server setup
 it.effect("keeps the manual-server fallback when background prerequisites fail", () =>
   Effect.gen(function* () {
