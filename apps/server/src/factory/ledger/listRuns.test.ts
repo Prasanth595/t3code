@@ -918,14 +918,23 @@ describe("runsByThread", () => {
   const launched = (threadId: string, ms = T0) =>
     line("session_launched", { thread_id: threadId, worktree: null, branch: null }, ms);
 
-  it("maps each session thread to its run and whether the run is finished", () => {
+  it("maps each session thread to its run and whether that session is stopped", () => {
     const dataDir = tempDir();
-    writeRun(dataDir, rid(1), launched("session-a", T0) + finishedLine);
-    writeRun(dataDir, rid(2), launched("session-b", T0 + 1000) + launched("session-c", T0 + 2000));
+    writeRun(dataDir, rid(1), launched("finished", T0) + finishedLine);
+    // A relaunch: the earlier session was stopped before the later one started.
+    writeRun(dataDir, rid(2), launched("earlier", T0 + 1000) + launched("current", T0 + 2000));
+    // A pr-open run whose session was stopped and its worktree removal tried.
+    writeRun(
+      dataDir,
+      rid(3),
+      launched("pr-open", T0 + 3000) +
+        line("worktree_remove_failed", { path: "/wt/t3-x", error: "not empty" }, T0 + 4000),
+    );
     expect(Object.fromEntries(runsByThread(dataDir))).toEqual({
-      "session-a": { run: rid(1), finished: true },
-      "session-b": { run: rid(2), finished: false },
-      "session-c": { run: rid(2), finished: false },
+      finished: { run: rid(1), stopped: true },
+      earlier: { run: rid(2), stopped: true },
+      current: { run: rid(2), stopped: false },
+      "pr-open": { run: rid(3), stopped: true },
     });
   });
 

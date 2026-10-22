@@ -75,7 +75,6 @@ const stubSessions = Sessions.FactorySessions.of({
   archive: () => Effect.die("not archived"),
   removeWorktree: () => Effect.die("not removed"),
   brokenWorktrees: Effect.succeed([]),
-  unbindWorktree: () => Effect.die("not unbound"),
   runningThreads: Effect.succeed(0),
   worktreesDirectory: (defaultDir) => Effect.succeed(defaultDir),
 });
@@ -173,38 +172,50 @@ describe("liveWorld: threads on a broken worktree", () => {
   };
 
   it.effect(
-    "are the factory's only when a finished run's session was on the worktree, each named with that run",
+    "are the factory's only on a stopped session's worktree, grouped by worktree with its run",
     () =>
       Effect.gen(function* () {
         const dataDir = tempDir();
         const finished = launched(dataDir, "187", "session-1", true);
-        launched(dataDir, "188", "session-2", false);
-        let reads = 0;
+        const going = launched(dataDir, "188", "session-2", false);
         const world = yield* worldOver(
           dataDir,
           Sessions.FactorySessions.of({
             ...stubSessions,
-            brokenWorktrees: Effect.sync(() => {
-              reads += 1;
-              return [
-                // A subagent left on the finished run's worktree.
-                {
-                  threadId: "child-1",
-                  worktreePath: "/wt/t3-a",
-                  threadsOnPath: ["child-1", "session-1"],
-                },
-                // The session of a run still going: its own stop handles it.
-                { threadId: "session-2", worktreePath: "/wt/t3-b", threadsOnPath: ["session-2"] },
-                // A person's thread.
-                { threadId: "someone", worktreePath: "/wt/t3-c", threadsOnPath: ["someone"] },
-              ];
-            }),
+            brokenWorktrees: Effect.succeed([
+              // Two subagents left on the finished run's worktree, beside its archived session.
+              {
+                threadId: "child-1",
+                worktreePath: "/wt/t3-a",
+                threadsOnPath: ["child-1", "child-2", "session-1"],
+              },
+              {
+                threadId: "child-2",
+                worktreePath: "/wt/t3-a",
+                threadsOnPath: ["child-1", "child-2", "session-1"],
+              },
+              // The session of a run still going: its own stop archives what is on its worktree.
+              { threadId: "session-2", worktreePath: "/wt/t3-b", threadsOnPath: ["session-2"] },
+              // A person's thread.
+              { threadId: "someone", worktreePath: "/wt/t3-c", threadsOnPath: ["someone"] },
+            ]),
           }),
         );
-        const expected = [{ threadId: "child-1", worktreePath: "/wt/t3-a", run: finished }];
-        assert.deepStrictEqual(yield* world.brokenWorktrees(), expected);
-        assert.deepStrictEqual(yield* world.brokenWorktrees(), expected);
-        assert.strictEqual(reads, 2);
+        const first = {
+          worktreePath: "/wt/t3-a",
+          run: finished,
+          threadIds: ["child-1", "child-2"],
+        };
+        assert.deepStrictEqual(yield* world.brokenWorktrees(), [first]);
+        assert.deepStrictEqual(yield* world.brokenWorktrees(), [first]);
+        // Once the run's session is stopped, its thread is the pass's to archive.
+        const ledger = Ledger.open(dataDir, going, { clock: ticking(T0 + 10_000, 1000) });
+        ledger.finish("stuck", null, null, makeCause("start", "stuck"));
+        ledger.close();
+        assert.deepStrictEqual(yield* world.brokenWorktrees(), [
+          first,
+          { worktreePath: "/wt/t3-b", run: going, threadIds: ["session-2"] },
+        ]);
       }),
   );
 

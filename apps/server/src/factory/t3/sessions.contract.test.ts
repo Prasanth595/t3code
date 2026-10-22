@@ -150,51 +150,46 @@ it.live(
     ).pipe(Effect.provide(Layer.merge(layerGit, NodeServices.layer))),
 );
 
-it.live(
-  "finds a thread whose worktree lost its checkout and unbinds it, so T3 reads it from the project checkout",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const base = yield* fs.makeTempDirectoryScoped({ prefix: "t3-factory-sessions-" });
-        const repo = path.join(base, "repo");
-        const worktreesDir = path.join(base, "worktrees");
-        yield* fs.makeDirectory(repo);
-        yield* fs.makeDirectory(worktreesDir);
-        const baseRef = yield* initRepoWithCommit(repo);
+it.live("finds a thread whose worktree lost its checkout, and not once it is archived", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const base = yield* fs.makeTempDirectoryScoped({ prefix: "t3-factory-sessions-" });
+      const repo = path.join(base, "repo");
+      const worktreesDir = path.join(base, "worktrees");
+      yield* fs.makeDirectory(repo);
+      yield* fs.makeDirectory(worktreesDir);
+      const baseRef = yield* initRepoWithCommit(repo);
 
-        yield* Effect.gen(function* () {
-          yield* createProject(repo);
-          const sessions = yield* Sessions.FactorySessions;
-          const launched = yield* sessions.launch({
-            commandId: "softfac:factory-sessions-contract:broken-worktree",
-            projectId,
-            title: "Factory contract",
-            baseRef,
-            startFromOrigin: false,
-            message: SIMPLE_PROMPT,
-            model: { instanceId: "claudeAgent", model: "claude-sonnet-4-6" },
-          });
-          const threadId = ThreadId.make(launched.threadId);
-          assert.strictEqual((yield* runStatusesUntilTerminal(threadId)).at(-1), "completed");
-          const worktreePath = (yield* sessions.thread(launched.threadId)).worktreePath!;
-          assert.deepStrictEqual(yield* sessions.brokenWorktrees, []);
+      yield* Effect.gen(function* () {
+        yield* createProject(repo);
+        const sessions = yield* Sessions.FactorySessions;
+        const launched = yield* sessions.launch({
+          commandId: "softfac:factory-sessions-contract:broken-worktree",
+          projectId,
+          title: "Factory contract",
+          baseRef,
+          startFromOrigin: false,
+          message: SIMPLE_PROMPT,
+          model: { instanceId: "claudeAgent", model: "claude-sonnet-4-6" },
+        });
+        const threadId = ThreadId.make(launched.threadId);
+        assert.strictEqual((yield* runStatusesUntilTerminal(threadId)).at(-1), "completed");
+        const worktreePath = (yield* sessions.thread(launched.threadId)).worktreePath!;
+        assert.deepStrictEqual(yield* sessions.brokenWorktrees, []);
 
-          // What a removal stopped partway leaves: the folder, without its checkout.
-          yield* fs.remove(path.join(worktreePath, ".git"));
-          assert.deepStrictEqual(yield* sessions.brokenWorktrees, [
-            { threadId: launched.threadId, worktreePath, threadsOnPath: [launched.threadId] },
-          ]);
+        // What a removal stopped partway leaves: the folder, without its checkout.
+        yield* fs.remove(path.join(worktreePath, ".git"));
+        assert.deepStrictEqual(yield* sessions.brokenWorktrees, [
+          { threadId: launched.threadId, worktreePath, threadsOnPath: [launched.threadId] },
+        ]);
 
-          yield* sessions.unbindWorktree(launched.threadId, worktreePath);
-          const after = yield* sessions.thread(launched.threadId);
-          assert.strictEqual(after.worktreePath, null);
-          assert.isFalse(after.archived);
-          assert.deepStrictEqual(yield* sessions.brokenWorktrees, []);
-        }).pipe(
-          Effect.provide(layerRuntime({ repo, worktreesDir, transcript: SIMPLE_TRANSCRIPT })),
-        );
-      }),
-    ).pipe(Effect.provide(Layer.merge(layerGit, NodeServices.layer))),
+        // An archived thread keeps its path, so a later find still names it beside a live one.
+        yield* sessions.archive(launched.threadId);
+        assert.strictEqual((yield* sessions.thread(launched.threadId)).worktreePath, worktreePath);
+        assert.deepStrictEqual(yield* sessions.brokenWorktrees, []);
+      }).pipe(Effect.provide(layerRuntime({ repo, worktreesDir, transcript: SIMPLE_TRANSCRIPT })));
+    }),
+  ).pipe(Effect.provide(Layer.merge(layerGit, NodeServices.layer))),
 );

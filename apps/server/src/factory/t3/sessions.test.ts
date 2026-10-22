@@ -1816,56 +1816,6 @@ describe("FactorySessions.brokenWorktrees", () => {
   );
 });
 
-describe("FactorySessions.unbindWorktree", () => {
-  const unbind = (path: string) =>
-    Effect.gen(function* () {
-      return yield* (yield* Sessions.FactorySessions).unbindWorktree(threadId, path);
-    });
-
-  it.effect("clears the thread's worktree only while the thread is still on that path", () =>
-    Effect.gen(function* () {
-      const commands: Array<Command> = [];
-      yield* unbind("/tmp/wt/t3-abc").pipe(
-        Effect.provide(layerSessions({}, {}, recordingDispatch(commands))),
-      );
-      assert.strictEqual(commands.length, 1);
-      const command = commands[0]!;
-      assert.strictEqual(command.type, "thread.metadata.update");
-      if (command.type === "thread.metadata.update") {
-        assert.strictEqual(command.threadId, threadId);
-        assert.isTrue(command.commandId.startsWith(`factory-unbind-worktree:${threadId}:`));
-        assert.strictEqual(command.worktreePath, null);
-        assert.strictEqual(command.expectedWorktreePath, "/tmp/wt/t3-abc");
-        assert.deepStrictEqual(Object.keys(command).toSorted(), [
-          "commandId",
-          "expectedWorktreePath",
-          "threadId",
-          "type",
-          "worktreePath",
-        ]);
-      }
-    }),
-  );
-
-  it.effect("fails as a sessions error when T3 refuses it", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(unbind("/tmp/wt/t3-abc")).pipe(
-        Effect.provide(
-          layerSessions(
-            {},
-            {},
-            {
-              dispatch: () =>
-                Effect.fail(new DispatchRejected({ message: "dispatch failed" }) as never),
-            },
-          ),
-        ),
-      );
-      assert.strictEqual(error.operation, "unbind-worktree");
-    }),
-  );
-});
-
 describe("FactorySessions.runningThreads", () => {
   // Only the field the count reads: the shell carries far more.
   const shell = (statuses: ReadonlyArray<string | null>) =>

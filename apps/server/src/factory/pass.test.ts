@@ -510,26 +510,29 @@ class Fake implements PassWorld {
     return this.pause;
   }
 
-  /** The live threads on a broken worktree a factory run launched; an unbound one leaves the list. */
+  /** The broken worktrees of stopped sessions with their live threads; an archived thread leaves its list. */
   broken: Array<BrokenWorktree> = [];
   brokenFails = false;
-  /** Threads T3 refuses to unbind. */
-  unbindRefused: Array<string> = [];
-  /** The `"<thread> <path>"` of each unbind T3 took, in order. */
-  unbound: Array<string> = [];
+  /** Threads T3 refuses to archive. */
+  archiveRefused: Array<string> = [];
+  /** Each thread `archiveThread` archived, in order. */
+  archived: Array<string> = [];
 
   brokenWorktrees() {
     return this.brokenFails
       ? Effect.fail<PassError>({ kind: "t3", message: "the projection is locked" })
-      : Effect.succeed([...this.broken]);
+      : Effect.succeed(this.broken.filter((b) => b.threadIds.length > 0));
   }
 
-  unbindWorktree(threadId: string, worktreePath: string) {
-    if (this.unbindRefused.includes(threadId)) {
-      return Effect.fail<PassError>({ kind: "t3", message: "T3 refused the update" });
+  archiveThread(threadId: string) {
+    if (this.archiveRefused.includes(threadId)) {
+      return Effect.fail<PassError>({ kind: "t3", message: "T3 refused the archive" });
     }
-    this.unbound.push(`${threadId} ${worktreePath}`);
-    this.broken = this.broken.filter((b) => b.threadId !== threadId);
+    this.archived.push(threadId);
+    this.broken = this.broken.map((b) => ({
+      ...b,
+      threadIds: b.threadIds.filter((id) => id !== threadId),
+    }));
     return Effect.void;
   }
 
@@ -2205,70 +2208,89 @@ describe("low disk space", () => {
 });
 
 describe("threads on a broken worktree", () => {
-  const LINE =
-    "rawphp/softfac#42: thread child-1 of run rawphp__softfac__42__1 was on worktree /wt/t3-abc, which is gone or no longer a git checkout; the thread no longer names it, so T3 reads its branch and pull request from the project checkout";
-  const brokenChild = (): BrokenWorktree => ({
-    threadId: "child-1",
+  const WHAT =
+    "rawphp/softfac#42: worktree /wt/t3-abc of run rawphp__softfac__42__1 is gone or no longer a git checkout";
+  const ITEM = `${WHAT}; the factory archived the threads still on it`;
+  const lineFor = (n: number) =>
+    `${WHAT}; archived ${n} thread(s) still on it, so T3 stops looking up their branch there`;
+  const brokenOf = (threadIds: Array<string>): BrokenWorktree => ({
     worktreePath: "/wt/t3-abc",
     run: rid(42),
+    threadIds,
   });
   const worktreeLines = (lines: ReadonlyArray<string>) =>
     lines.filter((l) => l.includes("no longer a git checkout"));
   const worktreeItems = (fake: Fake) =>
     fake.items.filter((item) => item.id.startsWith("worktree:"));
 
-  it.effect("are unbound once, with one line and one item naming the run and its issue", () =>
+  it.effect(
+    "are archived once, with one line and one item per worktree naming the run and its issue",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.broken = [brokenOf(["child-1", "child-2"])];
+        const { report, lines } = yield* pass(fake, [REPO], 5);
+        assert.deepEqual(fake.archived, ["child-1", "child-2"]);
+        assert.deepEqual(worktreeLines(lines), [lineFor(2)]);
+        assert.deepEqual(
+          worktreeItems(fake).map(({ id, kind, repo, issue, run, message }) => ({
+            id,
+            kind,
+            repo,
+            issue,
+            run,
+            message,
+          })),
+          [
+            {
+              id: "worktree:/wt/t3-abc",
+              kind: "attention",
+              repo: REPO,
+              issue: 42,
+              run: null,
+              message: ITEM,
+            },
+          ],
+        );
+        assert.equal(report.attention, 1);
+        assert.equal(report.errors, 0);
+
+        fake.now += 60_000;
+        const again = yield* pass(fake, [REPO], 5);
+        assert.deepEqual(fake.archived, ["child-1", "child-2"]);
+        assert.deepEqual(worktreeLines(again.lines), []);
+        assert.equal(worktreeItems(fake).length, 1);
+      }),
+  );
+
+  it.effect("a thread T3 refuses to archive is an error line and is tried again", () =>
     Effect.gen(function* () {
       const fake = new Fake();
-      fake.broken = [brokenChild()];
+      fake.broken = [brokenOf(["child-1", "child-2"])];
+      fake.archiveRefused = ["child-2"];
       const { report, lines } = yield* pass(fake, [REPO], 5);
-      assert.deepEqual(fake.unbound, ["child-1 /wt/t3-abc"]);
-      assert.deepEqual(worktreeLines(lines), [LINE]);
-      assert.deepEqual(
-        worktreeItems(fake).map(({ id, kind, repo, issue, run, message }) => ({
-          id,
-          kind,
-          repo,
-          issue,
-          run,
-          message,
-        })),
-        [
-          {
-            id: "worktree:child-1",
-            kind: "attention",
-            repo: REPO,
-            issue: 42,
-            run: null,
-            message: LINE,
-          },
-        ],
-      );
-      assert.equal(report.attention, 1);
-      assert.equal(report.errors, 0);
+      assert.equal(report.errors, 1);
+      assert.ok(lines.some((l) => l.startsWith("error: cannot archive thread child-2")));
+      assert.deepEqual(worktreeLines(lines), [lineFor(1)]);
+      assert.equal(worktreeItems(fake).length, 1);
 
-      fake.now += 60_000;
+      fake.archiveRefused = [];
       const again = yield* pass(fake, [REPO], 5);
-      assert.deepEqual(fake.unbound, ["child-1 /wt/t3-abc"]);
-      assert.deepEqual(worktreeLines(again.lines), []);
+      assert.deepEqual(fake.archived, ["child-1", "child-2"]);
+      assert.deepEqual(worktreeLines(again.lines), [lineFor(1)]);
       assert.equal(worktreeItems(fake).length, 1);
     }),
   );
 
-  it.effect("one T3 refuses to unbind is an error line, raises nothing, and is tried again", () =>
+  it.effect("a worktree whose every archive fails raises nothing", () =>
     Effect.gen(function* () {
       const fake = new Fake();
-      fake.broken = [brokenChild()];
-      fake.unbindRefused = ["child-1"];
+      fake.broken = [brokenOf(["child-1"])];
+      fake.archiveRefused = ["child-1"];
       const { report, lines } = yield* pass(fake, [REPO], 5);
       assert.equal(report.errors, 1);
+      assert.deepEqual(worktreeLines(lines), []);
       assert.deepEqual(worktreeItems(fake), []);
-      assert.ok(lines.some((l) => l.startsWith("error: cannot unbind thread child-1")));
-
-      fake.unbindRefused = [];
-      yield* pass(fake, [REPO], 5);
-      assert.deepEqual(fake.unbound, ["child-1 /wt/t3-abc"]);
-      assert.equal(worktreeItems(fake).length, 1);
     }),
   );
 
