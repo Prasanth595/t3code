@@ -2,8 +2,16 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
+
+const WEB_ICON_FILENAMES = [
+  "apple-touch-icon.png",
+  "favicon-16x16.png",
+  "favicon-32x32.png",
+  "favicon.ico",
+];
 
 it.layer(NodeServices.layer)("apply-web-brand-assets", (it) => {
   it.effect("copies the icons into an absolute target directory as given", () =>
@@ -15,12 +23,33 @@ it.layer(NodeServices.layer)("apply-web-brand-assets", (it) => {
 
       yield* applyWebBrandAssets("production", targetDirectory);
 
-      assert.deepStrictEqual((yield* fs.readDirectory(targetDirectory)).toSorted(), [
-        "apple-touch-icon.png",
-        "favicon-16x16.png",
-        "favicon-32x32.png",
-        "favicon.ico",
-      ]);
+      assert.deepStrictEqual(
+        (yield* fs.readDirectory(targetDirectory)).toSorted(),
+        WEB_ICON_FILENAMES,
+      );
+    }),
+  );
+
+  it.effect("resolves an empty target directory to the repo root", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const repoRoot = yield* path.fromFileUrl(new URL("..", import.meta.url));
+      const destinations = WEB_ICON_FILENAMES.map((filename) => path.join(repoRoot, filename));
+      for (const destination of destinations) {
+        assert.isFalse(yield* fs.exists(destination));
+      }
+      yield* Effect.addFinalizer(() =>
+        Effect.forEach(destinations, (destination) => fs.remove(destination, { force: true })).pipe(
+          Effect.orDie,
+        ),
+      );
+
+      yield* applyWebBrandAssets("production", "");
+
+      for (const destination of destinations) {
+        assert.isTrue(yield* fs.exists(destination));
+      }
     }),
   );
 });
