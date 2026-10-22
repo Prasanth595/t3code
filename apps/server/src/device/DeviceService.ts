@@ -297,23 +297,20 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         ),
       );
 
+  // Whether a start that just ended is still wanted; a replaced host fails it.
   const confirmStarted = Effect.fn("DeviceService.confirmStarted")(function* (
     host: DeviceHost.DeviceHost["Service"],
     agent: boolean,
   ) {
     const current = yield* readDeviceSettings;
-    if (!current.enabled || (agent && !current.agentAccessEnabled))
-      return yield* new DeviceHostUnavailableError({
-        hostId: host.id,
-        hostLabel: host.label,
-        reason: `${current.enabled ? "Agent device access" : "Device support"} was turned off while the host was starting.`,
-      });
+    if (!current.enabled || (agent && !current.agentAccessEnabled)) return false;
     if (hosts.get(host.id) !== host)
       return yield* new DeviceHostUnavailableError({
         hostId: host.id,
         hostLabel: host.label,
         reason: "Host configuration changed. Retry the operation.",
       });
+    return true;
   });
 
   const readiness: DeviceService["Service"]["readiness"] = Effect.fn("DeviceService.readiness")(
@@ -359,7 +356,12 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         );
       return yield* lifecycleLock.withPermit(
         Effect.gen(function* () {
-          yield* confirmStarted(host, false);
+          if (!(yield* confirmStarted(host, false)))
+            return yield* new DeviceHostUnavailableError({
+              hostId: host.id,
+              hostLabel: host.label,
+              reason: "Device support was turned off while the host was starting.",
+            });
           const { state } = yield* SynchronizedRef.get(stateRef);
           if (state.hostStatuses[host.id]?.status !== "ready") {
             yield* setHostStatus(host.id, { status: "ready" });
@@ -425,7 +427,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         );
       return yield* lifecycleLock.withPermit(
         Effect.gen(function* () {
-          yield* confirmStarted(host, true);
+          if (!(yield* confirmStarted(host, true))) return null;
           const hostSummaries = yield* Effect.forEach(
             hosts.values(),
             (candidate) => candidate.summary,
@@ -499,6 +501,21 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     );
   });
 
+  // Checked under the lock configure publishes under, so a failure that ends
+  // after device support was turned off cannot mark the setting back on.
+  const publishStartFailure = (hostId: DeviceHostId, error: DeviceError) =>
+    lifecycleLock
+      .withPermit(
+        Effect.gen(function* () {
+          if (!(yield* readDeviceSettings).enabled) return;
+          yield* setHostStatus(hostId, {
+            status: "failed",
+            detail: error._tag === "DeviceHostUnavailableError" ? error.reason : error.message,
+          });
+        }),
+      )
+      .pipe(Effect.ignore);
+
   const list: DeviceService["Service"]["list"] = Effect.gen(function* () {
     if (!(yield* readDeviceSettings).enabled) return (yield* SynchronizedRef.get(stateRef)).state;
     yield* Effect.forEach(
@@ -507,14 +524,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         Effect.gen(function* () {
           const ready = yield* readinessIfSupported(host.id);
           if (ready) yield* refresh(ready);
-        }).pipe(
-          Effect.catch((error) =>
-            setHostStatus(host.id, {
-              status: "failed",
-              detail: error._tag === "DeviceHostUnavailableError" ? error.reason : error.message,
-            }),
-          ),
-        ),
+        }).pipe(Effect.catch((error) => publishStartFailure(host.id, error))),
       { concurrency: 4 },
     );
     return (yield* SynchronizedRef.get(stateRef)).state;
@@ -560,14 +570,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         const ready =
           (yield* agentReadinessIfSupported(hostId)) ?? (yield* readinessIfSupported(hostId));
         if (ready) yield* refresh(ready);
-      }).pipe(
-        Effect.catch((error) =>
-          setHostStatus(hostId, {
-            status: "failed",
-            detail: error._tag === "DeviceHostUnavailableError" ? error.reason : error.message,
-          }),
-        ),
-      );
+      }).pipe(Effect.catch((error) => publishStartFailure(hostId, error)));
       return (yield* SynchronizedRef.get(stateRef)).state;
     },
   );
