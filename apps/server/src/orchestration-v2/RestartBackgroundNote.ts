@@ -167,6 +167,18 @@ export function runOutcome(
     : run.status;
 }
 
+/**
+ * The outcome a delegated task takes from its run. A Stop can reach a run whose turn
+ * already ended while its task waited for the tasks it delegated; those settle as
+ * interrupted, and the task was cancelled, not completed.
+ */
+export function delegatedRunOutcome(
+  run: Pick<OrchestrationV2Run, "status" | "restartCancelledBackgroundWork">,
+  stopRequested: boolean,
+): OrchestrationV2Run["status"] {
+  return run.status === "completed" && stopRequested ? "cancelled" : runOutcome(run);
+}
+
 /** Unstarted runs have no lost work to continue, except prepared continuations carrying a source run. */
 export function neverStarted(
   run: Pick<OrchestrationV2Run, "startedAt" | "restartContinuationOfRunId">,

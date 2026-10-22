@@ -134,6 +134,7 @@ it("readThread prefers activity-run status over a newer cancelled queued run", a
     contextTransfers: [],
     subagents: [],
     updatedAt: now,
+    turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
 
   const layer = layerOrchestratorService.pipe(
@@ -220,6 +221,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
       },
     ],
     updatedAt: now,
+    turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
 
   const childProjection = {
@@ -259,6 +261,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
     subagents: [],
     providerThreads: [],
     updatedAt: now,
+    turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
 
   const layer = layerOrchestratorService.pipe(
@@ -324,6 +327,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
     contextTransfers: [],
     subagents: [],
     updatedAt: now,
+    turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
   const foreignProjection = (threadId: ThreadId) =>
     ({
@@ -360,6 +364,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       contextTransfers: [],
       subagents: [],
       updatedAt: now,
+      turnItems: [],
     }) as unknown as OrchestrationV2ThreadProjection;
 
   const layer = layerOrchestratorService.pipe(
