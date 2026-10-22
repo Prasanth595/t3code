@@ -12,8 +12,8 @@ import { readThreadPreviewState } from "../previewStateStore";
 import { deviceEnvironment, useDeviceState } from "./device";
 
 vi.mock(import("../hooks/useSettings"), () => ({
-  useClientSettings: (select: (settings: { browserAutoShowFloatingPreview: boolean }) => unknown) =>
-    select({ browserAutoShowFloatingPreview: true }),
+  useClientSettings: ((select: (settings: { browserAutoShowFloatingPreview: boolean }) => unknown) =>
+    select({ browserAutoShowFloatingPreview: true })) as never,
 }));
 
 it("baselines the first device snapshot without reopening dismissed devices", async () => {
@@ -53,7 +53,7 @@ it("baselines the first device snapshot without reopening dismissed devices", as
   };
   const registry = AtomRegistry.make();
   using _registry = { [Symbol.dispose]: () => registry.dispose() };
-  const stateAtom = Atom.make(AsyncResult.initial<DeviceServiceState>());
+  const stateAtom = Atom.make<AsyncResult.AsyncResult<DeviceServiceState>>(AsyncResult.initial());
   using _subscription = vi.spyOn(deviceEnvironment, "state").mockReturnValue(stateAtom);
   using _store = {
     [Symbol.dispose]: () => usePreviewMiniPlayerStore.getState().removeThread(threadRef),
