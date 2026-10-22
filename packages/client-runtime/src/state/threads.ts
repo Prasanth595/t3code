@@ -773,6 +773,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   // attempt loads the full snapshot instead, which moves the cursor past it.
   const attempt = yield* Ref.make<"snapshot" | "resume">("snapshot");
   const forceSnapshot = yield* Ref.make(false);
+  const resumeDied = yield* Ref.make(false);
 
   yield* markSynchronizing;
   const subscribeThread = (): Stream.Stream<
@@ -879,15 +880,17 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         };
       }),
       {
-        // A die fails the stream, so the catch below reports or retries it. A
-        // transport defect waits for the next session instead: report it now,
-        // and make that session load the snapshot when it broke a resume.
-        onDefect: (cause) =>
-          Cause.hasDies(cause)
-            ? Effect.void
-            : Effect.flatMap(Ref.get(attempt), (kind) =>
-                kind === "resume" ? Ref.set(forceSnapshot, true) : Effect.void,
-              ).pipe(Effect.andThen(setStreamError("Could not synchronize the thread."))),
+        // Classify the defect here: switchMap can buffer the failure past a
+        // replacement session that has already reset `attempt`. A die fails the
+        // stream, so the catch below retries or reports it. A transport defect
+        // waits for the next session instead: report it now, and make that
+        // session load the snapshot when it broke a resume.
+        onDefect: Effect.fn("EnvironmentThreadState.onSubscriptionDefect")(function* (cause) {
+          const resumed = (yield* Ref.get(attempt)) === "resume";
+          if (resumed) yield* Ref.set(forceSnapshot, true);
+          if (Cause.hasDies(cause)) yield* Ref.set(resumeDied, resumed);
+          else yield* setStreamError("Could not synchronize the thread.");
+        }),
         onExpectedFailure: (cause) => setStreamError(formatThreadError(cause)),
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
@@ -900,7 +903,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         Stream.unwrap(
           Effect.gen(function* () {
             if (Cause.hasInterruptsOnly(cause)) return Stream.failCause(cause);
-            if ((yield* Ref.get(attempt)) === "resume") {
+            if (yield* Ref.getAndSet(resumeDied, false)) {
               yield* Ref.set(forceSnapshot, true);
               return subscribeThread();
             }

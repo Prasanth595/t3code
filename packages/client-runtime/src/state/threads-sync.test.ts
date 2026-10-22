@@ -127,6 +127,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const retryCount = yield* Ref.make(0);
   const subscriptionCount = yield* Ref.make(0);
   const subscriptions = yield* Queue.unbounded<number | undefined>();
+  const streamsEnded = yield* Queue.unbounded<void>();
   const loaderCalls = yield* Ref.make(0);
   const lastSubscribeAfterSequence = yield* Ref.make<number | undefined>(undefined);
   const lastRequestCompletionMarker = yield* Ref.make(false);
@@ -164,7 +165,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
           Effect.andThen(Ref.set(lastAcceptBoundedSnapshot, input.acceptBoundedSnapshot)),
           Effect.andThen(Ref.set(lastAcceptCompactTurnItems, input.acceptCompactTurnItems)),
           Effect.andThen(Queue.offer(subscriptions, input.afterSequence)),
-          Effect.as(streamFrom(inputs)),
+          Effect.as(streamFrom(inputs).pipe(Stream.ensuring(Queue.offer(streamsEnded, undefined)))),
         ),
       ),
   } as unknown as WsRpcProtocolClient;
@@ -276,6 +277,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     retryCount,
     subscriptionCount,
     subscriptions,
+    streamsEnded,
     loaderCalls,
     lastSubscribeAfterSequence,
     lastRequestCompletionMarker,
@@ -1293,6 +1295,64 @@ describe("EnvironmentThreads", () => {
 
       yield* harness.replaceSession;
       expect(yield* Queue.take(harness.subscriptions)).toBe(CACHED_SNAPSHOT_SEQUENCE + 5);
+    }),
+  );
+
+  it.effect("reloads the snapshot when a session replacement races a failed resume", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
+      expect(yield* Queue.take(harness.subscriptions)).toBe(CACHED_SNAPSHOT_SEQUENCE);
+
+      // Hold state application so the replay defect waits behind an update.
+      const applying = yield* Deferred.make<void>();
+      const releaseApplying = yield* Deferred.make<void>();
+      yield* SubscriptionRef.updateEffect(harness.threadState, (value) =>
+        Deferred.succeed(applying, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseApplying)),
+          Effect.as(value),
+        ),
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(applying);
+      yield* Queue.offerAll(harness.inputs, [
+        titleUpdated("Replayed update", CACHED_SNAPSHOT_SEQUENCE + 1),
+        new TestStreamDefect("Replayed event did not decode"),
+      ]);
+      yield* Queue.take(harness.streamsEnded);
+
+      // A replacement session starts building its input before the buffered
+      // defect reaches the retry.
+      const replacementStarted = yield* Deferred.make<void>();
+      const releaseReplacement = yield* Deferred.make<void>();
+      const session = Option.getOrThrow(yield* SubscriptionRef.get(harness.supervisorSession));
+      yield* SubscriptionRef.set(
+        harness.supervisorSession,
+        Option.some({
+          ...session,
+          initialConfig: Deferred.succeed(replacementStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseReplacement)),
+            Effect.andThen(session.initialConfig),
+          ),
+        }),
+      );
+      yield* Deferred.await(replacementStarted);
+      yield* Deferred.succeed(releaseApplying, undefined);
+      yield* Deferred.succeed(releaseReplacement, undefined);
+
+      expect(yield* Queue.take(harness.subscriptions)).toBeUndefined();
+      yield* Queue.offerAll(harness.inputs, [
+        snapshot(
+          { ...BASE_PROJECTION, thread: { ...BASE_PROJECTION.thread, title: "Reloaded thread" } },
+          CACHED_SNAPSHOT_SEQUENCE + 5,
+        ),
+        synchronized(),
+      ]);
+      let live = yield* Queue.take(harness.observed);
+      while (live.status !== "live") {
+        expect(Option.isNone(live.error)).toBe(true);
+        live = yield* Queue.take(harness.observed);
+      }
+      expect(Option.getOrThrow(live.data).thread.title).toBe("Reloaded thread");
+      expect(Option.isNone(live.error)).toBe(true);
     }),
   );
 
