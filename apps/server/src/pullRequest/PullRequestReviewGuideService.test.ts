@@ -105,12 +105,22 @@ const makeEvidenceRepositories = Effect.gen(function* () {
   yield* git(remote, ["checkout", "--quiet", "feature"]);
   yield* git(remote, ["reset", "--hard", repositories.lowerSha]);
   yield* fs.writeFileString(`${remote}/deleted.ts`, "old entry\nold implementation\nold export\n");
+  yield* fs.writeFileString(
+    `${remote}/deleted-long.txt`,
+    `${"x".repeat(32_767)}GIF89a${"readable source text".repeat(32)}\n`,
+  );
+  yield* fs.writeFileString(
+    `${remote}/deleted-image.txt`,
+    `${"x".repeat(32_767 - Buffer.byteLength("T3 review guide evidence\n"))}GIF89a${"readable source text".repeat(32)}\n`,
+  );
   yield* fs.writeFileString(`${remote}/rename.txt`, "rename me\n");
   yield* git(remote, ["add", "."]);
   yield* git(remote, ["commit", "--quiet", "-m", "legacy entry point"]);
   const lowerSha = yield* git(remote, ["rev-parse", "HEAD"]);
   yield* git(remote, ["branch", "-f", "stack-base", lowerSha]);
   yield* fs.remove(`${remote}/deleted.ts`);
+  yield* fs.remove(`${remote}/deleted-long.txt`);
+  yield* fs.remove(`${remote}/deleted-image.txt`);
   yield* fs.rename(`${remote}/rename.txt`, `${remote}/renamed.txt`);
   yield* fs.writeFileString(
     `${remote}/added.ts`,
@@ -161,6 +171,7 @@ const decodeManifest = Schema.decodeUnknownEffect(
             Schema.Struct({
               file: Schema.String,
               offset: Schema.Number,
+              payloadOffset: Schema.Number,
               bytes: Schema.Number,
               startsMidLine: Schema.Boolean,
               endsMidLine: Schema.Boolean,
@@ -502,7 +513,7 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
         }),
       ),
   );
-  it.effect.each(["git", "missing", "size", "write", "model"] as const)(
+  it.effect.each(["git", "missing", "size", "framing-size", "write", "model"] as const)(
     "cleans the checkout and evidence after a %s failure without publishing an incomplete bundle",
     (failure) =>
       Effect.scoped(
@@ -563,9 +574,14 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
                             )
                             .pipe(Effect.orDie);
                         }
-                        if (failure === "size" && call.args.includes(repositories.upperSha)) {
+                        if (
+                          (failure === "size" || failure === "framing-size") &&
+                          call.args.includes(repositories.upperSha)
+                        ) {
                           const result = yield* driver.execute(call);
-                          return { ...result, stdout: "x".repeat(64 * 1024 * 1024) };
+                          // The 430 KiB margin covers the index, but cannot also cover chunk preambles.
+                          const margin = failure === "framing-size" ? 430 * 1024 : 0;
+                          return { ...result, stdout: "x".repeat(64 * 1024 * 1024 - margin) };
                         }
                       }
                       return yield* driver.execute(call);
@@ -611,7 +627,7 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
               ),
             );
           }
-          if (failure === "size")
+          if (failure === "size" || failure === "framing-size")
             assert.include(result.run?._tag === "Failed" ? result.run.detail : "", "64 MiB");
           yield* assertCleaned(repositories.workspace, paths);
         }),
@@ -630,6 +646,7 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           const calls: Array<GitVcsDriver.ExecuteGitInput> = [];
           const paths: Array<string> = [];
           let sawSplitLine = false;
+          let sawImageLikeContinuation = false;
           let sawPageableChunk = false;
           const raw = (cwd: string, args: ReadonlyArray<string>) =>
             driver
@@ -690,13 +707,26 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
                         `${evidence.manifestPath.slice(0, -"manifest.json".length)}${chunk.file}`,
                       );
                       assert.isAtMost(bytes.length, 32 * 1024);
+                      assert.isAbove(chunk.payloadOffset, 0);
+                      assert.equal(
+                        new TextDecoder("utf8", { fatal: true }).decode(
+                          bytes.subarray(0, chunk.payloadOffset),
+                        ),
+                        "T3 review guide evidence\n",
+                      );
+                      const payload = bytes.subarray(chunk.payloadOffset);
+                      sawImageLikeContinuation ||=
+                        chunk.startsMidLine &&
+                        new TextDecoder("utf8", { fatal: true })
+                          .decode(payload)
+                          .startsWith("GIF89a");
                       assert.equal(chunk.offset, offset);
-                      assert.equal(chunk.bytes, bytes.length);
+                      assert.equal(chunk.bytes, payload.length);
                       const text = new TextDecoder("utf8", { fatal: true }).decode(bytes);
                       sawPageableChunk ||= text.split("\n").length > 2_000;
                       sawSplitLine ||= chunk.startsMidLine || chunk.endsMidLine;
-                      chunks.push(bytes);
-                      offset += bytes.length;
+                      chunks.push(payload);
+                      offset += payload.length;
                     }
                     assert.equal(offset, stream.bytes);
                     const combined = Buffer.concat(chunks);
@@ -748,6 +778,11 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
                     yield* raw(input.cwd, [...diff, "--unified=0", range, "--"]),
                   );
                   assert.include(reconstructed.get("patch:") ?? "", "-old implementation");
+                  assert.include(
+                    reconstructed.get("patch:") ?? "",
+                    `-${"x".repeat(32_767)}GIF89a${"readable source text".repeat(32)}\n`,
+                  );
+                  assert.isFalse(yield* fs.exists(`${input.cwd}/deleted-long.txt`));
                   assert.equal(
                     reconstructed.get("stat:"),
                     yield* raw(input.cwd, [...diff, "--stat", range, "--"]),
@@ -849,6 +884,7 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
             ],
           );
           assert.isTrue(sawSplitLine);
+          assert.isTrue(sawImageLikeContinuation);
           assert.isTrue(sawPageableChunk);
           assert.equal(
             calls.filter((call) => call.operation === "PullRequestReviewGuideService.readChange")
@@ -863,6 +899,68 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           yield* assertCleaned(repositories.workspace, paths);
         }),
       ),
+  );
+
+  it.effect("stores a guide when shared change reads need a missing promisor blob", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const original = yield* makeRepositories;
+        const fs = yield* FileSystem.FileSystem;
+        const { remote } = original;
+        const workspace = `${original.root}/partial-workspace`;
+        yield* git(remote, ["config", "uploadpack.allowFilter", "true"]);
+        yield* git(remote, ["config", "uploadpack.allowAnySHA1InWant", "true"]);
+        yield* git(original.root, [
+          "clone",
+          "--quiet",
+          "--no-local",
+          "--filter=blob:none",
+          remote,
+          workspace,
+        ]);
+        yield* git(remote, ["checkout", "--quiet", "stack-base"]);
+        yield* fs.writeFileString(`${remote}/base.txt`, "new base\nshared\n");
+        yield* git(remote, ["commit", "--quiet", "-am", "Advance the base"]);
+        const lowerSha = yield* git(remote, ["rev-parse", "HEAD"]);
+        const missingBlob = yield* git(remote, ["rev-parse", "HEAD:base.txt"]);
+        yield* git(remote, ["checkout", "--quiet", "-B", "feature"]);
+        yield* fs.writeFileString(`${remote}/base.txt`, "new feature\nshared\nmore\n");
+        yield* git(remote, ["commit", "--quiet", "-am", "Update the feature"]);
+        const headSha = yield* git(remote, ["rev-parse", "HEAD"]);
+        const localObjects = git(workspace, ["cat-file", "--batch-check", "--batch-all-objects"]);
+        assert.notInclude(yield* localObjects, missingBlob);
+        const stored = yield* Deferred.make<void>();
+        const runs = yield* watchRuns;
+        const paths: Array<string> = [];
+        const context = yield* Layer.build(
+          makeLayer({
+            ...original,
+            workspace,
+            headSha,
+            lowerSha,
+            upperSha: headSha,
+            stored,
+            stack: { ...stack(original), layers: [] },
+            generate: (input) =>
+              Effect.sync(() => {
+                paths.push(input.cwd, `${input.cwd}/../evidence`);
+                return { stops: [] };
+              }),
+          }),
+        );
+        const service = Context.get(
+          context,
+          PullRequestReviewGuideService.PullRequestReviewGuideService,
+        );
+        yield* runs.generate(service, reference);
+        const result = yield* runs.settled(service, reference);
+        assert.equal(result.run, null);
+        assert.isTrue(yield* Deferred.isDone(stored));
+        assert.deepEqual(result.guide?.stops[0]?.files, [{ path: "base.txt" }]);
+        assert.include(yield* localObjects, missingBlob);
+        yield* assertCleaned(workspace, paths);
+      }),
+    ),
   );
 
   it.effect("does no evidence preparation for a generator that ignores it", () =>

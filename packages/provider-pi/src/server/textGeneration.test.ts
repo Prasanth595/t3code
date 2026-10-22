@@ -103,7 +103,7 @@ const makeGeneration = (pi: Effect.Success<ReturnType<typeof makeFakePi>>) =>
     decodePiSettings({
       enabled: true,
       binaryPath: "pi",
-      launchArgs: "--tools bash,write --extension /fixture/unsafe.ts",
+      launchArgs: "--approve --tools bash,write --extension /fixture/unsafe.ts",
       customModels: [],
     }),
     {},
@@ -169,12 +169,17 @@ it.effect("generates a repository-aware review guide with Pi", () =>
     const prompt = pi.received.find((record) => record["type"] === "prompt");
     assert.include(prompt?.["message"], "/fixture/evidence/manifest.json");
     assert.include(prompt?.["message"], reviewInput.baseCommit);
-    assert.deepEqual(pi.launches[0]?.slice(-4), [
+    assert.deepEqual(pi.launches[0]?.slice(-5), [
       "--no-extensions",
       "--no-tools",
+      "--no-approve",
       "--tools",
       "read,grep,find,ls",
     ]);
+    const trustArgs = pi.launches[0]?.filter(
+      (arg) => arg === "--approve" || arg === "--no-approve",
+    );
+    assert.deepEqual(trustArgs, ["--approve", "--no-approve"]);
     assert.isFalse(pi.launches[0]?.includes("/fixture/unsafe.ts"));
     assert.isTrue(yield* Deferred.isDone(pi.closed));
   }),

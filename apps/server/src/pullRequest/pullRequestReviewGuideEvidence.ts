@@ -9,13 +9,15 @@ import { PATCH_RENDER_PREFIX_ARGS } from "../vcs/GitVcsDriverCore.ts";
 
 const MAX_EVIDENCE_BYTES = 64 * 1024 * 1024;
 const CHUNK_BYTES = 32 * 1024;
+// Native readers sniff image signatures regardless of extension, even in continuation chunks.
+const CHUNK_PREAMBLE = Buffer.from("T3 review guide evidence\n", "utf8");
 const encodePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 const encodeManifest = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
 const isTextGenerationError = Schema.is(TextGenerationError);
 
 // GIT_NO_LAZY_FETCH is newer than some supported Git installations. The empty protocol
 // allowlist also prevents older Git from reaching a promisor remote for missing objects.
-export const REVIEW_GUIDE_GIT_ENV = { GIT_NO_LAZY_FETCH: "1", GIT_ALLOW_PROTOCOL: "" };
+const REVIEW_GUIDE_GIT_ENV = { GIT_NO_LAZY_FETCH: "1", GIT_ALLOW_PROTOCOL: "" };
 
 export const REVIEW_GUIDE_DIFF_ARGS = [
   "--no-pager",
@@ -35,6 +37,7 @@ interface EvidenceStream {
   readonly chunks: Array<{
     file: string;
     offset: number;
+    payloadOffset: number;
     bytes: number;
     startsMidLine: boolean;
     endsMidLine: boolean;
@@ -78,24 +81,27 @@ export const prepareReviewGuideEvidence = Effect.fn(
         chunks: [],
       };
       for (let offset = 0; offset < bytes.length;) {
-        let end = Math.min(offset + CHUNK_BYTES, bytes.length);
+        let end = Math.min(offset + CHUNK_BYTES - CHUNK_PREAMBLE.length, bytes.length);
         if (end < bytes.length) {
           const newline = bytes.subarray(offset, end).lastIndexOf(10);
           if (newline >= 0) end = offset + newline + 1;
           else while ((bytes[end]! & 0xc0) === 0x80) end--;
         }
         const file = `${streams.length}-${stream.chunks.length}.txt`;
-        yield* fs.writeFile(`${directory}/${file}`, bytes.subarray(offset, end));
+        const framed = Buffer.concat([CHUNK_PREAMBLE, bytes.subarray(offset, end)]);
+        if (bytesWritten + framed.length > MAX_EVIDENCE_BYTES) return yield* sizeError();
+        yield* fs.writeFile(`${directory}/${file}`, framed);
+        bytesWritten += framed.length;
         stream.chunks.push({
           file,
           offset,
+          payloadOffset: CHUNK_PREAMBLE.length,
           bytes: end - offset,
           startsMidLine: offset > 0 && bytes[offset - 1] !== 10,
           endsMidLine: end < bytes.length && bytes[end - 1] !== 10,
         });
         offset = end;
       }
-      bytesWritten += bytes.length;
       streams.push(stream);
     });
     const read = (args: ReadonlyArray<string>) =>

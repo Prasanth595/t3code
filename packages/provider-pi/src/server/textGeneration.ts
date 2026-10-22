@@ -40,12 +40,15 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
         extensionPath: undefined,
         ephemeral: true,
         disableExtensions: true,
-        // Investigations add only native file readers after removing user tool selections.
         disableTools: true,
       });
       const connection = yield* makePiRpcConnection({
         command: piSettings.binaryPath || "pi",
-        args: request.investigate ? [...launch.args, "--tools", "read,grep,find,ls"] : launch.args,
+        // Pi filters extensions after installing packages. PR settings must stay unapproved
+        // even when user launch args or global trust would approve them.
+        args: request.investigate
+          ? [...launch.args, "--no-approve", "--tools", "read,grep,find,ls"]
+          : launch.args,
         cwd,
         env: launch.env,
       }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));

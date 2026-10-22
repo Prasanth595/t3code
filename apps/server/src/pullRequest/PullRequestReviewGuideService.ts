@@ -40,7 +40,6 @@ import { normalizeReviewGuide, parseReviewGuideChange } from "./pullRequestRevie
 import {
   prepareReviewGuideEvidence,
   REVIEW_GUIDE_DIFF_ARGS,
-  REVIEW_GUIDE_GIT_ENV,
 } from "./pullRequestReviewGuideEvidence.ts";
 
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,64}$/;
@@ -350,7 +349,7 @@ const make = Effect.gen(function* () {
           operation: "PullRequestReviewGuideService.readChange",
           cwd,
           args: [...REVIEW_GUIDE_DIFF_ARGS, ...args, `${baseCommit}...${headCommit}`, "--"],
-          env: REVIEW_GUIDE_GIT_ENV,
+          // Shared normalization must still fetch missing promisor blobs in partial clones.
           timeoutMs: 60_000,
           maxOutputBytes: 64 * 1024 * 1024,
         })
