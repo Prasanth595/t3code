@@ -2,6 +2,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -66,6 +68,7 @@ const piRpcProcess = (inventory: unknown) =>
           stdinBuffer = stdinBuffer.slice(newline + 1);
           if (line.length === 0) continue;
           const request = decodeRpcRequest(line);
+          if (request.type === "get_available_models" && inventory === null) continue;
           const data =
             request.type === "get_available_models"
               ? inventory
@@ -171,6 +174,34 @@ describe("PiProvider", () => {
           ["anthropic/claude-sonnet-4", undefined],
           ["demo/demo-model", false],
         ],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("preserves normal discovery when the extension-free model listing times out", () =>
+    Effect.gen(function* () {
+      const spawner = yield* piDiscoverySpawner(
+        { models: [{ provider: "demo", id: "demo-model" }] },
+        null,
+      );
+      const fiber = yield* checkPiProviderStatus(settings).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("30 seconds");
+      const snapshot = yield* Fiber.join(fiber);
+      assert.equal(snapshot.status, "ready");
+      assert.equal(snapshot.auth.status, "authenticated");
+      assert.deepEqual(
+        snapshot.models.map((model) => [model.slug, model.supportsTextGeneration]),
+        [
+          ["default", undefined],
+          ["demo/demo-model", undefined],
+        ],
+      );
+      assert.include(
+        snapshot.slashCommands.map((command) => command.name),
+        "compact",
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );

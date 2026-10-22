@@ -25,7 +25,7 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import {
-  getCustomModelOptionsByInstance,
+  getTextGenerationModelOptionsByInstance,
   getTextGenerationProviders,
   resolveAppModelSelectionState,
   selectsPlanAgent,
@@ -144,7 +144,7 @@ export function SourceControlWritingSettingsSection() {
     (entry) =>
       entry.instanceId === defaultModelSelection.instanceId && entry.enabled && entry.isAvailable,
   );
-  const modelOptionsByInstance = getCustomModelOptionsByInstance(
+  const modelOptionsByInstance = getTextGenerationModelOptionsByInstance(
     settings,
     projectEffectiveTextGenerationProviders,
     activeSelection.instanceId,
@@ -166,7 +166,7 @@ export function SourceControlWritingSettingsSection() {
     },
     textGenerationProviders,
   );
-  const reviewGuideModelOptionsByInstance = getCustomModelOptionsByInstance(
+  const reviewGuideModelOptionsByInstance = getTextGenerationModelOptionsByInstance(
     settings,
     textGenerationProviders,
     reviewGuideSelection.instanceId,

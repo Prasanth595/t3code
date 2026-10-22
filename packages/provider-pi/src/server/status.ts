@@ -59,6 +59,7 @@ const PI_PRESENTATION = {
 
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const PI_RPC_DISCOVERY_TIMEOUT_MS = 30_000;
+const PI_TEXT_GENERATION_DISCOVERY_TIMEOUT_MS = 5_000;
 /**
  * get_entries arrived in 0.80.3 and agent_settled landed in source at 0.80.4.
  * Version 0.80.5 was the first published package containing both hooks.
@@ -188,8 +189,8 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
   launchArgs: ReadonlyArray<string>,
   cwd?: string,
 ) {
-  // Without this list every model stays offered, and text generation still
-  // explains a rejected extension model.
+  // This optional probe must finish before the normal discovery deadline so
+  // it cannot discard an otherwise usable catalog and authentication state.
   const textGenerationModelSlugsFiber = yield* discoverPiTextGenerationModelSlugs(
     piSettings,
     environment,
@@ -197,6 +198,10 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
     cwd,
   ).pipe(
     Effect.orElseSucceed(() => undefined),
+    Effect.timeoutOrElse({
+      duration: PI_TEXT_GENERATION_DISCOVERY_TIMEOUT_MS,
+      orElse: () => Effect.succeed(undefined),
+    }),
     Effect.forkScoped,
   );
   const connection = yield* makePiDiscoveryConnection(piSettings, environment, launchArgs, cwd);
