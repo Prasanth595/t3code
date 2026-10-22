@@ -979,6 +979,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "enableAgentBrowserAccess",
   "enableAgentDeviceAccess",
   "textGenerationModelSelection",
+  "textGenerationFallbackModelSelection",
   "threadTitleInstructions",
   "sourceControlWriterModelSelection",
   "reviewGuideModelSelection",
@@ -1023,6 +1024,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   textGenerationModelSelection: Schema.optionalKey(ModelSelection),
+  textGenerationFallbackModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   threadTitleInstructions: Schema.optionalKey(TrimmedString),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   reviewGuideModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
@@ -1059,6 +1061,7 @@ const NULLABLE_PROJECT_SETTINGS_OVERRIDES: ReadonlySet<ProjectScopedServerSettin
   }[ProjectScopedServerSettingKey]
 >([
   "defaultModelSelection",
+  "textGenerationFallbackModelSelection",
   "sourceControlWriterModelSelection",
   "reviewGuideModelSelection",
   "pullRequestMergeMethod",
@@ -1266,6 +1269,10 @@ export const ServerSettings = Schema.Struct({
         ],
       }),
     ),
+  ),
+  /** Tried once when a text generation request fails. `null` means no fallback. */
+  textGenerationFallbackModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   threadTitleInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   branchNamingMode: BranchNamingMode.pipe(
@@ -1590,6 +1597,7 @@ export const ServerSettingsPatch = Schema.Struct({
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  textGenerationFallbackModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   threadTitleInstructions: Schema.optionalKey(TrimmedString),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),
   branchNamePrefix: Schema.optionalKey(TrimmedString),

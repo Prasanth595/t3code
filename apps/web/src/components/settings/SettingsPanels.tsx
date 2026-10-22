@@ -517,6 +517,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? ["Quit shortcut"] : []),
     ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
+    ...(settings.textGenerationFallbackModelSelection !== null
+      ? ["Text generation fallback model"]
+      : []),
     ...(settings.threadTitleInstructions !== DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions
       ? ["Thread title instructions"]
       : []),
@@ -629,6 +632,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
+      textGenerationFallbackModelSelection:
+        DEFAULT_UNIFIED_SETTINGS.textGenerationFallbackModelSelection,
       threadTitleInstructions: DEFAULT_UNIFIED_SETTINGS.threadTitleInstructions,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
@@ -861,6 +866,42 @@ export function GeneralSettingsPanel() {
   );
   const mixedAddProjectBaseDirectory = useScopedSettingsMixed(["addProjectBaseDirectory"]);
   const mixedTextGenerationModel = useScopedSettingsMixed(["textGenerationModelSelection"]);
+  const mixedTextGenerationFallbackModel = useScopedSettingsMixed([
+    "textGenerationFallbackModelSelection",
+  ]);
+  const usesTextGenerationFallback = settings.textGenerationFallbackModelSelection !== null;
+  const textGenerationFallbackSelection = resolveAppModelSelectionState(
+    {
+      ...settings,
+      textGenerationModelSelection:
+        settings.textGenerationFallbackModelSelection ?? textGenerationModelSelection,
+    },
+    textGenerationProviders,
+  );
+  // Turning the fallback on starts from another provider when one is ready,
+  // since a model on the primary's provider goes down with it.
+  const textGenerationFallbackSeedProviders = textGenerationProviders.filter((provider) =>
+    textGenerationModelInstanceEntries.some(
+      (entry) =>
+        entry.instanceId === provider.instanceId &&
+        entry.instanceId !== textGenInstanceId &&
+        entry.enabled &&
+        entry.isAvailable,
+    ),
+  );
+  const textGenerationFallbackSeed =
+    textGenerationFallbackSeedProviders.length > 0
+      ? resolveAppModelSelectionState(settings, textGenerationFallbackSeedProviders)
+      : textGenerationModelSelection;
+  const textGenerationFallbackInstanceEntry = textGenerationModelInstanceEntries.find(
+    (entry) => entry.instanceId === textGenerationFallbackSelection.instanceId,
+  );
+  const textGenerationFallbackModelOptionsByInstance = getCustomModelOptionsByInstance(
+    settings,
+    textGenerationProviders,
+    textGenerationFallbackSelection.instanceId,
+    textGenerationFallbackSelection.model,
+  );
 
   return (
     <SettingsPageContainer>
@@ -1906,6 +1947,106 @@ export function GeneralSettingsPanel() {
                     }}
                   />
                 ) : null}
+              </div>
+            )
+          }
+        />
+        <SettingsRow
+          serverScoped
+          settingKeys={["textGenerationFallbackModelSelection"]}
+          {...searchableSetting("text-generation-fallback-model")}
+          description="Tried once when generated text fails, such as when a provider is down or out of usage. Off means no fallback."
+          control={
+            !hasServerTargets ? (
+              <span className="text-sm text-muted-foreground">
+                Connect an environment to choose its text generation fallback model.
+              </span>
+            ) : (
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {usesTextGenerationFallback && !hasTextGenerationProvider ? (
+                  <span className="text-sm text-muted-foreground">
+                    No text generation providers available.
+                  </span>
+                ) : null}
+                {usesTextGenerationFallback && hasTextGenerationProvider ? (
+                  <ProviderModelPicker
+                    environmentId={environmentId}
+                    activeInstanceId={textGenerationFallbackSelection.instanceId}
+                    model={textGenerationFallbackSelection.model}
+                    lockedProvider={null}
+                    instanceEntries={textGenerationModelInstanceEntries}
+                    modelOptionsByInstance={textGenerationFallbackModelOptionsByInstance}
+                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    triggerAriaLabel="Text generation fallback model"
+                    {...(mixedTextGenerationFallbackModel ? { triggerLabel: "Mixed" } : {})}
+                    getModelDisabledReason={textGenerationModelDisabledReason}
+                    {...(environmentId
+                      ? {
+                          onOpenProviderSetup: (instanceId: ProviderInstanceId) => {
+                            void navigate({
+                              to: "/settings/providers",
+                              search: { environmentId, instanceId },
+                            });
+                          },
+                        }
+                      : {})}
+                    onInstanceModelChange={(instanceId, model) => {
+                      const reason = textGenerationModelDisabledReason(instanceId, model);
+                      if (reason) {
+                        toastManager.add({
+                          type: "error",
+                          title: "Text generation fallback model not saved",
+                          description: reason,
+                        });
+                        return;
+                      }
+                      updateSettings({
+                        textGenerationFallbackModelSelection: createModelSelection(
+                          instanceId,
+                          model,
+                        ),
+                      });
+                    }}
+                  />
+                ) : null}
+                {usesTextGenerationFallback &&
+                hasTextGenerationProvider &&
+                !mixedTextGenerationFallbackModel &&
+                textGenerationFallbackInstanceEntry ? (
+                  <TraitsPicker
+                    provider={textGenerationFallbackInstanceEntry.driverKind}
+                    models={textGenerationFallbackInstanceEntry.models}
+                    model={textGenerationFallbackSelection.model}
+                    modelOptions={textGenerationFallbackSelection.options ?? []}
+                    allowPromptInjectedEffort={false}
+                    planModeEnabled={
+                      settings.planModeEnabled ||
+                      selectsPlanAgent(textGenerationFallbackSelection.options)
+                    }
+                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    onModelOptionsChange={(options) =>
+                      updateSettings({
+                        textGenerationFallbackModelSelection: createModelSelection(
+                          textGenerationFallbackSelection.instanceId,
+                          textGenerationFallbackSelection.model,
+                          options,
+                        ),
+                      })
+                    }
+                  />
+                ) : null}
+                <Switch
+                  checked={usesTextGenerationFallback}
+                  disabled={!usesTextGenerationFallback && !hasTextGenerationProvider}
+                  onCheckedChange={(checked) =>
+                    updateSettings({
+                      textGenerationFallbackModelSelection: checked
+                        ? textGenerationFallbackSeed
+                        : null,
+                    })
+                  }
+                  aria-label="Use a text generation fallback model"
+                />
               </div>
             )
           }

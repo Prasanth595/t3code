@@ -397,6 +397,10 @@ const make = Effect.gen(function* () {
               ...reviewGuideInputFromPullRequest(detail, activity, checkout.baseCommit),
               cwd: checkout.path,
               modelSelection,
+              fallbackModelSelection: ServerSettings.resolveTextGenerationFallbackModelSelection(
+                projectSettings,
+                input.projectId,
+              ),
               instructions: projectSettings.reviewGuideInstructions,
               stack: checkout.stack,
             }),
