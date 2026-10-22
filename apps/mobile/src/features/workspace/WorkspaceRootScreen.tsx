@@ -98,7 +98,9 @@ function WorkspaceRootContent() {
       : Platform.OS === "ios"
         ? Math.max(insets.bottom, keyboardHeight) +
           (systemTabBar || sidebarTabs || tab.searchMode !== "resting"
-            ? 16
+            ? sidebarPicker
+              ? 80
+              : 16
             : WORKSPACE_DOCK.height + WORKSPACE_DOCK.bottomGap + 16)
         : keyboardHeight > 0 && tab.searchMode !== "resting"
           ? keyboardHeight + 64
@@ -146,10 +148,10 @@ function WorkspaceRootContent() {
             ]}
           />
         )}
-        {sidebarPicker ? <WorkspaceSidebarTabs /> : null}
         <SafeAreaInsetsContext value={sidebarPicker ? { ...insets, top: 0 } : insets}>
           {state.selectedTab === "threads" ? <HomeRouteScreen /> : <PullRequestsScreen />}
         </SafeAreaInsetsContext>
+        {sidebarPicker ? <WorkspaceSidebarTabs /> : null}
         <WorkspaceToolbar
           sidebar={sidebarNavigation}
           onNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
