@@ -40,6 +40,8 @@ const makeRecord = (overrides?: {
 
 interface HarnessOptions {
   readonly record?: Effect.Effect<DesktopServerOwnership.DesktopServerRuntimeRecord> | null;
+  /** Writes the record verbatim, so a test can make it unreadable. */
+  readonly rawRecord?: string;
   readonly descriptorStatus?: number;
   readonly baseDir: string;
 }
@@ -51,7 +53,9 @@ const makeHarness = (options: HarnessOptions) =>
     const recordPath = `${stateDir}/server-runtime.json`;
 
     yield* fileSystem.makeDirectory(stateDir, { recursive: true });
-    if (options.record) {
+    if (options.rawRecord !== undefined) {
+      yield* fileSystem.writeFileString(recordPath, options.rawRecord);
+    } else if (options.record) {
       const record = yield* options.record;
       yield* fileSystem.writeFileString(recordPath, JSON.stringify(record));
     } else {
@@ -185,6 +189,21 @@ describe("DesktopServerOwnership", () => {
       });
       const owner = yield* ownership.inspect;
       assert.equal(owner._tag, "foreign");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not name an owner it cannot read the record for", () =>
+    Effect.gen(function* () {
+      // The ownership lock is the authority, not the record. The server
+      // reads the record with `orElseSucceed(() => Option.none())` and takes
+      // the home over when the lock is free, so a record the desktop cannot
+      // decode must not strand a home the server could have taken over.
+      const { ownership } = yield* makeHarness({
+        baseDir: "/tmp/t3-ownership-unreadable",
+        rawRecord: "{ this is not a runtime record",
+      });
+      const owner = yield* ownership.inspect;
+      assert.equal(owner._tag, "none");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
