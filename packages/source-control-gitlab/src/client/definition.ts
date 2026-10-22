@@ -7,8 +7,7 @@ import {
 } from "@t3tools/source-control-core/client/definition";
 
 const CHECKOUT_COMMAND = /^glab\s+mr\s+checkout\s+(.+)$/i;
-const CHANGE_REQUEST_REFERENCE =
-  /^https:\/\/[^/\s]*gitlab[^/\s]*\/.+\/-\/merge_requests\/(\d+)(?:[/?#].*)?$/i;
+const CHANGE_REQUEST_REFERENCE = /^https?:\/\/[^/\s]+\/.+\/-\/merge_requests\/(\d+)(?:[/?#].*)?$/i;
 
 const KIND = SourceControlProviderKind.make("gitlab");
 
