@@ -273,11 +273,11 @@ describe("liveWorld: threads on a broken worktree", () => {
       const run = launched(dataDir, "187", "session-1", true);
       const file = NodePath.join(dataDir, "runs", runIdFileName(run));
       NodeFS.chmodSync(file, 0o000);
-      let now = 0;
+      let now = T0;
       const world = yield* worldOver(dataDir, childOnBroken, () => now);
       assert.deepStrictEqual(yield* world.brokenWorktrees(), []);
       NodeFS.chmodSync(file, 0o644);
-      now = 5 * 60 * 1000;
+      now = T0 + 5 * 60 * 1000;
       assert.deepStrictEqual(yield* world.brokenWorktrees(), [
         { worktreePath: "/wt/t3-a", run, threadIds: ["child-1"] },
       ]);
@@ -290,16 +290,16 @@ describe("liveWorld: threads on a broken worktree", () => {
       const run = launched(dataDir, "187", "session-1", true);
       const file = NodePath.join(dataDir, "runs", runIdFileName(run));
       NodeFS.chmodSync(file, 0o000);
-      let now = 0;
+      let now = T0;
       const world = yield* worldOver(dataDir, childOnBroken, () => now);
       assert.deepStrictEqual(yield* world.brokenWorktrees(), []);
       // Any read of the ledger now fails: the runs folder is a file.
       NodeFS.chmodSync(file, 0o644);
       NodeFS.rmSync(NodePath.join(dataDir, "runs"), { recursive: true });
       NodeFS.writeFileSync(NodePath.join(dataDir, "runs"), "not a folder");
-      now = 5 * 60 * 1000 - 1;
+      now = T0 + 5 * 60 * 1000 - 1;
       assert.deepStrictEqual(yield* world.brokenWorktrees(), []);
-      now = 5 * 60 * 1000;
+      now = T0 + 5 * 60 * 1000;
       const error = yield* Effect.flip(world.brokenWorktrees());
       assert.strictEqual(error.kind, "ledger");
     }),
