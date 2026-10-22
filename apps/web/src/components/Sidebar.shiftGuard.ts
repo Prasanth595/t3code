@@ -73,10 +73,12 @@ export function createSidebarShiftGuard(list: HTMLElement) {
     update() {
       const next = readTops(list);
       const now = performance.now();
-      if (now - lastInputAt >= OWN_INPUT_WINDOW_MS) {
-        for (const [row, top] of next) {
-          if (tops.get(row) !== top) movedAt.set(row, now);
-        }
+      const ownMove = now - lastInputAt < OWN_INPUT_WINDOW_MS;
+      for (const [row, top] of next) {
+        if (tops.get(row) === top) continue;
+        // The latest move decides: one the user caused clears an earlier mark.
+        if (ownMove) movedAt.delete(row);
+        else movedAt.set(row, now);
       }
       tops = next;
     },

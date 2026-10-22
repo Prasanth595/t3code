@@ -72,4 +72,18 @@ describe("sidebar shift guard", () => {
     await userEvent.click(list.button("B"));
     expect(list.pressed).toEqual(["A", "B"]);
   });
+
+  it("clears an earlier mark when the user's own input moves the row again", async () => {
+    using _clock = fakeTimers();
+    vi.advanceTimersByTime(1_000);
+    using list = mountList(["A", "B", "C", "D"]);
+
+    list.remove("A");
+    list.guard.update();
+    await userEvent.keyboard("{Escape}");
+    list.remove("B");
+    list.guard.update();
+    await userEvent.click(list.button("C"));
+    expect(list.pressed).toEqual(["C"]);
+  });
 });
