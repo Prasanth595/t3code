@@ -996,6 +996,11 @@ export const make = Effect.gen(function* () {
           yield* electronWindow.reveal(splash.value);
           return;
         }
+        // The splash can be closed (Cmd+W) while the backend is still starting.
+        if (yield* waitingForBackend) {
+          yield* showConnectingSplash;
+          return;
+        }
       }
       yield* createMainIfBackendReady;
     }).pipe(Effect.withSpan("desktop.window.activate")),

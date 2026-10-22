@@ -403,7 +403,7 @@ const makeSplashScenario = (
         return registered;
       }
       const created = yield* Ref.get(createdWindows);
-      return Option.fromNullishOr(created[0] ?? null);
+      return Option.fromNullishOr(created.find((window) => !window.isDestroyed()) ?? null);
     });
 
     const electronWindowShape = {
@@ -1214,6 +1214,27 @@ describe("DesktopWindow", () => {
           assert.equal(Option.getOrThrow(registeredMain), main.window);
         }).pipe(Effect.provide(scenario.layer));
       }),
+  );
+
+  it.effect("shows the splash again on activate after it was closed during startup", () =>
+    Effect.gen(function* () {
+      const closedSplash = makeFakeBrowserWindow();
+      const reopenedSplash = makeFakeBrowserWindow();
+      const scenario = yield* makeSplashScenario([closedSplash.window, reopenedSplash.window]);
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.showConnectingSplash;
+        closedSplash.isDestroyed.mockReturnValue(true);
+        const closed = closedSplash.windowListeners.get("closed");
+        assert.isDefined(closed);
+        closed();
+
+        yield* desktopWindow.activate;
+        assert.equal(yield* Ref.get(scenario.createCalls), 2);
+        assert.isTrue(Option.isNone(yield* Ref.get(scenario.mainWindow)));
+      }).pipe(Effect.provide(scenario.layer));
+    }),
   );
 
   it.effect("delivers capture completion and late errors without taking focus back", () =>
