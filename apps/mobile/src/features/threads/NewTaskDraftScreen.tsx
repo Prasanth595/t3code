@@ -1858,6 +1858,9 @@ export function NewTaskDraftScreen(props: {
         options={{
           headerBackVisible: false,
           headerShadowVisible: false,
+          headerTransparent: false,
+          headerStyle: { backgroundColor: "transparent" },
+          scrollEdgeEffects: { top: "hidden", bottom: "hidden", left: "hidden", right: "hidden" },
           title: "New thread",
           unstable_navigationItemStyle: "editor",
         }}
