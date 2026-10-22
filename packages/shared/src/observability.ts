@@ -178,6 +178,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+// `seen` holds only the current ancestors, so a value repeated under two keys is not a cycle.
 function markSeen(value: object, seen: WeakSet<object>): boolean {
   if (seen.has(value)) {
     return true;
@@ -213,24 +214,30 @@ function normalizeJsonValue(value: unknown, seen: WeakSet<object> = new WeakSet(
     if (markSeen(value, seen)) {
       return "[Circular]";
     }
-    return value.map((entry) => normalizeJsonValue(entry, seen));
+    const normalized = value.map((entry) => normalizeJsonValue(entry, seen));
+    seen.delete(value);
+    return normalized;
   }
   if (value instanceof Map) {
     if (markSeen(value, seen)) {
       return "[Circular]";
     }
-    return Object.fromEntries(
+    const normalized = Object.fromEntries(
       Array.from(value.entries(), ([key, entryValue]) => [
         String(key),
         normalizeJsonValue(entryValue, seen),
       ]),
     );
+    seen.delete(value);
+    return normalized;
   }
   if (value instanceof Set) {
     if (markSeen(value, seen)) {
       return "[Circular]";
     }
-    return Array.from(value.values(), (entry) => normalizeJsonValue(entry, seen));
+    const normalized = Array.from(value.values(), (entry) => normalizeJsonValue(entry, seen));
+    seen.delete(value);
+    return normalized;
   }
   if (!isPlainObject(value)) {
     return String(value);
@@ -238,9 +245,11 @@ function normalizeJsonValue(value: unknown, seen: WeakSet<object> = new WeakSet(
   if (markSeen(value, seen)) {
     return "[Circular]";
   }
-  return Object.fromEntries(
+  const normalized = Object.fromEntries(
     Object.entries(value).map(([key, entryValue]) => [key, normalizeJsonValue(entryValue, seen)]),
   );
+  seen.delete(value);
+  return normalized;
 }
 
 export function compactTraceAttributes(

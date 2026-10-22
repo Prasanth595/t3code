@@ -206,6 +206,21 @@ describe("observability", () => {
     );
   });
 
+  it("keeps an object that appears twice without marking it circular", () => {
+    const shared = { cwd: "/repo" };
+
+    assert.deepStrictEqual(
+      compactTraceAttributes({
+        ctx: { first: shared, second: shared },
+        list: [shared, shared],
+      }),
+      {
+        ctx: { first: { cwd: "/repo" }, second: { cwd: "/repo" } },
+        list: [{ cwd: "/repo" }, { cwd: "/repo" }],
+      },
+    );
+  });
+
   nodeServicesIt("node services", (it) => {
     it.effect(
       "keeps trace producers responsive during a slow write, bounds the backlog, and drains on close",
