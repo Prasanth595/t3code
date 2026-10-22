@@ -3,6 +3,7 @@ import { EnvironmentId, ThreadId, type DeviceServiceState } from "@t3tools/contr
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
+import { useEffect } from "react";
 
 import { act, render } from "../../test/render";
 import { useAgentOpenedPreviews } from "../components/preview/useAgentOpenedPreviews";
@@ -60,7 +61,9 @@ it("baselines the first device snapshot without reopening dismissed devices", as
   let loaded = false;
   function Probe() {
     const device = useDeviceState(threadRef.environmentId);
-    loaded = device.loaded;
+    useEffect(() => {
+      loaded = device.loaded;
+    }, [device.loaded]);
     useAgentOpenedPreviews({
       threadRef,
       deviceState: device.state,
