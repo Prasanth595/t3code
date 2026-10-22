@@ -56,7 +56,9 @@ export const openDesktopWithExistingOwner = Effect.fn(
     yield* appActivation.start.pipe(
       Effect.tap(() => logHomeOwnershipInfo("desktop app control socket ready")),
       Effect.catch((error) =>
-        logHomeOwnershipWarning("desktop app control socket unavailable", { error }),
+        logHomeOwnershipWarning("desktop app control socket unavailable", {
+          errorTag: error._tag,
+        }),
       ),
     );
   }
