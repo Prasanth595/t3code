@@ -939,11 +939,11 @@ export const make = Effect.gen(function* () {
           remoteName,
           remoteBranch: pullRequest.headBranch,
         });
-        return;
+        return true;
       }
 
       if (repositoryNameWithOwner.length === 0) {
-        return;
+        return false;
       }
 
       const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
@@ -973,6 +973,7 @@ export const make = Effect.gen(function* () {
         remoteName,
         remoteBranch: pullRequest.headBranch,
       });
+      return true;
     },
   );
 
@@ -988,7 +989,7 @@ export const make = Effect.gen(function* () {
           localBranch,
           headBranch: pullRequest.headBranch,
           cause: error,
-        }).pipe(Effect.asVoid),
+        }).pipe(Effect.as(false)),
       ),
     );
 
@@ -2818,7 +2819,7 @@ export const make = Effect.gen(function* () {
         worktreePath: string,
       ) {
         const details = yield* gitCore.statusDetails(worktreePath);
-        yield* configurePullRequestHeadUpstream(
+        return yield* configurePullRequestHeadUpstream(
           worktreePath,
           {
             ...pullRequest,
@@ -2864,7 +2865,11 @@ export const make = Effect.gen(function* () {
             Effect.orElseSucceed(() => null),
           );
 
-        yield* ensureExistingWorktreeUpstream(worktreePath);
+        const upstreamFetched = yield* ensureExistingWorktreeUpstream(worktreePath);
+        const submodules = yield* projectSettingsFor(input).pipe(
+          Effect.map(({ settings }) => settings.worktreeSubmodules),
+          Effect.orElseSucceed(() => null),
+        );
 
         const refreshed = yield* gitCore
           // The pull request's own ref, because it is the only thing that certainly names its
@@ -2875,11 +2880,12 @@ export const make = Effect.gen(function* () {
           .pipe(
             // A host that publishes no `refs/pull/<n>/head` leaves the remote-tracking branch,
             // taken only where it is the head branch's own rather than whatever the checkout
-            // happened to be cut from.
+            // happened to be cut from. A failed refresh cannot validate a cached tracking ref.
             Effect.catch(() =>
               Effect.gen(function* () {
                 const details = yield* gitCore.statusDetails(worktreePath);
                 if (
+                  !upstreamFetched ||
                   details.upstreamRef === null ||
                   !details.upstreamRef.endsWith(`/${pullRequest.headBranch}`)
                 ) {
@@ -2900,6 +2906,7 @@ export const make = Effect.gen(function* () {
                 cwd: worktreePath,
                 targetCommit: target.commitSha,
                 resetWhenHeadCommit: upstreamCommitBeforeFetch,
+                submodules,
               }),
             ),
             Effect.catch((error) =>

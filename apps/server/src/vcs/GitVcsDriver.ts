@@ -229,6 +229,7 @@ export interface GitRefreshCheckedOutBranchInput {
    * the fetch. HEAD sitting there means the checkout holds no work of its own.
    */
   resetWhenHeadCommit?: string | null | undefined;
+  submodules?: WorktreeSubmodules | null | undefined;
 }
 
 export interface GitRefreshCheckedOutBranchResult {

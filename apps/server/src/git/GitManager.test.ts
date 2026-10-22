@@ -4633,59 +4633,73 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("refreshes a reused PR worktree onto the updated pull request head", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      const remoteDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-reused-stale"]);
-      NodeFS.writeFileSync(NodePath.join(repoDir, "stale.txt"), "stale\n");
-      yield* runGit(repoDir, ["add", "stale.txt"]);
-      yield* runGit(repoDir, ["commit", "-m", "Reused stale PR branch"]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-reused-stale"]);
-      yield* runGit(repoDir, ["checkout", "main"]);
-      const worktreePath = NodePath.join(
-        repoDir,
-        "..",
-        `pr-reused-stale-${NodePath.basename(repoDir)}`,
-      );
-      yield* runGit(repoDir, ["worktree", "add", worktreePath, "feature/pr-reused-stale"]);
+  it.effect.each([false, true])(
+    "refreshes a reused PR worktree only after fetching its head (offline: %s)",
+    (offline) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/pr-reused-stale"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "stale.txt"), "stale\n");
+        yield* runGit(repoDir, ["add", "stale.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Reused stale PR branch"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-reused-stale"]);
+        yield* runGit(repoDir, ["checkout", "main"]);
+        const worktreePath = NodePath.join(
+          repoDir,
+          "..",
+          `pr-reused-stale-${NodePath.basename(repoDir)}`,
+        );
+        yield* runGit(repoDir, ["worktree", "add", worktreePath, "feature/pr-reused-stale"]);
 
-      yield* runGit(repoDir, ["checkout", "-b", "author-push", "origin/feature/pr-reused-stale"]);
-      NodeFS.writeFileSync(NodePath.join(repoDir, "authored.txt"), "authored\n");
-      yield* runGit(repoDir, ["add", "authored.txt"]);
-      yield* runGit(repoDir, ["commit", "-m", "New PR head commit"]);
-      yield* runGit(repoDir, ["push", "origin", "author-push:feature/pr-reused-stale"]);
-      const updatedHead = (yield* runGit(repoDir, ["rev-parse", "author-push"])).stdout.trim();
-      yield* runGit(repoDir, ["checkout", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "author-push", "origin/feature/pr-reused-stale"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "authored.txt"), "authored\n");
+        yield* runGit(repoDir, ["add", "authored.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "New PR head commit"]);
+        yield* runGit(repoDir, ["push", "origin", "author-push:feature/pr-reused-stale"]);
+        const updatedHead = (yield* runGit(repoDir, ["rev-parse", "author-push"])).stdout.trim();
+        yield* runGit(repoDir, ["checkout", "main"]);
 
-      const { manager } = yield* makeManager({
-        ghScenario: {
-          pullRequest: {
-            number: 84,
-            title: "Reused stale PR",
-            url: "https://github.com/pingdotgg/codething-mvp/pull/84",
-            baseRefName: "main",
-            headRefName: "feature/pr-reused-stale",
-            state: "open",
+        const previousHead = (yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim();
+        if (offline) {
+          yield* runGit(repoDir, [
+            "remote",
+            "set-url",
+            "origin",
+            NodePath.join(remoteDir, "missing.git"),
+          ]);
+        }
+        const { manager } = yield* makeManager({
+          ghScenario: {
+            pullRequest: {
+              number: 84,
+              title: "Reused stale PR",
+              url: "https://github.com/pingdotgg/codething-mvp/pull/84",
+              baseRefName: "main",
+              headRefName: "feature/pr-reused-stale",
+              state: "open",
+            },
           },
-        },
-      });
+        });
 
-      const result = yield* preparePullRequestThread(manager, {
-        cwd: repoDir,
-        reference: "84",
-        mode: "worktree",
-      });
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "84",
+          mode: "worktree",
+        });
 
-      expect(result.worktreePath && NodeFS.realpathSync.native(result.worktreePath)).toBe(
-        NodeFS.realpathSync.native(worktreePath),
-      );
-      expect(result.branch).toBe("feature/pr-reused-stale");
-      expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(updatedHead);
-    }),
+        expect(result.worktreePath && NodeFS.realpathSync.native(result.worktreePath)).toBe(
+          NodeFS.realpathSync.native(worktreePath),
+        );
+        expect(result.branch).toBe("feature/pr-reused-stale");
+        expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(
+          offline ? previousHead : updatedHead,
+        );
+        expect(result.isOnPullRequestHead).toBe(!offline);
+      }),
   );
 
   it.effect("resets a clean reused PR worktree onto a force-pushed pull request head", () =>
@@ -4760,6 +4774,90 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ),
       ).toBe("rewritten\n");
     }),
+  );
+
+  it.effect.each(["recursive", "none"] as const)(
+    "updates new PR worktree submodules before setup (mode: %s)",
+    (submodules) =>
+      Effect.gen(function* () {
+        // Local submodule fixtures need file transport enabled in git's child processes.
+        const previousProtocol = process.env.GIT_ALLOW_PROTOCOL;
+        process.env.GIT_ALLOW_PROTOCOL = "file";
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            if (previousProtocol === undefined) delete process.env.GIT_ALLOW_PROTOCOL;
+            else process.env.GIT_ALLOW_PROTOCOL = previousProtocol;
+          }),
+        );
+        const submoduleRepo = yield* makeTempDir("t3code-pr-submodule-");
+        yield* initRepo(submoduleRepo);
+        NodeFS.writeFileSync(NodePath.join(submoduleRepo, "version.txt"), "old\n");
+        yield* runGit(submoduleRepo, ["add", "."]);
+        yield* runGit(submoduleRepo, ["commit", "-m", "Old module"]);
+        const repoDir = yield* makeTempDir("t3code-pr-superproject-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, [
+          "-c",
+          "protocol.file.allow=always",
+          "submodule",
+          "add",
+          submoduleRepo,
+          "module",
+        ]);
+        yield* runGit(repoDir, ["commit", "-am", "Add module"]);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        const branch = "feature/pr-submodule";
+        yield* runGit(repoDir, ["branch", branch]);
+        yield* runGit(repoDir, ["push", "-u", "origin", branch]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "module", "version.txt"), "new\n");
+        yield* runGit(NodePath.join(repoDir, "module"), ["commit", "-am", "New module"]);
+        yield* runGit(NodePath.join(repoDir, "module"), [
+          "push",
+          "origin",
+          "HEAD:refs/heads/new-module",
+        ]);
+        yield* runGit(repoDir, ["commit", "-am", "Update module"]);
+        const target = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        yield* runGit(repoDir, ["push", "origin", `HEAD:${branch}`, "HEAD:refs/pull/90/head"]);
+        let setupContent: string | null = null;
+        const { manager } = yield* makeManager({
+          serverSettings: { worktreeSubmodules: submodules },
+          ghScenario: {
+            pullRequest: {
+              number: 90,
+              title: "PR updates module",
+              url: "https://github.com/pingdotgg/codething-mvp/pull/90",
+              baseRefName: "main",
+              headRefName: branch,
+              state: "open",
+              headSha: target,
+            },
+          },
+          setupScriptRunner: {
+            runForThread: (input) =>
+              Effect.sync(() => {
+                const file = NodePath.join(input.worktreePath!, "module", "version.txt");
+                setupContent = NodeFS.existsSync(file) ? NodeFS.readFileSync(file, "utf8") : null;
+                return { status: "no-script" as const };
+              }),
+          },
+        });
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "90",
+          mode: "worktree",
+          threadId: asThreadId("thread-pr-submodule"),
+        });
+        expect(result.isOnPullRequestHead).toBe(true);
+        expect((yield* runGit(result.worktreePath!, ["rev-parse", "HEAD"])).stdout.trim()).toBe(
+          target,
+        );
+        expect(setupContent).toBe(submodules === "none" ? null : "new\n");
+        expect((yield* runGit(result.worktreePath!, ["status", "--porcelain"])).stdout.trim()).toBe(
+          "",
+        );
+      }),
   );
 
   it.effect("keeps unpublished commits when creating a PR worktree from an existing branch", () =>
