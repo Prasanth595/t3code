@@ -153,8 +153,11 @@ const REMOTE_FALLBACK_EDITORS: ReadonlyArray<EditorId> = ["vscode"];
 let cachedProbedEditors: ReadonlyArray<EditorId> | null = null;
 
 export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
+  // Browsers cannot probe installed apps, so offer every supported remote link.
+  const fallbackEditors =
+    window.desktopBridge === undefined ? REMOTE_CAPABLE_EDITOR_IDS : REMOTE_FALLBACK_EDITORS;
   const [editors, setEditors] = useState<ReadonlyArray<EditorId>>(
-    () => cachedProbedEditors ?? REMOTE_FALLBACK_EDITORS,
+    () => cachedProbedEditors ?? fallbackEditors,
   );
 
   useEffect(() => {
@@ -163,7 +166,7 @@ export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
     }
     const probe = window.desktopBridge?.probeRemoteEditors;
     if (probe === undefined) {
-      cachedProbedEditors = REMOTE_FALLBACK_EDITORS;
+      cachedProbedEditors = fallbackEditors;
       return;
     }
     let cancelled = false;
@@ -182,7 +185,7 @@ export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [fallbackEditors]);
 
   return editors;
 }
