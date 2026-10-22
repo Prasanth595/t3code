@@ -8,7 +8,7 @@ import {
   type DesktopUpdateChannel,
   IDLE_COMPACTION_MODES,
   globalIdleCompaction,
-  idleCompactionPatch,
+  readsIdleCompactionModes,
   ProviderDriverKind,
   type ProviderInstanceId,
   type SidebarProjectGroupingMode,
@@ -1006,9 +1006,7 @@ export function GeneralSettingsPanel() {
               <SettingResetButton
                 label="compact idle threads"
                 onClick={() =>
-                  updateSettings(
-                    idleCompactionPatch(settings, globalIdleCompaction(DEFAULT_UNIFIED_SETTINGS)),
-                  )
+                  updateSettings({ idleCompaction: globalIdleCompaction(DEFAULT_UNIFIED_SETTINGS) })
                 }
               />
             ) : null
@@ -1018,7 +1016,7 @@ export function GeneralSettingsPanel() {
               value={globalIdleCompaction(settings)}
               onValueChange={(value) => {
                 const mode = IDLE_COMPACTION_MODES.find((candidate) => candidate.value === value);
-                if (mode) updateSettings(idleCompactionPatch(settings, mode.value));
+                if (mode) updateSettings({ idleCompaction: mode.value });
               }}
             >
               <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Compact idle threads">
@@ -1032,7 +1030,13 @@ export function GeneralSettingsPanel() {
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 {IDLE_COMPACTION_MODES.map((mode) => (
-                  <SelectItem hideIndicator key={mode.value} value={mode.value}>
+                  <SelectItem
+                    hideIndicator
+                    key={mode.value}
+                    value={mode.value}
+                    // A server from before modes has only the on/off switch, so it cannot store "Never".
+                    disabled={mode.value === "off" && !readsIdleCompactionModes(settings)}
+                  >
                     {mode.label}
                   </SelectItem>
                 ))}

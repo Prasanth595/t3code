@@ -226,6 +226,15 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("tells clients it reads idle compaction modes before any settings are saved", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const settings = yield* service.getSettings;
+      assert.equal(settings.idleCompaction, "onReturn");
+      assert.strictEqual(settings.compactIdleThreads, false);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("saves through a symlinked settings file without replacing the link", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

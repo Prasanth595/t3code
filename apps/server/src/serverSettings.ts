@@ -685,11 +685,13 @@ const make = Effect.gen(function* () {
           });
         }
       } else {
-        // Settings saved by a server that kept the mode in `compactIdleThreads`
-        // move it to `idleCompaction`, so that switch goes to clients as a boolean.
-        settings = withIdleCompaction(decoded.value, globalIdleCompaction(decoded.value));
+        settings = decoded.value;
       }
     }
+    // Settings saved by a server that kept the mode in `compactIdleThreads` move
+    // it to `idleCompaction`, so that switch goes to clients as a boolean. The
+    // defaults gain the field too, which tells clients this server reads modes.
+    settings = withIdleCompaction(settings, globalIdleCompaction(settings));
 
     // A file that failed to decode must stay on disk for the user to repair.
     const settingsFileTrusted = Option.isNone(parseFailure);

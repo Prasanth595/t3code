@@ -192,6 +192,22 @@ describe("scoped settings writes", () => {
     ]);
   });
 
+  it("sends an idle compaction mode in the form each environment's server reads", () => {
+    const targets = [
+      environment("Fixed", { settings: { compactIdleThreads: false, idleCompaction: "onReturn" } }),
+      environment("Modes", { settings: { compactIdleThreads: "onReturn" } }),
+      environment("Switch", { settings: { compactIdleThreads: false } }),
+    ];
+    const plan = planScopedSettingsPatch(resolveSettingsScope({}, [], targets), targets, {
+      idleCompaction: "beforeCacheExpires",
+    });
+    expect(plan.serverWrites.map((write) => write.patch)).toEqual([
+      { idleCompaction: "beforeCacheExpires" },
+      { compactIdleThreads: "beforeCacheExpires" },
+      { compactIdleThreads: true },
+    ]);
+  });
+
   it("writes an aggregate preference only to connected environments with loaded configuration", async () => {
     const persistServer = vi.fn().mockResolvedValue({ _tag: "Success" });
     const persistClient = vi.fn();

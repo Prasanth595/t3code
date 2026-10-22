@@ -2,6 +2,7 @@ import {
   ClientSettingsSchema,
   type ClientSettingsPatch,
   type EnvironmentId,
+  idleCompactionPatch,
   isNullableProjectSettingsOverride,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type ProjectId,
@@ -201,6 +202,13 @@ function projectOverrideWrites(
   return [...writes.values()];
 }
 
+/** Puts an idle compaction mode in the form each destination server reads. */
+function forDestination(previous: ServerSettings, patch: ServerSettingsPatch): ServerSettingsPatch {
+  if (patch.idleCompaction === undefined) return patch;
+  const { idleCompaction, compactIdleThreads: _legacy, ...rest } = patch;
+  return { ...rest, ...idleCompactionPatch(previous, idleCompaction) };
+}
+
 export function planScopedSettingsPatch(
   scope: ResolvedSettingsScope,
   environments: readonly ScopedSettingsEnvironment[],
@@ -278,12 +286,13 @@ export function planScopedSettingsPatch(
                   environmentId: environment.environmentId,
                   label: environment.label,
                   previous,
-                  patch:
+                  patch: forDestination(
+                    previous,
                     previous.worktreeCleanup != null &&
-                    serverPatch.storageCleanup &&
-                    Object.keys(serverPatch.storageCleanup).some((key) =>
-                      key.startsWith("worktree"),
-                    )
+                      serverPatch.storageCleanup &&
+                      Object.keys(serverPatch.storageCleanup).some((key) =>
+                        key.startsWith("worktree"),
+                      )
                       ? {
                           ...serverPatch,
                           worktreeCleanup: {
@@ -299,6 +308,7 @@ export function planScopedSettingsPatch(
                           },
                         }
                       : serverPatch,
+                  ),
                 },
               ];
             })

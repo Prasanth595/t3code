@@ -1393,6 +1393,10 @@ export const withIdleCompaction = <S extends IdleCompactionSettings>(
   mode: IdleCompactionMode,
 ): S => ({ ...settings, idleCompaction: mode, compactIdleThreads: mode === "beforeCacheExpires" });
 
+/** Whether a server reads modes, rather than only the boolean switch from before them. */
+export const readsIdleCompactionModes = (settings: IdleCompactionSettings) =>
+  settings.idleCompaction !== undefined || typeof settings.compactIdleThreads === "string";
+
 /**
  * The patch that sets `mode` in the form the server's settings show it reads:
  * the mode for a server that has `idleCompaction` or kept the mode in the legacy
@@ -1401,7 +1405,7 @@ export const withIdleCompaction = <S extends IdleCompactionSettings>(
 export const idleCompactionPatch = (settings: IdleCompactionSettings, mode: IdleCompactionMode) =>
   settings.idleCompaction !== undefined
     ? { idleCompaction: mode }
-    : typeof settings.compactIdleThreads === "string"
+    : readsIdleCompactionModes(settings)
       ? { compactIdleThreads: mode }
       : { compactIdleThreads: mode === "beforeCacheExpires" };
 
