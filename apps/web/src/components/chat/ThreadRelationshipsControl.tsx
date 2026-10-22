@@ -352,16 +352,22 @@ export function ThreadRelationshipsPanel(props: {
     });
     setBusyAction(null);
     if (result._tag === "Success") openThread(mergeTargetThreadId);
+    else if (result._tag === "Failure") {
+      toastManager.add({ type: "error", title: "Could not merge back" });
+    }
   };
 
   const detach = async () => {
     if (!canDetach || busyAction !== null) return;
     setBusyAction("detach");
-    await stopSession({
+    const result = await stopSession({
       environmentId: props.environmentId,
       input: { threadId: props.threadId },
     });
     setBusyAction(null);
+    if (result._tag === "Failure") {
+      toastManager.add({ type: "error", title: "Could not disconnect agent session" });
+    }
   };
 
   const stopSubagent = async (
