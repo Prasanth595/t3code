@@ -39,7 +39,6 @@ import type {
   EnvironmentId,
   MessageId,
   ModelSelection,
-  ProviderApprovalDecision,
   ProviderInteractionMode,
   RuntimeMode,
   RuntimeRequestId,
@@ -52,7 +51,11 @@ import {
   appendCodexArtifactTemplateUsePrompt,
   type CodexArtifactTemplate,
 } from "@t3tools/shared/codexArtifactTemplates";
-import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  declinePendingApprovals,
+  type ApprovalResponder,
+  type ThreadUserInputQuestion,
+} from "@t3tools/client-runtime/state/thread-requests";
 import {
   presentPendingBackgroundWork,
   presentProviderGoal,
@@ -199,6 +202,7 @@ export interface ThreadDetailScreenProps {
     | { readonly kind: "failed"; readonly reason: string; readonly onEditTask: () => void }
     | null;
   readonly activePendingApproval: PendingApproval | null;
+  readonly activePendingApprovals: ReadonlyArray<PendingApproval>;
   readonly respondingApprovalId: RuntimeRequestId | null;
   readonly activePendingUserInput: PendingUserInput | null;
   readonly activePendingUserInputDrafts: Record<string, PendingUserInputDraftAnswer>;
@@ -236,16 +240,16 @@ export interface ThreadDetailScreenProps {
   readonly onStopThread: () => void;
   /** Present while the thread's queue is held. */
   readonly onResumeQueue: (() => Promise<void>) | null;
-  readonly onSendMessage: (followUp?: ActiveTurnComposerAction) => Promise<MessageId | null>;
+  readonly onSendMessage: (
+    followUp?: ActiveTurnComposerAction,
+    beforeDispatch?: () => Promise<boolean>,
+  ) => Promise<MessageId | null>;
   readonly onReconnectEnvironment: () => void;
   readonly canSwitchThreadProvider: boolean;
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateThreadInteractionMode: (interactionMode: ProviderInteractionMode) => void;
-  readonly onRespondToApproval: (
-    requestId: RuntimeRequestId,
-    decision: ProviderApprovalDecision,
-  ) => Promise<unknown>;
+  readonly onRespondToApproval: ApprovalResponder;
   readonly onSelectUserInputOption: (
     requestId: RuntimeRequestId,
     question: ThreadUserInputQuestion,
@@ -357,7 +361,25 @@ function ThreadVisitWatermark(props: {
   const lastDispatchedVisitRef = useRef<string | null>(null);
   const lastVisitDispatchRef = useRef({ threadKey: selectedThreadKey, at: 0 });
   const selectedThreadId = thread.id;
-  const selectedThreadUpdatedAt = thread.updatedAt;
+  const snoozedUntil = thread.snoozedUntil;
+  // Keep the clock in state so React Compiler invalidates the wake calculation.
+  const [wakeNow, setWakeNow] = useState(() => new Date().toISOString());
+  useEffect(() => {
+    if (!showContent || snoozedUntil == null) return;
+    const delay = Date.parse(snoozedUntil) - Date.now();
+    if (!Number.isFinite(delay)) return;
+    const timer = setTimeout(() => setWakeNow(new Date().toISOString()), Math.max(0, delay) + 50);
+    return () => clearTimeout(timer);
+  }, [showContent, snoozedUntil]);
+  const selectedThreadWokeAt = threadWokeAt(thread, {
+    now: wakeNow,
+  });
+  // A scheduled wake can happen without a newer server update.
+  const selectedThreadUpdatedAt =
+    selectedThreadWokeAt !== null && Date.parse(selectedThreadWokeAt) > Date.parse(thread.updatedAt)
+      ? selectedThreadWokeAt
+      : thread.updatedAt;
+  const wakeIsLatestUpdate = selectedThreadUpdatedAt === selectedThreadWokeAt;
   const selectedThreadLastVisitedAt = thread.lastVisitedAt;
   const selectedThreadCompletedAt = thread.latestRun?.completedAt;
   useEffect(() => {
@@ -384,7 +406,14 @@ function ThreadVisitWatermark(props: {
       (Number.isNaN(lastVisitedAtMs) || completedAtMs > lastVisitedAtMs);
     const previous = lastVisitDispatchRef.current;
     const elapsed = Date.now() - previous.at;
-    if (previous.threadKey !== selectedThreadKey || hasUnseenCompletion || elapsed >= 10_000) {
+    // Like a completion, a wake the user is looking at must not wait out the throttle:
+    // leaving within it would cancel the dispatch and keep Woke in the list.
+    if (
+      previous.threadKey !== selectedThreadKey ||
+      hasUnseenCompletion ||
+      wakeIsLatestUpdate ||
+      elapsed >= 10_000
+    ) {
       dispatch();
       return;
     }
@@ -399,6 +428,7 @@ function ThreadVisitWatermark(props: {
     selectedThreadUpdatedAt,
     showContent,
     visitThread,
+    wakeIsLatestUpdate,
   ]);
   return null;
 }
@@ -1126,12 +1156,37 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     selectedThreadKey,
   ]);
 
-  const handleSendMessage = async (followUp?: ActiveTurnComposerAction) => {
+  const activePendingApprovalsRef = useRef(props.activePendingApprovals);
+  useLayoutEffect(() => {
+    activePendingApprovalsRef.current = props.activePendingApprovals;
+  }, [props.activePendingApprovals]);
+  const handleSendMessage = async (
+    followUp?: ActiveTurnComposerAction,
+    stillSendable?: () => boolean,
+  ) => {
     const targetThreadKey = selectedThreadKey;
     const hasUserMessage = selectedThreadFeed.some(
       (entry) => entry.type === "message" && entry.message.role === "user",
     );
-    const messageId = await props.onSendMessage(followUp);
+    // Runs only once the send path has validated the draft and is about to deliver it, so an
+    // empty submit, a queued-message edit, or `/feedback` leaves approvals alone.
+    const approvalsToDecline = props.activePendingApprovals;
+    const declineBeforeDispatch =
+      approvalsToDecline.length > 0 && props.activePendingUserInput === null
+        ? async () =>
+            props.respondingApprovalId === null &&
+            (await declinePendingApprovals(approvalsToDecline, props.onRespondToApproval)) &&
+            selectedThreadKeyRef.current === targetThreadKey &&
+            // A draft edited or pasted into during the decline isn't what the user sent.
+            stillSendable?.() !== false &&
+            // An approval that arrived during the decline would block the redirect; the draft
+            // stays so the next send declines it too.
+            !activePendingApprovalsRef.current.some(
+              (approval) =>
+                !approvalsToDecline.some((declined) => declined.requestId === approval.requestId),
+            )
+        : undefined;
+    const messageId = await props.onSendMessage(followUp, declineBeforeDispatch);
     if (messageId === null || selectedThreadKeyRef.current !== targetThreadKey) {
       return messageId;
     }
@@ -1542,7 +1597,11 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                         canOperateThread={props.canOperateThread}
                         reportedModelSelection={reportedModelSelection}
                         editorRef={composerEditorRef}
-                        placeholder="Ask the repo agent, or run a command…"
+                        placeholder={
+                          props.activePendingApproval
+                            ? "Send a message to decline and redirect the agent"
+                            : "Ask the repo agent, or run a command…"
+                        }
                         contentMaxWidth={contentMaxWidth}
                         connectionState={props.connectionStateLabel}
                         environmentLabel={props.environmentLabel}
@@ -1566,7 +1625,12 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                             : null
                         }
                         draftKey={props.composerDraftKey ?? undefined}
-                        followUpBehavior={props.followUpBehavior}
+                        followUpBehavior={
+                          props.activePendingApprovals.length > 0 &&
+                          props.activePendingUserInput === null
+                            ? "steer"
+                            : props.followUpBehavior
+                        }
                         canSteerActiveTurn={props.canSteerActiveTurn}
                         hidden={composerSlotHidden}
                         queuedEdit={
