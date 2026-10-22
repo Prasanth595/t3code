@@ -198,16 +198,17 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
       return;
     }
     for (const entry of [...entries].sort()) {
-      if (input.budget.remainingEntries === 0) {
-        input.budget.exhausted = true;
-        return;
-      }
-      input.budget.remainingEntries -= 1;
       // Installed dependencies can exhaust the shared budget and hide unrelated skills.
       if (entry === "node_modules") continue;
       const child = path.join(directory, entry);
       const info = yield* orUndefined(fileSystem.stat(child), input.budget);
       if (info?.type !== "Directory") continue;
+      // Charge only directories so supporting files cannot exhaust skill discovery.
+      if (input.budget.remainingEntries === 0) {
+        input.budget.exhausted = true;
+        return;
+      }
+      input.budget.remainingEntries -= 1;
       if (depth >= MAX_SKILL_DEPTH) continue;
       yield* visit(child, depth + 1);
     }

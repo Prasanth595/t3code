@@ -102,6 +102,49 @@ describe("Cursor skills", () => {
       }),
     ));
 
+  it("discovers nested and later skills despite a large supporting-file directory", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const fixture = yield* fileSystem
+          .makeTempDirectoryScoped({
+            directory: NodeOS.tmpdir(),
+            prefix: "cursor-skills-files-",
+          })
+          .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+        const userHome = path.join(fixture, "home");
+        const workspace = path.join(fixture, "workspace");
+        const root = path.join(workspace, ".cursor", "skills");
+        yield* fileSystem.makeDirectory(userHome);
+        for (const name of ["a-large", "a-large/inner", "b-small"]) {
+          const directory = path.join(root, name);
+          yield* fileSystem.makeDirectory(directory, { recursive: true });
+          yield* fileSystem.writeFileString(
+            path.join(directory, "SKILL.md"),
+            `---\nname: ${path.basename(directory)}\ndescription: Test skill\n---\n`,
+          );
+        }
+        const artifacts = path.join(root, "a-large", "artifacts");
+        yield* fileSystem.makeDirectory(artifacts);
+        yield* Effect.forEach(
+          Array.from({ length: 10_001 }, (_, index) => index),
+          (index) => fileSystem.writeFileString(path.join(artifacts, `${index}.txt`), ""),
+          { concurrency: 32, discard: true },
+        );
+
+        const result = yield* probeCursorSkills(workspace, { HOME: userHome }).pipe(Effect.result);
+        expect(result).toMatchObject({
+          _tag: "Success",
+          success: [
+            { name: "a-large", path: path.join(root, "a-large", "SKILL.md") },
+            { name: "b-small", path: path.join(root, "b-small", "SKILL.md") },
+            { name: "inner", path: path.join(root, "a-large", "inner", "SKILL.md") },
+          ],
+        });
+      }),
+    ));
+
   it("skips a skill tree deeper than the limit instead of failing discovery", async () =>
     await runNode(
       Effect.gen(function* () {
