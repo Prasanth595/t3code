@@ -476,6 +476,35 @@ describe("AcpRuntimeModel", () => {
     expect(JSON.stringify(event).length).toBeLessThan(hugeText.length);
   });
 
+  it.each([
+    { form: "string", wrap: (text: string): unknown => text },
+    { form: "Text", wrap: (text: string): unknown => ({ type: "Text", text }) },
+    { form: "stdout", wrap: (text: string): unknown => ({ stdout: text }) },
+  ])("bounds an oversized $form rawOutput to the same tail window", ({ wrap }) => {
+    const hugeText = Array.from({ length: 2_000 }, (_, i) => `line ${i}: ${"x".repeat(50)}`).join(
+      "\n",
+    );
+    const result = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tool-1",
+        status: "in_progress",
+        rawOutput: wrap(hugeText),
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    const event = result.events[0];
+    if (event?._tag !== "ToolCallUpdated") {
+      throw new Error("expected a ToolCallUpdated event");
+    }
+    const bounded = wrap(`[Earlier output truncated]\n\n${hugeText.slice(-8_000)}`);
+    expect(event.toolCall.data.rawOutput).toEqual(bounded);
+    const rawUpdate = (event.rawPayload as { readonly update: { readonly rawOutput: unknown } })
+      .update;
+    expect(rawUpdate.rawOutput).toEqual(bounded);
+  });
+
   it("coalesces 1000 rapid cumulative tool_call_update notifications for a redrawing progress bar", () => {
     let previous: AcpToolCallState | undefined;
     let lastEmittedDetailLength: number | undefined;

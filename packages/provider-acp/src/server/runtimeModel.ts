@@ -654,18 +654,24 @@ function boundToolCallOutputText(text: string): string {
 }
 
 const RAW_OUTPUT_TEXT_FIELDS = ["content", "stdout", "stderr", "output"] as const;
+// Agents also send output as a plain string or as `{ type: "Text", text }`, the two
+// forms the adapter reads back as command output.
+const RAW_OUTPUT_BOUNDED_FIELDS = [...RAW_OUTPUT_TEXT_FIELDS, "text"] as const;
 
 // `rawOutput` is provider-defined and, for terminal-shaped tools, mirrors the same
 // cumulative text-growth problem as `content` (see the comment above). Bound its known
 // text-bearing fields the same way so a chatty provider cannot smuggle unbounded output
 // through this field instead.
 function boundToolCallRawOutput(rawOutput: unknown): unknown {
+  if (typeof rawOutput === "string") {
+    return boundToolCallOutputText(rawOutput);
+  }
   if (!isRecord(rawOutput)) {
     return rawOutput;
   }
   let changed = false;
   const bounded: Record<string, unknown> = { ...rawOutput };
-  for (const field of RAW_OUTPUT_TEXT_FIELDS) {
+  for (const field of RAW_OUTPUT_BOUNDED_FIELDS) {
     const value = rawOutput[field];
     if (typeof value === "string" && value.length > TOOL_CALL_CONTENT_MAX_CHARS) {
       bounded[field] = boundToolCallOutputText(value);
