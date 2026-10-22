@@ -30,6 +30,7 @@ import {
   readEnvironmentSupportsPinning,
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
+  readEnvironmentSupportsThreadProjectMove,
   readEnvironmentSupportsTitleRegeneration,
   readThreadShell,
   useProjects,
@@ -129,8 +130,11 @@ export function useThreadActionMenu(input: {
       };
       const isRegeneratingTitle = thread.titleRegeneration != null;
       const snoozePresets = resolveSnoozePresets(now, timestampFormat);
-      const moveTargets = buildThreadMoveTargets(projects, thread);
+      const moveTargets = readEnvironmentSupportsThreadProjectMove(threadRef.environmentId)
+        ? buildThreadMoveTargets(projects, thread)
+        : [];
       const canMoveProject =
+        moveTargets.length > 0 &&
         threadRuntimeCanArchive(thread.runtime) &&
         thread.lineage.relationshipToParent !== "subagent";
       const items = buildThreadActionMenuItems({

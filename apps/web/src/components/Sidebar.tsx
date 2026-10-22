@@ -2263,8 +2263,13 @@ export default function Sidebar() {
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
-        const moveTargets = buildThreadMoveTargets(projects, thread);
+        const moveTargets =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadProjectMove ===
+          true
+            ? buildThreadMoveTargets(projects, thread)
+            : [];
         const canMoveProject =
+          moveTargets.length > 0 &&
           threadRuntimeCanArchive(thread.runtime) &&
           thread.lineage.relationshipToParent !== "subagent";
         const threadProjectGroup =

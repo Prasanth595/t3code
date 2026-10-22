@@ -1384,7 +1384,10 @@ function OpenCommandPaletteDialog(props: {
         if (refreshed._tag === "Failure") throw squashAtomCommandFailure(refreshed);
       },
     });
-    const moveTargets = buildThreadMoveTargets(projects, thread);
+    const moveTargets =
+      activeThreadServerConfig?.environment.capabilities.threadProjectMove === true
+        ? buildThreadMoveTargets(projects, thread)
+        : [];
     if (moveTargets.length > 0 && thread.lineage.relationshipToParent !== "subagent") {
       actionItems.push({
         kind: "submenu",

@@ -88,6 +88,7 @@ import { isMacPlatform } from "../lib/utils";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import {
+  readEnvironmentSupportsThreadProjectMove,
   readThreadShell,
   useProjects,
   useThreadShells,
@@ -2150,8 +2151,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         thread.environmentId,
         AuthOrchestrationOperateScope,
       );
-      const moveTargets = buildThreadMoveTargets(environmentProjects, thread);
+      const moveTargets = readEnvironmentSupportsThreadProjectMove(thread.environmentId)
+        ? buildThreadMoveTargets(environmentProjects, thread)
+        : [];
       const canMoveProject =
+        moveTargets.length > 0 &&
         canOperateThread &&
         threadRuntimeCanArchive(thread.runtime) &&
         thread.lineage.relationshipToParent !== "subagent";
