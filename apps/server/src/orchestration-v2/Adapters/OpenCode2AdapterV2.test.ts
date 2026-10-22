@@ -623,6 +623,50 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       ]);
     }).pipe(Effect.scoped),
   );
+  it.effect("reads a directory's models again after a failed read", () =>
+    Effect.gen(function* () {
+      const directory = "/work/worker";
+      const model = { providerID: "opencode-go", id: "glm-5.3-flash" };
+      const created = (variant: string) => [
+        out("session.create", {
+          model: { ...model, variant },
+          location: { directory },
+          permissions: "<any>",
+        }),
+        replyData("session.create", sessionInfo({ model: { ...model, variant } })),
+      ];
+      const { runtime } = yield* resumed([
+        out("model.list", { "location[directory]": directory }),
+        reply("model.list", { status: 500, body: { message: "Catalog unavailable" } }),
+        // Without a catalog the saved variant is kept.
+        ...created("medium"),
+        out("model.list", { "location[directory]": directory }),
+        reply("model.list", {
+          ...modelCatalog,
+          location: { directory },
+          data: [
+            {
+              ...modelCatalog.data[0]!,
+              ...model,
+              variants: ["low", "high"].map((id) => ({ id, settings: {} })),
+            },
+          ],
+        }),
+        ...created("high"),
+      ]);
+      for (const id of [threadId, ThreadId.make("thread:opencode2-adapter:second")]) {
+        yield* runtime.ensureThread({
+          threadId: id,
+          modelSelection: {
+            instanceId,
+            model: "opencode-go/glm-5.3-flash",
+            options: [{ id: "variant", value: "medium" }],
+          },
+          runtimePolicy: { ...policy(), cwd: directory },
+        });
+      }
+    }).pipe(Effect.scoped),
+  );
 
   it.effect("switches the session's model and variant before a turn that changed them", () =>
     Effect.gen(function* () {

@@ -2774,7 +2774,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const readModels = (directory: string) =>
       Effect.suspend(() => {
         const models = modelsByDirectory.get(directory) ?? new Map<string, CatalogModel>();
-        modelsByDirectory.set(directory, models);
         return client.model.list({ location: { directory } }).pipe(
           Effect.timeout("5 seconds"),
           Effect.tap((catalog) =>
@@ -2785,13 +2784,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   variants: model.variants.map((variant) => variant.id),
                 });
               }
+              // Only a read that answered counts, so a failed one is tried again by the next thread.
+              modelsByDirectory.set(directory, models);
             }),
           ),
           Effect.ignore({ log: true }),
         );
       });
-    // A directory's map exists while its first read is still filling it, so a thread starting
-    // then waits for that read instead of resolving its variant against an empty catalog.
+    // A thread starting while its directory's first read is still running waits for that read
+    // instead of resolving its variant against no catalog.
     const firstReads = new Map<string, Deferred.Deferred<void>>();
     const readModelsOnce = (cwd: string | null | undefined) =>
       Effect.suspend(() => {
