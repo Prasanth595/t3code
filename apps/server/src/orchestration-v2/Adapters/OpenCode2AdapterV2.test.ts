@@ -2205,22 +2205,26 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("continues a reply still streaming at reconnect from its recovered text", () =>
+  it.effect("continues a reply still streaming at reconnect from the text already shown", () =>
     Effect.gen(function* () {
-      const { runtime, thread } = yield* resumed([
-        out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
-        promptAccepted,
-        ...reconnected({ [SESSION]: { type: "running" } }, undefined, {
-          content: [{ type: "text", text: "Sent while the stream" }],
-          finish: undefined,
-        }),
-        ...openRequests([]),
+      const delta = (text: string) =>
         event("session.text.delta", {
           sessionID: SESSION,
           assistantMessageID: "msg_assistant_gap",
           ordinal: 0,
-          delta: " was down.",
+          delta: text,
+        });
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+        promptAccepted,
+        delta("Sent before the stream dropped"),
+        // OpenCode saves a block's text only when the block ends.
+        ...reconnected({ [SESSION]: { type: "running" } }, undefined, {
+          content: [{ type: "text", text: "" }],
+          finish: undefined,
         }),
+        ...openRequests([]),
+        delta(" and after it came back."),
         event("session.execution.succeeded", { sessionID: SESSION }),
       ]);
       const events = yield* runtime.events.pipe(
@@ -2236,9 +2240,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           : [],
       );
       assert.deepEqual(texts, [
-        "Sent while the stream",
-        "Sent while the stream was down.",
-        "Sent while the stream was down.",
+        "Sent before the stream dropped",
+        "Sent before the stream dropped",
+        "Sent before the stream dropped and after it came back.",
+        "Sent before the stream dropped and after it came back.",
       ]);
     }).pipe(Effect.scoped),
   );
