@@ -49,8 +49,7 @@ import { MorphIcon } from "~/components/MorphIcon";
 import { ExpandedImagePreview } from "./ExpandedImagePreview";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
-  isTimelineScrolledAwayFromEnd,
-  pinTimelineToEnd,
+  scheduleTimelineEndPin,
   readTimelinePosition,
   type RememberedTimelinePosition,
   rememberTimelinePosition,
@@ -1054,19 +1053,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       !endPinWasAtEndRef.current
     )
       return;
-    let second: number | null = null;
-    const first = requestAnimationFrame(() => {
-      second = requestAnimationFrame(() => {
-        const element = list.getScrollableNode();
-        if (!element || !isTimelineScrolledAwayFromEnd(element)) return;
-        endPinCancelRef.current?.();
-        endPinCancelRef.current = pinTimelineToEnd(list, () => followsEndRef.current);
-      });
-    });
-    return () => {
-      cancelAnimationFrame(first);
-      if (second !== null) cancelAnimationFrame(second);
-    };
+    return scheduleTimelineEndPin(list, () => followsEndRef.current, endPinCancelRef);
   }, [followsEnd, followsEndSmoothly, listRef, restoringThreadPosition, rows]);
 
   useThreadFindNavigation({

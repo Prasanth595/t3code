@@ -247,3 +247,35 @@ export function pinTimelineToEnd(
   frame = requestAnimationFrame(tick);
   return stop;
 }
+
+export function scheduleTimelineEndPin(
+  list: Parameters<typeof pinTimelineToEnd>[0],
+  shouldContinue: () => boolean,
+  endPinCancelRef: { current: (() => void) | null },
+): () => void {
+  let cancelPin = endPinCancelRef.current;
+  let second: number | null = null;
+  const first = requestAnimationFrame(() => {
+    second = requestAnimationFrame(() => {
+      const element = list.getScrollableNode();
+      if (!element || !isTimelineScrolledAwayFromEnd(element)) return;
+      cancelPin?.();
+      cancelPin = pinTimelineToEnd(list, shouldContinue);
+    });
+  });
+  const cancelPendingFrames = () => {
+    cancelAnimationFrame(first);
+    if (second !== null) cancelAnimationFrame(second);
+  };
+  const cancel = () => {
+    cancelPendingFrames();
+    cancelPin?.();
+  };
+  // Explicit jumps must cancel the layout check even before it starts a pin.
+  endPinCancelRef.current = cancel;
+  return () => {
+    cancelPendingFrames();
+    // Row updates cancel the old check, but let its started pin keep measuring.
+    if (endPinCancelRef.current === cancel) endPinCancelRef.current = cancelPin;
+  };
+}

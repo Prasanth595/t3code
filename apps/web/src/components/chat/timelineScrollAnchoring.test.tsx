@@ -4,6 +4,7 @@ import {
   observeTimelineRun,
   getAnchoredTurnMetrics,
   pinTimelineToEnd,
+  scheduleTimelineEndPin,
 } from "./timelineScrollAnchoring";
 
 function buildState({
@@ -137,8 +138,8 @@ describe("pinTimelineToEnd", () => {
         listeners.set(type, listener),
       removeEventListener: (type: string) => listeners.delete(type),
     };
-    const scrollToEnd = vi.fn(() => {
-      element.scrollTop = element.scrollHeight - element.clientHeight;
+    const scrollToEnd = vi.fn((options: { animated: boolean }) => {
+      if (!options.animated) element.scrollTop = element.scrollHeight - element.clientHeight;
     });
     const list = { getScrollableNode: () => element as unknown as HTMLElement, scrollToEnd };
     let frameNumber = 0;
@@ -236,5 +237,54 @@ describe("pinTimelineToEnd", () => {
     runAllFrames();
 
     expect(scrollToEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([0, 1, 2, 3])(
+    "keeps an explicit smooth jump in control after %i growth-check frames",
+    (framesBeforeJump) => {
+      const { element, list, scrollToEnd, runFrame, runAllFrames, listeners } = setup([5000]);
+      const cancelRef: { current: (() => void) | null } = { current: null };
+      scheduleTimelineEndPin(list, () => true, cancelRef);
+      for (let frame = 0; frame < framesBeforeJump; frame += 1) runFrame();
+      // The explicit jump cancels corrections before scheduling its animated scroll.
+      cancelRef.current?.();
+      cancelRef.current = null;
+      const offset = element.scrollTop;
+      scrollToEnd.mockClear();
+      requestAnimationFrame(() => void list.scrollToEnd({ animated: true }));
+      runAllFrames();
+
+      expect.soft(scrollToEnd.mock.calls.map(([options]) => options.animated)).toEqual([true]);
+      expect.soft(element.scrollTop).toBe(offset);
+      expect(listeners.size).toBe(0);
+    },
+  );
+
+  it("corrects followed growth after layout and keeps the started pin cancellable after effect cleanup", () => {
+    const { element, list, runFrame, runAllFrames, listeners, queue } = setup([5000]);
+    const cancelRef: { current: (() => void) | null } = { current: null };
+    const cleanup = scheduleTimelineEndPin(list, () => true, cancelRef);
+    runFrame();
+    runFrame();
+    cleanup();
+    runFrame();
+    expect(element.scrollTop).toBe(4300);
+    expect(listeners.size).toBeGreaterThan(0);
+
+    cancelRef.current?.();
+    runAllFrames();
+    expect(listeners.size).toBe(0);
+    expect(queue.size).toBe(0);
+  });
+
+  it.each([0, 1])("effect cleanup cancels a growth check after %i frames", (frames) => {
+    const { list, scrollToEnd, runFrame, runAllFrames, queue } = setup([5000]);
+    const cancelRef: { current: (() => void) | null } = { current: null };
+    const cleanup = scheduleTimelineEndPin(list, () => true, cancelRef);
+    for (let frame = 0; frame < frames; frame += 1) runFrame();
+    cleanup();
+    runAllFrames();
+    expect(scrollToEnd).not.toHaveBeenCalled();
+    expect(queue.size).toBe(0);
   });
 });
