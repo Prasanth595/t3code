@@ -12,8 +12,9 @@ import { readThreadPreviewState } from "../previewStateStore";
 import { deviceEnvironment, useDeviceState } from "./device";
 
 vi.mock(import("../hooks/useSettings"), () => ({
-  useClientSettings: ((select: (settings: { browserAutoShowFloatingPreview: boolean }) => unknown) =>
-    select({ browserAutoShowFloatingPreview: true })) as never,
+  useClientSettings: ((
+    select: (settings: { browserAutoShowFloatingPreview: boolean }) => unknown,
+  ) => select({ browserAutoShowFloatingPreview: true })) as never,
 }));
 
 it("baselines the first device snapshot without reopening dismissed devices", async () => {
