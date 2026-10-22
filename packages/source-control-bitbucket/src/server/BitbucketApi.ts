@@ -607,14 +607,6 @@ function originOf(value: string): string | null {
   }
 }
 
-function hostOf(value: string): string | null {
-  try {
-    return new URL(value).host;
-  } catch {
-    return null;
-  }
-}
-
 const responseError = Effect.fn("BitbucketApi.responseError")(function* (
   operation: BitbucketApiOperation,
   response: HttpClientResponse.HttpClientResponse,
@@ -652,9 +644,10 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
   const slots = yield* Semaphore.make(CONCURRENCY);
+  // The repository host PullRequestService keys its own backoff under, so both share one pause.
   const rateLimitKey = {
     provider: SourceControlProviderKind.make("bitbucket"),
-    host: hostOf(config.baseUrl) ?? config.baseUrl,
+    host: "bitbucket.org",
   };
 
   const apiUrl = (path: string) => `${config.baseUrl.replace(/\/+$/u, "")}${path}`;
@@ -698,32 +691,26 @@ export const make = Effect.gen(function* () {
    * Background reads fail at once while paused; a write or an interactive read has a user waiting
    * on it, so it still goes out.
    */
-  const throttled = <A, R>(
-    method: string,
-    effect: Effect.Effect<A, BitbucketApiError, R>,
-  ): Effect.Effect<A, BitbucketApiError, R> =>
-    slots.withPermit(
-      SourceControlRateLimit.Interactive.pipe(
-        Effect.flatMap((interactive) =>
-          limits.check(
-            rateLimitKey,
-            interactive || method !== "GET" ? { allowPaused: true } : undefined,
-          ),
+  const throttled = Effect.fn("BitbucketApi.throttled")(
+    function* <A, R>(method: string, effect: Effect.Effect<A, BitbucketApiError, R>) {
+      const interactive = yield* SourceControlRateLimit.Interactive;
+      const lease = yield* limits.check(
+        rateLimitKey,
+        interactive || method !== "GET" ? { allowPaused: true } : undefined,
+      );
+      return yield* effect.pipe(
+        Effect.tap(() => limits.recordSuccess({ ...rateLimitKey, lease })),
+        Effect.tapError((error) =>
+          (error._tag === "BitbucketResponseError" ||
+            error._tag === "BitbucketResponseBodyReadError") &&
+          error.status === 429
+            ? limits.recordRateLimit({ ...rateLimitKey, lease, retryAt: error.retryAt })
+            : Effect.void,
         ),
-        Effect.flatMap((lease) =>
-          effect.pipe(
-            Effect.tap(() => limits.recordSuccess({ ...rateLimitKey, lease })),
-            Effect.tapError((error) =>
-              (error._tag === "BitbucketResponseError" ||
-                error._tag === "BitbucketResponseBodyReadError") &&
-              error.status === 429
-                ? limits.recordRateLimit({ ...rateLimitKey, lease, retryAt: error.retryAt })
-                : Effect.void,
-            ),
-          ),
-        ),
-      ),
-    );
+      );
+    },
+    (effect) => slots.withPermit(effect),
+  );
 
   const decodeResponse = <S extends Schema.Top>(
     operation: BitbucketApiOperation,

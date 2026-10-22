@@ -769,10 +769,16 @@ it.effect("pauses background reads after a 429 until Bitbucket's retry-after pas
     const refused = yield* Effect.flip(lookup);
     assert.strictEqual(refused._tag, "BitbucketResponseError");
     const paused = yield* Effect.flip(lookup);
-    assert.strictEqual(paused._tag, "SourceControlRateLimitPausedError");
+    // Keyed by the repository host, where PullRequestService records its own backoff.
+    assert.deepInclude(paused, {
+      _tag: "SourceControlRateLimitPausedError",
+      host: "bitbucket.org",
+      retryAt: 60_000,
+    });
     assert.strictEqual(execute.mock.calls.length, 1);
 
-    // A user waiting on an answer is not held back by the background pause.
+    // A user waiting on an answer is not held back by the background pause, and their success
+    // does not end it early.
     yield* lookup.pipe(Effect.provideService(SourceControlRateLimit.Interactive, true));
     yield* bitbucket.request({
       method: "POST",
@@ -780,7 +786,11 @@ it.effect("pauses background reads after a 429 until Bitbucket's retry-after pas
     });
     assert.strictEqual(execute.mock.calls.length, 3);
 
-    yield* TestClock.adjust("61 seconds");
+    yield* TestClock.adjust("59 seconds");
+    assert.strictEqual((yield* Effect.flip(lookup))._tag, "SourceControlRateLimitPausedError");
+    assert.strictEqual(execute.mock.calls.length, 3);
+
+    yield* TestClock.adjust("1 second");
     yield* lookup;
     assert.strictEqual(execute.mock.calls.length, 4);
   }).pipe(Effect.provide(layer));

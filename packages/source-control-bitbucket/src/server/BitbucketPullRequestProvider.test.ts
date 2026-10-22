@@ -194,7 +194,7 @@ describe("bitbucketProviderFailure", () => {
   it("reports a request held back by the host-wide pause as rate limited until it ends", () => {
     const paused = new SourceControlRateLimit.SourceControlRateLimitPausedError({
       provider: SourceControlProviderKind.make("bitbucket"),
-      host: "api.bitbucket.org",
+      host: "bitbucket.org",
       retryAt: 120_000,
     });
 
