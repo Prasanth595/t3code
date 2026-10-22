@@ -1556,7 +1556,7 @@ export function NewTaskDraftScreen(props: {
         contentInsetAdjustmentBehavior="never"
         contentContainerClassName="grow items-center pb-[236px] pt-12"
         contentContainerStyle={
-          Platform.OS === "ios" ? { paddingTop: navigationHeaderHeight + 16 } : undefined
+          Platform.OS === "ios" ? { paddingTop: navigationHeaderHeight + 48 } : undefined
         }
         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
         keyboardShouldPersistTaps="handled"
