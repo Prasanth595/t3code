@@ -15,6 +15,7 @@ import { vi } from "vite-plus/test";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ProviderEventLoggers } from "@t3tools/provider-core/server/ProviderEventLoggers";
+import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import {
   ClaudeAgentSdkQueryRunner,
   layerQueryRunner,
@@ -185,7 +186,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           try {
-            process.kill(-(child.pid ?? 0), "SIGKILL");
+            signalProcessGroup(child.pid ?? 0, "SIGKILL");
           } catch {}
           NodeFS.rmSync(dir, { recursive: true, force: true });
         }),
