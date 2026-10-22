@@ -111,9 +111,7 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
     await expect.element(input()).toHaveValue(value);
     if (step === "repository") {
       await userEvent.keyboard("{Enter}");
-      await expect
-        .element(page.getByText("Choose a destination path and press Enter to clone."))
-        .toBeVisible();
+      await expect.element(input()).toHaveValue("/workspace/計画");
     } else {
       await userEvent.keyboard("{Enter}");
       await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
