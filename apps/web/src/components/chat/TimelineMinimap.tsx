@@ -1,17 +1,50 @@
 import { resolveTimelineMinimapPreview, type TimelineMinimapItem } from "./timelineMinimapItems";
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import {
   resolveTimelineMinimapHeightStyle,
   resolveTimelineMinimapIndexFromPointer,
   resolveTimelineMinimapInteractiveWidth,
+  resolveTimelineMinimapMarkIndices,
   resolveTimelineMinimapNavigationInteractive,
+  resolveTimelineMinimapRailHeightPx,
   resolveTimelineMinimapTopPercent,
   TIMELINE_MINIMAP_MIN_ITEMS,
 } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
+
+const SERVER_MINIMAP_VIEWPORT = { height: 0, fontSize: 16 };
+let minimapViewportSnapshot = SERVER_MINIMAP_VIEWPORT;
+
+function subscribeTimelineMinimapViewport(onChange: () => void) {
+  window.addEventListener("resize", onChange);
+  return () => window.removeEventListener("resize", onChange);
+}
+
+function getServerTimelineMinimapViewport() {
+  return SERVER_MINIMAP_VIEWPORT;
+}
+
+// Stable snapshot: a fresh object on every read loops useSyncExternalStore, and
+// reading the root font size on each hover forces layout.
+function readTimelineMinimapViewport() {
+  const height = window.innerHeight;
+  if (
+    minimapViewportSnapshot !== SERVER_MINIMAP_VIEWPORT &&
+    minimapViewportSnapshot.height === height
+  ) {
+    return minimapViewportSnapshot;
+  }
+  const parsed = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+  const fontSize = Number.isFinite(parsed) && parsed > 0 ? parsed : 16;
+  if (minimapViewportSnapshot.height === height && minimapViewportSnapshot.fontSize === fontSize) {
+    return minimapViewportSnapshot;
+  }
+  minimapViewportSnapshot = { height, fontSize };
+  return minimapViewportSnapshot;
+}
 
 function timelineMinimapEventTargetsPreview(target: EventTarget): boolean {
   return target instanceof Element && target.closest("[data-minimap-preview]") !== null;
@@ -52,6 +85,11 @@ export function TimelineMinimap({
   onSelect: (item: TimelineMinimapItem) => void;
 }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const viewport = useSyncExternalStore(
+    subscribeTimelineMinimapViewport,
+    readTimelineMinimapViewport,
+    getServerTimelineMinimapViewport,
+  );
   const wheelTargetRef = (node: HTMLDivElement | null) => {
     if (!node) return;
     node.addEventListener("wheel", onWheel, { passive: false });
@@ -112,6 +150,17 @@ export function TimelineMinimap({
       return Math.max(0, Math.min(items.length - 1, base + delta));
     });
   };
+
+  const paintedMarks = resolveTimelineMinimapMarkIndices({
+    itemCount: items.length,
+    railHeightPx: resolveTimelineMinimapRailHeightPx(
+      items.length,
+      viewport.height,
+      viewport.fontSize,
+    ),
+    pinnedIndices: [resolvedActiveIndex, resolvedCurrentIndex],
+  });
+  const paintedMarkSet = paintedMarks.length === items.length ? null : new Set(paintedMarks);
 
   if (items.length < TIMELINE_MINIMAP_MIN_ITEMS) {
     return null;
@@ -212,16 +261,19 @@ export function TimelineMinimap({
               const top = `${resolveTimelineMinimapTopPercent(index, items.length)}%`;
               const activeDistance =
                 resolvedActiveIndex === null ? null : Math.abs(index - resolvedActiveIndex);
+              const painted = paintedMarkSet === null || paintedMarkSet.has(index);
               return (
                 // Compositor-friendly on purpose: in-view state and the hover
                 // fisheye animate constantly (every scroll tick and streaming
                 // update flips a band of strips), so the strip animates only
-                // transform and opacity.
+                // transform and opacity. Unpainted strips stay mounted so the
+                // in-view highlight can still land on the exact message.
                 <span
                   aria-hidden="true"
                   className={cn(
                     "group/strip pointer-events-none absolute left-0 h-0.5 w-6 origin-left -translate-y-1/2 rounded-full transition-transform duration-150",
-                    activeDistance === 0 ? "bg-muted-foreground/75" : "bg-muted-foreground/35",
+                    painted &&
+                      (activeDistance === 0 ? "bg-muted-foreground/75" : "bg-muted-foreground/35"),
                     activeDistance === 0
                       ? "scale-x-100"
                       : activeDistance === 1
@@ -242,7 +294,9 @@ export function TimelineMinimap({
                   }}
                   style={{ top }}
                 >
-                  <span className="absolute inset-0 rounded-full bg-foreground/90 opacity-0 transition-opacity duration-150 group-data-[in-view=true]/strip:opacity-100" />
+                  {painted ? (
+                    <span className="absolute inset-0 rounded-full bg-foreground/90 opacity-0 transition-opacity duration-150 group-data-[in-view=true]/strip:opacity-100" />
+                  ) : null}
                 </span>
               );
             })}
