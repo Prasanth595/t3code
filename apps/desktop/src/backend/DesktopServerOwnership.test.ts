@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -6,6 +7,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopOwnerIdentity from "./DesktopOwnerIdentity.ts";
 import * as DesktopServerOwnership from "./DesktopServerOwnership.ts";
 
 const makeRecord = (overrides?: {
@@ -13,17 +15,31 @@ const makeRecord = (overrides?: {
   readonly port?: number;
   readonly origin?: string;
   readonly serviceManaged?: boolean;
-}): DesktopServerOwnership.DesktopServerRuntimeRecord => ({
-  version: 1,
-  pid: overrides?.pid ?? process.pid,
-  port: overrides?.port ?? 3773,
-  origin: overrides?.origin ?? "http://127.0.0.1:3773",
-  startedAt: "1970-01-01T00:00:00.000Z",
-  ...(overrides?.serviceManaged === undefined ? {} : { serviceManaged: overrides.serviceManaged }),
-});
+  readonly desktopOwnerId?: string;
+}): Effect.Effect<DesktopServerOwnership.DesktopServerRuntimeRecord> =>
+  Effect.sync(() => {
+    // The recorded start time has to match the running process, or the
+    // desktop treats the pid as recycled and reports no owner at all. The
+    // real clock is used here: the test clock starts at the epoch, which
+    // every running process started after.
+    const now = DateTime.nowUnsafe();
+    return {
+      version: 1,
+      pid: overrides?.pid ?? process.pid,
+      port: overrides?.port ?? 3773,
+      origin: overrides?.origin ?? "http://127.0.0.1:3773",
+      startedAt: DateTime.formatIso(now),
+      ...(overrides?.serviceManaged === undefined
+        ? {}
+        : { serviceManaged: overrides.serviceManaged }),
+      ...(overrides?.desktopOwnerId === undefined
+        ? {}
+        : { desktopOwnerId: overrides.desktopOwnerId }),
+    };
+  });
 
 interface HarnessOptions {
-  readonly record?: DesktopServerOwnership.DesktopServerRuntimeRecord | null;
+  readonly record?: Effect.Effect<DesktopServerOwnership.DesktopServerRuntimeRecord> | null;
   readonly descriptorStatus?: number;
   readonly baseDir: string;
 }
@@ -36,13 +52,15 @@ const makeHarness = (options: HarnessOptions) =>
 
     yield* fileSystem.makeDirectory(stateDir, { recursive: true });
     if (options.record) {
-      yield* fileSystem.writeFileString(recordPath, JSON.stringify(options.record));
+      const record = yield* options.record;
+      yield* fileSystem.writeFileString(recordPath, JSON.stringify(record));
     } else {
       yield* fileSystem.remove(recordPath, { force: true });
     }
 
     const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
       baseDir: options.baseDir,
+      stateDir,
       path: { join: (...segments: ReadonlyArray<string>) => segments.join("/") },
     } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
@@ -58,11 +76,21 @@ const makeHarness = (options: HarnessOptions) =>
       ),
     );
 
+    const ownerIdentity = yield* DesktopOwnerIdentity.make.pipe(
+      Effect.provide(Layer.mergeAll(layerEnvironment, layerHttpClient, NodeServices.layer)),
+    );
     const ownership = yield* DesktopServerOwnership.make.pipe(
-      Effect.provide(Layer.mergeAll(layerEnvironment, layerHttpClient)),
+      Effect.provide(
+        Layer.mergeAll(
+          layerEnvironment,
+          layerHttpClient,
+          NodeServices.layer,
+          Layer.succeed(DesktopOwnerIdentity.DesktopOwnerIdentity, ownerIdentity),
+        ),
+      ),
     );
 
-    return { ownership, recordPath, stateDir };
+    return { ownership, ownerIdentity, recordPath, stateDir };
   });
 
 describe("DesktopServerOwnership", () => {
@@ -102,15 +130,49 @@ describe("DesktopServerOwnership", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("reports a stranded server that owns the home but does not answer", () =>
+  it.effect("reports a stranded server this desktop started", () =>
     Effect.gen(function* () {
-      const { ownership } = yield* makeHarness({
+      const { ownerIdentity } = yield* makeHarness({
         baseDir: "/tmp/t3-ownership-stranded",
+      });
+      const ownerId = yield* ownerIdentity.ownerId;
+      const { ownership: ownershipWithMarker } = yield* makeHarness({
+        baseDir: "/tmp/t3-ownership-stranded",
+        record: makeRecord({ desktopOwnerId: ownerId }),
+        descriptorStatus: 503,
+      });
+      const owner = yield* ownershipWithMarker.inspect;
+      assert.equal(owner._tag, "stranded");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("leaves a server this desktop did not start alone", () =>
+    Effect.gen(function* () {
+      // A server the user started by hand carries no desktop owner id, so
+      // the desktop must never recover it.
+      const { ownership } = yield* makeHarness({
+        baseDir: "/tmp/t3-ownership-foreign",
         record: makeRecord(),
         descriptorStatus: 503,
       });
       const owner = yield* ownership.inspect;
-      assert.equal(owner._tag, "stranded");
+      assert.equal(owner._tag, "foreign");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("leaves a server another desktop started alone", () =>
+    Effect.gen(function* () {
+      const { ownerIdentity } = yield* makeHarness({
+        baseDir: "/tmp/t3-ownership-other-desktop",
+      });
+      const ownerId = yield* ownerIdentity.ownerId;
+      const { ownership: ownershipWithMarker } = yield* makeHarness({
+        baseDir: "/tmp/t3-ownership-other-desktop",
+        record: makeRecord({ desktopOwnerId: `${ownerId}-other` }),
+        descriptorStatus: 503,
+      });
+      const owner = yield* ownershipWithMarker.inspect;
+      assert.equal(owner._tag, "foreign");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -126,7 +188,19 @@ describe("DesktopServerOwnership", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("reads the runtime record from the T3 home's userdata directory", () =>
+  it.effect("keeps the same owner id across launches", () =>
+    Effect.gen(function* () {
+      const { ownerIdentity } = yield* makeHarness({ baseDir: "/tmp/t3-ownership-owner-id" });
+      const first = yield* ownerIdentity.ownerId;
+      const { ownerIdentity: secondOwnerIdentity } = yield* makeHarness({
+        baseDir: "/tmp/t3-ownership-owner-id",
+      });
+      const second = yield* secondOwnerIdentity.ownerId;
+      assert.equal(first, second, "a later launch must recognize its own leftover");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reads the runtime record from the T3 home's state directory", () =>
     Effect.gen(function* () {
       const { ownership, recordPath } = yield* makeHarness({
         baseDir: "/tmp/t3-ownership-path",

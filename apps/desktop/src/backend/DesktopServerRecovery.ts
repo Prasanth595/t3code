@@ -14,16 +14,26 @@ const RECOVERY_POLL_INTERVAL = Duration.millis(100);
 const RECOVERY_KILL_TIMEOUT = Duration.seconds(5);
 
 /**
- * Signal a pid, reporting whether the signal was delivered. A process that
- * is already gone is not an error: that is the outcome we wanted.
+ * Signal a server's whole process group, falling back to the leader where
+ * the platform has no process groups.
+ *
+ * The desktop starts the server detached on POSIX, so the server leads its
+ * own process group. Signalling the group ends the server and the agent
+ * processes it manages, instead of leaving them behind.
  */
-const signalPid = (pid: number, signal: NodeJS.Signals): Effect.Effect<boolean> =>
+const signalProcessGroup = (pid: number, signal: NodeJS.Signals): Effect.Effect<boolean> =>
   Effect.sync(() => {
     try {
-      process.kill(pid, signal);
+      process.kill(-pid, signal);
       return true;
     } catch {
-      return false;
+      try {
+        process.kill(pid, signal);
+        return true;
+      } catch {
+        // The process is gone, which is the outcome we wanted.
+        return false;
+      }
     }
   });
 
@@ -37,11 +47,25 @@ const isProcessAlive = (pid: number): boolean => {
 };
 
 /**
- * Wait for a pid to disappear, bounded by a timeout. Returns true when the
- * process is gone.
+ * Whether any member of the server's process group is still running. A
+ * platform without process groups reports false, which leaves the leader's
+ * own liveness as the deciding check.
+ */
+const isProcessGroupAlive = (pid: number): boolean => {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Wait for the server and its process group to disappear, bounded by a
+ * timeout. Returns true when the whole tree is gone.
  */
 const waitForExit = (pid: number, timeout: Duration.Duration): Effect.Effect<boolean> =>
-  Effect.sync(() => isProcessAlive(pid)).pipe(
+  Effect.sync(() => isProcessAlive(pid) || isProcessGroupAlive(pid)).pipe(
     Effect.repeat({
       while: (alive) => alive,
       schedule: Schedule.spaced(RECOVERY_POLL_INTERVAL),
@@ -79,7 +103,7 @@ export const recoverStrandedServer = Effect.fn("desktop.serverRecovery.recoverSt
       port: input.owner.record.port,
     });
 
-    yield* signalPid(pid, "SIGTERM");
+    yield* signalProcessGroup(pid, "SIGTERM");
     const exited = yield* waitForExit(pid, RECOVERY_SIGTERM_GRACE);
     if (exited) {
       yield* logRecoveryInfo("the stranded server stopped and released the T3 home", { pid });
@@ -91,7 +115,7 @@ export const recoverStrandedServer = Effect.fn("desktop.serverRecovery.recoverSt
     yield* logRecoveryWarning("the stranded server ignored SIGTERM; escalating to SIGKILL", {
       pid,
     });
-    yield* signalPid(pid, "SIGKILL");
+    yield* signalProcessGroup(pid, "SIGKILL");
     const killed = yield* waitForExit(pid, RECOVERY_KILL_TIMEOUT);
     if (killed) {
       yield* logRecoveryInfo("the stranded server was killed and released the T3 home", { pid });

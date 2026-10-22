@@ -52,6 +52,7 @@ import * as DesktopLinuxUrlHandler from "./app/DesktopLinuxUrlHandler.ts";
 import * as DesktopShutdown from "./app/DesktopShutdown.ts";
 import * as DesktopObservability from "./app/DesktopObservability.ts";
 import * as DesktopServerExposure from "./backend/DesktopServerExposure.ts";
+import * as DesktopOwnerIdentity from "./backend/DesktopOwnerIdentity.ts";
 import * as DesktopServerOwnership from "./backend/DesktopServerOwnership.ts";
 import * as DesktopClientSettings from "./settings/DesktopClientSettings.ts";
 import * as DesktopSavedEnvironments from "./settings/DesktopSavedEnvironments.ts";
@@ -229,6 +230,7 @@ const layerDesktopClerk = DesktopClerk.layer.pipe(
 );
 
 const layerDesktopApplicationRuntime = layerDesktopApplication.pipe(
+  Layer.provideMerge(DesktopOwnerIdentity.layer),
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeHttpClient.layerUndici),
   Layer.provideMerge(NetService.layer),

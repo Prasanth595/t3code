@@ -5,9 +5,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopOwnerIdentity from "./DesktopOwnerIdentity.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 
 const ENVIRONMENT_DESCRIPTOR_PATH = "/.well-known/t3/environment";
@@ -27,6 +30,9 @@ export const DesktopServerRuntimeRecord = Schema.Struct({
   startedAt: Schema.String,
   serviceManaged: Schema.optional(Schema.Boolean),
   serverVersion: Schema.optional(Schema.String),
+  // Set when a desktop app started the server, so a later desktop launch can
+  // tell its own leftover apart from a server the user started by hand.
+  desktopOwnerId: Schema.optional(Schema.String),
 });
 export type DesktopServerRuntimeRecord = typeof DesktopServerRuntimeRecord.Type;
 
@@ -38,13 +44,13 @@ const decodeServerRuntimeRecord = Schema.decodeUnknownEffect(
  * How the recorded owner of the T3 home relates to this desktop app.
  *
  * - `none`: nobody owns the home. The desktop may start its own server.
- * - `healthy`: a server is running, serving this same T3 home, and answering
- *   its environment descriptor. The desktop must not start a second writer.
- * - `stranded`: a server is running and holds the home's ownership lock, but
- *   it is not answering. A desktop-owned server in this state is the leftover
- *   of a previous desktop run and can be recovered.
- * - `foreign`: a server owns the home and is not answering, but it is not
- *   provably this desktop's own leftover. It is left alone.
+ * - `healthy`: a server is running and answering its environment descriptor.
+ *   The desktop must not start a second writer for the same home.
+ * - `stranded`: a server this desktop started is still running and holds the
+ *   home's ownership lock, but it is not answering. It is the leftover of an
+ *   earlier desktop run and can be recovered.
+ * - `foreign`: a server owns the home and this desktop cannot prove it
+ *   started that server. It is left alone.
  */
 export type DesktopServerOwner =
   | { readonly _tag: "none" }
@@ -52,6 +58,7 @@ export type DesktopServerOwner =
       readonly _tag: "healthy";
       readonly record: DesktopServerRuntimeRecord;
       readonly httpBaseUrl: URL;
+      readonly ownedByThisDesktop: boolean;
     }
   | {
       readonly _tag: "stranded";
@@ -94,15 +101,95 @@ const isProcessAlive = (pid: number): boolean => {
   }
 };
 
+/**
+ * Whether the recorded pid still belongs to the server that wrote the
+ * record. A pid is reused once the process that held it is gone, and the
+ * record survives a server that died without clearing it. Recovering a
+ * recycled pid would signal an unrelated process, so the process start time
+ * is compared with the time the record was written.
+ *
+ * The comparison mirrors the server's own ownership check: an unreadable
+ * start time is treated as "the same process", because that is the safe
+ * direction.
+ */
+const recordedProcessStillOwns = Effect.fn("desktop.serverOwnership.recordedProcessStillOwns")(
+  function* (
+    record: DesktopServerRuntimeRecord,
+    platform: NodeJS.Platform,
+  ): Effect.fn.Return<boolean, never, ChildProcessSpawner.ChildProcessSpawner> {
+    const recordedAt = Date.parse(record.startedAt);
+    if (!Number.isFinite(recordedAt)) {
+      return true;
+    }
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const command =
+      platform === "win32"
+        ? ChildProcess.make(
+            "powershell.exe",
+            [
+              "-NoProfile",
+              "-NonInteractive",
+              "-Command",
+              `(Get-Process -Id ${record.pid} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`,
+            ],
+            { stdin: "ignore", stdout: "pipe", stderr: "ignore" },
+          )
+        : ChildProcess.make("ps", ["-p", String(record.pid), "-o", "lstart="], {
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "ignore",
+            env: { LC_ALL: "C", TZ: "UTC" },
+          });
+    const output = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const handle = yield* spawner.spawn(command);
+        const bytes = yield* Stream.runCollect(handle.stdout);
+        const exitCode = yield* handle.exitCode;
+        return { text: Buffer.concat(bytes).toString("utf8"), exitCode };
+      }),
+    ).pipe(
+      Effect.timeoutOption(Duration.seconds(2)),
+      // A probe that cannot run is not proof of anything, so the pid is
+      // treated as the same process: the desktop never signals a process it
+      // cannot identify.
+      Effect.catchCause(() => Effect.succeed(Option.none())),
+    );
+    if (Option.isNone(output)) {
+      // The probe did not answer. Treating the pid as the same process is the
+      // safe direction: the desktop never signals a process it cannot identify.
+      return true;
+    }
+    if (output.value.exitCode !== 0) {
+      // The process is gone: `ps` reports no such pid.
+      return false;
+    }
+    const text = output.value.text.trim();
+    const startedAt = Date.parse(platform === "win32" ? text : `${text} UTC`);
+    if (!Number.isFinite(startedAt)) {
+      return true;
+    }
+    // The process must have started before the record was written. A process
+    // that started later is a different one that reused the pid.
+    return startedAt <= recordedAt + 1_000;
+  },
+);
+
 const readRuntimeRecord = Effect.fn("desktop.serverOwnership.readRuntimeRecord")(function* (
   path: string,
 ): Effect.fn.Return<Option.Option<DesktopServerRuntimeRecord>, never, FileSystem.FileSystem> {
   const fileSystem = yield* FileSystem.FileSystem;
   const raw = yield* fileSystem.readFileString(path).pipe(
     Effect.matchEffect({
-      // A record we cannot read tells us nothing; treat it as absent
-      // rather than refusing to start on a guess.
-      onFailure: () => Effect.succeed(Option.none<string>()),
+      // A missing record means nobody has started a server for this home yet.
+      // Any other read failure is worth reporting: the home may be owned by a
+      // server whose record we could not read.
+      onFailure: (cause) =>
+        cause.reason._tag === "NotFound"
+          ? Effect.succeed(Option.none<string>())
+          : logOwnershipWarning("could not read the server runtime record", {
+              path,
+              cause,
+            }).pipe(Effect.as(Option.none<string>())),
       onSuccess: (contents) => Effect.succeed(Option.some(contents)),
     }),
   );
@@ -111,11 +198,17 @@ const readRuntimeRecord = Effect.fn("desktop.serverOwnership.readRuntimeRecord")
   }
   const trimmed = raw.value.trim();
   if (trimmed.length === 0) {
+    yield* logOwnershipWarning("the server runtime record is empty", { path });
     return Option.none<DesktopServerRuntimeRecord>();
   }
   const decoded = yield* decodeServerRuntimeRecord(trimmed).pipe(
     Effect.map(Option.some),
-    Effect.orElseSucceed(() => Option.none<DesktopServerRuntimeRecord>()),
+    Effect.catchCause((cause) =>
+      logOwnershipWarning("could not decode the server runtime record", {
+        path,
+        cause,
+      }).pipe(Effect.as(Option.none<DesktopServerRuntimeRecord>())),
+    ),
   );
   return decoded;
 });
@@ -148,21 +241,47 @@ const probeEnvironment = Effect.fn("desktop.serverOwnership.probeEnvironment")(f
   return true;
 });
 
+const OWNERSHIP_PROBE_ATTEMPTS = 3;
+
+/**
+ * Probe the owner more than once before calling it stranded. A server that is
+ * busy answering a long request can miss a single probe, and recovering it
+ * would interrupt work it was doing.
+ *
+ * The probes are not spaced out: a server that does not answer costs the
+ * request timeout on every attempt, so an unresponsive owner already gets
+ * several seconds of grace, while a server that answers gets a prompt
+ * verdict.
+ */
+const probeOwnerUntilAnswered = Effect.fn("desktop.serverOwnership.probeOwnerUntilAnswered")(
+  function* (httpClient: HttpClient.HttpClient, origin: string): Effect.fn.Return<boolean> {
+    for (let attempt = 1; attempt <= OWNERSHIP_PROBE_ATTEMPTS; attempt += 1) {
+      if (yield* probeEnvironment(httpClient, origin)) {
+        return true;
+      }
+    }
+    return false;
+  },
+);
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const httpClient = yield* HttpClient.HttpClient;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const ownerIdentity = yield* DesktopOwnerIdentity.DesktopOwnerIdentity;
 
   // The desktop's server writes its runtime record next to the ownership
-  // lock, in the same userdata directory the server uses.
-  const runtimeStatePath = environment.path.join(
-    environment.baseDir,
-    "userdata",
-    "server-runtime.json",
-  );
-
-  const inspect = Effect.fn("desktop.serverOwnership.inspect")(function* () {
+  // lock, in the same state directory the server uses. The desktop resolves
+  // its state directory the same way the server does, so a development
+  // desktop finds a development server's record.
+  const runtimeStatePath = environment.path.join(environment.stateDir, "server-runtime.json");
+  const inspect = Effect.fn("desktop.serverOwnership.inspect")(function* (): Effect.fn.Return<
+    DesktopServerOwner,
+    never,
+    ChildProcessSpawner.ChildProcessSpawner
+  > {
     const record = yield* readRuntimeRecord(runtimeStatePath).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
     );
@@ -177,25 +296,41 @@ export const make = Effect.gen(function* () {
       return { _tag: "none" } as const;
     }
 
-    const healthy = yield* probeEnvironment(httpClient, value.origin);
+    // A pid is reused once the process that held it is gone, and the record
+    // outlives a server that died without clearing it. Recovering a recycled
+    // pid would signal an unrelated process, so the pid must still belong to
+    // the server that wrote the record.
+    const sameProcess = yield* recordedProcessStillOwns(value, environment.platform);
+    if (!sameProcess) {
+      yield* logOwnershipInfo("the recorded server is gone; the pid was reused", {
+        pid: value.pid,
+      });
+      return { _tag: "none" } as const;
+    }
+
+    // Only a server this desktop started may be recovered. A server the user
+    // started by hand, or a background service runs, is not ours to signal.
+    const ourOwnerId = yield* ownerIdentity.ownerId;
+    const ownedByThisDesktop = value.desktopOwnerId === ourOwnerId;
+
+    const healthy = yield* probeOwnerUntilAnswered(httpClient, value.origin);
     if (healthy) {
       yield* logOwnershipInfo("a server already owns this T3 home", {
         pid: value.pid,
         port: value.port,
         origin: value.origin,
+        ownedByThisDesktop,
       });
       return {
         _tag: "healthy",
         record: value,
         httpBaseUrl: new URL(value.origin),
+        ownedByThisDesktop,
       } as const;
     }
 
-    // The owner is alive but not answering. A service-managed server is
-    // expected to be supervised, and a user-started server is not ours to
-    // touch. Only a server this desktop started is ours to recover.
-    if (value.serviceManaged === true) {
-      yield* logOwnershipWarning("a background service owns this T3 home and is not answering", {
+    if (!ownedByThisDesktop) {
+      yield* logOwnershipWarning("another server owns this T3 home and is not answering", {
         pid: value.pid,
       });
       return { _tag: "foreign", record: value } as const;
@@ -205,7 +340,11 @@ export const make = Effect.gen(function* () {
   });
 
   return DesktopServerOwnership.of({
-    inspect: inspect(),
+    // The spawner requirement is resolved here, so callers of the service
+    // never have to provide it.
+    inspect: inspect().pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    ),
     runtimeStatePath: Effect.succeed(runtimeStatePath),
   });
 });

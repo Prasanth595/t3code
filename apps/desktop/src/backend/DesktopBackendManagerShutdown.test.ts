@@ -2,9 +2,11 @@
 // stop escalation ends the backend and its process group. The fixtures are isolated temporary
 // scripts; no desktop session or user state is touched.
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Layer from "effect/Layer";
@@ -14,8 +16,6 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import * as Schema from "effect/Schema";
-
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
@@ -23,16 +23,17 @@ import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 
 /**
- * A fixture that has not announced itself yet.
+ * The fixtures announce themselves on stdout and record every event in a
+ * file. The announcement is the milestone the test waits for, and the file
+ * keeps the record of a signal the manager's output drain may not deliver,
+ * because the drain is interrupted by the same scope close that stops the
+ * backend.
  */
-class FixtureNotReadyError extends Schema.TaggedError<FixtureNotReadyError>()(
-  "FixtureNotReadyError",
-  {},
-) {
-  override get message(): string {
-    return "The backend fixture has not announced itself yet.";
-  }
-}
+const FIXTURE_PRELUDE = [
+  'import * as NodeFS from "node:fs";',
+  "const log = (m) => NodeFS.appendFileSync(process.env.FIXTURE_LOG, m + String.fromCharCode(10));",
+  "const announce = (m) => process.stdout.write(m + String.fromCharCode(10));",
+];
 
 /**
  * A backend that ignores SIGTERM, like one wedged in a long provider call.
@@ -40,11 +41,13 @@ class FixtureNotReadyError extends Schema.TaggedError<FixtureNotReadyError>()(
  * quit and keeps holding the T3 home's ownership lock.
  */
 const STUBBORN_BACKEND_SOURCE = [
-  'import * as NodeFS from "node:fs";',
-  'const log = (m) => NodeFS.writeSync(NodeFS.openSync(process.env.FIXTURE_LOG, "a"), m + String.fromCharCode(10));',
-  'log("started pid=" + process.pid);',
-  'process.on("SIGTERM", () => log("SIGTERM"));',
-  'process.on("SIGINT", () => log("SIGINT"));',
+  ...FIXTURE_PRELUDE,
+  'process.on("SIGTERM", () => log("sigterm"));',
+  'process.on("SIGINT", () => log("sigint"));',
+  // The announcement comes after the handlers are installed, so a test that
+  // saw it knows the backend can act on a signal.
+  'log("ready pid=" + process.pid);',
+  'announce("ready pid=" + process.pid);',
   "setInterval(() => {}, 200);",
   "",
 ].join("\n");
@@ -54,14 +57,13 @@ const STUBBORN_BACKEND_SOURCE = [
  * whole process group down, or the child outlives the quit.
  */
 const CHILD_BACKEND_SOURCE = [
-  'import * as NodeFS from "node:fs";',
+  ...FIXTURE_PRELUDE,
   'import { spawn } from "node:child_process";',
-  'const log = (m) => NodeFS.writeSync(NodeFS.openSync(process.env.FIXTURE_LOG, "a"), m + String.fromCharCode(10));',
-  'log("started pid=" + process.pid);',
   'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
-  'log("child pid=" + child.pid);',
-  'process.on("SIGTERM", () => log("SIGTERM"));',
-  'process.on("SIGINT", () => log("SIGINT"));',
+  'process.on("SIGTERM", () => log("sigterm"));',
+  'process.on("SIGINT", () => log("sigint"));',
+  'log("ready pid=" + process.pid + " child pid=" + child.pid);',
+  'announce("ready pid=" + process.pid);',
   "setInterval(() => {}, 200);",
   "",
 ].join("\n");
@@ -70,29 +72,29 @@ const CHILD_BACKEND_SOURCE = [
  * A backend that shuts down cleanly on SIGTERM, like a real one does.
  */
 const COOPERATIVE_BACKEND_SOURCE = [
-  'import * as NodeFS from "node:fs";',
-  'const log = (m) => NodeFS.writeSync(NodeFS.openSync(process.env.FIXTURE_LOG, "a"), m + String.fromCharCode(10));',
-  'log("started pid=" + process.pid);',
-  'process.on("SIGTERM", () => { log("SIGTERM"); process.exit(0); });',
-  "setInterval(() => {}, 200);",
+  ...FIXTURE_PRELUDE,
+  // The timer is cleared instead of calling process.exit, so the process ends
+  // on its own and the file write is not cut short.
+  "const timer = setInterval(() => {}, 200);",
+  'process.on("SIGTERM", () => { log("sigterm"); clearInterval(timer); });',
+  'log("ready pid=" + process.pid);',
+  'announce("ready pid=" + process.pid);',
   "",
 ].join("\n");
 
-interface Fixture {
-  readonly script: string;
-  readonly log: string;
+/**
+ * A backend that has not announced itself yet.
+ */
+class FixtureNotReadyError extends Schema.TaggedError<FixtureNotReadyError>()(
+  "FixtureNotReadyError",
+  {},
+) {
+  override get message(): string {
+    return "The backend fixture did not start in time.";
+  }
 }
 
-const writeBackendScript = (source: string): Fixture => {
-  const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-backend-fixture-"));
-  const script = NodePath.join(dir, "backend.mjs");
-  const log = NodePath.join(dir, "fixture.log");
-  NodeFS.writeFileSync(script, source);
-  return { script, log };
-};
-
-const readFixtureLog = (logPath: string): string =>
-  NodeFS.existsSync(logPath) ? NodeFS.readFileSync(logPath, "utf8") : "";
+const FIXTURE_STARTUP_TIMEOUT = Duration.seconds(30);
 
 const isProcessAlive = (pid: number): boolean => {
   try {
@@ -103,27 +105,27 @@ const isProcessAlive = (pid: number): boolean => {
   }
 };
 
+const readFixtureLog = (logPath: string): string =>
+  NodeFS.existsSync(logPath) ? NodeFS.readFileSync(logPath, "utf8") : "";
+
 const pidFromLog = (log: string, label: string): number => {
   const match = new RegExp(`${label} pid=(\\d+)`).exec(log);
   return match === null ? -1 : Number.parseInt(match[1] ?? "", 10);
 };
 
 /**
- * Wait for the fixture to announce itself by writing its first log line. The
- * fixture's write is the milestone, so the test never sleeps on a guess.
+ * Wait for the fixture to announce itself on stdout. The announcement is the
+ * milestone, so the test never sleeps on a guess, and a fixture that never
+ * starts fails the test instead of looking like a stopped one.
  */
-const awaitFixtureLog = (
-  logPath: string,
-  predicate: (log: string) => boolean = (log) => log.length > 0,
-): Effect.Effect<string> =>
-  Effect.sync(() => readFixtureLog(logPath)).pipe(
-    Effect.flatMap((log) =>
-      predicate(log)
-        ? Effect.succeed(log)
-        : Effect.yieldNow.pipe(Effect.andThen(Effect.fail(new FixtureNotReadyError()))),
+const awaitFixtureReady = (
+  ready: Deferred.Deferred<void>,
+): Effect.Effect<void, FixtureNotReadyError> =>
+  Deferred.await(ready).pipe(
+    Effect.timeoutOption(FIXTURE_STARTUP_TIMEOUT),
+    Effect.flatMap((result) =>
+      Option.isSome(result) ? Effect.void : Effect.fail(new FixtureNotReadyError()),
     ),
-    Effect.retry({ times: 5_000 }),
-    Effect.catchCause(() => Effect.succeed(readFixtureLog(logPath))),
   );
 
 /** Wait for the manager to record the spawned backend's pid. */
@@ -133,13 +135,32 @@ const awaitBackendPid = (
   instance.snapshot.pipe(
     Effect.map((snapshot) => snapshot.activePid),
     Effect.flatMap((pid) =>
-      Option.isSome(pid)
-        ? Effect.succeed(pid.value)
-        : Effect.yieldNow.pipe(Effect.andThen(Effect.fail(new FixtureNotReadyError()))),
+      Option.isSome(pid) ? Effect.succeed(pid.value) : Effect.fail(new FixtureNotReadyError()),
     ),
-    Effect.retry({ times: 5_000 }),
-    Effect.catchCause(() => Effect.succeed(-1)),
+    Effect.retry({ while: () => true }),
+    Effect.timeoutOption(FIXTURE_STARTUP_TIMEOUT),
+    Effect.flatMap((result) =>
+      Option.isSome(result)
+        ? Effect.succeed(result.value)
+        : Effect.fail(new FixtureNotReadyError()),
+    ),
   );
+
+interface Fixture {
+  readonly script: string;
+  readonly log: string;
+  /** Completes when the fixture announces itself on stdout. */
+  readonly ready: Deferred.Deferred<void>;
+}
+
+const writeBackendScript = (source: string): Effect.Effect<Fixture> =>
+  Effect.gen(function* () {
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-backend-fixture-"));
+    const script = NodePath.join(dir, "backend.mjs");
+    const log = NodePath.join(dir, "fixture.log");
+    NodeFS.writeFileSync(script, source);
+    return { script, log, ready: yield* Deferred.make<void>() };
+  });
 
 const makeTestInstance = (
   fixture: Fixture,
@@ -185,7 +206,12 @@ const makeTestInstance = (
           forInstance: () =>
             Effect.succeed({
               beginSession: () => Effect.void,
-              writeOutputChunk: () => Effect.void,
+              // The fixture announces itself on stdout, so its output is the
+              // test's milestone.
+              writeOutputChunk: (_streamName, chunk) =>
+                new TextDecoder().decode(chunk).includes("ready pid=")
+                  ? Deferred.succeed(fixture.ready, undefined).pipe(Effect.ignore)
+                  : Effect.void,
               persistFailureSnapshot: () => Effect.void,
               persistFailure: () => Effect.void,
               discardSession: Effect.void,
@@ -211,12 +237,12 @@ const makeTestInstance = (
 describe("DesktopBackendManager stop budget", () => {
   it.live("escalates a backend that ignores SIGTERM to SIGKILL", () =>
     Effect.gen(function* () {
-      const fixture = writeBackendScript(STUBBORN_BACKEND_SOURCE);
+      const fixture = yield* writeBackendScript(STUBBORN_BACKEND_SOURCE);
       const instance = yield* makeTestInstance(fixture);
 
       yield* instance.start;
       const pid = yield* awaitBackendPid(instance);
-      yield* awaitFixtureLog(fixture.log);
+      yield* awaitFixtureReady(fixture.ready);
       assert.isTrue(isProcessAlive(pid), "the backend must be running before the stop");
 
       yield* instance.stop({ timeout: DesktopBackendManager.DEFAULT_BACKEND_STOP_TIMEOUT });
@@ -227,7 +253,7 @@ describe("DesktopBackendManager stop budget", () => {
       );
       assert.include(
         readFixtureLog(fixture.log),
-        "SIGTERM",
+        "sigterm",
         "the stop must try the graceful signal first",
       );
     }),
@@ -235,12 +261,12 @@ describe("DesktopBackendManager stop budget", () => {
 
   it.live("kills a backend that outlives the stop's own budget", () =>
     Effect.gen(function* () {
-      const fixture = writeBackendScript(STUBBORN_BACKEND_SOURCE);
+      const fixture = yield* writeBackendScript(STUBBORN_BACKEND_SOURCE);
       const instance = yield* makeTestInstance(fixture);
 
       yield* instance.start;
       const pid = yield* awaitBackendPid(instance);
-      yield* awaitFixtureLog(fixture.log);
+      yield* awaitFixtureReady(fixture.ready);
 
       // A budget shorter than the backend's own force-stop budget: the
       // graceful path cannot finish inside it, so the stop has to escalate
@@ -257,16 +283,13 @@ describe("DesktopBackendManager stop budget", () => {
 
   it.live("takes down a backend's child processes with it", () =>
     Effect.gen(function* () {
-      const fixture = writeBackendScript(CHILD_BACKEND_SOURCE);
+      const fixture = yield* writeBackendScript(CHILD_BACKEND_SOURCE);
       const instance = yield* makeTestInstance(fixture);
 
       yield* instance.start;
       const pid = yield* awaitBackendPid(instance);
-      const log = yield* awaitFixtureLog(
-        fixture.log,
-        (content) => pidFromLog(content, "child") > 0,
-      );
-      const childPid = pidFromLog(log, "child");
+      yield* awaitFixtureReady(fixture.ready);
+      const childPid = pidFromLog(readFixtureLog(fixture.log), "child");
       assert.isTrue(childPid > 0, "the fixture must have started a child");
       assert.isTrue(isProcessAlive(childPid), "the child must be running before the stop");
 
@@ -282,19 +305,19 @@ describe("DesktopBackendManager stop budget", () => {
 
   it.live("leaves a cooperative backend alone once it has exited", () =>
     Effect.gen(function* () {
-      const fixture = writeBackendScript(COOPERATIVE_BACKEND_SOURCE);
+      const fixture = yield* writeBackendScript(COOPERATIVE_BACKEND_SOURCE);
       const instance = yield* makeTestInstance(fixture);
 
       yield* instance.start;
       const pid = yield* awaitBackendPid(instance);
-      yield* awaitFixtureLog(fixture.log);
+      yield* awaitFixtureReady(fixture.ready);
 
       yield* instance.stop({ timeout: DesktopBackendManager.DEFAULT_BACKEND_STOP_TIMEOUT });
 
       assert.isFalse(isProcessAlive(pid), "the backend must be gone");
       const log = readFixtureLog(fixture.log);
-      assert.include(log, "SIGTERM", "the stop must send the graceful signal");
-      assert.notInclude(log, "SIGINT", "the stop must not escalate for a cooperative backend");
+      assert.include(log, "sigterm", "the stop must send the graceful signal");
+      assert.notInclude(log, "sigint", "the stop must not escalate for a cooperative backend");
     }),
   );
 });

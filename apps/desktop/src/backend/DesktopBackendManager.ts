@@ -301,24 +301,32 @@ const calculateRestartDelay = (attempt: number): Duration.Duration =>
   Duration.min(Duration.times(INITIAL_RESTART_DELAY, 2 ** attempt), MAX_RESTART_DELAY);
 
 /**
- * Signal a pid, ignoring a process that is already gone.
+ * Signal a backend's whole process group.
+ *
+ * The desktop spawns the backend detached on POSIX, so the backend leads its
+ * own process group and the group is what has to go. A managed descendant
+ * that survived the graceful signal would otherwise keep running after the
+ * desktop quit, and the group id is what the spawner's own finalizer targets.
+ *
+ * Falls back to the leader where the platform has no process groups, which is
+ * the case on Windows, where the spawner's finalizer kills the tree.
  *
  * Only ever called with a pid this manager captured at spawn: a pid read back
  * from a file could have been recycled by an unrelated process.
  */
-const signalPid = (pid: number, signal: NodeJS.Signals): Effect.Effect<boolean> =>
+const signalProcessGroup = (pid: number, signal: NodeJS.Signals): Effect.Effect<boolean> =>
   Effect.sync(() => {
     try {
-      process.kill(pid, signal);
+      process.kill(-pid, signal);
       return true;
-    } catch (error) {
-      // ESRCH: the process is gone, which is the outcome we wanted.
-      if (error instanceof Error && "code" in error && error.code === "ESRCH") {
+    } catch {
+      try {
+        process.kill(pid, signal);
+        return true;
+      } catch {
+        // The process is gone, which is the outcome we wanted.
         return false;
       }
-      // EPERM means the process exists but belongs to another user, so it is
-      // not ours to signal.
-      return false;
     }
   });
 
@@ -333,16 +341,30 @@ const isProcessAlive = (pid: number): boolean => {
 };
 
 /**
- * Wait for a pid to disappear, bounded by a timeout. Returns true when the
- * process is gone.
+ * Whether any member of the backend's process group is still running. A
+ * platform without process groups reports false, which leaves the leader's
+ * own liveness as the deciding check.
  */
-const waitForProcessExit = (pid: number, timeout: Duration.Duration): Effect.Effect<boolean> =>
-  Effect.sync(() => isProcessAlive(pid)).pipe(
+const isProcessGroupAlive = (pid: number): boolean => {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Wait for the backend and its process group to disappear, bounded by a
+ * timeout. Returns true when the whole tree is gone.
+ */
+const waitForProcessTreeExit = (pid: number, timeout: Duration.Duration): Effect.Effect<boolean> =>
+  Effect.sync(() => isProcessAlive(pid) || isProcessGroupAlive(pid)).pipe(
     Effect.repeat({
       while: (alive) => alive,
       schedule: Schedule.spaced(DEFAULT_BACKEND_KILL_POLL_INTERVAL),
     }),
-    // The last value is the process's liveness at the moment the wait ended:
+    // The last value is the tree's liveness at the moment the wait ended:
     // false means it exited, and a timeout means it is still running.
     Effect.timeoutOption(timeout),
     Effect.map((result) => Option.isSome(result) && !result.value),
@@ -375,12 +397,12 @@ const closeRun = (
  * Stop a run and make sure the backend process is really gone.
  *
  * The scope close is the graceful path: it runs the spawner's finalizer,
- * which sends SIGTERM and escalates to SIGKILL after the backend's own
- * force-stop budget. The outer wait can expire before that escalation has
- * finished, so a run that outlives its budget is force-killed here by the pid
- * the manager captured at spawn.
+ * which sends SIGTERM to the backend's process group and escalates to SIGKILL
+ * after the backend's own force-stop budget. The outer wait can expire before
+ * that escalation has finished, so a run that outlives its budget is
+ * force-killed here by the pid the manager captured at spawn.
  *
- * Returns true when the backend process is gone.
+ * Returns true when the backend and the process group it leads are gone.
  */
 const stopRun = Effect.fn("desktop.backendManager.stopRun")(function* (
   run: ActiveBackendRun,
@@ -398,15 +420,16 @@ const stopRun = Effect.fn("desktop.backendManager.stopRun")(function* (
   if (pid === undefined) {
     return false;
   }
-  if (!isProcessAlive(pid)) {
+  if (!isProcessAlive(pid) && !isProcessGroupAlive(pid)) {
     return true;
   }
 
-  // The graceful path did not finish in time. SIGKILL is the same
-  // escalation the spawner would have made, so the backend cannot keep
-  // holding the T3 home's ownership lock.
-  yield* signalPid(pid, "SIGKILL");
-  const exited = yield* waitForProcessExit(pid, DEFAULT_BACKEND_KILL_TIMEOUT);
+  // The graceful path did not finish in time. SIGKILL is the same escalation
+  // the spawner would have made, so the backend cannot keep holding the T3
+  // home's ownership lock. The whole group is signalled, so a managed
+  // descendant cannot outlive the backend.
+  yield* signalProcessGroup(pid, "SIGKILL");
+  const exited = yield* waitForProcessTreeExit(pid, DEFAULT_BACKEND_KILL_TIMEOUT);
   return exited;
 });
 

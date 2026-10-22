@@ -223,15 +223,28 @@ const bootstrap = Effect.gen(function* () {
         "bootstrap could not stop the stranded server owning this T3 home",
       );
     }
-  } else if (owner._tag === "healthy") {
-    yield* logBootstrapInfo("bootstrap found a healthy server already owning this T3 home", {
+  } else if (owner._tag === "healthy" || owner._tag === "foreign") {
+    // A server already owns this T3 home. Starting a second one would fail on
+    // the same ownership lock, so the desktop does not try: it reports the
+    // owner instead.
+    const responding = owner._tag === "healthy";
+    const ownedByThisDesktop = owner._tag === "healthy" && owner.ownedByThisDesktop;
+    yield* logBootstrapInfo("bootstrap found a server already owning this T3 home", {
       pid: owner.record.pid,
       origin: owner.record.origin,
+      responding,
+      ownedByThisDesktop,
     });
-  } else if (owner._tag === "foreign") {
-    yield* logBootstrapInfo("bootstrap found another server owning this T3 home", {
-      pid: owner.record.pid,
-    });
+    const electronDialog = yield* ElectronDialog.ElectronDialog;
+    const electronApp = yield* ElectronApp.ElectronApp;
+    yield* electronDialog.showErrorBox(
+      "This T3 home is already in use",
+      responding
+        ? `A T3 Code server is already running for this T3 home (${owner.record.origin}). The desktop did not start a second server for the same home, so it cannot open the local environment.\n\nTo use that server, turn off Settings > Connections > Local environment and add it as a saved environment. To let the desktop run its own server instead, stop that server and reopen T3 Code.`
+        : `Another T3 Code server owns this T3 home and is not responding (${owner.record.origin}). The desktop did not start a second server for the same home.\n\nStop that server and reopen T3 Code, or turn off Settings > Connections > Local environment and add a running server as a saved environment.`,
+    );
+    yield* electronApp.quit;
+    return;
   }
 
   const backendPortSelection = yield* resolveDesktopBackendPort(environment.configuredBackendPort);

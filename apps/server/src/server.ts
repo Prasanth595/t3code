@@ -767,6 +767,7 @@ const layerMakeServer = Layer.unwrap(
           config,
           port: address.port,
           serviceManaged: launcher.managed,
+          desktopOwnerId: config.desktopOwnerId,
         });
         yield* ownership
           .publish(state)
