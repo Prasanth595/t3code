@@ -42,7 +42,7 @@ import type { State } from "./domain/lifecycle.ts";
 import { ledgerCall as ledger, type LedgerError } from "./ledger/errors.ts";
 import { makeCause, type CauseStep, type ErrorKind, type MachineEvent } from "./ledger/events.ts";
 import { Ledger } from "./ledger/ledger.ts";
-import { listUnfinishedRuns, runsByWorktree } from "./ledger/listRuns.ts";
+import { listUnfinishedRuns, runsByThread } from "./ledger/listRuns.ts";
 import { readRun } from "./ledger/read.ts";
 import { runIdToString, type RunId } from "./ledger/runId.ts";
 import {
@@ -401,6 +401,8 @@ export const liveWorld = (
 ): Omit<PassWorld, "watchedRepos" | "freeSpace"> => {
   const withProcess = <A, E>(effect: Effect.Effect<A, E, FactoryProcess>) =>
     Effect.provideService(effect, FactoryProcess, process);
+  // Threads on a broken worktree that no run's session was on: a person's, never unbound.
+  const notFactory = new Set<string>();
   const githubFor = (watched: WatchedRepo) =>
     makeGitHub({ repo: watched.repo, ghConfigDir: machine.ghConfigDir });
   const trackerFor = (watched: WatchedRepo) => bindProcess(githubFor(watched), process);
@@ -648,24 +650,26 @@ export const liveWorld = (
     feedback: (repo, run, base) => feedback(gateContext(repo, runProject(repo.project, base)), run),
     recordError,
     handPause: () => loadHandPause(dataDir),
-    // Only a thread on a worktree a run launched is the factory's to unbind. The ledger is read
-    // only while T3 has a thread on a broken worktree at all.
+    // Only a thread on the worktree of a run's session is the factory's to unbind, and only once
+    // the run is finished: an unfinished run's own stop archives what is on its worktree. The
+    // ledger is read only while T3 has such a thread it has not ruled out before.
     brokenWorktrees: () =>
       sessions.brokenWorktrees.pipe(
         Effect.mapError(asPassError("t3")),
-        Effect.flatMap((broken) =>
-          broken.length === 0
-            ? Effect.succeed([])
-            : ledger(() => runsByWorktree(dataDir)).pipe(
-                Effect.mapError(asPassError("ledger")),
-                Effect.map((runs) =>
-                  broken.flatMap((thread) => {
-                    const run = runs.get(thread.worktreePath);
-                    return run === undefined ? [] : [{ ...thread, run }];
-                  }),
-                ),
-              ),
-        ),
+        Effect.flatMap((found) => {
+          const broken = found.filter((thread) => !notFactory.has(thread.threadId));
+          if (broken.length === 0) return Effect.succeed([]);
+          return ledger(() => runsByThread(dataDir)).pipe(
+            Effect.mapError(asPassError("ledger")),
+            Effect.map((runs) =>
+              broken.flatMap(({ threadId, worktreePath, threadsOnPath }) => {
+                const owner = threadsOnPath.map((id) => runs.get(id)).find((r) => r !== undefined);
+                if (owner === undefined) notFactory.add(threadId);
+                return owner?.finished === true ? [{ threadId, worktreePath, run: owner.run }] : [];
+              }),
+            ),
+          );
+        }),
       ),
     unbindWorktree: (threadId, worktreePath) =>
       sessions.unbindWorktree(threadId, worktreePath).pipe(Effect.mapError(asPassError("t3"))),

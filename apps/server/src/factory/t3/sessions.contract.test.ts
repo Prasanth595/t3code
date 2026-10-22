@@ -184,7 +184,7 @@ it.live(
           // What a removal stopped partway leaves: the folder, without its checkout.
           yield* fs.remove(path.join(worktreePath, ".git"));
           assert.deepStrictEqual(yield* sessions.brokenWorktrees, [
-            { threadId: launched.threadId, worktreePath },
+            { threadId: launched.threadId, worktreePath, threadsOnPath: [launched.threadId] },
           ]);
 
           yield* sessions.unbindWorktree(launched.threadId, worktreePath);
