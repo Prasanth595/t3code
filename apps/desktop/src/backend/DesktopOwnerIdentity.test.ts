@@ -163,21 +163,19 @@ describe("DesktopOwnerIdentity", () => {
       const reads = yield* Ref.make(0);
       const identity = yield* DesktopOwnerIdentity.make.pipe(
         Effect.provide(
-          Layer.mergeAll(
-            layerEnvironment,
-            layerFailingFileSystem({ writeFails: true, reads }),
-            NodeCrypto.layer,
-          ),
+          Layer.mergeAll(layerEnvironment, layerFailingFileSystem({ reads }), NodeCrypto.layer),
         ),
       );
 
       // The ownership check and the bootstrap configuration both read the
-      // identity, and they have to agree on it.
-      const first = yield* identity.ownerId.pipe(Effect.result);
-      const second = yield* identity.ownerId.pipe(Effect.result);
+      // identity, and they have to agree on it. A second read that reached
+      // the file would generate a different identity, because the file is
+      // still missing.
+      const first = yield* identity.ownerId;
+      const second = yield* identity.ownerId;
 
-      assert.equal(first._tag, "Failure");
-      assert.equal(second._tag, "Failure");
+      assert.isTrue(first.trim().length > 0, "the identity must not be empty");
+      assert.equal(second, first, "both consumers must see the same identity");
       assert.equal(yield* Ref.get(reads), 1, "the identity must be read once per launch");
     }),
   );
