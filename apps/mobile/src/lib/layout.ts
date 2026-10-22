@@ -29,6 +29,8 @@ export function deriveThreadArrangementSizing(input: {
     MOBILE_TYPOGRAPHY.footnote,
     input.baseFontSize,
   );
+  // Two body lines and one footnote line plus the padding the original fixed rows had:
+  // at the default text size these are exactly the old 56pt rows and 48pt headers.
   return {
     rowHeight: Math.max(56, Math.ceil(2 * bodyLineHeight * input.fontScale) + 10),
     headerHeight: Math.max(48, Math.ceil(headerLineHeight * input.fontScale) + 24),
@@ -73,6 +75,8 @@ export interface Layout {
 
 export interface WorkspacePaneLayout {
   readonly primarySidebarVisible: boolean;
+  /** Whether the sidebar shows once a collapsed split expands; independent of the current width. */
+  readonly primarySidebarWhenExpanded: boolean;
   readonly primarySidebarSuppressedByAuxiliary: boolean;
   readonly contentPaneWidth: number;
   readonly supportsAuxiliaryPane: boolean;
@@ -230,6 +234,7 @@ export function deriveWorkspacePaneLayout(input: {
 
     return {
       primarySidebarVisible,
+      primarySidebarWhenExpanded: input.primarySidebarPreferredVisible,
       primarySidebarSuppressedByAuxiliary,
       contentPaneWidth: Math.max(0, viewportWidth - primarySidebarWidth),
       supportsAuxiliaryPane: fileInspector.supported,
@@ -250,6 +255,7 @@ export function deriveWorkspacePaneLayout(input: {
 
   return {
     primarySidebarVisible: preferredPrimarySidebarVisible,
+    primarySidebarWhenExpanded: input.primarySidebarPreferredVisible,
     primarySidebarSuppressedByAuxiliary: false,
     contentPaneWidth,
     supportsAuxiliaryPane,
