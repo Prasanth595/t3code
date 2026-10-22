@@ -16,7 +16,7 @@ describe("adding usage limit sources", () => {
       [`${secondUrl}/extra`, "Third hub", "third-key"],
     ] as const;
     for (const [url, label, managementKey] of sources) {
-      const id = sourceIdFromUrl(url, new Set(Object.keys(settings.usageLimitSources)));
+      const id = sourceIdFromUrl(url, settings.usageLimitSources);
       settings = applyServerSettingsPatch(settings, {
         usageLimitSources: {
           [id]: { kind: "cliproxy", url, label, managementKey, enabled: true },
@@ -54,7 +54,7 @@ describe("adding usage limit sources", () => {
       const url = "http://proxy.test:8318/hub-a";
       settings = applyServerSettingsPatch(settings, {
         usageLimitSources: {
-          [sourceIdFromUrl(url, new Set(Object.keys(settings.usageLimitSources)))]: {
+          [sourceIdFromUrl(url, settings.usageLimitSources)]: {
             kind: "cliproxy",
             url,
             managementKey,

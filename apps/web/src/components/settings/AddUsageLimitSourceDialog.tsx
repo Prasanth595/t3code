@@ -49,7 +49,7 @@ export function AddUsageLimitSourceDialog({
 
   const save = () => {
     if (!canSave) return;
-    const id = sourceIdFromUrl(trimmedUrl, new Set(Object.keys(sources)));
+    const id = sourceIdFromUrl(trimmedUrl, sources);
     updateSettings({
       usageLimitSources: {
         [id]: {
