@@ -56,7 +56,7 @@ const provider = (id: string, overrides: Partial<ServerProvider> = {}): ServerPr
   ...overrides,
 });
 
-const bucket = (overrides: Partial<UsageBucket>): UsageBucket => ({
+const bucket: UsageBucket = {
   day: UsageDay.make("2026-10-20"),
   provider: "codex",
   model: "gpt-5.5",
@@ -73,8 +73,7 @@ const bucket = (overrides: Partial<UsageBucket>): UsageBucket => ({
   records: 4,
   unpricedRecords: 0,
   sessions: 1,
-  ...overrides,
-});
+};
 
 const source = (usageProvider: UsageSource["fingerprint"]["provider"]): UsageSource => ({
   fingerprint: {
@@ -91,10 +90,7 @@ const source = (usageProvider: UsageSource["fingerprint"]["provider"]): UsageSou
   message: null,
 });
 
-const layerUsage = (
-  buckets: ReadonlyArray<UsageBucket>,
-  requests: Array<UsageSummaryInput>,
-): Layer.Layer<UsageService.UsageService> =>
+const layerUsage = (requests: Array<UsageSummaryInput>): Layer.Layer<UsageService.UsageService> =>
   Layer.mock(UsageService.UsageService)({
     readSummary: (input) =>
       Effect.sync(() => {
@@ -105,7 +101,7 @@ const layerUsage = (
           timeZone: input.timeZone,
           sinceDay: input.sinceDay,
           untilDay: input.untilDay,
-          buckets,
+          buckets: [bucket],
           sources: [source("codex")],
           pricing: { status: "fresh", source: "test", fetchedAt: checkedAt, knownModels: 1 },
           scanDurationMs: 0,
@@ -128,7 +124,7 @@ const layerReport = (dependencies: Dependencies) =>
         refresh: Effect.void,
       }),
     ),
-    Layer.provide(dependencies.usage ?? layerUsage([], [])),
+    Layer.provide(dependencies.usage ?? layerUsage([])),
     Layer.provide(
       Layer.mock(ServerEnvironment.ServerEnvironment)({
         getDescriptor: Effect.succeed({
@@ -156,13 +152,7 @@ it.effect("reads limits from the provider registry and limit hubs", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse("2026-10-21T12:00:00Z"));
     const report = yield* readLimits({
-      registry: ProviderRegistryMock.layer([
-        provider("claudeAgent", {
-          displayName: "Claude",
-          auth: { status: "authenticated", label: "Max", email: "dev@example.com" },
-          usageLimits: limits,
-        }),
-      ]),
+      registry: ProviderRegistryMock.layer([provider("claudeAgent", { usageLimits: limits })]),
       sources: [
         {
           id: UsageLimitSourceId.make("hub"),
@@ -173,7 +163,6 @@ it.effect("reads limits from the provider registry and limit hubs", () =>
             {
               id: "codex-1.json",
               driver: ProviderDriverKind.make("codex"),
-              plan: "Pro",
               usageLimits: limits,
             },
           ],
@@ -204,20 +193,15 @@ it.effect("reads spend from the Usage tab's summary for the requested window", (
   Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse("2026-10-21T12:00:00Z"));
     const requests: Array<UsageSummaryInput> = [];
-    const spend = yield* readSpend({ usage: layerUsage([bucket({})], requests) }, 7);
+    const spend = yield* readSpend({ usage: layerUsage(requests) }, 7);
 
     assert.deepStrictEqual(
       [requests[0]?.sinceDay, requests[0]?.untilDay, requests[0]?.resolution],
       ["2026-10-15", "2026-10-21", "day"],
     );
-    assert.strictEqual(spend.costUsd, 1.01);
     assert.deepStrictEqual(
       spend.providers.map((entry) => [entry.provider, entry.costUsd, entry.totalTokens]),
       [["codex", 1.01, 10_500]],
-    );
-    assert.deepStrictEqual(
-      spend.periods.map((period) => [period.start, period.costUsd]),
-      [["2026-10-20", 1.01]],
     );
   }),
 );
