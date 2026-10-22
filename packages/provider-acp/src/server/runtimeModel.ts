@@ -832,6 +832,9 @@ function makeToolCallState(
   },
   options?: {
     readonly fallbackStatus?: "pending" | "inProgress" | "completed" | "failed";
+    // Compaction summaries reuse this state but are not cumulative tool output,
+    // so they keep their whole text instead of the tail window.
+    readonly keepWholeRawOutput?: boolean;
   },
 ): AcpToolCallState | undefined {
   const toolCallId = input.toolCallId.trim();
@@ -870,7 +873,9 @@ function makeToolCallState(
     data.meta = input._meta;
   }
   if (input.rawOutput !== undefined) {
-    data.rawOutput = boundToolCallRawOutput(input.rawOutput);
+    data.rawOutput = options?.keepWholeRawOutput
+      ? input.rawOutput
+      : boundToolCallRawOutput(input.rawOutput);
   }
   if (input.content != null) {
     data.content = sanitizeAcpToolCallContent(extractedContent.content ?? input.content);
@@ -1541,14 +1546,17 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
           : upd.status === "failed" || upd.status === "cancelled"
             ? ("failed" as const)
             : ("inProgress" as const);
-      const toolCall = makeToolCallState({
-        toolCallId: `acp-compaction:${upd.compactionId}`,
-        title: "Compact context",
-        kind: "think",
-        status,
-        rawOutput: (upd.error ?? summary) || undefined,
-        _meta: upd._meta,
-      });
+      const toolCall = makeToolCallState(
+        {
+          toolCallId: `acp-compaction:${upd.compactionId}`,
+          title: "Compact context",
+          kind: "think",
+          status,
+          rawOutput: (upd.error ?? summary) || undefined,
+          _meta: upd._meta,
+        },
+        { keepWholeRawOutput: true },
+      );
       if (toolCall !== undefined) {
         events.push({ _tag: "ToolCallUpdated", toolCall, rawPayload: params });
       }
@@ -1556,14 +1564,17 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
     }
     case "compaction_summary_chunk": {
       const text = acpContentBlockDisplayText(upd.content);
-      const toolCall = makeToolCallState({
-        toolCallId: `acp-compaction:${upd.compactionId}`,
-        title: "Compact context",
-        kind: "think",
-        status: "inProgress",
-        ...(text === undefined ? {} : { rawOutput: text }),
-        _meta: upd._meta,
-      });
+      const toolCall = makeToolCallState(
+        {
+          toolCallId: `acp-compaction:${upd.compactionId}`,
+          title: "Compact context",
+          kind: "think",
+          status: "inProgress",
+          ...(text === undefined ? {} : { rawOutput: text }),
+          _meta: upd._meta,
+        },
+        { keepWholeRawOutput: true },
+      );
       if (toolCall !== undefined) {
         events.push({ _tag: "ToolCallUpdated", toolCall, rawPayload: params });
       }
