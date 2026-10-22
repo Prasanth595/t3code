@@ -93,8 +93,9 @@
   const nativeFetch = fetch;
   globalThis.fetch = async (...args) => {
     const response = await nativeFetch(...args);
-    const url = typeof args[0] === "string" ? args[0] : args[0]?.url;
-    if (!url?.includes("/api/orchestration/shell") || !response.ok) return response;
+    const url = String(args[0]?.url ?? args[0]);
+    if (!options.enabled || !url.includes("/api/orchestration/shell") || !response.ok)
+      return response;
     const value = await response.clone().json();
     if (!Array.isArray(value.threads)) return response;
     frames.push({
