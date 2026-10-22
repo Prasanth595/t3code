@@ -43,7 +43,7 @@ export const PullRequestTargetInput = Schema.Struct({
   url: Schema.optional(
     TrimmedNonEmptyString.annotate({
       description:
-        "The pull request's web URL, for example https://github.com/owner/repo/pull/123. Preferred when you have it; host, repository and number are read from it.",
+        "The pull request's web URL, for example https://github.com/owner/repo/pull/123 or https://company.ghe.com/owner/repo/pull/123. Preferred when you have it; host, repository and number are read from it. If the host is not recognised, omit url and pass host, repository and number.",
     }),
   ),
   repository: Schema.optional(
@@ -71,7 +71,7 @@ export class PullRequestUrlInvalidError extends Schema.TaggedError<PullRequestUr
   {},
 ) {
   override get message(): string {
-    return "This is not a recognised pull request URL. Pass repository and number instead.";
+    return "This is not a recognised pull request URL. Pass host, repository and number instead.";
   }
 }
 

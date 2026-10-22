@@ -41,6 +41,20 @@ describe("parseChangeRequestUrl", () => {
     ).toBe("https://code.github.example.com/acme/web/pull/42");
   });
 
+  it.each(["my-awesome-company.ghe.com", "MY-AWESOME-COMPANY.GHE.COM"])(
+    "reads GitHub Enterprise Cloud URLs on %s",
+    (host) => {
+      expect(parseChangeRequestUrl(`https://${host}/Owner/Repo/pull/9/files?w=1#diff`)).toEqual({
+        host: host.toLowerCase(),
+        repository: "owner/repo",
+        number: 9,
+      });
+      expect(
+        pullRequestCandidateUrlFromReferenceAutolink(`https://${host}/Owner/Repo/issues/9`),
+      ).toBe(`https://${host.toLowerCase()}/Owner/Repo/pull/9`);
+    },
+  );
+
   it("reads a GitLab merge request on any host, nested groups and all", () => {
     expect(
       parseChangeRequestUrl("https://gitlab.com/t3tools/platform/t3code/-/merge_requests/42"),
@@ -111,6 +125,12 @@ describe("parseChangeRequestUrl", () => {
       "https://github.com/t3tools/t3code/pull/abc",
       "https://gitlab.com/t3tools/t3code/-/issues/12",
       "https://blog.example.test/2026/updates/pull/3",
+      "https://ghe.com/owner/repo/pull/9",
+      "https://notghe.com/owner/repo/pull/9",
+      "https://acme.ghe.com.example.test/owner/repo/pull/9",
+      "https://acme.ghe.com/owner/repo/pull/0",
+      "https://acme.ghe.com/owner/repo/pull/9007199254740992",
+      "ftp://acme.ghe.com/owner/repo/pull/9",
       "https://scm.example.test/tfs/Collection/Project/_git/Repo",
       "https://scm.example.test/tfs/Collection/Project/pullrequest/123",
       "https://scm.example.test/tfs/Collection/Project/_git/Repo/pullrequest/abc",
