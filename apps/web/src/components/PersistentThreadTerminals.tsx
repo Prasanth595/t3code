@@ -233,12 +233,14 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     bumpFocusRequestId();
   };
 
-  const closeTerminal = useStableCallback((terminalId: string, target: ScopedThreadRef = threadRef) => {
-    if (!readEnvironmentScope(target.environmentId, AuthTerminalOperateScope)) return;
-    terminalActions.closeTerminalSession(terminalId, target);
-    storeCloseTerminal(target, terminalId);
-    bumpFocusRequestId();
-  });
+  const closeTerminal = useStableCallback(
+    (terminalId: string, target: ScopedThreadRef = threadRef) => {
+      if (!readEnvironmentScope(target.environmentId, AuthTerminalOperateScope)) return;
+      terminalActions.closeTerminalSession(terminalId, target);
+      storeCloseTerminal(target, terminalId);
+      bumpFocusRequestId();
+    },
+  );
 
   const handleAddTerminalContext = (selection: TerminalContextSelection) => {
     if (!visible) {
