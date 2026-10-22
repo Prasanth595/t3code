@@ -29,7 +29,14 @@ export function claudeTaskOutputRoot(
 ): string | undefined {
   const uid = process.getuid?.();
   if (uid === undefined) return undefined;
-  const base = environment?.CLAUDE_CODE_TMPDIR?.trim() || "/tmp";
+  // Claude Code falls back to `os.tmpdir()`, which reads these from the
+  // environment it was launched with: macOS always sets TMPDIR.
+  const base =
+    environment?.CLAUDE_CODE_TMPDIR?.trim() ||
+    environment?.TMPDIR ||
+    environment?.TMP ||
+    environment?.TEMP ||
+    "/tmp";
   return path.join(base, `claude-${uid}`);
 }
 
