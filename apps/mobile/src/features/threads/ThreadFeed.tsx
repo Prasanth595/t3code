@@ -1470,7 +1470,12 @@ function renderFeedEntry(
                 })}
               </View>
             ) : null}
-            {attachmentOnly ? <AttachmentOnlyCaption instruction={message.text.trim()} /> : null}
+            {attachmentOnly ? (
+              <AttachmentOnlyCaption
+                label={attachments.every(isImageAttachment) ? "Image only" : "Attachment only"}
+                instruction={message.text.trim()}
+              />
+            ) : null}
             {message.text.trim().length > 0 && !attachmentOnly ? (
               <MarkdownImageAvailableWidthContext
                 value={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
@@ -1699,19 +1704,19 @@ type UserMessageContentProps = {
 };
 
 /** Sent with no text: a quiet caption stands in for the agent's bootstrap prompt, and a tap reveals it. */
-function AttachmentOnlyCaption(props: { readonly instruction: string }) {
+function AttachmentOnlyCaption(props: { readonly label: string; readonly instruction: string }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <View className="gap-1">
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={expanded ? "Hide agent instruction" : "Image only"}
+        accessibilityLabel={expanded ? "Hide agent instruction" : props.label}
         accessibilityState={{ expanded }}
         hitSlop={8}
         onPress={() => setExpanded((value) => !value)}
       >
         <Text className="text-xs italic text-user-bubble-foreground-muted">
-          {expanded ? "Hide" : "Image only"}
+          {expanded ? "Hide" : props.label}
         </Text>
       </Pressable>
       {expanded ? (

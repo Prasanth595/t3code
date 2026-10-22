@@ -352,6 +352,25 @@ describe("MessagesTimeline attachment-only messages", () => {
     expect(screen.buttons("Image only")).toHaveLength(1);
   });
 
+  it("labels a message without any image as attachment only", async () => {
+    setup();
+    await using screen = await renderTimeline([
+      message(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, {
+        attachments: [
+          {
+            type: "file" as const,
+            id: ChatAttachmentId.make("attachment-video"),
+            name: "clip.mp4",
+            mimeType: "video/mp4",
+            sizeBytes: 1024,
+          },
+        ],
+      }),
+    ]);
+    expect(screen.buttons("Attachment only")).toHaveLength(1);
+    expect(screen.buttons("Image only")).toHaveLength(0);
+  });
+
   it("keeps a message that adds text to the bootstrap prompt as a full bubble", async () => {
     setup();
     await using screen = await renderTimeline([

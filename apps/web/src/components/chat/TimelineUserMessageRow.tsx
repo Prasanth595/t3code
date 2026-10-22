@@ -532,7 +532,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         {attachmentOnly ? (
           <AttachmentOnlyCaption
             label={
-              unchippedFiles.length + unknownAttachments.length > 0
+              userVideos.length + unchippedFiles.length + unknownAttachments.length > 0
                 ? "Attachment only"
                 : "Image only"
             }
