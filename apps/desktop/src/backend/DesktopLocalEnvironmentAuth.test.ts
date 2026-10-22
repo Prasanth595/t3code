@@ -195,6 +195,36 @@ describe("DesktopLocalEnvironmentAuth", () => {
       return { auth, requestCount };
     });
 
+  it.effect("keeps retrying while the backend is too busy to answer", () =>
+    Effect.gen(function* () {
+      const requestCount = yield* Ref.make(0);
+      const layerHttpClient = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Ref.updateAndGet(requestCount, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count <= 2 ? Effect.never : Effect.succeed(tokenResponse(request)),
+            ),
+          ),
+        ),
+      );
+      const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth.pipe(
+        Effect.provide(
+          DesktopLocalEnvironmentAuth.layer.pipe(
+            Layer.provide(Layer.mergeAll(layerPool, layerHttpClient)),
+          ),
+        ),
+      );
+
+      const fiber = yield* auth.getBearerToken.pipe(Effect.forkChild);
+      yield* TestClock.adjust(Duration.seconds(30));
+      const token = yield* Fiber.join(fiber);
+
+      assert.strictEqual(token, "desktop-bearer-token");
+      assert.strictEqual(yield* Ref.get(requestCount), 3);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("does not retry a rejected bootstrap credential", () =>
     Effect.gen(function* () {
       const { auth, requestCount } = yield* makeExchange(1, () =>
