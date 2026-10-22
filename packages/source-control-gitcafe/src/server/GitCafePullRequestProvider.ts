@@ -273,16 +273,14 @@ export const make = Effect.gen(function* () {
     (operation: string) =>
     <A, R>(effect: Effect.Effect<A, PullRequestProviderError, R>) =>
       effect.pipe(
-        Effect.catch((error) =>
-          isForbidden(error)
-            ? Effect.fail(
-                failure(
-                  operation,
-                  "This GitCafe token cannot request reviewers. It needs the pr:review:read and pr:reviewers:write scopes.",
-                  error,
-                ),
-              )
-            : Effect.fail(error),
+        Effect.catchIf(isForbidden, (error) =>
+          Effect.fail(
+            failure(
+              operation,
+              "This GitCafe token cannot request reviewers. It needs the pr:review:read and pr:reviewers:write scopes.",
+              error,
+            ),
+          ),
         ),
       );
 
