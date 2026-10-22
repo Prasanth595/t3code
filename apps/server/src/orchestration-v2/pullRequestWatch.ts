@@ -97,6 +97,7 @@ export function evaluatePullRequestWatch(
   return {
     changes,
     next: {
+      ...watch,
       startedAt: watch.startedAt,
       headSha,
       failedChecks,

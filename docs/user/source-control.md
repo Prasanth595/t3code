@@ -287,12 +287,16 @@ the thread is active, the server checks the pull request every two minutes and w
 check fails, the required checks pass, someone else comments or reviews, or the branch starts to
 conflict. Threads in a project that watch the same pull request share one check. On GitHub, a check
 first asks whether anything changed and reads the pull request only when it did, which keeps
-watching inside GitHub's rate limit. Comments from your own account do not wake it. Watching ends
+watching inside GitHub's rate limit. Comments from your own account do not wake it. By default, watching ends
 when the pull request merges or closes, after 10 wakes in a row that bring only comments, after 8
 failed reads in a row, or when you press Stop on the thread. A rate limit only pauses watching.
-Settling or archiving a thread also ends all its watches. Unsettle the thread before starting a new
-watch. Watching a pull request again does not repeat check or conflict news its last
-watch already reported; unlinking the pull request clears that. Subagents cannot watch pull requests; the thread that delegated to them does. To start or stop
+To wait for a verdict after merge,
+ask the agent to watch with `postMergeCheck` set to the check's name. The thread stays in Working
+after merge, then wakes the agent once when the named check finishes on the PR head and
+stops. If no verdict arrives within 24 hours of observing the merge, it wakes with an inconclusive
+result and stops. Manual settlement, archive, Stop, and unwatch still end it.
+Unsettle the thread before starting a new watch. Watching a pull request again does not repeat
+check or conflict news its last watch already reported; unlinking the pull request clears that. Subagents cannot watch pull requests; the thread that delegated to them does. To start or stop
 it yourself, use the row menu in the **Linked pull requests** panel. In the thread details card, a
 watched pull request shows an eye; click it to stop watching.
 

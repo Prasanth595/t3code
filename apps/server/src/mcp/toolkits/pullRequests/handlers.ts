@@ -261,6 +261,7 @@ const make = Effect.gen(function* () {
   const setWatching = Effect.fn("PullRequestsToolkit.setWatching")(function* (
     input: PullRequestTargetInput,
     watching: boolean,
+    postMergeCheck?: string,
   ) {
     const thread = yield* requireThread(PullRequestWatchFailedError, input.threadId);
     const project = yield* projectOf(thread, PullRequestWatchFailedError);
@@ -285,6 +286,7 @@ const make = Effect.gen(function* () {
         repository: target.repository,
         number: target.number,
         watching,
+        ...(postMergeCheck === undefined ? {} : { postMergeCheck }),
         ...(watching ? { link: { url: target.url, source: "agent" as const } } : {}),
       })
       .pipe(Effect.catchCause(dispatchFailure(PullRequestWatchFailedError)));
@@ -415,7 +417,7 @@ const make = Effect.gen(function* () {
         Effect.map(listThreadPullRequests),
       ),
     ),
-    watch_pull_request: writesThread((input) => setWatching(input, true)),
+    watch_pull_request: writesThread((input) => setWatching(input, true, input.postMergeCheck)),
     unwatch_pull_request: writesThread((input) => setWatching(input, false)),
     write_pull_request_guides: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
