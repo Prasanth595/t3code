@@ -277,3 +277,240 @@ describe("ChatMarkdown Windows file links", () => {
     }
   });
 });
+
+describe("ChatMarkdown content direction", () => {
+  it.each([
+    {
+      language: "Hebrew",
+      heading: "כותרת בעברית",
+      sentence: "זהו משפט בעברית.",
+      item: "פריט ראשון",
+    },
+    {
+      language: "Arabic",
+      heading: "عنوان بالعربية",
+      sentence: "هذه جملة عربية.",
+      item: "العنصر الأول",
+    },
+  ])("lays out $language prose and bullets from the right", async ({ heading, sentence, item }) => {
+    setup();
+    await using screen = await renderText(`## ${heading}\n\n${sentence}\n\n- ${item}`);
+    const { container } = screen;
+    await vi.waitFor(() => {
+      for (const selector of ["h2", "p", "ul", "li"]) {
+        expect(getComputedStyle(container.querySelector(selector)!).direction, selector).toBe(
+          "rtl",
+        );
+      }
+      const itemStyle = getComputedStyle(container.querySelector("li")!);
+      expect(parseFloat(itemStyle.marginRight)).toBeGreaterThan(parseFloat(itemStyle.marginLeft));
+
+      // The final period belongs at the left end of this single-line RTL sentence.
+      const text = container.querySelector("p")!.firstChild!;
+      const first = document.createRange();
+      first.setStart(text, 0);
+      first.setEnd(text, 1);
+      const period = document.createRange();
+      period.setStart(text, sentence.length - 1);
+      period.setEnd(text, sentence.length);
+      expect(period.getBoundingClientRect().right).toBeLessThanOrEqual(
+        first.getBoundingClientRect().left,
+      );
+    });
+  });
+
+  it("resolves mixed list items, quotes and table cells independently across updates", async () => {
+    setup();
+    await using screen = await renderText(
+      "- שלום.\n- Hello.\n\n> مرحبا.\n\n| שם | Name |\n| --- | --- |\n| שלום. | Hello. |",
+    );
+    const { container, rerender } = screen;
+    await vi.waitFor(() => {
+      const [rtlItem, ltrItem] = container.querySelectorAll("li");
+      expect(getComputedStyle(rtlItem!).direction).toBe("rtl");
+      expect(getComputedStyle(ltrItem!).direction).toBe("ltr");
+      expect(getComputedStyle(container.querySelector("blockquote")!).direction).toBe("rtl");
+      const [rtlCell, ltrCell] = container.querySelectorAll("td");
+      expect(getComputedStyle(rtlCell!).direction).toBe("rtl");
+      expect(getComputedStyle(ltrCell!).direction).toBe("ltr");
+      const [firstColumn, secondColumn] = container.querySelectorAll("th");
+      expect(getComputedStyle(firstColumn!).direction).toBe("rtl");
+      expect(firstColumn!.getBoundingClientRect().left).toBeLessThan(
+        secondColumn!.getBoundingClientRect().left,
+      );
+    });
+    await rerender(
+      <ChatMarkdown cwd="/tmp/project" text={"English first.\n\nשלום."} isStreaming />,
+    );
+    await vi.waitFor(() => {
+      const [english, hebrew] = container.querySelectorAll("p");
+      expect(getComputedStyle(english!).direction).toBe("ltr");
+      expect(getComputedStyle(hebrew!).direction).toBe("rtl");
+    });
+  });
+
+  it.each(["-", "1."])(
+    "keeps mixed %s list marker gutters inside clipped lists",
+    async (marker) => {
+      setup();
+      await using screen = await renderText(`${marker} שלום.\n${marker} Hello.`);
+      const { container, rerender } = screen;
+      container.style.width = "300px";
+      container.style.overflow = "hidden";
+      for (const text of [
+        `${marker} שלום.\n${marker} Hello.`,
+        `${marker} Hello.\n${marker} שלום.`,
+        `${marker} שלום.\n\n${marker} Hello.`,
+      ]) {
+        await rerender(<ChatMarkdown cwd="/tmp/project" text={text} />);
+        const list = container.querySelector("ul, ol")!;
+        const listBox = list.getBoundingClientRect();
+        const clipBox = container.getBoundingClientRect();
+        for (const item of list.querySelectorAll("li")) {
+          const style = getComputedStyle(item);
+          const box = item.getBoundingClientRect();
+          const rtl = style.direction === "rtl";
+          const gutter = parseFloat(style.fontSize);
+          // Native outside markers have no DOM rect. Reserve a full font-sized
+          // marker gutter and prove that entire paint area survives clipping.
+          expect(style.listStylePosition).toBe("outside");
+          expect(style.listStyleType).not.toBe("none");
+          const left = rtl ? box.right : box.left - gutter;
+          const right = rtl ? box.right + gutter : box.left;
+          expect(left).toBeGreaterThanOrEqual(Math.max(listBox.left, clipBox.left) - 0.5);
+          expect(right).toBeLessThanOrEqual(Math.min(listBox.right, clipBox.right) + 0.5);
+        }
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "separates RTL task text from checkboxes (editable: %s)",
+    async (editable) => {
+      setup();
+      const onTaskListChange = editable ? vi.fn() : undefined;
+      await using screen = await renderText(
+        "- [ ] שלום עולם.\n- [x] مهمة عربية.\n- [ ] English task.",
+        {
+          onTaskListChange,
+        },
+      );
+      const { container } = screen;
+      container.style.width = "300px";
+      for (const item of container.querySelectorAll("li")) {
+        const checkbox = item.querySelector<HTMLInputElement>("input")!;
+        const label = document.createRange();
+        label.setStartAfter(checkbox);
+        label.setEndAfter(item.lastChild!);
+        const textBox = label.getBoundingClientRect();
+        const checkboxBox = checkbox.getBoundingClientRect();
+        const itemBox = item.getBoundingClientRect();
+        if (getComputedStyle(item).direction === "rtl") {
+          expect(checkboxBox.left).toBeGreaterThan(textBox.right);
+          expect(checkboxBox.right).toBeGreaterThan(itemBox.right);
+        } else {
+          expect(checkboxBox.right).toBeLessThan(textBox.left);
+          expect(checkboxBox.left).toBeLessThan(itemBox.left);
+        }
+        const listBox = item.parentElement!.getBoundingClientRect();
+        expect(checkboxBox.left).toBeGreaterThanOrEqual(listBox.left);
+        expect(checkboxBox.right).toBeLessThanOrEqual(listBox.right);
+      }
+      if (editable) {
+        await act(async () => container.querySelector<HTMLInputElement>("input")!.click());
+        expect(onTaskListChange).toHaveBeenCalledExactlyOnceWith({
+          markerOffset: 2,
+          checked: true,
+        });
+      }
+    },
+  );
+
+  it("aligns RTL table text to the right while retaining LTR columns", async () => {
+    setup();
+    await using screen = await renderText("| שם | Name |\n| --- | --- |\n| שלום. | Hello. |");
+    const { container } = screen;
+    container.style.width = "500px";
+    const table = container.querySelector("table")!;
+    expect(getComputedStyle(table).direction).toBe("ltr");
+    for (const row of table.rows) {
+      const [rtl, ltr] = row.cells;
+      expect(rtl!.getBoundingClientRect().left).toBeLessThan(ltr!.getBoundingClientRect().left);
+      for (const cell of row.cells) {
+        const range = document.createRange();
+        range.selectNodeContents(cell);
+        const textBox = range.getBoundingClientRect();
+        const box = cell.getBoundingClientRect();
+        const style = getComputedStyle(cell);
+        const leftGap = textBox.left - box.left - parseFloat(style.paddingLeft);
+        const rightGap = box.right - textBox.right - parseFloat(style.paddingRight);
+        if (style.direction === "rtl") expect(rightGap).toBeLessThan(leftGap);
+        else expect(leftGap).toBeLessThan(rightGap);
+      }
+    }
+  });
+
+  it("puts RTL alert quote chrome on the content side", async () => {
+    setup();
+    await using screen = await renderText("> [!NOTE]\n> שלום עולם.");
+    const note = screen.container.querySelector('[role="note"]')!;
+    const style = getComputedStyle(note);
+    expect(style.direction).toBe("rtl");
+    expect(parseFloat(style.borderRightWidth)).toBe(2);
+    expect(parseFloat(style.borderLeftWidth)).toBe(0);
+    expect(parseFloat(style.paddingRight)).toBeGreaterThan(0);
+    expect(parseFloat(style.paddingLeft)).toBe(0);
+  });
+
+  it("keeps loose ordered list markers on the paragraph's side", async () => {
+    setup();
+    await using screen = await renderText("1. שלום.\n\n2. עוד.");
+    const { container } = screen;
+    expect(getComputedStyle(container.querySelector("ol")!).direction).toBe("rtl");
+    expect(getComputedStyle(container.querySelector("li")!).direction).toBe("rtl");
+    expect(getComputedStyle(container.querySelector("p")!).direction).toBe("rtl");
+  });
+
+  it("keeps inline code LTR in RTL prose and preserves the user bubble opt-out", async () => {
+    setup();
+    const text = "שלום עם `const value = 1` בתוך משפט.";
+    await using screen = await renderText(text);
+    const { container, rerender } = screen;
+    expect(getComputedStyle(container.querySelector("p")!).direction).toBe("rtl");
+    expect(getComputedStyle(container.querySelector("code")!).direction).toBe("ltr");
+    await rerender(<ChatMarkdown cwd="/tmp/project" text={text} autoDirection={false} />);
+    expect(getComputedStyle(container.querySelector("p")!).direction).toBe("ltr");
+  });
+
+  it("keeps Latin-first mixed prose LTR with native first-strong direction", async () => {
+    setup();
+    await using screen = await renderText(
+      "React מאפשר לבנות ממשק בעברית עם `const value = 1` בתוך המשפט.\n\nEnglish prose stays left to right.",
+    );
+    const { container } = screen;
+    await vi.waitFor(() => {
+      const [hebrew, english] = container.querySelectorAll("p");
+      expect(getComputedStyle(hebrew!).direction).toBe("ltr");
+      expect(getComputedStyle(hebrew!.querySelector("code")!).direction).toBe("ltr");
+      expect(getComputedStyle(english!).direction).toBe("ltr");
+    });
+  });
+
+  it("keeps code blocks and English tables LTR within a Hebrew response", async () => {
+    setup();
+    await using screen = await renderText(
+      'הנה דוגמה של קוד וטבלה בעברית.\n\n```js\nconst message = "שלום";\n```\n\n| Name | Value |\n| --- | --- |\n| message | hello |',
+    );
+    const { container } = screen;
+    await vi.waitFor(() => {
+      expect(getComputedStyle(container.querySelector("p")!).direction).toBe("rtl");
+      for (const selector of ["pre", "pre code", "table", "th", "td"]) {
+        const elements = container.querySelectorAll(selector);
+        expect(elements.length, selector).toBeGreaterThan(0);
+        for (const element of elements) {
+          expect(getComputedStyle(element).direction, selector).toBe("ltr");
+        }
+      }
+    });
+  });
+});
