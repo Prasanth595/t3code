@@ -90,9 +90,9 @@ import { BrowserControlInterrupted, SessionControl } from "./SessionControl.ts";
 import { installPdfDocumentNavigation, isPdfAssetUrl } from "./PdfDocumentNavigation.ts";
 
 const SERVER_HOST_CLIENT_ID = SERVER_BROWSER_AUTOMATION_CLIENT_ID;
-const decodeSavedProfiles = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(PreviewReportProfilesInput),
-);
+const SavedProfilesJson = Schema.fromJsonString(PreviewReportProfilesInput);
+const decodeSavedProfiles = Schema.decodeUnknownEffect(SavedProfilesJson);
+const encodeSavedProfiles = Schema.encodeSync(SavedProfilesJson);
 const RENDER_SCALE = 2;
 // Chromium allows three unacked frames, so 100 ms pacing caps viewers near 30 fps.
 const SCREENCAST_ACK_PACE_MS = 100;
@@ -1333,9 +1333,7 @@ const make = Effect.gen(function* () {
     "server-browser",
     "reported-profiles.json",
   );
-  const fileServices = yield* Effect.context<
-    FileSystem.FileSystem | Path.Path | HostProcess.Platform
-  >();
+  const fileServices = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
   const saveProfilesLock = yield* Semaphore.make(1);
   let savedProfiles = yield* (yield* FileSystem.FileSystem)
     .readFileString(savedProfilesPath)
@@ -1353,10 +1351,10 @@ const make = Effect.gen(function* () {
       Effect.suspend(() => {
         const reported = resolveReportedProfiles(input);
         reportedProfiles = reported;
-        const contents = `${JSON.stringify({
+        const contents = encodeSavedProfiles({
           profiles: reported.profiles.filter((profile) => !isBuiltInBrowserProfileId(profile.id)),
           defaultProfileId: reported.defaultProfileId,
-        })}\n`;
+        });
         if (contents === savedProfiles) return Effect.void;
         return writeFileStringAtomically({ filePath: savedProfilesPath, contents }).pipe(
           Effect.provideContext(fileServices),
