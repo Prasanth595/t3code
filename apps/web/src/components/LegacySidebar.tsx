@@ -223,6 +223,11 @@ import {
 } from "../sidebarProjectGrouping";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
+import {
+  completeSidebarRouteReveal,
+  pendingSidebarRouteReveal,
+  type SidebarRouteReveal,
+} from "./sidebar/routeReveal";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
@@ -3243,7 +3248,7 @@ function useLegacySidebarThreads(input: {
   };
 }
 
-export default function LegacySidebar() {
+export default function LegacySidebar({ routeReveal }: { routeReveal: SidebarRouteReveal }) {
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
   const navigate = useNavigate();
   const sidebarThreadSortOrder = useClientSettings((s) => s.sidebarThreadSortOrder);
@@ -3258,16 +3263,6 @@ export default function LegacySidebar() {
   );
   const routeThreadRef = resolveActiveThreadRouteRef(routeTarget, routeDraftThread);
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
-  // History and the command palette can open a thread scrolled out of view.
-  // Mounting counts as a route change: leaving Settings unmounts the sidebar.
-  const scrolledRouteThreadKeyRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (scrolledRouteThreadKeyRef.current === routeThreadKey) return;
-    scrolledRouteThreadKeyRef.current = routeThreadKey;
-    document
-      .querySelector('[data-sidebar="content"] [data-thread-item] [data-active="true"]')
-      ?.scrollIntoView({ block: "nearest" });
-  }, [routeThreadKey]);
   const routeTerminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
@@ -3317,6 +3312,21 @@ export default function LegacySidebar() {
     sidebarThreadPreviewCount,
     expandedThreadListsByProject,
   });
+  // History and the command palette can open a thread scrolled out of view.
+  // Its row can mount after the route does, once its environment's shells
+  // arrive, so the reveal stays pending until the row renders.
+  const routeRowRendered =
+    routeThreadKey !== null && visibleSidebarThreadKeys.includes(routeThreadKey);
+  const revealRouteRow = useStableCallback(() => {
+    if (pendingSidebarRouteReveal(routeReveal, routeThreadKey) === null) return;
+    const activeRow = document.querySelector(
+      '[data-sidebar="content"] [data-thread-item] [data-active="true"]',
+    );
+    if (!activeRow) return;
+    completeSidebarRouteReveal(routeReveal);
+    activeRow.scrollIntoView({ block: "nearest" });
+  });
+  useEffect(revealRouteRow, [revealRouteRow, routeThreadKey, routeRowRendered]);
   const newThreadShortcutLabelOptions = {
     platform,
     context: {

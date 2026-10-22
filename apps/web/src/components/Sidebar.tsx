@@ -179,6 +179,11 @@ import { resolveSnoozePresets, snoozeWakeLabel, type SnoozePreset } from "./Side
 import { ProjectFavicon } from "./ProjectFavicon";
 import { deriveProviderEntriesByEnvironment } from "../providerInstances";
 import { useStableCallback } from "../hooks/useStableCallback";
+import {
+  completeSidebarRouteReveal,
+  pendingSidebarRouteReveal,
+  type SidebarRouteReveal,
+} from "./sidebar/routeReveal";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Button } from "./ui/button";
 import {
@@ -741,7 +746,7 @@ const SIDEBAR_DRAG_DISTANCE = 6;
 
 const SIDEBAR_DRAG_LABEL_HEIGHT = 24;
 
-export default function Sidebar() {
+export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReveal }) {
   const {
     projects,
     serverConfigs,
@@ -1061,17 +1066,9 @@ export default function Sidebar() {
   });
 
   // History, the command palette, and links can open a thread the project
-  // scope hides or the list has scrolled away. Reveal it once per route
-  // change, so a scope picked while that thread stays open is left alone.
-  // Mounting counts as a route change: leaving Settings unmounts the sidebar.
-  const revealedRouteRowKeyRef = useRef<string | null>(null);
-  const pendingRouteRevealKeyRef = useRef<string | null>(null);
+  // scope hides or the list has scrolled away.
   const revealRouteRow = useStableCallback(() => {
-    if (revealedRouteRowKeyRef.current !== routeRowThreadKey) {
-      revealedRouteRowKeyRef.current = routeRowThreadKey;
-      pendingRouteRevealKeyRef.current = routeRowThreadKey;
-    }
-    const pendingKey = pendingRouteRevealKeyRef.current;
+    const pendingKey = pendingSidebarRouteReveal(routeReveal, routeRowThreadKey);
     if (pendingKey === null) return;
     const thread = threads.find((candidate) => threadShellKey(candidate) === pendingKey);
     if (thread === undefined) return;
@@ -1084,7 +1081,7 @@ export default function Sidebar() {
       setProjectScopeKey(null);
       return;
     }
-    pendingRouteRevealKeyRef.current = null;
+    completeSidebarRouteReveal(routeReveal);
     document
       .querySelector('[data-sidebar="content"] [aria-current="page"]')
       ?.scrollIntoView({ block: "nearest" });
