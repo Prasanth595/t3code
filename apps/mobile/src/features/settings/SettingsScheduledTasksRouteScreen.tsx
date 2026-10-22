@@ -601,8 +601,11 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
                 voiceInput={voiceInput}
               />
             }
-            setDraft={(draft) => {
-              if (!saving) setEditor({ ...editor, draft });
+            setDraft={(update) => {
+              if (!saving)
+                setEditor((current) =>
+                  current ? { ...current, draft: update(current.draft) } : current,
+                );
             }}
             onSaved={() => {
               saved.current = true;
@@ -657,10 +660,11 @@ function TaskForm({
   readonly setSaving: (saving: boolean) => void;
   readonly dictationPending: boolean;
   readonly promptField: ReactNode;
-  readonly setDraft: (draft: Draft) => void;
+  readonly setDraft: (update: (current: Draft) => Draft) => void;
   readonly onSaved: () => void;
   readonly onChangeEnvironment: (target: SettingsTarget) => void;
 }) {
+  const { readEditor } = useScheduledTaskEditor();
   const navigation = useNavigation<NativeStackNavigationProp<ScheduledTaskRoutes>>();
   const tasks = useEnvironmentQuery(
     serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
@@ -692,6 +696,9 @@ function TaskForm({
   };
 
   const save = async () => {
+    const current = readEditor();
+    if (!current || current.environmentId !== environmentId) return;
+    const draft = current.draft;
     if (
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
       submissionPending.current ||
@@ -836,7 +843,7 @@ function TaskForm({
             disabled={saving}
             value={draft.title}
             placeholder="Check for issues"
-            onChange={(title) => setDraft({ ...draft, title })}
+            onChange={(title) => setDraft((current) => ({ ...current, title }))}
           />
           {promptField}
         </SettingsSection>
@@ -856,22 +863,24 @@ function TaskForm({
             onSelect={(id) => {
               const project = projects.find((item) => item.id === id);
               if (!project) return;
-              const keepsExplicitModel =
-                draft.modelSelectionIsExplicit &&
-                (draft.modelSelection === null ||
-                  !config?.settings ||
-                  resolveProjectProviderInstanceEnabled(
-                    config.settings,
-                    project.id,
-                    draft.modelSelection.instanceId,
-                  ));
-              setDraft({
-                ...draft,
-                projectId: project.id,
-                modelSelection: keepsExplicitModel
-                  ? draft.modelSelection
-                  : scheduledTaskDefaultModel(config, project),
-                modelSelectionIsExplicit: keepsExplicitModel,
+              setDraft((current) => {
+                const keepsExplicitModel =
+                  current.modelSelectionIsExplicit &&
+                  (current.modelSelection === null ||
+                    !config?.settings ||
+                    resolveProjectProviderInstanceEnabled(
+                      config.settings,
+                      project.id,
+                      current.modelSelection.instanceId,
+                    ));
+                return {
+                  ...current,
+                  projectId: project.id,
+                  modelSelection: keepsExplicitModel
+                    ? current.modelSelection
+                    : scheduledTaskDefaultModel(config, project),
+                  modelSelectionIsExplicit: keepsExplicitModel,
+                };
               });
             }}
           />
@@ -921,7 +930,7 @@ function TaskForm({
             ]}
             onSelect={(id) => {
               if (id === "worktree" || id === "root" || id === "existing_worktree")
-                setDraft({ ...draft, workspace: id });
+                setDraft((current) => ({ ...current, workspace: id }));
             }}
           />
           {draft.workspace === "worktree" ? (
@@ -943,7 +952,7 @@ function TaskForm({
               disabled={saving}
               value={draft.checkoutPath}
               borderTop
-              onChange={(checkoutPath) => setDraft({ ...draft, checkoutPath })}
+              onChange={(checkoutPath) => setDraft((current) => ({ ...current, checkoutPath }))}
             />
           ) : null}
         </SettingsSection>
@@ -960,14 +969,14 @@ function TaskForm({
               selected={draft.schedule.mode}
               onSelect={(mode) => {
                 setTimePickerOpen(false);
-                setDraft({
-                  ...draft,
+                setDraft((current) => ({
+                  ...current,
                   prompt:
-                    mode === "webhook" && !draft.prompt.trim()
+                    mode === "webhook" && !current.prompt.trim()
                       ? DEFAULT_WEBHOOK_PROMPT
-                      : draft.prompt,
-                  schedule: { ...draft.schedule, mode },
-                });
+                      : current.prompt,
+                  schedule: { ...current.schedule, mode },
+                }));
               }}
             />
           </View>
@@ -1003,7 +1012,10 @@ function TaskForm({
                   onDismiss={() => setTimePickerOpen(false)}
                   onValueChange={(_, selected) => {
                     const timeOfDay = `${String(selected.getHours()).padStart(2, "0")}:${String(selected.getMinutes()).padStart(2, "0")}`;
-                    setDraft({ ...draft, schedule: { ...draft.schedule, timeOfDay } });
+                    setDraft((current) => ({
+                      ...current,
+                      schedule: { ...current.schedule, timeOfDay },
+                    }));
                   }}
                 />
               ) : null}
@@ -1032,19 +1044,21 @@ function TaskForm({
                   })),
                 ]}
                 onSelect={(id) => {
-                  const weekdays =
-                    id === "every_day"
-                      ? DAYS.map((day) => day.index)
-                      : id === "weekdays"
-                        ? [1, 2, 3, 4, 5]
-                        : (() => {
-                            const day = DAYS.find((item) => String(item.index) === id);
-                            if (!day) return draft.schedule.weekdays;
-                            return draft.schedule.weekdays.includes(day.index)
-                              ? draft.schedule.weekdays.filter((index) => index !== day.index)
-                              : [...draft.schedule.weekdays, day.index];
-                          })();
-                  setDraft({ ...draft, schedule: { ...draft.schedule, weekdays } });
+                  setDraft((current) => {
+                    const weekdays =
+                      id === "every_day"
+                        ? DAYS.map((day) => day.index)
+                        : id === "weekdays"
+                          ? [1, 2, 3, 4, 5]
+                          : (() => {
+                              const day = DAYS.find((item) => String(item.index) === id);
+                              if (!day) return current.schedule.weekdays;
+                              return current.schedule.weekdays.includes(day.index)
+                                ? current.schedule.weekdays.filter((index) => index !== day.index)
+                                : [...current.schedule.weekdays, day.index];
+                            })();
+                    return { ...current, schedule: { ...current.schedule, weekdays } };
+                  });
                 }}
               />
             </>
@@ -1069,14 +1083,20 @@ function TaskForm({
                 disabled={saving}
                 borderTop
                 onChange={(maxDeliveryAgeMinutes) =>
-                  setDraft({ ...draft, schedule: { ...draft.schedule, maxDeliveryAgeMinutes } })
+                  setDraft((current) => ({
+                    ...current,
+                    schedule: { ...current.schedule, maxDeliveryAgeMinutes },
+                  }))
                 }
               />
               <WebhookFilterRows
                 filters={draft.schedule.filters}
                 disabled={saving}
                 onChange={(filters) =>
-                  setDraft({ ...draft, schedule: { ...draft.schedule, filters } })
+                  setDraft((current) => ({
+                    ...current,
+                    schedule: { ...current.schedule, filters },
+                  }))
                 }
               />
               <FormField
@@ -1086,7 +1106,10 @@ function TaskForm({
                 disabled={saving}
                 borderTop
                 onChange={(replayKey) =>
-                  setDraft({ ...draft, schedule: { ...draft.schedule, replayKey } })
+                  setDraft((current) => ({
+                    ...current,
+                    schedule: { ...current.schedule, replayKey },
+                  }))
                 }
               />
               <FormField
@@ -1096,7 +1119,10 @@ function TaskForm({
                 disabled={saving}
                 borderTop
                 onChange={(coalesceKey) =>
-                  setDraft({ ...draft, schedule: { ...draft.schedule, coalesceKey } })
+                  setDraft((current) => ({
+                    ...current,
+                    schedule: { ...current.schedule, coalesceKey },
+                  }))
                 }
               />
               <FormField
@@ -1107,7 +1133,10 @@ function TaskForm({
                 disabled={saving}
                 borderTop
                 onChange={(coalesceWindowSeconds) =>
-                  setDraft({ ...draft, schedule: { ...draft.schedule, coalesceWindowSeconds } })
+                  setDraft((current) => ({
+                    ...current,
+                    schedule: { ...current.schedule, coalesceWindowSeconds },
+                  }))
                 }
               />
               <Text className="px-4 pb-3 text-sm text-foreground-muted">
@@ -1124,7 +1153,10 @@ function TaskForm({
                 disabled={saving}
                 borderTop
                 onChange={(intervalMinutes) =>
-                  setDraft({ ...draft, schedule: { ...draft.schedule, intervalMinutes } })
+                  setDraft((current) => ({
+                    ...current,
+                    schedule: { ...current.schedule, intervalMinutes },
+                  }))
                 }
               />
               {Number(draft.schedule.intervalMinutes) < 1 ? (
@@ -1147,7 +1179,7 @@ function TaskForm({
             <ThemedSwitch
               accessibilityLabel="Task enabled"
               value={draft.enabled}
-              onValueChange={(enabled) => setDraft({ ...draft, enabled })}
+              onValueChange={(enabled) => setDraft((current) => ({ ...current, enabled }))}
             />
           </View>
         </SettingsSection>
