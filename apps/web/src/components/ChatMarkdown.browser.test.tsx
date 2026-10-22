@@ -271,21 +271,26 @@ describe("ChatMarkdown remote thread file links", () => {
       [threadRef.environmentId]: new Set(["/srv/shared.md"]),
     };
     filesystemMetadata.mockImplementation(
-      async (request: { environmentId: EnvironmentId; input: { paths: string[] } }) =>
-        AsyncResult.success({
-          entries: request.input.paths.map((path) =>
-            files[request.environmentId]?.has(path) ? { kind: "file" } : null,
-          ),
-        }),
+      (request: { environmentId: EnvironmentId; input: { paths: string[] } }) =>
+        // A reconnecting local backend never answers; the host's copy still opens.
+        request.environmentId === desktop && request.input.paths[0] === "/srv/shared.md"
+          ? new Promise(() => {})
+          : Promise.resolve(
+              AsyncResult.success({
+                entries: request.input.paths.map((path) =>
+                  files[request.environmentId]?.has(path) ? { kind: "file" } : null,
+                ),
+              }),
+            ),
+    );
+    await using screen = await renderText(
+      "[Notes](/home/me/Desktop/notes.txt:3), [Shared](/srv/shared.md), [Gone](/srv/gone.md) and [Home](~/notes.txt)",
+      { cwd: "/srv/project", threadRef },
     );
     using openFile = vi
       .spyOn(useRightPanelStore.getState(), "openFile")
       .mockImplementation(() => {});
-    await using screen = await renderText(
-      "[Notes](/home/me/Desktop/notes.txt:3), [Shared](/srv/shared.md) and [Gone](/srv/gone.md)",
-      { cwd: "/srv/project", threadRef },
-    );
-    const [notes, shared, gone] = screen.container.querySelectorAll("a");
+    const [notes, shared, gone, home] = screen.container.querySelectorAll("a");
 
     await act(async () => notes!.click());
     await vi.waitFor(() =>
@@ -304,6 +309,10 @@ describe("ChatMarkdown remote thread file links", () => {
     await vi.waitFor(() =>
       expect(openFile).toHaveBeenLastCalledWith(threadRef, "/srv/gone.md", undefined),
     );
+    // `~` is the host's home, so it never reaches the local lookup.
+    files[desktop].add("~/notes.txt");
+    await act(async () => home!.click());
+    expect(openFile).toHaveBeenLastCalledWith(threadRef, "~/notes.txt", undefined);
     expect(machines.openInEditor).toHaveBeenCalledOnce();
   });
 });

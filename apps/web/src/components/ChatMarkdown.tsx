@@ -6,7 +6,7 @@ import {
   extractMarkdownLinkHrefs,
   inlineCodeFilePathCandidate,
 } from "@t3tools/shared/markdownLinks";
-import { isHostPath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
+import { isAbsolutePath, isHostPath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { AuthFilesystemReadScope, AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import {
@@ -802,18 +802,15 @@ function useChatMarkdownState({
   const isOnlyOnLocalMachine = async (path: string) => {
     if (environmentId === null || localEnvironmentId === null) return false;
     const input = { paths: [path] };
-    const [host, local] = await Promise.all([
-      getFilesystemMetadata({ environmentId, input }),
-      getFilesystemMetadata({ environmentId: localEnvironmentId, input }),
-    ]);
-    // The host keeps the link unless it confirms the path is missing, so its
-    // panel can still report a permission or connection failure.
-    return (
-      host._tag === "Success" &&
-      host.value.entries[0] === null &&
-      local._tag === "Success" &&
-      (local.value.entries[0] ?? null) !== null
-    );
+    // Both start now, but a reconnecting local backend must not hold up a
+    // file the host has.
+    const local = getFilesystemMetadata({ environmentId: localEnvironmentId, input });
+    const host = await getFilesystemMetadata({ environmentId, input });
+    // A null entry also covers an unreadable path, which the host's panel
+    // could not show either. A failed lookup keeps the panel and its error.
+    if (host._tag !== "Success" || host.value.entries[0] !== null) return false;
+    const localResult = await local;
+    return localResult._tag === "Success" && (localResult.value.entries[0] ?? null) !== null;
   };
   const openOnLocalMachine = (targetPath: string) =>
     openInLocalEditor(targetPath).then((result) => {
@@ -843,7 +840,11 @@ function useChatMarkdownState({
       !!cwd &&
       (needsWorkspaceBasenameLookup(panelPath) ||
         stripRepeatedWorkspacePrefix(panelPath, cwd) !== null);
-    const mayBeLocal = localEnvironmentId !== null && fileLinkMeta.workspaceRelativePath === null;
+    // `~` names a different home on each machine.
+    const mayBeLocal =
+      localEnvironmentId !== null &&
+      fileLinkMeta.workspaceRelativePath === null &&
+      isAbsolutePath(fileLinkMeta.filePath);
     if (!needsWorkspaceLookup && !mayBeLocal) {
       openAt(panelPath);
       return;
