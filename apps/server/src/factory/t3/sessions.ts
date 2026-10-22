@@ -358,6 +358,8 @@ export class FactorySessions extends Context.Service<
     /**
      * The unarchived threads whose worktree is gone or has no `.git`: T3's
      * pull request lookup and settlement run git there and fail every sweep.
+     * A thread `archive` archived since this server started is left out, so
+     * one a person unarchives stays theirs until a restart.
      */
     readonly brokenWorktrees: Effect.Effect<ReadonlyArray<ThreadOnBrokenWorktree>, SessionsError>;
     /**
@@ -542,6 +544,9 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  // The threads `archive` archived in this process: `brokenWorktrees` leaves them out.
+  const archivedHere = new Set<string>();
+
   // A thread that cannot be read is archived anyway, so it is never left
   // running because its snapshot failed. When that fails, the thread is read
   // once more: a lost answer or a race can leave it archived all the same.
@@ -567,6 +572,7 @@ export const make = Effect.gen(function* () {
             ),
           ),
         );
+      archivedHere.add(id.value);
     },
   );
 
@@ -624,7 +630,10 @@ export const make = Effect.gen(function* () {
 
   // A path whose `.git` cannot be checked (a permission error) is not called broken.
   const brokenWorktrees: FactorySessions["Service"]["brokenWorktrees"] = Effect.gen(function* () {
-    const broken = yield* Effect.filter(yield* projections.getThreadWorktreePaths(), (thread) =>
+    const live = (yield* projections.getThreadWorktreePaths()).filter(
+      (thread) => !archivedHere.has(thread.threadId),
+    );
+    const broken = yield* Effect.filter(live, (thread) =>
       fs.exists(path.join(thread.worktreePath, ".git")).pipe(
         Effect.map((checkout) => !checkout),
         Effect.orElseSucceed(() => false),

@@ -724,8 +724,9 @@ const lowDisk = Effect.fn("Pass.lowDisk")(function* (
  * Archives the live threads left on a stopped session's worktree that is gone or no longer a git
  * checkout: subagents sharing the session's checkout, which archiving the session did not stop,
  * or threads on a folder a removal left half done. T3's pull request lookup and settlement run git
- * there every minute and fail every time; an archived thread is out of both. A thread is archived
- * once per server process, so a person who unarchives it keeps it. Each worktree gets one line and one attention item, and is not found again once its
+ * there every minute and fail every time; an archived thread is out of both. A thread the factory
+ * archived on any path is not found again until the server restarts, so a person who unarchives it
+ * keeps it until then. Each worktree gets one line and one attention item, and is not found again once its
  * threads are archived. The item names the run in its text, not in `run`, so it stays after the
  * run finished, which it nearly always has.
  */
