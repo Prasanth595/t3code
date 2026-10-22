@@ -246,7 +246,9 @@
             }
           }
           Object.values(node).forEach((v) => {
-            if (v && typeof v === "object") Array.isArray(v) ? v.forEach(visit) : visit(v);
+            if (!v || typeof v !== "object") return;
+            if (Array.isArray(v)) v.forEach(visit);
+            else visit(v);
           });
         };
         const deliver = (data) => {
