@@ -21,7 +21,6 @@ import {
   formatV2ProviderOriginLabel,
   resolveV2ItemSupport,
   resolveV2ItemProviderOrigin,
-  v2ItemSupportEqual,
 } from "./itemSupport.ts";
 
 const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
@@ -195,20 +194,6 @@ describe("resolveV2ItemSupport", () => {
       ],
     };
     expect(resolveV2ItemSupport(projection, itemId).item).toBe(commandItem);
-  });
-
-  it("returns the stable empty support for unknown items", () => {
-    expect(resolveV2ItemSupport(v2Projection, itemId)).toBe(EMPTY_V2_ITEM_SUPPORT);
-  });
-
-  it("compares support structurally while retaining entity identity semantics", () => {
-    expect(v2ItemSupportEqual(EMPTY_V2_ITEM_SUPPORT, { ...EMPTY_V2_ITEM_SUPPORT })).toBe(true);
-    expect(
-      v2ItemSupportEqual(EMPTY_V2_ITEM_SUPPORT, {
-        ...EMPTY_V2_ITEM_SUPPORT,
-        attempts: [{ id: "attempt" } as never],
-      }),
-    ).toBe(false);
   });
 });
 

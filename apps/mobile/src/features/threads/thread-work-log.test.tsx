@@ -102,6 +102,7 @@ vi.mock("./thread-command-output", () => ({
   useCommandOutputStreaming: () => false,
 }));
 vi.mock("./markdownCodeHighlightState", () => ({ useMarkdownCodeHighlight: () => null }));
+vi.mock("./ProposedPlanCard", () => ({ ProposedPlanCard: () => null }));
 vi.mock("./SubagentStatusDot", () => ({ SubagentStatusDot: () => null }));
 vi.mock("./thread-subagent-group", () => ({ ThreadSubagentGroup: () => null }));
 vi.mock("./QuestionAnswerHistory", () => ({ QuestionAnswerHistory: () => null }));
