@@ -68,17 +68,20 @@ export function usePendingTaskListActions(): {
           onPress: () => {
             // The row animates out before removal runs, so hold delivery from
             // confirmation on: a reconnect must not send a task being deleted.
-            // A lock the editor already held stays held unless removal succeeds.
+            // The hold is shared with the editor, which could release it
+            // mid-animation, so a task open in the editor is removed at once
+            // and keeps its hold unless removal succeeds.
             const messageId = pendingTask.message.messageId;
             const heldByEditor = appAtomRegistry.get(editingQueuedMessageIdsAtom)[messageId];
             holdEditingQueuedMessage(messageId);
             const releaseUnlessEditing = () => {
               if (!heldByEditor) releaseEditingQueuedMessage(messageId);
             };
-            void withThreadDismissal(
-              pendingTask.key,
-              () => removeThreadOutboxMessage(pendingTask.message),
-              (removed) => removed,
+            const remove = () => removeThreadOutboxMessage(pendingTask.message);
+            void (
+              heldByEditor
+                ? remove()
+                : withThreadDismissal(pendingTask.key, remove, (removed) => removed)
             )
               .then((removed) =>
                 removed ? releaseEditingQueuedMessage(messageId) : releaseUnlessEditing(),
