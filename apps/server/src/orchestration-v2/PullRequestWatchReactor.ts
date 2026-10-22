@@ -433,6 +433,12 @@ export const make = Effect.gen(function* () {
       },
     }).pipe(
       Effect.tap(() => woke(target)),
+      Effect.catchCause((cause) =>
+        logFailure("pull request post-merge timeout notification failed", {
+          threadId: target.thread.id,
+          pullRequest: threadPullRequestKeyOf(target.link),
+        })(cause).pipe(Effect.andThen(record(target, null))),
+      ),
       Effect.tap(() => ended(target, "post-merge-timeout")),
     );
 
@@ -670,14 +676,30 @@ export const make = Effect.gen(function* () {
             deadlineAt: DateTime.formatIso(DateTime.makeUnsafe(now + POST_MERGE_WAIT_MS)),
           },
         };
-        yield* record(target, watch);
+        const initialized = yield* record(target, watch).pipe(
+          Effect.as(true),
+          Effect.catchCause((cause) =>
+            logFailure("pull request post-merge start failed", {
+              threadId: target.thread.id,
+              pullRequest: threadPullRequestKeyOf(target.link),
+            })(cause).pipe(Effect.as(false)),
+          ),
+        );
+        if (!initialized) continue;
         target = { ...target, watch };
       }
       if (
         target.watch.postMerge !== undefined &&
         now >= Date.parse(target.watch.postMerge.deadlineAt)
       ) {
-        yield* postMergeTimeout(target);
+        yield* postMergeTimeout(target).pipe(
+          Effect.catchCause(
+            logFailure("pull request post-merge timeout failed", {
+              threadId: target.thread.id,
+              pullRequest: threadPullRequestKeyOf(target.link),
+            }),
+          ),
+        );
         continue;
       }
       // Grouped per project too: each project reads through its own checkout, so one that cannot

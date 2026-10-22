@@ -291,8 +291,8 @@ watching inside GitHub's rate limit. Comments from your own account do not wake 
 when the pull request merges or closes, after 10 wakes in a row that bring only comments, after 8
 failed reads in a row, or when you press Stop on the thread. A rate limit only pauses watching.
 To wait for a verdict after merge,
-ask the agent to watch with `postMergeCheck` set to the check's name. That watch survives merge and
-automatic settlement, then wakes the agent once when the named check finishes on the PR head and
+ask the agent to watch with `postMergeCheck` set to the check's name. The thread stays in Working
+after merge, then wakes the agent once when the named check finishes on the PR head and
 stops. If no verdict arrives within 24 hours of observing the merge, it wakes with an inconclusive
 result and stops. Manual settlement, archive, Stop, and unwatch still end it.
 Unsettle the thread before starting a new watch. Watching a pull request again does not repeat

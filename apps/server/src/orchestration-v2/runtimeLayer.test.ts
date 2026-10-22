@@ -2800,6 +2800,142 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each(["start", "timeout"] as const)(
+    "a failed post-merge %s write does not block another PR watch",
+    (stage) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const projectId = ProjectId.make(`post-merge-write-${stage}`);
+        const failingId = ThreadId.make(`post-merge-write-${stage}-12`);
+        yield* seedProject({
+          projectId,
+          title: "Post merge writes",
+          workspaceRoot: "/workspace/post-merge-writes",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        for (const number of [12, 13]) {
+          const threadId = ThreadId.make(`post-merge-write-${stage}-${number}`);
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`post-merge-write-create-${stage}-${number}`),
+            threadId,
+            projectId,
+            title: "Post merge writes",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make(`post-merge-write-watch-${stage}-${number}`),
+            threadId,
+            host: "github.com",
+            repository: "pingdotgg/t3code",
+            number,
+            watching: true,
+            ...(number === 12 ? { postMergeCheck: "Release verdict" } : {}),
+            link: { url: `https://github.com/pingdotgg/t3code/pull/${number}`, source: "agent" },
+          });
+        }
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-link.sync",
+          commandId: CommandId.make(`post-merge-write-snapshot-${stage}`),
+          threadId: failingId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 12,
+          snapshot: {
+            state: "merged",
+            title: "Post merge writes",
+            isDraft: false,
+            headBranch: "feature",
+            baseBranch: "main",
+            checksState: "passing",
+            mergeability: "mergeable",
+            reviewDecision: null,
+            updatedAt: "2026-10-02T12:00:00.000Z",
+            mergedAt: "2026-10-02T12:00:00.000Z",
+            closedAt: null,
+            syncedAt: "2026-10-02T12:00:00.000Z",
+          },
+          stack: null,
+        });
+        const reads: number[] = [];
+        let failures = 0;
+        const reactor = yield* PullRequestWatchReactor.make.pipe(
+          Effect.provideService(Orchestrator.OrchestratorV2, {
+            ...orchestrator,
+            dispatch: (command) => {
+              if (
+                command.type === "thread.pull-request-watch.sync" &&
+                command.threadId === failingId &&
+                (stage === "start" ? command.watch !== null : command.wake !== undefined)
+              ) {
+                failures += 1;
+                return Effect.fail(
+                  new Orchestrator.OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                  }),
+                );
+              }
+              return orchestrator.dispatch(command);
+            },
+          }),
+          Effect.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              Layer.mock(PullRequestService.PullRequestService)({
+                watchFingerprint: () => Effect.succeed(null),
+                invalidate: () => Effect.void,
+                detail: (input) =>
+                  Effect.sync(() => {
+                    reads.push(input.number);
+                    return {
+                      ...watchedPullRequestDetail({
+                        projectId,
+                        number: input.number,
+                        at: "2026-10-02T12:00:00.000Z",
+                      }),
+                      state: input.number === 12 ? ("merged" as const) : ("open" as const),
+                      checks: [],
+                    };
+                  }),
+                activity: () =>
+                  Effect.succeed({
+                    comments: [],
+                    commentCount: 0,
+                    commentsTruncated: false,
+                    reviewThreads: [],
+                    commits: [],
+                  }),
+              }),
+            ),
+          ),
+        );
+        yield* reactor.sweep;
+        if (stage === "timeout") {
+          reads.length = 0;
+          yield* TestClock.adjust("24 hours");
+          yield* reactor.sweep;
+          assert.isUndefined(
+            (yield* orchestrator.getThreadShell(failingId))?.pullRequests?.[0]?.watch,
+          );
+          assert.lengthOf(
+            (yield* orchestrator.getThreadRecords(failingId, ["messages"])).messages,
+            0,
+          );
+        }
+        assert.equal(failures, 1);
+        assert.include(reads, 13);
+      }),
+  );
+
   it.effect("ends a watch it cannot read, and tells the agent", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
