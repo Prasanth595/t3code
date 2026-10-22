@@ -462,6 +462,7 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "GitConfirm",
   "GitOverview",
   "NewTaskProject",
+  "NewTaskFiles",
   "NewTaskFile",
   "NewTaskAttachment",
   "NewTaskThreadSettings",
@@ -751,6 +752,11 @@ const RootStackConfig = createWorkspaceStackNavigator({
       linking: "new/add-project/new",
       screen: AddProjectNewRoute,
       options: GLASS_HEADER_OPTIONS,
+    }),
+    NewTaskFiles: createNativeStackScreen({
+      linking: "new/draft/files",
+      screen: ThreadFilesTreeScreen,
+      options: SOLID_HEADER_OPTIONS,
     }),
     NewTaskFile: createNativeStackScreen({
       linking: "new/draft/files/:path*",

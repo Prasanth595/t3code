@@ -20,6 +20,7 @@ import {
 } from "./android-workspace-tabs";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useAndroidWorkspaceRoot } from "./AndroidWorkspaceTabsProvider";
+import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 
 // Matches RAIL_WIDTH in the native rail.
@@ -61,6 +62,7 @@ export function AndroidWorkspaceNavigation(props: {
   readonly onOverlayChange?: (overlay: boolean) => void;
 }) {
   const workspace = useWorkspaceTabs()!;
+  const { startNewTask } = useAdaptiveWorkspaceLayout();
   const root = useAndroidWorkspaceRoot();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -117,7 +119,7 @@ export function AndroidWorkspaceNavigation(props: {
         }}
         onNewThread={() => {
           Keyboard.dismiss();
-          navigation.navigate("Thread", { draft: {} });
+          startNewTask();
         }}
         onOverlayChange={(event) => props.onOverlayChange?.(event.nativeEvent.overlay)}
         style={rail ? { flex: 1 } : { height: 80 * Math.max(1, scale) }}

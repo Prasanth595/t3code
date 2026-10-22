@@ -555,15 +555,22 @@ function threadGitMenuDefinition(
         id: "git-review",
         title: "Review changes",
         icon: "text.bubble",
-        disabled: !model.isRepo,
-        subtitle: "Turn diffs and worktree changes",
+        disabled: !model.isRepo || props.hasThread === false,
+        subtitle:
+          props.hasThread === false
+            ? "Available after the first message"
+            : "Turn diffs and worktree changes",
         onPress: model.openReview,
       },
       {
         id: "git-more",
         title: "More",
         icon: "ellipsis",
-        subtitle: "Commit, files, branches",
+        disabled: props.hasThread === false,
+        subtitle:
+          props.hasThread === false
+            ? "Available after the first message"
+            : "Commit, files, branches",
         onPress: model.openGitInspector,
       },
     ],

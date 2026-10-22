@@ -66,6 +66,7 @@ import {
 import { terminalDebugLog } from "../terminal/terminalDebugLog";
 import type { ThreadDetailScreenProps } from "./ThreadDetailScreen";
 import { ThreadScreenBinding, ThreadScreenFallback, ThreadScreenHost } from "./ThreadScreenHost";
+import { draftRouteIdentity } from "./thread-route-state";
 import { NewTaskDraftRouteScreen, type NewTaskDraftRouteParams } from "./NewTaskDraftRouteScreen";
 import { GitOverviewSheet } from "./git/GitOverviewSheet";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -187,7 +188,10 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
   return (
     <ThreadScreenHost>
       {props.route.params?.draft ? (
-        <NewTaskDraftRouteScreen route={{ ...props.route, params: props.route.params.draft }} />
+        <NewTaskDraftRouteScreen
+          key={draftRouteIdentity(props.route.params.draft)}
+          route={{ ...props.route, params: props.route.params.draft }}
+        />
       ) : (
         <LiveThreadRouteController {...props} />
       )}

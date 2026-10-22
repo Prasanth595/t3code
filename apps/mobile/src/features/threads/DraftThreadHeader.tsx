@@ -38,7 +38,7 @@ export function DraftThreadHeader(props: {
   const pull = useAtomCommand(vcsEnvironment.pull, { reportFailure: false });
   const openFiles = () => {
     if (!props.cwd || !canReadFiles) return;
-    navigation.navigate("ThreadFiles", {
+    navigation.navigate("NewTaskFiles", {
       environmentId,
       cwd: props.cwd,
       projectName: props.project.title,

@@ -1,6 +1,10 @@
 import * as NodeModule from "node:module";
 import { describe, expect, it } from "vite-plus/test";
-import { isDraftThreadRoute, submittedThreadParams } from "./thread-route-state";
+import {
+  draftRouteIdentity,
+  isDraftThreadRoute,
+  submittedThreadParams,
+} from "./thread-route-state";
 
 const requireNavigation = NodeModule.createRequire(
   NodeModule.createRequire(import.meta.url).resolve("@react-navigation/native/package.json"),
@@ -79,5 +83,27 @@ describe("missing shared-content project recovery", () => {
     expect(recovered.routes.at(-1)?.params).toEqual({
       draft: { environmentId: "environment", projectId: "replacement", incomingShareId: "share" },
     });
+  });
+});
+
+describe("draft route identity", () => {
+  it("changes when a reused Thread route selects another draft or starts a new one", () => {
+    const draft = { environmentId: "env", projectId: "project", draftId: "a" };
+    expect(draftRouteIdentity(draft)).not.toBe(draftRouteIdentity({ ...draft, draftId: "b" }));
+    expect(draftRouteIdentity(draft)).not.toBe(
+      draftRouteIdentity({ ...draft, draftId: undefined }),
+    );
+    expect(draftRouteIdentity(draft)).not.toBe(
+      draftRouteIdentity({ ...draft, projectId: "other" }),
+    );
+    expect(draftRouteIdentity(draft)).not.toBe(
+      draftRouteIdentity({ ...draft, incomingShareId: "share" }),
+    );
+  });
+
+  it("normalizes link parameters without resetting for display metadata", () => {
+    expect(
+      draftRouteIdentity({ environmentId: ["env"], projectId: ["project"], title: "Old" }),
+    ).toBe(draftRouteIdentity({ environmentId: "env", projectId: "project", title: "New" }));
   });
 });

@@ -142,7 +142,7 @@ export function CommandPalette(props: {
 }) {
   const navigation = useNavigation();
   const { themeVariables } = useAppearancePreferences();
-  const { selectThread } = useAdaptiveWorkspaceLayout();
+  const { selectThread, selectThreadRoute } = useAdaptiveWorkspaceLayout();
   const runCommand = props.onCommand;
   const projects = useProjects();
   const threads = useThreadShells();
@@ -279,7 +279,7 @@ export function CommandPalette(props: {
         title: `New thread in ${activeProject.title}`,
         searchTerms: ["new task", "chat", "create"],
         run: () =>
-          navigation.navigate("Thread", {
+          selectThreadRoute({
             draft: {
               environmentId: activeProject.environmentId,
               projectId: activeProject.id,
@@ -312,7 +312,7 @@ export function CommandPalette(props: {
       detail: `New thread · ${savedConnectionsById[project.environmentId]?.environmentLabel ?? project.environmentId}`,
       searchTerms: [project.workspaceRoot, "new thread", "project"],
       run: () =>
-        navigation.navigate("Thread", {
+        selectThreadRoute({
           draft: {
             environmentId: project.environmentId,
             projectId: project.id,
@@ -354,6 +354,7 @@ export function CommandPalette(props: {
     runCommand,
     savedConnectionsById,
     selectThread,
+    selectThreadRoute,
     threads,
   ]);
   const results = useMemo(

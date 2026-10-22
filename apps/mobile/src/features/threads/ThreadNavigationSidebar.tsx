@@ -577,7 +577,14 @@ function ThreadNavigationSidebarPane(
         return (
           <ThreadListV2PendingRow
             pendingTask={item.pendingTask}
-            selected={activeNewTask?.pendingKey === item.pendingTask.key}
+            selected={
+              activeNewTask?.pendingKey === item.pendingTask.key ||
+              (item.pendingTask.kind === "pending" &&
+                scopedThreadKey(
+                  item.pendingTask.environmentId,
+                  item.pendingTask.message.threadId,
+                ) === props.selectedThreadKey)
+            }
             project={projectByKey.get(pendingScopeKey) ?? null}
             projectTitle={projectTitleByProjectKey.get(pendingScopeKey)}
             environmentLabel={

@@ -575,7 +575,7 @@ function AdaptiveWorkspaceLayoutContent(
     usePendingTaskListActions(handleSelectThreadRoute);
 
   const handleNewThreadOnBranch = (thread: EnvironmentThreadShell) => {
-    navigation.navigate("Thread", {
+    handleSelectThreadRoute({
       draft: {
         environmentId: String(thread.environmentId),
         projectId: String(thread.projectId),
@@ -586,7 +586,7 @@ function AdaptiveWorkspaceLayoutContent(
   };
 
   const handleNewThreadInProject = (project: EnvironmentProject) => {
-    navigation.navigate("Thread", {
+    handleSelectThreadRoute({
       draft: {
         environmentId: String(project.environmentId),
         projectId: String(project.id),
