@@ -1,3 +1,4 @@
+import { createDeferredNavigation } from "./deferred-navigation";
 import { uuidv4 } from "../../lib/uuid";
 import type {
   EnvironmentProject,
@@ -99,6 +100,7 @@ interface AdaptiveWorkspaceContextValue {
   readonly fileInspector: FileInspectorPaneLayout;
   readonly primarySidebarSearchQuery: string;
   readonly startNewTask: () => void;
+  readonly deferThreadSelectionUntil: (operation: Promise<unknown>) => void;
   readonly selectThread: (thread: EnvironmentThreadShell) => void;
   readonly selectThreadRoute: (params: ReactNavigation.RootParamList["Thread"]) => void;
   readonly activateAuxiliaryPaneRole: (role: WorkspaceAuxiliaryPaneRole) => () => void;
@@ -134,6 +136,7 @@ const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceContextValue>({
   fileInspector: compactFileInspector,
   primarySidebarSearchQuery: "",
   startNewTask: () => undefined,
+  deferThreadSelectionUntil: () => undefined,
   selectThread: () => undefined,
   selectThreadRoute: () => undefined,
   activateAuxiliaryPaneRole: () => () => undefined,
@@ -495,7 +498,11 @@ function AdaptiveWorkspaceLayoutContent(
   };
 
   const selectAndroidWorkspace = useAndroidWorkspaceSelection();
+  const deferredThreadSelection = useMemo(createDeferredNavigation, []);
   function handleSelectThreadRoute(params: ReactNavigation.RootParamList["Thread"]) {
+    deferredThreadSelection.run(() => applyThreadRouteSelection(params));
+  }
+  function applyThreadRouteSelection(params: ReactNavigation.RootParamList["Thread"]) {
     if (Platform.OS === "android") {
       setFileInspectorPreferredVisible(false);
       selectAndroidWorkspace({ name: "Thread", params });
@@ -773,6 +780,7 @@ function AdaptiveWorkspaceLayoutContent(
     fileInspector,
     primarySidebarSearchQuery,
     startNewTask: handleStartNewTask,
+    deferThreadSelectionUntil: deferredThreadSelection.waitFor,
     selectThread: handleSelectThread,
     selectThreadRoute: handleSelectThreadRoute,
     activateAuxiliaryPaneRole,

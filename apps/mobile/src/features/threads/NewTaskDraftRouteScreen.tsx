@@ -1,3 +1,4 @@
+import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import * as Dialog from "../../components/ui/Dialog";
 import { useNavigation, usePreventRemove, type StaticScreenProps } from "@react-navigation/native";
@@ -25,6 +26,7 @@ export type { NewTaskDraftRouteParams } from "./thread-route-state";
 export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraftRouteParams>) {
   const params = useMemo(() => route.params ?? {}, [route.params]);
   const { reset } = useNewTaskFlow();
+  const { deferThreadSelectionUntil } = useAdaptiveWorkspaceLayout();
   const [initialized, setInitialized] = useState(false);
   useLayoutEffect(() => {
     reset();
@@ -102,10 +104,12 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
       setPendingCheckouts((count) => count - 1);
       if (active) setPreparation({ request: initialProjectRef, result, workspaceRoot });
     });
+    deferThreadSelectionUntil(checkoutTail.current);
     return () => {
       active = false;
     };
   }, [
+    deferThreadSelectionUntil,
     environmentId,
     workspaceRoot,
     initialProjectRef,
