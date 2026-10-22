@@ -208,7 +208,10 @@ describe("connection presentation", () => {
       alternateRoutes: [{ target: relay, profile: Option.none() }],
     };
     expect(
-      pairAgainAddress({ entry: mixed, connection: blocked("authentication", { hop: "relay" }) }),
+      pairAgainAddress({
+        entry: mixed,
+        connection: blocked("authentication", { hop: "server", via: "relay" }),
+      }),
     ).toBeNull();
     expect(pairAgainAddress({ entry: mixed, connection: blocked("authentication") })).toBe(
       "https://environment.example.test",
