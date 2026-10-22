@@ -405,6 +405,36 @@ it.effect("discards empty destinations and incomplete clone metadata", () =>
   }).pipe(Effect.provide(layerDiscard)),
 );
 
+it.effect("does not execute a recovered repository's fsmonitor hook during discard", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-clone-fsmonitor-" });
+    const destination = path.join(parent, "checkout");
+    const hook = path.join(parent, "fsmonitor");
+    yield* fs.writeFileString(hook, '#!/bin/sh\nprintf ran > "$0.ran"\n');
+    yield* fs.chmod(hook, 0o755);
+    yield* git.execute({ operation: "test.init", cwd: parent, args: ["init", destination] });
+    yield* git.execute({
+      operation: "test.index",
+      cwd: destination,
+      args: ["read-tree", "--empty"],
+    });
+    yield* git.execute({
+      operation: "test.config",
+      cwd: destination,
+      args: ["config", "core.fsmonitor", hook],
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      yield* service.discardClone(destination);
+    }).pipe(Effect.provide(layer({ git: { execute: git.execute } })));
+    assert.isFalse(yield* fs.exists(`${hook}.ran`));
+    assert.deepStrictEqual(yield* fs.readDirectory(destination), []);
+  }).pipe(Effect.provide(layerDiscard)),
+);
+
 it.effect.each([false, true])("preserves recovered clone files when ignored=%s", (ignored) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

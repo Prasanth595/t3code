@@ -485,7 +485,7 @@ export const make = Effect.gen(function* () {
           const result = yield* git.execute({
             operation: "SourceControlRepositoryService.discardClone.inspect",
             cwd: normalized,
-            args: ["--git-dir", metadataPath, ...args],
+            args: ["-c", "core.fsmonitor=false", "--git-dir", metadataPath, ...args],
             timeoutMs: 5_000,
             maxOutputBytes: 4_096,
           });
