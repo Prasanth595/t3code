@@ -5,8 +5,10 @@ import {
   ProviderInstanceId,
   ThreadId,
   type ServerProvider,
+  type AcpRegistryConfigurableProvider,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
 
@@ -168,4 +170,36 @@ it("rechecks task access after confirming deletion", async () => {
   });
   await screen.click("Delete");
   expect(commands.delete).not.toHaveBeenCalled();
+});
+
+
+it.each(["Save", "Disable"])("keeps other provider edits through a %s refetch", async (action) => {
+  setup();
+  const providers: AcpRegistryConfigurableProvider[] = ["google", "other"].map((providerId) => ({
+    providerId,
+    supported: ["openai"],
+    required: false,
+    current: { apiType: "openai", baseUrl: "https://api.example.test/v1" },
+  }));
+  const response = { _tag: "Success" as const, value: { providers } };
+  commands.listProviders.mockResolvedValue(response);
+  await using screen = await renderSection();
+  await screen.click("List providers");
+  const input = (label: string) => screen.container.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!;
+  await userEvent.fill(input("other base URL"), "https://other.example.test/v1");
+  await userEvent.fill(input("other write-only headers JSON"), '{"X-Test":"unsaved"}');
+  await userEvent.fill(input("google write-only headers JSON"), '{"X-Test":"saved"}');
+
+  const reload = Promise.withResolvers<typeof response>();
+  commands.listProviders.mockReturnValueOnce(reload.promise);
+  await screen.click(action);
+  await userEvent.fill(input("other base URL"), "https://newer.example.test/v1");
+  await act(async () => reload.resolve(response));
+
+  expect(input("other base URL").value).toBe("https://newer.example.test/v1");
+  expect(input("other write-only headers JSON").value).toBe('{"X-Test":"unsaved"}');
+  expect(input("google write-only headers JSON").value).toBe("");
+  await screen.click("Refresh");
+  expect(input("other base URL").value).toBe("https://api.example.test/v1");
+  expect(input("other write-only headers JSON").value).toBe("");
 });
