@@ -52,7 +52,8 @@ vi.mock("../../state/entities", () => ({
 vi.mock("@t3tools/client-runtime/state/thread-execution", () => ({
   deriveThreadRuntime: () => ({ status: state.status }),
 }));
-vi.mock("@t3tools/client-runtime/state/thread-requests", () => ({
+vi.mock(import("@t3tools/client-runtime/state/thread-requests"), async (importOriginal) => ({
+  ...(await importOriginal()),
   derivePendingThreadRequests: () => ({ approvals: state.approvals, userInputs: state.userInputs }),
 }));
 vi.mock("../../state/session", () => ({
@@ -81,6 +82,7 @@ vi.mock("./ProviderModelPicker", () => ({
   ProviderModelPicker: ({ model }: { model: string }) => <button type="button">{model}</button>,
 }));
 vi.mock("./TraitsPicker", () => ({
+  readPromptUltrathink: () => false,
   TraitsPicker: () => null,
   TraitsMenuContent: () => null,
   getReasoningTraitStep: () => null,
@@ -91,7 +93,7 @@ vi.mock("./TraitsPicker", () => ({
 vi.mock("../ChatMarkdown", () => ({
   default: ({ text }: { text: string }) => <p>{text}</p>,
 }));
-vi.mock("./ChatComposer", () => ({
+vi.mock("./ComposerFooterControls", () => ({
   ComposerFooterModeControls: () => null,
 }));
 vi.mock("../../shortcutModifierState", () => ({

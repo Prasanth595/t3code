@@ -10,7 +10,7 @@ import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { SideChatControls } from "./SideChatControls";
 import { SideChatContext } from "./SideChatPanel";
 import { ProviderModelPicker } from "./ProviderModelPicker";
-import { TraitsPicker } from "./TraitsPicker";
+import { TraitsPicker, readPromptUltrathink } from "./TraitsPicker";
 
 const instanceId = ProviderInstanceId.make("codex");
 const driver = ProviderDriverKind.make("codex");
@@ -73,8 +73,8 @@ function Fixture({ active = true }: { active?: boolean }) {
           model={model}
           models={models}
           modelOptions={options}
-          prompt={draft}
-          onPromptChange={setDraft}
+          promptUltrathink={readPromptUltrathink(draft)}
+          onPromptEdit={setDraft}
           planModeEnabled={false}
           onModelOptionsChange={(next) =>
             setOptions((next ?? []).map((o) => ({ id: o.id, value: String(o.value) })))

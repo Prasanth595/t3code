@@ -11,12 +11,12 @@ import {
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { getAppModelOptionsForInstance } from "../../modelSelection";
 import { ProviderModelPicker } from "./ProviderModelPicker";
-import { TraitsPicker } from "./TraitsPicker";
+import { TraitsPicker, readPromptUltrathink } from "./TraitsPicker";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { SideChatControls } from "./SideChatControls";
 import { ComposerSurface } from "./ComposerSurface";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
-import { ComposerFooterModeControls } from "./ChatComposer";
+import { ComposerFooterModeControls } from "./ComposerFooterControls";
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
 import {
   startAttachmentUpload,
@@ -623,8 +623,8 @@ export function SideChatSession({
                           model={selection.model}
                           models={entry.models}
                           modelOptions={selection.options}
-                          prompt={draft}
-                          onPromptChange={setDraft}
+                          promptUltrathink={readPromptUltrathink(draft)}
+                          onPromptEdit={setDraft}
                           planModeEnabled={settings.planModeEnabled}
                           onModelOptionsChange={(options) =>
                             setSelection((current) => ({ ...current, options: options ?? [] }))
