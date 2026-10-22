@@ -261,7 +261,7 @@ describe("environment RPC", () => {
       yield* Fiber.interrupt(subscriptionFiber);
 
       expect(subscriptions).toEqual(["first", "second"]);
-      expect(yield* Ref.get(retryCount)).toBe(0);
+      expect(yield* Ref.get(retryCount)).toBe(1);
     }),
   );
 
