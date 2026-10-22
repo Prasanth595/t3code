@@ -42,11 +42,10 @@ export const makeGhProcess = Effect.gen(function* () {
   return {
     run: (input) => {
       // The spawn's own env extends the host's, so its address is the one gh will see.
-      const address = (
+      const address =
         input.env !== undefined && "DBUS_SESSION_BUS_ADDRESS" in input.env
           ? input.env.DBUS_SESSION_BUS_ADDRESS
-          : environment.DBUS_SESSION_BUS_ADDRESS
-      )?.trim();
+          : environment.DBUS_SESSION_BUS_ADDRESS;
       if (address && address !== "autolaunch:") return process.run(input);
       return noBusToDiscover.pipe(
         Effect.flatMap((missing) =>

@@ -79,6 +79,7 @@ describe("makeGhProcess", () => {
     Effect.gen(function* () {
       expect(yield* spawnedBusAddress({})).toBe("disabled:");
       expect(yield* spawnedBusAddress({ address: "autolaunch:" })).toBe("disabled:");
+      expect(yield* spawnedBusAddress({ spawnAddress: "autolaunch:" })).toBe("disabled:");
       // A spawn that clears the host's address leaves godbus nothing to use either.
       expect(yield* spawnedBusAddress({ address: "unix:path=/tmp/bus", spawnAddress: "" })).toBe(
         "disabled:",
@@ -88,7 +89,7 @@ describe("makeGhProcess", () => {
       expect(yield* spawnedBusAddress({ unreadable: session })).toBe("disabled:");
       expect(yield* spawnedBusAddress({ files: { [session]: "garbage\n" } })).toBe("disabled:");
       expect(
-        yield* spawnedBusAddress({ files: { [session]: "DBUS_SESSION_BUS_ADDRESS=\n" } }),
+        yield* spawnedBusAddress({ files: { [session]: "DBUS_SESSION_BUS_ADDRESS=\r\n" } }),
       ).toBe("disabled:");
     }),
   );
