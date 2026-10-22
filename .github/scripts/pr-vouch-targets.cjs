@@ -3,17 +3,22 @@
 const MAX_MATRIX_JOBS = 256;
 const TRUST_LIST_PATH = ".github/VOUCHED.td";
 
-// Maps each GitHub handle in a VOUCHED.td file to "vouched" or "denounced".
+// Maps each GitHub handle in a VOUCHED.td file to "vouched" or "denounced",
+// read the way mitchellh/vouch check-user reads it (vouch/file.nu parse-line
+// and parse-handle, vouch/lib.nu check-user): the whole handle is lowercased,
+// details start at the first space, an entry without a platform applies to
+// GitHub, and the first entry for a handle decides its status.
 function parseTrustList(text) {
   const statuses = new Map();
   for (const rawLine of text.split("\n")) {
-    const line = rawLine.trim();
+    const line = rawLine.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "");
     if (line === "" || line.startsWith("#")) continue;
     const denounced = line.startsWith("-");
-    const entry = (denounced ? line.slice(1) : line).split(/\s+/, 1)[0];
-    const separator = entry.indexOf(":");
-    if (separator !== -1 && entry.slice(0, separator) !== "github") continue;
-    statuses.set(entry.slice(separator + 1).toLowerCase(), denounced ? "denounced" : "vouched");
+    const handle = (denounced ? line.slice(1) : line).split(" ", 1)[0].toLowerCase();
+    const separator = handle.indexOf(":");
+    if (separator !== -1 && handle.slice(0, separator) !== "github") continue;
+    const username = handle.slice(separator + 1);
+    if (!statuses.has(username)) statuses.set(username, denounced ? "denounced" : "vouched");
   }
   return statuses;
 }

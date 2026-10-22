@@ -47,6 +47,17 @@ test("only trust status changes count, not comments, order or reasons", () => {
   assert.deepEqual([...changedHandles(before, after)].sort(), ["carol", "dave", "frank", "grace"]);
 });
 
+test("handles are read the way the vouch action reads them", () => {
+  assert.deepEqual([...changedHandles("", "GitHub:Alice\n")], ["alice"]);
+  assert.deepEqual([...changedHandles("github:alice\n", "GITHUB:alice\n")], []);
+  assert.deepEqual([...changedHandles("github:bob\n", "-github:bob spam\ngithub:bob\n")], ["bob"]);
+  assert.deepEqual([...changedHandles("github:carol\n", "github:carol\n-github:carol spam\n")], []);
+  assert.deepEqual([...changedHandles("github:dave\n", "github:dave\tnote\n")].sort(), [
+    "dave",
+    "dave\tnote",
+  ]);
+});
+
 test("matching PRs beyond the matrix limit are reported, not dropped silently", () => {
   const pulls = Array.from({ length: MAX_MATRIX_JOBS + 4 }, (_, index) => pull(index + 1, "alice"));
 
