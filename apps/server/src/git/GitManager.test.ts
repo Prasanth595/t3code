@@ -6,6 +6,7 @@ import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -2026,7 +2027,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("a user's pull request lookup reaches the provider as a user action", () =>
+  it.effect("resolves a user's pull request while background reads to its host are paused", () =>
     Effect.gen(function* () {
       const { service } = createGitHubProviderWithFakeGh({
         pullRequest: {
@@ -2038,21 +2039,44 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           state: "open",
         },
       });
-      const interactive: boolean[] = [];
-      const { manager } = yield* makeManager({
-        sourceControlProvider: {
-          ...service,
-          getChangeRequest: (input) =>
-            SourceControlRateLimit.Interactive.pipe(
-              Effect.tap((value) => Effect.sync(() => interactive.push(value))),
-              Effect.andThen(service.getChangeRequest(input)),
-            ),
-        },
+      const limits = yield* SourceControlRateLimit.make;
+      const key = { provider: SourceControlProviderKind.make("github"), host: "github.com" };
+      yield* limits.recordRateLimit({
+        ...key,
+        lease: 0,
+        retryAt: (yield* Clock.currentTimeMillis) + 60_000,
       });
+      // Gated like BitbucketApi's reads: refused during a pause unless a user is waiting.
+      const getChangeRequest: SourceControlProvider["Service"]["getChangeRequest"] = (input) =>
+        SourceControlRateLimit.Interactive.pipe(
+          Effect.flatMap((interactive) =>
+            limits.check(key, interactive ? { allowPaused: true } : undefined),
+          ),
+          Effect.mapError(
+            (cause) =>
+              new SourceControlProviderFailure({
+                provider: key.provider,
+                operation: "getChangeRequest",
+                cwd: input.cwd,
+                detail: cause.detail,
+                cause,
+              }),
+          ),
+          Effect.andThen(service.getChangeRequest(input)),
+        );
+      const background = yield* Effect.flip(
+        getChangeRequest({ cwd: process.cwd(), reference: "91" }),
+      );
+      expect(background.cause).toMatchObject({ _tag: "SourceControlRateLimitPausedError" });
 
-      // A host's background rate-limit pause would otherwise refuse it.
-      yield* manager.resolvePullRequest({ cwd: process.cwd(), reference: "91" });
-      expect(interactive).toEqual([true]);
+      const { manager } = yield* makeManager({
+        sourceControlProvider: { ...service, getChangeRequest },
+      });
+      const { pullRequest } = yield* manager.resolvePullRequest({
+        cwd: process.cwd(),
+        reference: "91",
+      });
+      expect(pullRequest.number).toBe(91);
     }),
   );
 
