@@ -4762,6 +4762,81 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("keeps unpublished commits when creating a PR worktree from an existing branch", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      const branch = "feature/pr-unpublished-commit";
+      yield* runGit(repoDir, ["checkout", "-b", branch]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "published.txt"), "published work\n");
+      yield* runGit(repoDir, ["add", "published.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Published PR work"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", branch]);
+      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/89/head"]);
+
+      NodeFS.writeFileSync(NodePath.join(repoDir, "unpublished.txt"), "unpublished work\n");
+      yield* runGit(repoDir, ["add", "unpublished.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Unpublished local work"]);
+      const localHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["checkout", "main"]);
+
+      const setupCalls: ProjectSetupScriptRunner.ProjectSetupScriptRunnerInput[] = [];
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 89,
+            title: "PR with unpublished local work",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/89",
+            baseRefName: "main",
+            headRefName: branch,
+            state: "open",
+          },
+        },
+        setupScriptRunner: {
+          runForThread: (setupInput) =>
+            Effect.sync(() => {
+              setupCalls.push(setupInput);
+              return { status: "no-script" as const };
+            }),
+        },
+      });
+
+      const threadId = asThreadId("thread-pr-unpublished-commit");
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "89",
+        mode: "worktree",
+        threadId,
+      });
+
+      expect((yield* runGit(repoDir, ["rev-parse", branch])).stdout.trim()).toBe(localHead);
+      expect(result.worktreePath).not.toBeNull();
+      const worktreePath = result.worktreePath as string;
+      expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(localHead);
+      expect(NodeFS.readFileSync(NodePath.join(worktreePath, "unpublished.txt"), "utf8")).toBe(
+        "unpublished work\n",
+      );
+      expect(result.isOnPullRequestHead).toBe(false);
+      expect(setupCalls).toHaveLength(1);
+      expect(setupCalls[0]).toEqual({ threadId, projectCwd: repoDir, worktreePath });
+
+      const reopened = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "89",
+        mode: "worktree",
+        threadId,
+      });
+
+      expect(reopened.worktreePath).toBe(worktreePath);
+      expect(reopened.isOnPullRequestHead).toBe(false);
+      expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(localHead);
+      expect(setupCalls).toHaveLength(1);
+    }),
+  );
+
   it.effect("keeps a reused PR worktree that carries its own commit off the rewritten head", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

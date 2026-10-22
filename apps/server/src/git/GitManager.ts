@@ -2835,12 +2835,12 @@ export const make = Effect.gen(function* () {
       const localPullRequestBranch =
         resolvePullRequestWorktreeLocalBranchName(pullRequestWithRemoteInfo);
 
-      // Git refuses to move a branch that is checked out in a worktree, so the
-      // reuse paths cannot go through materializePullRequestHeadBranch and instead
-      // advance the checkout from inside the worktree.
+      // Existing local branches may carry unpublished commits. Refresh them from
+      // inside their worktree so both new and reused checkouts preserve that work.
       const reuseExistingWorktree = Effect.fn("reuseExistingWorktree")(function* (
         worktreePath: string,
         checkedOutBranch: string,
+        options?: { readonly newWorktree?: boolean },
       ) {
         if (checkedOutBranch !== localPullRequestBranch) {
           // findLocalHeadBranch also accepts a branch that merely shares the head's bare name —
@@ -2914,9 +2914,9 @@ export const make = Effect.gen(function* () {
             ),
           );
 
-        // Only when the checkout actually moved: another thread may be running in this worktree,
-        // and re-running the setup script under it buys nothing when the code did not change.
-        if (refreshed.moved) {
+        // New checkouts need setup even when local commits keep them off the PR head.
+        // Reused checkouts only need it when the code actually changed.
+        if (refreshed.moved || options?.newWorktree) {
           yield* maybeRunSetupScript(worktreePath);
         }
 
@@ -2984,11 +2984,14 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      yield* materializePullRequestHeadBranch(
-        input.cwd,
-        pullRequestWithRemoteInfo,
-        localPullRequestBranch,
-      );
+      const hasExistingLocalBranch = existingBranchBeforeFetch?.name === localPullRequestBranch;
+      if (!hasExistingLocalBranch) {
+        yield* materializePullRequestHeadBranch(
+          input.cwd,
+          pullRequestWithRemoteInfo,
+          localPullRequestBranch,
+        );
+      }
 
       const existingBranchAfterFetch = yield* findLocalHeadBranch(input.cwd);
       const existingBranchAfterFetchPath = existingBranchAfterFetch?.worktreePath
@@ -3026,6 +3029,11 @@ export const make = Effect.gen(function* () {
           ),
         },
       );
+      if (hasExistingLocalBranch) {
+        return yield* reuseExistingWorktree(worktree.worktree.path, worktree.worktree.refName, {
+          newWorktree: true,
+        });
+      }
       yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
       yield* maybeRunSetupScript(worktree.worktree.path);
 
