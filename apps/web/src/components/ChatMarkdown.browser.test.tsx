@@ -266,8 +266,9 @@ describe("ChatMarkdown remote thread file links", () => {
     setup();
     machines.primaryEnvironmentId = desktop;
     machines.remoteEnvironmentIds.add(threadRef.environmentId);
+    const desktopFiles = new Set(["/home/me/Desktop/notes.txt", "/srv/shared.md"]);
     const files = {
-      [desktop]: new Set(["/home/me/Desktop/notes.txt", "/srv/shared.md"]),
+      [desktop]: desktopFiles,
       [threadRef.environmentId]: new Set(["/srv/shared.md"]),
     };
     filesystemMetadata.mockImplementation(
@@ -310,7 +311,7 @@ describe("ChatMarkdown remote thread file links", () => {
       expect(openFile).toHaveBeenLastCalledWith(threadRef, "/srv/gone.md", undefined),
     );
     // `~` is the host's home, so it never reaches the local lookup.
-    files[desktop].add("~/notes.txt");
+    desktopFiles.add("~/notes.txt");
     await act(async () => home!.click());
     expect(openFile).toHaveBeenLastCalledWith(threadRef, "~/notes.txt", undefined);
     expect(machines.openInEditor).toHaveBeenCalledOnce();
