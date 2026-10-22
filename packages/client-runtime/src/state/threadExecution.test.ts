@@ -96,6 +96,14 @@ describe("thread execution presentation", () => {
         ...projection,
         providerSessions: [{ ...projection.providerSessions[0]!, status: "error" }],
       }),
+    ).toEqual(statuses);
+    expect(
+      deriveProviderExtensionStatuses({
+        ...projection,
+        providerSessions: [
+          { ...projection.providerSessions[0]!, status: "error", extensionStatuses: [] },
+        ],
+      }),
     ).toEqual([]);
     expect(
       deriveProviderExtensionStatuses({

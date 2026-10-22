@@ -712,6 +712,84 @@ describe("PiAdapterV2", () => {
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect.each(["model error", "rejected prompt", "failed compact"] as const)(
+    "keeps extension status through a reusable %s and the next turn",
+    (failure) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* fake.emit({
+          type: "extension_ui_request",
+          method: "setStatus",
+          statusKey: "watch",
+          statusText: "Watching 3 files",
+        });
+        const command = failure === "failed compact" ? "compact" : "prompt";
+        yield* startTurn(
+          runtime,
+          providerThread,
+          "default",
+          [],
+          command === "compact" ? "/compact" : "Hello pi",
+        );
+        yield* fake.takeRequest(command);
+        if (failure === "model error") {
+          yield* fake.emit({
+            type: "message_end",
+            message: { role: "assistant", stopReason: "error", errorMessage: "Rate limited" },
+          });
+          yield* fake.emit({ type: "agent_settled" });
+        } else {
+          yield* fake.emit({
+            type: "response",
+            command,
+            success: false,
+            error: "Request rejected",
+          });
+        }
+        const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+        assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "failed");
+        assert.deepInclude(runtime.providerSession, {
+          status: "error",
+          extensionStatuses: [{ key: "watch", text: "Watching 3 files" }],
+        });
+
+        yield* fake.emit({
+          type: "extension_ui_request",
+          method: "setStatus",
+          statusKey: "watch",
+          statusText: "Watching 4 files",
+        });
+        yield* fake.emit({
+          type: "extension_ui_request",
+          id: "failed-turn-status-barrier",
+          method: "input",
+          title: "Continue?",
+        });
+        yield* takeEvent((event) => event.type === "runtime_request.updated");
+        assert.deepInclude(runtime.providerSession, {
+          status: "error",
+          extensionStatuses: [{ key: "watch", text: "Watching 4 files" }],
+        });
+
+        yield* startTurn(runtime, providerThread, "default", [], "Hello again", undefined, 2);
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "agent_settled" });
+        const nextTerminal = yield* takeEvent((event) => event.type === "turn.terminal");
+        assert.isTrue(nextTerminal.type === "turn.terminal" && nextTerminal.status === "completed");
+        assert.deepInclude(runtime.providerSession, {
+          id: SESSION_ID,
+          status: "ready",
+          extensionStatuses: [{ key: "watch", text: "Watching 4 files" }],
+        });
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("preserves extension statuses when a native session switch is vetoed", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;

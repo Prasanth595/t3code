@@ -73,7 +73,7 @@ export function deriveProviderExtensionStatuses(
       session.providerInstanceId === instanceId &&
       (activeThread === undefined || session.id === activeThread.providerSessionId),
   );
-  return session === undefined || session.status === "stopped" || session.status === "error"
+  return session === undefined || session.status === "stopped"
     ? EMPTY_EXTENSION_STATUSES
     : (session.extensionStatuses ?? EMPTY_EXTENSION_STATUSES);
 }

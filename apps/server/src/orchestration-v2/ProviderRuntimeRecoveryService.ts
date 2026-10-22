@@ -588,7 +588,9 @@ export const make = Effect.gen(function* () {
         });
       }
       for (const session of projection.providerSessions.filter(
-        (candidate) => candidate.status !== "stopped" && candidate.status !== "error",
+        (candidate) =>
+          (candidate.status !== "stopped" && candidate.status !== "error") ||
+          (candidate.extensionStatuses?.length ?? 0) > 0,
       )) {
         events.push({
           id: yield* allocateEventId(),
@@ -599,10 +601,10 @@ export const make = Effect.gen(function* () {
           occurredAt: now,
           payload: {
             ...session,
-            status: "stopped",
+            status: session.status === "error" ? "error" : "stopped",
             ...(session.extensionStatuses === undefined ? {} : { extensionStatuses: [] }),
             updatedAt: now,
-            lastError: null,
+            lastError: session.status === "error" ? session.lastError : null,
           },
         });
       }

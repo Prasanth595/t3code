@@ -531,6 +531,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       let lastNativeThreadId: string | null = null;
       let stopRequested = false;
       let unsolicitedActivityDetected = false;
+      // Turn failures can leave Pi alive; pump termination retires the runtime.
+      let runtimeRetired = false;
       let pendingWake: PiWake | null = null;
       let extensionStatusReset: {
         previous: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]>;
@@ -610,7 +612,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             status,
             lastError,
             updatedAt,
-            ...(status === "stopped" || status === "error" ? { extensionStatuses: [] } : {}),
+            ...(status === "stopped" || runtimeRetired || unsolicitedActivityDetected
+              ? { extensionStatuses: [] }
+              : {}),
           };
           yield* emit({
             type: "provider_session.updated",
@@ -624,7 +628,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         if (
           closed ||
           stopRequested ||
-          sessionEntity.status === "error" ||
+          runtimeRetired ||
+          unsolicitedActivityDetected ||
           sessionEntity.status === "stopped"
         )
           return;
@@ -2249,6 +2254,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         Effect.catchCause((cause) =>
           sessionEventPermit.withPermits(1)(
             Effect.gen(function* () {
+              runtimeRetired = true;
               const state = threadState;
               if (extensionStatusReset !== null)
                 yield* Deferred.fail(
