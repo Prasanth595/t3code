@@ -3,6 +3,7 @@ import { ProviderInstanceId } from "@t3tools/contracts";
 import { totalTokens } from "@t3tools/provider-core/server/usage";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { it } from "@effect/vitest";
 import { describe, expect, vi } from "vite-plus/test";
@@ -106,6 +107,24 @@ it("includes automated review inference models and ignores workflow and telemetr
   expect(parse({ ...value, stream: { kind: "run", id: "run-1" } })).toEqual([]);
 });
 
+it("includes native version 3 automated review inferences", () => {
+  const value = entry();
+  const review = {
+    ...value,
+    payload_schema_version: 3,
+    payload: {
+      ...value.payload,
+      event: {
+        ...value.payload.event,
+        kind: "automated_review_completed",
+        model: { provider_id: "meta", model_id: "review-model", reasoning_effort: "high" },
+      },
+    },
+  };
+  expect(parse(review)).toEqual([{ ...parse(value)[0], model: "review-model" }]);
+  expect(museUsageFormat.parseProjected(review, undefined)).toEqual(parse(review));
+});
+
 it("handles malformed and partial data and rejects unsupported timestamps or schemas", () => {
   expect(museUsageFormat.parseLine("not json", undefined)).toEqual([]);
   expect(museUsageFormat.parseLine(JSON.stringify(entry()).slice(0, -1), undefined)).toEqual([]);
@@ -154,6 +173,7 @@ describe("Muse history discovery", () => {
     "uses the initialized home with XDG_DATA_HOME=%s and closes without starting a session",
     (xdg) =>
       Effect.gen(function* () {
+        const path = yield* Path.Path;
         const close = vi.fn(async () => {});
         using create = vi.spyOn(MuseSdk, "createMuseSdkHostEffect").mockReturnValue(
           Effect.succeed({
@@ -169,10 +189,10 @@ describe("Muse history discovery", () => {
           environment: { XDG_DATA_HOME: xdg, MUSE_NO_AUTO_UPDATE: "0" },
         });
         expect(directories).toEqual([
-          { dir: "/native/configured-home/sessions", fileName: "session.jsonl" },
+          { dir: path.join("/native/configured-home", "sessions"), fileName: "session.jsonl" },
         ]);
         expect(create).toHaveBeenCalledWith({
-          binaryPath: "/test-home/bin/custom-muse",
+          binaryPath: path.join("/test-home", "bin/custom-muse"),
           environment: {
             PATH: "/host/bin",
             XDG_DATA_HOME: xdg ?? "/host/data",

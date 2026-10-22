@@ -846,6 +846,7 @@ describe("UsageService", () => {
         const parent = entry("inference-1");
         const review = {
           ...entry("review", "child"),
+          payload_schema_version: 3,
           payload: {
             event: {
               ...parent.payload.event,

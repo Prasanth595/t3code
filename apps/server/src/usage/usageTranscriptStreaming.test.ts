@@ -113,7 +113,7 @@ describe("large usage records", () => {
       schema_version: 1,
       record_type: "event",
       payload_type: "runtime.session",
-      payload_schema_version: 1,
+      payload_schema_version: 3,
       id: "envelope-1",
       recorded_at: 1_785_578_400_123_456,
       stream: { kind: "session", id: "parent" },

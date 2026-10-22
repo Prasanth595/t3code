@@ -20,7 +20,8 @@ const Entry = Schema.Struct({
   schema_version: Schema.Literal(1),
   record_type: Schema.Literal("event"),
   payload_type: Schema.Literal("runtime.session"),
-  payload_schema_version: Schema.Literal(1),
+  // Native automated review completions use session payload version 3.
+  payload_schema_version: Schema.Literals([1, 3]),
   id: Schema.NonEmptyString,
   recorded_at: Schema.Number,
   stream: Schema.Struct({ kind: Schema.Literal("session"), id: Schema.NonEmptyString }),
