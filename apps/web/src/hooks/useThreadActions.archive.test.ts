@@ -67,8 +67,11 @@ it.each([
   };
   state.refreshed = [];
   state.notice = null;
-  const archive = Promise.withResolvers<{ _tag: "Success"; value: undefined }>();
-  state.archive.mockReset().mockReturnValue(archive.promise);
+  let resolveArchive!: (result: { _tag: "Success"; value: undefined }) => void;
+  const archive = new Promise<{ _tag: "Success"; value: undefined }>((resolve) => {
+    resolveArchive = resolve;
+  });
+  state.archive.mockReset().mockReturnValue(archive);
 
   const pending = useThreadActions().archiveThread({
     environmentId: EnvironmentId.make("archive-env"),
@@ -79,7 +82,7 @@ it.each([
     destination === "/settings"
       ? {}
       : { environmentId: "archive-env", threadId: destination.split("/").at(-1)! };
-  archive.resolve({ _tag: "Success", value: undefined });
+  resolveArchive({ _tag: "Success", value: undefined });
 
   expect((await pending)._tag).toBe("Success");
   expect(state.refreshed).toEqual(["archive-env"]);
