@@ -10,9 +10,9 @@ import { describe, it } from "vite-plus/test";
 
 import { guardLogStream } from "./logStreams.ts";
 
-const guardModule = NodeURL.pathToFileURL(
-  NodePath.join(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "logStreams.ts"),
-).href;
+const factoryDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+/** The module server.ts imports for FactoryLayer. */
+const factoryModule = NodeURL.pathToFileURL(NodePath.join(factoryDir, "index.ts")).href;
 
 const enospc = () =>
   Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" });
@@ -42,18 +42,22 @@ describe("guardLogStream", () => {
     await nextMacrotask();
     log.log("three");
     await nextMacrotask();
+    // A writer that waits on its callback is not left hanging by a dropped line.
+    const written = await new Promise((resolve) => stream.write("four\n", resolve));
+    assert.isUndefined(written);
     assert.deepEqual(fd, []);
 
     full = false;
     log.log("back");
     log.log("again");
-    assert.deepEqual(fd, ["3 log lines dropped (ENOSPC)\n", "back\n", "again\n"]);
+    assert.deepEqual(fd, ["4 log lines dropped (ENOSPC)\n", "back\n", "again\n"]);
   });
 
-  it("keeps a process alive whose stdout pipe has closed", async () => {
+  // The guard is in place as soon as server.ts imports the factory, before any layer builds, so a
+  // full disk during startup cannot end the server either.
+  it("keeps a process that imported the factory alive when its stdout pipe has closed", async () => {
     const script = [
-      `import { guardLogStreams } from ${JSON.stringify(guardModule)};`,
-      `guardLogStreams();`,
+      `await import(${JSON.stringify(factoryModule)});`,
       `for (let i = 0; i < 50; i++) {`,
       `  console.log("line " + i);`,
       `  await new Promise((resolve) => setImmediate(resolve));`,
@@ -63,7 +67,11 @@ describe("guardLogStream", () => {
     const child = NodeChildProcess.spawn(
       process.execPath,
       ["--input-type=module", "--no-warnings", "-e", script],
-      { stdio: ["ignore", "pipe", "pipe"], timeout: 15_000 },
+      {
+        cwd: NodePath.resolve(factoryDir, "../.."),
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
+      },
     );
     // Nobody reads stdout, so every write the child makes to it fails with EPIPE.
     child.stdout.destroy();
