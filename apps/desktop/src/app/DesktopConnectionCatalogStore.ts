@@ -23,6 +23,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.ts";
@@ -465,7 +466,17 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(raw) || (yield* isReadableCatalog(raw.value))) {
         return;
       }
-      const keptPath = `${catalogPath}.unreadable-${yield* Clock.currentTimeMillis}`;
+      const id = (yield* crypto.randomUUIDv4().pipe(
+        Effect.mapError(
+          (cause) =>
+            new DesktopConnectionCatalogStoreWriteError({
+              operation: "keep-unreadable-catalog",
+              path: catalogPath,
+              cause,
+            }),
+        ),
+      )).slice(0, 8);
+      const keptPath = `${catalogPath}.unreadable-${yield* Clock.currentTimeMillis}-${id}`;
       yield* fileSystem.rename(catalogPath, keptPath).pipe(
         Effect.mapError(
           (cause) =>
@@ -480,6 +491,7 @@ export const make = Effect.gen(function* () {
     },
   );
   const existingCatalogChecked = yield* Ref.make(false);
+  const firstWriteLock = yield* Semaphore.make(1);
 
   const migrateLegacyCatalog = Effect.gen(function* () {
     if (!(yield* encryptionAvailable)) {
@@ -551,11 +563,19 @@ export const make = Effect.gen(function* () {
       if (!(yield* encryptionAvailable)) {
         return false;
       }
-      if (!(yield* Ref.get(existingCatalogChecked))) {
-        yield* keepUnreadableCatalog();
-        yield* Ref.set(existingCatalogChecked, true);
+      if (yield* Ref.get(existingCatalogChecked)) {
+        yield* writeCatalog(catalog);
+        return true;
       }
-      yield* writeCatalog(catalog);
+      yield* firstWriteLock.withPermits(1)(
+        Effect.gen(function* () {
+          if (!(yield* Ref.get(existingCatalogChecked))) {
+            yield* keepUnreadableCatalog();
+            yield* Ref.set(existingCatalogChecked, true);
+          }
+          yield* writeCatalog(catalog);
+        }),
+      );
       return true;
     }),
     clear: fileSystem.remove(catalogPath, { force: true }).pipe(

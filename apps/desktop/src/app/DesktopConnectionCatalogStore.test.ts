@@ -376,15 +376,49 @@ describe("DesktopConnectionCatalogStore", () => {
   );
 
   it.effect("replaces a readable catalog without keeping a copy", () =>
-    withStore(
-      Effect.gen(function* () {
-        const environment = yield* DesktopEnvironment.DesktopEnvironment;
-        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
-        assert.isTrue(yield* store.set(savedCatalog));
-        assert.isTrue(yield* store.set(emptyCatalog));
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-connection-catalog-test-",
+      });
+      const layer = layerFor(baseDir);
+      const previousRun = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+        Effect.provide(layer),
+      );
+      assert.isTrue(yield* previousRun.set(savedCatalog));
 
-        assert.deepStrictEqual(yield* savedCatalogFiles(environment.stateDir), []);
-      }),
-    ),
+      const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+        Effect.provide(layer),
+      );
+      assert.isTrue(yield* store.set(emptyCatalog));
+
+      assert.deepStrictEqual(yield* savedCatalogFiles(path.join(baseDir, "userdata")), []);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("keeps an unreadable catalog once when first saves run concurrently", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-connection-catalog-test-",
+      });
+      const layer = layerFor(baseDir);
+      const previousRun = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+        Effect.provide(layer),
+      );
+      assert.isTrue(yield* previousRun.set("\u0000not a catalog"));
+
+      const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+        Effect.provide(layer),
+      );
+      const saved = yield* Effect.all([store.set(emptyCatalog), store.set(savedCatalog)], {
+        concurrency: "unbounded",
+      });
+
+      assert.deepStrictEqual(saved, [true, true]);
+      assert.equal((yield* savedCatalogFiles(path.join(baseDir, "userdata"))).length, 1);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });
