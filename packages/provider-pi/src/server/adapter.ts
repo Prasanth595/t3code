@@ -518,6 +518,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       >();
       const pendingPrompts = new Map<string, PendingPiPrompt>();
       const sessionApprovals = new Set<string>();
+      const lastPlanSteps = new Map<string, ReadonlyArray<OrchestrationV2PlanStep>>();
       const planIds = new Map<string, PlanId>();
       // Answering a dialog and terminalizing a turn both publish lifecycle
       // events. Pi can settle immediately after `extension_ui_response`, so
@@ -1037,28 +1038,45 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           completedAt: completed ? emittedAt : null,
         } as const;
         if (toolName === "todo") {
-          const steps = piTodoSteps(args, resultRecord);
           const planKey = `${turn.turnInput.threadId}:todo_list`;
+          const todoArgs = completed && !isError ? args : { todos: recordField(args, "todos") };
+          const derived = piTodoSteps(todoArgs, resultRecord);
+          if (completed && !isError && derived.length > 0) {
+            lastPlanSteps.set(planKey, derived);
+          }
+          if (completed && !isError && recordString(args, "action") === "clear") {
+            lastPlanSteps.delete(planKey);
+          }
+          const steps = derived.length > 0 ? derived : (lastPlanSteps.get(planKey) ?? []);
+
+          if (
+            completed &&
+            !isError &&
+            (derived.length > 0 || recordString(args, "action") === "clear")
+          ) {
+            const planId = yield* resolvePlanId(turn, planKey);
+            const allCompleted =
+              steps.length > 0 && steps.every((step) => step.status === "completed");
+            const planStatus = allCompleted ? "completed" : "active";
+            yield* emit({
+              type: "plan.updated",
+              driver: PI_PROVIDER,
+              plan: {
+                id: planId,
+                threadId: turn.turnInput.threadId,
+                runId: turn.turnInput.runId,
+                nodeId: idAllocator.derive.nodeFromProviderItem({
+                  driver: PI_PROVIDER,
+                  nativeItemId: toolCallId,
+                }),
+                kind: "todo_list",
+                status: planStatus,
+                steps: [...steps],
+              },
+            });
+          }
+
           const planId = yield* resolvePlanId(turn, planKey);
-          const allCompleted =
-            steps.length > 0 && steps.every((step) => step.status === "completed");
-          const planStatus = completed ? (allCompleted ? "completed" : "active") : "draft";
-          yield* emit({
-            type: "plan.updated",
-            driver: PI_PROVIDER,
-            plan: {
-              id: planId,
-              threadId: turn.turnInput.threadId,
-              runId: turn.turnInput.runId,
-              nodeId: idAllocator.derive.nodeFromProviderItem({
-                driver: PI_PROVIDER,
-                nativeItemId: toolCallId,
-              }),
-              kind: "todo_list",
-              status: planStatus,
-              steps: [...steps],
-            },
-          });
           yield* emit({
             type: "turn_item.updated",
             driver: PI_PROVIDER,
@@ -3351,7 +3369,7 @@ export function piTodoSteps(
 ): ReadonlyArray<OrchestrationV2PlanStep> {
   const details = recordField(resultRecord, "details");
   const tasks = recordField(details, "tasks");
-  if (Array.isArray(tasks) && tasks.length > 0) {
+  if (Array.isArray(tasks)) {
     return tasks.flatMap((task, index) => {
       if (typeof task !== "object" || task === null) return [];
       const statusRaw = recordString(task, "status")?.toLowerCase();
@@ -3378,10 +3396,9 @@ export function piTodoSteps(
     });
   }
 
-  const structuredTodos =
-    recordField(recordField(resultRecord, "structuredContent"), "todos") ??
-    recordField(details, "todos");
-  if (Array.isArray(structuredTodos) && structuredTodos.length > 0) {
+  const structuredContent = recordField(resultRecord, "structuredContent");
+  const structuredTodos = recordField(structuredContent, "todos") ?? recordField(details, "todos");
+  if (Array.isArray(structuredTodos)) {
     return structuredTodos.flatMap((todo, index) => {
       if (typeof todo !== "object" || todo === null) return [];
       const statusRaw = recordString(todo, "status")?.toLowerCase();
@@ -3409,7 +3426,7 @@ export function piTodoSteps(
   }
 
   const argTodos = recordField(args, "todos");
-  if (Array.isArray(argTodos) && argTodos.length > 0) {
+  if (Array.isArray(argTodos)) {
     return argTodos.flatMap((todo, index) => {
       if (typeof todo !== "object" || todo === null) return [];
       const statusRaw = recordString(todo, "status")?.toLowerCase();
@@ -3439,6 +3456,7 @@ export function piTodoSteps(
   const subject = recordString(args, "subject") ?? recordString(args, "content");
   if (subject !== undefined && subject.trim().length > 0) {
     const statusRaw = recordString(args, "status")?.toLowerCase();
+    if (statusRaw === "deleted" || statusRaw === "cancelled" || statusRaw === "removed") return [];
     const status =
       statusRaw === "completed" || statusRaw === "complete" || statusRaw === "done"
         ? "completed"

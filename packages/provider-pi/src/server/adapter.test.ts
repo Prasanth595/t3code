@@ -2391,22 +2391,14 @@ describe("PiAdapterV2", () => {
       );
       assert.isTrue(startNode.type === "node.updated" && startNode.node.status === "running");
 
-      const startPlan = yield* takeEvent(
-        (event) => event.type === "plan.updated" && event.plan.kind === "todo_list",
-      );
-      if (startPlan.type !== "plan.updated" || startPlan.plan.kind !== "todo_list") {
-        return assert.fail("expected plan.updated with todo_list");
-      }
-      assert.equal(startPlan.plan.status, "draft");
-      assert.equal(startPlan.plan.steps.length, 2);
-
       const startItem = yield* takeEvent(
         (event) => event.type === "turn_item.updated" && event.turnItem.type === "todo_list",
       );
       assert.isTrue(
         startItem.type === "turn_item.updated" &&
           startItem.turnItem.type === "todo_list" &&
-          startItem.turnItem.status === "running",
+          startItem.turnItem.status === "running" &&
+          startItem.turnItem.steps.length === 2,
       );
 
       // End phase: tool completes with rpiv-todo details.tasks
@@ -2466,13 +2458,29 @@ describe("PiAdapterV2", () => {
       assert.equal(endItem.turnItem.steps.length, 2);
       assert.equal(endItem.turnItem.planId, endPlan.plan.id);
 
-      // Second tool call: update tasks so all are completed -> plan status becomes completed
+      // Second tool call start: intermediate update call does not clobber the authoritative plan
       yield* fake.emit({
         type: "tool_execution_start",
         toolCallId: "call_todo_2",
         toolName: "todo",
         args: { action: "update", id: 2, status: "completed" },
       });
+
+      const updateStartItem = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "todo_list" &&
+          event.turnItem.status === "running",
+      );
+      if (
+        updateStartItem.type !== "turn_item.updated" ||
+        updateStartItem.turnItem.type !== "todo_list"
+      ) {
+        return assert.fail("expected turn_item.updated on update start");
+      }
+      // Retains the previous steps rather than falling back to zero steps
+      assert.equal(updateStartItem.turnItem.steps.length, 2);
+
       yield* fake.emit({
         type: "tool_execution_end",
         toolCallId: "call_todo_2",
@@ -2560,6 +2568,22 @@ describe("PiAdapterV2", () => {
     // 4. args.subject
     const fromSingle = piTodoSteps({ subject: "Solo task", status: "pending" }, {});
     assert.deepEqual(fromSingle, [{ id: "1", text: "Solo task", status: "pending" }]);
+
+    // 5. Authoritative empty result details.tasks overrides args fallback
+    const emptyResult = piTodoSteps({ subject: "Old task" }, { details: { tasks: [] } });
+    assert.deepEqual(emptyResult, []);
+
+    // 6. Authoritative empty structuredContent.todos overrides args fallback
+    const emptyStructured = piTodoSteps(
+      { todos: [{ content: "Old task" }] },
+      { structuredContent: { todos: [] } },
+    );
+    assert.deepEqual(emptyStructured, []);
+
+    // 7. Single task with terminal status (deleted/cancelled/removed) is filtered out
+    assert.deepEqual(piTodoSteps({ subject: "Old task", status: "deleted" }, {}), []);
+    assert.deepEqual(piTodoSteps({ subject: "Old task", status: "cancelled" }, {}), []);
+    assert.deepEqual(piTodoSteps({ subject: "Old task", status: "removed" }, {}), []);
   });
 
   it.effect.each([false, true])("follows an extension rewind with summarize=%s", (summarize) =>
