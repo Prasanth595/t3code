@@ -15,6 +15,39 @@ a new browser.
 
 Prefer a container? See [Dev container](../internals/devcontainer.md) for VS Code and Codespaces setup.
 
+## GitCafe mirror (optional)
+
+GitHub is the source of truth. [git.cafe/pingdotgg/t3code](https://git.cafe/pingdotgg/t3code) is a
+two-way synced mirror with much higher API rate limits, which helps when many agents read PRs and
+issues at once. You never need it to contribute.
+
+The mirror has no CI, so it is for reads only. Fetch and read through GitCafe; push and open PRs on
+GitHub, and GitCafe mirrors them within about a minute.
+
+```sh
+git remote set-url origin https://git.cafe/pingdotgg/t3code.git
+git remote add github https://github.com/pingdotgg/t3code.git
+# The GitHub remote you push to: `github`, or your fork's remote.
+git config remote.pushDefault github
+bun install -g @gitcafe/cli   # `cafe` runs under Bun
+cafe auth login && cafe auth http setup
+cafe skills install --global  # optional: cafe-* skills for coding agents
+```
+
+With `origin` on git.cafe:
+
+- Read PRs, issues, comments, reviews, and check status with `cafe`; checks come from
+  `cafe pr status <n> --json`.
+- Push, open PRs, run stacks, and merge on GitHub: `git push` (via `pushDefault`), `gh pr create`,
+  `gh stack`, `gh pr merge <branch> --match-head-commit <sha>`. Never `cafe pr create` or
+  `cafe stack submit`: those PRs get no CI.
+- Use `gh` for what the mirror lacks: CI logs and reruns, PR labels, a fork PR's head repository,
+  and anything `cafe` returns empty or 403/404 for.
+- PR and issue numbers can differ between the forges. Name PRs by branch
+  (`cafe pr list --head <branch>`, `gh pr view <branch>`), and write `Fixes #<GitHub number>`.
+- `cafe` flags differ from `gh`: `--repo` not `-R`, `cafe issue comments <n>` not `--comments`,
+  `cafe pr status` not `pr checks`. `cafe ci` covers GitCafe Actions only, so it is empty here.
+
 ## Choosing a dev process
 
 Use `vp run dev` for server and web, or `vp run dev:desktop` for the Electron client.
