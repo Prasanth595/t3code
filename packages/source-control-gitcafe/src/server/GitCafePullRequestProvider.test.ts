@@ -605,6 +605,19 @@ describe("GitCafePullRequestProvider", () => {
     }).pipe(Effect.provide(server.layer));
   });
 
+  it.effect("names the missing scopes when the token may not request reviewers", () => {
+    const server = fakeGitCafe({
+      "GET /repos/owner/repo/pulls/7": pull,
+      "GET /repos/owner/repo/pulls/7/reviewer-candidates": new Response("", { status: 403 }),
+      "GET /repos/owner/repo/pulls/7/reviewers": { items: [], next: null },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const error = yield* Effect.flip(provider.listReviewerCandidates(target));
+      assert.match(error.detail, /pr:reviewers:write/u);
+    }).pipe(Effect.provide(server.layer));
+  });
+
   it.effect("applies and removes labels by name through their ids", () => {
     const server = fakeGitCafe({
       "GET /repos/owner/repo/pulls/7": pull,

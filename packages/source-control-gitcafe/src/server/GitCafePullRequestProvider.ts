@@ -261,6 +261,31 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const isForbidden = (error: PullRequestProviderError) =>
+    isApiError(error.cause) && error.cause.status === 403;
+
+  /**
+   * GitCafe offers no way to read a token's scopes, so reviewer controls show
+   * for anyone who may edit the pull request; a token without the reviewer
+   * scopes learns which ones it lacks when it uses them.
+   */
+  const explainReviewerScopes =
+    (operation: string) =>
+    <A, R>(effect: Effect.Effect<A, PullRequestProviderError, R>) =>
+      effect.pipe(
+        Effect.catch((error) =>
+          isForbidden(error)
+            ? Effect.fail(
+                failure(
+                  operation,
+                  "This GitCafe token cannot request reviewers. It needs the pr:review:read and pr:reviewers:write scopes.",
+                  error,
+                ),
+              )
+            : Effect.fail(error),
+        ),
+      );
+
   /**
    * GitCafe replaces a pull request's whole reviewer or label list, so one toggle reads the
    * list, changes it, and writes it back fenced on the pull request's version. The version is
@@ -595,9 +620,7 @@ export const make = Effect.gen(function* () {
           // Reviewers need `pr:review:read`, which a contents-only token lacks.
           readPages("getChangeRequest", input, `${path}/reviewers`, Json.GitCafeActorEntries).pipe(
             Effect.catch((error) =>
-              isApiError(error.cause) && error.cause.status === 403
-                ? Effect.succeed({ items: [], next: null })
-                : Effect.fail(error),
+              isForbidden(error) ? Effect.succeed({ items: [], next: null }) : Effect.fail(error),
             ),
           ),
           readPages("getChangeRequest", input, `${path}/labels`, Json.GitCafeLabels),
@@ -818,8 +841,15 @@ export const make = Effect.gen(function* () {
         const [pull, candidates, reviewers] = yield* Effect.all(
           [
             readPull(operation, input),
-            readPages(operation, input, `${path}/reviewer-candidates`, Json.GitCafeActorEntries),
-            readPages(operation, input, `${path}/reviewers`, Listed),
+            readPages(
+              operation,
+              input,
+              `${path}/reviewer-candidates`,
+              Json.GitCafeActorEntries,
+            ).pipe(explainReviewerScopes(operation)),
+            readPages(operation, input, `${path}/reviewers`, Listed).pipe(
+              explainReviewerScopes(operation),
+            ),
           ],
           { concurrency: 3 },
         );
@@ -840,7 +870,7 @@ export const make = Effect.gen(function* () {
         { name: "reviewers", key: "actorIds" },
         input.reviewers.map((reviewer) => reviewer.id),
         input.requested,
-      ),
+      ).pipe(explainReviewerScopes("setReviewerRequest")),
     listLabelCandidates: Effect.fn("GitCafePullRequestProvider.listLabelCandidates")(
       function* (input) {
         const operation = "listLabelCandidates";
