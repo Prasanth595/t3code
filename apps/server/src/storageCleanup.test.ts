@@ -1675,6 +1675,48 @@ describe("storage cleanup reports and local file policies", () => {
         }),
       ),
   );
+  it.live.each(["uncommitted-changes", "tracked-changes", "any-local-files"] as const)(
+    "preserves a skip-worktree deletion with policy %s",
+    (policy) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, fs, worktree, setPolicy, command } = yield* cleanupFixture();
+          setPolicy(policy);
+          yield* command(worktree, ["update-index", "--skip-worktree", "tracked.txt"]);
+          yield* fs.remove(`${worktree}/tracked.txt`);
+          expect((yield* service.runNow).entries[0]?.outcome).toBe("kept");
+          expect(yield* fs.exists(worktree)).toBe(true);
+        }),
+      ),
+  );
+  it.live.each(["uncommitted-changes", "tracked-changes", "any-local-files"] as const)(
+    "respects policy %s for ignored-only collapsed sparse directories",
+    (policy) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, fs, worktree, setPolicy, command } = yield* cleanupFixture();
+          setPolicy(policy);
+          yield* fs.makeDirectory(`${worktree}/excluded`);
+          yield* fs.writeFileString(`${worktree}/excluded/local.txt`, "original\n");
+          yield* fs.writeFileString(`${worktree}/.gitignore`, ".env\n");
+          yield* command(worktree, ["add", "."]);
+          yield* command(worktree, ["commit", "-m", "add sparse files"]);
+          yield* command(worktree, [
+            "sparse-checkout",
+            "set",
+            "--cone",
+            "--sparse-index",
+            "included",
+          ]);
+          yield* command(worktree, ["config", "sparse.expectFilesOutsideOfPatterns", "true"]);
+          yield* fs.makeDirectory(`${worktree}/excluded`);
+          yield* fs.writeFileString(`${worktree}/excluded/.env`, "ignored\n");
+          expect((yield* service.runNow).entries[0]?.outcome).toBe(
+            policy === "any-local-files" ? "kept" : "removed",
+          );
+        }),
+      ),
+  );
   it.live.each([
     { edited: false, sparseIndex: false },
     { edited: true, sparseIndex: false },

@@ -564,23 +564,68 @@ const make = Effect.gen(function* () {
     const index = yield* git.execute({
       operation: "StorageCleanup.indexFlags",
       cwd,
-      args: ["ls-files", "--sparse", "-v", "-z"],
+      args: ["ls-files", "--sparse", "--stage", "-v", "-z"],
       maxOutputBytes: 16 * 1024 * 1024,
     });
     if (index.stdoutTruncated) return "index flags exceed the inspection limit";
+    const skippedPaths: string[] = [];
+    const pathPresent = (target: string) =>
+      fs.exists(target).pipe(
+        Effect.flatMap((exists) =>
+          exists
+            ? Effect.succeed(true)
+            : fs.readLink(target).pipe(
+                Effect.as(true),
+                Effect.catch((error) => Effect.succeed(error.reason._tag !== "NotFound")),
+              ),
+        ),
+      );
     for (const entry of index.stdout.split("\0")) {
       if (/^[a-z] /.test(entry)) return "tracked files have assume-unchanged flags";
       if (!entry.startsWith("S ")) continue;
       if (entry.includes("\uFFFD")) return "skipped tracked paths could not be inspected";
-      const target = path.join(cwd, entry.slice(2));
-      // Sparse exclusions may be absent; dangling links still contain local data.
-      const present =
-        (yield* fs.exists(target)) ||
-        (yield* fs.readLink(target).pipe(
-          Effect.as(true),
-          Effect.catch((error) => Effect.succeed(error.reason._tag !== "NotFound")),
-        ));
-      if (present) return "tracked files have skip-worktree flags";
+      const name = entry.slice(entry.indexOf("\t") + 1);
+      if (name.endsWith("/")) {
+        // A collapsed sparse directory can contain only ignored or untracked files.
+        // Inspect its tracked descendants without expanding or rewriting the real index.
+        const tree = entry.split(" ")[2]!;
+        const descendants = yield* git.execute({
+          operation: "StorageCleanup.sparseIndexTree",
+          cwd,
+          args: ["ls-tree", "-r", "--name-only", "-z", tree],
+          maxOutputBytes: 16 * 1024 * 1024,
+        });
+        if (descendants.stdoutTruncated || descendants.stdout.includes("\uFFFD"))
+          return "skipped tracked paths could not be inspected";
+        for (const child of descendants.stdout.split("\0")) {
+          if (child !== "" && (yield* pathPresent(path.join(cwd, name, child))))
+            return "tracked files have skip-worktree flags";
+        }
+      } else {
+        if (yield* pathPresent(path.join(cwd, name)))
+          return "tracked files have skip-worktree flags";
+        skippedPaths.push(name);
+      }
+    }
+    if (skippedPaths.length > 0) {
+      const sparse = yield* git.execute({
+        operation: "StorageCleanup.sparseConfig",
+        cwd,
+        args: ["config", "--bool", "core.sparseCheckout"],
+        allowNonZeroExit: true,
+      });
+      if (sparse.stdout.trim() !== "true") return "tracked deletions have skip-worktree flags";
+      const selected = yield* git.execute({
+        operation: "StorageCleanup.sparseRules",
+        cwd,
+        args: ["sparse-checkout", "check-rules", "-z"],
+        stdin: skippedPaths.join("\0") + "\0",
+        maxOutputBytes: 4096,
+        allowNonZeroExit: true,
+      });
+      // Older Git versions cannot verify exclusions: retain the tree conservatively.
+      if (selected.exitCode !== 0 || selected.stdoutTruncated || selected.stdout.length > 0)
+        return "tracked deletions have skip-worktree flags";
     }
     if (rules.worktreeKeepWhen !== "any-local-files") return null;
     const ignored = yield* git.execute({
