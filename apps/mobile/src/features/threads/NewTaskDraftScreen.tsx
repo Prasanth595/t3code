@@ -943,6 +943,7 @@ export function NewTaskDraftScreen(props: {
       );
       return null;
     }
+    promptInputRef.current?.blur();
     navigation.dispatch(
       CommonActions.setParams(
         submittedThreadParams(String(message.environmentId), String(message.threadId)),
@@ -1053,30 +1054,41 @@ export function NewTaskDraftScreen(props: {
     </View>
   );
   // The nested hero scroll view does not receive UIKit's automatic navigation inset in split columns.
-  const heroViewport = (headerInset: number, bottomInset: number) => (
-    <NativeScrollEdgeEffectsContext
-      value={{ top: "hidden", bottom: "hidden", left: "hidden", right: "hidden" }}
-    >
-      <View className="flex-1" collapsable={false}>
-        <ScrollView
-          alwaysBounceVertical={false}
-          className="flex-1"
-          contentInsetAdjustmentBehavior="never"
-          contentContainerClassName="grow items-center"
-          contentContainerStyle={{ paddingTop: headerInset + 24, paddingBottom: bottomInset }}
-          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-          style={{ flex: 1 }}
-          testID="new-task-hero-scroll"
+  const heroViewport = (headerInset: number, bottomInset: number, availableHeight: number) =>
+    availableHeight < 180 ? null : (
+      <NativeScrollEdgeEffectsContext
+        value={{ top: "hidden", bottom: "hidden", left: "hidden", right: "hidden" }}
+      >
+        <View
+          collapsable={false}
+          style={{
+            position: "absolute",
+            top: headerInset,
+            bottom: bottomInset,
+            left: 0,
+            right: 0,
+            overflow: "hidden",
+          }}
         >
-          <View style={{ flexGrow: 1 }} />
-          {hero}
-          <View style={{ flexGrow: 2 }} />
-        </ScrollView>
-      </View>
-    </NativeScrollEdgeEffectsContext>
-  );
+          <ScrollView
+            alwaysBounceVertical={false}
+            className="flex-1"
+            contentInsetAdjustmentBehavior="never"
+            contentContainerClassName="grow items-center"
+            contentContainerStyle={{ paddingVertical: 24 }}
+            keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            style={{ flex: 1 }}
+            testID="new-task-hero-scroll"
+          >
+            <View style={{ flexGrow: 1 }} />
+            {hero}
+            <View style={{ flexGrow: 2 }} />
+          </ScrollView>
+        </View>
+      </NativeScrollEdgeEffectsContext>
+    );
 
   const workspaceControls = (
     <View className="flex-row items-center gap-1 px-2">

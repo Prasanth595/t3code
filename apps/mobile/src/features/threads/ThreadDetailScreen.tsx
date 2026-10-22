@@ -177,7 +177,11 @@ import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
 export interface ThreadDetailScreenProps {
   readonly header?: React.ReactNode;
   readonly draftMode?: {
-    readonly content: (headerInset: number, bottomInset: number) => React.ReactNode;
+    readonly content: (
+      headerInset: number,
+      bottomInset: number,
+      availableHeight: number,
+    ) => React.ReactNode;
     readonly controls: React.ReactNode;
     readonly editorRef: React.RefObject<ComposerEditorHandle | null>;
     readonly sendBlockedReason: string | null;
@@ -1320,6 +1324,11 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
         props.draftMode.content(
           navigationHeaderHeight,
           liveKeyboardHeight + estimatedOverlayHeight + 24,
+          screenAreaHeight -
+            navigationHeaderHeight -
+            liveKeyboardHeight -
+            estimatedOverlayHeight -
+            24,
         )
       ) : showContent ? (
         <View

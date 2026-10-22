@@ -192,6 +192,7 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
   }));
   const editorStyle = useAnimatedStyle(() => ({
     position: "absolute",
+    overflow: "hidden",
     height: animatedHeight.value,
     left: isExpanded ? 14 : editorX.value + 4,
     right: isExpanded ? 14 : rowWidth.value - editorX.value - editorWidth.value + 4,
