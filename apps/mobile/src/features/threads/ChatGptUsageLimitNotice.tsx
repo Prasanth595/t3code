@@ -13,7 +13,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 
 export function ChatGptUsageLimitNotice({ thread }: { thread: EnvironmentThreadShell }) {
-  const [copied, setCopied] = useState(false);
+  const [status, setStatus] = useState<"copied" | "copy-failed" | "open-failed" | null>(null);
   const code = thread.runtime?.lastErrorCode;
   const workspaceLimit = code === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
   if (thread.runtime?.status !== "failed" || (!workspaceLimit && code !== CHATGPT_USAGE_LIMIT_CODE))
@@ -29,7 +29,7 @@ export function ChatGptUsageLimitNotice({ thread }: { thread: EnvironmentThreadS
       </View>
       <Text className="text-xs text-foreground-muted">
         {workspaceLimit
-          ? copied
+          ? status === "copied"
             ? "Request copied. Send it to your workspace admin."
             : "You've reached your workspace's limit for using your ChatGPT plan in other apps. Copy a request to ask your workspace admin for increased usage limits."
           : "Review your usage settings in ChatGPT."}
@@ -40,8 +40,8 @@ export function ChatGptUsageLimitNotice({ thread }: { thread: EnvironmentThreadS
           tone="primary"
           onPress={() =>
             void Clipboard.setStringAsync(CHATGPT_WORKSPACE_ADMIN_REQUEST).then(
-              () => setCopied(true),
-              () => undefined,
+              () => setStatus("copied"),
+              () => setStatus("copy-failed"),
             )
           }
         />
@@ -49,9 +49,21 @@ export function ChatGptUsageLimitNotice({ thread }: { thread: EnvironmentThreadS
         <Button
           label="Manage usage"
           tone="primary"
-          onPress={() => void Linking.openURL(CHATGPT_USAGE_URL).catch(() => undefined)}
+          onPress={() =>
+            void Linking.openURL(CHATGPT_USAGE_URL).then(
+              () => setStatus(null),
+              () => setStatus("open-failed"),
+            )
+          }
         />
       )}
+      {status === "copy-failed" || status === "open-failed" ? (
+        <Text accessibilityRole="alert" className="text-xs text-destructive">
+          {status === "copy-failed"
+            ? "Could not copy the request. Try again."
+            : "Could not open ChatGPT. Go to chatgpt.com → Settings → Usage."}
+        </Text>
+      ) : null}
     </View>
   );
 }
