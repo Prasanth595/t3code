@@ -13,9 +13,21 @@ import { makeGhProcess } from "./gitHubCliProcess.ts";
 function spawnedBusAddress(input: {
   readonly platform?: NodeJS.Platform;
   readonly address?: string;
-  readonly files?: ReadonlyArray<string>;
-  readonly unreadable?: boolean;
+  /** File contents by path; a path not listed does not exist. */
+  readonly files?: Readonly<Record<string, string>>;
+  /** A path that exists but cannot be stat'ed or read. */
+  readonly unreadable?: string;
 }) {
+  const files = input.files ?? {};
+  const denied = (path: string, method: string) =>
+    Effect.fail(
+      PlatformError.systemError({
+        _tag: path === input.unreadable ? "PermissionDenied" : "NotFound",
+        module: "FileSystem",
+        method,
+        pathOrDescriptor: path,
+      }),
+    );
   const envs: Array<NodeJS.ProcessEnv | undefined> = [];
   const run: SourceControlHost.SourceControlHost["Service"]["process"]["run"] = (spawn) =>
     Effect.sync(() => {
@@ -38,16 +50,9 @@ function spawnedBusAddress(input: {
         TestSourceControlHost.layer({ process: { run } }),
         FileSystem.layerNoop({
           exists: (path) =>
-            input.unreadable
-              ? Effect.fail(
-                  PlatformError.systemError({
-                    _tag: "PermissionDenied",
-                    module: "FileSystem",
-                    method: "exists",
-                    pathOrDescriptor: path,
-                  }),
-                )
-              : Effect.succeed((input.files ?? []).includes(path)),
+            path === input.unreadable ? denied(path, "exists") : Effect.succeed(path in files),
+          readFileString: (path) =>
+            path in files ? Effect.succeed(files[path]!) : denied(path, "readFileString"),
         }),
       ),
     ),
@@ -65,17 +70,30 @@ describe("makeGhProcess", () => {
     Effect.gen(function* () {
       expect(yield* spawnedBusAddress({})).toBe("disabled:");
       expect(yield* spawnedBusAddress({ address: "autolaunch:" })).toBe("disabled:");
+      // godbus ignores a `dbus-session` file it cannot read or that names no address.
+      const session = "/run/user/1000/dbus-session";
+      expect(yield* spawnedBusAddress({ unreadable: session })).toBe("disabled:");
+      expect(yield* spawnedBusAddress({ files: { [session]: "garbage\n" } })).toBe("disabled:");
+      expect(
+        yield* spawnedBusAddress({ files: { [session]: "DBUS_SESSION_BUS_ADDRESS=\n" } }),
+      ).toBe("disabled:");
     }),
   );
 
   it.effect("leaves a bus godbus can find or was given", () =>
     Effect.gen(function* () {
-      expect(yield* spawnedBusAddress({ files: ["/run/user/1000/bus"] })).toBeUndefined();
-      expect(yield* spawnedBusAddress({ files: ["/run/user/1000/dbus-session"] })).toBeUndefined();
+      expect(yield* spawnedBusAddress({ files: { "/run/user/1000/bus": "" } })).toBeUndefined();
+      expect(
+        yield* spawnedBusAddress({
+          files: {
+            "/run/user/1000/dbus-session": "DBUS_SESSION_BUS_ADDRESS=unix:abstract=/tmp/dbus-x\n",
+          },
+        }),
+      ).toBeUndefined();
       expect(yield* spawnedBusAddress({ address: "unix:path=/tmp/bus" })).toBeUndefined();
       expect(yield* spawnedBusAddress({ platform: "darwin" })).toBeUndefined();
-      // godbus counts a bus it cannot stat as present, so an unreadable one is left alone too.
-      expect(yield* spawnedBusAddress({ unreadable: true })).toBeUndefined();
+      // godbus counts a socket it cannot stat as present, so an unreadable one is left alone too.
+      expect(yield* spawnedBusAddress({ unreadable: "/run/user/1000/bus" })).toBeUndefined();
     }),
   );
 });

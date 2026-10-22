@@ -4,6 +4,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
+const SESSION_ADDRESS_PREFIX = "DBUS_SESSION_BUS_ADDRESS=";
+
 /**
  * Runs `gh` without letting it autolaunch a D-Bus session bus.
  *
@@ -24,10 +26,19 @@ export const makeGhProcess = Effect.gen(function* () {
     const address = environment.DBUS_SESSION_BUS_ADDRESS?.trim();
     if (platform === "darwin" || userId === undefined) return false;
     if (address && address !== "autolaunch:") return false;
-    const found = yield* Effect.forEach(["bus", "dbus-session"], (name) =>
-      fileSystem.exists(`/run/user/${userId}/${name}`).pipe(Effect.orElseSucceed(() => true)),
-    );
-    return !found.some(Boolean);
+    const runtimeDir = `/run/user/${userId}`;
+    // godbus takes the bus socket if stat finds anything there, but uses `dbus-session` only
+    // when it reads as `DBUS_SESSION_BUS_ADDRESS=<address>`; otherwise it still autolaunches.
+    if (yield* fileSystem.exists(`${runtimeDir}/bus`).pipe(Effect.orElseSucceed(() => true))) {
+      return false;
+    }
+    const session = yield* fileSystem
+      .readFileString(`${runtimeDir}/dbus-session`)
+      .pipe(Effect.orElseSucceed(() => ""));
+    const sessionAddress = session.startsWith(SESSION_ADDRESS_PREFIX)
+      ? session.slice(SESSION_ADDRESS_PREFIX.length).replace(/[\r\n]+$/u, "")
+      : "";
+    return sessionAddress === "";
   });
 
   return {
