@@ -2757,6 +2757,73 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} is no longer empty.`,
         });
     }
+    if (
+      command.type === "thread.metadata.update" &&
+      command.projectId !== undefined &&
+      command.projectId !== thread.projectId
+    ) {
+      if (thread.lineage.relationshipToParent === "subagent") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is a subagent. Move its parent thread instead.`,
+        });
+      }
+      const destination = yield* projects.get(command.projectId).pipe(mapDispatchError(command));
+      if (Option.isNone(destination) || destination.value.deletedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `No project ${command.projectId}.`,
+        });
+      }
+      const family = yield* projectionStore
+        .getShellSnapshot({ projectId: thread.projectId })
+        .pipe(mapDispatchError(command));
+      const child = [...family.threads, ...family.archivedThreads].find(
+        (candidate) =>
+          candidate.lineage.parentThreadId === thread.id &&
+          candidate.lineage.relationshipToParent === "subagent",
+      );
+      if (child !== undefined) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has subagent ${child.id}. Move is refused while a child thread still belongs to this project.`,
+        });
+      }
+      const shell = yield* projectionStore
+        .getThreadShell(command.threadId)
+        .pipe(mapDispatchError(command));
+      if (shell === null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} could not be read.`,
+        });
+      }
+      const busy =
+        shell.activeRunId !== null ||
+        shell.status === "preparing" ||
+        shell.status === "queued" ||
+        shell.status === "starting" ||
+        shell.status === "running" ||
+        shell.status === "waiting";
+      if (busy) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is ${shell.status}. Stop it before moving it to another project.`,
+        });
+      }
+      if (thread.worktreePath !== null && command.keepWorktree !== true) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has a worktree at ${thread.worktreePath}. Pass keepWorktree to move it without changing that checkout.`,
+        });
+      }
+    }
     if (command.type === "thread.archive" && thread.archivedAt !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -3207,6 +3274,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
+            ...(command.projectId === undefined ? {} : { projectId: command.projectId }),
             ...(command.linkedPullRequest === undefined
               ? {}
               : {
