@@ -107,7 +107,7 @@ export function resolveDraftProjectSelection(
 }
 
 export function newTaskDestination(
-  usesSplitView: boolean,
+  _usesSplitView: boolean,
   projects: ReadonlyArray<EnvironmentProject>,
   currentProject: Pick<EnvironmentProject, "environmentId" | "id"> | undefined,
 ) {
@@ -117,10 +117,9 @@ export function newTaskDestination(
         candidate.environmentId === currentProject?.environmentId &&
         candidate.id === currentProject.id,
     ) ?? projects[0];
-  return usesSplitView && project
+  return project
     ? {
-        screen: "NewTaskDraft" as const,
-        params: { environmentId: String(project.environmentId), projectId: String(project.id) },
+        draft: { environmentId: String(project.environmentId), projectId: String(project.id) },
       }
-    : { screen: "NewTask" as const };
+    : { draft: {} };
 }

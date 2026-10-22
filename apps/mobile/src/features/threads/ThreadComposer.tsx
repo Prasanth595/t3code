@@ -227,6 +227,7 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
 }
 
 export interface ThreadComposerProps {
+  readonly isDraft?: boolean;
   readonly canOperateThread: boolean;
   readonly placeholder: string;
   readonly contentMaxWidth?: number;
@@ -565,7 +566,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     pullRequestRepository: project?.repositoryIdentity?.displayName ?? null,
     threadPullRequests: props.selectedThread.pullRequests,
     selectedProviderStatus,
-    hasThread: true,
+    hasThread: !props.isDraft,
     hasCompactableConversation: props.hasCompactableConversation,
     onChangeDraftMessage: props.onChangeDraftMessage,
     onUpdateInteractionMode:
@@ -957,9 +958,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 className="min-w-0 flex-1"
                 onLayout={compactEditor.onEditorLayout}
                 style={[
-                  { minWidth: isExpanded ? 0 : INLINE_EDITOR_MIN_WIDTH },
+                  { minWidth: compactEditor.isExpanded ? 0 : INLINE_EDITOR_MIN_WIDTH },
                   compactEditor.containerStyle,
-                  isExpanded ? { flex: 0, width: 0 } : undefined,
+                  compactEditor.isExpanded ? { flex: 0, width: 0 } : undefined,
                 ]}
               ></Animated.View>
               {!isExpanded && stripAttachments.length > 0 ? (
@@ -987,7 +988,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               ) : null}
               <View
                 className="min-w-0 shrink flex-row items-center"
-                style={isExpanded ? { flex: 1, justifyContent: "flex-end" } : undefined}
+                style={
+                  compactEditor.isExpanded ? { flex: 1, justifyContent: "flex-end" } : undefined
+                }
               >
                 {modelControl}
                 <ComposerDictationStartAction
@@ -1037,11 +1040,22 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 environmentId={props.environmentId}
                 onOpenMention={(path) => {
                   Keyboard.dismiss();
-                  navigation.navigate("ThreadFile", {
-                    environmentId: String(props.environmentId),
-                    threadId: String(props.selectedThread.id),
-                    path: fileRoutePathSegments(path),
-                  });
+                  if (props.isDraft) {
+                    navigation.navigate("NewTaskSheet", {
+                      screen: "NewTaskFile",
+                      params: {
+                        environmentId: String(props.environmentId),
+                        cwd: props.projectCwd ?? undefined,
+                        path: fileRoutePathSegments(path),
+                      },
+                    });
+                  } else {
+                    navigation.navigate("ThreadFile", {
+                      environmentId: String(props.environmentId),
+                      threadId: String(props.selectedThread.id),
+                      path: fileRoutePathSegments(path),
+                    });
+                  }
                 }}
                 onOpenAttachment={openDraftDocument}
                 chipsInert={!isExpanded}

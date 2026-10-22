@@ -67,9 +67,8 @@ export function HomeRouteScreen() {
   const handleSelectThread = useHomeThreadSelection();
   const handleNewThreadOnBranch = useCallback(
     (thread: EnvironmentThreadShell) => {
-      navigation.navigate("NewTaskSheet", {
-        screen: "NewTaskDraft",
-        params: {
+      navigation.navigate("Thread", {
+        draft: {
           environmentId: String(thread.environmentId),
           projectId: String(thread.projectId),
           branch: thread.branch,
@@ -284,9 +283,8 @@ export function HomeRouteScreen() {
           onDeletePendingTask={confirmDeletePendingTask}
           onNewThreadOnBranch={handleNewThreadOnBranch}
           onNewThreadInProject={(project) => {
-            navigation.navigate("NewTaskSheet", {
-              screen: "NewTaskDraft",
-              params: {
+            navigation.navigate("Thread", {
+              draft: {
                 environmentId: String(project.environmentId),
                 projectId: String(project.id),
                 title: project.title,

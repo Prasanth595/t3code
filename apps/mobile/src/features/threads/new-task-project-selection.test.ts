@@ -118,21 +118,21 @@ describe("newTaskDestination", () => {
   it("opens the current thread's project directly in split view", () => {
     const projects = [makeProject("first"), makeProject("current", "other-environment")];
     expect(newTaskDestination(true, projects, projects[1])).toEqual({
-      screen: "NewTaskDraft",
-      params: { environmentId: "other-environment", projectId: "current" },
+      draft: { environmentId: "other-environment", projectId: "current" },
     });
   });
   it("uses an available project when split view has no current project", () => {
     expect(newTaskDestination(true, [makeProject("first")], undefined)).toEqual({
-      screen: "NewTaskDraft",
-      params: { environmentId: "environment", projectId: "first" },
+      draft: { environmentId: "environment", projectId: "first" },
     });
   });
   it("keeps the picker when there are no projects", () => {
-    expect(newTaskDestination(true, [], undefined)).toEqual({ screen: "NewTask" });
+    expect(newTaskDestination(true, [], undefined)).toEqual({ draft: {} });
   });
-  it("keeps the compact project-picker flow", () => {
+  it("opens the same draft route in compact view", () => {
     const project = makeProject("current");
-    expect(newTaskDestination(false, [project], project)).toEqual({ screen: "NewTask" });
+    expect(newTaskDestination(false, [project], project)).toEqual({
+      draft: { environmentId: "environment", projectId: "current" },
+    });
   });
 });

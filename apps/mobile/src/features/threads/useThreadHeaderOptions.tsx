@@ -1,5 +1,7 @@
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useMemo } from "react";
+import { Platform } from "react-native";
+import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { isDuoDevice } from "../../lib/device-type";
 import type { AppNativeStackNavigationOptions } from "../../native/StackHeader";
 import { useDeviceType } from "../../native/native-layout-metrics";
@@ -102,6 +104,12 @@ export function useThreadHeaderOptions(props: {
 
   const options: AppNativeStackNavigationOptions = {
     headerShown: true,
+    headerTransparent: props.usesNativeHeaderGlass,
+    headerStyle: props.usesNativeHeaderGlass ? { backgroundColor: "transparent" } : undefined,
+    headerShadowVisible: false,
+    scrollEdgeEffects: props.usesNativeHeaderGlass
+      ? nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version)
+      : undefined,
     headerTitle: props.title,
     headerTitleStyle: props.usesNativeHeaderGlass
       ? {

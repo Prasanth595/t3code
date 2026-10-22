@@ -174,6 +174,12 @@ import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
 
 export interface ThreadDetailScreenProps {
+  readonly draftMode?: {
+    readonly content: (headerInset: number) => React.ReactNode;
+    readonly controls: React.ReactNode;
+    readonly editorRef: React.RefObject<ComposerEditorHandle | null>;
+    readonly sendBlockedReason: string | null;
+  };
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
   readonly setupWorkingStartedAt?: string | null;
   readonly canOperateThread: boolean;
@@ -455,7 +461,8 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const browserTabs = useThreadServerBrowserTabs({
     environmentId: props.environmentId,
     threadId: props.selectedThread.id,
-    enabled: props.serverConfig?.environment.capabilities.serverBrowser === true,
+    enabled:
+      !props.draftMode && props.serverConfig?.environment.capabilities.serverBrowser === true,
   });
   const openBrowserPreview = (tabId?: string) => {
     Keyboard.dismiss();
@@ -515,14 +522,15 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const queuedCount = useThreadQueuedCount(props.selectedThreadDetailRef);
   const turnSubagents = useThreadTurnSubagents(props.selectedThreadDetailRef);
   const agentsSegment = resolveSubagentPillSegment(turnSubagents);
-  const composerEditorRef = useRef<ComposerEditorHandle>(null);
+  const defaultComposerEditorRef = useRef<ComposerEditorHandle>(null);
+  const composerEditorRef = props.draftMode?.editorRef ?? defaultComposerEditorRef;
   const isProviderSubagent = isProviderNativeSubagentThread(props.selectedThread.source);
   const editingRunId = props.queuedRunEdit?.runId ?? null;
   useEffect(() => {
     if (editingRunId === null) return;
     const frame = requestAnimationFrame(() => composerEditorRef.current?.focus());
     return () => cancelAnimationFrame(frame);
-  }, [editingRunId]);
+  }, [editingRunId, composerEditorRef]);
   const composerOverlayRef = useRef<ViewInstance>(null);
   const listRef = useRef<LegendListRef>(null);
   const feedTouchStartRef = useRef<{ pageX: number; pageY: number } | null>(null);
@@ -1256,7 +1264,8 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     });
   };
 
-  const showScrollToEndButton = contentPresentationKind === "ready" && !endFollowEnabled;
+  const showScrollToEndButton =
+    !props.draftMode && contentPresentationKind === "ready" && !endFollowEnabled;
   const { themeAppearance } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
 
@@ -1296,9 +1305,11 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       <ThreadVisitWatermark
         environmentId={props.environmentId}
         selectedThread={props.selectedThread}
-        showContent={showContent}
+        showContent={showContent && !props.draftMode}
       />
-      {showContent ? (
+      {props.draftMode ? (
+        props.draftMode.content(navigationHeaderHeight)
+      ) : showContent ? (
         <View
           style={{ flex: 1 }}
           onTouchStart={handleFeedTouchStart}
@@ -1605,14 +1616,18 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                     </View>
                   ) : (
                     <>
+                      {props.draftMode?.controls}
                       <ThreadComposer
+                        isDraft={Boolean(props.draftMode)}
                         canOperateThread={props.canOperateThread}
                         reportedModelSelection={reportedModelSelection}
                         editorRef={composerEditorRef}
                         placeholder={
-                          props.activePendingApproval
-                            ? "Send a message to decline and redirect the agent"
-                            : "Ask the repo agent, or run a command…"
+                          props.draftMode
+                            ? "Ask anything…"
+                            : props.activePendingApproval
+                              ? "Send a message to decline and redirect the agent"
+                              : "Ask the repo agent, or run a command…"
                         }
                         contentMaxWidth={contentMaxWidth}
                         connectionState={props.connectionStateLabel}
@@ -1631,10 +1646,12 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                         // the draft: queueing them against a thread id the server may
                         // still reject would strand them in the outbox.
                         sendBlockedReason={
-                          props.creationState?.kind === "preparing" &&
-                          !props.creationState.serverOwned
-                            ? "Starting the task…"
-                            : null
+                          props.draftMode
+                            ? props.draftMode.sendBlockedReason
+                            : props.creationState?.kind === "preparing" &&
+                                !props.creationState.serverOwned
+                              ? "Starting the task…"
+                              : null
                         }
                         draftKey={props.composerDraftKey ?? undefined}
                         followUpBehavior={

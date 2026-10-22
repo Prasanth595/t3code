@@ -21,9 +21,8 @@ export function usePendingTaskListActions(): {
 
   const openPendingTask = useCallback(
     (pendingTask: PendingNewTask) => {
-      navigation.navigate("NewTaskSheet", {
-        screen: "NewTaskDraft",
-        params: {
+      navigation.navigate("Thread", {
+        draft: {
           environmentId: String(pendingTask.environmentId),
           projectId: String(pendingTask.projectId),
           ...(pendingTask.kind === "pending"

@@ -1,6 +1,7 @@
+import { useNewTaskFlow } from "./new-task-flow-provider";
 import * as Dialog from "../../components/ui/Dialog";
 import { useNavigation, usePreventRemove, type StaticScreenProps } from "@react-navigation/native";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { View } from "react-native";
 import {
   isAtomCommandInterrupted,
@@ -15,9 +16,10 @@ import { checkoutNewTaskBranch } from "./checkout-new-task-branch";
 import { resolveNewTaskBranchWorktreePath } from "./new-task-context-presentation";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 
+import { ThreadScreenFallback } from "./ThreadScreenHost";
 import { NewTaskDraftScreen } from "./NewTaskDraftScreen";
 
-type NewTaskDraftRouteParams = {
+export type NewTaskDraftRouteParams = {
   readonly environmentId?: string | string[];
   readonly projectId?: string | string[];
   readonly branch?: string | null;
@@ -31,6 +33,12 @@ type NewTaskDraftRouteParams = {
 
 export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraftRouteParams>) {
   const params = useMemo(() => route.params ?? {}, [route.params]);
+  const { reset } = useNewTaskFlow();
+  const [initialized, setInitialized] = useState(false);
+  useLayoutEffect(() => {
+    reset();
+    setInitialized(true);
+  }, [reset]);
   const pendingTaskId = Array.isArray(params.pendingTaskId)
     ? params.pendingTaskId[0]
     : params.pendingTaskId;
@@ -153,6 +161,7 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
   );
   const preparingBranch = checkoutPending || (needsPreparation && result?._tag !== "Success");
 
+  if (!initialized) return null;
   return (
     <>
       <NativeStackScreenOptions
@@ -161,9 +170,11 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
         }}
       />
       {preparingBranch ? (
-        <View className="flex-1 items-center justify-center bg-screen">
-          <Text className="text-foreground">Switching branch...</Text>
-        </View>
+        <ThreadScreenFallback>
+          <View className="flex-1 items-center justify-center bg-screen">
+            <Text className="text-foreground">Switching branch...</Text>
+          </View>
+        </ThreadScreenFallback>
       ) : (
         <NewTaskDraftScreen
           initialProjectRef={preparedProjectRef}
@@ -178,4 +189,12 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
       )}
     </>
   );
+}
+
+export function LegacyNewTaskDraftRedirect({ route }: StaticScreenProps<NewTaskDraftRouteParams>) {
+  const navigation = useNavigation();
+  useEffect(() => {
+    navigation.getParent()?.navigate("Thread", { draft: route.params ?? {} });
+  }, [navigation, route.params]);
+  return null;
 }

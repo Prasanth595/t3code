@@ -8,11 +8,12 @@ export const activeNewTaskAtom = Atom.make<{ readonly pendingKey: string | null 
   null,
 ).pipe(Atom.keepAlive);
 
-export function useActiveNewTask(pendingKey: string | null) {
+export function useActiveNewTask(pendingKey: string | null, active = true) {
   useFocusEffect(
     useCallback(() => {
+      if (!active) return;
       appAtomRegistry.set(activeNewTaskAtom, { pendingKey });
       return () => appAtomRegistry.set(activeNewTaskAtom, null);
-    }, [pendingKey]),
+    }, [pendingKey, active]),
   );
 }

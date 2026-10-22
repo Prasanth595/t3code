@@ -279,9 +279,8 @@ export function CommandPalette(props: {
         title: `New thread in ${activeProject.title}`,
         searchTerms: ["new task", "chat", "create"],
         run: () =>
-          navigation.navigate("NewTaskSheet", {
-            screen: "NewTaskDraft",
-            params: {
+          navigation.navigate("Thread", {
+            draft: {
               environmentId: activeProject.environmentId,
               projectId: activeProject.id,
               title: activeProject.title,
@@ -313,9 +312,8 @@ export function CommandPalette(props: {
       detail: `New thread · ${savedConnectionsById[project.environmentId]?.environmentLabel ?? project.environmentId}`,
       searchTerms: [project.workspaceRoot, "new thread", "project"],
       run: () =>
-        navigation.navigate("NewTaskSheet", {
-          screen: "NewTaskDraft",
-          params: {
+        navigation.navigate("Thread", {
+          draft: {
             environmentId: project.environmentId,
             projectId: project.id,
             title: project.title,

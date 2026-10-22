@@ -500,7 +500,7 @@ function AdaptiveWorkspaceLayoutContent(
       ? { environmentId: thread.environmentId, id: thread.projectId }
       : undefined;
     navigation.navigate(
-      "NewTaskSheet",
+      "Thread",
       newTaskDestination(layout.usesSplitView, projects, currentProject),
     );
   };
@@ -523,9 +523,8 @@ function AdaptiveWorkspaceLayoutContent(
   const { openPendingTask: handleOpenPendingTask } = usePendingTaskListActions();
 
   const handleNewThreadOnBranch = (thread: EnvironmentThreadShell) => {
-    navigation.navigate("NewTaskSheet", {
-      screen: "NewTaskDraft",
-      params: {
+    navigation.navigate("Thread", {
+      draft: {
         environmentId: String(thread.environmentId),
         projectId: String(thread.projectId),
         branch: thread.branch,
@@ -535,9 +534,8 @@ function AdaptiveWorkspaceLayoutContent(
   };
 
   const handleNewThreadInProject = (project: EnvironmentProject) => {
-    navigation.navigate("NewTaskSheet", {
-      screen: "NewTaskDraft",
-      params: {
+    navigation.navigate("Thread", {
+      draft: {
         environmentId: String(project.environmentId),
         projectId: String(project.id),
         title: project.title,
