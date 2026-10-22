@@ -14,6 +14,7 @@ import * as Stream from "effect/Stream";
 import { reportLabel } from "@t3tools/provider-core/server/notification";
 
 import { forkParked } from "../serverActivation.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
@@ -28,6 +29,8 @@ export class DelegatedTaskQuestionReactor extends Context.Service<
 const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const pendingEvents = new Map<string, OrchestrationV2DomainEvent>();
 
   const wakeParent = Effect.fnUntraced(function* (
     task: OrchestrationV2Subagent,
@@ -61,6 +64,7 @@ const make = Effect.gen(function* () {
   // Runs for every domain event; most events return before any work is needed.
   const handle: DelegatedTaskQuestionReactor["Service"]["handle"] = Effect.fnUntraced(
     function* (event) {
+      pendingEvents.delete(event.id);
       if (event.type === "run.updated") {
         if (!["completed", "failed", "waiting"].includes(event.payload.status)) return;
         const parent = yield* projections.getThreadRecords(event.threadId, ["subagents"]);
@@ -88,6 +92,12 @@ const make = Effect.gen(function* () {
               continue;
             }
             yield* wakeParent(task, request).pipe(
+              Effect.catchTags({
+                ThreadManagementProviderInstanceDisabledError: () =>
+                  Effect.sync(() => {
+                    pendingEvents.set(event.id, event);
+                  }),
+              }),
               Effect.catchCause((cause) =>
                 Effect.logWarning("catching up a delegated task question failed", {
                   taskId: task.id,
@@ -158,6 +168,12 @@ const make = Effect.gen(function* () {
     },
     (effect, event) =>
       effect.pipe(
+        Effect.catchTags({
+          ThreadManagementProviderInstanceDisabledError: () =>
+            Effect.sync(() => {
+              pendingEvents.set(event.id, event);
+            }),
+        }),
         Effect.catchCause((cause) =>
           Effect.logWarning("waking the parent of a delegated task question failed", {
             threadId: event.threadId,
@@ -167,14 +183,29 @@ const make = Effect.gen(function* () {
       ),
   );
 
-  const start: DelegatedTaskQuestionReactor["Service"]["start"] = () =>
-    forkParked(
-      Stream.runForEach(threads.streamDomainEvents, handle).pipe(
+  const start: DelegatedTaskQuestionReactor["Service"]["start"] = Effect.fn(
+    "DelegatedTaskQuestionReactor.start",
+  )(function* () {
+    const changes = yield* settings.subscribeChanges;
+    yield* forkParked(
+      Stream.merge(
+        threads.streamDomainEvents.pipe(Stream.map(handle)),
+        changes.pipe(
+          // Provider enablement changes must retry questions rejected by the gate.
+          Stream.map(() =>
+            Effect.suspend(() =>
+              Effect.forEach([...pendingEvents.values()], handle, { discard: true }),
+            ),
+          ),
+        ),
+      ).pipe(
+        Stream.runForEach((effect) => effect),
         Effect.catchCause((cause) =>
           Effect.logWarning("delegated task question event stream failed", { cause }),
         ),
       ),
     );
+  });
 
   return { start, handle } satisfies DelegatedTaskQuestionReactor["Service"];
 });

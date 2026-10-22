@@ -5,6 +5,7 @@ import {
   EventId,
   NodeId,
   type OrchestrationV2DomainEvent,
+  type ServerSettings as ServerSettingsValue,
   PlanId,
   ProjectId,
   ProviderDriverKind,
@@ -21,6 +22,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -59,7 +61,21 @@ const layerTest = Layer.mergeAll(
     { databaseLayer: layerDatabase, runEffectWorker: false },
   ),
 );
-const layerQuestionSettings = ServerSettings.layerTest();
+const layerQuestionSettings = Layer.effect(
+  ServerSettings.ServerSettingsService,
+  Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const changes = yield* PubSub.unbounded<ServerSettingsValue>();
+    return {
+      ...settings,
+      updateSettings: (patch: Parameters<typeof settings.updateSettings>[0]) =>
+        settings
+          .updateSettings(patch)
+          .pipe(Effect.tap((updated) => PubSub.publish(changes, updated))),
+      subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
+    };
+  }),
+).pipe(Layer.provide(ServerSettings.layerTest()));
 const layerQuestionThreadManagement = ThreadManagementService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -74,7 +90,7 @@ const layerQuestionTest = Layer.mergeAll(
   layerQuestionSettings,
   layerQuestionThreadManagement,
   DelegatedTaskQuestionReactor.layer.pipe(
-    Layer.provide(Layer.merge(layerTest, layerQuestionThreadManagement)),
+    Layer.provide(Layer.mergeAll(layerTest, layerQuestionThreadManagement, layerQuestionSettings)),
   ),
 );
 
@@ -866,12 +882,27 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       ).length,
       0,
     );
-    yield* settings.updateSettings({
-      projectSettingsOverrides: {
-        [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
-      },
-    });
-    yield* reactor.handle(asyncQuestion);
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* reactor.start();
+        const afterSequence = yield* eventSink.latestSequence();
+        yield* settings.updateSettings({
+          projectSettingsOverrides: {
+            [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
+          },
+        });
+        yield* eventSink.stream({ afterSequence, eventType: "message.updated" }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "message.updated" &&
+              stored.event.threadId === parentThreadId &&
+              stored.event.payload.notification !== undefined,
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+      }),
+    );
     assert.equal(
       (yield* projections.getThreadProjection(parentThreadId)).messages.filter(
         (message) => message.notification !== undefined,
