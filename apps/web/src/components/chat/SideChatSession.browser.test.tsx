@@ -1,10 +1,7 @@
 import { act, render } from "../../../test/render";
 import * as Cause from "effect/Cause";
-import {
-  RuntimeRequestId,
-  type OrchestrationV2ProjectedTurnItem,
-  type UserInputQuestion,
-} from "@t3tools/contracts";
+import { RuntimeRequestId, type OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
+import type { ThreadPendingUserInput } from "@t3tools/client-runtime/state/thread-requests";
 import type { PendingApproval } from "../../session-logic";
 import { page, userEvent } from "vite-plus/test/browser";
 import { type ComponentProps } from "react";
@@ -17,11 +14,7 @@ const state = vi.hoisted(() => ({
   answer: vi.fn(),
   approve: vi.fn(),
   approvals: [] as PendingApproval[],
-  userInputs: [] as {
-    requestId: string;
-    questions: UserInputQuestion[];
-    responseCapability?: string;
-  }[],
+  userInputs: [] as ThreadPendingUserInput[],
   status: "running",
   visibleTurnItems: [] as OrchestrationV2ProjectedTurnItem[],
   ctrlKey: false,
@@ -271,13 +264,17 @@ it.each(["local", "inherited"] as const)(
   },
 );
 
-const editorRequest = () => [
+const editorRequest = (): ThreadPendingUserInput[] => [
   {
-    requestId: "edit-request",
+    requestId: RuntimeRequestId.make("edit-request"),
+    createdAt: "2026-10-22T00:00:00Z",
+    responseCapability: "live",
+    dismissible: false,
     questions: [
       {
         id: "proposal",
         header: "Proposed text",
+        multiSelect: false,
         question: "Review this text",
         options: [],
         initialAnswer: "  First line\nSecond line\n",
