@@ -161,7 +161,6 @@ import {
 } from "./pendingUserInputLayout";
 import {
   COMPOSER_COLLAPSED_CHROME,
-  COMPOSER_EXPANDED_CHROME,
   COMPOSER_LAYOUT_TRANSITION,
   COMPOSER_TRANSITION_DURATION_MS,
   THREAD_COMPOSER_BOTTOM_GUTTER,
@@ -531,7 +530,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const feedTouchStartRef = useRef<{ pageX: number; pageY: number } | null>(null);
   const selectedThreadKeyRef = useRef(selectedThreadKey);
   const lastScrolledSubmittedMessageIdRef = useRef<MessageId | null>(null);
-  const [composerExpanded, setComposerExpanded] = useState(false);
+  const [composerHeight, setComposerHeight] = useState<number | null>(null);
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
   const [submittedMessageId, setSubmittedMessageId] = useState<MessageId | null>(null);
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
@@ -547,7 +546,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       : undefined);
   // A hardware keyboard can focus the editor without occupying any screen height.
   const composerBottomInset =
-    Platform.OS === "ios" && (composerExpanded || liveKeyboardHeight > 0)
+    Platform.OS === "ios" && liveKeyboardHeight > 0
       ? 0
       : alignedBottomInset !== undefined
         ? Math.max(0, alignedBottomInset - THREAD_COMPOSER_BOTTOM_GUTTER)
@@ -793,10 +792,8 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     ) ||
     (props.historyControls?.hasMoreHistory === true &&
       props.selectedThread.latestUserMessageAt !== null);
-  const composerChrome = composerExpanded
-    ? COMPOSER_EXPANDED_CHROME
-    : COMPOSER_COLLAPSED_CHROME + (hasSidebarTabBar ? 14 : 0);
-  const composerOverlapHeight = composerChrome + composerBottomInset;
+  const composerOverlapHeight =
+    composerHeight ?? COMPOSER_COLLAPSED_CHROME + (hasSidebarTabBar ? 14 : 0) + composerBottomInset;
   const [collapsedUserInputRequestId, setCollapsedUserInputRequestId] =
     useState<RuntimeRequestId | null>(null);
   const activeUserInputRequestId = props.activePendingUserInput?.requestId ?? null;
@@ -1673,7 +1670,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                         onUpdateModelSelection={props.onUpdateThreadModelSelection}
                         onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
                         onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
-                        onExpandedChange={setComposerExpanded}
+                        onHeightChange={setComposerHeight}
                         onEditorFocusChange={handleOwnedInputFocusChange}
                       />
                     </>

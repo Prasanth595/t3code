@@ -1215,11 +1215,8 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   private func emitContentSizeIfNeeded() {
-    // The laid-out text without insets. A one-line draft reports its natural width, so
-    // JS can tell whether it fits a narrower row than the one it is laid out in; past
-    // one line only the height matters, so layout stops at the second line. The width
-    // comes from the line fragment because usedRect spans the container once the view
-    // scrolls. A trailing newline's empty line only exists as the extra fragment.
+    // Report text bounds without insets, bounded by the composer's four visible lines.
+    // A trailing newline's empty line only exists as the extra fragment.
     let layout = textView.layoutManager
     let container = textView.textContainer
     var lines = 0
@@ -1230,9 +1227,9 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       lines += 1
       width = used.width
       height = used.maxY
-      if lines > 1 { stop.pointee = true }
+      if lines >= 4 { stop.pointee = true }
     }
-    if lines < 2, layout.extraLineFragmentTextContainer === container {
+    if lines < 4, layout.extraLineFragmentTextContainer === container {
       lines += 1
       height = max(height, layout.extraLineFragmentUsedRect.maxY)
     }
