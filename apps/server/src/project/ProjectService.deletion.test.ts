@@ -290,7 +290,7 @@ it.effect(
       ) VALUES
         (
           'message:legacy-delete:1', ${threadId}, NULL, 'user', 'First question with screenshot',
-          '[{"type":"image","id":"thread-legacy-deletion-00000000-0000-4000-8000-000000000001","name":"screenshot.png","mimeType":"image/png","sizeBytes":128}]',
+          '[{"type":"image","id":"legacy_screenshot","name":"screenshot.png","mimeType":"image/png","sizeBytes":128}]',
           0, '2026-01-01T01:00:00.000Z', '2026-01-01T01:00:00.000Z'
         ),
         (
@@ -370,7 +370,7 @@ it.effect(
         const request = yield* decodeEffectRequest(cleanup[0]?.payload_json);
         assert.deepEqual(request, {
           type: "attachment.cleanup",
-          attachmentIds: ["thread-legacy-deletion-00000000-0000-4000-8000-000000000001"],
+          attachmentIds: ["legacy_screenshot"],
         });
       }).pipe(Effect.provide(layerServices));
     }).pipe(Effect.provide(layerDatabase)),
