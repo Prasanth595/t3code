@@ -29,6 +29,14 @@ const FIXED_EPOCH = "2026-01-01T00:00:00.000Z";
 const WRITE_ROWS = 400;
 
 /**
+ * How many rows the writer has inserted when it signals the read.
+ *
+ * The read has to start while the writer is still writing, so the milestone
+ * is part way through the inserts, not after them.
+ */
+const WRITE_MILESTONE_ROWS = 50;
+
+/**
  * The lock wait a read pays, and the connection it pays it on.
  *
  * The measurement is the point of the change, so it is taken the way the
@@ -168,33 +176,40 @@ const measureReadUnderWriteLoad = Effect.fn("measureReadUnderWriteLoad")(functio
     },
   });
 
-  // A writer, inserting rows the whole time the read runs. It signals when it
-  // has written enough for the read to meet a busy writer.
+  // A writer, inserting rows the whole time the read runs.
   //
   // The columns are the table's own. A row that does not insert is a failed
   // row, not write load, so the insert is not allowed to fail quietly: the
   // rows are counted afterwards and the count is asserted.
+  //
+  // The milestone is signalled PART WAY THROUGH the inserts, not after them, so
+  // the read runs while the writer is still writing. A milestone at the end
+  // would measure a read against a writer that had already finished.
   const writing = yield* Deferred.make<void>();
   let written = 0;
-  const writer = yield* Effect.repeat(
-    Effect.gen(function* () {
-      yield* sql`INSERT INTO orchestration_v2_projection_checkpoints (
-        checkpoint_id, thread_id, scope_id, run_id, node_id, ordinal_within_scope,
-        status, captured_at, payload_json
-      ) VALUES (
-        ${crypto.randomUUID()}, ${threadId}, ${`lockwait-scope-${written}`}, ${"run"}, ${"node"},
-        ${written}, 'captured', ${FIXED_EPOCH}, '{}'
-      )`;
-      written += 1;
-    }),
-    { times: WRITE_ROWS },
-  ).pipe(
-    Effect.andThen(Deferred.succeed(writing, undefined)),
-    Effect.forkChild({ startImmediately: true }),
-  );
+  const writer = yield* Effect.forEach(
+    Array.from({ length: WRITE_ROWS }, (_, index) => index),
+    (index) =>
+      Effect.gen(function* () {
+        yield* sql`INSERT INTO orchestration_v2_projection_checkpoints (
+          checkpoint_id, thread_id, scope_id, run_id, node_id, ordinal_within_scope,
+          status, captured_at, payload_json
+        ) VALUES (
+          ${crypto.randomUUID()}, ${threadId}, ${`lockwait-scope-${index}`}, ${"run"}, ${"node"},
+          ${index}, 'captured', ${FIXED_EPOCH}, '{}'
+        )`;
+        written += 1;
+        if (index === WRITE_MILESTONE_ROWS - 1) {
+          yield* Deferred.succeed(writing, undefined);
+        }
+      }),
+  ).pipe(Effect.forkChild({ startImmediately: true }));
 
   // Wait for the milestone, not for a wall-clock duration.
   yield* Deferred.await(writing);
+  // The writer is still going: the read has to overlap the writes, or it is
+  // measuring a writer that has already finished.
+  assert.isBelow(written, WRITE_ROWS);
   const started = yield* Clock.currentTimeMillis;
   yield* projectionStore
     .getThreadRecords(threadId, ["runs"])
@@ -232,31 +247,40 @@ const measureReadOnWriter = Effect.fn("measureReadOnWriter")(function* (threadId
     },
   });
 
-  // A writer inserting rows the whole time the read runs.
+  // A writer, inserting rows the whole time the read runs.
   //
   // The columns are the table's own. A row that does not insert is a failed
   // row, not write load, so the insert is not allowed to fail quietly: the
   // rows are counted afterwards and the count is asserted.
+  //
+  // The milestone is signalled PART WAY THROUGH the inserts, not after them, so
+  // the read runs while the writer is still writing. A milestone at the end
+  // would measure a read against a writer that had already finished.
   const writing = yield* Deferred.make<void>();
   let written = 0;
-  const writer = yield* Effect.repeat(
-    Effect.gen(function* () {
-      yield* sql`INSERT INTO orchestration_v2_projection_checkpoints (
-        checkpoint_id, thread_id, scope_id, run_id, node_id, ordinal_within_scope,
-        status, captured_at, payload_json
-      ) VALUES (
-        ${crypto.randomUUID()}, ${threadId}, ${`lockwait-scope-${written}`}, ${"run"}, ${"node"},
-        ${written}, 'captured', ${FIXED_EPOCH}, '{}'
-      )`;
-      written += 1;
-    }),
-    { times: WRITE_ROWS },
-  ).pipe(
-    Effect.andThen(Deferred.succeed(writing, undefined)),
-    Effect.forkChild({ startImmediately: true }),
-  );
+  const writer = yield* Effect.forEach(
+    Array.from({ length: WRITE_ROWS }, (_, index) => index),
+    (index) =>
+      Effect.gen(function* () {
+        yield* sql`INSERT INTO orchestration_v2_projection_checkpoints (
+          checkpoint_id, thread_id, scope_id, run_id, node_id, ordinal_within_scope,
+          status, captured_at, payload_json
+        ) VALUES (
+          ${crypto.randomUUID()}, ${threadId}, ${`lockwait-scope-${index}`}, ${"run"}, ${"node"},
+          ${index}, 'captured', ${FIXED_EPOCH}, '{}'
+        )`;
+        written += 1;
+        if (index === WRITE_MILESTONE_ROWS - 1) {
+          yield* Deferred.succeed(writing, undefined);
+        }
+      }),
+  ).pipe(Effect.forkChild({ startImmediately: true }));
 
+  // Wait for the milestone, not for a wall-clock duration.
   yield* Deferred.await(writing);
+  // The writer is still going: the read has to overlap the writes, or it is
+  // measuring a writer that has already finished.
+  assert.isBelow(written, WRITE_ROWS);
   const started = yield* Clock.currentTimeMillis;
   // A read on the writer connection: the same statement, without the reader.
   yield* sql
