@@ -65,6 +65,7 @@ import {
   toForgejoChangeRequest,
 } from "@t3tools/source-control-forgejo/server/forgejoPullRequests";
 import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -2022,6 +2023,36 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           "json",
         ]);
       }
+    }),
+  );
+
+  it.effect("a user's pull request lookup reaches the provider as a user action", () =>
+    Effect.gen(function* () {
+      const { service } = createGitHubProviderWithFakeGh({
+        pullRequest: {
+          number: 91,
+          title: "Safe checkout PR",
+          url: "https://github.com/pingdotgg/codething-mvp/pull/91",
+          baseRefName: "main",
+          headRefName: "feature/pr-safe",
+          state: "open",
+        },
+      });
+      const interactive: boolean[] = [];
+      const { manager } = yield* makeManager({
+        sourceControlProvider: {
+          ...service,
+          getChangeRequest: (input) =>
+            SourceControlRateLimit.Interactive.pipe(
+              Effect.tap((value) => Effect.sync(() => interactive.push(value))),
+              Effect.andThen(service.getChangeRequest(input)),
+            ),
+        },
+      });
+
+      // A host's background rate-limit pause would otherwise refuse it.
+      yield* manager.resolvePullRequest({ cwd: process.cwd(), reference: "91" });
+      expect(interactive).toEqual([true]);
     }),
   );
 
