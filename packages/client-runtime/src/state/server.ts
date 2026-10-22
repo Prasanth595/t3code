@@ -769,7 +769,7 @@ export function createServerEnvironmentAtoms<R, E>(
                   const accepted =
                     receivedProgress &&
                     (selfUpdateMethod === "boot-service" || selfUpdateMethod === "respawn")
-                      ? { targetVersion: targetVersion.trim(), method: selfUpdateMethod }
+                      ? { targetVersion, method: selfUpdateMethod }
                       : undefined;
                   return yield* resolveServerUpdateProgressResult(
                     targetVersion,
