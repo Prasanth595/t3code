@@ -172,7 +172,6 @@ it("rechecks task access after confirming deletion", async () => {
   expect(commands.delete).not.toHaveBeenCalled();
 });
 
-
 it.each(["Save", "Disable"])("keeps other provider edits through a %s refetch", async (action) => {
   setup();
   const providers: AcpRegistryConfigurableProvider[] = ["google", "other"].map((providerId) => ({
@@ -185,7 +184,8 @@ it.each(["Save", "Disable"])("keeps other provider edits through a %s refetch", 
   commands.listProviders.mockResolvedValue(response);
   await using screen = await renderSection();
   await screen.click("List providers");
-  const input = (label: string) => screen.container.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!;
+  const input = (label: string) =>
+    screen.container.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!;
   await userEvent.fill(input("other base URL"), "https://other.example.test/v1");
   await userEvent.fill(input("other write-only headers JSON"), '{"X-Test":"unsaved"}');
   await userEvent.fill(input("google write-only headers JSON"), '{"X-Test":"saved"}');
