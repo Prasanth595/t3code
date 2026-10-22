@@ -56,7 +56,7 @@ function WorkspaceRootTitle(props: {
 function WorkspaceRootContent() {
   const navigation = useNavigation();
   const { width: windowWidth } = useWindowDimensions();
-  const { layout } = useAdaptiveWorkspaceLayout();
+  const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
   const primaryColumn = use(NativePrimaryColumnContext);
   const columnMetrics = useNativeColumnLayoutMetrics();
   const nativeMetrics = useNativeLayoutMetrics();
@@ -152,10 +152,7 @@ function WorkspaceRootContent() {
           {state.selectedTab === "threads" ? <HomeRouteScreen /> : <PullRequestsScreen />}
         </SafeAreaInsetsContext>
         {sidebarPicker ? <WorkspaceSidebarTabs /> : null}
-        <WorkspaceToolbar
-          sidebar={sidebarNavigation}
-          onNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
-        />
+        <WorkspaceToolbar sidebar={sidebarNavigation} onNewTask={startNewTask} />
       </View>
     </WorkspaceTabsContext>
   );

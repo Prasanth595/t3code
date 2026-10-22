@@ -105,3 +105,22 @@ export function resolveDraftProjectSelection(
   const onlyProject = getOnlySelectableProject(projectScopes);
   return onlyProject ? { kind: "select", project: onlyProject } : { kind: "pick" };
 }
+
+export function newTaskDestination(
+  usesSplitView: boolean,
+  projects: ReadonlyArray<EnvironmentProject>,
+  currentProject: Pick<EnvironmentProject, "environmentId" | "id"> | undefined,
+) {
+  const project =
+    projects.find(
+      (candidate) =>
+        candidate.environmentId === currentProject?.environmentId &&
+        candidate.id === currentProject.id,
+    ) ?? projects[0];
+  return usesSplitView && project
+    ? {
+        screen: "NewTaskDraft" as const,
+        params: { environmentId: String(project.environmentId), projectId: String(project.id) },
+      }
+    : { screen: "NewTask" as const };
+}

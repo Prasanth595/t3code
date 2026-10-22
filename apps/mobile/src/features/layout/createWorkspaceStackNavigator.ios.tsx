@@ -68,6 +68,7 @@ const isPullRequestRoute = (route: Route) =>
 function ColumnScreen(props: {
   readonly descriptor: Descriptor;
   readonly primary?: boolean;
+  readonly attached?: boolean;
   readonly selectedThreadKey?: string | null;
   readonly selectedPullRequestKey?: string | null;
   readonly onDismiss: (routeKey: string) => void;
@@ -90,6 +91,7 @@ function ColumnScreen(props: {
   return (
     <Split.Screen
       screenKey={key}
+      activityMode={props.attached === false ? "detached" : "attached"}
       onDismiss={(event) => {
         if (event.nativeEvent.isNativeDismiss) props.onDismiss(key);
       }}
@@ -136,10 +138,11 @@ function ColumnScreen(props: {
 function WorkspaceColumns(
   props: ViewProps & { readonly primary: Route; readonly detail: Route[] },
 ) {
-  const { layout, panes, togglePrimarySidebar, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const { layout, panes, togglePrimarySidebar, toggleAuxiliaryPane, startNewTask } =
+    useAdaptiveWorkspaceLayout();
   const deviceType = useDeviceType();
   const selectedTab = useWorkspaceTabs()?.state.selectedTab;
-  const openNewTask = () => props.navigation.navigate("NewTaskSheet", { screen: "NewTask" });
+  const openNewTask = startNewTask;
   // The Duo keeps compose in the detail column's bar, which is its vertical bar in landscape
   // and folded, so it sits with the column's other actions whichever screen is shown. Pull
   // requests leave it out, including one opened from a thread; their bar is already full of
@@ -149,6 +152,7 @@ function WorkspaceColumns(
   const inspector = use(NativeWorkspaceInspectorContext);
   const hostRef = useRef<SplitHostCommands>(null);
   const activeDetailKey = props.detail.at(-1)?.key;
+  const replacesDetailRoot = props.detail.some((route) => route.name === "NewTaskSheet");
   const compactColumn = activeDetailKey ? "secondary" : "primary";
   const collapsed = useRef(!layout.usesSplitView);
   const collapsedColumn = useRef<CollapsedSplitColumn>({ visible: compactColumn, leaving: null });
@@ -288,12 +292,15 @@ function WorkspaceColumns(
               />
             </ColumnContent>
           </Split.Screen>
+          {/* Keep a split flow as the column root through folding, matching its persisted card
+              presentation. Reattaching screens below it would push them over the active flow. */}
           {props.detail.map((route) => {
             const descriptor = props.descriptors[route.key];
             return descriptor ? (
               <ColumnScreen
                 key={route.key}
                 descriptor={descriptor}
+                attached={!replacesDetailRoot || route.key === activeDetailKey}
                 onDismiss={handleNativeDismiss}
                 onAppearance={followCollapsedSplit}
                 onCompose={isPullRequestRoute(route) ? undefined : detailCompose}
@@ -316,7 +323,7 @@ function WorkspaceColumns(
 }
 
 function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean }) {
-  const { layout } = useAdaptiveWorkspaceLayout();
+  const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
   // Native dismiss commits the route pop after the transition. Restore the dock
   // when the primary screen starts appearing, including interactive back gestures.
   const [primaryVisible, setPrimaryVisible] = useState(false);
@@ -343,7 +350,7 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
     options: { headerShown: false },
     render: () => (
       <WorkspaceNativeTabs
-        onNewTask={() => props.navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
+        onNewTask={startNewTask}
         hidden={
           projection.detail.length > 0 &&
           !primaryVisible &&

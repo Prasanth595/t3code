@@ -52,6 +52,9 @@ import {
 } from "../../lib/adaptive-navigation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import type { ThreadListFilters } from "../../persistence/mobile-preferences";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { useProjects } from "../../state/entities";
+import { environmentThreadShells } from "../../state/threads";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import {
   DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS,
@@ -69,6 +72,7 @@ import {
 import { AndroidWorkspaceSidebar } from "../workspace/AndroidWorkspaceSidebar";
 import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSelection";
 import { HomeListOptionsProvider } from "../home/home-list-options";
+import { newTaskDestination } from "../threads/new-task-project-selection";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
 import { useOpenThreadPullRequests } from "../threads/use-open-thread-pull-requests";
@@ -93,6 +97,7 @@ interface AdaptiveWorkspaceContextValue {
   readonly panes: WorkspacePaneLayout;
   readonly fileInspector: FileInspectorPaneLayout;
   readonly primarySidebarSearchQuery: string;
+  readonly startNewTask: () => void;
   readonly selectThread: (thread: EnvironmentThreadShell) => void;
   readonly activateAuxiliaryPaneRole: (role: WorkspaceAuxiliaryPaneRole) => () => void;
   readonly registerWorkspaceInspector: (render: () => ReactNode) => () => void;
@@ -126,6 +131,7 @@ const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceContextValue>({
   panes: compactPanes,
   fileInspector: compactFileInspector,
   primarySidebarSearchQuery: "",
+  startNewTask: () => undefined,
   selectThread: () => undefined,
   activateAuxiliaryPaneRole: () => () => undefined,
   registerWorkspaceInspector: () => () => undefined,
@@ -485,9 +491,24 @@ function AdaptiveWorkspaceLayoutContent(
     });
   };
 
+  const projects = useProjects();
   const handleStartNewTask = () => {
-    navigation.navigate("NewTaskSheet", { screen: "NewTask" });
+    const thread = appAtomRegistry
+      .get(environmentThreadShells.navigationThreadShellsAtom)
+      .find((candidate) => candidate.environmentId === environmentId && candidate.id === threadId);
+    const currentProject = thread
+      ? { environmentId: thread.environmentId, id: thread.projectId }
+      : undefined;
+    navigation.navigate(
+      "NewTaskSheet",
+      newTaskDestination(layout.usesSplitView, projects, currentProject),
+    );
   };
+
+  useHardwareKeyboardCommand("newTask", () => {
+    handleStartNewTask();
+    return true;
+  });
 
   // Minted here (root stack navigation) so the sidebar pane stays free of
   // navigation hooks — on iOS it renders inside an independent nav tree.
@@ -732,6 +753,7 @@ function AdaptiveWorkspaceLayoutContent(
     panes,
     fileInspector,
     primarySidebarSearchQuery,
+    startNewTask: handleStartNewTask,
     selectThread: handleSelectThread,
     activateAuxiliaryPaneRole,
     registerWorkspaceInspector,

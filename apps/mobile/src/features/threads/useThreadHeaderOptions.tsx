@@ -26,7 +26,7 @@ export function useThreadHeaderOptions(props: {
   const deviceType = useDeviceType();
   const usesDuoHeader = usesNativeWorkspaceColumns && isDuoDevice(deviceType);
   const navigation = useNavigation();
-  const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
+  const { layout, panes, togglePrimarySidebar, startNewTask } = useAdaptiveWorkspaceLayout();
   const threadCenterHeaderItems = useThreadGitCenterHeaderItems(props.gitControls);
   const compactRightHeaderItems = useThreadGitRightHeaderItems(props.gitControls);
   const splitLeftHeaderItems = useMemo<NativeHeaderItems>(
@@ -71,7 +71,7 @@ export function useThreadHeaderOptions(props: {
               icon: { name: "square.and.pencil", type: "sfSymbol" as const },
               identifier: "thread-left-new-task",
               label: "New task",
-              onPress: () => navigation.navigate("NewTaskSheet", { screen: "NewTask" }),
+              onPress: startNewTask,
               type: "button" as const,
             }),
           ]
@@ -80,8 +80,8 @@ export function useThreadHeaderOptions(props: {
     [
       panes.primarySidebarVisible,
       props.onReturnToThread,
-      navigation,
       togglePrimarySidebar,
+      startNewTask,
       usesDuoHeader,
       usesNativeWorkspaceColumns,
     ],
