@@ -18,9 +18,11 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { makePiTextGeneration } from "./textGeneration.ts";
+import { PiSettings } from "../settings.ts";
 
 const decodeJsonLine = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const encodeJsonLine = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodePiSettings = Schema.decodeUnknownSync(PiSettings);
 
 const makeFakePi = (reply: string, setModelError?: string, settle = true) =>
   Effect.gen(function* () {
@@ -98,12 +100,12 @@ const evidence = Effect.succeed({
 
 const makeGeneration = (pi: Effect.Success<ReturnType<typeof makeFakePi>>) =>
   makePiTextGeneration(
-    {
+    decodePiSettings({
       enabled: true,
       binaryPath: "pi",
       launchArgs: "--tools bash,write --extension /fixture/unsafe.ts",
       customModels: [],
-    },
+    }),
     {},
   ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, pi.spawner));
 
