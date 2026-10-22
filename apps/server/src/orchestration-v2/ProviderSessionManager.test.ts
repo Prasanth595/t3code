@@ -379,7 +379,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
         }
         const now = yield* DateTime.now;
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
-        const session = {
+        let session: OrchestrationV2ProviderSession = {
           ...makeProviderSession({
             providerSessionId: input.providerSessionId,
             now,
@@ -407,7 +407,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
           instanceId: ProviderInstanceId.make("codex"),
           driver: CODEX_DRIVER,
           providerSessionId: input.providerSessionId,
-          providerSession: session,
+          get providerSession() {
+            return session;
+          },
           events: options.failEventStream
             ? Stream.fail(
                 new ProviderAdapter.ProviderAdapterEventStreamError({
@@ -416,7 +418,13 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
                   cause: "process exited",
                 }),
               )
-            : Stream.fromQueue(events),
+            : Stream.fromQueue(events).pipe(
+                Stream.tap((event) =>
+                  Effect.sync(() => {
+                    if (event.type === "provider_session.updated") session = event.providerSession;
+                  }),
+                ),
+              ),
           ...(options.backgroundTasksEndWithProcess === false
             ? {}
             : { backgroundTasksEndWithProcess: true as const }),
@@ -1440,6 +1448,31 @@ it.effect(
           firstClient.events.pipe(Stream.runHead),
           secondClient.events.pipe(Stream.runHead),
         ]);
+        assert.deepEqual(
+          (yield* projectionStore.getThreadProjection(threadId)).providerSessions.at(-1)
+            ?.extensionStatuses,
+          statuses,
+        );
+        const reused = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.deepEqual(reused.providerSession.extensionStatuses, statuses);
+        yield* eventSink.write({
+          events: [
+            {
+              id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+              type: "provider-session.updated",
+              threadId,
+              driver: CODEX_DRIVER,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: yield* DateTime.now,
+              payload: reused.providerSession,
+            },
+          ],
+        });
         assert.deepEqual(
           (yield* projectionStore.getThreadProjection(threadId)).providerSessions.at(-1)
             ?.extensionStatuses,
