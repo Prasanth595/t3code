@@ -3312,18 +3312,22 @@ export default function LegacySidebar({ routeReveal }: { routeReveal: SidebarRou
     sidebarThreadPreviewCount,
     expandedThreadListsByProject,
   });
-  // History and the command palette can open a thread scrolled out of view.
-  // Its row can mount after the route does, once its environment's shells
-  // arrive, so the reveal stays pending until the row renders.
+  // History and the command palette can open a thread scrolled out of view,
+  // and a remount starts the list at the top, so each route change and each
+  // mount scroll to the open thread once. Its row can mount after the route
+  // does, once its environment's shells arrive, so the reveal waits for it.
+  const mountRevealOwed = useRef(true);
   const routeRowRendered =
     routeThreadKey !== null && visibleSidebarThreadKeys.includes(routeThreadKey);
   const revealRouteRow = useStableCallback(() => {
-    if (pendingSidebarRouteReveal(routeReveal, routeThreadKey) === null) return;
+    const pendingKey = pendingSidebarRouteReveal(routeReveal, routeThreadKey);
+    if (pendingKey === null && (!mountRevealOwed.current || routeThreadKey === null)) return;
     const activeRow = document.querySelector(
       '[data-sidebar="content"] [data-thread-item] [data-active="true"]',
     );
     if (!activeRow) return;
     completeSidebarRouteReveal(routeReveal);
+    mountRevealOwed.current = false;
     activeRow.scrollIntoView({ block: "nearest" });
   });
   useEffect(revealRouteRow, [revealRouteRow, routeThreadKey, routeRowRendered]);

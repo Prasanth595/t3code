@@ -1,6 +1,7 @@
 // Owned by AppSidebarLayout because the narrow drawer and Settings unmount the
 // thread sidebar without changing the route. Only a route change requests a
-// reveal, so a scope or scroll chosen while one thread stays open survives.
+// reveal that may widen the project scope, so a scope chosen while one thread
+// stays open survives a remount. Scroll position does not survive one.
 export interface SidebarRouteReveal {
   observedKey: string | null;
   pendingKey: string | null;

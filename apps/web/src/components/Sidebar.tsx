@@ -1066,13 +1066,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   });
 
   // History, the command palette, and links can open a thread the project
-  // scope hides or the list has scrolled away.
+  // scope hides or the list has scrolled away. A remount starts the list at
+  // the top, so each mount also scrolls to the open thread once, without
+  // widening the scope.
+  const mountRevealOwed = useRef(true);
   const revealRouteRow = useStableCallback(() => {
     const pendingKey = pendingSidebarRouteReveal(routeReveal, routeRowThreadKey);
-    if (pendingKey === null) return;
-    const thread = threads.find((candidate) => threadShellKey(candidate) === pendingKey);
+    const revealKey = pendingKey ?? (mountRevealOwed.current ? routeRowThreadKey : null);
+    if (revealKey === null) return;
+    const thread = threads.find((candidate) => threadShellKey(candidate) === revealKey);
     if (thread === undefined) return;
     if (
+      pendingKey !== null &&
       scopedProjectKeys !== null &&
       filterSidebarV2VisibleThreads([thread], scopedProjectKeys).length === 0 &&
       filterSidebarV2VisibleThreads([thread], null).length === 1
@@ -1082,6 +1087,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       return;
     }
     completeSidebarRouteReveal(routeReveal);
+    mountRevealOwed.current = false;
     document
       .querySelector('[data-sidebar="content"] [aria-current="page"]')
       ?.scrollIntoView({ block: "nearest" });
