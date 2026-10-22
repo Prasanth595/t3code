@@ -2681,9 +2681,15 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
             Fiber.join(activePrompt.fiber).pipe(
               Effect.catchCause((cause) =>
                 options.cancelBehavior !== "wait-for-prompt" && Cause.hasInterruptsOnly(cause)
-                  ? Effect.succeed({
-                      stopReason: "cancelled",
-                    } satisfies EffectAcpSchema.PromptResponse)
+                  ? Ref.get(terminationErrorRef).pipe(
+                      Effect.flatMap((error) =>
+                        Option.isSome(error) && !activePrompt.queueState.cancelRequested
+                          ? Effect.fail(error.value)
+                          : Effect.succeed({
+                              stopReason: "cancelled",
+                            } satisfies EffectAcpSchema.PromptResponse),
+                      ),
+                    )
                   : Effect.failCause(cause),
               ),
               Effect.tap(() =>

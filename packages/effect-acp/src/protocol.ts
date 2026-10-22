@@ -891,6 +891,21 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       ),
     send: (_clientId, request) =>
       offerOutgoing(request).pipe(
+        // RpcClient registers before sending. A correlated failure releases those
+        // registrations; a failed send leaves them pending until the client closes.
+        Effect.catchTags({
+          AcpRequestError: (error) =>
+            request._tag === "Request" && error.code === -32800
+              ? Queue.offer(clientQueue, {
+                  _tag: "Exit",
+                  requestId: request.id,
+                  exit: {
+                    _tag: "Failure",
+                    cause: [{ _tag: "Fail", error: error.toProtocolError() }],
+                  },
+                }).pipe(Effect.asVoid)
+              : Effect.fail(error),
+        }),
         Effect.mapError(
           (error) =>
             new RpcClientError.RpcClientError({
