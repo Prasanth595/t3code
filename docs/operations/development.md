@@ -22,8 +22,8 @@ two-way synced mirror with much higher API rate limits, which helps when many ag
 issues at once. You never need it to contribute.
 
 Comments, reviews, labels, and issue edits made on GitCafe sync back to GitHub. The exception is
-code: CI runs only on GitHub, so push branches and open PRs there. GitCafe mirrors a new PR within
-about a minute, and from then on you can work with it through either forge.
+code: push branches and open PRs on GitHub, where CI runs. GitCafe mirrors a new PR within about a
+minute, and from then on you can work with it through either forge.
 
 ```sh
 git remote set-url origin https://git.cafe/pingdotgg/t3code.git
@@ -40,8 +40,13 @@ With `origin` on git.cafe:
 - Use `cafe` for PRs, issues, comments, reviews, and labels, both reading and writing. Check status
   comes from `cafe pr status <n> --json`.
 - Create PRs on GitHub: `git push` (to the `pushDefault` remote), then `gh pr create` or `gh stack`.
-  Never `cafe pr create` or `cafe stack submit`, because those PRs get no CI.
-- Merge with `gh pr merge <branch> --match-head-commit <sha>`. `cafe pr merge` has no head lock.
+  A PR opened with `cafe pr create` or `cafe stack submit` can get a different number on each forge,
+  a sync marker appended to its body, and rewritten references, and it cannot come from a fork.
+- Write or edit text with closing keywords using `gh`. Any text GitCafe writes to GitHub has its
+  `#<n>` references turned into GitCafe links, so a `Fixes #<n>` edited through `cafe` silently stops
+  closing the issue.
+- Merge with `gh pr merge <branch> --match-head-commit <sha>`. `cafe pr merge` only pins the head
+  GitCafe last saw, not the commit you reviewed.
 - Use `gh` where the mirror falls short: CI logs and reruns, a fork PR's head repository, and
   anything `cafe` returns empty or 403/404 for.
 - PR and issue numbers can differ between the forges. Name PRs by branch
