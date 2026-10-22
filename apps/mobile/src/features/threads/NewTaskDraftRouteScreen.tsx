@@ -190,11 +190,3 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
     </>
   );
 }
-
-export function LegacyNewTaskDraftRedirect({ route }: StaticScreenProps<NewTaskDraftRouteParams>) {
-  const navigation = useNavigation();
-  useEffect(() => {
-    navigation.getParent()?.navigate("Thread", { draft: route.params ?? {} });
-  }, [navigation, route.params]);
-  return null;
-}

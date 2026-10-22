@@ -667,18 +667,13 @@ function openNewTaskDraft(
   },
 ) {
   const state = navigation.getState();
-  if (state?.routeNames.includes("NewTaskProject")) {
-    const threadIndex = state.routes.findLastIndex((route) => route.name === "Thread");
-    const routes = [
-      ...state.routes.slice(0, threadIndex < 0 ? state.index : threadIndex),
-      { key: uuidv4(), name: "Thread", params: { draft: params } },
-    ];
-    navigation.dispatch(CommonActions.reset({ ...state, index: routes.length - 1, routes }));
-  } else {
-    navigation.dispatch(
-      CommonActions.reset({ index: 0, routes: [{ name: "NewTaskDraft", params }] }),
-    );
-  }
+  if (!state) return;
+  const threadIndex = state.routes.findLastIndex((route) => route.name === "Thread");
+  const routes = [
+    ...state.routes.slice(0, threadIndex < 0 ? state.index : threadIndex),
+    { key: uuidv4(), name: "Thread", params: { draft: params } },
+  ];
+  navigation.dispatch(CommonActions.reset({ ...state, index: routes.length - 1, routes }));
 }
 
 async function draftWithPrompt(

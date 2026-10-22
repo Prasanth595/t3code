@@ -152,7 +152,6 @@ function WorkspaceColumns(
   const inspector = use(NativeWorkspaceInspectorContext);
   const hostRef = useRef<SplitHostCommands>(null);
   const activeDetailKey = props.detail.at(-1)?.key;
-  const replacesDetailRoot = props.detail.some((route) => route.name === "NewTaskSheet");
   const compactColumn = activeDetailKey ? "secondary" : "primary";
   const collapsed = useRef(!layout.usesSplitView);
   const collapsedColumn = useRef<CollapsedSplitColumn>({ visible: compactColumn, leaving: null });
@@ -292,15 +291,13 @@ function WorkspaceColumns(
               />
             </ColumnContent>
           </Split.Screen>
-          {/* Keep a split flow as the column root through folding, matching its persisted card
-              presentation. Reattaching screens below it would push them over the active flow. */}
           {props.detail.map((route) => {
             const descriptor = props.descriptors[route.key];
             return descriptor ? (
               <ColumnScreen
                 key={route.key}
                 descriptor={descriptor}
-                attached={!replacesDetailRoot || route.key === activeDetailKey}
+                attached
                 onDismiss={handleNativeDismiss}
                 onAppearance={followCollapsedSplit}
                 onCompose={isPullRequestRoute(route) ? undefined : detailCompose}
