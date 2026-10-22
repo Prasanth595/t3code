@@ -87,7 +87,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type * as Statement from "effect/sql/Statement";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
-import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
+import { threadHtmlRenderAttachmentIds, threadOwnedAttachmentIds } from "../attachmentStore.ts";
 import {
   isThreadHistoryUserTurn,
   isConversationHistoryItem,
@@ -5223,7 +5223,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       ]).pipe(
         Effect.map(([messages, renders]) => [
           ...new Set([
-            ...messages.map((row) => row.id),
+            ...threadOwnedAttachmentIds(
+              threadId,
+              messages.map((row) => row.id),
+            ),
             ...threadHtmlRenderAttachmentIds(
               threadId,
               renders.map((row) => {
@@ -6814,8 +6817,11 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
         service.getThreadProjection(threadId).pipe(
           Effect.map((projection) => [
             ...new Set([
-              ...projection.messages.flatMap((message) =>
-                message.attachments.map((attachment) => attachment.id),
+              ...threadOwnedAttachmentIds(
+                threadId,
+                projection.messages.flatMap((message) =>
+                  message.attachments.map((attachment) => attachment.id),
+                ),
               ),
               ...threadHtmlRenderAttachmentIds(
                 threadId,

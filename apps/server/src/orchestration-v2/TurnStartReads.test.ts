@@ -258,8 +258,11 @@ it.effect.each(["sqlite", "memory"] as const)(
       assert.deepEqual(yield* store.getThreadAttachmentIds(threadId), []);
       if (storage === "sqlite") {
         const sql = yield* SqlClient.SqlClient;
-        yield* sql`UPDATE orchestration_v2_projection_messages SET payload_json = json_object('text', ${"x".repeat(512_000)}, 'attachments', json_array(json_object('id', 'attachment:old'))) WHERE message_id = 'obsolete-history'`;
-        assert.deepEqual(yield* store.getThreadAttachmentIds(threadId), ["attachment:old"]);
+        // A relaunched thread can reuse another thread's claimed uploads; deleting it must not remove them.
+        const owned = "thread-completion-reads-00000000-0000-4000-8000-000000000001";
+        const foreign = "thread-other-00000000-0000-4000-8000-000000000002";
+        yield* sql`UPDATE orchestration_v2_projection_messages SET payload_json = json_object('text', ${"x".repeat(512_000)}, 'attachments', json_array(json_object('id', ${owned}), json_object('id', ${foreign}))) WHERE message_id = 'obsolete-history'`;
+        assert.deepEqual(yield* store.getThreadAttachmentIds(threadId), [owned]);
       }
       const page = yield* store.getTimelinePage(threadId, { view: "activity", limit: 1 });
       assert.deepEqual(
