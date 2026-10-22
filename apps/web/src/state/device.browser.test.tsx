@@ -25,8 +25,26 @@ it("baselines the first device snapshot without reopening dismissed devices", as
     hosts: [],
     hostStatus: "ready",
     hostStatuses: {},
-    devices: [{ hostId: "local", id: "phone", platform: "ios", name: "Phone", version: "26", booted: true, physical: false }],
-    sessions: [{ threadId: threadRef.threadId, hostId: "local", deviceId: "phone", platform: "ios", openedAt: "2026-10-01T00:00:00Z" }],
+    devices: [
+      {
+        hostId: "local",
+        id: "phone",
+        platform: "ios",
+        name: "Phone",
+        version: "26",
+        booted: true,
+        physical: false,
+      },
+    ],
+    sessions: [
+      {
+        threadId: threadRef.threadId,
+        hostId: "local",
+        deviceId: "phone",
+        platform: "ios",
+        openedAt: "2026-10-01T00:00:00Z",
+      },
+    ],
     onboardingCompleted: true,
     agentAccessEnabled: true,
     hubBasePath: "/api/device-hub",
@@ -36,7 +54,9 @@ it("baselines the first device snapshot without reopening dismissed devices", as
   using _registry = { [Symbol.dispose]: () => registry.dispose() };
   const stateAtom = Atom.make(AsyncResult.initial<DeviceServiceState>());
   using _subscription = vi.spyOn(deviceEnvironment, "state").mockReturnValue(stateAtom);
-  using _store = { [Symbol.dispose]: () => usePreviewMiniPlayerStore.getState().removeThread(threadRef) };
+  using _store = {
+    [Symbol.dispose]: () => usePreviewMiniPlayerStore.getState().removeThread(threadRef),
+  };
   let loaded = false;
   function Probe() {
     const device = useDeviceState(threadRef.environmentId);
@@ -54,7 +74,9 @@ it("baselines the first device snapshot without reopening dismissed devices", as
     return null;
   }
   await using _screen = await render(
-    <RegistryContext.Provider value={registry}><Probe /></RegistryContext.Provider>,
+    <RegistryContext.Provider value={registry}>
+      <Probe />
+    </RegistryContext.Provider>,
   );
   const initiallyLoaded = loaded;
   await act(() => registry.set(stateAtom, AsyncResult.success(snapshot)));
@@ -66,13 +88,22 @@ it("baselines the first device snapshot without reopening dismissed devices", as
   expect(loaded).toBe(true);
 
   const nextDevice = { ...snapshot.devices[0]!, id: "tablet", name: "Tablet" };
-  await act(() => registry.set(stateAtom, AsyncResult.success({
-    ...snapshot,
-    devices: [...snapshot.devices, nextDevice],
-    sessions: [...snapshot.sessions, { ...snapshot.sessions[0]!, deviceId: nextDevice.id }],
-    revision: 2,
-  })));
+  await act(() =>
+    registry.set(
+      stateAtom,
+      AsyncResult.success({
+        ...snapshot,
+        devices: [...snapshot.devices, nextDevice],
+        sessions: [...snapshot.sessions, { ...snapshot.sessions[0]!, deviceId: nextDevice.id }],
+        revision: 2,
+      }),
+    ),
+  );
   expect(usePreviewMiniPlayerStore.getState().byThreadKey[threadKey]?.source).toEqual({
-    kind: "device", hostId: "local", deviceId: "tablet", platform: "ios", name: "Tablet",
+    kind: "device",
+    hostId: "local",
+    deviceId: "tablet",
+    platform: "ios",
+    name: "Tablet",
   });
 });

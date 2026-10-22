@@ -35,7 +35,7 @@ export function useDeviceState(environmentId: EnvironmentId | null): {
   const query = useEnvironmentQuery(
     environmentId === null ? null : deviceEnvironment.state({ environmentId, input: {} }),
   );
-  return { state: query.data ?? EMPTY_DEVICE_STATE, loaded: query.data !== undefined };
+  return { state: query.data ?? EMPTY_DEVICE_STATE, loaded: query.data !== null };
 }
 
 const deviceHubAccessAtom = Atom.family((environmentId: EnvironmentId) =>
