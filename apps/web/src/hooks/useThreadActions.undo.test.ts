@@ -19,7 +19,7 @@ const commands = vi.hoisted(() => ({
 }));
 const router = vi.hoisted(() => ({
   navigate: vi.fn(async () => {}),
-  state: { matches: [{ params: {} as Record<string, string> }] },
+  state: { location: { href: "/" }, matches: [{ params: {} as Record<string, string> }] },
 }));
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
 vi.mock("../state/session", async (original) => ({
