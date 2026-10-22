@@ -1271,8 +1271,7 @@ it.effect.each(["failure", "interruption", "stale-attempt", "start-guard"] as co
                           }),
                         ),
                 }),
-            Layer.succeed(RunFinalizationService.RunFinalizationObserver, {
-              refresh: () => Effect.void,
+            Layer.succeed(RunFinalizationService.RunTurnObserver, {
               refreshAfterTurn: () => Ref.update(refreshes, (count) => count + 1),
             }),
           ),
@@ -2417,9 +2416,19 @@ it.effect("emits run_interrupt_result when hard-stop finalizes the active attemp
       ["run_interrupt_result"],
     );
     assert.deepEqual(observed, ["run:interrupted", "pull-requests-refreshed"]);
+    // Finalization follows the session this run used, even if promotion replaces it.
     assert.deepEqual(
-      committedEffects.map((effect) => effect.request.type),
-      ["checkpoint.capture"],
+      committedEffects.map((effect) => ({
+        type: effect.request.type,
+        providerSessionId:
+          effect.request.type === "checkpoint.capture" ? effect.request.providerSessionId : null,
+      })),
+      [
+        {
+          type: "checkpoint.capture",
+          providerSessionId: ProviderSessionId.make("session:hard-stop"),
+        },
+      ],
     );
   }),
 );
@@ -2801,8 +2810,7 @@ function captureRootRunTermination(input: {
             ingestNormalized: input.ingestNormalized ?? (() => Effect.succeed([])),
           }),
           ServerSettings.layerTest(),
-          Layer.succeed(RunFinalizationService.RunFinalizationObserver, {
-            refresh: () => Effect.void,
+          Layer.succeed(RunFinalizationService.RunTurnObserver, {
             refreshAfterTurn: () =>
               Ref.update(observed, (current) => [...current, "pull-requests-refreshed"]).pipe(
                 Effect.andThen(input.refreshAfterTurn ?? Effect.void),
@@ -2870,6 +2878,7 @@ function captureRootRunTermination(input: {
         providerThread: {
           id: ids.providerThreadId,
           driver,
+          providerSessionId: ProviderSessionId.make(`session:${input.key}`),
         } as OrchestrationV2ProviderThread,
         attempt: {
           id: ids.attemptId,

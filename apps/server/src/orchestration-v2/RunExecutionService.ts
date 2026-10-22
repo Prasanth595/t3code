@@ -610,7 +610,7 @@ export const layer: Layer.Layer<
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
-    const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
+    const turnObserver = yield* RunFinalizationService.RunTurnObserver;
 
     const writeFinalRunEvents = Effect.fn("RunExecutionService.writeFinalRunEvents")(
       function* (input: {
@@ -738,6 +738,9 @@ export const layer: Layer.Layer<
                       type: "checkpoint.capture" as const,
                       runId: input.run.id,
                       scopeId: input.checkpointScope.id,
+                      ...(input.providerThread.providerSessionId === null
+                        ? {}
+                        : { providerSessionId: input.providerThread.providerSessionId }),
                     },
                   },
                 ]
@@ -873,7 +876,7 @@ export const layer: Layer.Layer<
       startRootRun: Effect.fn("RunExecutionService.startRootRun")(function* (input) {
         // Startup failure and stream shutdown can report the same attempt.
         const refreshAfterTurn = yield* Effect.cached(
-          finalizationObserver.refreshAfterTurn(input.appThread.projectId).pipe(
+          turnObserver.refreshAfterTurn(input.appThread.projectId).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("failed to refresh pull requests after run termination", {
                 threadId: input.run.threadId,
