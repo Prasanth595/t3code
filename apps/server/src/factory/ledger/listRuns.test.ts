@@ -7,7 +7,14 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import type { State } from "../domain/lifecycle.ts";
 import { makeCause } from "./events.ts";
 import { Ledger } from "./ledger.ts";
-import { holdsSlot, listRuns, listUnfinishedRuns, readRuns, runInfoOf } from "./listRuns.ts";
+import {
+  holdsSlot,
+  listRuns,
+  listUnfinishedRuns,
+  readRuns,
+  runInfoOf,
+  runsByWorktree,
+} from "./listRuns.ts";
 import { lastLineIsFinished } from "./read.ts";
 import { RUNS_DIR, runIdFileName, type RunId } from "./runId.ts";
 import { T0, ticking, useTempDirs } from "./testSupport.ts";
@@ -904,5 +911,26 @@ describe("readRuns: skipFinishedBefore", () => {
     ]);
     expect(fullReads()).not.toContain(oldFinished);
     expect(listRuns(dataDir).map((run) => run.id.issue)).toEqual(["1", "2", "3"]);
+  });
+});
+
+describe("runsByWorktree", () => {
+  const launched = (worktree: string | null, ms = T0) =>
+    line("session_launched", { thread_id: "t", worktree, branch: "b" }, ms);
+
+  it("maps each worktree a session was launched on to its run, the later run when two were", () => {
+    const dataDir = tempDir();
+    writeRun(dataDir, rid(1), launched("/wt/t3-a", T0) + finishedLine);
+    writeRun(dataDir, rid(2), launched("/wt/t3-b", T0 + 1000) + launched("/wt/t3-c", T0 + 2000));
+    writeRun(dataDir, rid(3), launched("/wt/t3-a", T0 + 3000) + launched(null, T0 + 4000));
+    expect(Object.fromEntries(runsByWorktree(dataDir))).toEqual({
+      "/wt/t3-a": rid(3),
+      "/wt/t3-b": rid(2),
+      "/wt/t3-c": rid(2),
+    });
+  });
+
+  it("is empty without a runs directory", () => {
+    expect(runsByWorktree(tempDir()).size).toBe(0);
   });
 });

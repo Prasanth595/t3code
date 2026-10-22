@@ -32,6 +32,7 @@ import { formatTs } from "./ledger/time.ts";
 import {
   STUCK_READ_EVERY_MS,
   runPass,
+  type BrokenWorktree,
   type Loaded,
   type PassError,
   type GateStart,
@@ -507,6 +508,29 @@ class Fake implements PassWorld {
 
   handPause() {
     return this.pause;
+  }
+
+  /** The live threads on a broken worktree a factory run launched; an unbound one leaves the list. */
+  broken: Array<BrokenWorktree> = [];
+  brokenFails = false;
+  /** Threads T3 refuses to unbind. */
+  unbindRefused: Array<string> = [];
+  /** The `"<thread> <path>"` of each unbind T3 took, in order. */
+  unbound: Array<string> = [];
+
+  brokenWorktrees() {
+    return this.brokenFails
+      ? Effect.fail<PassError>({ kind: "t3", message: "the projection is locked" })
+      : Effect.succeed([...this.broken]);
+  }
+
+  unbindWorktree(threadId: string, worktreePath: string) {
+    if (this.unbindRefused.includes(threadId)) {
+      return Effect.fail<PassError>({ kind: "t3", message: "T3 refused the update" });
+    }
+    this.unbound.push(`${threadId} ${worktreePath}`);
+    this.broken = this.broken.filter((b) => b.threadId !== threadId);
+    return Effect.void;
   }
 
   freeSpace() {
@@ -2176,6 +2200,87 @@ describe("low disk space", () => {
       fake.free = "error";
       yield* pass(fake, [REPO], 5);
       assert.deepEqual(lowItems(fake), []);
+    }),
+  );
+});
+
+describe("threads on a broken worktree", () => {
+  const LINE =
+    "rawphp/softfac#42: thread child-1 of run rawphp__softfac__42__1 was on worktree /wt/t3-abc, which is gone or no longer a git checkout; the thread no longer names it, so T3 reads its branch and pull request from the project checkout";
+  const brokenChild = (): BrokenWorktree => ({
+    threadId: "child-1",
+    worktreePath: "/wt/t3-abc",
+    run: rid(42),
+  });
+  const worktreeLines = (lines: ReadonlyArray<string>) =>
+    lines.filter((l) => l.includes("no longer a git checkout"));
+  const worktreeItems = (fake: Fake) =>
+    fake.items.filter((item) => item.id.startsWith("worktree:"));
+
+  it.effect("are unbound once, with one line and one item naming the run and its issue", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.broken = [brokenChild()];
+      const { report, lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(fake.unbound, ["child-1 /wt/t3-abc"]);
+      assert.deepEqual(worktreeLines(lines), [LINE]);
+      assert.deepEqual(
+        worktreeItems(fake).map(({ id, kind, repo, issue, run, message }) => ({
+          id,
+          kind,
+          repo,
+          issue,
+          run,
+          message,
+        })),
+        [
+          {
+            id: "worktree:child-1",
+            kind: "attention",
+            repo: REPO,
+            issue: 42,
+            run: null,
+            message: LINE,
+          },
+        ],
+      );
+      assert.equal(report.attention, 1);
+      assert.equal(report.errors, 0);
+
+      fake.now += 60_000;
+      const again = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(fake.unbound, ["child-1 /wt/t3-abc"]);
+      assert.deepEqual(worktreeLines(again.lines), []);
+      assert.equal(worktreeItems(fake).length, 1);
+    }),
+  );
+
+  it.effect("one T3 refuses to unbind is an error line, raises nothing, and is tried again", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.broken = [brokenChild()];
+      fake.unbindRefused = ["child-1"];
+      const { report, lines } = yield* pass(fake, [REPO], 5);
+      assert.equal(report.errors, 1);
+      assert.deepEqual(worktreeItems(fake), []);
+      assert.ok(lines.some((l) => l.startsWith("error: cannot unbind thread child-1")));
+
+      fake.unbindRefused = [];
+      yield* pass(fake, [REPO], 5);
+      assert.deepEqual(fake.unbound, ["child-1 /wt/t3-abc"]);
+      assert.equal(worktreeItems(fake).length, 1);
+    }),
+  );
+
+  it.effect("a check that cannot read the threads is an error line, and the pass claims on", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.brokenFails = true;
+      fake.ready[REPO] = [1];
+      const { report, lines } = yield* pass(fake, [REPO], 5);
+      assert.equal(report.errors, 1);
+      assert.ok(lines.some((l) => l.startsWith("error: cannot check the sessions' worktrees: ")));
+      assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
     }),
   );
 });
