@@ -1015,7 +1015,7 @@ export function GeneralSettingsPanel() {
           }
           control={
             <Select
-              value={globalIdleCompaction(settings)}
+              value={idleCompaction.mixed ? null : globalIdleCompaction(settings)}
               onValueChange={(value) => {
                 const mode = IDLE_COMPACTION_MODES.find((candidate) => candidate.value === value);
                 if (mode) updateSettings({ idleCompaction: mode.value });
@@ -1023,10 +1023,10 @@ export function GeneralSettingsPanel() {
             >
               <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Compact idle threads">
                 <SelectValue>
-                  {
-                    IDLE_COMPACTION_MODES.find(
-                      (mode) => mode.value === globalIdleCompaction(settings),
-                    )?.label
+                  {(value: string | null) =>
+                    value === null
+                      ? "Mixed"
+                      : IDLE_COMPACTION_MODES.find((mode) => mode.value === value)?.label
                   }
                 </SelectValue>
               </SelectTrigger>
