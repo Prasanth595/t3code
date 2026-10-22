@@ -591,9 +591,24 @@ it.effect.each(["thread.stop", "run.interrupt"] as const)(
         runs: ["interrupted", "queued:held"],
         watched: [],
       });
+      assert.notInclude((yield* threadState(grandchildThreadId)).runs, "interrupted");
+      const childStops = yield* sql<{ readonly command_id: string }>`
+        SELECT command_id FROM orchestration_v2_effect_outbox
+        WHERE thread_id = ${childThreadId} AND effect_type = 'delegated-tasks.stop'
+      `;
+      assert.equal(childStops.length, 1);
+      const childStopCommandId = CommandId.make(childStops[0]!.command_id);
+      yield* threads.stopDelegatedTasks({
+        threadId: childThreadId,
+        commandId: childStopCommandId,
+      });
       assert.deepEqual((yield* threadState(grandchildThreadId)).runs, ["interrupted"]);
 
+      yield* send(grandchildThreadId, "resume after Stop", "start_immediately");
+      const resumed = yield* threadState(grandchildThreadId);
       yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId: stopCommandId });
+      yield* threads.stopDelegatedTasks({ threadId: childThreadId, commandId: childStopCommandId });
+      assert.deepEqual(yield* threadState(grandchildThreadId), resumed);
       assert.deepEqual((yield* threadState(childThreadId)).runs, ["interrupted", "queued:held"]);
 
       if (type === "thread.stop") {

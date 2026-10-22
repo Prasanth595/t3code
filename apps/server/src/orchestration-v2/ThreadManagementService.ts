@@ -1107,7 +1107,7 @@ const make = Effect.gen(function* () {
     for (const task of subagents) {
       if (task.origin !== "app_owned" || task.childThreadId === null) continue;
       const threadId = task.childThreadId;
-      // Follow-up tasks reuse a child thread; walk its subtree only once.
+      // Follow-up tasks reuse a child thread. Its Stop outbox effect handles descendants.
       if (stoppedChildThreadIds.has(threadId)) continue;
       stoppedChildThreadIds.add(threadId);
       yield* dispatch({
@@ -1116,7 +1116,6 @@ const make = Effect.gen(function* () {
         threadId,
         ...(input.reason === undefined ? {} : { reason: input.reason }),
       }).pipe(
-        Effect.andThen(stopDelegatedTasks({ ...input, threadId })),
         Effect.catch((error) =>
           Effect.logWarning("Unable to stop a delegated task", {
             parentThreadId: input.threadId,
