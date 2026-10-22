@@ -36,8 +36,16 @@ it.layer(NodeServices.layer)("apply-web-brand-assets", (it) => {
       const path = yield* Path.Path;
       const repoRoot = yield* path.fromFileUrl(new URL("..", import.meta.url));
       const destinations = WEB_ICON_FILENAMES.map((filename) => path.join(repoRoot, filename));
+      // readDirectory does not follow symlinks, so a dangling link counts as an existing entry.
+      // Names are lowercased so a case-insensitive filesystem cannot hide a differently cased file.
+      const existingEntries = new Set(
+        (yield* fs.readDirectory(repoRoot)).map((entry) => entry.toLowerCase()),
+      );
       for (const destination of destinations) {
-        assert.isFalse(yield* fs.exists(destination));
+        assert.isFalse(
+          existingEntries.has(path.basename(destination)),
+          `${destination} already exists`,
+        );
       }
       yield* Effect.addFinalizer(() =>
         Effect.forEach(destinations, (destination) => fs.remove(destination, { force: true })).pipe(
