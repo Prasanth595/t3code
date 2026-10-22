@@ -1,28 +1,10 @@
 import { EnvironmentId, ProviderDriverKind, type ServerProviderSkill } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
 
+import { render } from "../../../test/render";
 import { ComposerCommandMenu, type ComposerCommandItem } from "./ComposerCommandMenu";
-
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  container.style.width = "360px";
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  document.body.replaceChildren();
-  vi.unstubAllGlobals();
-});
 
 function commandItem(id: string, description: string): ComposerCommandItem {
   return {
@@ -49,85 +31,70 @@ function skillItem(
   };
 }
 
-async function renderDetail(item: ComposerCommandItem) {
-  await act(async () =>
-    root.render(
-      <ComposerCommandMenu
-        listId="suggestions"
-        environmentId={EnvironmentId.make("environment-1")}
-        items={[item]}
-        resolvedTheme="light"
-        isLoading={false}
-        triggerKind="skill"
-        activeItemId={item.id}
-        detailItem={item}
-        onHighlightedItemChange={() => {}}
-        onShowDetail={() => {}}
-        onCloseDetail={() => {}}
-        onSelect={() => {}}
-      />,
-    ),
+function menu(item: ComposerCommandItem, detailItem: ComposerCommandItem | null) {
+  return (
+    <ComposerCommandMenu
+      listId="suggestions"
+      environmentId={EnvironmentId.make("environment-1")}
+      items={[item]}
+      resolvedTheme="light"
+      isLoading={false}
+      triggerKind={item.type === "skill" ? "skill" : "slash-command"}
+      activeItemId={item.id}
+      detailItem={detailItem}
+      onHighlightedItemChange={() => {}}
+      onShowDetail={() => {}}
+      onCloseDetail={() => {}}
+      onSelect={() => {}}
+    />
   );
 }
 
-async function renderActive(item: ComposerCommandItem) {
-  await act(async () =>
-    root.render(
-      <ComposerCommandMenu
-        listId="suggestions"
-        environmentId={EnvironmentId.make("environment-1")}
-        items={[item]}
-        resolvedTheme="light"
-        isLoading={false}
-        triggerKind="slash-command"
-        activeItemId={item.id}
-        detailItem={null}
-        onHighlightedItemChange={() => {}}
-        onShowDetail={() => {}}
-        onCloseDetail={() => {}}
-        onSelect={() => {}}
-      />,
-    ),
-  );
-  return container.querySelector(`[aria-label^="Show details for ${item.label}"]`);
+function container(width: string) {
+  const element = document.createElement("div");
+  element.style.width = width;
+  return element;
+}
+
+function detailButton(root: HTMLElement, item: ComposerCommandItem) {
+  return root.querySelector(`[aria-label^="Show details for ${item.label}"]`);
 }
 
 describe("ComposerCommandMenu detail button", () => {
   it("appears on a command only when its description is cut off", async () => {
-    expect(await renderActive(commandItem("short", "Fits"))).toBeNull();
-    expect(
-      await renderActive(commandItem("long", "A description that keeps going ".repeat(10))),
-    ).not.toBeNull();
+    const short = commandItem("short", "Fits");
+    await using shortScreen = await render(menu(short, null), { container: container("360px") });
+    expect(detailButton(shortScreen.container, short)).toBeNull();
+
+    const long = commandItem("long", "A description that keeps going ".repeat(10));
+    await using longScreen = await render(menu(long, null), { container: container("360px") });
+    expect(detailButton(longScreen.container, long)).not.toBeNull();
   });
 
   it("appears on the active command once a narrower menu cuts its description off", async () => {
     const item = commandItem("narrowed", "A description that fits on one line only in a wide menu");
-    container.style.width = "1600px";
-    expect(await renderActive(item)).toBeNull();
+    await using screen = await render(menu(item, null), { container: container("1600px") });
+    expect(detailButton(screen.container, item)).toBeNull();
 
-    await act(async () => {
-      container.style.width = "260px";
-      for (let frame = 0; frame < 2; frame++) {
-        await new Promise((resolve) => requestAnimationFrame(resolve));
-      }
-    });
-    expect(container.querySelector('[aria-label^="Show details for /narrowed"]')).not.toBeNull();
+    screen.container.style.width = "260px";
+    await vi.waitFor(() => expect(detailButton(screen.container, item)).not.toBeNull());
   });
 
   it("appears on every skill, even when its description fits", async () => {
-    expect(await renderActive(skillItem("tidy", "Fits"))).not.toBeNull();
+    const item = skillItem("tidy", "Fits");
+    await using screen = await render(menu(item, null), { container: container("360px") });
+    expect(detailButton(screen.container, item)).not.toBeNull();
   });
 });
 
 describe("ComposerCommandMenu detail panel", () => {
   it("shows a skill's full description rather than its short one", async () => {
-    await renderDetail(
-      skillItem("release", "Short summary", {
-        shortDescription: "Short summary",
-        description: "The full description with every detail",
-      }),
-    );
-    expect(container.textContent).toContain("The full description with every detail");
-    expect(container.textContent).not.toContain("Short summary");
+    const item = skillItem("release", "Short summary", {
+      shortDescription: "Short summary",
+      description: "The full description with every detail",
+    });
+    await using screen = await render(menu(item, item), { container: container("360px") });
+    expect(screen.container.textContent).toContain("The full description with every detail");
+    expect(screen.container.textContent).not.toContain("Short summary");
   });
 });
