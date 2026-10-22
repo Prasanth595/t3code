@@ -16,6 +16,10 @@ const state = vi.hoisted(() => ({
   notice: null as { action: string; undo: () => Promise<unknown> } | null,
 }));
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
+vi.mock("../state/session", async (original) => ({
+  ...(await original<typeof import("../state/session")>()),
+  readEnvironmentScope: () => true,
+}));
 vi.mock("@tanstack/react-router", () => ({ useRouter: () => state.router }));
 vi.mock("./useSettings", () => ({ useClientSettings: () => false }));
 vi.mock("./useHandleNewThread", () => ({
