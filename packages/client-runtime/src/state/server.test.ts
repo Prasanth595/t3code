@@ -221,6 +221,7 @@ describe("accepted server update recovery", () => {
       () =>
         Effect.gen(function* () {
           const observing = yield* Deferred.make<void>();
+          const cancelFiber = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
           const oldReadyObserved = yield* Deferred.make<void>();
           const readyEvents =
             yield* Queue.unbounded<Parameters<typeof matchesServerUpdateReadyEvent>[1]>();
@@ -251,15 +252,20 @@ describe("accepted server update recovery", () => {
               ).pipe(
                 Stream.concat(
                   Stream.fromEffect(
-                    loss === "interrupt"
-                      ? Effect.interrupt
-                      : Effect.fail(
-                          loss === "server_error"
-                            ? new Error("Archive verification failed.")
-                            : new RpcClientError.RpcClientError({
-                                reason: new Socket.SocketCloseError({ code: 1006 }),
-                              }),
-                        ),
+                    loss === "cancel"
+                      ? Effect.fiber.pipe(
+                          Effect.flatMap((fiber) => Deferred.succeed(cancelFiber, fiber)),
+                          Effect.andThen(Effect.never),
+                        )
+                      : loss === "interrupt"
+                        ? Effect.interrupt
+                        : Effect.fail(
+                            loss === "server_error"
+                              ? new Error("Archive verification failed.")
+                              : new RpcClientError.RpcClientError({
+                                  reason: new Socket.SocketCloseError({ code: 1006 }),
+                                }),
+                          ),
                   ),
                 ),
               ),
