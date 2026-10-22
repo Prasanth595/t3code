@@ -305,6 +305,7 @@ export function parseReviewInlineComments(
     if (
       record.kind !== "review-comment" ||
       "payload" in record ||
+      record.sectionId.startsWith("pull-request:") ||
       !referencedIds.has(record.contextId)
     ) {
       continue;

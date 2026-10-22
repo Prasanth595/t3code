@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
+import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
+
+import { pullRequestComposerContext } from "../../lib/composerContext";
 
 import {
   formatReviewCommentContext,
@@ -43,6 +46,28 @@ function makeTarget(): ReviewCommentTarget {
 }
 
 describe("review comment serialization", () => {
+  it("excludes a linked pull request chip from draft review comments", () => {
+    const record = pullRequestComposerContext(
+      {
+        number: 42,
+        title: "Fix checkout",
+        url: "https://github.com/example/repo/pull/42",
+        headBranch: "fix-checkout",
+        baseBranch: "main",
+        state: "open",
+        isDraft: false,
+      },
+      "pr-42",
+    );
+
+    expect(
+      parseReviewInlineComments(formatComposerContextReference(record), {
+        version: 1,
+        records: [record],
+      }),
+    ).toEqual([]);
+  });
+
   it("reads an added review comment after the composer upgrades it to a context chip", () => {
     const upgraded = upgradeLegacyContextMessage(
       formatReviewCommentContext(makeTarget(), "Please keep this configurable."),
