@@ -8,6 +8,34 @@ const environmentId = EnvironmentId.make("laptop");
 const projectId = ProjectId.make("project");
 
 describe("settingInheritanceLayers", () => {
+  it("distinguishes project and environment worktree cleanup policies", () => {
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      worktreeCleanup: {
+        mode: "custom" as const,
+        rules: DEFAULT_SERVER_SETTINGS.storageCleanup,
+      },
+      projectSettingsOverrides: {
+        [projectId]: { worktreeCleanup: { mode: "off" as const } },
+      },
+    };
+    const layers = settingInheritanceLayers(
+      {
+        environmentId,
+        label: "Laptop",
+        projectId,
+        ...resolveProjectSettings(settings, projectId),
+      },
+      settings,
+      "worktreeCleanup",
+    );
+    expect(layers.map((layer) => [layer.key, layer.value, layer.effective])).toEqual([
+      ["project", "Off", true],
+      ["environment", "Custom", false],
+      ["built-in", "Not set", false],
+    ]);
+  });
+
   it("shows the checkout's t3.json as a layer for file-backed keys", () => {
     const file = { defaultThreadEnvMode: "worktree" as const };
     const fromFile = settingInheritanceLayers(
