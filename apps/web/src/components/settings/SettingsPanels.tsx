@@ -17,6 +17,7 @@ import {
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   type ResponseStreamingMode,
+  type UltracodeMode,
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
 } from "@t3tools/contracts/settings";
@@ -104,6 +105,19 @@ const RESPONSE_STREAMING_MODE_LABELS: Record<ResponseStreamingMode, string> = {
 const RESPONSE_STREAMING_MODE_DESCRIPTIONS: Record<ResponseStreamingMode, string> = {
   turn: "Text appears once the agent finishes its turn.",
   paragraph: "Each paragraph or code block appears as soon as it is complete.",
+};
+
+const ULTRACODE_MODE_LABELS: Record<UltracodeMode, string> = {
+  keyword: "When a message says ultracode",
+  always: "Every turn",
+  off: "Off",
+};
+
+const ULTRACODE_MODE_DESCRIPTIONS: Record<UltracodeMode, string> = {
+  keyword:
+    "A message containing the word ultracode asks the agent to run its work as a multi-agent workflow.",
+  always: "Every message asks the agent to run substantive work as a multi-agent workflow.",
+  off: "Agents are never asked to orchestrate a workflow, even when a message says ultracode.",
 };
 
 const SIDEBAR_PROJECT_SORT_ORDER_LABELS: Record<SidebarProjectSortOrder, string> = {
@@ -484,6 +498,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.responseStreamingMode !== DEFAULT_UNIFIED_SETTINGS.responseStreamingMode
       ? ["Response streaming"]
       : []),
+    ...(settings.ultracode !== DEFAULT_UNIFIED_SETTINGS.ultracode ? ["Ultracode"] : []),
     ...(settings.enableProviderUpdateChecks !== DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
       ? ["Provider update checks"]
       : []),
@@ -606,6 +621,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
       snoozePresets: DEFAULT_UNIFIED_SETTINGS.snoozePresets,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
+      ultracode: DEFAULT_UNIFIED_SETTINGS.ultracode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
@@ -1273,6 +1289,49 @@ export function DiffsSettingsPanel() {
                 <SelectItem hideIndicator value="split">
                   {DIFF_LAYOUT_LABELS.split}
                 </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          serverScoped
+          settingKeys={["ultracode"]}
+          {...searchableSetting("ultracode")}
+          description={
+            mixedUltracode
+              ? "The selected targets use different ultracode settings."
+              : ULTRACODE_MODE_DESCRIPTIONS[settings.ultracode]
+          }
+          resetAction={
+            settings.ultracode !== DEFAULT_UNIFIED_SETTINGS.ultracode ? (
+              <SettingResetButton
+                label="ultracode"
+                onClick={() => updateSettings({ ultracode: DEFAULT_UNIFIED_SETTINGS.ultracode })}
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={mixedUltracode ? null : settings.ultracode}
+              onValueChange={(value) => {
+                if (value === "keyword" || value === "always" || value === "off") {
+                  updateSettings({ ultracode: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Ultracode">
+                <SelectValue>
+                  {(value: UltracodeMode | null) =>
+                    value === null ? "Mixed" : ULTRACODE_MODE_LABELS[value]
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {(["keyword", "always", "off"] as const).map((mode) => (
+                  <SelectItem key={mode} hideIndicator value={mode}>
+                    {ULTRACODE_MODE_LABELS[mode]}
+                  </SelectItem>
+                ))}
               </SelectPopup>
             </Select>
           }
