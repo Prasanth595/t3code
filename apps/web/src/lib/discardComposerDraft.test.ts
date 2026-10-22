@@ -2,7 +2,11 @@ import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { DraftId, useComposerDraftStore } from "../composerDraftStore";
+import {
+  type ComposerImageAttachment,
+  DraftId,
+  useComposerDraftStore,
+} from "../composerDraftStore";
 import { showThreadUndoNotice } from "../hooks/showThreadUndoNotice";
 import { discardComposerDraft } from "./discardComposerDraft";
 
@@ -24,7 +28,15 @@ function imagePreview(name = "image.png") {
   const file = new File(["image bytes"], name, { type: "image/png" });
   const previewUrl = URL.createObjectURL(file);
   return {
-    image: { id: name, name, mimeType: file.type, sizeBytes: file.size, file, previewUrl },
+    image: {
+      type: "image",
+      id: name,
+      name,
+      mimeType: file.type,
+      sizeBytes: file.size,
+      file,
+      previewUrl,
+    } satisfies ComposerImageAttachment,
     [Symbol.dispose]() {
       URL.revokeObjectURL(previewUrl);
     },
