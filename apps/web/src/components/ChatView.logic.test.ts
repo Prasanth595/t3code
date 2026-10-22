@@ -1086,7 +1086,10 @@ describe("deriveTimelineWorking", () => {
       expect(deriveTimelineWorking(state)).toBe(true);
       expect(deriveTimelineWorking({ ...state, phase: "ready" })).toBe(false);
       expect(
-        deriveTimelineWorking({ ...state, phase: derivePhase({ ...readySession, status: "failed" }) }),
+        deriveTimelineWorking({
+          ...state,
+          phase: derivePhase({ ...readySession, status: "failed" }),
+        }),
       ).toBe(false);
     },
   );
