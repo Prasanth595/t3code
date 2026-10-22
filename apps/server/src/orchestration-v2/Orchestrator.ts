@@ -3392,16 +3392,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     passed: false,
                     passedChecks: [],
                     conflicting: false,
-                    awaitingBaseline: true,
                     // Watching again must not repeat check or conflict news the last watch told.
-                    ...(existing.endedWatch && {
-                      headSha: existing.endedWatch.headSha,
-                      failedChecks: existing.endedWatch.failedChecks,
-                      passed: existing.endedWatch.passed,
-                      passedChecks: existing.endedWatch.passedChecks,
-                      conflicting: existing.endedWatch.conflicting,
-                      awaitingBaseline: existing.endedWatch.awaitingBaseline === true,
-                    }),
+                    ...(existing.endedWatch
+                      ? {
+                          headSha: existing.endedWatch.headSha,
+                          failedChecks: existing.endedWatch.failedChecks,
+                          passed: existing.endedWatch.passed,
+                          passedChecks: existing.endedWatch.passedChecks,
+                          conflicting: existing.endedWatch.conflicting,
+                          ...(existing.endedWatch.awaitingBaseline && {
+                            awaitingBaseline: existing.endedWatch.awaitingBaseline,
+                          }),
+                        }
+                      : { awaitingBaseline: "all" as const }),
                     remarksThrough: startedAt,
                     remarkIds: [],
                     wakes: 0,
