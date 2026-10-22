@@ -1641,15 +1641,20 @@ export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 export function requiredScopesForServerSettingsPatch(
   patch: ServerSettingsPatch,
 ): ReadonlyArray<AuthEnvironmentScope> {
-  let changesProviders = false;
+  // A null entry removes the whole override, including any stored provider state.
+  // Entries that omit providerInstances preserve it and remain settings-only edits.
+  let changesProviders =
+    patch.projectSettingsOverrides !== undefined &&
+    Object.values(patch.projectSettingsOverrides).some(
+      (entry) => entry === null || Object.hasOwn(entry, "providerInstances"),
+    );
   let changesSettings = false;
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
-    if (key === "providers" || key === "providerInstances" || key === "usageLimitSources") {
-      changesProviders = true;
-    } else {
-      changesSettings = true;
-    }
+    const providerOnly =
+      key === "providers" || key === "providerInstances" || key === "usageLimitSources";
+    if (providerOnly) changesProviders = true;
+    else changesSettings = true;
   }
   return [
     ...(changesSettings || !changesProviders ? [AuthSettingsWriteScope] : []),

@@ -11,6 +11,7 @@ import {
   globalIdleCompaction,
   idleCompactionPatch,
   requiredScopesForProjectMutation,
+  requiredScopesForServerSettingsPatch,
   resolveIdleCompaction,
   resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
@@ -338,6 +339,28 @@ describe("resolveProjectProviderInstanceEnabled", () => {
       },
     };
     expect(resolveProjectProviderInstanceEnabled(settings, projectId, instanceId)).toBe(false);
+  });
+});
+
+describe("requiredScopesForServerSettingsPatch", () => {
+  it("requires both grants only when project patches can change provider state", () => {
+    const projectId = ProjectId.make("project-a");
+    const instanceId = ProviderInstanceId.make("codex_work");
+    for (const projectSettingsOverrides of [
+      { [projectId]: { providerInstances: { [instanceId]: { enabled: false } } } },
+      { [projectId]: { providerInstances: {} } },
+      { [projectId]: null },
+    ]) {
+      expect(requiredScopesForServerSettingsPatch({ projectSettingsOverrides })).toEqual([
+        "settings:write",
+        "providers:manage",
+      ]);
+    }
+    expect(
+      requiredScopesForServerSettingsPatch({
+        projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+      }),
+    ).toEqual(["settings:write"]);
   });
 });
 
