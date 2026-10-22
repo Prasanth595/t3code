@@ -310,6 +310,34 @@ describe("pools", () => {
     expect(accounts[0]?.limits.windows).toEqual(expect.arrayContaining([window, monthly]));
   });
 
+  it("keeps windows of different kinds that share an id across sources", () => {
+    const weekly = { id: "spend", kind: "weekly", label: "Weekly spend", usedPercent: 10 } as const;
+    const monthly = {
+      ...weekly,
+      kind: "monthly",
+      label: "Monthly spend",
+      usedPercent: 20,
+    } as const;
+    const input = new Map(
+      [weekly, monthly].map((reported, index) => [
+        EnvironmentId.make(`env-${index}`),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [
+              provider({
+                driver: claude,
+                auth: { status: "authenticated", email: "same@example.com" },
+                usageLimits: { checkedAt, windows: [reported] },
+              }),
+            ],
+          },
+        },
+      ]),
+    );
+    expect(collectLimitAccounts(input)[0]?.limits.windows).toEqual([weekly, monthly]);
+  });
+
   it("redeems through the hub when it holds a credit, even with a fresher native read", () => {
     const native = provider({
       driver: claude,

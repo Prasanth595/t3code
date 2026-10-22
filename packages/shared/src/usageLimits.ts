@@ -182,9 +182,10 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     }
     const checkedAt = Date.parse(next.limits.checkedAt);
     for (const window of next.limits.windows) {
-      const previous = windows.get(window.id);
+      const id = `${window.kind}:${window.id}`;
+      const previous = windows.get(id);
       if (!previous || checkedAt > previous.checkedAt) {
-        windows.set(window.id, { window, checkedAt });
+        windows.set(id, { window, checkedAt });
       }
     }
     // Redeeming through a hub also clears the routing cooldown that hub holds
