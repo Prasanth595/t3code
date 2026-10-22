@@ -115,6 +115,7 @@ function convertItems(items: NativeStackHeaderItem[], prefix: string): HeaderIte
           axisBehavior: item.axisBehavior,
           icon: convertIcon(item.icon),
           menu: item.disabled ? undefined : convertMenu(item.menu, `${id}:menu`),
+          disabled: item.disabled,
           variant: item.variant,
           tintColor: item.tintColor,
           hidesSharedBackground: item.hidesSharedBackground,
@@ -128,6 +129,7 @@ function convertItems(items: NativeStackHeaderItem[], prefix: string): HeaderIte
           axisBehavior: item.axisBehavior,
           icon: convertIcon(item.icon),
           onPress: item.disabled ? undefined : item.onPress,
+          disabled: item.disabled,
           visibilityPriority:
             item.visibilityPriority === "default" ? "standard" : item.visibilityPriority,
           variant: item.variant,
