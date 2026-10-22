@@ -112,6 +112,7 @@ function accountKey(
 interface AccountReport {
   readonly driver: ServerProvider["driver"];
   readonly email?: string | undefined;
+  readonly plan?: string | undefined;
   readonly workspaceId?: string | undefined;
   readonly usageLimits?: ServerProviderUsageLimits | undefined;
 }
@@ -119,6 +120,7 @@ interface AccountReport {
 const nativeReport = (provider: ServerProvider): AccountReport => ({
   driver: provider.driver,
   email: provider.auth.email,
+  plan: provider.auth.label,
   workspaceId: provider.auth.workspaceId,
   usageLimits: provider.usageLimits,
 });
@@ -723,9 +725,9 @@ export function collectProviderUsageLimits(
     credits,
   } of native) {
     const key = resolveKey(nativeReport(provider));
-    const email =
-      provider.auth.email ??
-      reports.find((report) => report.email && key !== null && resolveKey(report) === key)?.email;
+    const matchingReports = reports.filter((report) => key !== null && resolveKey(report) === key);
+    const email = provider.auth.email ?? matchingReports.find((report) => report.email)?.email;
+    const plan = provider.auth.label ?? matchingReports.find((report) => report.plan)?.plan;
     const hubCredits = sources
       .flatMap((source) => source.accounts.map((account) => ({ source, account })))
       .filter(
@@ -752,7 +754,7 @@ export function collectProviderUsageLimits(
       id: provider.instanceId,
       driver: provider.driver,
       label: `${provider.displayName?.trim() || String(provider.driver)} [${provider.instanceId}]`,
-      ...(provider.auth.label ? { plan: provider.auth.label } : {}),
+      ...(plan ? { plan } : {}),
       instanceId: provider.instanceId,
       resetCreditInput:
         hubCreditId && hubCredits

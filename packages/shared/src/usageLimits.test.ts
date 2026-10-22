@@ -469,7 +469,13 @@ describe("pools", () => {
       usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: 28 }] },
     });
     const hubAccounts = [
-      { id: "account-a", email: "same@example.com", workspaceId: "personal", usedPercent: 28 },
+      {
+        id: "account-a",
+        email: "same@example.com",
+        workspaceId: "personal",
+        plan: "Pro",
+        usedPercent: 28,
+      },
       { id: "account-b", email: "same@example.com", workspaceId: "business", usedPercent: 0 },
       { id: "account-c", email: "other@example.com", workspaceId: "plus", usedPercent: 1 },
     ].map(({ usedPercent, ...account }) => ({
@@ -494,6 +500,7 @@ describe("pools", () => {
       `${source.id}:account-c:plus`,
     ]);
     expect(accounts[0]?.email).toBe("same@example.com");
+    expect(accounts[0]?.plan).toBe("Pro");
     expect(accounts[0]?.environments.map((environment) => environment.environmentId)).toEqual([
       "worker-a",
       "worker-b",
@@ -509,6 +516,7 @@ describe("pools", () => {
     const report = collectProviderUsageLimits(native.instanceId, [native], [hub], now);
     expect(report?.accounts).toHaveLength(3);
     expect(report?.accounts[0]?.email).toBe("same@example.com");
+    expect(report?.accounts[0]?.plan).toBe("Pro");
   });
 
   it("does not infer an email-less account from an ambiguous workspace or another driver", () => {
