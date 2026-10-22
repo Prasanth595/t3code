@@ -290,12 +290,14 @@ function WorkspaceVideoPreview(props: {
     },
   });
   // Servers that report the file's revision let an unchanged file stay loaded; older ones
-  // only offer the workspace mutation, which changes after every command.
+  // only offer the workspace mutation, which changes after every command. The revision also
+  // goes in the URL, since two mints in the same millisecond sign identical URLs.
   const fileRevision = assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined;
+  const revision = fileRevision ?? props.workspaceMutationId;
   const revisionSuffix =
-    fileRevision !== undefined || props.workspaceMutationId === null
+    revision === null
       ? ""
-      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${encodeURIComponent(props.workspaceMutationId)}`;
+      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}${fileRevision !== undefined ? "file" : "workspace"}-revision=${encodeURIComponent(revision)}`;
   const latestUrl = assetUrl._tag === "Success" ? `${assetUrl.url}${revisionSuffix}` : null;
 
   return (
@@ -304,7 +306,7 @@ function WorkspaceVideoPreview(props: {
         src={latestUrl}
         sourceFailed={assetUrl._tag === "Failure"}
         label={props.name}
-        revision={fileRevision ?? props.workspaceMutationId}
+        revision={revision}
         preload="metadata"
         className="flex h-full min-h-0 w-full max-w-5xl items-center justify-center"
         onRetry={refreshAssetUrl}
@@ -347,10 +349,11 @@ function WorkspaceAudioPreview(props: {
     },
   });
   const fileRevision = assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined;
+  const revision = fileRevision ?? props.workspaceMutationId;
   const revisionSuffix =
-    fileRevision !== undefined || props.workspaceMutationId === null
+    revision === null
       ? ""
-      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}workspace-revision=${encodeURIComponent(props.workspaceMutationId)}`;
+      : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}${fileRevision !== undefined ? "file" : "workspace"}-revision=${encodeURIComponent(revision)}`;
   const url = assetUrl._tag === "Success" ? `${assetUrl.url}${revisionSuffix}` : null;
   if (assetUrl._tag === "Failure" || (url !== null && failedUrl === url)) {
     return (
@@ -368,7 +371,7 @@ function WorkspaceAudioPreview(props: {
     <AudioPreview
       src={url}
       name={props.name}
-      revision={fileRevision ?? props.workspaceMutationId}
+      revision={revision}
       onError={() => setFailedUrl(url)}
     />
   );
