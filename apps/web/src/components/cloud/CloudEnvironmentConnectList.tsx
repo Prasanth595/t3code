@@ -50,24 +50,28 @@ function cloudEnvironmentCompatibility(
   saved?: SavedCloudEnvironmentConnection,
 ) {
   const descriptor = status === undefined ? undefined : Option.getOrNull(status)?.descriptor;
+  // The runtime owns a saved server's compatibility. It knows which route a
+  // rejection came from and keeps a newer socket rejection over replayed discovery.
+  if (saved !== undefined) {
+    const updatable = saved.entry?.serverUpdateRequired === true;
+    const unsupported = updatable || saved.connection.phase === "unsupported";
+    return {
+      descriptor,
+      unsupported,
+      updatable,
+      blocked: unsupported && !updatable,
+      detail: unsupported ? saved.connection.error : null,
+    };
+  }
   const error =
     descriptor === undefined ? null : orchestrationProtocolCompatibilityError(descriptor);
-  // Relay discovery cannot clear a rejection from another route to the same environment.
-  const useSavedCompatibility =
-    descriptor === undefined ||
-    (error === null && (saved?.entry?.alternateRoutes?.length ?? 0) > 0);
-  const unsupported = useSavedCompatibility
-    ? saved?.connection.phase === "unsupported"
-    : error !== null;
-  const updatable = useSavedCompatibility
-    ? saved?.entry?.serverUpdateRequired === true
-    : error?.serverUpdateRequired === true;
+  const updatable = error?.serverUpdateRequired === true;
   return {
     descriptor,
-    unsupported,
+    unsupported: error !== null,
     updatable,
-    blocked: unsupported && !updatable,
-    detail: error?.message ?? (unsupported ? saved?.connection.error : null) ?? null,
+    blocked: error !== null && !updatable,
+    detail: error?.message ?? null,
   };
 }
 
@@ -98,9 +102,7 @@ export interface SavedCloudEnvironmentConnection {
   readonly connection: EnvironmentConnectionPresentation;
   readonly relayManaged: boolean;
   readonly serverConfig?: Pick<ServerConfig, "environment"> | null;
-  readonly entry?: Partial<
-    Pick<ConnectionCatalogEntry, "serverUpdateRequired" | "enabled" | "alternateRoutes">
-  >;
+  readonly entry?: Partial<Pick<ConnectionCatalogEntry, "serverUpdateRequired" | "enabled">>;
 }
 
 function RemoteEnvironmentRowsSkeleton() {
@@ -368,11 +370,7 @@ export function CloudEnvironmentConnectRows({
           traceId: null,
         })
       : savedEnvironment
-        ? presentSavedCloudEnvironmentConnection(
-            savedEnvironment.connection.phase === "unsupported"
-              ? { phase: "available", error: null, traceId: null }
-              : savedEnvironment.connection,
-          )
+        ? presentSavedCloudEnvironmentConnection(savedEnvironment.connection)
         : null;
     const relayStatus = status === undefined ? null : Option.getOrNull(status);
     const updateAction =
@@ -439,13 +437,7 @@ export function CloudEnvironmentConnectRows({
               if (checked && !savedEnvironment) {
                 const connected = await connectEnvironment(environment);
                 if (!connected) selection.onChange(environment.environmentId, false);
-              } else if (
-                checked &&
-                !unsupported &&
-                savedEnvironment?.connection.phase !== "unsupported" &&
-                !savedEnvironment?.entry?.serverUpdateRequired &&
-                savedEnvironment?.entry?.enabled === false
-              ) {
+              } else if (checked && !unsupported && savedEnvironment?.entry?.enabled === false) {
                 const result = await setEnvironmentEnabled({
                   environmentId: environment.environmentId,
                   enabled: true,

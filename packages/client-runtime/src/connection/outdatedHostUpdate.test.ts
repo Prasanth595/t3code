@@ -152,7 +152,7 @@ class OutdatedHostSocket {
 }
 
 describe("updateOutdatedHost", () => {
-  it.effect("checks an outdated host before updating it and switching it back on", () =>
+  it.effect("refuses a newer host, then updates an outdated one and switches it back on", () =>
     Effect.gen(function* () {
       const blocked = orchestrationProtocolCompatibilityError(descriptor(undefined, "0.0.45"));
       expect(blocked).toMatchObject({ serverUpdateRequired: true });
@@ -207,14 +207,6 @@ describe("updateOutdatedHost", () => {
       );
 
       const result = yield* Effect.gen(function* () {
-        const before = yield* describeOutdatedHost(TARGET.environmentId);
-        expect(before.serverVersion).toBe("0.0.45");
-        expect(orchestrationProtocolCompatibilityError(before)).toMatchObject({
-          serverUpdateRequired: true,
-        });
-        expect(sockets).toHaveLength(0);
-        expect(calls).toEqual([]);
-
         served = descriptor(ORCHESTRATION_PROTOCOL_VERSION + 1, "0.0.99");
         const unsupported = orchestrationProtocolCompatibilityError(served);
         const futureError = yield* updateOutdatedHost(

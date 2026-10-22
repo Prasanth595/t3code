@@ -46,7 +46,7 @@ const endpoint = {
   providerKind: "manual" as const,
 };
 
-function setup(selfUpdate: boolean) {
+function setup(selfUpdate: boolean, protocol = ORCHESTRATION_PROTOCOL_VERSION - 1) {
   discovery.refresh.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   discovery.register.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   discovery.update.mockReset();
@@ -77,7 +77,7 @@ function setup(selfUpdate: boolean) {
               label: "Work laptop",
               platform: { os: "linux", arch: "x64" },
               serverVersion: "0.0.45",
-              orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION - 1,
+              orchestrationProtocolVersion: protocol,
               capabilities: {
                 repositoryIdentity: true,
                 ...(selfUpdate ? { serverSelfUpdate: "boot-service" as const } : {}),
@@ -142,5 +142,14 @@ describe("outdated T3 Connect servers", () => {
     await expect.element(screen.getByText(/Client not supported/)).toBeVisible();
     await expect.element(screen.getByRole("button", { name: "Add" })).toBeDisabled();
     expect(discovery.register).not.toHaveBeenCalled();
+  });
+
+  it("keeps a saved server's rejection when discovery reports it compatible", async () => {
+    setup(false, ORCHESTRATION_PROTOCOL_VERSION);
+    await using screen = await render(rows([{ ...savedOutdated, entry: {} }]));
+    await expect
+      .element(screen.getByRole("button", { name: "Client not supported" }))
+      .toBeDisabled();
+    expect(screen.getByRole("button", { name: "Update" }).query()).toBeNull();
   });
 });
