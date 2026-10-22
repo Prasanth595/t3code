@@ -3812,6 +3812,110 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("flags a stop request only on the latest run, using the interrupt index", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const suffix = "shell-stop-request";
+      const threadId = yield* addRolledBackRecoveryCandidate(suffix);
+      const olderRunId = RunId.make(`run:${suffix}:rolled-back`);
+      const latestRunId = RunId.make(`run:${suffix}:latest`);
+      const rootNodeId = NodeId.make(`node:${suffix}:latest`);
+      const now = yield* DateTime.now;
+      yield* projectionStore.apply({
+        id: EventId.make(`event:${suffix}:latest-run`),
+        type: "run.created",
+        threadId,
+        runId: latestRunId,
+        nodeId: rootNodeId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: latestRunId,
+          threadId,
+          ordinal: 2,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make(`message:${suffix}:latest`),
+          rootNodeId,
+          activeAttemptId: null,
+          status: "running",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      const requestStop = (runId: RunId, ordinal: number) =>
+        projectionStore.apply({
+          id: EventId.make(`event:${suffix}:stop:${runId}`),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          nodeId: rootNodeId,
+          driver,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make(`item:${suffix}:stop:${runId}`),
+            threadId,
+            runId,
+            nodeId: rootNodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal,
+            status: "completed",
+            title: "Stop requested",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "run_interrupt_request",
+            message: "Stopping",
+          },
+        });
+      const expectStopRequested = Effect.fn("expectStopRequested")(function* (expected: boolean) {
+        const memoryShell = ProjectionStore.threadShellFromProjection(
+          yield* projectionStore.getThreadProjection(threadId),
+        );
+        const sqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        );
+        assert.equal(sqlShell?.latestRunId, latestRunId);
+        assert.equal(memoryShell.latestRunStopRequested, expected);
+        assert.equal(sqlShell?.latestRunStopRequested, expected);
+      });
+
+      yield* expectStopRequested(false);
+      yield* requestStop(olderRunId, 2);
+      yield* expectStopRequested(false);
+      yield* requestStop(latestRunId, 3);
+      yield* expectStopRequested(true);
+
+      const { statements, tracer } = traceSqlStatements();
+      yield* projectionStore.getShellSnapshot().pipe(Effect.withTracer(tracer));
+      const statement = statements.find((query) => query.includes("AS latest_run_stop_requested"));
+      assert.isDefined(statement);
+      const stopLookups = (yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${statement}`,
+      ))
+        .map((row) => row.detail)
+        .filter((detail) => detail.startsWith("SEARCH stop_request "));
+      // Latest and blocking runs: each is one probe of the small partial index,
+      // not a read of every item row in the run.
+      assert.lengthOf(stopLookups, 2);
+      for (const lookup of stopLookups) {
+        assert.include(
+          lookup,
+          "COVERING INDEX orchestration_v2_projection_turn_items_run_interrupt_idx (thread_id=? AND run_id=?)",
+        );
+      }
+    }),
+  );
+
   it.effect("selects the latest waiting secret only from active runs", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
