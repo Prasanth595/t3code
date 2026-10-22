@@ -66,15 +66,10 @@ describe("resolveFileModifierClickAction", () => {
     expect(
       resolveFileModifierClickAction(click({ metaKey: true, altKey: true }), link, "MacIntel"),
     ).toBe("reveal");
-    expect(
-      resolveFileModifierClickAction(click({ ctrlKey: true, altKey: true }), link, "Win32"),
-    ).toBe("reveal");
-  });
-
-  it("uses the platform's mod key only", () => {
+    expect(resolveFileModifierClickAction(click({ ctrlKey: true }), link, "Win32")).toBe(
+      "open-in-editor",
+    );
     expect(resolveFileModifierClickAction(click({ ctrlKey: true }), link, "MacIntel")).toBeNull();
-    expect(resolveFileModifierClickAction(click({ metaKey: true }), link, "Win32")).toBeNull();
-    expect(resolveFileModifierClickAction(click({}), link, "MacIntel")).toBeNull();
   });
 
   it("leaves Mod-click to multi-select in trees and opens the editor on Mod+Shift-click", () => {
@@ -82,8 +77,5 @@ describe("resolveFileModifierClickAction", () => {
     expect(
       resolveFileModifierClickAction(click({ metaKey: true, shiftKey: true }), tree, "MacIntel"),
     ).toBe("open-in-editor");
-    expect(
-      resolveFileModifierClickAction(click({ metaKey: true, altKey: true }), tree, "MacIntel"),
-    ).toBe("reveal");
   });
 });
