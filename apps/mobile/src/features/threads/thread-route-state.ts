@@ -1,5 +1,3 @@
-import type { NewTaskDraftRouteParams } from "./NewTaskDraftRouteScreen";
-
 export function isDraftThreadRoute(
   route:
     | {
@@ -9,8 +7,7 @@ export function isDraftThreadRoute(
     | undefined,
 ) {
   return (
-    route?.name === "Thread" &&
-    Boolean((route.params as { draft?: NewTaskDraftRouteParams } | undefined)?.draft)
+    route?.name === "Thread" && Boolean((route.params as { draft?: unknown } | undefined)?.draft)
   );
 }
 

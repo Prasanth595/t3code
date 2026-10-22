@@ -493,6 +493,58 @@ function AdaptiveWorkspaceLayoutContent(
     });
   };
 
+  const selectAndroidWorkspace = useAndroidWorkspaceSelection();
+  function handleSelectThreadRoute(params: ReactNavigation.RootParamList["Thread"]) {
+    if (Platform.OS === "android") {
+      setFileInspectorPreferredVisible(false);
+      selectAndroidWorkspace({ name: "Thread", params });
+      return;
+    }
+    const navigationAction = resolveThreadSelectionNavigationAction({
+      usesSplitView: layout.usesSplitView,
+      pathname,
+      workspaceRouteName: navigation
+        .getState()
+        ?.routes.find((route) => route.key === props.workspaceRouteKey)?.name,
+    });
+    const overlayState = resolveThreadSelectionOverlayState({
+      state: navigation.getState(),
+      workspaceRouteKey: props.workspaceRouteKey,
+      action: navigationAction,
+      params,
+    });
+    if (overlayState !== null) {
+      setFileInspectorPreferredVisible(false);
+      navigation.dispatch(CommonActions.reset(overlayState));
+      return;
+    }
+    if (navigationAction === "set-params") {
+      setFileInspectorPreferredVisible(false);
+      const state = navigation.getState();
+      const route = state?.routes.find((candidate) => candidate.key === props.workspaceRouteKey);
+      if (route?.name === "Thread") {
+        navigation.dispatch({
+          ...CommonActions.setParams({
+            environmentId: undefined,
+            threadId: undefined,
+            draft: undefined,
+            ...params,
+          }),
+          source: route.key,
+        });
+      } else {
+        navigation.navigate("Thread", params);
+      }
+      return;
+    }
+    if (navigationAction === "replace") {
+      setFileInspectorPreferredVisible(false);
+      navigation.dispatch(StackActions.replace("Thread", params));
+      return;
+    }
+    navigation.navigate("Thread", params);
+  }
+
   const projects = useProjects();
   const handleStartNewTask = () => {
     const thread = appAtomRegistry
@@ -703,57 +755,6 @@ function AdaptiveWorkspaceLayoutContent(
     ),
   );
 
-  const selectAndroidWorkspace = useAndroidWorkspaceSelection();
-  function handleSelectThreadRoute(params: ReactNavigation.RootParamList["Thread"]) {
-    if (Platform.OS === "android") {
-      setFileInspectorPreferredVisible(false);
-      selectAndroidWorkspace({ name: "Thread", params });
-      return;
-    }
-    const navigationAction = resolveThreadSelectionNavigationAction({
-      usesSplitView: layout.usesSplitView,
-      pathname,
-      workspaceRouteName: navigation
-        .getState()
-        ?.routes.find((route) => route.key === props.workspaceRouteKey)?.name,
-    });
-    const overlayState = resolveThreadSelectionOverlayState({
-      state: navigation.getState(),
-      workspaceRouteKey: props.workspaceRouteKey,
-      action: navigationAction,
-      params,
-    });
-    if (overlayState !== null) {
-      setFileInspectorPreferredVisible(false);
-      navigation.dispatch(CommonActions.reset(overlayState));
-      return;
-    }
-    if (navigationAction === "set-params") {
-      setFileInspectorPreferredVisible(false);
-      const state = navigation.getState();
-      const route = state?.routes.find((candidate) => candidate.key === props.workspaceRouteKey);
-      if (route?.name === "Thread") {
-        navigation.dispatch({
-          ...CommonActions.setParams({
-            environmentId: undefined,
-            threadId: undefined,
-            draft: undefined,
-            ...params,
-          }),
-          source: route.key,
-        });
-      } else {
-        navigation.navigate("Thread", params);
-      }
-      return;
-    }
-    if (navigationAction === "replace") {
-      setFileInspectorPreferredVisible(false);
-      navigation.dispatch(StackActions.replace("Thread", params));
-      return;
-    }
-    navigation.navigate("Thread", params);
-  }
   const handleSelectThread = (thread: EnvironmentThreadShell) => {
     handleSelectThreadRoute({
       environmentId: String(thread.environmentId),

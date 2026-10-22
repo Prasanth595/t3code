@@ -923,12 +923,6 @@ export function NewTaskDraftScreen(props: {
     if (!message) {
       return null;
     }
-    if (!queuesInsteadOfStarting) {
-      // Arm the lock-screen card before the async thread creation: backgrounding
-      // the app right after tapping submit would otherwise reject the foreground
-      // -only Activity start. If creation fails, the token registration's replay
-      // finds no work and ends the card within seconds.
-    }
     // Persist before clearing the draft or leaving its editor. This only waits
     // for the local outbox write; server and worktree setup run on the thread.
     flow.setSubmitting(true);
