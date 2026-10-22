@@ -34,10 +34,10 @@ export const guardLogStream = (
     dropped += 1;
     code = errorCode(error);
   };
-  // The line whose write failed is the one this error is about.
-  stream.on("error", (error) => {
+  // Without a listener the error ends the process. Each failed line is counted by its own write
+  // callback instead: lines written in the tick a write fails are buffered, and fail with it.
+  stream.on("error", () => {
     broken = true;
-    drop(error);
   });
   const write = stream.write.bind(stream);
   stream.write = ((
@@ -47,8 +47,15 @@ export const guardLogStream = (
   ) => {
     const encoding = typeof encodingOrDone === "function" ? undefined : encodingOrDone;
     const done = typeof encodingOrDone === "function" ? encodingOrDone : callback;
-    if (!broken && !stream.destroyed && stream.writableErrored === null) {
-      return encoding === undefined ? write(chunk, done) : write(chunk, encoding, done);
+    if (!broken && !stream.destroyed && !stream.writableErrored) {
+      const counted = (error?: Error | null) => {
+        if (error) {
+          broken = true;
+          drop(error);
+        }
+        done?.(error);
+      };
+      return encoding === undefined ? write(chunk, counted) : write(chunk, encoding, counted);
     }
     broken = true;
     try {
