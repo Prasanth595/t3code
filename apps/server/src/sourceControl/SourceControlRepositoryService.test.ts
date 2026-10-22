@@ -429,48 +429,59 @@ it.effect.each([false, true])("preserves recovered clone files when ignored=%s",
   }).pipe(Effect.provide(layerDiscard)),
 );
 
-it.effect.each(["branch", "unborn", "detached", "reflog"] as const)(
-  "preserves recovered clone history with %s HEAD",
-  (kind) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const git = yield* GitVcsDriver.GitVcsDriver;
-      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-clone-recovered-history-" });
-      const destination = path.join(parent, "checkout");
-      yield* git.execute({
-        operation: "test.init",
-        cwd: parent,
-        args: ["init", "-b", "main", destination],
-      });
-      const run = (args: ReadonlyArray<string>) =>
-        git.execute({ operation: "test.history", cwd: destination, args });
-      yield* run([
-        "-c",
-        "user.name=Test",
-        "-c",
-        "user.email=test@example.com",
-        "commit",
-        "--allow-empty",
-        "-m",
-        "local work",
-      ]);
-      const commit = (yield* run(["rev-parse", "HEAD"])).stdout.trim();
-      if (kind === "unborn") yield* run(["symbolic-ref", "HEAD", "refs/heads/unborn"]);
-      if (kind === "detached") {
-        yield* run(["checkout", "--detach", "HEAD"]);
-        yield* run(["branch", "-D", "main"]);
-      }
-      if (kind === "reflog") yield* run(["update-ref", "-d", "refs/heads/main"]);
-      assert.deepStrictEqual(yield* fs.readDirectory(destination), [".git"]);
+it.effect.each([
+  "branch",
+  "unborn",
+  "detached",
+  "reflog",
+  "unreachable-loose",
+  "unreachable-packed",
+] as const)("preserves recovered clone history with %s HEAD", (kind) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-clone-recovered-history-" });
+    const destination = path.join(parent, "checkout");
+    yield* git.execute({
+      operation: "test.init",
+      cwd: parent,
+      args: ["init", "-b", "main", destination],
+    });
+    const run = (args: ReadonlyArray<string>) =>
+      git.execute({ operation: "test.history", cwd: destination, args });
+    yield* run([
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "local work",
+    ]);
+    const commit = (yield* run(["rev-parse", "HEAD"])).stdout.trim();
+    if (kind === "unborn") yield* run(["symbolic-ref", "HEAD", "refs/heads/unborn"]);
+    if (kind === "detached") {
+      yield* run(["checkout", "--detach", "HEAD"]);
+      yield* run(["branch", "-D", "main"]);
+    }
+    if (kind === "reflog") yield* run(["update-ref", "-d", "refs/heads/main"]);
+    if (kind === "unreachable-loose" || kind === "unreachable-packed") {
+      if (kind === "unreachable-packed") yield* run(["repack", "-ad"]);
+      yield* run(["update-ref", "-d", "refs/heads/main"]);
+      yield* run(["reflog", "expire", "--expire=all", "--all"]);
+      assert.strictEqual((yield* run(["rev-list", "--all", "--reflog"])).stdout, "");
+    }
+    assert.deepStrictEqual(yield* fs.readDirectory(destination), [".git"]);
 
-      yield* Effect.gen(function* () {
-        const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
-        yield* service.discardClone(destination).pipe(Effect.ignore);
-      }).pipe(Effect.provide(layer({ git: { execute: git.execute } })));
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      yield* service.discardClone(destination).pipe(Effect.ignore);
+    }).pipe(Effect.provide(layer({ git: { execute: git.execute } })));
 
-      yield* run(["cat-file", "-e", `${commit}^{commit}`]);
-    }).pipe(Effect.provide(layerDiscard)),
+    yield* run(["cat-file", "-e", `${commit}^{commit}`]);
+  }).pipe(Effect.provide(layerDiscard)),
 );
 
 it.effect("preserves staged work after its working file was removed", () =>

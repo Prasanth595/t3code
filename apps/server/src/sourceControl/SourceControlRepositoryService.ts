@@ -475,11 +475,12 @@ export const make = Effect.gen(function* () {
           });
         }
         // Even an empty working tree can retain staged work or commits.
-        // Include unborn refs, detached HEAD, and reflog-only history.
+        // Include unreachable objects left by a clone that stopped before creating refs.
         for (const args of [
           ["ls-files", "--stage"],
           ["for-each-ref", "--count=1", "--format=%(objectname)"],
           ["rev-list", "--all", "--reflog", "--max-count=1"],
+          ["cat-file", "--batch-all-objects", "--batch-check"],
         ]) {
           const result = yield* git.execute({
             operation: "SourceControlRepositoryService.discardClone.inspect",
