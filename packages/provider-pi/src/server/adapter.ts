@@ -1368,6 +1368,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       recordString(output, "runId") === childId,
                   )
                 : undefined;
+              const result =
+                recordString(output, "savedOutputPath") ?? recordString(output, "error");
               yield* emitSubagentRow(launch, childPath, {
                 // A closed owner cannot promise further updates for a detached member.
                 status:
@@ -1377,8 +1379,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 ...(recordString(child, "agent") === undefined
                   ? {}
                   : { title: recordString(child, "agent")! }),
-                result:
-                  recordString(output, "savedOutputPath") ?? recordString(output, "error") ?? null,
+                ...(result === undefined ? {} : { result }),
               });
             }
           }
@@ -3313,7 +3314,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     ProviderAdapter.ProviderAdapterProtocolError
                   >();
                   rollbackBarrier = barrier;
-                  yield* resetAsyncSubagents();
                   return barrier;
                 }),
               ),
@@ -3322,6 +3322,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   const forkData = yield* lifecycleRequest({ type: "fork", entryId: forkEntryId });
                   if (recordField(forkData, "cancelled") === true)
                     return yield* protocolError("A Pi extension cancelled the session fork");
+                  // A veto keeps the original session and its children observable.
+                  yield* sessionEventPermit.withPermits(1)(resetAsyncSubagents());
                   const forkState = yield* request({ type: "get_state" }).pipe(
                     Effect.onError(() =>
                       Effect.sync(() => {

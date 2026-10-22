@@ -2723,7 +2723,9 @@ describe("PiAdapterV2", () => {
                 childOutputs: keys.map((workflowKey, index) => ({
                   workflowKey,
                   runId: `member:${index}`,
-                  savedOutputPath: `/outputs/${index}.md`,
+                  ...(index === 0
+                    ? { savedOutputPath: "/outputs/0.md" }
+                    : { error: "beta failed" }),
                 })),
               },
             ],
@@ -2748,7 +2750,7 @@ describe("PiAdapterV2", () => {
       }
       assert.deepEqual(
         members.map((row) => final.get(row.id)?.result),
-        ["/outputs/0.md", "/outputs/1.md"],
+        ["/outputs/0.md", "beta failed"],
       );
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
       const items = new Map(
@@ -2760,6 +2762,81 @@ describe("PiAdapterV2", () => {
       );
       assert.lengthOf([...items.values()], 3);
       for (const item of items.values()) assert.isUndefined(item.progress);
+      for (const { childOutputs, expected } of [
+        { childOutputs: undefined, expected: ["/outputs/0.md", "beta failed"] },
+        {
+          childOutputs: keys.map((workflowKey, index) => ({
+            workflowKey,
+            runId: `member:${index}`,
+          })),
+          expected: ["/outputs/0.md", "beta failed"],
+        },
+        {
+          childOutputs: keys.map((workflowKey, index) => ({
+            workflowKey: index === 0 ? workflowKey : "unrelated",
+            runId: index === 0 ? "unrelated" : `member:${index}`,
+            savedOutputPath: "/outputs/unrelated.md",
+          })),
+          expected: ["/outputs/0.md", "beta failed"],
+        },
+        {
+          childOutputs: [
+            { workflowKey: keys[0], runId: "member:0", savedOutputPath: "", error: "ignored" },
+            { workflowKey: keys[1], runId: "member:1", error: "" },
+          ],
+          expected: ["", ""],
+        },
+        {
+          childOutputs: [
+            { workflowKey: keys[0], runId: "member:0", savedOutputPath: "/outputs/replaced.md" },
+            { workflowKey: keys[1], runId: "member:1", error: "beta retry failed" },
+          ],
+          expected: ["/outputs/replaced.md", "beta retry failed"],
+        },
+      ]) {
+        yield* fake.emit({
+          type: "message_end",
+          message: {
+            role: "custom",
+            customType: "subagent-notify",
+            details: {
+              runs: [
+                {
+                  runId: "native-run",
+                  status: "completed",
+                  childRuns: keys.map((workflowKey, index) => ({
+                    workflowKey,
+                    runId: `member:${index}`,
+                    status: "completed",
+                  })),
+                  ...(childOutputs === undefined ? {} : { childOutputs }),
+                },
+              ],
+            },
+          },
+        });
+        yield* piEventBarrier(fake, takeEvent);
+        const latestMembers = new Map(
+          observed.flatMap((event) =>
+            event.type === "subagent.updated" ? [[event.subagent.id, event.subagent] as const] : [],
+          ),
+        );
+        const latestItems = new Map(
+          observed.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "subagent"
+              ? [[event.turnItem.subagentId, event.turnItem] as const]
+              : [],
+          ),
+        );
+        assert.deepEqual(
+          members.map((row) => latestMembers.get(row.id)?.result),
+          expected,
+        );
+        assert.deepEqual(
+          members.map((row) => latestItems.get(row.id)?.result),
+          expected,
+        );
+      }
       yield* fake.emit({ type: "agent_settled" });
       yield* takeEvent((event) => event.type === "turn.terminal");
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
@@ -2835,6 +2912,112 @@ describe("PiAdapterV2", () => {
       assert.equal(latest?.status, "completed");
       assert.equal(latest?.result, "one file");
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["widget", "notice"] as const)(
+    "keeps async children observable after a rollback veto until their terminal %s",
+    (completion) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent, observed } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread);
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "agent_start" });
+        yield* asyncSubagentTool(fake, "native-run");
+        const launched = yield* takeEvent((event) => event.type === "subagent.updated");
+        assert.isTrue(launched.type === "subagent.updated");
+        if (launched.type !== "subagent.updated") return;
+        yield* fake.emit({ type: "agent_settled" });
+        yield* takeEvent((event) => event.type === "turn.terminal");
+        const before = yield* runtime.readThreadSnapshot({ providerThread });
+        assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+        fake.deferNextLifecycle("fork");
+        const rollingBack = yield* runtime
+          .rollbackThread({
+            providerThread,
+            target: {
+              type: "thread_start",
+              checkpointId: CheckpointId.make("checkpoint-start"),
+              appRunOrdinal: 0,
+            },
+            providerThreadTurns: uncapturedTurns(providerThread.id),
+          })
+          .pipe(Effect.flip, Effect.forkScoped);
+        const fork = yield* fake.takeRequest("fork");
+        yield* fake.emit(
+          subagentWidget([
+            {
+              id: "native-run",
+              kind: "subagent",
+              label: "scout",
+              state: "running",
+              activity: { currentTool: "bash" },
+            },
+          ]),
+        );
+        yield* fake.emit({
+          type: "response",
+          id: fork["id"],
+          command: "fork",
+          success: true,
+          data: { cancelled: true },
+        });
+        const error = yield* Fiber.join(rollingBack);
+        assert.equal(error._tag, "ProviderAdapterRollbackThreadError");
+        assert.match(String(error.cause), /cancelled the session fork/);
+        assert.deepEqual(yield* runtime.readThreadSnapshot({ providerThread }), before);
+        assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+        yield* takeEvent(
+          (event) => event.type === "subagent.updated" && event.subagent.progress === "bash",
+        );
+        if (completion === "widget") {
+          yield* fake.emit(
+            subagentWidget([
+              { id: "native-run", kind: "subagent", label: "scout", state: "complete" },
+            ]),
+          );
+        } else {
+          yield* fake.emit({
+            type: "message_end",
+            message: {
+              role: "custom",
+              customType: "subagent-notify",
+              content: "child result",
+              details: { runs: [{ runId: "native-run", status: "completed" }] },
+            },
+          });
+        }
+        const settled = yield* takeEvent(
+          (event) => event.type === "subagent.updated" && event.subagent.status === "completed",
+        );
+        assert.isTrue(settled.type === "subagent.updated");
+        if (settled.type !== "subagent.updated") return;
+        assert.equal(settled.subagent.id, launched.subagent.id);
+        assert.equal(settled.subagent.runId, launched.subagent.runId);
+        assert.equal(settled.subagent.result, completion === "notice" ? "child result" : null);
+        const item = yield* takeEvent(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "subagent" &&
+            event.turnItem.status === "completed",
+        );
+        assert.isTrue(item.type === "turn_item.updated" && item.turnItem.type === "subagent");
+        if (item.type !== "turn_item.updated" || item.turnItem.type !== "subagent") return;
+        assert.equal(item.turnItem.subagentId, launched.subagent.id);
+        assert.equal(item.turnItem.runId, launched.subagent.runId);
+        assert.equal(item.turnItem.result, settled.subagent.result);
+        assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+        assert.isFalse(
+          observed.some(
+            (event) => event.type === "subagent.updated" && event.subagent.status === "interrupted",
+          ),
+        );
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect.each([
