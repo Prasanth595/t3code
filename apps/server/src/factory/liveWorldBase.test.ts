@@ -12,7 +12,7 @@ import { timeLimitOnlyProjectConfig, type MachineConfig } from "./config.ts";
 import { liveWorld } from "./index.ts";
 import { makeCause } from "./ledger/events.ts";
 import { Ledger } from "./ledger/ledger.ts";
-import { newRunId } from "./ledger/runId.ts";
+import { newRunId, runIdFileName } from "./ledger/runId.ts";
 import { T0, ticking, useTempDirs } from "./ledger/testSupport.ts";
 import type { Repo } from "./pass.ts";
 import { FactoryProcess } from "./process.ts";
@@ -235,6 +235,60 @@ describe("liveWorld: threads on a broken worktree", () => {
       // Any read of the ledger now fails: the runs folder is a file.
       NodeFS.writeFileSync(NodePath.join(dataDir, "runs"), "not a folder");
       assert.deepStrictEqual(yield* world.brokenWorktrees(), []);
+    }),
+  );
+
+  /** A sessions stub that always finds `child-1` live on the finished run's worktree. */
+  const childOnBroken = Sessions.FactorySessions.of({
+    ...stubSessions,
+    archive: () => Effect.void,
+    brokenWorktrees: Effect.succeed([
+      { threadId: "child-1", worktreePath: "/wt/t3-a", threadsOnPath: ["child-1", "session-1"] },
+    ]),
+  });
+
+  it.effect("archives a thread at most once, so a person's unarchive sticks", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const run = launched(dataDir, "187", "session-1", true);
+      const world = yield* worldOver(dataDir, childOnBroken);
+      assert.deepStrictEqual(yield* world.brokenWorktrees(), [
+        { worktreePath: "/wt/t3-a", run, threadIds: ["child-1"] },
+      ]);
+      yield* world.archiveThread("child-1");
+      // The stub finds it live again, as after a person unarchived it.
+      assert.deepStrictEqual(yield* world.brokenWorktrees(), []);
+    }),
+  );
+
+  it.effect("fails when the ledger cannot be read, and finds the thread once it can", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const runs = NodePath.join(dataDir, "runs");
+      NodeFS.writeFileSync(runs, "not a folder");
+      const world = yield* worldOver(dataDir, childOnBroken);
+      const error = yield* Effect.flip(world.brokenWorktrees());
+      assert.strictEqual(error.kind, "ledger");
+      NodeFS.rmSync(runs);
+      const run = launched(dataDir, "187", "session-1", true);
+      assert.deepStrictEqual(yield* world.brokenWorktrees(), [
+        { worktreePath: "/wt/t3-a", run, threadIds: ["child-1"] },
+      ]);
+    }),
+  );
+
+  it.effect("rules no thread out while a run file cannot be read", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const run = launched(dataDir, "187", "session-1", true);
+      const file = NodePath.join(dataDir, "runs", runIdFileName(run));
+      NodeFS.chmodSync(file, 0o000);
+      const world = yield* worldOver(dataDir, childOnBroken);
+      assert.deepStrictEqual(yield* world.brokenWorktrees(), []);
+      NodeFS.chmodSync(file, 0o644);
+      assert.deepStrictEqual(yield* world.brokenWorktrees(), [
+        { worktreePath: "/wt/t3-a", run, threadIds: ["child-1"] },
+      ]);
     }),
   );
 

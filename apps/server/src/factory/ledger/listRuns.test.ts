@@ -930,7 +930,9 @@ describe("runsByThread", () => {
       launched("pr-open", T0 + 3000) +
         line("worktree_remove_failed", { path: "/wt/t3-x", error: "not empty" }, T0 + 4000),
     );
-    expect(Object.fromEntries(runsByThread(dataDir))).toEqual({
+    const { runs, complete } = runsByThread(dataDir);
+    expect(complete).toBe(true);
+    expect(Object.fromEntries(runs)).toEqual({
       finished: { run: rid(1), stopped: true },
       earlier: { run: rid(2), stopped: true },
       current: { run: rid(2), stopped: false },
@@ -938,7 +940,18 @@ describe("runsByThread", () => {
     });
   });
 
-  it("is empty without a runs directory", () => {
-    expect(runsByThread(tempDir()).size).toBe(0);
+  it("is empty and complete without a runs directory", () => {
+    const { runs, complete } = runsByThread(tempDir());
+    expect(runs.size).toBe(0);
+    expect(complete).toBe(true);
+  });
+
+  it("is not complete when a run file cannot be read", () => {
+    const dataDir = tempDir();
+    writeRun(dataDir, rid(1), launched("readable", T0));
+    unreadableRun(dataDir, rid(2));
+    const { runs, complete } = runsByThread(dataDir);
+    expect([...runs.keys()]).toEqual(["readable"]);
+    expect(complete).toBe(false);
   });
 });
