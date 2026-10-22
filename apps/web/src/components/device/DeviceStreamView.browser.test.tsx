@@ -19,14 +19,19 @@ function setup() {
   const decoder = stubGlobal("VideoDecoder", undefined);
   Reflect.deleteProperty(globalThis, "VideoDecoder");
   const fetch = stubGlobal("fetch", () => Promise.resolve(new Response("prime")));
-  const sockets: Array<{ onmessage?: (event: { data: ArrayBuffer }) => void }> = [];
+  // The client opens its input socket only after the MJPEG prime resolves.
+  type InputSocket = { onmessage?: (event: { data: ArrayBuffer }) => void };
+  let open!: (socket: InputSocket) => void;
+  const opened = new Promise<InputSocket>((resolve) => {
+    open = resolve;
+  });
   const socket = stubGlobal(
     "WebSocket",
     class {
       static OPEN = 1;
       readyState = 1;
       constructor() {
-        sockets.push(this);
+        open(this);
       }
       onmessage?: (event: { data: ArrayBuffer }) => void;
       send(message: string | Uint8Array) {
@@ -44,15 +49,16 @@ function setup() {
       decoder[Symbol.dispose]();
     },
     touches,
-    configure() {
+    async configure() {
       const json = new TextEncoder().encode(
         JSON.stringify({ width: 400, height: 800, orientation: "portrait" }),
       );
       const packet = new Uint8Array(1 + json.length);
       packet[0] = 0x82;
       packet.set(json, 1);
-      sockets[0]?.onmessage?.({ data: Uint8Array.of(0x83).buffer });
-      sockets[0]?.onmessage?.({ data: packet.buffer });
+      const input = await opened;
+      input.onmessage?.({ data: Uint8Array.of(0x83).buffer });
+      input.onmessage?.({ data: packet.buffer });
     },
   };
 }
