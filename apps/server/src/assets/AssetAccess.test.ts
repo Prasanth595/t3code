@@ -34,6 +34,7 @@ import { ASSET_ROUTE_PREFIX, issueAssetUrl, readMcpAppHtml, resolveAsset } from 
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import { githubMediaResponse } from "./GitHubMediaFetch.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
@@ -224,6 +225,120 @@ describe("AssetAccess", () => {
       Effect.scoped,
     );
   });
+
+  for (const media of [
+    { name: "PNG", type: "image/png", bytes: screenshotPng, status: 200, headers: {} },
+    {
+      name: "MP4 range",
+      type: "video/mp4",
+      bytes: new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112]),
+      status: 206,
+      headers: { range: "bytes=0-7", "if-range": '"video-version"' },
+    },
+  ]) {
+    it.effect(
+      `resolves canonical sign-in HTML to ${media.name} bytes in the displayed repository`,
+      () => {
+        const canonical = "https://github.com/user-attachments/assets/example-attachment";
+        const signed =
+          "https://private-user-images.githubusercontent.com/123/example?fixture=one&part=two";
+        const requests: string[] = [];
+        return Effect.gen(function* () {
+          const asset = {
+            url: canonical,
+            cwd: "/different-checkout",
+            repositoryUrl: "https://github.com/displayed/repository",
+            expiresAt: Number.MAX_SAFE_INTEGER,
+          };
+          const response = HttpServerResponse.toWeb(
+            yield* githubMediaResponse(asset, media.headers),
+          );
+          expect(response.status).toBe(media.status);
+          expect(response.headers.get("content-type")).toBe(media.type);
+          expect(new Uint8Array(yield* Effect.promise(() => response.arrayBuffer()))).toEqual(
+            media.bytes,
+          );
+          if (media.status === 206) {
+            expect(response.headers.get("content-range")).toBe("bytes 0-7/100");
+            expect(response.headers.get("accept-ranges")).toBe("bytes");
+            expect(response.headers.get("etag")).toBe('"video-version"');
+          }
+          expect(requests).toEqual([canonical, signed]);
+        }).pipe(
+          Effect.provide(
+            Layer.mock(GitHubRest.GitHubRest)({
+              rest: (input) => {
+                expect(input).toMatchObject({
+                  host: "github.com",
+                  method: "POST",
+                  path: "markdown",
+                  body: {
+                    mode: "gfm",
+                    text: `![](<${canonical}>)`,
+                    context: "displayed/repository",
+                  },
+                });
+                return Effect.succeed({
+                  status: 200,
+                  headers: {},
+                  truncated: false,
+                  invalidUtf8: false,
+                  body: `<p><a href="${canonical}"><img src="${signed.replaceAll("&", "&amp;")}" data-canonical-src="${canonical}"></a></p>`,
+                });
+              },
+            }),
+          ),
+          Effect.provide(
+            Layer.mock(GitHubCredentials.GitHubCredentials)({
+              get: (host) =>
+                Effect.succeed({
+                  host,
+                  token: Redacted.make("api-token"),
+                  source: "gh",
+                  fingerprint: "test",
+                }),
+            }),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              requests.push(request.url);
+              if (request.url === canonical) {
+                expect(request.headers.authorization).toBe("Bearer api-token");
+                return Effect.succeed(
+                  HttpClientResponse.fromWeb(
+                    request,
+                    new Response("<html>Sign in</html>", {
+                      headers: { "content-type": "text/html; charset=utf-8" },
+                    }),
+                  ),
+                );
+              }
+              expect(request.url).toBe(signed);
+              expect(request.headers.authorization).toBeUndefined();
+              expect(request.headers.range).toBe(media.headers.range);
+              expect(request.headers["if-range"]).toBe(media.headers["if-range"]);
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(media.bytes, {
+                    status: media.status,
+                    headers: {
+                      "content-type": media.type,
+                      "accept-ranges": "bytes",
+                      "content-range": "bytes 0-7/100",
+                      etag: '"video-version"',
+                    },
+                  }),
+                ),
+              );
+            }),
+          ),
+          Effect.scoped,
+        );
+      },
+    );
+  }
 
   it.effect("serves an image a tool returned inline from the stored item", () =>
     Effect.gen(function* () {
