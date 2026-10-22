@@ -26,6 +26,8 @@ import {
   OrchestratorMcpTaskCancelInput,
   OrchestratorMcpTaskCancelResult,
   OrchestratorMcpTaskStatusInput,
+  OrchestratorMcpTaskWaitInput,
+  OrchestratorMcpTaskWaitResult,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadListInput,
@@ -121,6 +123,20 @@ const TaskStatusTool = Tool.make("task_status", {
   dependencies,
 })
   .annotate(Tool.Title, "Get delegated task status")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+const TaskWaitTool = Tool.make("task_wait", {
+  description:
+    "Needs an agent running inside a T3 thread. Wait for several delegated tasks of THIS thread at once: mode all (default) returns when every listed task is ready, mode any when at least one is. A task is ready when it finished or when it waits on a question or approval. Returns ready tasks with their summaries in request order, the rest as pending, and timedOut when timeoutMs elapsed first; a timeout cancels nothing. Prefer ending your turn when you have nothing else to do, since every completion already wakes this thread; use task_wait when this turn needs the results to continue, for example between phases.",
+  parameters: OrchestratorMcpTaskWaitInput,
+  success: OrchestratorMcpTaskWaitResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Wait for delegated tasks")
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
@@ -366,6 +382,7 @@ export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
   DelegateTasksTool,
+  TaskWaitTool,
   TaskStatusTool,
   TaskCancelTool,
   WorkflowStopTool,
