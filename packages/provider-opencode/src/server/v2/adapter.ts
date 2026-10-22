@@ -2790,8 +2790,26 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           Effect.ignore({ log: true }),
         );
       });
+    // A directory's map exists while its first read is still filling it, so a thread starting
+    // then waits for that read instead of resolving its variant against an empty catalog.
+    const firstReads = new Map<string, Deferred.Deferred<void>>();
     const readModelsOnce = (cwd: string | null | undefined) =>
-      modelsByDirectory.has(directoryOf(cwd)) ? Effect.void : readModels(directoryOf(cwd));
+      Effect.suspend(() => {
+        const directory = directoryOf(cwd);
+        const pending = firstReads.get(directory);
+        if (pending !== undefined) return Deferred.await(pending);
+        if (modelsByDirectory.has(directory)) return Effect.void;
+        const read = Deferred.makeUnsafe<void>();
+        firstReads.set(directory, read);
+        return readModels(directory).pipe(
+          Effect.ensuring(
+            Effect.suspend(() => {
+              firstReads.delete(directory);
+              return Deferred.succeed(read, undefined);
+            }),
+          ),
+        );
+      });
     yield* readModels(session.cwd);
 
     const agentRules = new Map<string, ReadonlyMap<string, ReadonlyArray<Rule>>>();

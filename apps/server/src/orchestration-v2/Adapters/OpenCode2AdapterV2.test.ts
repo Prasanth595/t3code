@@ -583,6 +583,46 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       });
     }).pipe(Effect.scoped),
   );
+  it.effect("waits for a directory's model read already in flight before creating a session", () =>
+    Effect.gen(function* () {
+      const directory = "/work/worker";
+      const model = { providerID: "opencode-go", id: "glm-5.3-flash", variant: "high" };
+      const { runtime } = yield* resumed([
+        out("model.list", { "location[directory]": directory }),
+        reply("model.list", {
+          ...modelCatalog,
+          location: { directory },
+          data: [
+            {
+              ...modelCatalog.data[0]!,
+              ...model,
+              variants: ["low", "high"].map((id) => ({ id, settings: {} })),
+            },
+          ],
+        }),
+        out("session.create", { model, location: { directory }, permissions: "<any>" }),
+        replyData("session.create", sessionInfo({ model, location: { directory } })),
+      ]);
+      const ensure = (id: ThreadId, model: string) =>
+        runtime.ensureThread({
+          threadId: id,
+          modelSelection: { instanceId, model, options: [{ id: "variant", value: "medium" }] },
+          runtimePolicy: { ...policy(), cwd: directory },
+        });
+      // The malformed model starts the directory's read and then fails without another request.
+      const [first, second] = yield* Effect.all(
+        [
+          Effect.exit(ensure(threadId, "malformed")),
+          ensure(ThreadId.make("thread:opencode2-adapter:second"), "opencode-go/glm-5.3-flash"),
+        ],
+        { concurrency: "unbounded" },
+      );
+      assert.isTrue(Exit.isFailure(first));
+      assert.deepEqual(second.nativeMetadata?.modelSelection?.options, [
+        { id: "variant", value: "high" },
+      ]);
+    }).pipe(Effect.scoped),
+  );
 
   it.effect("switches the session's model and variant before a turn that changed them", () =>
     Effect.gen(function* () {
