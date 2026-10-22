@@ -89,6 +89,7 @@ const defaultsConfig = {
   poll_seconds: 60,
   max_concurrent_runs: 1,
   max_concurrent_gates: 2,
+  feedback_seconds: 600,
 };
 
 const report = (overrides: Partial<MachineConfigReport> = {}): MachineConfigReport => ({
@@ -109,6 +110,7 @@ const populated = report({
     poll_seconds: 45,
     max_concurrent_runs: 3,
     max_concurrent_gates: 2,
+    feedback_seconds: 300,
   },
   repos: [
     {
@@ -195,6 +197,7 @@ describe("FactorySettingsPanel", () => {
     poll_seconds: 60,
     max_concurrent_runs: 1,
     max_concurrent_gates: 2,
+    feedback_seconds: 600,
   };
 
   // #93: the model is picked in T3 (the project's default, else Settings), not on this page.
@@ -212,11 +215,54 @@ describe("FactorySettingsPanel", () => {
     await click(button(root, "Save"));
     const sent = mocks.saveFactoryConfig.mock.calls[0]![1] as Record<string, unknown>;
     expect(Object.keys(sent).sort()).toEqual([
+      "feedback_seconds",
       "gh_config_dir",
       "max_concurrent_gates",
       "max_concurrent_runs",
       "poll_seconds",
     ]);
+  });
+
+  it("shows the reported feedback seconds and saves an edited value", async () => {
+    resetMocks();
+    mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
+    mocks.saveFactoryConfig.mockResolvedValue(ok(populated));
+    await using panel = await open();
+    const root = panel.container;
+
+    expect(input(root, "Feedback seconds").value).toBe("300");
+    expect(textOf(root)).toContain(
+      "How often the factory looks for comments and reviews on a ready pull request. 0 reads on every pass.",
+    );
+
+    await type(input(root, "Feedback seconds"), "0");
+    await click(button(root, "Save"));
+
+    expect(mocks.saveFactoryConfig).toHaveBeenCalledWith(mocks.prepared, {
+      gh_config_dir: "/home/t3/gh",
+      poll_seconds: 45,
+      max_concurrent_runs: 3,
+      max_concurrent_gates: 2,
+      feedback_seconds: 0,
+    });
+  });
+
+  it("shows an error on feedback_seconds beside its input, not at the top", async () => {
+    resetMocks();
+    mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
+    mocks.saveFactoryConfig.mockResolvedValue({
+      kind: "invalid",
+      errors: [
+        { file: FILE, field: "feedback_seconds", message: "must be an integer of at least 0" },
+      ],
+    });
+    await using panel = await open();
+    const root = panel.container;
+
+    await click(button(root, "Save"));
+
+    expect(textOf(field(root, "feedback_seconds")!)).toContain("must be an integer of at least 0");
+    expect(root.querySelector('[data-testid="form-errors"]')).toBeNull();
   });
 
   it("shows the defaults when there is no file yet, and saving creates it", async () => {

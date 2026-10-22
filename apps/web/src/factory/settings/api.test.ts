@@ -54,6 +54,7 @@ const values: MachineConfigValues = {
   poll_seconds: 45,
   max_concurrent_runs: 2,
   max_concurrent_gates: 1,
+  feedback_seconds: 120,
 };
 
 describe("fetchFactoryConfig", () => {
