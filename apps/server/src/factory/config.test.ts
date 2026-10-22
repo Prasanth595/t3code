@@ -772,6 +772,7 @@ describe("loaders", () => {
             pollSeconds: 60,
             maxConcurrentRuns: 1,
             maxConcurrentGates: 1,
+            feedbackSeconds: 600,
             notify: true,
             minFreeGib: 10,
           },

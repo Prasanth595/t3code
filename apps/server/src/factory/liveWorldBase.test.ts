@@ -48,6 +48,7 @@ const machine: MachineConfig = {
   pollSeconds: 60,
   maxConcurrentRuns: 1,
   maxConcurrentGates: 1,
+  feedbackSeconds: 600,
   notify: true,
   minFreeGib: 0,
 };

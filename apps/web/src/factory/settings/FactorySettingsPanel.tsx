@@ -27,6 +27,7 @@ interface FormState {
   readonly poll_seconds: string;
   readonly max_concurrent_runs: string;
   readonly max_concurrent_gates: string;
+  readonly feedback_seconds: string;
 }
 
 const EMPTY_FORM: FormState = {
@@ -34,6 +35,7 @@ const EMPTY_FORM: FormState = {
   poll_seconds: "",
   max_concurrent_runs: "",
   max_concurrent_gates: "",
+  feedback_seconds: "",
 };
 
 const text = (value: unknown) => (value === undefined || value === null ? "" : String(value));
@@ -46,6 +48,7 @@ const formOf = (report: MachineConfigReport): FormState => {
     poll_seconds: text(source.poll_seconds),
     max_concurrent_runs: text(source.max_concurrent_runs),
     max_concurrent_gates: text(source.max_concurrent_gates),
+    feedback_seconds: text(source.feedback_seconds),
   };
 };
 
@@ -56,6 +59,7 @@ const valuesOf = (form: FormState): MachineConfigValues => ({
   poll_seconds: toNumber(form.poll_seconds),
   max_concurrent_runs: toNumber(form.max_concurrent_runs),
   max_concurrent_gates: toNumber(form.max_concurrent_gates),
+  feedback_seconds: toNumber(form.feedback_seconds),
 });
 
 type Load =
@@ -230,6 +234,7 @@ function MachineConfigForm({
     "poll_seconds",
     "max_concurrent_runs",
     "max_concurrent_gates",
+    "feedback_seconds",
   ]);
   const topErrors = errors.filter((error) => !inputNames.has(fieldKey(error) ?? ""));
   const saving = saveStatus === "saving";
@@ -317,6 +322,21 @@ function MachineConfigForm({
                 aria-label="Max concurrent gates"
                 value={form.max_concurrent_gates}
                 onChange={setText("max_concurrent_gates")}
+              />
+            </Field>
+          }
+        />
+        <SettingsRow
+          title="Feedback seconds"
+          description="How often the factory looks for comments and reviews on a ready pull request. 0 reads on every pass."
+          control={
+            <Field name="feedback_seconds" errors={errors}>
+              <Input
+                size="touch"
+                type="number"
+                aria-label="Feedback seconds"
+                value={form.feedback_seconds}
+                onChange={setText("feedback_seconds")}
               />
             </Field>
           }

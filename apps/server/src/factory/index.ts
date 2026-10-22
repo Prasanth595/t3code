@@ -447,6 +447,7 @@ export const liveWorld = (
     sessions,
     gate: live.gate,
     maxConcurrentGates: machine.maxConcurrentGates,
+    feedbackSeconds: machine.feedbackSeconds,
     gateOptions: {
       ghConfigDir: machine.ghConfigDir,
       clock,

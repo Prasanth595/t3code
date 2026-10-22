@@ -1046,6 +1046,7 @@ repos:
     poll_seconds: 60,
     max_concurrent_runs: 1,
     max_concurrent_gates: 2,
+    feedback_seconds: 600,
   };
   const configFile = (dir: string) => NodePath.join(dir, "config.yml");
   const fileText = (dir: string) => NodeFS.readFileSync(configFile(dir), "utf8");
@@ -1054,6 +1055,7 @@ repos:
     poll_seconds: 30,
     max_concurrent_runs: 2,
     max_concurrent_gates: 2,
+    feedback_seconds: 120,
   };
 
   it.effect(
@@ -1093,6 +1095,7 @@ repos:
           poll_seconds: 60,
           max_concurrent_runs: 1,
           max_concurrent_gates: 2,
+          feedback_seconds: 600,
         },
         defaults: DEFAULTS,
         errors: [],

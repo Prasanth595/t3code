@@ -734,6 +734,7 @@ describe("liveWorld", () => {
     pollSeconds: 60,
     maxConcurrentRuns: 1,
     maxConcurrentGates: 1,
+    feedbackSeconds: 600,
     notify: true,
     minFreeGib: 0,
   };
@@ -1630,6 +1631,7 @@ describe("the gate in the background", () => {
     pollSeconds: 60,
     maxConcurrentRuns: 1,
     maxConcurrentGates: 1,
+    feedbackSeconds: 600,
     notify: true,
     minFreeGib: 0,
   } satisfies MachineConfig;
@@ -1759,6 +1761,7 @@ describe("the gate in the background", () => {
     pollSeconds: 60,
     maxConcurrentRuns: 1,
     maxConcurrentGates: 1,
+    feedbackSeconds: 600,
     notify: true,
     minFreeGib: 0,
   };
@@ -2092,6 +2095,7 @@ describe("the gate in the background", () => {
         pollSeconds: 60,
         maxConcurrentRuns: 1,
         maxConcurrentGates: 1,
+        feedbackSeconds: 600,
         notify: true,
         minFreeGib: 0,
       };
@@ -2147,6 +2151,7 @@ describe("the gate in the background", () => {
             pollSeconds: 60,
             maxConcurrentRuns: 1,
             maxConcurrentGates: 1,
+            feedbackSeconds: 600,
             notify: true,
             minFreeGib: 0,
           },

@@ -74,6 +74,7 @@ const machine = (max: number): MachineConfig => ({
   pollSeconds: 60,
   maxConcurrentRuns: max,
   maxConcurrentGates: 2,
+  feedbackSeconds: 600,
   notify: true,
   minFreeGib: 10,
 });

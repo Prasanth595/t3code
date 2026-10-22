@@ -603,8 +603,8 @@ describe("FactorySettingsPanel", () => {
       await using panel = await open(width);
       const root = panel.container;
       const inputs = Array.from(root.querySelectorAll("input"));
-      // The four machine fields: the watched projects have no inputs.
-      expect(inputs).toHaveLength(4);
+      // The five machine fields: the watched projects have no inputs.
+      expect(inputs).toHaveLength(5);
       expect(inputs.map((node) => node.getAttribute("data-size"))).toEqual(
         inputs.map(() => "touch"),
       );

@@ -15,6 +15,7 @@ import { isMap, isScalar, parseDocument, YAMLMap } from "yaml";
 import {
   ambiguousMessage,
   ambiguousRepos,
+  DEFAULT_FEEDBACK_SECONDS,
   DEFAULT_MAX_CONCURRENT_GATES,
   DEFAULT_POLL_SECONDS,
   loadMachineConfig,
@@ -54,6 +55,7 @@ export interface MachineConfigFields {
   readonly poll_seconds: number;
   readonly max_concurrent_runs: number;
   readonly max_concurrent_gates: number;
+  readonly feedback_seconds: number;
 }
 
 /** `MachineConfigFields` as a file that does not load holds them: any may be missing. */
@@ -97,6 +99,7 @@ const EDITABLE_KEYS = [
   "poll_seconds",
   "max_concurrent_runs",
   "max_concurrent_gates",
+  "feedback_seconds",
 ] as const;
 
 /**
@@ -120,6 +123,7 @@ const defaults = (): MachineConfigFields => ({
   poll_seconds: DEFAULT_POLL_SECONDS,
   max_concurrent_runs: FORM_MAX_CONCURRENT_RUNS,
   max_concurrent_gates: DEFAULT_MAX_CONCURRENT_GATES,
+  feedback_seconds: DEFAULT_FEEDBACK_SECONDS,
 });
 
 const fieldsOf = (machine: MachineConfig): MachineConfigFields => ({
@@ -127,6 +131,7 @@ const fieldsOf = (machine: MachineConfig): MachineConfigFields => ({
   poll_seconds: machine.pollSeconds,
   max_concurrent_runs: machine.maxConcurrentRuns,
   max_concurrent_gates: machine.maxConcurrentGates,
+  feedback_seconds: machine.feedbackSeconds,
 });
 
 const projectBlock = (project: ProjectConfig): ProjectBlock => ({

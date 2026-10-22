@@ -46,14 +46,6 @@ import {
 } from "./run.ts";
 
 /**
- * How often the feedback of one run is read at most. Each read costs about 3 GraphQL points (the
- * pull request's reviews and comments, and the issue's activity) and the pass runs every
- * `poll_seconds`, so at 40 `pr-open` runs a 60 second poll would spend 7,200 points an hour of
- * the 5,000 a login has on feedback alone. At one read in 10 minutes it is about 720.
- */
-export const FEEDBACK_READ_EVERY_MS = 10 * 60 * 1000;
-
-/**
  * How far before the start of the last clean read the next read pages back. GitHub's clock can
  * differ from ours and a read can lag behind a write, so a review submitted just before that
  * start may not have been there to read. It costs at most one more page in a flood of reviews.
@@ -63,6 +55,8 @@ export const CLEAN_READ_MARGIN_MS = 60_000;
 /** What the feedback step asks of the factory: what a re-gate asks, and the read of a pull request's feedback. */
 export interface FeedbackContext extends GateContext {
   readonly tracker: GateContext["tracker"] & Pick<BoundGitHub, "prFeedback">;
+  /** The machine's `feedback_seconds`: the least time between two reads of a run's feedback. */
+  readonly feedbackSeconds: number;
 }
 
 export type FeedbackError = BuildingError;
@@ -104,7 +98,7 @@ const NONE: FeedbackStep = { kind: "none" };
  * `feedback_forwarding` line names (by its GitHub id, which an edit does not change) is never sent
  * again. With none left, nothing is written and `none` is the answer.
  *
- * The feedback of a run is read at most once every `FEEDBACK_READ_EVERY_MS`. The time of the last
+ * The feedback of a run is read at most once every `ctx.feedbackSeconds`. The time of the last
  * read is kept in `feedbackReadFile` and is written before the read is made, so a read that fails
  * waits too. A read that succeeds and finds nothing new also keeps the time it started, as the
  * file's second line, and the next read pages back through the reviews only to that time (see
@@ -308,7 +302,7 @@ const writeReadTimes = (
 const readIsDue = (ctx: FeedbackContext, run: RunId): number | null => {
   const now = ctx.clock();
   const { last, clean } = readTimes(ctx, run);
-  if (last !== null && now >= last && now - last < FEEDBACK_READ_EVERY_MS) return null;
+  if (last !== null && now >= last && now - last < ctx.feedbackSeconds * 1000) return null;
   writeReadTimes(ctx, run, now, clean);
   return now;
 };

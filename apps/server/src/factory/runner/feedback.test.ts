@@ -1178,7 +1178,7 @@ describe("feedback: the step", () => {
       clearCalls(rig);
       rig.clock.now = T0 + 60_000;
       assert.deepStrictEqual(yield* feedbackIn(rig), NONE);
-      assert.deepStrictEqual(rig.gh.calls, feedbackReads(secondBefore(T0 - 60_000)));
+      assert.deepStrictEqual(rig.gh.calls, feedbackReads());
       assert.strictEqual(readTime(rig), `${T0 + 60_000}\n${T0 + 60_000}`);
     }),
   );
@@ -1196,7 +1196,7 @@ describe("feedback: the step", () => {
       assert.strictEqual(readTime(rig), `${T0}\n${T0}`);
       rig.clock.now = T0 + 120_000;
       assert.deepStrictEqual(yield* feedbackIn(rig), NONE);
-      assert.deepStrictEqual(rig.gh.calls, feedbackReads(secondBefore(T0 - 60_000)));
+      assert.deepStrictEqual(rig.gh.calls, feedbackReads());
       assert.strictEqual(readTime(rig), `${T0 + 120_000}\n${T0 + 120_000}`);
     }),
   );

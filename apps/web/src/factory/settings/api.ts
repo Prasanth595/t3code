@@ -39,7 +39,7 @@ export interface RepoBlock {
 }
 
 /**
- * The four keys the form edits, under the YAML field names. The model is picked in T3, not here,
+ * The five keys the form edits, under the YAML field names. The model is picked in T3, not here,
  * and so are the repos: the factory watches the T3 projects that opt in.
  */
 export interface MachineConfigValues {
@@ -47,6 +47,7 @@ export interface MachineConfigValues {
   readonly poll_seconds: number | null;
   readonly max_concurrent_runs: number | null;
   readonly max_concurrent_gates: number | null;
+  readonly feedback_seconds: number | null;
 }
 
 /** The file's values read leniently when it does not load: any key may be missing or oddly typed. */
@@ -61,6 +62,7 @@ export interface MachineConfigReport {
     readonly poll_seconds: number;
     readonly max_concurrent_runs: number;
     readonly max_concurrent_gates: number;
+    readonly feedback_seconds: number;
   } | null;
   /** What an empty form holds; the server owns these so the page never copies them. */
   readonly defaults: MachineConfigValues;
