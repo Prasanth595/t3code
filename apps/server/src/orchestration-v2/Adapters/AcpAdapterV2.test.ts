@@ -13,7 +13,7 @@ import { decodeAcpReplayTranscript, makeAcpReplayRuntime } from "./AcpAdapterV2.
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, it, vi } from "@effect/vitest";
 import {
   CheckpointId,
   EnvironmentId,
@@ -1216,7 +1216,7 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.effect("keeps replayed message order and earlier snapshots as history streams in", () =>
+  it.effect("replays history in order, with stable earlier snapshots and linear work", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
@@ -1294,6 +1294,29 @@ describe("AcpAdapterV2", () => {
         "user:next one",
         "assistant:done",
       ]);
+
+      // Copying the history Map for each chunk calls Map.prototype.set once per
+      // stored message, so a long replay would make about n^2 / 2 writes instead
+      // of one per chunk.
+      const longHistory = 500;
+      const mapWrites = yield* Effect.acquireUseRelease(
+        Effect.sync(() => vi.spyOn(Map.prototype, "set")),
+        (mapSet) =>
+          Effect.forEach(
+            Array.from({ length: longHistory }, (_, index) => index),
+            (index) =>
+              replay(
+                index % 2 === 0 ? "user_message_chunk" : "agent_message_chunk",
+                `h${index}`,
+                "x",
+              ),
+            { discard: true },
+          ).pipe(Effect.map(() => mapSet.mock.calls.length)),
+        (mapSet) => Effect.sync(() => mapSet.mockRestore()),
+      );
+      const long = yield* runtime.readThreadSnapshot({ providerThread });
+      assert.equal(long.messages.length, 4 + longHistory);
+      assert.isBelow(mapWrites, longHistory * 2);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

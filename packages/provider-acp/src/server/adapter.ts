@@ -1329,7 +1329,7 @@ type PendingRuntimeRequest = {
     }
 );
 
-/** Replay updates `order` and `messages` in place; readers copy them out. */
+/** Writers update `order` and `messages` in place; readers copy them out. */
 interface SnapshotMessageState {
   readonly order: Array<string>;
   readonly messages: Map<string, OrchestrationV2ConversationMessage>;
