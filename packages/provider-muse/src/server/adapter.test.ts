@@ -1585,15 +1585,16 @@ describe("MuseAdapterV2", () => {
       const { nativeId } = yield* startConversation(harness, fake);
       const revisions = [
         { revision: 1, status: "inProgress" },
-        { revision: 2, status: "inProgress", subagentId: "subagent-1" },
+        { revision: 2, status: "inProgress", subagentId: "" },
+        { revision: 3, status: "inProgress", subagentId: "subagent-1" },
         {
-          revision: 3,
+          revision: 4,
           status: "inProgress",
           subagentId: "subagent-1",
           childSessionId: "child-session-1",
         },
         {
-          revision: 4,
+          revision: 5,
           status: "completed",
           subagentId: "subagent-1",
           childSessionId: "child-session-1",
@@ -1621,6 +1622,7 @@ describe("MuseAdapterV2", () => {
         });
       }
       assert.deepStrictEqual(listed, [
+        { nativeId: "sub-1", roster: ["sub-1"] },
         { nativeId: "sub-1", roster: ["sub-1"] },
         { nativeId: "subagent-1", roster: ["subagent-1"] },
         { nativeId: "child-session-1", roster: ["child-session-1"] },

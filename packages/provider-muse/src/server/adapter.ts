@@ -254,7 +254,7 @@ const nativeRef = (nativeId: string) => ({
 });
 /** The roster lists a child under its turn item's native id, so readers can pair the two. */
 const backgroundTaskId = (item: MuseItem) =>
-  item.kind === "subagent" ? item.childSessionId || (item.subagentId ?? item.itemId) : item.itemId;
+  item.kind === "subagent" ? item.childSessionId || item.subagentId || item.itemId : item.itemId;
 const recordSchema = Schema.Record(Schema.String, Schema.Unknown);
 const INFORMATIONAL_NOTIFICATIONS = new Set([
   "session/contextUsage",
