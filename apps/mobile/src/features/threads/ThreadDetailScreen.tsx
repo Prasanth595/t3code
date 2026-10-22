@@ -161,7 +161,6 @@ import {
 } from "./pendingUserInputLayout";
 import {
   COMPOSER_COLLAPSED_CHROME,
-  COMPOSER_LAYOUT_TRANSITION,
   COMPOSER_TRANSITION_DURATION_MS,
   THREAD_COMPOSER_BOTTOM_GUTTER,
   ThreadComposer,
@@ -1396,7 +1395,6 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
               coordinate space. Its top and height can then animate together
               instead of the auto-sized host jumping to Yoga's destination. */}
             <Animated.View
-              layout={COMPOSER_LAYOUT_TRANSITION}
               pointerEvents="box-none"
               style={[
                 {
