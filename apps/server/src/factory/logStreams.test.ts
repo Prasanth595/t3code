@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - the guard patches real Node streams, and a child process proves it.
 import * as NodeChildProcess from "node:child_process";
 import { Console } from "node:console";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { Writable } from "node:stream";
 import * as NodeURL from "node:url";
@@ -8,11 +9,13 @@ import * as NodeURL from "node:url";
 import { assert } from "@effect/vitest";
 import { describe, it } from "vite-plus/test";
 
+import { useTempDirs } from "./ledger/testSupport.ts";
 import { guardLogStream } from "./logStreams.ts";
 
 const factoryDir = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 /** The module server.ts imports for FactoryLayer. */
 const factoryModule = NodeURL.pathToFileURL(NodePath.join(factoryDir, "index.ts")).href;
+const tempDir = useTempDirs();
 
 const enospc = () =>
   Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" });
@@ -20,23 +23,64 @@ const enospc = () =>
 /** Lets a stream emit the error it queued on the next tick. */
 const nextMacrotask = () => new Promise<void>((resolve) => setImmediate(resolve));
 
+/** A stream that records what reaches it and fails every write while `full` says so. */
+const fakeLog = () => {
+  const state = { full: false, streamed: [] as Array<string>, fd: [] as Array<string> };
+  const stream = new Writable({
+    write(chunk, _encoding, callback) {
+      if (state.full) return callback(enospc());
+      state.streamed.push(String(chunk));
+      callback();
+    },
+  });
+  guardLogStream(stream, 1, (_fd, data) => {
+    if (state.full) throw enospc();
+    state.fd.push(String(data));
+  });
+  return { state, stream, log: new Console(stream) };
+};
+
+/**
+ * Runs a child that imports the factory, as server.ts does, then logs on every turn of the event
+ * loop with a stdout whose every write fails, and answers how it ended.
+ */
+const runChild = async (stdout: "closed pipe" | "read-only file") => {
+  const script = [
+    `await import(${JSON.stringify(factoryModule)});`,
+    `for (let i = 0; i < 20; i++) {`,
+    `  console.log("line " + i);`,
+    `  await new Promise((resolve) => setImmediate(resolve));`,
+    `}`,
+    `process.stderr.write("alive\\n");`,
+  ].join("\n");
+  const file = NodePath.join(tempDir("log"), "t3fac.log");
+  NodeFS.writeFileSync(file, "");
+  // A file opened for reading fails every write with EBADF: stdout is then the same kind of
+  // stream as the log file launchd gives the server.
+  const fd = stdout === "read-only file" ? NodeFS.openSync(file, "r") : "pipe";
+  const child = NodeChildProcess.spawn(
+    process.execPath,
+    ["--input-type=module", "--no-warnings", "-e", script],
+    { cwd: NodePath.resolve(factoryDir, "../.."), stdio: ["ignore", fd, "pipe"], timeout: 30_000 },
+  );
+  if (typeof fd === "number") NodeFS.closeSync(fd);
+  // Nobody reads a closed pipe, so every write the child makes to it fails with EPIPE.
+  child.stdout?.destroy();
+  let stderr = "";
+  child.stderr!.setEncoding("utf8").on("data", (text: string) => (stderr += text));
+  const [status, signal] = await new Promise<[number | null, NodeJS.Signals | null]>((resolve) =>
+    child.on("close", (code, killed) => resolve([code, killed])),
+  );
+  return { status, signal, stderr };
+};
+
 describe("guardLogStream", () => {
   it("drops lines while the disk is full and says how many on the first write that succeeds", async () => {
-    let full = true;
-    const fd: Array<string> = [];
-    // Fails the way a log file on a full disk does: the write calls back with ENOSPC, which the
-    // stream emits as an `error` event on the next tick.
-    const stream = new Writable({
-      write(_chunk, _encoding, callback) {
-        callback(full ? enospc() : null);
-      },
-    });
-    guardLogStream(stream, 1, (_fd, data) => {
-      if (full) throw enospc();
-      fd.push(String(data));
-    });
-    const log = new Console(stream);
+    const { state, stream, log } = fakeLog();
+    log.log("zero");
+    assert.deepEqual(state.streamed, ["zero\n"]);
 
+    state.full = true;
     log.log("one");
     log.log("two");
     await nextMacrotask();
@@ -47,42 +91,29 @@ describe("guardLogStream", () => {
     assert.isUndefined(written);
     const encoded = await new Promise((resolve) => stream.write("five\n", "utf8", resolve));
     assert.isUndefined(encoded);
-    assert.deepEqual(fd, []);
+    assert.deepEqual(state.fd, []);
 
-    full = false;
+    state.full = false;
     log.log("back");
     log.log("again");
-    assert.deepEqual(fd, ["5 log lines dropped (ENOSPC)\n", "back\n", "again\n"]);
+    assert.deepEqual(state.streamed, ["zero\n"]);
+    assert.deepEqual(state.fd, ["5 log lines dropped (ENOSPC)\n", "back\n", "again\n"]);
+  });
+
+  it("writes the lines of a stream that was destroyed to its file descriptor", () => {
+    const { state, stream, log } = fakeLog();
+    stream.destroy();
+    log.log("after");
+    assert.deepEqual(state.fd, ["after\n"]);
   });
 
   // The guard is in place as soon as server.ts imports the factory, before any layer builds, so a
   // full disk during startup cannot end the server either.
-  it("keeps a process that imported the factory alive when its stdout pipe has closed", async () => {
-    const script = [
-      `await import(${JSON.stringify(factoryModule)});`,
-      `for (let i = 0; i < 50; i++) {`,
-      `  console.log("line " + i);`,
-      `  await new Promise((resolve) => setImmediate(resolve));`,
-      `}`,
-      `process.stderr.write("alive\\n");`,
-    ].join("\n");
-    const child = NodeChildProcess.spawn(
-      process.execPath,
-      ["--input-type=module", "--no-warnings", "-e", script],
-      {
-        cwd: NodePath.resolve(factoryDir, "../.."),
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 30_000,
-      },
-    );
-    // Nobody reads stdout, so every write the child makes to it fails with EPIPE.
-    child.stdout.destroy();
-    let stderr = "";
-    child.stderr.setEncoding("utf8").on("data", (text: string) => (stderr += text));
-    const [status, signal] = await new Promise<[number | null, NodeJS.Signals | null]>((resolve) =>
-      child.on("close", (code, killed) => resolve([code, killed])),
-    );
-    assert.deepStrictEqual([status, signal], [0, null], stderr);
-    assert.strictEqual(stderr, "alive\n");
-  });
+  for (const stdout of ["read-only file", "closed pipe"] as const) {
+    it(`keeps a process that imported the factory alive when its stdout is a ${stdout}`, async () => {
+      const child = await runChild(stdout);
+      assert.deepStrictEqual([child.status, child.signal], [0, null], child.stderr);
+      assert.strictEqual(child.stderr, "alive\n");
+    });
+  }
 });
