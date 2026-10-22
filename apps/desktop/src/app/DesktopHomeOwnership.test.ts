@@ -58,7 +58,7 @@ const layerServices = (options: { readonly quitting?: boolean }) =>
     } as unknown as ElectronDialog.ElectronDialog["Service"]);
 
     const layerWindow = Layer.succeed(DesktopWindow.DesktopWindow, {
-      createMain: Ref.updateAndGet(windows, (count) => count + 1),
+      createMain: Ref.update(windows, (count) => count + 1),
     } as unknown as DesktopWindow.DesktopWindow["Service"]);
 
     const layerState = Layer.succeed(DesktopState.DesktopState, {
@@ -67,7 +67,7 @@ const layerServices = (options: { readonly quitting?: boolean }) =>
     });
 
     const layerActivation = Layer.succeed(DesktopAppActivation.DesktopAppActivation, {
-      start: Ref.updateAndGet(sockets, (count) => count + 1),
+      start: Ref.update(sockets, (count) => count + 1),
       setRendererReady: () => Effect.void,
       complete: () => Effect.void,
     } as unknown as DesktopAppActivation.DesktopAppActivation["Service"]);
