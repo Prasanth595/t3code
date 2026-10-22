@@ -151,7 +151,7 @@ threads whose pull request merged. A closed pull request can also settle an idle
 thread. An empty thread's inactivity counts from when it was created.
 Work in progress, pending questions or approvals, and live background work
 prevent automatic settlement. An open pull request does not prevent inactivity
-settlement unless you turn on **Keep threads with a PR** in **Settings → General**,
+settlement unless you turn on **Keep threads with a PR** in **Settings → General → Auto-settle**,
 but an old closed or merged pull request does not settle work you
 resumed after it closed. Only your own messages count as resuming. A turn that
 finished background work or a pull request watch starts on its own does not.
@@ -161,7 +161,8 @@ choose **Auto-settle behavior**, and pick **Disabled**. The current option is ch
 **Enabled** to return to the usual rules. Manual settle, snooze, and archive still work while it
 is disabled.
 
-Change these rules in **Settings → General** on web and desktop, or **Settings → Thread behavior** on mobile.
+Change these rules in **Settings → General → Auto-settle** on web and desktop,
+or **Settings → Thread behavior** on mobile.
 They continue to run when your apps are closed. On web and desktop, choose an environment at the
 top to change only its rules, or **All environments** to update connected environments together.
 Mixed values show where the selected environments disagree. Mobile applies these
@@ -228,6 +229,18 @@ Summaries shorten shell wrappers and can still describe the latest call after it
 finishes; the call's own result shows its status.
 
 ## Snooze until later
+
+Open **Settings → General → Snooze** on web and desktop,
+or **Settings → Thread behavior → Snooze presets** on mobile, to configure five snooze slots in a fixed order.
+Each slot uses either a relative duration of 1–168 hours, or an absolute day and time.
+Choose Today, Tomorrow, or a weekday; weekdays use their next occurrence, including today
+if the chosen time is still ahead. A Today slot disappears from the menu after its time passes.
+
+For example, replace the one-hour slot with **Relative: 168 hours**, and set two other
+slots to **Absolute: Tomorrow at 06:00** and **Absolute: Monday at 06:00**. Relative hours add
+elapsed time, including across daylight saving changes.
+Preferences apply on this device. The existing presets stay unchanged until you save a custom
+set; **Restore defaults** brings them back.
 
 Choose **Snooze → Custom…** from a thread's menu to pick a date and time in your
 local time zone, or a duration in minutes, hours, or days. Durations start when
