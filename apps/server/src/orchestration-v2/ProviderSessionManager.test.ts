@@ -2946,6 +2946,147 @@ it.effect("ProviderSessionManagerV2 persists session-scoped runtime requests wit
 );
 
 it.effect(
+  "ProviderSessionManagerV2 drops session-scoped requests for threads detached from a shared runtime",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const projectId = yield* idAllocator.allocate.project({
+          fixtureName: "provider-session-manager-detached-request",
+        });
+        const detachedThreadId = yield* idAllocator.allocate.thread({
+          fixtureName: "provider-session-manager-detached-request-a",
+          projectId,
+        });
+        const attachedThreadId = yield* idAllocator.allocate.thread({
+          fixtureName: "provider-session-manager-detached-request-b",
+          projectId,
+        });
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({
+              idAllocator,
+              threadId: detachedThreadId,
+              projectId,
+              now,
+            }),
+            yield* makeThreadCreatedEvent({
+              idAllocator,
+              threadId: attachedThreadId,
+              projectId,
+              now,
+            }),
+          ],
+        });
+        const runtime = yield* manager.open({
+          threadId: detachedThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* manager.open({
+          threadId: attachedThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+
+        const detachedRequest = yield* makePendingRuntimeRequestEvents({
+          idAllocator,
+          threadId: detachedThreadId,
+          providerSessionId,
+          providerThread: makeProviderThread({
+            idAllocator,
+            threadId: detachedThreadId,
+            providerSessionId,
+            nativeThreadId: "native-thread-detached-request-a",
+            now,
+          }),
+          now,
+        });
+        const attachedRequest = yield* makePendingRuntimeRequestEvents({
+          idAllocator,
+          threadId: attachedThreadId,
+          providerSessionId,
+          providerThread: makeProviderThread({
+            idAllocator,
+            threadId: attachedThreadId,
+            providerSessionId,
+            nativeThreadId: "native-thread-detached-request-b",
+            now,
+          }),
+          now,
+        });
+        // Persist a request while attached; detach must settle all of its artifacts.
+        yield* eventSink.write({ events: detachedRequest.events });
+        yield* manager.detach({ providerSessionId, threadId: detachedThreadId });
+        const afterSequence = yield* eventSink.latestSequence({ threadId: attachedThreadId });
+        const markerFiber = yield* eventSink
+          .stream({
+            threadId: attachedThreadId,
+            afterSequence,
+          })
+          .pipe(
+            Stream.filter((stored) => stored.event.type === "provider-session.updated"),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+        const adapterEvents = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+        assert.isDefined(adapterEvents);
+        yield* Queue.offerAll(adapterEvents!, [
+          ...detachedRequest.providerEvents,
+          ...attachedRequest.providerEvents,
+          {
+            type: "provider_session.updated",
+            driver: CODEX_DRIVER,
+            providerSession: {
+              ...runtime.providerSession,
+              updatedAt: DateTime.add(now, { milliseconds: 1 }),
+            },
+          },
+        ]);
+        yield* Fiber.join(markerFiber);
+
+        const detached = yield* projectionStore.getThreadProjection(detachedThreadId);
+        const attached = yield* projectionStore.getThreadProjection(attachedThreadId);
+        assert.equal(
+          detached.runtimeRequests.find((candidate) => candidate.id === detachedRequest.requestId)
+            ?.status,
+          "cancelled",
+        );
+        assert.equal(
+          detached.nodes.find((node) => node.runtimeRequestId === detachedRequest.requestId)
+            ?.status,
+          "cancelled",
+        );
+        assert.equal(
+          detached.turnItems.find(
+            (item) =>
+              item.type === "approval_request" && item.requestId === detachedRequest.requestId,
+          )?.status,
+          "cancelled",
+        );
+        assert.equal(
+          attached.runtimeRequests.find((candidate) => candidate.id === attachedRequest.requestId)
+            ?.status,
+          "pending",
+        );
+      });
+
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+    }),
+);
+
+it.effect(
   "ProviderSessionManagerV2 opens one shared runtime, broadcasts events, and detaches threads independently",
   () =>
     Effect.gen(function* () {

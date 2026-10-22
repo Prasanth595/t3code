@@ -1998,7 +1998,11 @@ export const layerWithOptions = (
                       const current = (yield* Ref.get(sessions)).get(
                         sessionKey(entry.runtime.providerSessionId),
                       );
-                      if (current?.runtime !== entry.runtime) return;
+                      if (
+                        current?.runtime !== entry.runtime ||
+                        !current.attachedThreadIds.has(threadId)
+                      )
+                        return;
                       yield* providerEventIngestor
                         .ingestNormalized({
                           providerSessionId: entry.runtime.providerSessionId,
@@ -2465,6 +2469,24 @@ export const layerWithOptions = (
               });
               return;
             }
+            // A shared runtime survives detach, but its old live requests no longer have a
+            // responder. Serialize with ingestion and re-attachment before settling them.
+            yield* threadAttachment.withLock(
+              threadAttachmentKey(input),
+              Effect.gen(function* () {
+                const entry = (yield* Ref.get(sessions)).get(key);
+                if (
+                  entry?.runtime !== detached.value.runtime ||
+                  entry.attachedThreadIds.has(input.threadId)
+                )
+                  return;
+                yield* writeReleasedRuntimeRequestEvents({
+                  entry: { ...entry, attachedThreadIds: new Set([input.threadId]) },
+                  reason: "manual_shutdown",
+                  releasedAt: yield* DateTime.now,
+                }).pipe(entry.requestEventPermit.withPermits(1));
+              }),
+            );
             const unloadThread = detached.value.exposedRuntime.unloadThread;
             if (detached.value.supportsMultipleProviderThreads && unloadThread !== undefined) {
               // Serialized with re-attachment: a thread whose next turn
