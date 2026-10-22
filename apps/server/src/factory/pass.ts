@@ -72,12 +72,12 @@ export interface ClaimScanResult {
   readonly unread: ReadonlyArray<{ readonly issue: number; readonly message: string }>;
 }
 
-/** A live thread on a worktree a factory run launched, which is gone or no longer a git checkout. */
+/** A stopped session's worktree that is gone or no longer a git checkout, with the live threads still on it. */
 export interface BrokenWorktree {
-  readonly threadId: string;
   readonly worktreePath: string;
-  /** The run whose session was launched on the worktree. */
+  /** The run whose session was on the worktree. */
   readonly run: RunId;
+  readonly threadIds: ReadonlyArray<string>;
 }
 
 /** Everything a pass reads and writes. */
@@ -223,13 +223,10 @@ export interface PassWorld {
    * checkouts; not read when `min_free_gib` is 0.
    */
   readonly freeSpace: () => Effect.Effect<FreeSpace, PassError>;
-  /** The live threads on a worktree a factory run launched that is gone or is no longer a git checkout. */
+  /** The worktrees of stopped sessions that are gone or no longer git checkouts, with live threads on them. */
   readonly brokenWorktrees: () => Effect.Effect<ReadonlyArray<BrokenWorktree>, PassError>;
-  /** Clears the thread's worktree, while the thread is still on `worktreePath`. */
-  readonly unbindWorktree: (
-    threadId: string,
-    worktreePath: string,
-  ) => Effect.Effect<void, PassError>;
+  /** Archives the thread: `archive` on the sessions. */
+  readonly archiveThread: (threadId: string) => Effect.Effect<void, PassError>;
   readonly nowMs: () => number;
   /** Writes one event to the machine log. */
   readonly record: (event: MachineEvent) => Effect.Effect<void, LedgerError>;
@@ -724,12 +721,13 @@ const lowDisk = Effect.fn("Pass.lowDisk")(function* (
 });
 
 /**
- * Unbinds each live thread left on a broken worktree a run launched: one sharing the session's
- * checkout, which archiving the session did not stop, or one whose folder went away. T3's pull
- * request lookup and settlement run git there every minute and fail every time; unbound, they read
- * the thread's branch and pull request from the project checkout. Each thread gets one line and
- * one attention item, and is not found again. The item names the run in its text, not in `run`,
- * so it stays after the run finished, which it nearly always has.
+ * Archives the live threads left on a stopped session's worktree that is gone or no longer a git
+ * checkout: subagents sharing the session's checkout, which archiving the session did not stop,
+ * or threads on a folder a removal left half done. T3's pull request lookup and settlement run git
+ * there every minute and fail every time; an archived thread is out of both, and unarchiving it
+ * undoes this. Each worktree gets one line and one attention item, and is not found again once its
+ * threads are archived. The item names the run in its text, not in `run`, so it stays after the
+ * run finished, which it nearly always has.
  */
 const brokenWorktrees = Effect.fn("Pass.brokenWorktrees")(function* (world: PassWorld, pass: Pass) {
   const found = yield* Effect.result(world.brokenWorktrees());
@@ -744,32 +742,40 @@ const brokenWorktrees = Effect.fn("Pass.brokenWorktrees")(function* (world: Pass
     );
     return;
   }
-  for (const { threadId, worktreePath, run } of found.success) {
-    const unbound = yield* Effect.result(world.unbindWorktree(threadId, worktreePath));
-    if (unbound._tag === "Failure") {
-      yield* pass.fail(
-        null,
-        passError(
-          unbound.failure.kind,
-          `cannot unbind thread ${threadId} from worktree ${worktreePath}: `,
-          unbound.failure.message,
-        ),
-      );
-      continue;
+  for (const { worktreePath, run, threadIds } of found.success) {
+    let archived = 0;
+    for (const threadId of threadIds) {
+      const result = yield* Effect.result(world.archiveThread(threadId));
+      if (result._tag === "Failure") {
+        yield* pass.fail(
+          null,
+          passError(
+            result.failure.kind,
+            `cannot archive thread ${threadId} on broken worktree ${worktreePath}: `,
+            result.failure.message,
+          ),
+        );
+      } else {
+        archived += 1;
+      }
     }
-    const text = plain(
-      `${run.repo}#${run.issue}: thread ${threadId} of run ${runIdToString(run)} was on worktree ${worktreePath}, which is gone or no longer a git checkout; the thread no longer names it, so T3 reads its branch and pull request from the project checkout`,
+    if (archived === 0) continue;
+    const what = `${run.repo}#${run.issue}: worktree ${worktreePath} of run ${runIdToString(run)} is gone or no longer a git checkout`;
+    pass.line(
+      plain(
+        `${what}; archived ${archived} thread(s) still on it, so T3 stops looking up their branch there`,
+      ),
     );
-    pass.line(text);
     pass.report.attention += 1;
     const issue = Number(run.issue);
     yield* world.attention.raise({
-      id: `worktree:${threadId}`,
+      id: `worktree:${worktreePath}`,
       kind: "attention",
       repo: run.repo,
       issue: Number.isInteger(issue) ? issue : null,
       run: null,
-      message: text,
+      // No count: an open item is not raised again, so it would go stale.
+      message: plain(`${what}; the factory archived the threads still on it`),
     });
   }
 });

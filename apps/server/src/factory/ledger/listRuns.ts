@@ -372,19 +372,22 @@ export const listRuns = (
   }).map((run) => run.read ?? unreadableSummary(run.id));
 
 /**
- * The run each session thread was launched for, from every run's `session_launched` lines, and
- * whether that run is finished. Every run file is read whole, so it is for the rare pass that
- * found a thread on a broken worktree.
+ * The run each session thread was launched for, and whether that session is stopped: the run is
+ * finished, a later session replaced it, or its worktree step (`worktree_removed` or
+ * `worktree_remove_failed`) is written. Every run file is read whole, so it is for the rare pass
+ * that found a thread on a broken worktree.
  */
 export const runsByThread = (
   dataDir: string,
-): Map<string, { readonly run: RunId; readonly finished: boolean }> => {
-  const runs = new Map<string, { readonly run: RunId; readonly finished: boolean }>();
-  for (const { record, summary } of readRuns(dataDir)) {
+): Map<string, { readonly run: RunId; readonly stopped: boolean }> => {
+  const runs = new Map<string, { readonly run: RunId; readonly stopped: boolean }>();
+  for (const { record, seen, summary } of readRuns(dataDir)) {
     for (const entry of record?.entries ?? []) {
       if (entry.event !== "session_launched") continue;
       const threadId = dataText(entry.data, "thread_id");
-      if (threadId !== null) runs.set(threadId, { run: summary.id, finished: summary.finished });
+      if (threadId === null) continue;
+      const current = seen?.threadId === threadId && seen.worktreeDone !== true;
+      runs.set(threadId, { run: summary.id, stopped: summary.finished || !current });
     }
   }
   return runs;

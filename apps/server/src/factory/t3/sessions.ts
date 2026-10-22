@@ -175,7 +175,6 @@ export class SessionsError extends Schema.TaggedError<SessionsError>()("FactoryS
     "archive",
     "remove-worktree",
     "broken-worktrees",
-    "unbind-worktree",
     "running-threads",
     "worktrees-directory",
   ]),
@@ -361,12 +360,6 @@ export class FactorySessions extends Context.Service<
      * pull request lookup and settlement run git there and fail every sweep.
      */
     readonly brokenWorktrees: Effect.Effect<ReadonlyArray<ThreadOnBrokenWorktree>, SessionsError>;
-    /**
-     * Clears the thread's worktree, so T3 reads its branch and pull request
-     * from the project checkout. T3 refuses it once the thread is on another
-     * path than `path`.
-     */
-    readonly unbindWorktree: (threadId: string, path: string) => Effect.Effect<void, SessionsError>;
     /**
      * How many unarchived threads, a person's or the factory's, have an agent at work: a run
      * preparing, starting or running. A run waiting on a person does not count.
@@ -648,24 +641,6 @@ export const make = Effect.gen(function* () {
     }));
   }).pipe(Effect.mapError((cause) => new SessionsError({ operation: "broken-worktrees", cause })));
 
-  const unbindWorktree: FactorySessions["Service"]["unbindWorktree"] = Effect.fn(
-    "Sessions.unbindWorktree",
-  )(
-    function* (threadId, worktreePath) {
-      const id = yield* decodeThreadId(threadId);
-      const uuid = yield* crypto.randomUUIDv4();
-      const commandId = yield* decodeCommandId(`factory-unbind-worktree:${id}:${uuid}`);
-      yield* management.dispatch({
-        type: "thread.metadata.update",
-        commandId,
-        threadId: id,
-        worktreePath: null,
-        expectedWorktreePath: worktreePath,
-      });
-    },
-    Effect.mapError((cause) => new SessionsError({ operation: "unbind-worktree", cause })),
-  );
-
   const runningThreads: FactorySessions["Service"]["runningThreads"] = projections
     .getShellSnapshot({ location: "active" })
     .pipe(
@@ -700,7 +675,6 @@ export const make = Effect.gen(function* () {
     archive,
     removeWorktree,
     brokenWorktrees,
-    unbindWorktree,
     runningThreads,
     worktreesDirectory,
   });

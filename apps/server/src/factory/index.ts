@@ -401,7 +401,7 @@ export const liveWorld = (
 ): Omit<PassWorld, "watchedRepos" | "freeSpace"> => {
   const withProcess = <A, E>(effect: Effect.Effect<A, E, FactoryProcess>) =>
     Effect.provideService(effect, FactoryProcess, process);
-  // Threads on a broken worktree that no run's session was on: a person's, never unbound.
+  // Threads on a broken worktree that no run's session was on: a person's, never archived.
   const notFactory = new Set<string>();
   const githubFor = (watched: WatchedRepo) =>
     makeGitHub({ repo: watched.repo, ghConfigDir: machine.ghConfigDir });
@@ -650,9 +650,9 @@ export const liveWorld = (
     feedback: (repo, run, base) => feedback(gateContext(repo, runProject(repo.project, base)), run),
     recordError,
     handPause: () => loadHandPause(dataDir),
-    // Only a thread on the worktree of a run's session is the factory's to unbind, and only once
-    // the run is finished: an unfinished run's own stop archives what is on its worktree. The
-    // ledger is read only while T3 has such a thread it has not ruled out before.
+    // Only threads on the worktree of a run's session are the factory's to archive, and only once
+    // that session is stopped: until then the run's own stop archives what is on its worktree.
+    // The ledger is read only while T3 has such a thread it has not ruled out before.
     brokenWorktrees: () =>
       sessions.brokenWorktrees.pipe(
         Effect.mapError(asPassError("t3")),
@@ -661,18 +661,23 @@ export const liveWorld = (
           if (broken.length === 0) return Effect.succeed([]);
           return ledger(() => runsByThread(dataDir)).pipe(
             Effect.mapError(asPassError("ledger")),
-            Effect.map((runs) =>
-              broken.flatMap(({ threadId, worktreePath, threadsOnPath }) => {
+            Effect.map((runs) => {
+              const byPath = new Map<string, { run: RunId; threadIds: Array<string> }>();
+              for (const { threadId, worktreePath, threadsOnPath } of broken) {
                 const owner = threadsOnPath.map((id) => runs.get(id)).find((r) => r !== undefined);
                 if (owner === undefined) notFactory.add(threadId);
-                return owner?.finished === true ? [{ threadId, worktreePath, run: owner.run }] : [];
-              }),
-            ),
+                if (owner?.stopped !== true) continue;
+                const entry = byPath.get(worktreePath) ?? { run: owner.run, threadIds: [] };
+                entry.threadIds.push(threadId);
+                byPath.set(worktreePath, entry);
+              }
+              return [...byPath].map(([worktreePath, entry]) => ({ worktreePath, ...entry }));
+            }),
           );
         }),
       ),
-    unbindWorktree: (threadId, worktreePath) =>
-      sessions.unbindWorktree(threadId, worktreePath).pipe(Effect.mapError(asPassError("t3"))),
+    archiveThread: (threadId) =>
+      sessions.archive(threadId).pipe(Effect.mapError(asPassError("t3"))),
     nowMs: clock,
     attention,
     record: (event: MachineEvent) =>
