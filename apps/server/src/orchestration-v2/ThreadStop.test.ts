@@ -607,6 +607,50 @@ it.effect.each(["run.interrupt", "thread.stop"] as const)(
     }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("a repeated Stop that changes nothing still stops the delegated tasks", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const parentThreadId = ThreadId.make("thread:stop-again");
+    yield* createWatchingThread(parentThreadId, 1);
+    yield* send(parentThreadId, "first", "start_immediately");
+    yield* delegate(parentThreadId, "stop-again child");
+    const now = yield* DateTime.now;
+    const run = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
+    yield* projections.apply({
+      id: EventId.make("event:stop-again:run-completed"),
+      type: "run.updated",
+      threadId: parentThreadId,
+      runId: run.id,
+      occurredAt: now,
+      payload: { ...run, status: "completed", completedAt: now },
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.stop",
+      commandId: CommandId.make("stop-again:first"),
+      threadId: parentThreadId,
+    });
+
+    // The first Stop already disposed the delivery and ended the watch, so this one writes no
+    // events, like Stop on a thread an older server stopped without stopping its children.
+    const again = yield* orchestrator.dispatch({
+      type: "thread.stop",
+      commandId: CommandId.make("stop-again:second"),
+      threadId: parentThreadId,
+    });
+    assert.lengthOf(again.storedEvents, 0);
+    const walks = yield* sql<{ readonly command_id: string }>`
+      SELECT command_id FROM orchestration_v2_effect_outbox
+      WHERE effect_type = 'delegated-tasks.stop'
+    `;
+    assert.deepEqual(
+      walks.map((row) => row.command_id),
+      ["stop-again:first", "stop-again:second"],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each(["thread.stop", "run.interrupt"] as const)(
   "%s cancels buffered wakes and preserves durable queued messages",
   (type) =>
