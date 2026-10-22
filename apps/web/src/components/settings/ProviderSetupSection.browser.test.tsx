@@ -193,7 +193,9 @@ describe("Antigravity setup", () => {
     await using screen = await renderSetup({ provider: { ...provider, installed: false } });
 
     await screen.click("Install Antigravity");
-    await expect.element(screen.getByRole("status").filter({ hasText: "Starting installation." })).toBeVisible();
+    await expect
+      .element(screen.getByRole("status").filter({ hasText: "Starting installation." }))
+      .toBeVisible();
 
     setup.installation = {
       ...idleInstallation,
@@ -203,10 +205,16 @@ describe("Antigravity setup", () => {
       totalBytes: 2_000_000,
     };
     await publish();
-    await expect.element(screen.getByRole("button", { name: "Cancel installation" })).toBeDisabled();
+    await expect
+      .element(screen.getByRole("button", { name: "Cancel installation" }))
+      .toBeDisabled();
     await act(async () => command.resolve({ _tag: "Success", value: undefined }));
-    await expect.element(screen.getByRole("button", { name: "Cancel installation" })).toBeEnabled();
-    await expect.element(screen.getByRole("status").filter({ hasText: "Downloading 1.0 MB of 2.0 MB." })).toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "Cancel installation" }))
+      .toBeEnabled();
+    await expect
+      .element(screen.getByRole("status").filter({ hasText: "Downloading 1.0 MB of 2.0 MB." }))
+      .toBeVisible();
   });
 
   it("waits for verified auth after submitting a callback to the selected environment", async () => {
