@@ -895,6 +895,23 @@ function ThreadRouteContent(
 
       <>
         <ThreadScreenBinding
+          header={
+            <ThreadHeader
+              title={selectedThread.title}
+              subtitle={headerSubtitle}
+              headerColor={headerColor}
+              usesNativeHeaderGlass={usesNativeHeaderGlass}
+              gitControls={threadGitControlProps}
+              hasThreadCwd={selectedThreadCwd !== null}
+              hasWorkspaceRoot={Boolean(selectedThreadProject?.workspaceRoot)}
+              fileInspectorSupported={fileInspector.supported}
+              inspectorMode={inspectorMode}
+              onToggleInspector={handleToggleInspector}
+              onOpenGitInspector={handleOpenGitInspector}
+              onOpenFilesInspector={handleOpenFilesInspector}
+              onReturnToThread={props.onReturnToThread}
+            />
+          }
           canOperateThread={canOperateThread}
           selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
           selectedThreadDetailRef={selectedThreadDetailRef}
@@ -961,7 +978,11 @@ function ThreadRouteContent(
           projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
           threadCwd={selectedThreadCwd}
           selectedThreadQueueCount={composer.selectedThreadQueueCount}
-          queuedMessages={composer.selectedThreadQueuedMessages}
+          queuedMessages={
+            selectedThreadCreation && selectedThreadCreation.outcome?.kind !== "delivered"
+              ? [selectedThreadCreation.message, ...composer.selectedThreadQueuedMessages]
+              : composer.selectedThreadQueuedMessages
+          }
           dispatchingMessageId={composer.dispatchingQueuedMessageId}
           layoutVariant={layout.variant}
           usesAutomaticContentInsets={usesNativeHeaderGlass}
@@ -994,21 +1015,6 @@ function ThreadRouteContent(
   return (
     <>
       {activeInspectorRenderer ? <InspectorPaneRoleActivation /> : null}
-      <ThreadHeader
-        title={selectedThread.title}
-        subtitle={headerSubtitle}
-        headerColor={headerColor}
-        usesNativeHeaderGlass={usesNativeHeaderGlass}
-        gitControls={threadGitControlProps}
-        hasThreadCwd={selectedThreadCwd !== null}
-        hasWorkspaceRoot={Boolean(selectedThreadProject?.workspaceRoot)}
-        fileInspectorSupported={fileInspector.supported}
-        inspectorMode={inspectorMode}
-        onToggleInspector={handleToggleInspector}
-        onOpenGitInspector={handleOpenGitInspector}
-        onOpenFilesInspector={handleOpenFilesInspector}
-        onReturnToThread={props.onReturnToThread}
-      />
 
       {renderThreadRouteBody()}
     </>

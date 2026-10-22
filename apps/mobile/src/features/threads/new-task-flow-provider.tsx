@@ -1,4 +1,4 @@
-import { useActiveNewTask } from "../../state/active-new-task";
+import { ActiveNewTaskContext } from "../../state/active-new-task";
 import * as Dialog from "../../components/ui/Dialog";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { useEnvironmentPresentation } from "../../state/presentation";
@@ -166,6 +166,7 @@ export function branchBadgeLabel(input: {
 }
 
 type NewTaskFlowContextValue = {
+  readonly activeNewTask: { readonly pendingKey: string | null } | null;
   readonly projectScopes: ReadonlyArray<HomeProjectScope>;
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
@@ -256,7 +257,13 @@ type NewTaskFlowContextValue = {
 
 const NewTaskFlowContext = React.createContext<NewTaskFlowContextValue | null>(null);
 
-export function NewTaskFlowProvider(props: React.PropsWithChildren<{ active?: boolean }>) {
+export function NewTaskFlowProvider(
+  props: React.PropsWithChildren<{
+    active?: boolean;
+    routeDraftId?: string;
+    routePendingTaskId?: string;
+  }>,
+) {
   const projects = useProjects();
   const threads = useThreadShells();
   const { savedConnectionsById } = useSavedRemoteConnections();
@@ -441,13 +448,21 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren<{ active?: bo
       }),
     );
   }, [activeDraftKey, editingPendingTask, selectedProject, props.active]);
-  useActiveNewTask(
-    editingPendingTask
-      ? `pending-task:${editingPendingTask.messageId}`
-      : selectedProjectDraftKey
-        ? `draft-task:${selectedProjectDraftKey}`
-        : null,
-    props.active ?? true,
+  const activePendingKey =
+    props.active === false
+      ? null
+      : props.routePendingTaskId
+        ? `pending-task:${props.routePendingTaskId}`
+        : props.routeDraftId
+          ? `draft-task:${props.routeDraftId}`
+          : editingPendingTask
+            ? `pending-task:${editingPendingTask.messageId}`
+            : selectedProjectDraftKey
+              ? `draft-task:${selectedProjectDraftKey}`
+              : null;
+  const activeNewTask = React.useMemo(
+    () => (props.active === false ? null : { pendingKey: activePendingKey }),
+    [props.active, activePendingKey],
   );
   const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
   const prompt = selectedProjectDraft.text;
@@ -1157,6 +1172,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren<{ active?: bo
   );
 
   const value = {
+    activeNewTask,
     projectScopes,
     selectedEnvironmentId,
     selectedProjectKey,
@@ -1223,7 +1239,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren<{ active?: bo
     setExpandedProvider,
   } satisfies NewTaskFlowContextValue;
 
-  return <NewTaskFlowContext.Provider value={value}>{props.children}</NewTaskFlowContext.Provider>;
+  return (
+    <ActiveNewTaskContext value={activeNewTask}>
+      <NewTaskFlowContext.Provider value={value}>{props.children}</NewTaskFlowContext.Provider>
+    </ActiveNewTaskContext>
+  );
 }
 
 export function useNewTaskFlow() {

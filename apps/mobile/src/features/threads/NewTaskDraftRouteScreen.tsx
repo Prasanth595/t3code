@@ -164,13 +164,9 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
   if (!initialized) return null;
   return (
     <>
-      <NativeStackScreenOptions
-        options={{
-          title: Array.isArray(params.title) ? params.title[0] : (params.title ?? "New task"),
-        }}
-      />
       {preparingBranch ? (
         <ThreadScreenFallback>
+          <NativeStackScreenOptions options={{ title: "New thread" }} />
           <View className="flex-1 items-center justify-center bg-screen">
             <Text className="text-foreground">Switching branch...</Text>
           </View>

@@ -1,33 +1,29 @@
-import { useWorkspaceSidebarHeaderItem } from "../layout/useWorkspaceSidebarHeaderItem";
-import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
-import { submittedThreadParams } from "./thread-route-state";
+import { DraftEnvironmentControl } from "./DraftEnvironmentControl";
 import { NativeScrollEdgeEffectsContext } from "../../native/NativeScrollViewMarker";
+import { DraftThreadHeader } from "./DraftThreadHeader";
+import { threadHeaderAppearance } from "./thread-header-appearance";
+import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
+import { useComposerAttachmentActions } from "../../state/use-composer-attachment-actions";
+import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
+import { submittedThreadParams } from "./thread-route-state";
 import { ThreadScreenBinding, ThreadScreenFallback } from "./ThreadScreenHost";
 import { draftThreadShell } from "./draft-thread-shell";
 import { connectionTone } from "../connection/connectionTone";
 import { AppBar } from "../../components/ui/AppBar";
 import { ThreadId } from "@t3tools/contracts";
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
-import {
-  nextPastedTextFileName,
-  pastedTextDisposition,
-  replaceTextSelection,
-} from "@t3tools/client-runtime/text-paste";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   CommonActions,
   StackActions,
   useNavigation,
   usePreventRemove,
 } from "@react-navigation/native";
-import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { KeyboardController } from "react-native-keyboard-controller";
@@ -35,17 +31,14 @@ import { KeyboardController } from "react-native-keyboard-controller";
 import {
   AuthOrchestrationOperateScope,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
-  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
-import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 
-import { type ComposerEditorHandle, type ComposerTextPaste } from "../../components/ComposerEditor";
+import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import { composerContextImportsAtom } from "../../state/use-composer-drafts";
 import { composerContextSendBlockReason } from "../../lib/composerContext";
 import { ComposerInlineControl } from "../../components/ComposerToolbar";
 
-import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import {
   composerAttachmentUploadBlockReason,
   composerAttachmentsStillUploading,
@@ -54,22 +47,12 @@ import {
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
-import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import { threadContextsOutsideEnvironment } from "@t3tools/shared/composerContextReferences";
 
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
-import {
-  convertPastedImagesToAttachments,
-  createPastedTextComposerAttachment,
-  pickComposerFiles,
-  pickComposerMedia,
-  removePersistedComposerAttachmentFile,
-} from "../../lib/composerImages";
 
 import {
   clearComposerDraftContent,
-  captureComposerDraftInsertion,
-  countComposerDraftAttachmentsAfterSelection,
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
   restoreComposerDraftSnapshot,
@@ -89,9 +72,11 @@ import {
   isModelSelectionUnavailable,
   resolveSelectableModelSelection,
 } from "../../lib/modelOptions";
-import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
-import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
+import {
+  useRemoteConnections,
+  useRemoteEnvironmentRuntime,
+} from "../../state/use-remote-environment-registry";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import {
   nextEnvironmentId,
@@ -169,11 +154,10 @@ export function NewTaskDraftScreen(props: {
   readonly incomingShareId?: string;
 }) {
   const [creationMetadata] = useState(makeTurnCommandMetadata);
-  const { layout } = useAdaptiveWorkspaceLayout();
-  const sidebarHeaderItem = useWorkspaceSidebarHeaderItem();
   const projects = useProjects();
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
+  const goBack = useWorkspaceBackNavigation("threads");
   const {
     consumeShare,
     getShare,
@@ -193,22 +177,17 @@ export function NewTaskDraftScreen(props: {
     );
     return scope?.title ?? selectedProject.title;
   })();
-  const { connectedEnvironments } = useRemoteConnectionStatus();
+  const { onReconnectEnvironment } = useRemoteConnections();
+  const environmentRuntime = useRemoteEnvironmentRuntime(selectedProject?.environmentId ?? null);
+  const connectionState = environmentRuntime?.connectionState ?? "offline";
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
     selectedProject?.environmentId ?? null,
   );
-  const environmentConnected =
-    selectedProject !== null &&
-    connectedEnvironments.find(
-      (environment) => environment.environmentId === selectedProject.environmentId,
-    )?.connectionState === "connected";
+  const environmentConnected = connectionState === "connected";
   const canOperate = useEnvironmentScope(
     selectedProject?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
-  const taskPermissionReason =
-    environmentConnected && !canOperate ? "This connection cannot start tasks." : null;
-  const modelUnavailable = environmentConnected && flow.selectedModelOption?.isUnavailable === true;
   const projectCloneState = useProjectClone(
     selectedProject
       ? { environmentId: selectedProject.environmentId, projectId: selectedProject.id }
@@ -296,24 +275,12 @@ export function NewTaskDraftScreen(props: {
   const shareImportDraftBackupRef = useRef(new Map<string, ComposerDraft>());
   const activeShareImportTokenRef = useRef<symbol | null>(null);
   const shareImportMountedRef = useRef(true);
-  const pendingPastedTextAttachmentCountRef = useRef(0);
-  const [pendingPastedTextAttachmentCount, setPendingPastedTextAttachmentCount] = useState(0);
-  const pastedTextFileNamesRef = useRef<{ draftKey: string | null; names: Set<string> }>({
-    draftKey: null,
-    names: new Set(),
-  });
   // The share import resumes after awaits; this reads the screen's current
   // draft and share at that point without re-running the import effect.
   const isCurrentShareImport = useEffectEvent(
     (draftKey: string, shareId: string) =>
       flow.draftKey === draftKey && props.incomingShareId === shareId,
   );
-  // Pasted-text attachments finish in an event handler, where an effect event
-  // cannot be called and the provider's draft key has no store to read.
-  const latestDraftKeyRef = useRef(flow.draftKey);
-  useLayoutEffect(() => {
-    latestDraftKeyRef.current = flow.draftKey;
-  });
   const isImportingShare = importingShareKey !== null;
   const alertedUnavailableIncomingShareIdRef = useRef<string | null>(null);
   // The share this screen already moved into its draft. Sending clears the
@@ -355,13 +322,6 @@ export function NewTaskDraftScreen(props: {
   };
   const cycleEnvironmentCommands = environments.length > 1 ? (["cycleHost"] as const) : [];
   useHardwareKeyboardCommand(cycleEnvironmentCommands, cycleEnvironment);
-  const offersUsageLimits =
-    flow.selectedProviderStatus !== null &&
-    hasProviderUsageLimits(
-      flow.selectedProviderStatus.driver,
-      selectedEnvironmentServerConfig?.providers ?? [],
-      selectedEnvironmentServerConfig?.usageLimitSources ?? [],
-    );
   const composerWorkspaceCwd =
     (flow.workspaceMode === "worktree"
       ? selectedProject?.workspaceRoot
@@ -842,181 +802,21 @@ export function NewTaskDraftScreen(props: {
     workspaceMode: flow.workspaceMode,
     worktreePath: flow.selectedWorktreePath,
   });
-  const showBranchLoading = flow.branchesLoading && flow.availableBranches.length === 0;
+  const showBranchLoading =
+    environmentConnected && flow.branchesLoading && flow.availableBranches.length === 0;
 
-  async function handlePickMedia(): Promise<void> {
-    if (isComposerInteractionLocked) {
-      return;
-    }
-    const capabilities = selectedEnvironmentServerConfig?.environment.capabilities;
-    const insertion = flow.draftKey ? captureComposerDraftInsertion(flow.draftKey) : undefined;
-    const result = await pickComposerMedia({
-      existingCount:
-        flow.draftKey && insertion
-          ? countComposerDraftAttachmentsAfterSelection(flow.draftKey, insertion)
-          : flow.attachments.length,
-      maxVideoBytes:
-        capabilities?.attachmentUploads === true
-          ? capabilities.fileAttachments?.maxUploadBytes
-          : undefined,
-    });
-    const rejectedCount =
-      result.attachments.length > 0 ? flow.appendAttachments(result.attachments, insertion) : 0;
-    const problems = [
-      ...(result.error ? [result.error] : []),
-      ...(rejectedCount > 0
-        ? [`You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments per message.`]
-        : []),
-    ];
-    if (problems.length > 0) {
-      Dialog.alert("Could not attach photo or video", problems.join("\n\n"));
-    }
-  }
-
-  async function handlePickFiles(): Promise<void> {
-    if (isComposerInteractionLocked) {
-      return;
-    }
-    const maxBytes =
-      selectedEnvironmentServerConfig?.environment.capabilities.fileAttachments?.maxUploadBytes;
-    if (maxBytes === undefined) {
-      Dialog.alert("File attachments are not available on this server.");
-      return;
-    }
-    const insertion = flow.draftKey ? captureComposerDraftInsertion(flow.draftKey) : undefined;
-    const result = await pickComposerFiles({
-      existingCount:
-        flow.draftKey && insertion
-          ? countComposerDraftAttachmentsAfterSelection(flow.draftKey, insertion)
-          : flow.attachments.length,
-      maxBytes,
-    });
-    const rejectedCount =
-      result.files.length > 0 ? flow.appendAttachments(result.files, insertion) : 0;
-    const problems = [
-      ...(result.error ? [result.error] : []),
-      ...(rejectedCount > 0
-        ? [`You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`]
-        : []),
-    ];
-    if (problems.length > 0) {
-      Dialog.alert("Could not attach file", problems.join("\n\n"));
-    }
-  }
-
-  const handleNativePasteImages = async (uris: ReadonlyArray<string>) => {
-    const insertion = flow.draftKey ? captureComposerDraftInsertion(flow.draftKey) : undefined;
-    const existingCount =
-      flow.draftKey && insertion
-        ? countComposerDraftAttachmentsAfterSelection(flow.draftKey, insertion)
-        : flow.attachments.length;
-    const converted = await settlePromise(() =>
-      convertPastedImagesToAttachments({ uris, existingCount }),
-    );
-    if (AsyncResult.isFailure(converted)) {
-      console.error("[native paste] error converting images", squashAtomCommandFailure(converted));
-      return;
-    }
-    if (converted.value.length > 0) flow.appendAttachments(converted.value, insertion);
-  };
-
-  const handleNativePasteText = async (paste: ComposerTextPaste) => {
-    const draftKey = flow.draftKey;
-    if (!draftKey) return;
-    const insertion = { text: paste.value, ...paste.selection };
-    const insertPaste = () => {
-      const insertion = replaceTextSelection({
-        value: paste.value,
-        selection: paste.selection,
-        text: paste.text,
-      });
-      flow.setPrompt(insertion.value);
-    };
-    const capabilities = selectedEnvironmentServerConfig?.environment.capabilities;
-    const advertisedMax =
-      capabilities?.attachmentUploads === true
-        ? capabilities.fileAttachments?.maxUploadBytes
-        : undefined;
-    const maxBytes =
-      advertisedMax === undefined ? null : clampFileAttachmentUploadBytes(advertisedMax);
-    const wouldExceedInputLimit =
-      paste.value.length -
-        Math.max(0, paste.selection.end - paste.selection.start) +
-        paste.text.length >
-      PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
-    const canAttach =
-      maxBytes !== null &&
-      countComposerDraftAttachmentsAfterSelection(draftKey, insertion) <
-        PROVIDER_SEND_TURN_MAX_ATTACHMENTS &&
-      new TextEncoder().encode(paste.text).byteLength <= maxBytes;
-    if (
-      pastedTextDisposition({
-        text: paste.text,
-        wouldExceedInputLimit,
-        canAttach: true,
-      }) === "attachment"
-    ) {
-      if (canAttach && maxBytes !== null) {
-        pendingPastedTextAttachmentCountRef.current += 1;
-        setPendingPastedTextAttachmentCount(pendingPastedTextAttachmentCountRef.current);
-        const attached = await settlePromise(async () => {
-          if (pastedTextFileNamesRef.current.draftKey !== draftKey) {
-            pastedTextFileNamesRef.current = { draftKey, names: new Set() };
-          }
-          const reservedNames = pastedTextFileNamesRef.current.names;
-          for (const attachment of flow.attachments) reservedNames.add(attachment.name);
-          const name = nextPastedTextFileName([...reservedNames]);
-          reservedNames.add(name);
-          const attachment = await createPastedTextComposerAttachment({
-            text: paste.text,
-            name,
-            maxBytes,
-          });
-          if (latestDraftKeyRef.current !== draftKey) {
-            await removePersistedComposerAttachmentFile(attachment.fileUri);
-            return;
-          }
-          if (flow.appendAttachments([attachment], insertion) > 0) {
-            await removePersistedComposerAttachmentFile(attachment.fileUri);
-            Dialog.alert(
-              "Could not attach pasted text",
-              `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
-            );
-          }
-        });
-        pendingPastedTextAttachmentCountRef.current = Math.max(
-          0,
-          pendingPastedTextAttachmentCountRef.current - 1,
-        );
-        setPendingPastedTextAttachmentCount(pendingPastedTextAttachmentCountRef.current);
-        if (AsyncResult.isFailure(attached)) {
-          const error = squashAtomCommandFailure(attached);
-          Dialog.alert(
-            "Could not attach pasted text",
-            error instanceof Error ? error.message : "Try again.",
-          );
-        }
-        return;
-      } else if (!wouldExceedInputLimit) {
-        insertPaste();
-      } else {
-        Dialog.alert(
-          wouldExceedInputLimit
-            ? "Pasted text is too large for this message"
-            : "Could not attach pasted text",
-          wouldExceedInputLimit
-            ? "Remove some text or an attachment, then paste again."
-            : "Remove an attachment or use a smaller paste, then try again.",
-        );
-      }
-      return;
-    }
-
-    insertPaste();
-  };
+  const {
+    onPickDraftMedia: handlePickMedia,
+    onPickDraftFiles: handlePickFiles,
+    onNativePasteImages: handleNativePasteImages,
+    onNativePasteText: handleNativePasteText,
+  } = useComposerAttachmentActions({
+    draftKey: flow.draftKey,
+    serverConfig: selectedEnvironmentServerConfig,
+    locked: isComposerInteractionLocked,
+  });
 
   async function handleStart(): Promise<import("@t3tools/contracts").MessageId | null> {
-    if (pendingPastedTextAttachmentCountRef.current > 0) return null;
     const selectedProject = flow.selectedProject;
     const draftKey = flow.draftKey;
     if (!selectedProject || !draftKey) {
@@ -1074,20 +874,6 @@ export function NewTaskDraftScreen(props: {
       Dialog.alert(title, detail);
       return null;
     }
-    // T3's own limits command is answered by the thread composer; a new task would
-    // send it to the agent. A provider's same-named command, or a prompt carrying
-    // attachments, goes through as usual.
-    if (
-      offersUsageLimits &&
-      isUsageLimitsCommand(initialMessageText) &&
-      draft.attachments.length === 0
-    ) {
-      Dialog.alert(
-        "Usage limits",
-        "Send /usage-limits inside a thread, or open Settings → Usage → Limits.",
-      );
-      return null;
-    }
     // A failed-send restore can leave the draft over the cap on purpose (it
     // never drops the user's files); starting anyway would upload everything
     // and have the server reject the turn.
@@ -1142,14 +928,6 @@ export function NewTaskDraftScreen(props: {
       // the app right after tapping submit would otherwise reject the foreground
       // -only Activity start. If creation fails, the token registration's replay
       // finds no work and ends the card within seconds.
-      armAgentAwarenessLiveActivityForLocalWork({
-        environmentId: selectedProject.environmentId,
-        threadTitle: deriveThreadTitleSeed({
-          text: initialMessageText,
-          attachments: draft.attachments,
-        }),
-        projectTitle: selectedProject.title,
-      });
     }
     // Persist before clearing the draft or leaving its editor. This only waits
     // for the local outbox write; server and worktree setup run on the thread.
@@ -1185,46 +963,20 @@ export function NewTaskDraftScreen(props: {
     return message.messageId;
   }
 
-  if (!selectedProject) {
-    return (
-      <ThreadScreenFallback>
-        <View className="flex-1 bg-screen" collapsable={false}>
-          {Platform.OS === "android" ? (
-            <>
-              <NativeStackScreenOptions options={{ headerShown: false }} />
-              <AndroidScreenHeader
-                title="New thread"
-                hideBottomBorder
-                onBack={() => navigation.goBack()}
-              />
-            </>
-          ) : (
-            <NativeStackScreenOptions options={{ title: "Loading task" }} />
-          )}
-        </View>
-      </ThreadScreenFallback>
-    );
-  }
+  // Keep the current surface until the local draft selection is ready. Publishing
+  // an empty loading surface here flashes between two already-cached threads.
+  if (!selectedProject) return null;
 
-  const canStart =
-    !isImportingContext &&
-    !cloneBlocksStart &&
-    taskPermissionReason === null &&
-    attachmentBlockReason === null &&
-    !modelUnavailable &&
-    Boolean(flow.selectedProject) &&
-    Boolean(flow.selectedModel) &&
-    (flow.prompt.trim().length > 0 || flow.attachments.length > 0) &&
-    isIncomingShareReady &&
-    !isImportingShare &&
-    !flow.submitting &&
-    pendingPastedTextAttachmentCount === 0 &&
-    // Until the repository check answers, a saved worktree selection may belong to a non-git folder.
-    !(flow.workspaceMode === "worktree" && (!flow.selectedBranchName || !flow.isGitRepoKnown));
-  const closeNewTask = () => {
-    void KeyboardController.dismiss({ animated: true });
-    navigation.goBack();
-  };
+  const setupBlockReason =
+    isIncomingShareReady && !isImportingShare
+      ? cloneBlocksStart
+        ? "Wait for the project clone to finish."
+        : flow.submitting
+          ? "Starting the thread…"
+          : flow.workspaceMode === "worktree" && (!flow.selectedBranchName || !flow.isGitRepoKnown)
+            ? "Choose a base branch before creating a worktree."
+            : null
+      : "Wait for shared content to finish importing.";
   const chooseProject = () => {
     if (isComposerInteractionLocked) {
       return;
@@ -1243,24 +995,12 @@ export function NewTaskDraftScreen(props: {
   };
 
   const environmentControl = (
-    <ComposerInlineControl
-      accessibilityLabel={`Environment: ${selectedEnvironmentLabel}`}
-      chevronDirection="right"
+    <DraftEnvironmentControl
+      connectionState={connectionState}
+      label={selectedEnvironmentLabel}
+      machineKind={resolveEnvironmentMachineKind(selectedEnvironmentServerConfig)}
       disabled={isComposerInteractionLocked}
-      renderIcon={(size) => (
-        <EnvironmentMachineSymbol
-          kind={resolveEnvironmentMachineKind(selectedEnvironmentServerConfig)}
-          size={size}
-          tintColorClassName="accent-icon-muted"
-        />
-      )}
-      label={`on ${selectedEnvironmentLabel}`}
-      maxWidth={flow.isScratchDraft ? 170 : 260}
-      onPress={
-        flow.environments.length > 1 ? () => openContextPicker("NewTaskEnvironment") : undefined
-      }
-      showChevron={flow.environments.length > 1}
-      static={flow.environments.length <= 1}
+      onChooseEnvironment={() => openContextPicker("NewTaskEnvironment")}
     />
   );
   const hero = flow.isScratchDraft ? (
@@ -1311,6 +1051,7 @@ export function NewTaskDraftScreen(props: {
       {environmentControl}
     </View>
   );
+  // The nested hero scroll view does not receive UIKit's automatic navigation inset in split columns.
   const heroViewport = (headerInset: number) => (
     <NativeScrollEdgeEffectsContext
       value={{ top: "hidden", bottom: "hidden", left: "hidden", right: "hidden" }}
@@ -1328,7 +1069,9 @@ export function NewTaskDraftScreen(props: {
           style={{ flex: 1 }}
           testID="new-task-hero-scroll"
         >
+          <View style={{ flexGrow: 1 }} />
           {hero}
+          <View style={{ flexGrow: 2 }} />
         </ScrollView>
       </View>
     </NativeScrollEdgeEffectsContext>
@@ -1365,7 +1108,36 @@ export function NewTaskDraftScreen(props: {
     </View>
   );
 
-  if (!flow.selectedModel) return null;
+  if (!flow.selectedModel) {
+    return (
+      <ThreadScreenFallback>
+        <AppBar
+          title="New thread"
+          sidebar={false}
+          onBack={goBack}
+          options={{
+            ...threadHeaderAppearance(NATIVE_LIQUID_GLASS_SUPPORTED),
+            unstable_headerSubtitle: undefined,
+            unstable_headerRightItems: () => [],
+            unstable_headerToolbarItems: () => [],
+          }}
+        />
+        <View className="flex-1 justify-end gap-3 p-4">
+          <Text className="text-foreground-muted">
+            Your draft is saved on this device. Connect to an environment to choose its first model.
+          </Text>
+          <ComposerEditor
+            draftKey={flow.draftKey}
+            value={flow.prompt}
+            onChangeText={flow.setPrompt}
+            placeholder="Ask the repo agent, or run a command…"
+            multiline
+            style={{ minHeight: 64 }}
+          />
+        </View>
+      </ThreadScreenFallback>
+    );
+  }
   const thread = draftThreadShell({
     environmentId: selectedProject.environmentId,
     projectId: selectedProject.id,
@@ -1379,27 +1151,11 @@ export function NewTaskDraftScreen(props: {
   });
   return (
     <>
-      <AppBar
-        title="New thread"
-        sidebar={false}
-        optionsVersion={sidebarHeaderItem}
-        onBack={closeNewTask}
-        hideBottomBorder
-        options={{
-          title: "New thread",
-          headerTitle: "New thread",
-          unstable_headerSubtitle: undefined,
-          headerBackVisible: !layout.usesSplitView,
-          unstable_headerLeftItems: layout.usesSplitView ? () => [sidebarHeaderItem] : undefined,
-          unstable_headerRightItems: () => [],
-          unstable_headerToolbarItems: () => [],
-          headerShadowVisible: false,
-          headerTransparent: true,
-          headerStyle: { backgroundColor: "transparent" },
-          scrollEdgeEffects: { top: "hidden", bottom: "hidden", left: "hidden", right: "hidden" },
-        }}
-      />
       <ThreadScreenBinding
+        environmentId={selectedProject.environmentId}
+        header={
+          <DraftThreadHeader thread={thread} project={selectedProject} cwd={composerWorkspaceCwd} />
+        }
         draftMode={{
           content: heroViewport,
           controls: (
@@ -1432,17 +1188,14 @@ export function NewTaskDraftScreen(props: {
             </View>
           ),
           editorRef: promptInputRef,
-          sendBlockedReason:
-            canStart || (flow.prompt.length === 0 && flow.attachments.length === 0)
-              ? null
-              : (taskPermissionReason ?? attachmentBlockReason ?? "Task is not ready to send"),
+          sendBlockedReason: setupBlockReason,
         }}
         canOperateThread={canOperate}
         selectedThread={thread}
         selectedThreadDetailRef={null}
         contentPresentation={{ kind: "ready" }}
-        screenTone={connectionTone(environmentConnected ? "connected" : "offline")}
-        connectionError={null}
+        screenTone={connectionTone(connectionState)}
+        connectionError={environmentRuntime?.connectionError ?? null}
         environmentLabel={selectedEnvironmentLabel}
         feedbackSubmissions={[]}
         onDismissFeedback={() => {}}
@@ -1458,7 +1211,7 @@ export function NewTaskDraftScreen(props: {
         activePendingUserInputDrafts={{}}
         activePendingUserInputAnswers={null}
         respondingUserInputId={null}
-        connectionStateLabel={environmentConnected ? "connected" : "offline"}
+        connectionStateLabel={connectionState}
         activeThreadBusy={false}
         canStopThread={false}
         queuedRunEdit={null}
@@ -1468,7 +1221,6 @@ export function NewTaskDraftScreen(props: {
         isSavingQueuedEdit={false}
         onCancelQueuedRunEdit={() => {}}
         onRemoveQueuedEditAttachment={() => {}}
-        environmentId={selectedProject.environmentId}
         projectWorkspaceRoot={selectedProject.workspaceRoot}
         threadCwd={composerWorkspaceCwd}
         selectedThreadQueueCount={0}
@@ -1476,7 +1228,7 @@ export function NewTaskDraftScreen(props: {
         dispatchingMessageId={null}
         serverConfig={selectedEnvironmentServerConfig}
         usesAutomaticContentInsets
-        onOpenConnectionEditor={() => {}}
+        onOpenConnectionEditor={() => navigation.navigate("Connections")}
         onChangeDraftMessage={flow.setPrompt}
         onPickDraftMedia={handlePickMedia}
         onPickDraftFiles={handlePickFiles}
@@ -1486,11 +1238,11 @@ export function NewTaskDraftScreen(props: {
         onStopThread={() => {}}
         onResumeQueue={null}
         onSendMessage={handleStart}
-        onReconnectEnvironment={() => {}}
+        onReconnectEnvironment={() => onReconnectEnvironment(selectedProject.environmentId)}
         canSwitchThreadProvider
-        onUpdateThreadModelSelection={(modelSelection) => {
-          if (flow.draftKey) updateComposerDraftSettings(flow.draftKey, { modelSelection });
-        }}
+        onUpdateThreadModelSelection={(selection) =>
+          flow.setSelectedModelKey(`${selection.instanceId}:${selection.model}`, selection.options)
+        }
         onUpdateThreadRuntimeMode={flow.setRuntimeMode}
         onUpdateThreadInteractionMode={flow.setInteractionMode}
         onRespondToApproval={async () => {}}

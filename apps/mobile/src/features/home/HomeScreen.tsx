@@ -1,4 +1,4 @@
-import { activeNewTaskAtom } from "../../state/active-new-task";
+import { useActiveNewTask } from "../../state/active-new-task";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import type { ThreadMoveDestination } from "../threads/threadOrder";
@@ -265,7 +265,7 @@ export function HomeScreen(props: HomeScreenProps) {
     Platform.OS === "android" ? "bg-header" : contentBackground,
   );
   const columnMetrics = useNativeColumnLayoutMetrics();
-  const activeNewTask = useAtomValue(activeNewTaskAtom);
+  const activeNewTask = useActiveNewTask();
   const selectedThreadKey = activeNewTask ? null : (primaryColumn?.selectedThreadKey ?? null);
   const fullSwipeWidth = primaryColumn && columnMetrics ? columnMetrics.width - 20 : undefined;
   const queuedThreadKeys = useQueuedThreadKeys();
@@ -585,7 +585,12 @@ export function HomeScreen(props: HomeScreenProps) {
         <ThreadListV2PendingRow
           pane={primaryColumn ? "sidebar" : "screen"}
           pendingTask={item.pendingTask}
-          selected={activeNewTask?.pendingKey === item.pendingTask.key}
+          selected={
+            activeNewTask?.pendingKey === item.pendingTask.key ||
+            (item.pendingTask.kind === "pending" &&
+              scopedThreadKey(item.pendingTask.environmentId, item.pendingTask.message.threadId) ===
+                selectedThreadKey)
+          }
           project={projectByKey.get(pendingScopeKey) ?? null}
           projectTitle={v2ProjectTitleByProjectKey.get(pendingScopeKey)}
           environmentLabel={

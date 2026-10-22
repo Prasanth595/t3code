@@ -1,4 +1,4 @@
-import { activeNewTaskAtom } from "../../state/active-new-task";
+import { useActiveNewTask } from "../../state/active-new-task";
 import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { resolveScratchProjectScopeKey } from "@t3tools/client-runtime/state/project-grouping";
@@ -158,7 +158,7 @@ function ThreadNavigationSidebarPane(
     regenerateThreadTitle,
   } = useThreadListActions();
   const pendingTasks = usePendingNewTasks();
-  const activeNewTask = useAtomValue(activeNewTaskAtom);
+  const activeNewTask = useActiveNewTask();
   const queuedThreadKeys = useQueuedThreadKeys();
   const { confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = Object.values(savedConnectionsById)

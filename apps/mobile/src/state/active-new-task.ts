@@ -1,19 +1,9 @@
-import { useFocusEffect } from "@react-navigation/native";
-import { Atom } from "effect/reactivity";
-import { useCallback } from "react";
-import { appAtomRegistry } from "./atom-registry";
+import { createContext, use } from "react";
 
-// A focused new-task flow replaces the thread selection, even before it has a draft row.
-export const activeNewTaskAtom = Atom.make<{ readonly pendingKey: string | null } | null>(
+export const ActiveNewTaskContext = createContext<{ readonly pendingKey: string | null } | null>(
   null,
-).pipe(Atom.keepAlive);
+);
 
-export function useActiveNewTask(pendingKey: string | null, active = true) {
-  useFocusEffect(
-    useCallback(() => {
-      if (!active) return;
-      appAtomRegistry.set(activeNewTaskAtom, { pendingKey });
-      return () => appAtomRegistry.set(activeNewTaskAtom, null);
-    }, [pendingKey, active]),
-  );
+export function useActiveNewTask() {
+  return use(ActiveNewTaskContext);
 }

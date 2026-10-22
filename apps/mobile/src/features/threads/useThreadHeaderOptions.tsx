@@ -1,8 +1,7 @@
 import { useWorkspaceSidebarHeaderItem } from "../layout/useWorkspaceSidebarHeaderItem";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useMemo } from "react";
-import { Platform } from "react-native";
-import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
+import { threadHeaderAppearance } from "./thread-header-appearance";
 import { isDuoDevice } from "../../lib/device-type";
 import type { AppNativeStackNavigationOptions } from "../../native/StackHeader";
 import { useDeviceType } from "../../native/native-layout-metrics";
@@ -24,6 +23,7 @@ export function useThreadHeaderOptions(props: {
   readonly usesNativeHeaderGlass: boolean;
   readonly gitControls: Parameters<typeof ThreadGitControls>[0];
   readonly onReturnToThread?: () => void;
+  readonly draft?: boolean;
 }) {
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const deviceType = useDeviceType();
@@ -55,7 +55,7 @@ export function useThreadHeaderOptions(props: {
           ]
         : []),
       sidebarHeaderItem,
-      ...(!usesDuoHeader
+      ...(!usesDuoHeader && !props.draft
         ? [
             withNativeGlassHeaderItem({
               accessibilityLabel: "New task",
@@ -68,13 +68,7 @@ export function useThreadHeaderOptions(props: {
           ]
         : []),
     ],
-    [
-      sidebarHeaderItem,
-      props.onReturnToThread,
-      startNewTask,
-      usesDuoHeader,
-      usesNativeWorkspaceColumns,
-    ],
+    [sidebarHeaderItem, props.onReturnToThread, props.draft, startNewTask, usesDuoHeader],
   );
   const canGoBack = navigation.canGoBack();
   const compactHomeHeaderItems = useMemo<NativeHeaderItems>(
@@ -91,20 +85,8 @@ export function useThreadHeaderOptions(props: {
   );
 
   const options: AppNativeStackNavigationOptions = {
-    headerShown: true,
-    headerTransparent: props.usesNativeHeaderGlass,
-    headerStyle: props.usesNativeHeaderGlass ? { backgroundColor: "transparent" } : undefined,
-    headerShadowVisible: false,
-    scrollEdgeEffects: props.usesNativeHeaderGlass
-      ? nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version)
-      : undefined,
+    ...threadHeaderAppearance(props.usesNativeHeaderGlass),
     headerTitle: props.title,
-    headerTitleStyle: props.usesNativeHeaderGlass
-      ? {
-          fontSize: 17,
-          fontWeight: "800",
-        }
-      : undefined,
     title: props.title,
     headerBackVisible: !layout.usesSplitView,
     unstable_headerLeftItems: layout.usesSplitView

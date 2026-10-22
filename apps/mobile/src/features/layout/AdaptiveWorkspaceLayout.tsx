@@ -99,6 +99,7 @@ interface AdaptiveWorkspaceContextValue {
   readonly primarySidebarSearchQuery: string;
   readonly startNewTask: () => void;
   readonly selectThread: (thread: EnvironmentThreadShell) => void;
+  readonly selectThreadRoute: (params: ReactNavigation.RootParamList["Thread"]) => void;
   readonly activateAuxiliaryPaneRole: (role: WorkspaceAuxiliaryPaneRole) => () => void;
   readonly registerWorkspaceInspector: (render: () => ReactNode) => () => void;
   readonly setPrimarySidebarSearchQuery: (query: string) => void;
@@ -133,6 +134,7 @@ const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceContextValue>({
   primarySidebarSearchQuery: "",
   startNewTask: () => undefined,
   selectThread: () => undefined,
+  selectThreadRoute: () => undefined,
   activateAuxiliaryPaneRole: () => () => undefined,
   registerWorkspaceInspector: () => () => undefined,
   setPrimarySidebarSearchQuery: () => undefined,
@@ -499,10 +501,7 @@ function AdaptiveWorkspaceLayoutContent(
     const currentProject = thread
       ? { environmentId: thread.environmentId, id: thread.projectId }
       : undefined;
-    navigation.navigate(
-      "Thread",
-      newTaskDestination(layout.usesSplitView, projects, currentProject),
-    );
+    handleSelectThreadRoute(newTaskDestination(layout.usesSplitView, projects, currentProject));
   };
 
   useHardwareKeyboardCommand("newTask", () => {
@@ -520,7 +519,8 @@ function AdaptiveWorkspaceLayoutContent(
   };
 
   const handleOpenThreadPullRequests = useOpenThreadPullRequests();
-  const { openPendingTask: handleOpenPendingTask } = usePendingTaskListActions();
+  const { openPendingTask: handleOpenPendingTask } =
+    usePendingTaskListActions(handleSelectThreadRoute);
 
   const handleNewThreadOnBranch = (thread: EnvironmentThreadShell) => {
     navigation.navigate("Thread", {
@@ -704,11 +704,7 @@ function AdaptiveWorkspaceLayoutContent(
   );
 
   const selectAndroidWorkspace = useAndroidWorkspaceSelection();
-  const handleSelectThread = (thread: EnvironmentThreadShell) => {
-    const params = {
-      environmentId: String(thread.environmentId),
-      threadId: String(thread.id),
-    };
+  function handleSelectThreadRoute(params: ReactNavigation.RootParamList["Thread"]) {
     if (Platform.OS === "android") {
       setFileInspectorPreferredVisible(false);
       selectAndroidWorkspace({ name: "Thread", params });
@@ -717,6 +713,9 @@ function AdaptiveWorkspaceLayoutContent(
     const navigationAction = resolveThreadSelectionNavigationAction({
       usesSplitView: layout.usesSplitView,
       pathname,
+      workspaceRouteName: navigation
+        .getState()
+        ?.routes.find((route) => route.key === props.workspaceRouteKey)?.name,
     });
     const overlayState = resolveThreadSelectionOverlayState({
       state: navigation.getState(),
@@ -730,12 +729,22 @@ function AdaptiveWorkspaceLayoutContent(
       return;
     }
     if (navigationAction === "set-params") {
-      const nextThreadKey = scopedThreadKey(thread.environmentId, thread.id);
-      if (nextThreadKey === selectedThreadKey) {
-        return;
-      }
       setFileInspectorPreferredVisible(false);
-      navigation.navigate("Thread", params);
+      const state = navigation.getState();
+      const route = state?.routes.find((candidate) => candidate.key === props.workspaceRouteKey);
+      if (route?.name === "Thread") {
+        navigation.dispatch({
+          ...CommonActions.setParams({
+            environmentId: undefined,
+            threadId: undefined,
+            draft: undefined,
+            ...params,
+          }),
+          source: route.key,
+        });
+      } else {
+        navigation.navigate("Thread", params);
+      }
       return;
     }
     if (navigationAction === "replace") {
@@ -744,6 +753,12 @@ function AdaptiveWorkspaceLayoutContent(
       return;
     }
     navigation.navigate("Thread", params);
+  }
+  const handleSelectThread = (thread: EnvironmentThreadShell) => {
+    handleSelectThreadRoute({
+      environmentId: String(thread.environmentId),
+      threadId: String(thread.id),
+    });
   };
 
   const contextValue = {
@@ -753,6 +768,7 @@ function AdaptiveWorkspaceLayoutContent(
     primarySidebarSearchQuery,
     startNewTask: handleStartNewTask,
     selectThread: handleSelectThread,
+    selectThreadRoute: handleSelectThreadRoute,
     activateAuxiliaryPaneRole,
     registerWorkspaceInspector,
     setPrimarySidebarSearchQuery,

@@ -175,6 +175,7 @@ import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
 
 export interface ThreadDetailScreenProps {
+  readonly header?: React.ReactNode;
   readonly draftMode?: {
     readonly content: (headerInset: number) => React.ReactNode;
     readonly controls: React.ReactNode;
@@ -679,7 +680,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       environmentLabel: props.environmentLabel,
       onReconnect: props.onReconnectEnvironment,
     });
-    if (connectionStatus !== null) {
+    if (connectionStatus !== null && !props.draftMode) {
       return connectionStatus;
     }
     if (props.activePendingApproval !== null || props.activePendingUserInput !== null) {
@@ -1224,6 +1225,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
         hasStartedTurn: props.selectedThread.latestRun !== null,
         hasUserMessage,
         queuedMessageCount: props.selectedThreadQueueCount,
+        deliveryDeferred: props.connectionStateLabel !== "connected",
       }),
     );
     composerEditorRef.current?.blur();
@@ -1629,11 +1631,9 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                         reportedModelSelection={reportedModelSelection}
                         editorRef={composerEditorRef}
                         placeholder={
-                          props.draftMode
-                            ? "Ask anything…"
-                            : props.activePendingApproval
-                              ? "Send a message to decline and redirect the agent"
-                              : "Ask the repo agent, or run a command…"
+                          props.activePendingApproval
+                            ? "Send a message to decline and redirect the agent"
+                            : "Ask the repo agent, or run a command…"
                         }
                         contentMaxWidth={contentMaxWidth}
                         connectionState={props.connectionStateLabel}

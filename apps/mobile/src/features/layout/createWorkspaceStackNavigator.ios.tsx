@@ -48,6 +48,7 @@ import {
   nativeWorkspacePopAction,
   projectWorkspaceStack,
   partitionStackPresentations,
+  reconcileStackScreens,
   type CollapsedSplitColumn,
 } from "../../native/workspace-stack-projection";
 import {
@@ -71,7 +72,7 @@ function ColumnScreen(props: {
   readonly attached?: boolean;
   readonly selectedThreadKey?: string | null;
   readonly selectedPullRequestKey?: string | null;
-  readonly onDismiss: (routeKey: string) => void;
+  readonly onDismiss: (routeKey: string, native: boolean) => void;
   readonly onAppearance: (type: "willAppear" | "didAppear" | "willDisappear", key: string) => void;
   readonly onCompose?: () => void;
   readonly navigation: ViewProps["navigation"];
@@ -93,7 +94,7 @@ function ColumnScreen(props: {
       screenKey={key}
       activityMode={props.attached === false ? "detached" : "attached"}
       onDismiss={(event) => {
-        if (event.nativeEvent.isNativeDismiss) props.onDismiss(key);
+        props.onDismiss(key, event.nativeEvent.isNativeDismiss);
       }}
       onWillAppear={() => {
         props.onAppearance("willAppear", key);
@@ -117,7 +118,13 @@ function ColumnScreen(props: {
             options={descriptor.options}
             canGoBack={!props.primary}
             column={props.primary ? "primary" : "detail"}
-            onCompose={props.onCompose}
+            onCompose={
+              descriptor.route.params &&
+              "draft" in descriptor.route.params &&
+              descriptor.route.params.draft
+                ? undefined
+                : props.onCompose
+            }
           />
           <ColumnContent
             primary={props.primary}
@@ -141,6 +148,34 @@ function WorkspaceColumns(
   const { layout, panes, togglePrimarySidebar, toggleAuxiliaryPane, startNewTask } =
     useAdaptiveWorkspaceLayout();
   const deviceType = useDeviceType();
+  // Split screens must remain mounted while UIKit animates a detached route away.
+  const [screens, setScreens] = useState({
+    routes: props.detail,
+    descriptors: props.descriptors,
+    observedRoutes: props.detail,
+    observedDescriptors: props.descriptors,
+    completed: new Set<string>(),
+  });
+  if (
+    screens.observedRoutes !== props.detail ||
+    screens.observedDescriptors !== props.descriptors
+  ) {
+    const routes = reconcileStackScreens(screens.routes, props.detail, screens.completed);
+    const retained = new Set(routes.map((route) => route.key));
+    const active = new Set(props.detail.map((route) => route.key));
+    setScreens({
+      routes,
+      descriptors: Object.fromEntries(
+        Object.entries({ ...screens.descriptors, ...props.descriptors }).filter(([key]) =>
+          retained.has(key),
+        ),
+      ),
+      observedRoutes: props.detail,
+      observedDescriptors: props.descriptors,
+      completed: new Set([...screens.completed].filter((key) => active.has(key))),
+    });
+  }
+
   const selectedTab = useWorkspaceTabs()?.state.selectedTab;
   const openNewTask = startNewTask;
   // The Duo keeps compose in the detail column's bar, which is its vertical bar in landscape
@@ -181,10 +216,17 @@ function WorkspaceColumns(
         )
       : null;
   const handleNativeDismiss = useCallback(
-    (key: string) => {
-      const state = props.navigation.getState();
-      const action = nativeWorkspacePopAction(state, key);
-      if (action) props.navigation.dispatch(action);
+    (key: string, native: boolean) => {
+      setScreens((current) => ({
+        ...current,
+        routes: current.routes.filter((route) => route.key !== key),
+        completed: new Set([...current.completed, key]),
+      }));
+      if (native) {
+        const state = props.navigation.getState();
+        const action = nativeWorkspacePopAction(state, key);
+        if (action) props.navigation.dispatch(action);
+      }
     },
     [props.navigation],
   );
@@ -291,13 +333,13 @@ function WorkspaceColumns(
               />
             </ColumnContent>
           </Split.Screen>
-          {props.detail.map((route) => {
-            const descriptor = props.descriptors[route.key];
+          {screens.routes.map((route) => {
+            const descriptor = props.descriptors[route.key] ?? screens.descriptors[route.key];
             return descriptor ? (
               <ColumnScreen
                 key={route.key}
                 descriptor={descriptor}
-                attached
+                attached={props.detail.some((current) => current.key === route.key)}
                 onDismiss={handleNativeDismiss}
                 onAppearance={followCollapsedSplit}
                 onCompose={isPullRequestRoute(route) ? undefined : detailCompose}

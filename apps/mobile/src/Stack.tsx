@@ -522,6 +522,18 @@ function RootStackLayout(props: {
   const path = getPathFromState(props.state, navigationPathConfig);
   const pathname = path.startsWith("/") ? path : `/${path}`;
   const workspaceLocation = workspaceLocationFromState(props.state);
+  const draftRoute = props.state.routes.findLast((route) => route.name === "Thread");
+  const draftParams = (
+    draftRoute?.params as
+      | { draft?: { draftId?: string | string[]; pendingTaskId?: string | string[] } }
+      | undefined
+  )?.draft;
+  const routeDraftId = Array.isArray(draftParams?.draftId)
+    ? draftParams.draftId[0]
+    : draftParams?.draftId;
+  const routePendingTaskId = Array.isArray(draftParams?.pendingTaskId)
+    ? draftParams.pendingTaskId[0]
+    : draftParams?.pendingTaskId;
   useAgentNotificationNavigation(workspaceLocation.pathname);
   useConnectOnboardingNavigation();
   useAppShortcuts(props.state);
@@ -539,7 +551,9 @@ function RootStackLayout(props: {
 
   return (
     <NewTaskFlowProvider
-      active={isDraftThreadRoute(props.state.routes.findLast((route) => route.name === "Thread"))}
+      active={isDraftThreadRoute(draftRoute)}
+      routeDraftId={routeDraftId}
+      routePendingTaskId={routePendingTaskId}
     >
       <HardwareKeyboardCommandProvider pathname={pathname}>
         <ThreadOutboxDrainWorker />

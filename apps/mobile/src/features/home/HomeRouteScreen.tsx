@@ -27,7 +27,7 @@ import { HomeScreen } from "./HomeScreen";
 import { HomeHeader } from "./HomeHeader";
 import { useHomeListOptions } from "./home-list-options";
 import { useAtomValueWhileVisible, useHomeRouteVisible } from "./home-route-visibility";
-import { useHomeThreadSelection } from "./home-thread-navigation";
+import { useHomeThreadRouteSelection, useHomeThreadSelection } from "./home-thread-navigation";
 import { buildHomeProjectScopes } from "./homeThreadList";
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
@@ -65,9 +65,10 @@ export function HomeRouteScreen() {
     else setLocalSearchQuery(query);
   };
   const handleSelectThread = useHomeThreadSelection();
+  const selectThreadRoute = useHomeThreadRouteSelection();
   const handleNewThreadOnBranch = useCallback(
     (thread: EnvironmentThreadShell) => {
-      navigation.navigate("Thread", {
+      selectThreadRoute({
         draft: {
           environmentId: String(thread.environmentId),
           projectId: String(thread.projectId),
@@ -76,7 +77,7 @@ export function HomeRouteScreen() {
         },
       });
     },
-    [navigation],
+    [selectThreadRoute],
   );
 
   useEffect(() => {
@@ -283,7 +284,7 @@ export function HomeRouteScreen() {
           onDeletePendingTask={confirmDeletePendingTask}
           onNewThreadOnBranch={handleNewThreadOnBranch}
           onNewThreadInProject={(project) => {
-            navigation.navigate("Thread", {
+            selectThreadRoute({
               draft: {
                 environmentId: String(project.environmentId),
                 projectId: String(project.id),

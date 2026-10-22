@@ -36,7 +36,14 @@ function ThreadScreenOutlet() {
   const store = useContext(ThreadScreenContext)!;
   const content = useSyncExternalStore(store.subscribe, store.getSnapshot);
   if (content === null) return null;
-  return "props" in content ? <ThreadDetailScreen {...content.props} /> : content.fallback;
+  return "props" in content ? (
+    <>
+      {content.props.header}
+      <ThreadDetailScreen {...content.props} />
+    </>
+  ) : (
+    content.fallback
+  );
 }
 
 // Controllers can change from draft to live without replacing the native screen,
