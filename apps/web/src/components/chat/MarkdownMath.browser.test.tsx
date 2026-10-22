@@ -25,9 +25,8 @@ it("keeps keyboard scrolling available as a streamed equation outgrows its viewp
   await screen.getByRole("button", { name: "Before equation" }).click();
   await userEvent.keyboard("{Tab}");
   await expect.element(scroller).toHaveFocus();
-  await userEvent.keyboard("{End}");
-  await expect.element(scroller).toHaveProperty("scrollLeft", expect.any(Number));
-  expect((scroller.element() as HTMLElement).scrollLeft).toBeGreaterThan(0);
+  await userEvent.keyboard("{ArrowRight}");
+  await expect.element(scroller).not.toHaveProperty("scrollLeft", 0);
 
   await screen.rerender(equation("x_1 + x_2 + x_3 + x_4 + x_5 + x_6 + x_7 + x_8", 1000));
   await expect.element(screen.getByLabelText("Scroll display equation")).not.toBeInTheDocument();
