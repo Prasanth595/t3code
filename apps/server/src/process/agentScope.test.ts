@@ -41,6 +41,7 @@ const withFakeSystemd = <A, E>(
     readonly units: Map<string, { activeState: string; result: string }>;
     readonly calls: ReadonlyArray<ReadonlyArray<string>>;
     readonly stateDir: string;
+    readonly manager: { stalled: boolean };
   }) => Effect.Effect<A, E>,
   { oomPolicy = true }: { readonly oomPolicy?: boolean } = {},
 ) =>
@@ -51,6 +52,7 @@ const withFakeSystemd = <A, E>(
     }
     const units = new Map<string, { activeState: string; result: string }>();
     const calls: Array<ReadonlyArray<string>> = [];
+    const manager = { stalled: false };
     const output = (stdout: string, code = 0): ProcessRunner.ProcessRunOutput => ({
       stdout,
       stderr: "",
@@ -62,22 +64,30 @@ const withFakeSystemd = <A, E>(
       stderrInvalidUtf8: false,
     });
     const runner = ProcessRunner.ProcessRunner.of({
-      run: ({ args }) =>
-        Effect.sync(() => {
-          calls.push(args);
-          if (!oomPolicy && args.some((arg) => arg.startsWith("--property=OOMPolicy="))) {
-            return output("", 1);
-          }
-          const [, verb, unit = ""] = args;
-          if (verb === "reset-failed") units.delete(unit);
-          if (verb !== "show") return output("");
-          const state = units.get(unit);
-          return output(
-            state === undefined
-              ? "LoadState=not-found\nActiveState=inactive\nResult=success\n"
-              : `LoadState=loaded\nActiveState=${state.activeState}\nResult=${state.result}\n`,
-          );
-        }),
+      run: ({ command, args }) =>
+        manager.stalled
+          ? Effect.fail(
+              new ProcessRunner.ProcessTimeoutError({
+                command,
+                argumentCount: args.length,
+                timeoutMs: 5_000,
+              }),
+            )
+          : Effect.sync(() => {
+              calls.push(args);
+              if (!oomPolicy && args.some((arg) => arg.startsWith("--property=OOMPolicy="))) {
+                return output("", 1);
+              }
+              const [, verb, unit = ""] = args;
+              if (verb === "reset-failed") units.delete(unit);
+              if (verb !== "show") return output("");
+              const state = units.get(unit);
+              return output(
+                state === undefined
+                  ? "LoadState=not-found\nActiveState=inactive\nResult=success\n"
+                  : `LoadState=loaded\nActiveState=${state.activeState}\nResult=${state.result}\n`,
+              );
+            }),
     });
     const scope = yield* make.pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
@@ -85,7 +95,7 @@ const withFakeSystemd = <A, E>(
       Effect.provideService(HostProcess.Environment, { PATH: bin, XDG_RUNTIME_DIR: "/run/user/1" }),
     );
     const { stateDir } = yield* ServerConfig.ServerConfig;
-    return yield* body({ scope, units, calls, stateDir }).pipe(
+    return yield* body({ scope, units, calls, stateDir, manager }).pipe(
       Effect.ensuring(Effect.sync(() => NodeFS.rmSync(bin, { recursive: true, force: true }))),
     );
   }).pipe(
@@ -170,6 +180,20 @@ describe("AgentScope service", () => {
         }
         units.set(unitOf(live), { activeState: "failed", result: "oom-kill" });
         expect(yield* scope.oomKilled("live")).toBe(true);
+      }),
+    ),
+  );
+
+  it.effect("probes systemd again after its user manager missed the timeout", () =>
+    withFakeSystemd(({ scope, manager }) =>
+      Effect.gen(function* () {
+        manager.stalled = true;
+        const first = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        expect(unitOf(first)).toBe("");
+        manager.stalled = false;
+        const second = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        expect(unitOf(second)).not.toBe("");
+        expect(second.args).toContain("--property=OOMPolicy=stop");
       }),
     ),
   );
