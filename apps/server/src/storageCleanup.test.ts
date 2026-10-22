@@ -1675,29 +1675,48 @@ describe("storage cleanup reports and local file policies", () => {
         }),
       ),
   );
-  it.live.each([false, true])("cleans sparse worktrees safely, excluded edit=%s", (edited) =>
-    runCleanupTest(
-      Effect.gen(function* () {
-        const { service, fs, worktree, command } = yield* cleanupFixture();
-        yield* fs.makeDirectory(`${worktree}/excluded`);
-        yield* fs.writeFileString(`${worktree}/excluded/local.txt`, "original\n");
-        yield* command(worktree, ["add", "."]);
-        yield* command(worktree, ["commit", "-m", "add excluded file"]);
-        yield* command(worktree, ["sparse-checkout", "set", "--cone", "included"]);
-        yield* command(worktree, ["config", "sparse.expectFilesOutsideOfPatterns", "true"]);
-        if (edited) {
+  it.live.each([
+    { edited: false, sparseIndex: false },
+    { edited: true, sparseIndex: false },
+    { edited: false, sparseIndex: true },
+    { edited: true, sparseIndex: true },
+  ])(
+    "cleans sparse worktrees safely, excluded edit=$edited, sparse index=$sparseIndex",
+    ({ edited, sparseIndex }) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, fs, worktree, command } = yield* cleanupFixture();
           yield* fs.makeDirectory(`${worktree}/excluded`);
-          yield* fs.writeFileString(`${worktree}/excluded/local.txt`, "hidden edit\n");
-        }
+          yield* fs.writeFileString(`${worktree}/excluded/local.txt`, "original\n");
+          yield* command(worktree, ["add", "."]);
+          yield* command(worktree, ["commit", "-m", "add excluded file"]);
+          yield* command(worktree, [
+            "sparse-checkout",
+            "set",
+            "--cone",
+            ...(sparseIndex ? ["--sparse-index"] : []),
+            "included",
+          ]);
+          if (sparseIndex) {
+            const entries = yield* command(worktree, ["ls-files", "--sparse", "-v"]);
+            expect(entries.stdout).toContain("S excluded/");
+          }
+          yield* command(worktree, ["config", "sparse.expectFilesOutsideOfPatterns", "true"]);
+          if (edited) {
+            yield* fs.makeDirectory(`${worktree}/excluded`);
+            yield* fs.writeFileString(`${worktree}/excluded/local.txt`, "hidden edit\n");
+          }
 
-        const report = yield* service.runNow;
+          const report = yield* service.runNow;
 
-        expect(report.entries[0]?.outcome).toBe(edited ? "kept" : "removed");
-        if (edited)
-          expect(yield* fs.readFileString(`${worktree}/excluded/local.txt`)).toBe("hidden edit\n");
-        else expect(yield* fs.exists(worktree)).toBe(false);
-      }),
-    ),
+          expect(report.entries[0]?.outcome).toBe(edited ? "kept" : "removed");
+          if (edited)
+            expect(yield* fs.readFileString(`${worktree}/excluded/local.txt`)).toBe(
+              "hidden edit\n",
+            );
+          else expect(yield* fs.exists(worktree)).toBe(false);
+        }),
+      ),
   );
   it.live("preserves a dangling tracked link hidden by skip-worktree", () =>
     runCleanupTest(

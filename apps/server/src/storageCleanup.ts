@@ -564,7 +564,7 @@ const make = Effect.gen(function* () {
     const index = yield* git.execute({
       operation: "StorageCleanup.indexFlags",
       cwd,
-      args: ["ls-files", "-v", "-z"],
+      args: ["ls-files", "--sparse", "-v", "-z"],
       maxOutputBytes: 16 * 1024 * 1024,
     });
     if (index.stdoutTruncated) return "index flags exceed the inspection limit";
