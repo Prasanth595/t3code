@@ -172,6 +172,7 @@ export const make = Effect.gen(function* () {
     id: row.projectId,
     title: row.title,
     workspaceRoot: row.workspaceRoot,
+    groupingIdentity: row.groupingIdentity,
     repositoryIdentity: enrichment?.repositoryIdentity ?? null,
     faviconPath: row.faviconPath ?? enrichment?.faviconPath ?? null,
     defaultModelSelection: row.defaultModelSelection,
@@ -349,6 +350,9 @@ export const make = Effect.gen(function* () {
         projectId: input.projectId,
         title: input.title,
         workspaceRoot,
+        ...(input.groupingIdentity === undefined
+          ? {}
+          : { groupingIdentity: input.groupingIdentity }),
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
       });
       yield* projectEnrichment.invalidate([workspaceRoot]);
@@ -385,6 +389,9 @@ export const make = Effect.gen(function* () {
         ...(input.defaultThreadEnvMode === undefined
           ? {}
           : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
+        ...(input.groupingIdentity === undefined
+          ? {}
+          : { groupingIdentity: input.groupingIdentity }),
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
       });
       if (workspaceRoot !== previousRoot) {

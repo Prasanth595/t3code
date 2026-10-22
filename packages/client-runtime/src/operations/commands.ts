@@ -47,6 +47,7 @@ export interface CreateProjectInput extends CommandMetadata {
   readonly workspaceRoot: string;
   readonly createWorkspaceRootIfMissing?: boolean;
   readonly defaultModelSelection?: ModelSelection | null;
+  readonly groupingIdentity?: string | null;
   readonly scripts?: ReadonlyArray<ProjectScript>;
 }
 
@@ -59,6 +60,7 @@ export interface UpdateProjectInput extends CommandMetadata {
   readonly projectIcon?: ProjectIconOverride | null;
   readonly faviconPath?: string | null;
   readonly defaultThreadEnvMode?: ThreadEnvMode | null;
+  readonly groupingIdentity?: string | null;
   readonly scripts?: ReadonlyArray<ProjectScript>;
 }
 
@@ -307,6 +309,7 @@ const mutateProject = Effect.fn("EnvironmentCommands.mutateProject")(function* (
         readonly workspaceRoot: string;
         readonly createWorkspaceRootIfMissing?: boolean;
         readonly defaultModelSelection?: ModelSelection | null;
+        readonly groupingIdentity?: string | null;
         readonly scripts?: ReadonlyArray<ProjectScript>;
       }
     | {
@@ -316,6 +319,7 @@ const mutateProject = Effect.fn("EnvironmentCommands.mutateProject")(function* (
         readonly title?: string;
         readonly workspaceRoot?: string;
         readonly defaultModelSelection?: ModelSelection | null;
+        readonly groupingIdentity?: string | null;
         readonly scripts?: ReadonlyArray<ProjectScript>;
       }
     | {
@@ -343,6 +347,7 @@ export const createProject = Effect.fn("EnvironmentCommands.createProject")(func
     ...(input.defaultModelSelection === undefined
       ? {}
       : { defaultModelSelection: input.defaultModelSelection }),
+    ...(input.groupingIdentity === undefined ? {} : { groupingIdentity: input.groupingIdentity }),
     ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
   });
 });
@@ -365,6 +370,7 @@ export const updateProject = Effect.fn("EnvironmentCommands.updateProject")(func
     ...(input.defaultThreadEnvMode === undefined
       ? {}
       : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
+    ...(input.groupingIdentity === undefined ? {} : { groupingIdentity: input.groupingIdentity }),
     ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
   });
 });
