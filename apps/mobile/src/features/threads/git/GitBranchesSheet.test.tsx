@@ -1,7 +1,7 @@
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vite-plus/test";
@@ -59,9 +59,11 @@ vi.mock("../../../state/vcs", () => ({ vcsEnvironment: { status: () => null } })
 import { GitBranchesSheet } from "./GitBranchesSheet";
 
 it("recognizes both the main checkout and a linked worktree as this thread's checkout", () => {
-  const directory = realpathSync(mkdtempSync(join(tmpdir(), "branch-occupancy-")));
+  const directory = NodeFS.realpathSync(
+    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "branch-occupancy-")),
+  );
   const git = (...args: string[]) =>
-    execFileSync("git", ["-c", "commit.gpgsign=false", ...args], {
+    NodeChildProcess.execFileSync("git", ["-c", "commit.gpgsign=false", ...args], {
       cwd: directory,
       encoding: "utf8",
       stdio: "pipe",
@@ -78,7 +80,7 @@ it("recognizes both the main checkout and a linked worktree as this thread's che
       "-m",
       "initial",
     );
-    const linked = join(directory, "linked");
+    const linked = NodePath.join(directory, "linked");
     git("worktree", "add", "-b", "feature/linked", linked);
     git("branch", "feature/available");
     checkout.projectRoot = directory;
@@ -98,8 +100,6 @@ it("recognizes both the main checkout and a linked worktree as this thread's che
       const html = renderToStaticMarkup(
         <GitBranchesSheet
           route={{
-            key: "branches",
-            name: "GitBranches",
             params: { environmentId: "environment-1", threadId: "thread-1" },
           }}
         />,
@@ -127,6 +127,6 @@ it("recognizes both the main checkout and a linked worktree as this thread's che
       { name: "main", subtitle: "Checked out in another worktree", disabled: true },
     ]);
   } finally {
-    rmSync(directory, { recursive: true, force: true });
+    NodeFS.rmSync(directory, { recursive: true, force: true });
   }
 });
