@@ -1159,6 +1159,7 @@ const certificateError = {
   code: -202,
   description: "ERR_CERT_AUTHORITY_INVALID",
 };
+const dataUrl = `data:text/html,${"PAYLOAD".repeat(300)}`;
 
 it.live("reports why a page failed to load while the tab shows the error page", () =>
   Effect.scoped(
@@ -1202,6 +1203,11 @@ it.live("reports why a page failed to load while the tab shows the error page", 
       page.emit("request", { ...request, url: () => "https://device.local/login" });
       expect(yield* status()).not.toHaveProperty("loadError");
       expect(yield* snapshot()).not.toHaveProperty("loadError");
+
+      const dataRequest = { ...request, url: () => dataUrl };
+      page.emit("request", dataRequest);
+      page.emit("requestfailed", dataRequest);
+      expect((yield* status()).loadError?.url).toBe("data:text/html,…");
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -1235,6 +1241,8 @@ it.live("reports a desktop tab's load failure from before the server connected",
         });
       expect((yield* status()).loadError).toEqual(certificateError);
       expect((yield* snapshot()).loadError).toEqual(certificateError);
+      desktopLoadFailures.set(opened.tabId, { ...certificateError, url: dataUrl });
+      expect((yield* status()).loadError?.url).toBe("data:text/html,…");
       // A navigation the server sees supersedes it, even before the error page goes.
       page.emit("request", {
         url: () => "https://device.local/retry",

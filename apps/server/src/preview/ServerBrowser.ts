@@ -850,15 +850,9 @@ const make = Effect.gen(function* () {
       }
       tab.loading = false;
       const { code, description } = ServerBrowserPage.parseNetError(errorText);
-      const url = request.url().slice(0, 2048);
+      const url = ServerBrowserPage.withoutDataPayload(request.url()).slice(0, 2048);
       tab.loadError = { url, code, description };
-      report(tab, {
-        _tag: "LoadFailed",
-        url: ServerBrowserPage.withoutDataPayload(request.url()).slice(0, 2048),
-        title: "",
-        code,
-        description,
-      });
+      report(tab, { _tag: "LoadFailed", url, title: "", code, description });
     });
     page.on("response", (response) => {
       pushBounded(tab.networkEntries, {
@@ -1365,7 +1359,12 @@ const make = Effect.gen(function* () {
     const reported = await Effect.runPromise(
       desktopChannel.loadFailure({ threadId: tab.threadId, tabId: tab.tabId }),
     );
-    return Option.getOrUndefined(reported);
+    return Option.getOrUndefined(
+      Option.map(reported, (error) => ({
+        ...error,
+        url: ServerBrowserPage.withoutDataPayload(error.url),
+      })),
+    );
   };
 
   const statusWithTitle = async (
