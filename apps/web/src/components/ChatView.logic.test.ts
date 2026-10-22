@@ -1245,6 +1245,31 @@ describe("deriveThreadPendingBackgroundTasks", () => {
   it("leaves the running turn's own subagents to the timeline", () => {
     expect(deriveThreadPendingBackgroundTasks(projection(2))).toEqual([]);
   });
+
+  it("leaves the running turn's subagents to the timeline when the provider also lists them", () => {
+    const base = projection(2);
+    const fixture = {
+      ...base,
+      thread: { ...base.thread, activeProviderThreadId: null },
+      providerThreads: [
+        {
+          id: "provider-thread",
+          providerInstanceId: "opencode",
+          pendingBackgroundTasks: [
+            { taskId: "earlier", kind: "subagent", description: "Audit" },
+            { taskId: "follow-up", kind: "subagent", description: "Review" },
+          ],
+        },
+      ],
+      turnItems: base.turnItems.map((item) => ({
+        ...item,
+        nativeItemRef: { nativeId: "follow-up" },
+      })),
+    } as unknown as ReturnType<typeof makeThreadProjectionFixture>;
+    expect(deriveThreadPendingBackgroundTasks(fixture)).toEqual([
+      { taskId: "earlier", kind: "subagent", providerInstanceId: "opencode", description: "Audit" },
+    ]);
+  });
 });
 
 describe("deriveWorkspaceMutationId", () => {
