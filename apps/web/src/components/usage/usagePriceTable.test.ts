@@ -136,7 +136,6 @@ describe("price table edits", () => {
   });
 });
 
-
 describe("model mapping validation", () => {
   const mapping = (model: string, alias: string): UsagePriceDraft => ({
     id: `model:${model}`,
@@ -166,10 +165,15 @@ describe("model mapping validation", () => {
     const environment = target("local", {}, { constructor: "__proto__" });
     const clear = mapping("constructor", "");
     const reverse = mapping("__proto__", "constructor");
-    for (const edits of [[reverse, clear], [clear, reverse]]) {
+    for (const edits of [
+      [reverse, clear],
+      [clear, reverse],
+    ]) {
       const result = usagePriceTableChanges(environment, edits);
       expect(result.errors.size).toBe(0);
-      expect(result.changes).toEqual(edits.map(({ model, alias }) => ({ model, alias: alias || null })));
+      expect(result.changes).toEqual(
+        edits.map(({ model, alias }) => ({ model, alias: alias || null })),
+      );
     }
   });
 });
