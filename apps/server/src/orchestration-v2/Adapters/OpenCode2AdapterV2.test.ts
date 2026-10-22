@@ -2205,6 +2205,44 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("continues a reply still streaming at reconnect from its recovered text", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+        promptAccepted,
+        ...reconnected({ [SESSION]: { type: "running" } }, undefined, {
+          content: [{ type: "text", text: "Sent while the stream" }],
+          finish: undefined,
+        }),
+        ...openRequests([]),
+        event("session.text.delta", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_assistant_gap",
+          ordinal: 0,
+          delta: " was down.",
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const collected = yield* Fiber.join(events);
+      const texts = collected.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+          ? [event.turnItem.text]
+          : [],
+      );
+      assert.deepEqual(texts, [
+        "Sent while the stream",
+        "Sent while the stream was down.",
+        "Sent while the stream was down.",
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("shows a permission asked while the stream was down, and answers it", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed(

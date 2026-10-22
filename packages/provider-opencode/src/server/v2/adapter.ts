@@ -2562,10 +2562,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       for (const message of recent.toReversed()) {
         if (message.type !== "assistant" || state.active !== turn) continue;
         const ordinals = { text: 0, reasoning: 0 };
-        for (const part of message.content) {
+        for (const [index, part] of message.content.entries()) {
           if (part.type === "text" || part.type === "reasoning") {
             const block = { assistantMessageID: message.id, ordinal: ordinals[part.type]++ };
-            yield* emitText(state, turn, block, part.type, () => part.text, true);
+            // The last block of a response still streaming keeps its text for the next delta.
+            const open =
+              message.time.streamed === undefined && index === message.content.length - 1;
+            yield* emitText(state, turn, block, part.type, () => part.text, !open);
             continue;
           }
           if (part.type !== "tool") continue;
