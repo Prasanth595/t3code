@@ -107,6 +107,10 @@ import {
   type IssueSummary,
 } from "./tracker/github.ts";
 
+// server.ts imports this module before it builds a layer, so from here on a full disk under
+// launchd drops log lines instead of ending the server, during startup too.
+guardLogStreams();
+
 export type { FactoryStatus } from "./status.ts";
 
 export type { RepoConfigReading } from "./config.ts";
@@ -1012,13 +1016,8 @@ export const factoryRuntime = (options: RuntimeOptions = {}) =>
 
 export const FactoryRuntime = factoryRuntime();
 
-/**
- * The factory's root layer. server.ts merges it into the runtime; nothing else imports it. It
- * guards stdout and stderr before the factory starts, so a full disk under launchd drops log
- * lines instead of ending the server.
- */
+/** The factory's root layer. server.ts merges it into the runtime; nothing else imports it. */
 export const FactoryLayer = FactoryRuntime.pipe(
-  Layer.provideMerge(Layer.effectDiscard(Effect.sync(guardLogStreams))),
   Layer.provideMerge(Paths.layer),
   Layer.provideMerge(ServerExitService.layer),
   Layer.provide(Gate.layer),

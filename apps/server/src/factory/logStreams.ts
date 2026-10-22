@@ -42,13 +42,13 @@ export const guardLogStream = (
   const write = stream.write.bind(stream);
   stream.write = ((
     chunk: string | Uint8Array,
-    encoding?: BufferEncoding | ((error?: Error | null) => void),
+    encodingOrDone?: BufferEncoding | ((error?: Error | null) => void),
     callback?: (error?: Error | null) => void,
   ) => {
+    const encoding = typeof encodingOrDone === "function" ? undefined : encodingOrDone;
+    const done = typeof encodingOrDone === "function" ? encodingOrDone : callback;
     if (!broken && !stream.destroyed && stream.writableErrored === null) {
-      return typeof encoding === "function"
-        ? write(chunk, encoding)
-        : write(chunk, encoding as BufferEncoding, callback);
+      return encoding === undefined ? write(chunk, done) : write(chunk, encoding, done);
     }
     broken = true;
     try {
@@ -56,20 +56,16 @@ export const guardLogStream = (
         writeFd(fd, `${dropped} log lines dropped (${code})\n`);
         dropped = 0;
       }
-      writeFd(
-        fd,
-        typeof chunk === "string" ? Buffer.from(chunk, encoding as BufferEncoding) : chunk,
-      );
+      writeFd(fd, typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk);
     } catch (error) {
       drop(error);
     }
-    const done = typeof encoding === "function" ? encoding : callback;
     if (done !== undefined) process.nextTick(done);
     return true;
   }) as Writable["write"];
 };
 
-/** Guards the process's stdout and stderr. Called once at startup, by FactoryLayer. */
+/** Guards the process's stdout and stderr. `index.ts` calls it when server.ts imports it. */
 export const guardLogStreams = (): void => {
   guardLogStream(process.stdout, 1);
   guardLogStream(process.stderr, 2);
