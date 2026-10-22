@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
 
 import {
   formatReviewCommentContext,
@@ -42,6 +43,52 @@ function makeTarget(): ReviewCommentTarget {
 }
 
 describe("review comment serialization", () => {
+  it("reads an added review comment after the composer upgrades it to a context chip", () => {
+    const upgraded = upgradeLegacyContextMessage(
+      formatReviewCommentContext(makeTarget(), "Please keep this configurable."),
+    );
+    const comments = parseReviewInlineComments(upgraded.text, {
+      version: 1,
+      records: upgraded.records,
+    });
+
+    expect(comments).toEqual([
+      {
+        id: upgraded.records[0]!.contextId,
+        sectionId: "section-1",
+        sectionTitle: "Working tree",
+        filePath: "apps/demo/src/main.ts",
+        startIndex: 0,
+        endIndex: 1,
+        rangeLabel: "7",
+        text: "Please keep this configurable.",
+        diff: "@@ -7,1 +7,1 @@\n-const retryLimit = 2;\n+const retryLimit = 4;",
+        fenceLanguage: "diff",
+      },
+    ]);
+  });
+
+  it("keeps legacy comments and counts a typed comment only while its chip is present", () => {
+    const upgraded = upgradeLegacyContextMessage(
+      formatReviewCommentContext(makeTarget(), "Typed comment"),
+    );
+    const context = { version: 1, records: upgraded.records } as const;
+    const legacy = formatReviewCommentContext(makeTarget(), "Legacy comment");
+    const comments = parseReviewInlineComments(
+      `${legacy}\n${upgraded.text}\n${upgraded.text}`,
+      context,
+    );
+
+    expect(comments.map((comment) => comment.text)).toEqual(["Legacy comment", "Typed comment"]);
+    expect(parseReviewInlineComments(legacy, context).map((comment) => comment.text)).toEqual([
+      "Legacy comment",
+    ]);
+    expect(parseReviewInlineComments("", context)).toEqual([]);
+    expect(
+      parseReviewInlineComments(upgraded.text.replace("/review-comment/", "/mention/"), context),
+    ).toEqual([]);
+  });
+
   it("keeps closing-tag text inside a chip label within a real review body", () => {
     const body = "Before [</review_comment>](t3-context://v1/mention/context-1) after";
     const serialized = `<review_comment sectionId="s" filePath="app.ts" startIndex="0" endIndex="0">${body}</review_comment>`;
