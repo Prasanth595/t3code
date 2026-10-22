@@ -21,8 +21,9 @@ GitHub is the source of truth. [git.cafe/pingdotgg/t3code](https://git.cafe/ping
 two-way synced mirror with much higher API rate limits, which helps when many agents read PRs and
 issues at once. You never need it to contribute.
 
-The mirror has no CI, so it is for reads only. Fetch and read through GitCafe; push and open PRs on
-GitHub, and GitCafe mirrors them within about a minute.
+Comments, reviews, labels, and issue edits made on GitCafe sync back to GitHub. The exception is
+code: CI runs only on GitHub, so push branches and open PRs there. GitCafe mirrors a new PR within
+about a minute, and from then on you can work with it through either forge.
 
 ```sh
 git remote set-url origin https://git.cafe/pingdotgg/t3code.git
@@ -36,17 +37,18 @@ cafe skills install --global  # optional: cafe-* skills for coding agents
 
 With `origin` on git.cafe:
 
-- Read PRs, issues, comments, reviews, and check status with `cafe`; checks come from
-  `cafe pr status <n> --json`.
-- Push, open PRs, run stacks, and merge on GitHub: `git push` (via `pushDefault`), `gh pr create`,
-  `gh stack`, `gh pr merge <branch> --match-head-commit <sha>`. Never `cafe pr create` or
-  `cafe stack submit`: those PRs get no CI.
-- Use `gh` for what the mirror lacks: CI logs and reruns, PR labels, a fork PR's head repository,
-  and anything `cafe` returns empty or 403/404 for.
+- Use `cafe` for PRs, issues, comments, reviews, and labels, both reading and writing. Check status
+  comes from `cafe pr status <n> --json`.
+- Create PRs on GitHub: `git push` (to the `pushDefault` remote), then `gh pr create` or `gh stack`.
+  Never `cafe pr create` or `cafe stack submit`, because those PRs get no CI.
+- Merge with `gh pr merge <branch> --match-head-commit <sha>`. `cafe pr merge` has no head lock.
+- Use `gh` where the mirror falls short: CI logs and reruns, a fork PR's head repository, and
+  anything `cafe` returns empty or 403/404 for.
 - PR and issue numbers can differ between the forges. Name PRs by branch
   (`cafe pr list --head <branch>`, `gh pr view <branch>`), and write `Fixes #<GitHub number>`.
 - `cafe` flags differ from `gh`: `--repo` not `-R`, `cafe issue comments <n>` not `--comments`,
-  `cafe pr status` not `pr checks`. `cafe ci` covers GitCafe Actions only, so it is empty here.
+  `cafe pr status` not `pr checks`. `cafe ci` only lists GitCafe Actions runs, which this repo
+  doesn't have, so it comes back empty here. `cafe api` paths omit `/api` (`cafe api /repos/...`).
 
 ## Choosing a dev process
 
