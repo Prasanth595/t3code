@@ -59,6 +59,7 @@ vi.mock("../state/entities", async (original) => ({
   useProjects: () => [],
   useThreadShells: () => [],
   useServerConfigs: () => new Map(),
+  waitForProject: async () => undefined,
 }));
 vi.mock("../state/queries", async (original) => ({
   ...(await original<typeof import("../state/queries")>()),
@@ -71,7 +72,7 @@ vi.mock("../state/session", async (original) => ({
 }));
 vi.mock("../state/filesystem", async (original) => ({
   ...(await original<typeof import("../state/filesystem")>()),
-  useFilesystemReadAccess: () => ({ allowed: true }),
+  useFilesystemReadAccess: () => ({ canReadFiles: true, isPending: false, error: null }),
 }));
 vi.mock("../state/query", async (original) => ({
   ...(await original<typeof import("../state/query")>()),
@@ -89,7 +90,7 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
   ])("keeps Enter in the input during composition: %j", async (composition) => {
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
     await act(() => openCommandPalette({ open: "add-project" }));
-    await page.getByText(step === "folder" ? "Local folder" : "Clone from URL", { exact: true }).click();
+    await page.getByText(step === "folder" ? "Local folder" : "Git URL", { exact: true }).click();
     const input = () => page.getByRole("combobox");
     if (step === "destination") {
       await input().fill("https://example.com/team/project.git");
