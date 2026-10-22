@@ -6,8 +6,8 @@ document builder and serializer and dispatches through the real EditorView.
 It does not synthesize editor DOM or keyboard events.
 
 ```js
-window.fixture =
-  await import("/@fs/home/ubuntu/wt/issue-17124/scripts/fixtures/issue-17124/seed.js");
+const worktreePath = "/absolute/path/to/your/worktree";
+window.fixture = await import(`/@fs${worktreePath}/scripts/fixtures/issue-17124/seed.js`);
 await fixture.seed(fixture.fixtures.A[0]);
 // Use preview_press for Tab, X, Shift+Enter, and Backspace.
 await fixture.observe();
@@ -19,8 +19,10 @@ marker prefixes normalize to the reachable content position. Seed returns both
 requested and canonical text so a capture can report normalization.
 
 `installRpc(environmentId)` binds normal guarded app commands to the isolated
-environment. `createFixtureThread(rpc, projectId)` creates an empty synthetic
-thread in this worktree. `stageRenderedFixture(rpc, threadId)` takes the current
+environment. `createFixtureThread(rpc, projectId, worktreePath)` creates an empty
+synthetic thread in the supplied absolute worktree path. Use the isolated server's
+worktree path for `worktreePath` in both the module import and thread creation.
+`stageRenderedFixture(rpc, threadId)` takes the current
 serialized composer text, dispatches it with `defer_start`, then interrupts the
 prepared run with its queue held. Never release the prepared run: this path is
 for inspecting the real message renderer without starting a provider. Use a

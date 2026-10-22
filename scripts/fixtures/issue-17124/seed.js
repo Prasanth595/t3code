@@ -52,7 +52,7 @@ export async function observe() {
 
 export async function installRpc(environmentId) {
   const { createEnvironmentRpcCommand } =
-    await import("/@fs/home/ubuntu/wt/issue-17124/packages/client-runtime/src/state/runtime.ts");
+    await import("../../../packages/client-runtime/src/state/runtime.ts");
   const { connectionAtomRuntime } = await import("/src/connection/runtime.ts");
   const { appAtomRegistry } = await import("/src/rpc/atomRegistry.ts");
   return (input) =>
@@ -62,7 +62,7 @@ export async function installRpc(environmentId) {
     }).run(appAtomRegistry, { environmentId, input: { commandId: crypto.randomUUID(), ...input } });
 }
 
-export async function createFixtureThread(rpc, projectId) {
+export async function createFixtureThread(rpc, projectId, worktreePath) {
   const threadId = `list-evidence-${crypto.randomUUID()}`;
   const result = await rpc({
     type: "thread.create",
@@ -73,7 +73,7 @@ export async function createFixtureThread(rpc, projectId) {
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: "fix/issue-17124",
-    worktreePath: "/home/ubuntu/wt/issue-17124",
+    worktreePath,
     createdBy: "user",
     creationSource: "web",
   });
