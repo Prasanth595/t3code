@@ -151,6 +151,8 @@ export const OrchestrationV2ProviderRef = Schema.Struct({
 export type OrchestrationV2ProviderRef = typeof OrchestrationV2ProviderRef.Type;
 
 export const OrchestrationV2AppThreadLineage = Schema.Struct({
+  /** Present only for app-owned workflow members, including check agents. */
+  workflowId: Schema.optional(NodeId),
   parentThreadId: Schema.NullOr(ThreadId),
   relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
   rootThreadId: ThreadId,
@@ -784,8 +786,21 @@ export const OrchestrationV2WorkflowPhase = Schema.Struct({
 });
 export type OrchestrationV2WorkflowPhase = typeof OrchestrationV2WorkflowPhase.Type;
 
+export const WorkflowAgentOutcomeCategory = Schema.Literals([
+  "never_started",
+  "timed_out",
+  "cancelled",
+  "provider_error",
+  "check_failed",
+  "completed",
+]);
+export type WorkflowAgentOutcomeCategory = typeof WorkflowAgentOutcomeCategory.Type;
+
 /** Nested timestamps use epoch milliseconds; only top-level DateTimeUtc fields are remapped for JSON. */
 export const OrchestrationV2WorkflowAgent = Schema.Struct({
+  attemptTaskIds: Schema.optional(Schema.Array(NodeId)),
+  outcomeCategory: Schema.optional(WorkflowAgentOutcomeCategory),
+  runnerSettledAt: Schema.optional(NonNegativeInt),
   index: NonNegativeInt,
   label: TrimmedNonEmptyString,
   agentId: Schema.optional(TrimmedNonEmptyString),
