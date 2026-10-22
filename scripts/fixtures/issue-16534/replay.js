@@ -44,6 +44,17 @@
       (t) =>
         t.id.startsWith("triage-") && (options.lineage || !/^triage-A-(9|10|11|12)$/.test(t.id)),
     );
+    if (options.shelf === "settled") {
+      const source = snapshot.threads.find((t) => t.id === "triage-A-8");
+      for (let i = 13; i <= 26; i++)
+        snapshot.threads.push({
+          ...source,
+          id: "triage-A-" + i,
+          title: "Triage A thread " + i,
+          latestMessageAt: "2026-10-21T23:" + String(i).padStart(2, "0") + ":00.000Z",
+          updatedAt: "2026-10-21T23:" + String(i).padStart(2, "0") + ":00.000Z",
+        });
+    }
     snapshot.projects = snapshot.projects?.filter((p) => p.id?.startsWith("triage-")) || [];
     shellSequence = snapshot.snapshotSequence;
     if (options.delay) {

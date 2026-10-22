@@ -75,6 +75,11 @@ def main():
         messages.append(dict(id=f'triage-link-{group}',threadId=f'triage-{group}-8',runId=None,nodeId=None,role='assistant',text=text,attachments=[],streaming=False,createdAt=CLOCK,updatedAt=CLOCK,createdBy='agent',creationSource='web'))
     message_values = ['(' + ','.join(map(quote,[m['id'],m['threadId'],None,None,m['role'],0,CLOCK,CLOCK,encoded(m)])) + ')' for m in messages]
     (args.output/'messages.sql').write_text('INSERT OR REPLACE INTO orchestration_v2_projection_messages (message_id,thread_id,run_id,node_id,role,streaming,created_at,updated_at,payload_json) VALUES ' + ','.join(message_values) + ';\n')
+    item_values = []
+    for m in messages:
+        item=dict(id=m['id']+'-item',threadId=m['threadId'],runId=None,nodeId=None,providerThreadId=None,providerTurnId=None,nativeItemRef=None,parentItemId=None,ordinal=0,status='completed',title=None,startedAt=CLOCK,completedAt=CLOCK,updatedAt=CLOCK,type='assistant_message',messageId=m['id'],text=m['text'],streaming=False)
+        item_values.append('(' + ','.join(map(quote,[item['id'],item['threadId'],None,None,None,None,None,0,'assistant_message','completed',CLOCK,encoded(item)])) + ')')
+    (args.output/'turn-items.sql').write_text('INSERT OR REPLACE INTO orchestration_v2_projection_turn_items (turn_item_id,thread_id,run_id,node_id,provider_thread_id,provider_turn_id,parent_item_id,ordinal,type,status,updated_at,payload_json) VALUES '+','.join(item_values)+';\n')
     # One statement, so the state helper can apply it as one atomic transaction.
     project_values = []
     for group in projects:
@@ -96,6 +101,8 @@ def main():
     (args.output/'fixture.json').write_text(encoded(fixture)+'\n')
     digest = hashlib.sha256(encoded(fixture).encode()).hexdigest()
     (args.output/'sha256.txt').write_text(digest+'\n')
+    from transcript import write_transcript
+    write_transcript(args.output)
     print(digest)
 
 

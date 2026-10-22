@@ -5,7 +5,8 @@ fixtures prove rendering/navigation, not event-sourced backend behavior.
 Generate with `python3 scripts/fixtures/issue-16534/seed.py --output /tmp/sidebar-seed
 --variant all`. Stop the isolated server before applying reset-threads.sql,
 archive-unrelated-threads.sql, hide-v1-threads.sql, hide-unrelated-projects.sql,
-projects.sql, threads.sql and messages.sql, in that order, with the documented
+projects.sql, threads.sql, messages.sql, turn-items.sql, transcript-runs.sql,
+transcript-messages.sql and transcript-turn-items.sql, in that order, with the documented
 `t3-sqlite-state.ts exec` helper, once per file. Never target the live T3 home.
 
 `all` includes two eight-thread projects, forty spacers, child/grandchild/fork
