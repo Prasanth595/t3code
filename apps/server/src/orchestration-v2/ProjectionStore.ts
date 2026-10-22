@@ -83,6 +83,7 @@ import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as SqlClient from "effect/sql/SqlClient";
 import type * as Statement from "effect/sql/Statement";
 
@@ -5245,6 +5246,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       filter,
     ) =>
       sql.withTransaction(readCanonicalProjection(threadId, undefined, fields, filter)).pipe(
+        // The MCP read path runs this for every thread read. It is a pure
+        // read, so it belongs on the reader connection: on the writer it
+        // contends with the writes that the same load is producing.
+        NodeSqliteClient.readOnly,
         Effect.map(
           (projection) =>
             Object.fromEntries([
@@ -6404,9 +6409,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       );
 
     const getShellSnapshot: ProjectionStoreV2Shape["getShellSnapshot"] = (options) =>
-      sql
-        .withTransaction(readShellSnapshotRows(options))
-        .pipe(Effect.mapError(shellSnapshotReadError), Effect.flatMap(decodeShellSnapshot));
+      sql.withTransaction(readShellSnapshotRows(options)).pipe(
+        // A pure read: the shell list is read far more often than it is
+        // written, and on the writer it queues behind the writes.
+        NodeSqliteClient.readOnly,
+        Effect.mapError(shellSnapshotReadError),
+        Effect.flatMap(decodeShellSnapshot),
+      );
 
     const getThreadShell: ProjectionStoreV2Shape["getThreadShell"] = (threadId) =>
       sql
@@ -6480,7 +6489,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             });
           }),
         )
-        .pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })));
+        .pipe(
+          // A pure read: the shell row for one thread is read on every
+          // thread read, and on the writer it queues behind the writes.
+          NodeSqliteClient.readOnly,
+          Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
+        );
 
     return {
       apply,
