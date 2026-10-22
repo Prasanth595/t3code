@@ -76,6 +76,11 @@ export interface ReviewGuideStackLayer {
   readonly state: "open" | "closed" | "merged";
 }
 
+export interface ReviewGuideEvidence {
+  readonly manifestPath: string;
+  readonly headCommit: string;
+}
+
 export interface ReviewGuideGenerationInput {
   cwd: string;
   number: number;
@@ -86,6 +91,8 @@ export interface ReviewGuideGenerationInput {
   settledReview: string;
   instructions?: string | undefined;
   stack?: ReadonlyArray<ReviewGuideStackLayer> | undefined;
+  /** Prepared only on demand, within the host's checkout scope. */
+  evidence?: Effect.Effect<ReviewGuideEvidence, TextGenerationError> | undefined;
   modelSelection: ModelSelection;
 }
 

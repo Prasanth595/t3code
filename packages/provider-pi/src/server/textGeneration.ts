@@ -14,6 +14,7 @@ import * as TextGenerationOperations from "@t3tools/provider-core/server/textGen
 const PI_TIMEOUT_MS = 180_000;
 
 const isTextGenerationError = Schema.is(TextGenerationError);
+const encodePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
 export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* (
   piSettings: PiSettings,
@@ -39,12 +40,12 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
         extensionPath: undefined,
         ephemeral: true,
         disableExtensions: true,
-        // Background naming/content helpers must never mutate the workspace.
+        // Investigations add only native file readers after removing user tool selections.
         disableTools: true,
       });
       const connection = yield* makePiRpcConnection({
         command: piSettings.binaryPath || "pi",
-        args: launch.args,
+        args: request.investigate ? [...launch.args, "--tools", "read,grep,find,ls"] : launch.args,
         cwd,
         env: launch.env,
       }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
@@ -105,7 +106,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
     (effect, request) => {
       const { operation } = request;
       return effect.pipe(
-        Effect.timeoutOption(PI_TIMEOUT_MS),
+        Effect.timeoutOption(request.investigate?.timeoutMs ?? PI_TIMEOUT_MS),
         Effect.flatMap(
           Option.match({
             onNone: () =>
@@ -127,8 +128,29 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
     },
   );
 
-  return TextGenerationOperations.fromRunner(
-    "PiTextGeneration",
-    TextGenerationOperations.withoutInvestigation("Pi", runPiJson),
+  const run: TextGenerationOperations.Runner = Effect.fn("PiTextGeneration.run")(
+    function* (request) {
+      if (!request.investigate) return yield* runPiJson(request);
+      if (request.investigate.evidence === undefined) {
+        return yield* new TextGenerationError({
+          operation: request.operation,
+          detail: "Pi review guides require host-prepared Git evidence for the checkout.",
+        });
+      }
+      // Preparation has its own budget and must finish before starting the model's timeout/process.
+      const evidence = yield* request.investigate.evidence;
+      return yield* runPiJson({
+        ...request,
+        prompt: [
+          request.prompt,
+          "",
+          `Host-prepared Git evidence manifest: ${encodePath(evidence.manifestPath)}.`,
+          `Pinned base: ${request.investigate.baseCommit}. Pinned head: ${evidence.headCommit}.`,
+          "Read this manifest first. Chunk filenames are relative to its directory. Investigate using read, grep, find and ls; Git outputs are supplied in the evidence bundle, so no shell is needed. Read surrounding current source from the checkout. Stack comparisons are context only, as required above.",
+        ].join("\n"),
+      });
+    },
   );
+
+  return TextGenerationOperations.fromRunner("PiTextGeneration", run);
 });
