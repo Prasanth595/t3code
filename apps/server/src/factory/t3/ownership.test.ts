@@ -47,9 +47,9 @@ const ownerScript = (statePath: string, home: string) =>
     `  Layer.succeed(HostProcess.HomeDirectory, ${JSON.stringify(home)}),`,
     `  Layer.succeed(HostProcess.Environment, {}),`,
     `).pipe(Layer.provideMerge(NodeServices.layer));`,
-    // A fiber waiting on Effect.never holds no handle, so the open stdin keeps the child, and its
-    // lock, alive until it is killed; it ends with the test runner if the runner dies first.
-    `process.stdin.on("end", () => process.exit()).resume();`,
+    // A fiber waiting on Effect.never holds no handle, so without this the child would exit, and
+    // release the lock, on its own.
+    `setInterval(() => {}, 2 ** 30);`,
     `Effect.runFork(Effect.scoped(Effect.gen(function* () {`,
     `  const owner = yield* acquireServerOwnership(${JSON.stringify(statePath)});`,
     `  yield* owner.publish(yield* makePersistedServerRuntimeState({`,
@@ -70,7 +70,7 @@ const startOwner = (statePath: string, home: string) =>
           const child = NodeChildProcess.spawn(
             process.execPath,
             ["--input-type=module", "--no-warnings", "-e", ownerScript(statePath, home)],
-            { cwd: NodePath.resolve(srcDir, ".."), stdio: ["pipe", "pipe", "pipe"] },
+            { cwd: NodePath.resolve(srcDir, ".."), stdio: ["ignore", "pipe", "pipe"] },
           );
           let stderr = "";
           child.stderr.setEncoding("utf8").on("data", (text: string) => (stderr += text));

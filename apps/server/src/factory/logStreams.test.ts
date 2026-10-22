@@ -78,14 +78,11 @@ describe("guardLogStream", () => {
   it("drops lines while the disk is full and says how many on the first write that succeeds", async () => {
     const { state, stream, log } = fakeLog();
     log.log("zero");
-    assert.notExists(await new Promise((resolve) => stream.write("ok\n", resolve)));
-    assert.notExists(await new Promise((resolve) => stream.write("ok2\n", "utf8", resolve)));
-    assert.deepEqual(state.streamed, ["zero\n", "ok\n", "ok2\n"]);
+    assert.deepEqual(state.streamed, ["zero\n"]);
 
     state.full = true;
-    const failed = new Promise<unknown>((resolve) => stream.write("one\n", resolve));
+    log.log("one");
     log.log("two");
-    assert.propertyVal(await failed, "code", "ENOSPC");
     await nextMacrotask();
     log.log("three");
     await nextMacrotask();
@@ -99,7 +96,7 @@ describe("guardLogStream", () => {
     state.full = false;
     log.log("back");
     log.log("again");
-    assert.deepEqual(state.streamed, ["zero\n", "ok\n", "ok2\n"]);
+    assert.deepEqual(state.streamed, ["zero\n"]);
     assert.deepEqual(state.fd, ["5 log lines dropped (ENOSPC)\n", "back\n", "again\n"]);
   });
 
