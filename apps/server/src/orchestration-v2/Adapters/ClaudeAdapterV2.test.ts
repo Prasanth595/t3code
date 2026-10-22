@@ -7311,7 +7311,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* harness.start();
         yield* harness.offer(harness.taskStarted());
         yield* harness.settle();
-        assert.equal((yield* harness.request("auditor"))?.behavior, "allow");
+        // Under bypass, the CLI forwards only requests that need a person's decision.
+        yield* harness.approve("auditor", "accept");
         assert.equal((yield* harness.request("another-agent"))?.behavior, "deny");
         assert.equal((yield* harness.request("auditor", AbortSignal.abort()))?.behavior, "deny");
         yield* harness.start();
@@ -7319,7 +7320,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         // Older runs still stream work, but only the latest settled run ingests approvals.
         assert.equal((yield* harness.request("auditor"))?.behavior, "deny");
         assert.equal((yield* harness.request(undefined))?.behavior, "deny");
-        assert.isFalse(harness.events.some((event) => event.type === "runtime_request.updated"));
+        assert.equal(
+          harness.events.filter((event) => event.type === "runtime_request.updated").length,
+          1,
+        );
       }).pipe(
         Effect.scoped,
         Effect.provide(
@@ -7358,7 +7362,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* harness.start();
       yield* harness.offer(harness.taskStarted("replacement-launch"));
       yield* harness.settle();
-      assert.equal((yield* harness.request("auditor"))?.behavior, "allow");
+      yield* harness.approve("auditor", "accept");
       assert.equal((yield* harness.request("auditor", undefined, oldCallback))?.behavior, "deny");
     }).pipe(
       Effect.scoped,
