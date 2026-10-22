@@ -18,7 +18,13 @@ import {
   type EnvironmentServerConfig,
 } from "../connection/presentation.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
-import { hasRelayRoute, hasSavedBearerRoute } from "../connection/routes.ts";
+import {
+  connectionRoutes,
+  hasRelayRoute,
+  hasSavedBearerRoute,
+  isLearned,
+  routeHttpBaseUrl,
+} from "../connection/routes.ts";
 
 function mapsEqual<K, V>(left: ReadonlyMap<K, V>, right: ReadonlyMap<K, V>): boolean {
   if (left.size !== right.size) {
@@ -200,6 +206,14 @@ export interface EnvironmentConnectionSummary {
   readonly connectionErrorTraceId: string | null;
 }
 
+// A paired address can sit behind T3 Connect when the user moves T3 Connect first.
+function savedAddress(entry: EnvironmentPresentation["entry"]): string | null {
+  const route = connectionRoutes(entry).find(
+    (candidate) => !isLearned(candidate) && candidate.target._tag === "BearerConnectionTarget",
+  );
+  return route === undefined ? null : routeHttpBaseUrl(route);
+}
+
 export function projectEnvironmentConnectionSummary(
   environmentId: EnvironmentId,
   environment: EnvironmentPresentation,
@@ -207,7 +221,8 @@ export function projectEnvironmentConnectionSummary(
   return {
     environmentId,
     environmentLabel: environment.entry.target.label,
-    displayUrl: connectionCatalogDisplayUrl(environment.entry) ?? "",
+    displayUrl:
+      connectionCatalogDisplayUrl(environment.entry) ?? savedAddress(environment.entry) ?? "",
     isRelayManaged: hasRelayRoute(environment.entry) && !hasSavedBearerRoute(environment.entry),
     hasRelayRoute: hasRelayRoute(environment.entry),
     isEnabled: environment.entry.enabled,
