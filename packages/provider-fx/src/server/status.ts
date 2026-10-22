@@ -106,22 +106,21 @@ export const buildInitialFxProviderSnapshot = (
     }),
   );
 
-const runFxCli = (
+const runFxCli = Effect.fn("runFxCli")(function* (
   settings: FxSettings,
   args: ReadonlyArray<string>,
   environment: NodeJS.ProcessEnv,
-) =>
-  Effect.gen(function* () {
-    const command = settings.binaryPath || "fx";
-    const spawnCommand = yield* resolveSpawnCommand(command, args, { env: environment });
-    return yield* spawnAndCollect(
-      command,
-      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        env: environment,
-        shell: spawnCommand.shell,
-      }),
-    );
-  });
+) {
+  const command = settings.binaryPath || "fx";
+  const spawnCommand = yield* resolveSpawnCommand(command, args, { env: environment });
+  return yield* spawnAndCollect(
+    command,
+    ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+      env: environment,
+      shell: spawnCommand.shell,
+    }),
+  );
+});
 
 /** `fx status --json` on fx 0.0.13: `auth` names the login method, `missing` when signed out. */
 const FxStatus = Schema.fromJsonString(

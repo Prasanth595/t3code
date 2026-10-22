@@ -126,37 +126,36 @@ export function withFxSessionMode(
     loadSession: (sessionId, options) => activated(runtime.loadSession(sessionId, options)),
     resumeSession: (sessionId, options) => activated(runtime.resumeSession(sessionId, options)),
     forkSession: (sessionId, options) => activated(runtime.forkSession(sessionId, options)),
-    setMode: (requested) =>
-      Effect.gen(function* () {
-        const state = yield* runtime.getModeState;
-        const advertised = state?.availableModes.map((mode) => mode.id) ?? [];
-        const target = fxModeId(requested, advertised);
-        if (target === undefined) {
-          return yield* new EffectAcpErrors.AcpRequestError({
-            code: -32602,
-            errorMessage: `fx cannot run in mode "${requested}"; it advertises ${advertised.join(", ") || "no modes"}.`,
-            data: {
-              configId: FX_MODE_CONFIG_ID,
-              allowedValues: advertised,
-              receivedValue: requested,
-            },
-          });
-        }
-        const sessionId = pendingSessionId;
-        if (sessionId === undefined || state?.currentModeId !== target) {
-          const response = yield* runtime.setMode(target);
-          pendingSessionId = undefined;
-          return response;
-        }
-        yield* runtime.request("session/set_config_option", {
-          sessionId,
-          configId: FX_MODE_CONFIG_ID,
-          value: target,
+    setMode: Effect.fn("setFxMode")(function* (requested) {
+      const state = yield* runtime.getModeState;
+      const advertised = state?.availableModes.map((mode) => mode.id) ?? [];
+      const target = fxModeId(requested, advertised);
+      if (target === undefined) {
+        return yield* new EffectAcpErrors.AcpRequestError({
+          code: -32602,
+          errorMessage: `fx cannot run in mode "${requested}"; it advertises ${advertised.join(", ") || "no modes"}.`,
+          data: {
+            configId: FX_MODE_CONFIG_ID,
+            allowedValues: advertised,
+            receivedValue: requested,
+          },
         });
-        // Only a write fx took counts, so a retried setup sends it again.
+      }
+      const sessionId = pendingSessionId;
+      if (sessionId === undefined || state?.currentModeId !== target) {
+        const response = yield* runtime.setMode(target);
         pendingSessionId = undefined;
-        return {};
-      }),
+        return response;
+      }
+      yield* runtime.request("session/set_config_option", {
+        sessionId,
+        configId: FX_MODE_CONFIG_ID,
+        value: target,
+      });
+      // Only a write fx took counts, so a retried setup sends it again.
+      pendingSessionId = undefined;
+      return {};
+    }),
   };
 }
 
@@ -169,50 +168,48 @@ export function withFxSessionMode(
  * gateway takes any id, and its other backends refuse an unknown one with
  * their own error, so a thread never runs on a model it did not pick.
  */
-export const applyFxModelSelection = (
+export const applyFxModelSelection = Effect.fn("applyFxModelSelection")(function* (
   runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
   modelSelection: ModelSelection,
   defaultModel: Effect.Effect<string | undefined> | undefined,
-): Effect.Effect<string | undefined, EffectAcpErrors.AcpError> =>
-  Effect.gen(function* () {
-    const option = (yield* runtime.getConfigOptions).find(
-      (entry) => entry.id === FX_MODEL_CONFIG_ID && entry.type === "select",
-    );
-    const current = option?.type === "select" ? option.currentValue : undefined;
-    const requested = modelSelection.model.trim();
-    const isDefault = requested.length === 0 || requested === FX_DEFAULT_MODEL_SLUG;
-    const target = isDefault ? defaultModel && (yield* defaultModel) : requested;
-    if (target === undefined || target === current) return current;
-    // The status default can belong to another fx backend than the session's
-    // (after `fx provider`, or a loaded older session); then the session's
-    // own model stands.
-    if (
-      isDefault &&
-      (option === undefined || !collectSessionConfigOptionValues(option).includes(target))
-    ) {
-      return current;
-    }
-    yield* runtime.setConfigOption(FX_MODEL_CONFIG_ID, target, { allowUnlistedValue: true });
-    return target;
-  });
+): Effect.fn.Return<string | undefined, EffectAcpErrors.AcpError> {
+  const option = (yield* runtime.getConfigOptions).find(
+    (entry) => entry.id === FX_MODEL_CONFIG_ID && entry.type === "select",
+  );
+  const current = option?.type === "select" ? option.currentValue : undefined;
+  const requested = modelSelection.model.trim();
+  const isDefault = requested.length === 0 || requested === FX_DEFAULT_MODEL_SLUG;
+  const target = isDefault ? defaultModel && (yield* defaultModel) : requested;
+  if (target === undefined || target === current) return current;
+  // The status default can belong to another fx backend than the session's
+  // (after `fx provider`, or a loaded older session); then the session's
+  // own model stands.
+  if (
+    isDefault &&
+    (option === undefined || !collectSessionConfigOptionValues(option).includes(target))
+  ) {
+    return current;
+  }
+  yield* runtime.setConfigOption(FX_MODEL_CONFIG_ID, target, { allowUnlistedValue: true });
+  return target;
+});
 
 /** The shared option loop writes a stored effort; a thread without one starts at medium. */
-export const applyFxEffortDefault = (
+export const applyFxEffortDefault = Effect.fn("applyFxEffortDefault")(function* (
   runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
   modelSelection: ModelSelection,
-): Effect.Effect<void, EffectAcpErrors.AcpError> =>
-  Effect.gen(function* () {
-    if (getModelSelectionStringOptionValue(modelSelection, FX_EFFORT_CONFIG_ID)) return;
-    const option = (yield* runtime.getConfigOptions).find(
-      (entry) => entry.id === FX_EFFORT_CONFIG_ID && entry.type === "select",
-    );
-    if (
-      option !== undefined &&
-      collectSessionConfigOptionValues(option).includes(FX_DEFAULT_EFFORT)
-    ) {
-      yield* runtime.setConfigOption(FX_EFFORT_CONFIG_ID, FX_DEFAULT_EFFORT);
-    }
-  });
+): Effect.fn.Return<void, EffectAcpErrors.AcpError> {
+  if (getModelSelectionStringOptionValue(modelSelection, FX_EFFORT_CONFIG_ID)) return;
+  const option = (yield* runtime.getConfigOptions).find(
+    (entry) => entry.id === FX_EFFORT_CONFIG_ID && entry.type === "select",
+  );
+  if (
+    option !== undefined &&
+    collectSessionConfigOptionValues(option).includes(FX_DEFAULT_EFFORT)
+  ) {
+    yield* runtime.setConfigOption(FX_EFFORT_CONFIG_ID, FX_DEFAULT_EFFORT);
+  }
+});
 
 interface FxAcpRuntimeInput extends Omit<
   AcpSessionRuntime.AcpSessionRuntimeOptions,
@@ -222,26 +219,25 @@ interface FxAcpRuntimeInput extends Omit<
   readonly environment?: NodeJS.ProcessEnv;
 }
 
-export const makeFxAcpRuntime = (
+export const makeFxAcpRuntime = Effect.fn("makeFxAcpRuntime")(function* (
   input: FxAcpRuntimeInput,
-): Effect.Effect<
+): Effect.fn.Return<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   EffectAcpErrors.AcpError,
   ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
-> =>
-  Effect.gen(function* () {
-    const { fxSettings, environment, ...runtimeOptions } = input;
-    const context = yield* Layer.build(
-      AcpSessionRuntime.layer({
-        ...runtimeOptions,
-        spawn: {
-          command: fxSettings.binaryPath || "fx",
-          args: ["acp"],
-          cwd: input.cwd,
-          env: { ...environment },
-        },
-        cancelBehavior: FX_ACP_CANCEL_BEHAVIOR,
-      }),
-    );
-    return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(Effect.provide(context));
-  });
+> {
+  const { fxSettings, environment, ...runtimeOptions } = input;
+  const context = yield* Layer.build(
+    AcpSessionRuntime.layer({
+      ...runtimeOptions,
+      spawn: {
+        command: fxSettings.binaryPath || "fx",
+        args: ["acp"],
+        cwd: input.cwd,
+        env: { ...environment },
+      },
+      cancelBehavior: FX_ACP_CANCEL_BEHAVIOR,
+    }),
+  );
+  return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(Effect.provide(context));
+});
