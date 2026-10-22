@@ -683,6 +683,47 @@ it.effect("reports an unusable host over a merely failing one", () =>
   }),
 );
 
+it.effect("leaves hidden repositories out unless the listing names their project", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        hiddenPullRequestRepositories: ["https://github.com/PingDotGG/t3code.git"],
+      },
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+        project({ id: "p2", title: "eva", workspaceRoot: "/b", repository: "colonelpanic8/eva" }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: (input) =>
+            Effect.succeed({
+              items: [
+                changeRequest(
+                  input.repository === "pingdotgg/t3code" ? 1 : 2,
+                  "2026-07-01T00:00:00Z",
+                ),
+              ],
+              truncated: false,
+              continues: true,
+            }),
+        }),
+      ],
+    });
+
+    const unscoped = yield* service.list({ state: "open" });
+    const scoped = yield* service.list({ state: "open", projectId: "p1" as ProjectId });
+    assert.deepStrictEqual(
+      unscoped.entries.map((entry) => [entry.repository, entry.number]),
+      [["colonelpanic8/eva", 2]],
+    );
+    assert.deepStrictEqual(
+      scoped.entries.map((entry) => [entry.repository, entry.number]),
+      [["pingdotgg/t3code", 1]],
+    );
+  }),
+);
+
 it.effect("tells two hosts of one kind apart in the switcher and the filter", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
