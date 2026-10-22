@@ -310,8 +310,17 @@ export const make = Effect.gen(function* () {
 
     // Only a server this desktop started may be recovered. A server the user
     // started by hand, or a background service runs, is not ours to signal.
-    const ourOwnerId = yield* ownerIdentity.ownerId;
-    const ownedByThisDesktop = value.desktopOwnerId === ourOwnerId;
+    const ourOwnerId = yield* ownerIdentity.ownerId.pipe(
+      Effect.map(Option.some),
+      Effect.catchCause((cause) =>
+        logOwnershipWarning("could not read the desktop owner identity", { cause }).pipe(
+          Effect.as(Option.none<string>()),
+        ),
+      ),
+    );
+    // A desktop that cannot name itself owns no server, so it recovers none.
+    const ownedByThisDesktop =
+      Option.isSome(ourOwnerId) && value.desktopOwnerId === ourOwnerId.value;
 
     const healthy = yield* probeOwnerUntilAnswered(httpClient, value.origin);
     if (healthy) {

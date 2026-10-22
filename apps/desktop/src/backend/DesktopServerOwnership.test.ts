@@ -188,6 +188,29 @@ describe("DesktopServerOwnership", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("never hands out an empty owner id", () =>
+    Effect.gen(function* () {
+      const { ownerIdentity } = yield* makeHarness({ baseDir: "/tmp/t3-ownership-non-empty" });
+      const ownerId = yield* ownerIdentity.ownerId;
+      assert.isTrue(
+        ownerId.trim().length > 0,
+        "an empty id would be rejected by the bootstrap contract and would name no owner",
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("treats a stored empty owner id as absent", () =>
+    Effect.gen(function* () {
+      const { ownerIdentity, stateDir } = yield* makeHarness({
+        baseDir: "/tmp/t3-ownership-empty-id",
+      });
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.writeFileString(`${stateDir}/desktop-owner-id`, "  \n");
+      const ownerId = yield* ownerIdentity.ownerId;
+      assert.isTrue(ownerId.trim().length > 0, "a stored empty id must be replaced, not accepted");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("keeps the same owner id across launches", () =>
     Effect.gen(function* () {
       const { ownerIdentity } = yield* makeHarness({ baseDir: "/tmp/t3-ownership-owner-id" });

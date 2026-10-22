@@ -4,22 +4,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
+import * as PlatformError from "effect/PlatformError";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
-
-const DesktopOwnerIdentityDocument = Schema.Struct({
-  ownerId: Schema.String,
-});
-
-const decodeDesktopOwnerIdentity = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(DesktopOwnerIdentityDocument),
-);
-
-const encodeDesktopOwnerIdentity = Schema.encodeEffect(
-  Schema.fromJsonString(DesktopOwnerIdentityDocument),
-);
 
 export class DesktopOwnerIdentity extends Context.Service<
   DesktopOwnerIdentity,
@@ -33,7 +21,7 @@ export class DesktopOwnerIdentity extends Context.Service<
      * It is not a credential: it only says which desktop installation
      * started a server.
      */
-    readonly ownerId: Effect.Effect<string>;
+    readonly ownerId: Effect.Effect<string, PlatformError.PlatformError>;
   }
 >()("@t3tools/desktop/backend/DesktopOwnerIdentity") {}
 
@@ -46,7 +34,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const crypto = yield* Crypto.Crypto;
 
-  const ownerIdentityPath = environment.path.join(environment.stateDir, "desktop-owner.json");
+  const ownerIdentityPath = environment.path.join(environment.stateDir, "desktop-owner-id");
 
   const ownerId = Effect.gen(function* () {
     const existing = yield* fileSystem.readFileString(ownerIdentityPath).pipe(
@@ -56,21 +44,17 @@ export const make = Effect.gen(function* () {
       }),
     );
     if (Option.isSome(existing)) {
-      const decoded = yield* decodeDesktopOwnerIdentity(existing.value.trim()).pipe(Effect.option);
-      if (Option.isSome(decoded)) {
-        return decoded.value.ownerId;
+      const stored = existing.value.trim();
+      // An empty id names no owner: the bootstrap contract rejects it, and a
+      // record written with it would be accepted by a later launch.
+      if (stored.length > 0) {
+        return stored;
       }
     }
-    const generated = yield* crypto.randomUUIDv4().pipe(Effect.orElseSucceed(() => ""));
-    const document = yield* encodeDesktopOwnerIdentity({ ownerId: generated }).pipe(
-      Effect.catchCause((cause) =>
-        logOwnerIdentityWarning("could not encode the desktop owner identity", {
-          path: ownerIdentityPath,
-          cause,
-        }).pipe(Effect.as("")),
-      ),
-    );
-    yield* fileSystem.writeFileString(ownerIdentityPath, `${document}\n`).pipe(
+    // A failed generation is not papered over with an empty id: the desktop
+    // that cannot name itself must not claim a server as its own.
+    const generated = yield* crypto.randomUUIDv4();
+    yield* fileSystem.writeFileString(ownerIdentityPath, `${generated}\n`).pipe(
       Effect.catchCause((cause) =>
         logOwnerIdentityWarning("could not persist the desktop owner identity", {
           path: ownerIdentityPath,
