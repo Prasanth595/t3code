@@ -23,6 +23,8 @@ export function ThreadTitleMenu(props: {
   readonly thread: EnvironmentThreadShell;
   readonly subtitle: string;
   readonly maxWidth: number;
+  /** Android only: one row with the subtitle after the title, matching AndroidScreenHeader. */
+  readonly compact?: boolean;
 }) {
   const { thread } = props;
   const configs = useAtomValue(environmentServerConfigsAtom);
@@ -48,6 +50,7 @@ export function ThreadTitleMenu(props: {
     now,
   });
   const android = Platform.OS === "android";
+  const inlineSubtitle = android && props.compact && props.subtitle !== "";
   const snooze = (until: string) => {
     void handlers.snoozeThread(thread, until);
   };
@@ -127,8 +130,17 @@ export function ThreadTitleMenu(props: {
               size={10}
               tintColorClassName="accent-foreground-muted"
             />
+            {inlineSubtitle ? (
+              <AppText
+                numberOfLines={1}
+                textRole="label"
+                className="ml-1 flex-1 text-foreground-muted"
+              >
+                {props.subtitle}
+              </AppText>
+            ) : null}
           </View>
-          {props.subtitle ? (
+          {props.subtitle && !inlineSubtitle ? (
             <AppText
               numberOfLines={1}
               textRole="label"

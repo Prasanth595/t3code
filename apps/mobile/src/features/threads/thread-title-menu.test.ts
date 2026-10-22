@@ -1,6 +1,19 @@
 import { describe, expect, it } from "vite-plus/test";
-import { makeThreadShellFixture } from "../../test-fixtures";
-import { buildThreadTitleMenu, threadTitleSnoozeUntil } from "./thread-title-menu";
+import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
+import {
+  EnvironmentId,
+  RunId,
+  RuntimeRequestId,
+  type OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import { makeRawThreadShell, makeThreadShellFixture } from "../../test-fixtures";
+import {
+  buildThreadTitleMenu,
+  threadTitleMaxWidth,
+  threadTitleMenuVersion,
+  threadTitleSnoozeUntil,
+} from "./thread-title-menu";
 
 const now = new Date("2026-10-18T12:00:00.000Z");
 const capabilities = {
@@ -89,5 +102,79 @@ describe("thread title actions", () => {
       true,
     );
     expect(actions.find((action) => action.id === "delete")?.attributes?.destructive).toBe(true);
+  });
+});
+
+describe("thread title header content", () => {
+  it("re-renders native title content only when the menu or title can change", () => {
+    const version = threadTitleMenuVersion(thread);
+    expect(
+      threadTitleMenuVersion({ ...thread, updatedAt: "2026-10-18T12:00:01.000Z", itemCount: 9 }),
+    ).toEqual(version);
+    expect(threadTitleMenuVersion({ ...thread, title: "Renamed" })).not.toEqual(version);
+    expect(threadTitleMenuVersion({ ...thread, settledOverride: "settled" })).not.toEqual(version);
+  });
+
+  it("re-renders when a nonblocking question arrives or clears during a run", () => {
+    const runId = RunId.make("run-1");
+    const running = (pendingRuntimeRequest: OrchestrationV2ThreadShell["pendingRuntimeRequest"]) =>
+      presentThreadShell(
+        EnvironmentId.make("environment-test"),
+        makeRawThreadShell({
+          status: "running",
+          latestRunId: runId,
+          activeRunId: runId,
+          pendingRuntimeRequest,
+        }),
+      );
+    const idle = running(null);
+    const asking = running({
+      id: RuntimeRequestId.make("request-1"),
+      kind: "user_input",
+      createdAt: DateTime.makeUnsafe("2026-10-18T12:00:00.000Z"),
+      blocking: false,
+    });
+    for (const shell of [idle, asking]) {
+      expect(shell.hasPendingApprovals).toBe(false);
+      expect(shell.hasPendingUserInput).toBe(false);
+    }
+    expect(ids({ thread: idle })).toContain("snooze");
+    expect(ids({ thread: asking })).not.toContain("snooze");
+    expect(threadTitleMenuVersion(asking)).not.toEqual(threadTitleMenuVersion(idle));
+    expect(threadTitleMenuVersion({ ...asking, itemCount: 9 })).toEqual(
+      threadTitleMenuVersion(asking),
+    );
+  });
+
+  const gitItems = [
+    { type: "button", icon: { name: "branch" } },
+    { type: "spacing", spacing: 8 },
+    { type: "button", icon: { name: "terminal" } },
+  ];
+  const width = (overrides: Partial<Parameters<typeof threadTitleMaxWidth>[0]>) =>
+    threadTitleMaxWidth({
+      paneWidth: 320,
+      horizontalInsets: 0,
+      verticalBar: false,
+      leadingItems: null,
+      trailingItems: gitItems,
+      compose: false,
+      ...overrides,
+    });
+
+  it("leaves the title most of a compact Duo bar when actions move to the vertical bar", () => {
+    expect(width({ verticalBar: true, compose: true })).toBeGreaterThanOrEqual(200);
+    expect(width({ compose: true })).toBeLessThan(width({ compose: false }));
+  });
+
+  it("keeps a usable title target in a minimum-width split pane", () => {
+    expect(
+      width({
+        leadingItems: [
+          { type: "button", icon: { name: "sidebar.left" }, axisBehavior: "horizontalOnly" },
+          { type: "button", icon: { name: "square.and.pencil" } },
+        ],
+      }),
+    ).toBe(44);
   });
 });

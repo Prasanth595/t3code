@@ -88,6 +88,8 @@ export function threadTitleMenuVersion(thread: EnvironmentThreadShell | null) {
     thread.snoozedUntil,
     thread.hasPendingApprovals,
     thread.hasPendingUserInput,
+    // Nonblocking questions leave both flags false but still block snoozing.
+    thread.source.pendingRuntimeRequest != null,
     thread.pendingSubagentRequest,
     thread.latestUserMessageAt,
     thread.latestRun?.status,
@@ -105,4 +107,48 @@ export function threadTitleSnoozeUntil(event: string, now: Date): string | null 
   if (!event.startsWith("snooze:")) return null;
   const until = event.slice("snooze:".length);
   return Date.parse(until) > now.getTime() ? until : null;
+}
+
+type NativeHeaderItems = ReadonlyArray<Record<string, unknown>>;
+
+/**
+ * Native-stack only returns the title's position to Yoga, so custom title content needs its
+ * own width cap. Reserves the horizontal controls and gaps, keeping a 44-point trigger when
+ * UIKit must compress or overflow controls in a narrow pane. A vertical bar holds icon items
+ * and separates them itself, so only `horizontalOnly` items stay in this bar.
+ */
+export function threadTitleMaxWidth(input: {
+  readonly paneWidth: number;
+  readonly horizontalInsets: number;
+  readonly verticalBar: boolean;
+  /** Split-view leading items; null when the bar leads with Back or a home button. */
+  readonly leadingItems: NativeHeaderItems | null;
+  readonly trailingItems: NativeHeaderItems;
+  /** The Duo workspace navigator appends a compose group to the detail column's bar. */
+  readonly compose: boolean;
+}) {
+  const itemWidth = (items: NativeHeaderItems) =>
+    items.reduce<number>((width, item) => {
+      if (
+        input.verticalBar &&
+        (item.type === "spacing" || (item.icon != null && item.axisBehavior !== "horizontalOnly"))
+      )
+        return width;
+      return width + (item.type === "spacing" ? Number(item.spacing) : 60);
+    }, 0);
+  const leadingWidth = input.leadingItems
+    ? itemWidth(input.leadingItems) + 16
+    : input.verticalBar
+      ? 16
+      : 72;
+  const composeWidth = input.compose && !input.verticalBar ? 68 : 0;
+  return Math.max(
+    44,
+    input.paneWidth -
+      input.horizontalInsets -
+      leadingWidth -
+      itemWidth(input.trailingItems) -
+      composeWidth -
+      16,
+  );
 }
