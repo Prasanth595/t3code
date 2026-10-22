@@ -1,8 +1,16 @@
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 
-import type { DesktopWindowError } from "../window/DesktopWindow.ts";
+import * as DesktopAppActivation from "./DesktopAppActivation.ts";
+import * as DesktopObservability from "./DesktopObservability.ts";
 import * as DesktopServerOwnership from "../backend/DesktopServerOwnership.ts";
+import * as DesktopState from "./DesktopState.ts";
+import * as DesktopWindow from "../window/DesktopWindow.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
+
+const { logInfo: logHomeOwnershipInfo, logWarning: logHomeOwnershipWarning } =
+  DesktopObservability.makeComponentLogger("desktop-home-ownership");
 
 /**
  * A server that already owns the T3 home the desktop wants to use.
@@ -24,22 +32,36 @@ export const openDesktopWithExistingOwner = Effect.fn(
   "desktop.homeOwnership.openDesktopWithExistingOwner",
 )(function* (input: {
   readonly owner: DesktopHomeOwner;
-  readonly showErrorBox: (title: string, content: string) => Effect.Effect<void>;
-  readonly openMainWindow: Effect.Effect<unknown, DesktopWindowError>;
-  /**
-   * Starts the control socket the desktop exposes to `t3 app`. The app is
-   * open, so the socket has to be listening too. Failures are the caller's
-   * to report.
-   */
-  readonly startControlSocket: Effect.Effect<void, never, Scope.Scope>;
-  readonly isQuitting: Effect.Effect<boolean>;
-}): Effect.fn.Return<void, DesktopWindowError, Scope.Scope> {
-  const quitting = yield* input.isQuitting;
+}): Effect.fn.Return<
+  void,
+  ElectronDialog.ElectronDialogShowErrorBoxError | DesktopWindow.DesktopWindowError,
+  | DesktopAppActivation.DesktopAppActivation
+  | DesktopState.DesktopState
+  | DesktopWindow.DesktopWindow
+  | ElectronDialog.ElectronDialog
+  | Scope.Scope
+> {
+  const electronDialog = yield* ElectronDialog.ElectronDialog;
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  const desktopState = yield* DesktopState.DesktopState;
+  const appActivation = yield* DesktopAppActivation.DesktopAppActivation;
+
+  const quitting = yield* Ref.get(desktopState.quitting);
   if (!quitting) {
-    yield* input.startControlSocket;
+    // The desktop app stays open, so the control socket it exposes to
+    // `t3 app` has to be listening too. The socket is the desktop's own
+    // control channel in the state directory and does not depend on the
+    // local environment, so it can start without a backend behind it. A
+    // socket that cannot start is worth a warning, not a dead desktop.
+    yield* appActivation.start.pipe(
+      Effect.tap(() => logHomeOwnershipInfo("desktop app control socket ready")),
+      Effect.catch((error) =>
+        logHomeOwnershipWarning("desktop app control socket unavailable", { error }),
+      ),
+    );
   }
   const responding = input.owner._tag === "healthy";
-  yield* input.showErrorBox(
+  yield* electronDialog.showErrorBox(
     "This T3 home is already in use",
     responding
       ? `A T3 Code server is already running for this T3 home (${input.owner.record.origin}). The desktop did not start a second server for the same home, so it cannot open the local environment.\n\nTo use that server, turn off Settings > Connections > Local environment and add it as a saved environment. To let the desktop run its own server instead, stop that server and reopen T3 Code.`
@@ -48,5 +70,5 @@ export const openDesktopWithExistingOwner = Effect.fn(
   if (quitting) {
     return;
   }
-  yield* input.openMainWindow;
+  yield* desktopWindow.createMain;
 });

@@ -1,9 +1,13 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
+import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import * as DesktopHomeOwnership from "./DesktopHomeOwnership.ts";
-import type { DesktopWindowError } from "../window/DesktopWindow.ts";
+import * as DesktopState from "./DesktopState.ts";
+import * as DesktopWindow from "../window/DesktopWindow.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 
 const healthyOwner: DesktopHomeOwnership.DesktopHomeOwner = {
   _tag: "healthy",
@@ -35,32 +39,67 @@ interface OpenResult {
   readonly controlSocketsStarted: number;
 }
 
+/**
+ * The services the desktop reaches for, with the parts this behavior uses
+ * replaced by counters.
+ */
+const layerServices = (options: { readonly quitting?: boolean }) =>
+  Effect.gen(function* () {
+    const dialogs: Array<readonly [string, string]> = [];
+    const windows = yield* Ref.make(0);
+    const sockets = yield* Ref.make(0);
+    const quitting = Ref.makeUnsafe(options.quitting ?? false);
+
+    const layerDialog = Layer.succeed(ElectronDialog.ElectronDialog, {
+      showErrorBox: (title: string, content: string) =>
+        Effect.sync(() => {
+          dialogs.push([title, content]);
+        }),
+    } as unknown as ElectronDialog.ElectronDialog["Service"]);
+
+    const layerWindow = Layer.succeed(DesktopWindow.DesktopWindow, {
+      createMain: Ref.updateAndGet(windows, (count) => count + 1),
+    } as unknown as DesktopWindow.DesktopWindow["Service"]);
+
+    const layerState = Layer.succeed(DesktopState.DesktopState, {
+      backendReady: Ref.makeUnsafe(false),
+      quitting,
+    });
+
+    const layerActivation = Layer.succeed(DesktopAppActivation.DesktopAppActivation, {
+      start: Ref.updateAndGet(sockets, (count) => count + 1),
+      setRendererReady: () => Effect.void,
+      complete: () => Effect.void,
+    } as unknown as DesktopAppActivation.DesktopAppActivation["Service"]);
+
+    return {
+      layer: Layer.mergeAll(layerDialog, layerWindow, layerState, layerActivation),
+      read: Effect.gen(function* () {
+        return {
+          dialogs,
+          windowsOpened: yield* Ref.get(windows),
+          controlSocketsStarted: yield* Ref.get(sockets),
+        };
+      }),
+    };
+  });
+
 const open = (
   owner: DesktopHomeOwnership.DesktopHomeOwner,
   options?: { readonly quitting?: boolean },
-): Effect.Effect<OpenResult, DesktopWindowError> =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const dialogs: Array<readonly [string, string]> = [];
-      const windows = yield* Ref.make(0);
-      const sockets = yield* Ref.make(0);
-      yield* DesktopHomeOwnership.openDesktopWithExistingOwner({
-        owner,
-        showErrorBox: (title, content) =>
-          Effect.sync(() => {
-            dialogs.push([title, content]);
-          }),
-        openMainWindow: Ref.updateAndGet(windows, (count) => count + 1),
-        startControlSocket: Ref.updateAndGet(sockets, (count) => count + 1),
-        isQuitting: Effect.succeed(options?.quitting ?? false),
-      });
-      return {
-        dialogs,
-        windowsOpened: yield* Ref.get(windows),
-        controlSocketsStarted: yield* Ref.get(sockets),
-      };
-    }),
-  );
+): Effect.Effect<
+  OpenResult,
+  ElectronDialog.ElectronDialogShowErrorBoxError | DesktopWindow.DesktopWindowError
+> =>
+  Effect.gen(function* () {
+    const services = yield* layerServices(options ?? {});
+    yield* Effect.scoped(
+      DesktopHomeOwnership.openDesktopWithExistingOwner({ owner }).pipe(
+        Effect.provide(services.layer),
+      ),
+    );
+    return yield* services.read;
+  });
 
 describe("DesktopHomeOwnership", () => {
   it.effect("keeps the app open when another server owns the T3 home", () =>
