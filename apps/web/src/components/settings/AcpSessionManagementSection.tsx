@@ -225,15 +225,13 @@ export function AcpSessionManagementSection(props: {
         Object.fromEntries(
           result.value.providers.map((provider) => [
             provider.providerId,
-            resetProviderId !== undefined &&
-            provider.providerId !== resetProviderId &&
-            current[provider.providerId] !== undefined
+            (resetProviderId !== undefined && provider.providerId !== resetProviderId
               ? current[provider.providerId]
-              : {
-                  apiType: provider.current?.apiType ?? provider.supported[0] ?? "",
-                  baseUrl: provider.current?.baseUrl ?? "",
-                  headers: "",
-                },
+              : undefined) ?? {
+              apiType: provider.current?.apiType ?? provider.supported[0] ?? "",
+              baseUrl: provider.current?.baseUrl ?? "",
+              headers: "",
+            },
           ]),
         ),
       );

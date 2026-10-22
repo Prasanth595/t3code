@@ -190,11 +190,14 @@ it.each(["Save", "Disable"])("keeps other provider edits through a %s refetch", 
   await userEvent.fill(input("other write-only headers JSON"), '{"X-Test":"unsaved"}');
   await userEvent.fill(input("google write-only headers JSON"), '{"X-Test":"saved"}');
 
-  const reload = Promise.withResolvers<typeof response>();
-  commands.listProviders.mockReturnValueOnce(reload.promise);
+  let resolveReload!: (value: typeof response) => void;
+  const reload = new Promise<typeof response>((resolve) => {
+    resolveReload = resolve;
+  });
+  commands.listProviders.mockReturnValueOnce(reload);
   await screen.click(action);
   await userEvent.fill(input("other base URL"), "https://newer.example.test/v1");
-  await act(async () => reload.resolve(response));
+  await act(async () => resolveReload(response));
 
   expect(input("other base URL").value).toBe("https://newer.example.test/v1");
   expect(input("other write-only headers JSON").value).toBe('{"X-Test":"unsaved"}');
