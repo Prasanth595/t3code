@@ -65,11 +65,7 @@ function readTokenRates(
   const input = finiteNumber(entry[`input_cost_per_token${suffix}`]);
   const output = finiteNumber(entry[`output_cost_per_token${suffix}`]);
   if (input === null || output === null) return null;
-  const cacheRate = (
-    name: string,
-    field: Exclude<keyof TokenRates, "inputCostPerToken" | "outputCostPerToken">,
-    fallback: number,
-  ) =>
+  const cacheRate = (name: string, field: keyof TokenRates, fallback: number) =>
     finiteNumber(entry[`${name}${suffix}`]) ??
     (standard !== undefined && standard.inputCostPerToken > 0
       ? (standard[field] / standard.inputCostPerToken) * input

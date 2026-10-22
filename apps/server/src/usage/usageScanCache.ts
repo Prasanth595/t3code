@@ -17,8 +17,9 @@ const SPEED_COMPATIBLE_SINCE_VERSION = 4;
  * replace it, dropping saved usage for deleted transcripts. Separate files keep
  * both.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v8.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v9.json";
 export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v8.json",
   "usage-scan-cache-v7.json",
   "usage-scan-cache-v6.json",
   "usage-scan-cache-v5.json",
@@ -118,8 +119,12 @@ function serializeFile(entry: CachedFile, tables: InternTables): SerializedFile 
     record.rateModel === undefined
       ? null
       : intern(tables.models, tables.modelIndex, record.rateModel),
-    record.unresolvedServiceTierTurnId ?? null,
-    record.oneHourCacheCreationTokens ?? 0,
+    // Optional trailing slots are written only when set, so most rows stay short.
+    ...(record.oneHourCacheCreationTokens !== undefined
+      ? ([record.unresolvedServiceTierTurnId ?? null, record.oneHourCacheCreationTokens] as const)
+      : record.unresolvedServiceTierTurnId !== undefined
+        ? ([record.unresolvedServiceTierTurnId] as const)
+        : ([] as const)),
   ];
   return {
     s: entry.size,
