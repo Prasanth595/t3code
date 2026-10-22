@@ -19,17 +19,8 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { ThreadScreenFallback } from "./ThreadScreenHost";
 import { NewTaskDraftScreen } from "./NewTaskDraftScreen";
 
-export type NewTaskDraftRouteParams = {
-  readonly environmentId?: string | string[];
-  readonly projectId?: string | string[];
-  readonly branch?: string | null;
-  readonly worktreePath?: string | null;
-  readonly title?: string | string[];
-  readonly cloning?: string | string[];
-  readonly pendingTaskId?: string | string[];
-  readonly draftId?: string | string[];
-  readonly incomingShareId?: string | string[];
-};
+import type { NewTaskDraftRouteParams } from "./thread-route-state";
+export type { NewTaskDraftRouteParams } from "./thread-route-state";
 
 export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraftRouteParams>) {
   const params = useMemo(() => route.params ?? {}, [route.params]);

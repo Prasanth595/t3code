@@ -1,3 +1,4 @@
+import { uuidv4 } from "../../lib/uuid";
 import { ThreadUndoNotice } from "./ThreadUndoNotice";
 import { Toolbar } from "../../components/ui/Toolbar";
 import { use } from "react";
@@ -70,6 +71,7 @@ export function HomeRouteScreen() {
     (thread: EnvironmentThreadShell) => {
       selectThreadRoute({
         draft: {
+          requestId: uuidv4(),
           environmentId: String(thread.environmentId),
           projectId: String(thread.projectId),
           branch: thread.branch,
@@ -286,6 +288,7 @@ export function HomeRouteScreen() {
           onNewThreadInProject={(project) => {
             selectThreadRoute({
               draft: {
+                requestId: uuidv4(),
                 environmentId: String(project.environmentId),
                 projectId: String(project.id),
                 title: project.title,

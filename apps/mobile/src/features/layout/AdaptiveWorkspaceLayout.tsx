@@ -1,3 +1,4 @@
+import { uuidv4 } from "../../lib/uuid";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -553,7 +554,9 @@ function AdaptiveWorkspaceLayoutContent(
     const currentProject = thread
       ? { environmentId: thread.environmentId, id: thread.projectId }
       : undefined;
-    handleSelectThreadRoute(newTaskDestination(layout.usesSplitView, projects, currentProject));
+    handleSelectThreadRoute(
+      newTaskDestination(layout.usesSplitView, projects, currentProject, uuidv4()),
+    );
   };
 
   useHardwareKeyboardCommand("newTask", () => {
@@ -577,6 +580,7 @@ function AdaptiveWorkspaceLayoutContent(
   const handleNewThreadOnBranch = (thread: EnvironmentThreadShell) => {
     handleSelectThreadRoute({
       draft: {
+        requestId: uuidv4(),
         environmentId: String(thread.environmentId),
         projectId: String(thread.projectId),
         branch: thread.branch,
@@ -588,6 +592,7 @@ function AdaptiveWorkspaceLayoutContent(
   const handleNewThreadInProject = (project: EnvironmentProject) => {
     handleSelectThreadRoute({
       draft: {
+        requestId: uuidv4(),
         environmentId: String(project.environmentId),
         projectId: String(project.id),
         title: project.title,
@@ -918,6 +923,7 @@ function AdaptiveWorkspaceLayoutContent(
                 style={railOverlay ? { right: 0 } : { width: navigationRailWidth }}
               >
                 <AndroidWorkspaceNavigation
+                  onNewThread={handleStartNewTask}
                   rail
                   onSelect={revealPrimarySidebar}
                   onOverlayChange={setRailOverlay}

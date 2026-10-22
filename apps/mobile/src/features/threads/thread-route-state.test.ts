@@ -107,3 +107,10 @@ describe("draft route identity", () => {
     ).toBe(draftRouteIdentity({ environmentId: "env", projectId: "project", title: "New" }));
   });
 });
+
+it("starts a fresh controller for repeated new-task requests in the same project", () => {
+  const project = { environmentId: "env", projectId: "project" };
+  expect(draftRouteIdentity({ ...project, requestId: "first" })).not.toBe(
+    draftRouteIdentity({ ...project, requestId: "second" }),
+  );
+});

@@ -110,6 +110,7 @@ export function newTaskDestination(
   _usesSplitView: boolean,
   projects: ReadonlyArray<EnvironmentProject>,
   currentProject: Pick<EnvironmentProject, "environmentId" | "id"> | undefined,
+  requestId: string,
 ) {
   const project =
     projects.find(
@@ -119,7 +120,11 @@ export function newTaskDestination(
     ) ?? projects[0];
   return project
     ? {
-        draft: { environmentId: String(project.environmentId), projectId: String(project.id) },
+        draft: {
+          requestId,
+          environmentId: String(project.environmentId),
+          projectId: String(project.id),
+        },
       }
-    : { draft: {} };
+    : { draft: { requestId } };
 }

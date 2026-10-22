@@ -1,3 +1,4 @@
+import { uuidv4 } from "../../lib/uuid";
 import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
@@ -281,6 +282,7 @@ export function CommandPalette(props: {
         run: () =>
           selectThreadRoute({
             draft: {
+              requestId: uuidv4(),
               environmentId: activeProject.environmentId,
               projectId: activeProject.id,
               title: activeProject.title,
@@ -314,6 +316,7 @@ export function CommandPalette(props: {
       run: () =>
         selectThreadRoute({
           draft: {
+            requestId: uuidv4(),
             environmentId: project.environmentId,
             projectId: project.id,
             title: project.title,
