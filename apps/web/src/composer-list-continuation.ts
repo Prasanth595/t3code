@@ -149,13 +149,24 @@ function currentLine(value: string, cursor: number): { start: number; end: numbe
   return { start, end, text: value.slice(start, end) };
 }
 
-function* listMarkersAbove(value: string, start: number) {
+function* listMarkersAbove(
+  value: string,
+  start: number,
+  tokens: ReturnType<typeof inlineTokenRanges>,
+) {
+  let tokenIndex = tokens.length - 1;
   while (start > 0) {
-    const previous = currentLine(value, start - 1);
-    const parsed = parseListMarker(previous.text);
+    let lineStart = value.lastIndexOf("\n", start - 2) + 1;
+    // A newline inside a chip does not start a list item.
+    for (let token = tokens[tokenIndex]; token; token = tokens[tokenIndex]) {
+      if (token.start >= lineStart) tokenIndex -= 1;
+      else if (token.end > lineStart) lineStart = value.lastIndexOf("\n", token.start - 1) + 1;
+      else break;
+    }
+    const parsed = parseListMarker(value.slice(lineStart, start - 1));
     if (!parsed) return;
     yield parsed.marker;
-    start = previous.start;
+    start = lineStart;
   }
 }
 
@@ -173,7 +184,7 @@ export function listContinuationForEnter(value: string, cursor: number): Compose
     const { indent } = parsed.marker;
     let parent: ListMarker | undefined;
     if (indent !== "") {
-      for (const above of listMarkersAbove(value, line.start)) {
+      for (const above of listMarkersAbove(value, line.start, tokens)) {
         if (above.indent.length < indent.length && indent.startsWith(above.indent)) {
           parent = above;
           break;
@@ -213,10 +224,12 @@ export function listIndentForTab(
   if (!Number.isInteger(start) || start !== end || start < 0 || start > value.length) return null;
   const line = currentLine(value, start);
   const parsed = parseListMarker(line.text);
-  if (!parsed || isInsideInlineToken(inlineTokenRanges(value), start)) return null;
+  if (!parsed) return null;
+  const tokens = inlineTokenRanges(value);
+  if (isInsideInlineToken(tokens, start)) return null;
   const { marker } = parsed;
   let lastChild: ListMarker | undefined;
-  for (const above of listMarkersAbove(value, line.start)) {
+  for (const above of listMarkersAbove(value, line.start, tokens)) {
     if (above.indent.length > marker.indent.length && above.indent.startsWith(marker.indent)) {
       if (!lastChild || above.indent.length < lastChild.indent.length) lastChild = above;
       continue;

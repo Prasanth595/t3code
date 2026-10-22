@@ -43,6 +43,7 @@ describe("composer list continuation", () => {
       "2. parent\n   1. sibling\n      1. grandchild\n3. child",
       "2. parent\n   1. sibling\n      1. grandchild\n   2. child",
     ],
+    ['1. @"file\n   9. name"\n2. child', '1. @"file\n   9. name"\n   1. child'],
   ])("nests the numbered item in %j and keeps its text caret", (value, expected) => {
     const cursor = value.lastIndexOf("child") + 2;
     const edit = listIndentForTab(value, cursor, cursor)!;
@@ -61,6 +62,13 @@ describe("composer list continuation", () => {
       value = applyEdit(value, listContinuationForEnter(value, value.length)!);
       expect(value).toBe(expected);
     }
+  });
+
+  it("does not lift an empty item to a marker inside a multiline chip", () => {
+    const value = '1. @"file\n   9. name"\n      1. ';
+    expect(applyEdit(value, listContinuationForEnter(value, value.length)!)).toBe(
+      '1. @"file\n   9. name"\n2. ',
+    );
   });
 
   it("refuses to split a supplementary currency skill chip", () => {
