@@ -206,9 +206,13 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
       rowWidth.set(event.nativeEvent.layout.width);
     },
     onEditorLayout: (event: { nativeEvent: { layout: { x: number; width: number } } }) => {
-      editorX.set(event.nativeEvent.layout.x);
-      editorWidth.set(event.nativeEvent.layout.width);
-      setCompactWidth(Math.max(0, event.nativeEvent.layout.width - 8));
+      // The expanded toolbar gives this slot to the model control. Keep the
+      // compact geometry for the return transition, rather than recording zero.
+      if (!isExpanded) {
+        editorX.set(event.nativeEvent.layout.x);
+        editorWidth.set(event.nativeEvent.layout.width);
+        setCompactWidth(Math.max(0, event.nativeEvent.layout.width - 8));
+      }
     },
     editorProps: {
       singleLineCentered: false,
@@ -952,7 +956,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               <Animated.View
                 className="min-w-0 flex-1"
                 onLayout={compactEditor.onEditorLayout}
-                style={[{ minWidth: INLINE_EDITOR_MIN_WIDTH }, compactEditor.containerStyle]}
+                style={[
+                  { minWidth: isExpanded ? 0 : INLINE_EDITOR_MIN_WIDTH },
+                  compactEditor.containerStyle,
+                  isExpanded ? { flex: 0, width: 0 } : undefined,
+                ]}
               ></Animated.View>
               {!isExpanded && stripAttachments.length > 0 ? (
                 <View className="flex-row gap-1 pl-1">
@@ -977,7 +985,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   ) : null}
                 </View>
               ) : null}
-              <View className="min-w-0 shrink flex-row items-center">
+              <View
+                className="min-w-0 shrink flex-row items-center"
+                style={isExpanded ? { flex: 1, justifyContent: "flex-end" } : undefined}
+              >
                 {modelControl}
                 <ComposerDictationStartAction
                   state={voiceInput.state}

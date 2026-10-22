@@ -1750,9 +1750,17 @@ export function NewTaskDraftScreen(props: {
               <Animated.View
                 className="min-w-0 flex-1"
                 onLayout={compactEditor.onEditorLayout}
-                style={compactEditor.containerStyle}
+                style={[
+                  compactEditor.containerStyle,
+                  compactEditor.isExpanded ? { flex: 0, width: 0 } : undefined,
+                ]}
               ></Animated.View>
-              <View className="min-w-0 shrink flex-row items-center gap-2">
+              <View
+                className="min-w-0 shrink flex-row items-center gap-2"
+                style={
+                  compactEditor.isExpanded ? { flex: 1, justifyContent: "flex-end" } : undefined
+                }
+              >
                 <View className="min-w-0 shrink">
                   <ComposerModelControl
                     size={hasSidebarTabBar ? "large" : "regular"}
