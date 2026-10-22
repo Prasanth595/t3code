@@ -27,6 +27,7 @@ import {
 import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
+import * as DesktopProcessTree from "./DesktopProcessTree.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
@@ -301,75 +302,12 @@ const calculateRestartDelay = (attempt: number): Duration.Duration =>
   Duration.min(Duration.times(INITIAL_RESTART_DELAY, 2 ** attempt), MAX_RESTART_DELAY);
 
 /**
- * Signal a backend's whole process group.
+ * Close a run's scope, which is the graceful path: the scope close runs the
+ * spawner's finalizer, which signals the backend and escalates to SIGKILL
+ * after the backend's own force-stop budget.
  *
- * The desktop spawns the backend detached on POSIX, so the backend leads its
- * own process group and the group is what has to go. A managed descendant
- * that survived the graceful signal would otherwise keep running after the
- * desktop quit, and the group id is what the spawner's own finalizer targets.
- *
- * Falls back to the leader where the platform has no process groups, which is
- * the case on Windows, where the spawner's finalizer kills the tree.
- *
- * Only ever called with a pid this manager captured at spawn: a pid read back
- * from a file could have been recycled by an unrelated process.
+ * Returns true when the scope closed inside the budget.
  */
-const signalProcessGroup = (pid: number, signal: NodeJS.Signals): Effect.Effect<boolean> =>
-  Effect.sync(() => {
-    try {
-      process.kill(-pid, signal);
-      return true;
-    } catch {
-      try {
-        process.kill(pid, signal);
-        return true;
-      } catch {
-        // The process is gone, which is the outcome we wanted.
-        return false;
-      }
-    }
-  });
-
-const isProcessAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    // EPERM: the process exists but is not ours to signal.
-    return error instanceof Error && "code" in error && error.code === "EPERM";
-  }
-};
-
-/**
- * Whether any member of the backend's process group is still running. A
- * platform without process groups reports false, which leaves the leader's
- * own liveness as the deciding check.
- */
-const isProcessGroupAlive = (pid: number): boolean => {
-  try {
-    process.kill(-pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-/**
- * Wait for the backend and its process group to disappear, bounded by a
- * timeout. Returns true when the whole tree is gone.
- */
-const waitForProcessTreeExit = (pid: number, timeout: Duration.Duration): Effect.Effect<boolean> =>
-  Effect.sync(() => isProcessAlive(pid) || isProcessGroupAlive(pid)).pipe(
-    Effect.repeat({
-      while: (alive) => alive,
-      schedule: Schedule.spaced(DEFAULT_BACKEND_KILL_POLL_INTERVAL),
-    }),
-    // The last value is the tree's liveness at the moment the wait ended:
-    // false means it exited, and a timeout means it is still running.
-    Effect.timeoutOption(timeout),
-    Effect.map((result) => Option.isSome(result) && !result.value),
-  );
-
 const closeRun = (
   run: ActiveBackendRun,
   parentScope: Scope.Scope,
@@ -420,7 +358,7 @@ const stopRun = Effect.fn("desktop.backendManager.stopRun")(function* (
   if (pid === undefined) {
     return false;
   }
-  if (!isProcessAlive(pid) && !isProcessGroupAlive(pid)) {
+  if (!(yield* DesktopProcessTree.isProcessTreeAlive(pid))) {
     return true;
   }
 
@@ -428,8 +366,12 @@ const stopRun = Effect.fn("desktop.backendManager.stopRun")(function* (
   // the spawner would have made, so the backend cannot keep holding the T3
   // home's ownership lock. The whole group is signalled, so a managed
   // descendant cannot outlive the backend.
-  yield* signalProcessGroup(pid, "SIGKILL");
-  const exited = yield* waitForProcessTreeExit(pid, DEFAULT_BACKEND_KILL_TIMEOUT);
+  yield* DesktopProcessTree.signalProcessTree(pid, "SIGKILL");
+  const exited = yield* DesktopProcessTree.waitForProcessTreeExit(
+    pid,
+    DEFAULT_BACKEND_KILL_TIMEOUT,
+    DEFAULT_BACKEND_KILL_POLL_INTERVAL,
+  );
   return exited;
 });
 

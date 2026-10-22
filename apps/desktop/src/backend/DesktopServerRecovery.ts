@@ -1,9 +1,8 @@
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-import * as Schedule from "effect/Schedule";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
+import * as DesktopProcessTree from "./DesktopProcessTree.ts";
 import * as DesktopServerOwnership from "./DesktopServerOwnership.ts";
 
 const { logInfo: logRecoveryInfo, logWarning: logRecoveryWarning } =
@@ -12,69 +11,6 @@ const { logInfo: logRecoveryInfo, logWarning: logRecoveryWarning } =
 const RECOVERY_SIGTERM_GRACE = Duration.seconds(5);
 const RECOVERY_POLL_INTERVAL = Duration.millis(100);
 const RECOVERY_KILL_TIMEOUT = Duration.seconds(5);
-
-/**
- * Signal a server's whole process group, falling back to the leader where
- * the platform has no process groups.
- *
- * The desktop starts the server detached on POSIX, so the server leads its
- * own process group. Signalling the group ends the server and the agent
- * processes it manages, instead of leaving them behind.
- */
-const signalProcessGroup = (pid: number, signal: NodeJS.Signals): Effect.Effect<boolean> =>
-  Effect.sync(() => {
-    try {
-      process.kill(-pid, signal);
-      return true;
-    } catch {
-      try {
-        process.kill(pid, signal);
-        return true;
-      } catch {
-        // The process is gone, which is the outcome we wanted.
-        return false;
-      }
-    }
-  });
-
-const isProcessAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error instanceof Error && "code" in error && error.code === "EPERM";
-  }
-};
-
-/**
- * Whether any member of the server's process group is still running. A
- * platform without process groups reports false, which leaves the leader's
- * own liveness as the deciding check.
- */
-const isProcessGroupAlive = (pid: number): boolean => {
-  try {
-    process.kill(-pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-/**
- * Wait for the server and its process group to disappear, bounded by a
- * timeout. Returns true when the whole tree is gone.
- */
-const waitForExit = (pid: number, timeout: Duration.Duration): Effect.Effect<boolean> =>
-  Effect.sync(() => isProcessAlive(pid) || isProcessGroupAlive(pid)).pipe(
-    Effect.repeat({
-      while: (alive) => alive,
-      schedule: Schedule.spaced(RECOVERY_POLL_INTERVAL),
-    }),
-    // The last value is the process's liveness at the moment the wait ended:
-    // false means it exited, and a timeout means it is still running.
-    Effect.timeoutOption(timeout),
-    Effect.map((result) => Option.isSome(result) && !result.value),
-  );
 
 /**
  * Recover a stranded server that this desktop app started.
@@ -103,8 +39,12 @@ export const recoverStrandedServer = Effect.fn("desktop.serverRecovery.recoverSt
       port: input.owner.record.port,
     });
 
-    yield* signalProcessGroup(pid, "SIGTERM");
-    const exited = yield* waitForExit(pid, RECOVERY_SIGTERM_GRACE);
+    yield* DesktopProcessTree.signalProcessTree(pid, "SIGTERM");
+    const exited = yield* DesktopProcessTree.waitForProcessTreeExit(
+      pid,
+      RECOVERY_SIGTERM_GRACE,
+      RECOVERY_POLL_INTERVAL,
+    );
     if (exited) {
       yield* logRecoveryInfo("the stranded server stopped and released the T3 home", { pid });
       return true;
@@ -115,8 +55,12 @@ export const recoverStrandedServer = Effect.fn("desktop.serverRecovery.recoverSt
     yield* logRecoveryWarning("the stranded server ignored SIGTERM; escalating to SIGKILL", {
       pid,
     });
-    yield* signalProcessGroup(pid, "SIGKILL");
-    const killed = yield* waitForExit(pid, RECOVERY_KILL_TIMEOUT);
+    yield* DesktopProcessTree.signalProcessTree(pid, "SIGKILL");
+    const killed = yield* DesktopProcessTree.waitForProcessTreeExit(
+      pid,
+      RECOVERY_KILL_TIMEOUT,
+      RECOVERY_POLL_INTERVAL,
+    );
     if (killed) {
       yield* logRecoveryInfo("the stranded server was killed and released the T3 home", { pid });
       return true;
