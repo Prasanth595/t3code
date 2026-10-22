@@ -4,6 +4,7 @@ import {
   type OrchestrationV2Notification,
   type PullRequestActivity,
   type PullRequestComment,
+  type PullRequestDetail,
   type PullRequestRef,
   type PullRequestThreadCommentsResult,
   type ThreadPullRequestLink,
@@ -18,6 +19,7 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -42,6 +44,7 @@ import { evaluatePullRequestWatch, pullRequestWatchMessage } from "./pullRequest
  */
 const SWEEP_MINUTES = 2;
 const READ_FAILURE_LIMIT = 8;
+const POST_MERGE_WAIT_MS = 24 * 60 * 60_000;
 /**
  * Without a host fingerprint, a pull request with nothing in flight is read again only when its
  * sync snapshot moves, or after this long, for news the snapshot cannot show, such as a bot
@@ -102,6 +105,8 @@ interface ReadPlan {
 const watchKey = ({ thread, watch }: WatchTarget) => `${thread.id} ${watch.startedAt}`;
 
 type WatchEndReason =
+  | "post-merge-check"
+  | "post-merge-timeout"
   | "merged"
   | "closed"
   | "unreadable"
@@ -146,6 +151,9 @@ function planRead(
   fingerprint: ProviderChangeRequestWatchFingerprint | null,
   now: number,
 ): ReadPlan {
+  if (group.targets.some((target) => target.watch.postMerge !== undefined)) {
+    return { detail: true, activity: false };
+  }
   if (last === undefined || group.targets.some((target) => !last.watches.has(watchKey(target)))) {
     return { detail: true, activity: true };
   }
@@ -167,6 +175,9 @@ function planRead(
 function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatch): boolean {
   return (
     left.startedAt === right.startedAt &&
+    left.postMergeCheck === right.postMergeCheck &&
+    left.postMerge?.headSha === right.postMerge?.headSha &&
+    left.postMerge?.deadlineAt === right.postMerge?.deadlineAt &&
     left.headSha === right.headSha &&
     left.failedChecks.join("\n") === right.failedChecks.join("\n") &&
     left.passed === right.passed &&
@@ -402,14 +413,67 @@ export const make = Effect.gen(function* () {
       Effect.tap(() => ended(target, "closed")),
     );
 
-  const endsWithoutRead = ({ thread, link }: WatchTarget): WatchEndReason | undefined =>
-    link.snapshot?.state === "merged"
+  const endsWithoutRead = ({ thread, link, watch }: WatchTarget): WatchEndReason | undefined =>
+    link.snapshot?.state === "merged" && watch.postMergeCheck === undefined
       ? "merged"
-      : thread.settledOverride === "settled" || thread.settledAt !== null
+      : (thread.settledOverride === "settled" || thread.settledAt !== null) &&
+          watch.postMergeCheck === undefined
         ? "settled"
         : thread.lineage.relationshipToParent === "subagent"
           ? "subagent"
           : undefined;
+
+  const postMergeTimeout = (target: WatchTarget) =>
+    record(target, null, {
+      text: `Pull request #${target.link.number} (${target.link.url}) merged, but T3 Code could not confirm ${target.watch.postMergeCheck} on its PR head within 24 hours. The result is inconclusive. T3 Code stopped watching; inspect the check before deciding what to do next.`,
+      notification: {
+        source: { kind: "monitor" },
+        outcome: "failed",
+        summary: `#${target.link.number}: ${target.watch.postMergeCheck} inconclusive, stopped watching`,
+      },
+    }).pipe(
+      Effect.tap(() => woke(target)),
+      Effect.tap(() => ended(target, "post-merge-timeout")),
+    );
+
+  const observePostMerge = Effect.fn("PullRequestWatchReactor.observePostMerge")(function* (
+    target: WatchTarget,
+    detail: PullRequestDetail,
+    now: number,
+  ) {
+    const postMerge = {
+      deadlineAt:
+        target.watch.postMerge?.deadlineAt ??
+        DateTime.formatIso(DateTime.makeUnsafe(now + POST_MERGE_WAIT_MS)),
+      headSha: target.watch.postMerge?.headSha ?? detail.headSha ?? null,
+    };
+    const watch = { ...target.watch, postMerge };
+    const check =
+      postMerge.headSha !== null && detail.headSha === postMerge.headSha
+        ? detail.checks.find(
+            (check) => check.name === watch.postMergeCheck && check.status !== "pending",
+          )
+        : undefined;
+    if (check !== undefined) {
+      yield* record(
+        target,
+        null,
+        {
+          text: `Pull request #${target.link.number} (${target.link.url}) merged. Post-merge check ${check.name} on PR head ${postMerge.headSha} finished with ${check.status}.${check.url ? ` ${check.url}` : ""} T3 Code stopped watching.`,
+          notification: {
+            source: { kind: "monitor" },
+            outcome: check.status === "success" ? "completed" : "failed",
+            summary: `#${target.link.number}: ${check.name} ${check.status}, stopped watching`,
+          },
+        },
+        watch,
+      );
+      yield* woke(target);
+      yield* ended(target, "post-merge-check");
+    } else if (!watchesEqual(watch, target.watch)) {
+      yield* record(target, watch);
+    }
+  });
 
   const eachTarget = <E>(
     group: WatchGroup,
@@ -467,7 +531,12 @@ export const make = Effect.gen(function* () {
     const reference = referenceOf(group);
     // The reads are recorded against this fingerprint, so a cached answer older than it must not
     // stand in for them. Clients are not told: this only drops this pull request's cached reads.
-    if (fingerprint !== null) yield* pullRequests.invalidate({ reference });
+    if (
+      fingerprint !== null ||
+      group.targets.some((target) => target.watch.postMerge !== undefined)
+    ) {
+      yield* pullRequests.invalidate({ reference });
+    }
     const read = yield* Effect.exit(
       Effect.all(
         [
@@ -510,7 +579,9 @@ export const make = Effect.gen(function* () {
       return yield* eachTarget(group, (target) =>
         detail.state === "closed"
           ? closed(target)
-          : record(target, null).pipe(Effect.tap(() => ended(target, "merged"))),
+          : target.watch.postMergeCheck !== undefined
+            ? observePostMerge(target, detail, now)
+            : record(target, null).pipe(Effect.tap(() => ended(target, "merged"))),
       );
     }
 
@@ -539,6 +610,7 @@ export const make = Effect.gen(function* () {
       remarks: fingerprint?.remarks ?? null,
     });
     yield* eachTarget(group, (target) => {
+      if (target.watch.postMerge !== undefined) return Effect.void;
       const report = evaluatePullRequestWatch(target.watch, detail, remarks);
       if (report.changes.length > 0) {
         const wake = pullRequestWatchMessage({
@@ -578,10 +650,34 @@ export const make = Effect.gen(function* () {
     for (const target of targets) lifeOf(target);
     const byPullRequest = new Map<string, Array<WatchTarget>>();
     const ending: Array<readonly [WatchTarget, WatchEndReason]> = [];
-    for (const target of targets) {
+    const now = yield* Clock.currentTimeMillis;
+    for (const initial of targets) {
+      let target = initial;
       const reason = endsWithoutRead(target);
       if (reason !== undefined) {
         ending.push([target, reason]);
+        continue;
+      }
+      if (
+        target.watch.postMergeCheck !== undefined &&
+        target.link.snapshot?.state === "merged" &&
+        target.watch.postMerge === undefined
+      ) {
+        const watch = {
+          ...target.watch,
+          postMerge: {
+            headSha: null,
+            deadlineAt: DateTime.formatIso(DateTime.makeUnsafe(now + POST_MERGE_WAIT_MS)),
+          },
+        };
+        yield* record(target, watch);
+        target = { ...target, watch };
+      }
+      if (
+        target.watch.postMerge !== undefined &&
+        now >= Date.parse(target.watch.postMerge.deadlineAt)
+      ) {
+        yield* postMergeTimeout(target);
         continue;
       }
       // Grouped per project too: each project reads through its own checkout, so one that cannot

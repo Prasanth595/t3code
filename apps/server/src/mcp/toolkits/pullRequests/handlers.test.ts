@@ -270,6 +270,7 @@ describe("pull request toolkit handlers", () => {
       const harness = yield* makeHarness();
       const result = yield* harness.call("watch_pull_request", {
         url: "https://github.com/t3tools/t3code/pull/9",
+        postMergeCheck: "Main",
       });
       expect(result).toMatchObject({ number: 9, watching: false, wasWatching: false });
       expect(yield* Ref.get(harness.commands)).toMatchObject([
@@ -277,6 +278,7 @@ describe("pull request toolkit handlers", () => {
           type: "thread.pull-request.watch",
           number: 9,
           watching: true,
+          postMergeCheck: "Main",
           link: { url: "https://github.com/t3tools/t3code/pull/9", source: "agent" },
         },
       ]);
@@ -345,7 +347,11 @@ describe("pull request toolkit handlers", () => {
         },
       });
       const error = yield* harness
-        .call("watch_pull_request", { repository: "t3tools/t3code", number: 1 })
+        .call("watch_pull_request", {
+          repository: "t3tools/t3code",
+          number: 1,
+          postMergeCheck: "Main",
+        })
         .pipe(Effect.flip);
       expect(error).toMatchObject({ _tag: "PullRequestWatchFromSubagentError" });
       expect(yield* Ref.get(harness.commands)).toEqual([]);

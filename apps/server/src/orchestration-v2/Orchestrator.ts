@@ -2585,8 +2585,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       const inactive =
         thread.archivedAt !== null ||
-        thread.settledOverride === "settled" ||
-        thread.settledAt !== null ||
+        ((thread.settledOverride === "settled" || thread.settledAt !== null) &&
+          link?.watch?.postMergeCheck === undefined) ||
+        thread.lineage.relationshipToParent === "subagent" ||
         isProviderNativeSubagentThread(thread);
       if (link?.watch?.startedAt !== command.startedAt || (command.wake && inactive)) {
         return yield* new OrchestratorDispatchError({
@@ -2649,6 +2650,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    automaticSettlement = false,
   ) {
     const thread = yield* projectionStore.getThread(command.threadId).pipe(
       Effect.mapError(
@@ -3070,7 +3072,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...thread,
             settledOverride: "settled",
             settledAt: alreadySettled ? thread.settledAt : (command.settledAt ?? now),
-            pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
+            pullRequests: thread.pullRequests?.map((link) =>
+              automaticSettlement && link.watch?.postMergeCheck !== undefined
+                ? link
+                : withPullRequestWatch(link, undefined),
+            ),
             unsettledAt: null,
             pinnedAt: null,
             pinOrderKey: null,
@@ -3385,25 +3391,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : existing.watch
               : !command.watching
                 ? undefined
-                : (existing.watch ?? {
-                    startedAt,
-                    headSha: null,
-                    failedChecks: [],
-                    passed: false,
-                    passedChecks: [],
-                    conflicting: false,
-                    // Watching again must not repeat check or conflict news the last watch told.
-                    ...(existing.endedWatch && {
-                      headSha: existing.endedWatch.headSha,
-                      failedChecks: existing.endedWatch.failedChecks,
-                      passed: existing.endedWatch.passed,
-                      passedChecks: existing.endedWatch.passedChecks,
-                      conflicting: existing.endedWatch.conflicting,
-                    }),
-                    remarksThrough: startedAt,
-                    remarkIds: [],
-                    wakes: 0,
-                  });
+                : existing.watch === undefined
+                  ? {
+                      startedAt,
+                      ...(command.postMergeCheck === undefined
+                        ? {}
+                        : { postMergeCheck: command.postMergeCheck }),
+                      headSha: null,
+                      failedChecks: [],
+                      passed: false,
+                      passedChecks: [],
+                      conflicting: false,
+                      // Watching again must not repeat check or conflict news the last watch told.
+                      ...(existing.endedWatch && {
+                        headSha: existing.endedWatch.headSha,
+                        failedChecks: existing.endedWatch.failedChecks,
+                        passed: existing.endedWatch.passed,
+                        passedChecks: existing.endedWatch.passedChecks,
+                        conflicting: existing.endedWatch.conflicting,
+                      }),
+                      remarksThrough: startedAt,
+                      remarkIds: [],
+                      wakes: 0,
+                    }
+                  : command.postMergeCheck === undefined ||
+                      command.postMergeCheck === existing.watch.postMergeCheck
+                    ? existing.watch
+                    : {
+                        ...existing.watch,
+                        startedAt,
+                        postMergeCheck: command.postMergeCheck,
+                        postMerge: undefined,
+                      };
           if (watch === existing.watch && links === linked) return thread;
           const final =
             command.type === "thread.pull-request-watch.sync" && watch === undefined
@@ -11291,6 +11310,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
           events,
           effects,
+          true,
         );
         break;
       }
