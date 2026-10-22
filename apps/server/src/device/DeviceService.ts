@@ -264,20 +264,50 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 
   // A host can take minutes to start (an SSH host may be installing its hub),
   // so starting runs outside the lifecycle lock; each host serializes its own
-  // starts and stops. Under the lock, a start that is no longer wanted stops.
+  // starts and stops. Turning device support or agent access off can land
+  // before a start takes its host's lock, so however the start ends, an
+  // unwanted one stops again under the lock and drops the statuses it
+  // published after configure cleared them.
+  const stopIfRevoked =
+    (host: DeviceHost.DeviceHost["Service"], agent: boolean) =>
+    <A, E>(start: Effect.Effect<A, E>) =>
+      start.pipe(
+        Effect.ensuring(
+          lifecycleLock
+            .withPermit(
+              Effect.gen(function* () {
+                const current = yield* readDeviceSettings;
+                if (current.enabled && (!agent || current.agentAccessEnabled)) return;
+                yield* current.enabled ? host.stopAgent : host.stop;
+                yield* publish((state) => ({
+                  ...state,
+                  ...(host.id === LOCAL_DEVICE_HOST_ID
+                    ? {
+                        hostStatus: current.enabled ? "idle" : "disabled",
+                        hostStatusDetail: undefined,
+                      }
+                    : {}),
+                  hostStatuses: Object.fromEntries(
+                    Object.entries(state.hostStatuses).filter(([id]) => id !== host.id),
+                  ),
+                }));
+              }),
+            )
+            .pipe(Effect.ignore),
+        ),
+      );
+
   const confirmStarted = Effect.fn("DeviceService.confirmStarted")(function* (
     host: DeviceHost.DeviceHost["Service"],
     agent: boolean,
   ) {
     const current = yield* readDeviceSettings;
-    if (!current.enabled || (agent && !current.agentAccessEnabled)) {
-      yield* current.enabled ? host.stopAgent : host.stop;
+    if (!current.enabled || (agent && !current.agentAccessEnabled))
       return yield* new DeviceHostUnavailableError({
         hostId: host.id,
         hostLabel: host.label,
         reason: `${current.enabled ? "Agent device access" : "Device support"} was turned off while the host was starting.`,
       });
-    }
     if (hosts.get(host.id) !== host)
       return yield* new DeviceHostUnavailableError({
         hostId: host.id,
@@ -325,6 +355,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                 cause: error,
               }),
           ),
+          stopIfRevoked(host, false),
         );
       return yield* lifecycleLock.withPermit(
         Effect.gen(function* () {
@@ -390,6 +421,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                 cause: error,
               }),
           ),
+          stopIfRevoked(host, true),
         );
       return yield* lifecycleLock.withPermit(
         Effect.gen(function* () {

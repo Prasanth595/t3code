@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { ThreadId } from "@t3tools/contracts";
+import { LOCAL_DEVICE_HOST_ID, ThreadId, type DeviceHostSummary } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -217,4 +217,92 @@ it.effect("starts other hosts while one host is still starting", () =>
     expect(stops).toEqual(["slow", "fast", "slow"]);
     expect((yield* service.state).hostStatuses).toEqual({});
   }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true }))),
+);
+
+it.effect("stops a start that fails after device support was turned off before it began", () =>
+  Effect.gen(function* () {
+    const summaryEntered = yield* Deferred.make<void>();
+    const finishSummary = yield* Deferred.make<void>();
+    let pauseSummary = false;
+    let running = false;
+    const stops: string[] = [];
+    const summary: DeviceHostSummary = {
+      id: LOCAL_DEVICE_HOST_ID,
+      label: "Local",
+      kind: "local",
+      hubInstalled: true,
+      agentDeviceInstalled: false,
+      platforms: [{ platform: "android", available: true }],
+    };
+    const run = () => Effect.succeed({ stdout: "", stderr: "", code: 0 });
+    const ready: DeviceHost.DeviceHostReady = {
+      nodePath: process.execPath,
+      hub: { origin: "http://local" },
+      devices: makeDeviceHubOperations({
+        hostId: LOCAL_DEVICE_HOST_ID,
+        origin: "http://local",
+        http: HttpClient.make(() => Effect.die("unused")),
+        run,
+        androidAvailable: Effect.succeed(true),
+      }),
+      run,
+      helpers: { serveSimAxSettings: null, serveSimCli: null },
+    };
+    const host: DeviceHost.DeviceHost["Service"] = {
+      id: LOCAL_DEVICE_HOST_ID,
+      label: "Local",
+      summary: Effect.suspend(() =>
+        pauseSummary
+          ? Deferred.succeed(summaryEntered, undefined).pipe(
+              Effect.andThen(Deferred.await(finishSummary)),
+              Effect.as(summary),
+            )
+          : Effect.succeed(summary),
+      ),
+      platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+      ensureReady: () => Effect.succeed(ready),
+      // Like LocalDeviceHost: the hub is up before the agent tools install fails.
+      ensureAgentReady: () =>
+        Effect.sync(() => {
+          running = true;
+        }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new DeviceHost.DeviceHostError({
+                hostId: LOCAL_DEVICE_HOST_ID,
+                step: "installing agent tools",
+                cause: new Error("offline"),
+              }),
+            ),
+          ),
+        ),
+      current: Effect.sync(() => (running ? ready : null)),
+      stopAgent: Effect.void,
+      stop: Effect.sync(() => {
+        stops.push("stop");
+        running = false;
+      }),
+    };
+    const service = yield* DeviceService.makeWithHosts(new Map([[host.id, host]])).pipe(
+      Effect.provide(NodeCrypto.layer),
+    );
+    pauseSummary = true;
+    const starting = yield* service.agentReadinessIfSupported().pipe(Effect.flip, Effect.forkChild);
+    yield* Deferred.await(summaryEntered);
+    yield* service.configure({ enabled: false });
+    yield* Deferred.succeed(finishSummary, undefined);
+    const error = yield* Fiber.join(starting);
+    expect(error._tag === "DeviceHostUnavailableError" && error.reason).toBe(
+      "Device support failed during installing agent tools.",
+    );
+    expect(stops).toEqual(["stop", "stop"]);
+    expect(yield* service.currentReadiness()).toBeNull();
+    const state = yield* service.state;
+    expect(state.hostStatus).toBe("disabled");
+    expect(state.hostStatuses).toEqual({});
+  }).pipe(
+    Effect.provide(
+      ServerSettings.layerTest({ enableDeviceSupport: true, enableAgentDeviceAccess: true }),
+    ),
+  ),
 );
