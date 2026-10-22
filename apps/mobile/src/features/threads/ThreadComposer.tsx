@@ -1,3 +1,4 @@
+import { useSidebarWorkspaceTabs } from "../workspace/useSystemWorkspaceTabBar";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
@@ -248,6 +249,7 @@ const FOLLOW_UP_ACTION_SUBTITLE = {
 } as const;
 
 function SendActionButton(props: {
+  readonly size?: "regular" | "large";
   readonly accessibilityLabel: string;
   readonly presentation: ComposerSendPresentation;
   readonly disabled: boolean;
@@ -257,6 +259,7 @@ function SendActionButton(props: {
   const button = (
     <ComposerActionButton
       accessibilityLabel={props.accessibilityLabel}
+      size={props.size}
       icon={presentation.icon}
       variant="primary"
       disabled={props.disabled}
@@ -292,6 +295,7 @@ export function ComposerSurface(props: {
   readonly children: ReactNode;
   readonly style: ViewStyle;
   readonly animateLayout?: boolean;
+  readonly capsule?: boolean;
 }) {
   const colors = useUniwindTheme();
   const targetBorderRadius =
@@ -306,8 +310,10 @@ export function ComposerSurface(props: {
         })
       : targetBorderRadius;
   }, [animatedBorderRadius, shouldAnimate, targetBorderRadius]);
+  const borderCurve = props.style.borderCurve;
   const animatedShapeStyle = useAnimatedStyle(() => ({
     borderRadius: animatedBorderRadius.value,
+    ...(borderCurve ? { borderCurve } : {}),
   }));
   const layoutTransition = shouldAnimate ? COMPOSER_LAYOUT_TRANSITION : undefined;
 
@@ -334,7 +340,11 @@ export function ComposerSurface(props: {
         pointerEvents="none"
         tintColor="transparent"
         layout={layoutTransition}
-        style={[{ position: "absolute", inset: 0 }, animatedShapeStyle]}
+        style={[
+          { position: "absolute", inset: 0 },
+          animatedShapeStyle,
+          props.capsule ? { borderRadius: 999 } : undefined,
+        ]}
       >
         {null}
       </AnimatedGlassSurface>
@@ -508,6 +518,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const isVoiceInputPresented = voicePresentation.statusLabel !== null;
   const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
   const { setComposerEditing } = useAdaptiveWorkspaceLayout();
+  const hasSidebarTabBar = useSidebarWorkspaceTabs() === "picker";
   // The composer stays one row, with the model picker in it, until the draft would
   // wrap. Then the draft stacks above the controls and returns to the row once it
   // fits again. The native editor reports its laid-out text size: more than one
@@ -872,6 +883,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         ) : null}
 
         <ComposerSurface
+          capsule={hasSidebarTabBar && !usesCard}
           style={
             usesCard
               ? {
@@ -881,9 +893,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   paddingTop: 14,
                 }
               : {
-                  borderRadius: 27,
+                  borderRadius: hasSidebarTabBar ? 31 : 27,
+                  ...(hasSidebarTabBar ? { borderCurve: "circular" as const } : {}),
                   overflow: "hidden" as const,
-                  paddingVertical: 2,
+                  paddingVertical: hasSidebarTabBar ? 9 : 2,
                 }
           }
         >
@@ -1104,6 +1117,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 />
                 {showStopAction ? (
                   <ComposerActionButton
+                    size={hasSidebarTabBar ? "large" : "regular"}
                     accessibilityLabel="Stop agent"
                     icon="stop.fill"
                     variant="danger"
@@ -1112,6 +1126,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   />
                 ) : showResumeAction ? (
                   <ComposerActionButton
+                    size={hasSidebarTabBar ? "large" : "regular"}
                     accessibilityLabel="Resume queue"
                     icon="play"
                     disabled={!props.canOperateThread || resumingQueue}
@@ -1119,6 +1134,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   />
                 ) : (
                   <SendActionButton
+                    size={hasSidebarTabBar ? "large" : "regular"}
                     accessibilityLabel={sendBlockedReason ?? sendLabel}
                     presentation={sendPresentation}
                     disabled={!canSend}

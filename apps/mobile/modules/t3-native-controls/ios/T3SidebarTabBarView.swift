@@ -12,10 +12,14 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
 
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
+    let iconBundle = Bundle(for: Self.self).url(forResource: "T3NativeControlIcons", withExtension: "bundle").flatMap(Bundle.init(url:))
+    let pullRequestIcon = UIImage(named: "pull-request", in: iconBundle, compatibleWith: nil)?.withRenderingMode(.alwaysTemplate)
     tabBar.items = [
       UITabBarItem(title: "Threads", image: UIImage(systemName: "text.bubble"), tag: 0),
-      UITabBarItem(title: "Pull requests", image: UIImage(systemName: "arrow.triangle.pull"), tag: 1),
+      UITabBarItem(title: "Pulls", image: pullRequestIcon, tag: 1),
     ]
+    tabBar.items?.last?.accessibilityLabel = "Pull requests"
+    tabBar.items?.first?.selectedImage = UIImage(systemName: "text.bubble.fill")
     tabBar.itemPositioning = .fill
     tabBar.delegate = self
     addSubview(tabBar)
