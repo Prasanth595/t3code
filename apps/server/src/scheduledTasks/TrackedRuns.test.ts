@@ -97,7 +97,7 @@ it("lists only dispatched runs as pending, and follows a run bound from the proj
   runs.track(messageId, taskId, "start");
   assert.deepEqual(runs.pending(), []);
   runs.dispatched(messageId, threadId);
-  assert.deepEqual(runs.pending(), [{ messageId, threadId }]);
+  assert.deepEqual(runs.pending(), [{ taskId, startedAtIso: "start", messageId, threadId }]);
   runs.bindRun(messageId, RunId.make("run:caught-up"));
   assert.deepEqual(runs.observe(runEvent("run:caught-up", "completed", MessageId.make("other"))), [
     settledFor("succeeded", null),

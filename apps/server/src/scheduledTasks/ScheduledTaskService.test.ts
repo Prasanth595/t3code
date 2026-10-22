@@ -487,6 +487,10 @@ const makeTurnHarness = (
     readonly runs?: ReadonlyArray<OrchestrationV2Run>;
     /** How many times the event stream fails before it starts to deliver events. */
     readonly streamFailures?: number;
+    /** Reads the thread as deleted, which the projection keeps as a flagged record. */
+    readonly threadDeleted?: boolean;
+    /** Makes every projection read fail, as for a thread whose records are gone. */
+    readonly recordsUnreadable?: boolean;
     /** Makes the stream a live tail: events from before it was opened are not delivered. */
     readonly liveTail?: boolean;
     /** Runs when the projection's runs are read, so an event can land mid catch-up. */
@@ -511,8 +515,11 @@ const makeTurnHarness = (
               ),
             getThreadRecords: (_threadId, fields: ReadonlyArray<string>, filter) =>
               Effect.gen(function* () {
+                if (options.recordsUnreadable)
+                  return yield* Effect.fail(new Error("no records") as never);
                 if (fields.includes("runs")) yield* options.duringRunsRead?.(events) ?? Effect.void;
                 return {
+                  thread: { deletedAt: options.threadDeleted ? epoch : null },
                   messages: (filter?.messageIds ?? []).map((id) => ({
                     id,
                     runId: options.messageRunId ?? null,
@@ -833,6 +840,42 @@ it.effect("a cancelled run is still recorded when its first save fails", () =>
       yield* untilStatus(service, task.id, "failed");
       const [settled] = (yield* service.list()).tasks;
       assert.equal(settled?.lastRunError, "The run was cancelled.");
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect(
+  "a run whose thread cannot be read during catch-up is released, not retried forever",
+  () =>
+    Effect.gen(function* () {
+      const harness = yield* makeTurnHarness({ streamFailures: 1, recordsUnreadable: true });
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const { task } = yield* upsertBoundTask(service);
+        yield* service.runNow({ id: task.id });
+        yield* Queue.take(harness.dispatched);
+        yield* TestClock.adjust("1 minute");
+        yield* untilStatus(service, task.id, "failed");
+        const [settled] = (yield* service.list()).tasks;
+        assert.equal(settled?.lastRunError, "Could not read how the run ended.");
+        // The stream was resubscribed once for the drop, not again for the unreadable thread.
+        assert.equal(yield* Ref.get(harness.subscriptions), 2);
+      }).pipe(Effect.provide(harness.layer));
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a thread deleted while the stream was down fails its run on catch-up", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeTurnHarness({ streamFailures: 1, threadDeleted: true });
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      yield* service.runNow({ id: task.id });
+      yield* Queue.take(harness.dispatched);
+      yield* TestClock.adjust("30 seconds");
+      yield* untilStatus(service, task.id, "failed");
+      const [settled] = (yield* service.list()).tasks;
+      assert.equal(settled?.lastRunError, "The thread was deleted.");
     }).pipe(Effect.provide(harness.layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

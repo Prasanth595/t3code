@@ -120,10 +120,19 @@ export function makeTrackedRuns() {
       return held === null ? null : end(run, held);
     },
     /** Dispatched runs still waiting for an end, for catching up after missed events. */
-    pending: (): ReadonlyArray<{ readonly messageId: MessageId; readonly threadId: ThreadId }> =>
+    pending: (): ReadonlyArray<
+      Pick<SettledRun, "taskId" | "startedAtIso" | "messageId"> & { readonly threadId: ThreadId }
+    > =>
       [...runs.values()].flatMap((run) =>
         run.dispatched && run.threadId !== null
-          ? [{ messageId: run.messageId, threadId: run.threadId }]
+          ? [
+              {
+                taskId: run.taskId,
+                startedAtIso: run.startedAtIso,
+                messageId: run.messageId,
+                threadId: run.threadId,
+              },
+            ]
           : [],
       ),
     /** Follows a run found by reading the projection rather than by events. */
