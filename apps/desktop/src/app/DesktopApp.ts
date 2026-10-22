@@ -218,11 +218,14 @@ const bootstrap = Effect.gen(function* () {
   if (owner._tag === "stranded") {
     const recovered = yield* recoverStrandedServer({ owner });
     if (!recovered) {
-      // The stranded server still holds the lock, so starting our own
-      // backend would fail the same way. Let the ownership dialog explain.
+      // The stranded server still holds the lock, so starting our own backend
+      // would be refused with exit code 78. Report the owner and keep the app
+      // open instead of making a doomed start.
       yield* logBootstrapWarning(
         "bootstrap could not stop the stranded server owning this T3 home",
       );
+      yield* DesktopHomeOwnership.openDesktopWithExistingOwner({ owner });
+      return;
     }
   } else if (owner._tag === "healthy" || owner._tag === "foreign" || owner._tag === "unknown") {
     // The desktop cannot start a server for this home: either another server

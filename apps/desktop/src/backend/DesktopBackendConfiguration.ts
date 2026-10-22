@@ -577,6 +577,12 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   input: SharedBootstrapInput & {
     readonly port: number;
     readonly distro: string | null;
+    /**
+     * Identifies this desktop installation to the server it starts. The WSL
+     * server keeps its own home directory, but the record it writes still
+     * says which desktop started it.
+     */
+    readonly desktopOwnerId: string;
   },
 ): Effect.fn.Return<
   DesktopBackendManager.DesktopBackendStartConfig,
@@ -607,6 +613,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     host: wslBindHost,
     desktopBootstrapToken: input.bootstrapToken,
     desktopBootstrapSecret: input.bootstrapSecret,
+    desktopOwnerId: input.desktopOwnerId,
     // PortSchema rejects 0, so when tailscale serve is disabled we still need a
     // valid number in this slot.
     tailscaleServeEnabled: false,
@@ -813,6 +820,7 @@ export const make = Effect.gen(function* () {
       ...shared,
       port: backendExposure.port,
       distro: persistedSettings.wslDistro,
+      desktopOwnerId: yield* ownerIdentity.ownerId,
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
@@ -890,7 +898,11 @@ export const make = Effect.gen(function* () {
     resolveWsl: Effect.fnUntraced(
       function* (input) {
         const shared = yield* sharedInputs;
-        return yield* resolveWslStartConfig({ ...shared, ...input }).pipe(
+        return yield* resolveWslStartConfig({
+          ...shared,
+          ...input,
+          desktopOwnerId: yield* ownerIdentity.ownerId,
+        }).pipe(
           Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
           Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),
           Effect.provideService(DesktopWslServerTree.DesktopWslServerTree, wslServerTree),

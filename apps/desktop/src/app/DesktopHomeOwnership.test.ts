@@ -33,6 +33,17 @@ const foreignOwner: DesktopHomeOwnership.DesktopHomeOwner = {
   },
 };
 
+const strandedOwner: DesktopHomeOwnership.DesktopHomeOwner = {
+  _tag: "stranded",
+  record: {
+    version: 1,
+    pid: 4244,
+    port: 3775,
+    origin: "http://127.0.0.1:3775",
+    startedAt: "2026-01-01T00:00:00.000Z",
+  },
+};
+
 const unknownOwner: DesktopHomeOwnership.DesktopHomeOwner = {
   _tag: "unknown",
   recordPath: "/tmp/t3-home/userdata/server-runtime.json",
@@ -134,6 +145,19 @@ describe("DesktopHomeOwnership", () => {
       assert.equal(result.windowsOpened, 1);
       assert.equal(result.controlSocketsStarted, 1);
       assert.include(result.dialogs[0]?.[1] ?? "", "is not responding");
+    }),
+  );
+
+  it.effect("reports a server the desktop could not stop", () =>
+    Effect.gen(function* () {
+      const result = yield* open(strandedOwner);
+
+      assert.equal(result.windowsOpened, 1, "the app stays open so the user can act");
+      assert.equal(result.controlSocketsStarted, 1);
+      assert.include(
+        result.dialogs[0]?.[1] ?? "",
+        "could not stop the server that owns this T3 home",
+      );
     }),
   );
 

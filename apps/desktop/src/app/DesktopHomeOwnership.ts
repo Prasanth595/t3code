@@ -17,7 +17,10 @@ const { logInfo: logHomeOwnershipInfo, logWarning: logHomeOwnershipWarning } =
  * or its ownership record cannot be read.
  */
 export type DesktopHomeOwner =
-  | Extract<DesktopServerOwnership.DesktopServerOwner, { readonly _tag: "healthy" | "foreign" }>
+  | Extract<
+      DesktopServerOwnership.DesktopServerOwner,
+      { readonly _tag: "healthy" | "foreign" | "stranded" }
+    >
   | {
       readonly _tag: "unknown";
       readonly recordPath: string;
@@ -74,7 +77,9 @@ export const openDesktopWithExistingOwner = Effect.fn(
       ? `The record that says who owns this T3 home (${input.owner.recordPath}) could not be read, so the desktop cannot tell whether the home is free. The desktop did not start a server for a home it cannot place.\n\nRemove that file to let the desktop start its own server, then reopen T3 Code.`
       : input.owner._tag === "healthy"
         ? `A T3 Code server is already running for this T3 home (${input.owner.record.origin}). The desktop did not start a second server for the same home, so it cannot open the local environment.\n\nTo use that server, turn off Settings > Connections > Local environment and add it as a saved environment. To let the desktop run its own server instead, stop that server and reopen T3 Code.`
-        : `Another T3 Code server owns this T3 home and is not responding (${input.owner.record.origin}). The desktop did not start a second server for the same home.\n\nStop that server and reopen T3 Code, or turn off Settings > Connections > Local environment and add a running server as a saved environment.`;
+        : input.owner._tag === "stranded"
+          ? `The desktop could not stop the server that owns this T3 home (${input.owner.record.origin}), so it did not start a second server for the same home.\n\nStop that server and reopen T3 Code, or turn off Settings > Connections > Local environment and add a running server as a saved environment.`
+          : `Another T3 Code server owns this T3 home and is not responding (${input.owner.record.origin}). The desktop did not start a second server for the same home.\n\nStop that server and reopen T3 Code, or turn off Settings > Connections > Local environment and add a running server as a saved environment.`;
   yield* electronDialog.showErrorBox(title, content);
   if (quitting) {
     return;
