@@ -262,7 +262,9 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
     setPreview(null);
   }
   const orderVersion = rows
-    .map((row) => `${row.key}:${row.height}:${row.thread?.pinOrderKey}:${row.thread?.activeOrderKey}`)
+    .map(
+      (row) => `${row.key}:${row.height}:${row.thread?.pinOrderKey}:${row.thread?.activeOrderKey}`,
+    )
     .join("|");
   useEffect(() => {
     stop();

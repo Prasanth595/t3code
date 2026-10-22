@@ -25,7 +25,10 @@ export function deriveThreadArrangementSizing(input: {
   readonly fontScale: number;
 }) {
   const bodyLineHeight = scaledTypographyLineHeight(MOBILE_TYPOGRAPHY.body, input.baseFontSize);
-  const headerLineHeight = scaledTypographyLineHeight(MOBILE_TYPOGRAPHY.footnote, input.baseFontSize);
+  const headerLineHeight = scaledTypographyLineHeight(
+    MOBILE_TYPOGRAPHY.footnote,
+    input.baseFontSize,
+  );
   return {
     rowHeight: Math.max(56, Math.ceil(2 * bodyLineHeight * input.fontScale) + 10),
     headerHeight: Math.max(48, Math.ceil(headerLineHeight * input.fontScale) + 24),
