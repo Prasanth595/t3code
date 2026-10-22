@@ -7364,6 +7364,32 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("asks for a subagent of an earlier run after a later run fails", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeIdlePermissionHarness();
+      yield* harness.start();
+      yield* harness.offer(harness.taskStarted());
+      const launchTurn = (yield* harness.settle()).providerTurnId;
+      yield* harness.start();
+      yield* harness.offer(
+        makeResultFrame({
+          uuid: "failed-turn",
+          result: "API Error: 500 Internal server error.",
+          isError: true,
+          apiErrorStatus: 500,
+          terminalReason: "api_error",
+        }),
+      );
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "failed");
+      yield* harness.approve("auditor", "accept", launchTurn);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect("cancels a settled subagent approval when Claude aborts its callback", () =>
     Effect.gen(function* () {
       const harness = yield* makeIdlePermissionHarness();

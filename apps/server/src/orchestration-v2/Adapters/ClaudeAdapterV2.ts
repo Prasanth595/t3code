@@ -6944,7 +6944,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           for (const [runId, settled] of settledTurnsByRunId) {
             if (
               settled.nativeThreadId === input.context.nativeThreadId &&
-              (input.status !== "completed" || !runningSubagentRunIds.has(runId))
+              (runId === input.context.input.runId || !runningSubagentRunIds.has(runId))
             ) {
               settledTurnsByRunId.delete(runId);
             }
