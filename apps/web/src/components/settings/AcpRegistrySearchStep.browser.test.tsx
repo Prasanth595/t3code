@@ -55,6 +55,7 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
 import { AcpRegistrySearchStep } from "./AcpRegistrySearchStep";
 
 const environmentId = EnvironmentId.make("remote-device");
+const isRegistrySearchInput = Schema.is(AcpRegistrySearchInput);
 const gemini: AcpRegistrySearchAgent = {
   id: "gemini",
   name: "Gemini CLI",
@@ -149,7 +150,7 @@ it("ignores prepare completion after unmount", async () => {
 it("keeps pasted searches valid at the registry request boundary", async () => {
   setup();
   state.search.mockImplementation(({ input }: { readonly input: unknown }) => {
-    const valid = Schema.is(AcpRegistrySearchInput)(input);
+    const valid = isRegistrySearchInput(input);
     state.error = valid ? null : "Invalid registry search query";
     state.result = valid && input.query ? { agents: [] } : { agents: [gemini] };
   });
