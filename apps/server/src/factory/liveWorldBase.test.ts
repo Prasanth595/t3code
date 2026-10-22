@@ -128,7 +128,11 @@ describe("liveWorld: a step of a run is built for the base the pass hands it", (
 describe("liveWorld: threads on a broken worktree", () => {
   const tempDir = useTempDirs();
 
-  const worldOver = (dataDir: string, sessions: Sessions.FactorySessions["Service"]) =>
+  const worldOver = (
+    dataDir: string,
+    sessions: Sessions.FactorySessions["Service"],
+    clock: () => number = () => 0,
+  ) =>
     Effect.gen(function* () {
       return liveWorld(
         machine,
@@ -136,7 +140,7 @@ describe("liveWorld: threads on a broken worktree", () => {
         FactoryProcess.of({ run: () => Effect.die("no gh") }),
         NodeServices.layer,
         sessions,
-        () => 0,
+        clock,
         "mac-mini",
         { list: () => Effect.succeed([]), raise: () => Effect.void, clear: () => Effect.void },
         {
@@ -269,9 +273,59 @@ describe("liveWorld: threads on a broken worktree", () => {
       const run = launched(dataDir, "187", "session-1", true);
       const file = NodePath.join(dataDir, "runs", runIdFileName(run));
       NodeFS.chmodSync(file, 0o000);
-      const world = yield* worldOver(dataDir, childOnBroken);
+      let now = 0;
+      const world = yield* worldOver(dataDir, childOnBroken, () => now);
       assert.deepStrictEqual(yield* world.brokenWorktrees(), []);
       NodeFS.chmodSync(file, 0o644);
+      now = 5 * 60 * 1000;
+      assert.deepStrictEqual(yield* world.brokenWorktrees(), [
+        { worktreePath: "/wt/t3-a", run, threadIds: ["child-1"] },
+      ]);
+    }),
+  );
+
+  it.effect("reads the ledger again for an unsettled thread only every five minutes", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const run = launched(dataDir, "187", "session-1", true);
+      const file = NodePath.join(dataDir, "runs", runIdFileName(run));
+      NodeFS.chmodSync(file, 0o000);
+      let now = 0;
+      const world = yield* worldOver(dataDir, childOnBroken, () => now);
+      assert.deepStrictEqual(yield* world.brokenWorktrees(), []);
+      // Any read of the ledger now fails: the runs folder is a file.
+      NodeFS.chmodSync(file, 0o644);
+      NodeFS.rmSync(NodePath.join(dataDir, "runs"), { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(dataDir, "runs"), "not a folder");
+      now = 5 * 60 * 1000 - 1;
+      assert.deepStrictEqual(yield* world.brokenWorktrees(), []);
+      now = 5 * 60 * 1000;
+      const error = yield* Effect.flip(world.brokenWorktrees());
+      assert.strictEqual(error.kind, "ledger");
+    }),
+  );
+
+  it.effect("reads the ledger at once when a new thread turns up beside an unsettled one", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const run = launched(dataDir, "187", "session-1", true);
+      launched(dataDir, "188", "session-2", false);
+      const found = [
+        { threadId: "session-2", worktreePath: "/wt/t3-b", threadsOnPath: ["session-2"] },
+      ];
+      const world = yield* worldOver(
+        dataDir,
+        Sessions.FactorySessions.of({
+          ...stubSessions,
+          brokenWorktrees: Effect.sync(() => [...found]),
+        }),
+      );
+      assert.deepStrictEqual(yield* world.brokenWorktrees(), []);
+      found.push({
+        threadId: "child-1",
+        worktreePath: "/wt/t3-a",
+        threadsOnPath: ["child-1", "session-1"],
+      });
       assert.deepStrictEqual(yield* world.brokenWorktrees(), [
         { worktreePath: "/wt/t3-a", run, threadIds: ["child-1"] },
       ]);
