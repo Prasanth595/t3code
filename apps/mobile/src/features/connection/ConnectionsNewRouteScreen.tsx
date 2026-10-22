@@ -217,7 +217,8 @@ export function ConnectionsNewRouteScreen({
       >
         <View collapsable={false} className="gap-6.5">
           <PairingScanCard
-            cameraActive={cameraPermission?.granted === true && screenFocused && !scanComplete}
+            cameraGranted={cameraPermission?.granted === true}
+            cameraActive={screenFocused && !scanComplete}
             onScan={handleQrScan}
             onScanPress={() => {
               void handleScanPress();
@@ -277,16 +278,18 @@ const SCAN_RETICLE_TOP = 36;
 const SCAN_RETICLE_RADIUS = 28;
 
 function PairingScanCard(props: {
+  readonly cameraGranted: boolean;
   readonly cameraActive: boolean;
   readonly onScan: (result: { readonly data: string }) => void;
   readonly onScanPress: () => void;
 }) {
   const light = useAppearancePreferences().themeAppearance === "light";
+  const scanning = props.cameraGranted && props.cameraActive;
   return (
     <Pressable
-      accessibilityRole={props.cameraActive ? undefined : "button"}
-      accessibilityLabel={props.cameraActive ? undefined : "Scan QR code"}
-      disabled={props.cameraActive}
+      accessibilityRole={scanning ? undefined : "button"}
+      accessibilityLabel={scanning ? undefined : "Scan QR code"}
+      disabled={scanning}
       onPress={props.onScanPress}
       className={cn(
         "overflow-hidden rounded-[26px] border-continuous",
@@ -304,22 +307,27 @@ function PairingScanCard(props: {
         <Rect fill="url(#pairing-scan-backdrop)" height="100%" width="100%" />
       </Svg>
 
-      {props.cameraActive ? (
-        <>
-          <CameraView
-            active
-            barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-            onBarcodeScanned={props.onScan}
-            style={StyleSheet.absoluteFill}
-          />
-          <FrostedCutout
-            cutoutTop={SCAN_RETICLE_TOP}
-            cutoutWidth={SCAN_RETICLE_SIZE}
-            cutoutHeight={SCAN_RETICLE_SIZE}
-            cutoutRadius={SCAN_RETICLE_RADIUS}
-            appearance={light ? "light" : "dark"}
-          />
-        </>
+      {props.cameraGranted ? (
+        // expo-camera on iOS only stops its capture session through the `active` prop
+        // or removeFromSuperview, and the latter can be skipped when the view is
+        // recycled on unmount. Keep the view mounted and flip `active` so the camera
+        // is released (and the privacy indicator clears) as soon as it is not needed.
+        <CameraView
+          active={props.cameraActive}
+          barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+          onBarcodeScanned={props.cameraActive ? props.onScan : undefined}
+          pointerEvents="none"
+          style={[StyleSheet.absoluteFill, props.cameraActive ? null : { opacity: 0 }]}
+        />
+      ) : null}
+      {scanning ? (
+        <FrostedCutout
+          cutoutTop={SCAN_RETICLE_TOP}
+          cutoutWidth={SCAN_RETICLE_SIZE}
+          cutoutHeight={SCAN_RETICLE_SIZE}
+          cutoutRadius={SCAN_RETICLE_RADIUS}
+          appearance={light ? "light" : "dark"}
+        />
       ) : null}
 
       <View
@@ -338,7 +346,7 @@ function PairingScanCard(props: {
             width: SCAN_RETICLE_SIZE,
           }}
         >
-          {props.cameraActive ? null : (
+          {scanning ? null : (
             <>
               <SymbolView
                 name="qrcode.viewfinder"
