@@ -989,6 +989,25 @@ describe("AcpRuntimeModel", () => {
     });
   });
 
+  it("keeps an oversized compaction summary whole", () => {
+    const summary = Array.from({ length: 400 }, (_, i) => `ph ${i}: ${"x".repeat(40)}`).join("\n");
+    const result = parseSessionUpdateEvent({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "compaction_update",
+        compactionId: "compact-1",
+        status: "completed",
+        summary: [{ type: "text", text: summary }],
+      },
+    } satisfies EffectAcpSchema.SessionNotification);
+
+    const event = result.events[0];
+    if (event?._tag !== "ToolCallUpdated") {
+      throw new Error("expected a ToolCallUpdated event");
+    }
+    expect(event.toolCall.data.rawOutput).toBe(summary);
+  });
+
   it("applies ACP v2 agent-owned terminal snapshots and output chunks", () => {
     const snapshot = applyAcpAgentTerminalUpdate(undefined, {
       sessionUpdate: "terminal_update",
