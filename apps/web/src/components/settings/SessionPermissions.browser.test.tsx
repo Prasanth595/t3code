@@ -26,14 +26,14 @@ it("explains unavailable permission checks without showing stale grants", async 
   } as const;
   state.session = { data, hasError: false, isPending: false };
   const environmentId = "permissions-test" as EnvironmentId;
-  await using screen = await render(
-    <SessionPermissions environmentId={environmentId} connected />,
-  );
+  await using screen = await render(<SessionPermissions environmentId={environmentId} connected />);
   await expect.element(screen.getByRole("list")).toBeVisible();
 
   state.session = { data, hasError: true, isPending: false };
   await screen.rerender(<SessionPermissions environmentId={environmentId} connected />);
-  await expect.element(screen.getByText("Could not check this session’s permissions.")).toBeVisible();
+  await expect
+    .element(screen.getByText("Could not check this session’s permissions."))
+    .toBeVisible();
   await expect.element(screen.getByRole("list")).not.toBeInTheDocument();
 
   state.session = { data: null, hasError: false, isPending: true };
