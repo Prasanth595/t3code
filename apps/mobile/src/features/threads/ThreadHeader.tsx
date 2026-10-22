@@ -16,6 +16,8 @@ import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 export function ThreadHeader(
   props: Parameters<typeof useThreadHeaderOptions>[0] & {
     readonly thread: EnvironmentThreadShell | null;
+    /** False while a client-only creation is preparing, before the server owns the thread. */
+    readonly canMutateThread: boolean;
     readonly hasThreadCwd: boolean;
     readonly hasWorkspaceRoot: boolean;
     readonly fileInspectorSupported: boolean;
@@ -89,6 +91,7 @@ export function ThreadHeader(
     <ThreadTitleMenu
       key={scopedThreadKey(props.thread.environmentId, props.thread.id)}
       thread={props.thread}
+      canMutate={props.canMutateThread}
       subtitle={titleSubtitle}
       maxWidth={native.titleMaxWidth}
       compact={composerKeyboardActive}
@@ -113,6 +116,7 @@ export function ThreadHeader(
           titleSubtitle,
           native.titleMaxWidth,
           threadTitleMenuVersion(props.thread),
+          props.canMutateThread,
         ]}
         trailing={
           props.fileInspectorSupported && props.hasThreadCwd ? (

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { executeThreadUndo, planThreadUndo } from "@t3tools/client-runtime/state/thread-undo";
 import {
   EnvironmentId,
   RunId,
@@ -11,6 +12,7 @@ import { makeRawThreadShell, makeThreadShellFixture } from "../../test-fixtures"
 import {
   buildThreadTitleMenu,
   threadTitleMaxWidth,
+  threadTitleMenuOffers,
   threadTitleMenuVersion,
   threadTitleSnoozeUntil,
 } from "./thread-title-menu";
@@ -118,6 +120,22 @@ describe("thread title actions", () => {
   });
 });
 
+describe("thread title menu events", () => {
+  const snoozeId = menu()
+    .find((action) => action.id === "snooze")
+    ?.subactions?.find((action) => action.id !== "snooze:custom")?.id;
+  it.each(["settle", snoozeId!, "snooze:custom", "pin", "rename", "regenerate-title", "delete"])(
+    "drops a stale %s chosen before mutations became unavailable",
+    (event) => {
+      expect(threadTitleMenuOffers(menu(), event)).toBe(true);
+      expect(threadTitleMenuOffers(menu({ canOperate: false }), event)).toBe(false);
+    },
+  );
+  it("keeps Copy thread ID while mutations are unavailable", () => {
+    expect(threadTitleMenuOffers(menu({ canOperate: false }), "copy-thread-id")).toBe(true);
+  });
+});
+
 describe("thread title header content", () => {
   it("re-renders native title content only when the menu or title can change", () => {
     const version = threadTitleMenuVersion(thread);
@@ -126,6 +144,31 @@ describe("thread title header content", () => {
     ).toEqual(version);
     expect(threadTitleMenuVersion({ ...thread, title: "Renamed" })).not.toEqual(version);
     expect(threadTitleMenuVersion({ ...thread, settledOverride: "settled" })).not.toEqual(version);
+  });
+
+  it("re-renders when another client reorders a pinned thread, so Undo restores the new order", async () => {
+    const pinned = makeThreadShellFixture({
+      pinnedAt: "2026-10-18T11:00:00.000Z",
+      pinOrderKey: "a0",
+    });
+    const reordered = { ...pinned, pinOrderKey: "a2", updatedAt: "2026-10-18T12:00:01.000Z" };
+    // The native header keeps its title element, and that element's shell, until the version changes.
+    const titleShell =
+      JSON.stringify(threadTitleMenuVersion(reordered)) ===
+      JSON.stringify(threadTitleMenuVersion(pinned))
+        ? pinned
+        : reordered;
+
+    const restoredOrderKeys: Array<string | undefined> = [];
+    await executeThreadUndo(
+      planThreadUndo("unpin", titleShell),
+      async (step) => {
+        if (step.action === "pin") restoredOrderKeys.push(step.orderKey);
+        return true;
+      },
+      (succeeded) => succeeded,
+    );
+    expect(restoredOrderKeys).toEqual(["a2"]);
   });
 
   it("re-renders when only the settled timestamp arrives or clears", () => {

@@ -14,13 +14,19 @@ import { queuedThreadKeysAtom } from "../../state/use-thread-outbox";
 import { useThreadListActions } from "../home/useThreadListActions";
 import { useWorkspaceListNavigation } from "../workspace/useAndroidWorkspaceNavigation";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
-import { buildThreadTitleMenu, threadTitleSnoozeUntil } from "./thread-title-menu";
+import {
+  buildThreadTitleMenu,
+  threadTitleMenuOffers,
+  threadTitleSnoozeUntil,
+} from "./thread-title-menu";
 import { leaveDeletedThread } from "./thread-title-delete-navigation";
 import { ThreadTitleMenuTrigger } from "./ThreadTitleMenuTrigger";
 import { Platform, View } from "react-native";
 
 export function ThreadTitleMenu(props: {
   readonly thread: EnvironmentThreadShell;
+  /** False until the server owns the thread; only Copy thread ID stays available. */
+  readonly canMutate: boolean;
   readonly subtitle: string;
   readonly maxWidth: number;
   /** Android only: one row with the subtitle after the title, matching AndroidScreenHeader. */
@@ -29,11 +35,14 @@ export function ThreadTitleMenu(props: {
   const { thread } = props;
   const configs = useAtomValue(environmentServerConfigsAtom);
   const queuedKeys = useAtomValue(queuedThreadKeysAtom);
-  const canOperate = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
+  const canOperate =
+    useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope) && props.canMutate;
   const handlers = useThreadListActions();
   const navigation = useNavigation();
   const returnToList = useWorkspaceListNavigation("threads");
   const [customSnoozeOpen, setCustomSnoozeOpen] = useState(false);
+  // Losing mutations closes an open custom snooze sheet before it can submit.
+  if (customSnoozeOpen && !canOperate) setCustomSnoozeOpen(false);
   const [now, setNow] = useState(() => new Date());
   useFocusEffect(
     useCallback(() => {
@@ -62,6 +71,7 @@ export function ThreadTitleMenu(props: {
         title={thread.title}
         onOpen={() => setNow(new Date())}
         onAction={(event) => {
+          if (!threadTitleMenuOffers(actions, event)) return;
           switch (event) {
             case "settle":
               void handlers.settleThread(thread);

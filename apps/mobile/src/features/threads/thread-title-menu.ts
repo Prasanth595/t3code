@@ -86,6 +86,8 @@ export function threadTitleMenuVersion(thread: EnvironmentThreadShell | null) {
     thread.settledOverride,
     thread.settledAt,
     thread.pinnedAt,
+    // Unpin's Undo restores the captured key, so another client's reorder must reach the menu.
+    thread.pinOrderKey,
     thread.snoozedAt,
     thread.snoozedUntil,
     thread.hasPendingApprovals,
@@ -102,6 +104,15 @@ export function threadTitleMenuVersion(thread: EnvironmentThreadShell | null) {
     thread.runtime?.status === "failed" ? thread.runtime.updatedAt : null,
     thread.titleRegeneration,
   ];
+}
+
+/**
+ * A native menu can deliver a choice made before its actions changed, such as a client-only
+ * thread losing mutations. Only dispatch events the current menu still offers.
+ */
+export function threadTitleMenuOffers(actions: ReadonlyArray<MenuAction>, event: string) {
+  const id = event.startsWith("snooze:") ? "snooze" : event;
+  return actions.some((action) => action.id === id);
 }
 
 /** Carry the displayed instant in the action ID, even if the menu spans midnight. */
