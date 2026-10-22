@@ -81,6 +81,8 @@ const stubSessions = Sessions.FactorySessions.of({
   send: () => Effect.die("not sent"),
   archive: () => Effect.die("not archived"),
   removeWorktree: () => Effect.die("not removed"),
+  brokenWorktrees: Effect.succeed([]),
+  unbindWorktree: () => Effect.die("not unbound"),
   runningThreads: Effect.succeed(0),
   worktreesDirectory: (defaultDir) => Effect.succeed(defaultDir),
 });

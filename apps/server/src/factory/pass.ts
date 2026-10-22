@@ -72,6 +72,14 @@ export interface ClaimScanResult {
   readonly unread: ReadonlyArray<{ readonly issue: number; readonly message: string }>;
 }
 
+/** A live thread on a worktree a factory run launched, which is gone or no longer a git checkout. */
+export interface BrokenWorktree {
+  readonly threadId: string;
+  readonly worktreePath: string;
+  /** The run whose session was launched on the worktree. */
+  readonly run: RunId;
+}
+
 /** Everything a pass reads and writes. */
 export interface PassWorld {
   /**
@@ -215,6 +223,13 @@ export interface PassWorld {
    * checkouts; not read when `min_free_gib` is 0.
    */
   readonly freeSpace: () => Effect.Effect<FreeSpace, PassError>;
+  /** The live threads on a worktree a factory run launched that is gone or is no longer a git checkout. */
+  readonly brokenWorktrees: () => Effect.Effect<ReadonlyArray<BrokenWorktree>, PassError>;
+  /** Clears the thread's worktree, while the thread is still on `worktreePath`. */
+  readonly unbindWorktree: (
+    threadId: string,
+    worktreePath: string,
+  ) => Effect.Effect<void, PassError>;
   readonly nowMs: () => number;
   /** Writes one event to the machine log. */
   readonly record: (event: MachineEvent) => Effect.Effect<void, LedgerError>;
@@ -574,6 +589,7 @@ export const runPass = Effect.fn("Pass.runPass")(function* (
   }
   const repos = yield* loadRepos(world, watched, pass);
   pass.lowDisk = yield* lowDisk(world, machine, pass);
+  yield* brokenWorktrees(world, pass);
   // Without the ledger there is no telling how many runs are active, so nothing is claimed.
   const infos = yield* runs(world, pass);
   if (infos !== null) {
@@ -705,6 +721,57 @@ const lowDisk = Effect.fn("Pass.lowDisk")(function* (
     message: `low disk: free space is below min_free_gib ${machine.minFreeGib}; ${held}`,
   });
   return true;
+});
+
+/**
+ * Unbinds each live thread left on a broken worktree a run launched: one sharing the session's
+ * checkout, which archiving the session did not stop, or one whose folder went away. T3's pull
+ * request lookup and settlement run git there every minute and fail every time; unbound, they read
+ * the thread's branch and pull request from the project checkout. Each thread gets one line and
+ * one attention item, and is not found again. The item names the run in its text, not in `run`,
+ * so it stays after the run finished, which it nearly always has.
+ */
+const brokenWorktrees = Effect.fn("Pass.brokenWorktrees")(function* (world: PassWorld, pass: Pass) {
+  const found = yield* Effect.result(world.brokenWorktrees());
+  if (found._tag === "Failure") {
+    yield* pass.fail(
+      null,
+      passError(
+        found.failure.kind,
+        "cannot check the sessions' worktrees: ",
+        found.failure.message,
+      ),
+    );
+    return;
+  }
+  for (const { threadId, worktreePath, run } of found.success) {
+    const unbound = yield* Effect.result(world.unbindWorktree(threadId, worktreePath));
+    if (unbound._tag === "Failure") {
+      yield* pass.fail(
+        null,
+        passError(
+          unbound.failure.kind,
+          `cannot unbind thread ${threadId} from worktree ${worktreePath}: `,
+          unbound.failure.message,
+        ),
+      );
+      continue;
+    }
+    const text = plain(
+      `${run.repo}#${run.issue}: thread ${threadId} of run ${runIdToString(run)} was on worktree ${worktreePath}, which is gone or no longer a git checkout; the thread no longer names it, so T3 reads its branch and pull request from the project checkout`,
+    );
+    pass.line(text);
+    pass.report.attention += 1;
+    const issue = Number(run.issue);
+    yield* world.attention.raise({
+      id: `worktree:${threadId}`,
+      kind: "attention",
+      repo: run.repo,
+      issue: Number.isInteger(issue) ? issue : null,
+      run: null,
+      message: text,
+    });
+  }
 });
 
 /**

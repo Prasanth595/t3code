@@ -174,6 +174,8 @@ export class SessionsError extends Schema.TaggedError<SessionsError>()("FactoryS
     "send",
     "archive",
     "remove-worktree",
+    "broken-worktrees",
+    "unbind-worktree",
     "running-threads",
     "worktrees-directory",
   ]),
@@ -182,6 +184,12 @@ export class SessionsError extends Schema.TaggedError<SessionsError>()("FactoryS
   override get message(): string {
     return `Factory sessions ${this.operation} failed.`;
   }
+}
+
+/** A live thread on a worktree that is gone, or is no longer a git checkout. */
+export interface BrokenWorktree {
+  readonly threadId: string;
+  readonly worktreePath: string;
 }
 
 /** The fields `status` and `thread` read from a thread projection. */
@@ -332,7 +340,10 @@ export class FactorySessions extends Context.Service<
      */
     readonly archive: (threadId: string) => Effect.Effect<void, SessionsError>;
     /**
-     * Removes a thread's worktree from disk with git and keeps its branch. A
+     * Removes a thread's worktree from disk with git and keeps its branch.
+     * Every live thread still on it, such as a subagent sharing the session's
+     * checkout, is archived first; one that cannot be archived fails the call
+     * before git runs, so no live thread is left on a half-removed folder. A
      * worktree already gone counts as removed. `path` must be absolute. When
      * git takes the worktree off the clone's list but cannot empty its
      * directory, the call deletes the rest itself over about 10 s. It deletes
@@ -340,6 +351,17 @@ export class FactorySessions extends Context.Service<
      * left behind (a restart mid-wait) fails, naming the path, for a person.
      */
     readonly removeWorktree: (path: string) => Effect.Effect<void, SessionsError>;
+    /**
+     * The unarchived threads whose worktree is gone or has no `.git`: T3's
+     * pull request lookup and settlement run git there and fail every sweep.
+     */
+    readonly brokenWorktrees: Effect.Effect<ReadonlyArray<BrokenWorktree>, SessionsError>;
+    /**
+     * Clears the thread's worktree, so T3 reads its branch and pull request
+     * from the project checkout. T3 refuses it once the thread is on another
+     * path than `path`.
+     */
+    readonly unbindWorktree: (threadId: string, path: string) => Effect.Effect<void, SessionsError>;
     /**
      * How many unarchived threads, a person's or the factory's, have an agent at work: a run
      * preparing, starting or running. A run waiting on a person does not count.
@@ -562,6 +584,14 @@ export const make = Effect.gen(function* () {
     if (!path.isAbsolute(worktreePath)) {
       return yield* removeWorktreeFailed(`the worktree path is not absolute: ${worktreePath}`);
     }
+    const bound = yield* projections
+      .getThreadWorktreePaths()
+      .pipe(Effect.mapError(removeWorktreeFailed));
+    yield* Effect.forEach(
+      bound.filter((thread) => thread.worktreePath === worktreePath),
+      (thread) => archive(thread.threadId),
+      { discard: true },
+    ).pipe(Effect.mapError(removeWorktreeFailed));
     const attempt = yield* git
       .execute({
         operation: "factory.sessions.removeWorktree",
@@ -588,6 +618,45 @@ export const make = Effect.gen(function* () {
       .remove(worktreePath, { recursive: true })
       .pipe(Effect.retry(LEFTOVER_REMOVE_ATTEMPTS), Effect.mapError(removeWorktreeFailed));
   });
+
+  // A path whose `.git` cannot be checked (a permission error) is not called broken.
+  const brokenWorktrees: FactorySessions["Service"]["brokenWorktrees"] = projections
+    .getThreadWorktreePaths()
+    .pipe(
+      Effect.flatMap((bound) =>
+        Effect.filter(bound, (thread) =>
+          fs.exists(path.join(thread.worktreePath, ".git")).pipe(
+            Effect.map((checkout) => !checkout),
+            Effect.orElseSucceed(() => false),
+          ),
+        ),
+      ),
+      Effect.map((broken) =>
+        broken.map((thread) => ({
+          threadId: thread.threadId as string,
+          worktreePath: thread.worktreePath,
+        })),
+      ),
+      Effect.mapError((cause) => new SessionsError({ operation: "broken-worktrees", cause })),
+    );
+
+  const unbindWorktree: FactorySessions["Service"]["unbindWorktree"] = Effect.fn(
+    "Sessions.unbindWorktree",
+  )(
+    function* (threadId, worktreePath) {
+      const id = yield* decodeThreadId(threadId);
+      const uuid = yield* crypto.randomUUIDv4();
+      const commandId = yield* decodeCommandId(`factory-unbind-worktree:${id}:${uuid}`);
+      yield* management.dispatch({
+        type: "thread.metadata.update",
+        commandId,
+        threadId: id,
+        worktreePath: null,
+        expectedWorktreePath: worktreePath,
+      });
+    },
+    Effect.mapError((cause) => new SessionsError({ operation: "unbind-worktree", cause })),
+  );
 
   const runningThreads: FactorySessions["Service"]["runningThreads"] = projections
     .getShellSnapshot({ location: "active" })
@@ -622,6 +691,8 @@ export const make = Effect.gen(function* () {
     send,
     archive,
     removeWorktree,
+    brokenWorktrees,
+    unbindWorktree,
     runningThreads,
     worktreesDirectory,
   });

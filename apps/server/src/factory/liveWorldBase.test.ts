@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - the broken-worktree tests lay out a real ledger.
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -6,7 +10,10 @@ import { describe, vi } from "vite-plus/test";
 
 import { timeLimitOnlyProjectConfig, type MachineConfig } from "./config.ts";
 import { liveWorld } from "./index.ts";
+import { makeCause } from "./ledger/events.ts";
+import { Ledger } from "./ledger/ledger.ts";
 import { newRunId } from "./ledger/runId.ts";
+import { T0, ticking, useTempDirs } from "./ledger/testSupport.ts";
 import type { Repo } from "./pass.ts";
 import { FactoryProcess } from "./process.ts";
 import * as Sessions from "./t3/sessions.ts";
@@ -67,6 +74,8 @@ const stubSessions = Sessions.FactorySessions.of({
   send: () => Effect.die("not sent"),
   archive: () => Effect.die("not archived"),
   removeWorktree: () => Effect.die("not removed"),
+  brokenWorktrees: Effect.succeed([]),
+  unbindWorktree: () => Effect.die("not unbound"),
   runningThreads: Effect.succeed(0),
   worktreesDirectory: (defaultDir) => Effect.succeed(defaultDir),
 });
@@ -113,6 +122,76 @@ describe("liveWorld: a step of a run is built for the base the pass hands it", (
         "interrupted main",
         "feedback main",
       ]);
+    }),
+  );
+});
+
+describe("liveWorld: threads on a broken worktree", () => {
+  const tempDir = useTempDirs();
+
+  const worldOver = (dataDir: string, sessions: Sessions.FactorySessions["Service"]) =>
+    Effect.gen(function* () {
+      return liveWorld(
+        machine,
+        dataDir,
+        FactoryProcess.of({ run: () => Effect.die("no gh") }),
+        NodeServices.layer,
+        sessions,
+        () => 0,
+        "mac-mini",
+        { list: () => Effect.succeed([]), raise: () => Effect.void, clear: () => Effect.void },
+        {
+          gate: { run: () => Effect.die("no gate") },
+          wake: Effect.void,
+          scope: yield* Scope.make(),
+        },
+      );
+    });
+
+  it.effect("are the factory's only on a worktree a run launched, each named with that run", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const run = newRunId("rawphp/softfac", "187", 1);
+      const ledger = Ledger.create(dataDir, run, { clock: ticking(T0, 1000) });
+      ledger.append(
+        {
+          event: "session_launched",
+          data: {
+            thread_id: "session-1",
+            worktree: "/wt/t3-factory",
+            branch: "t3/factory-issue-187",
+            model_instance: null,
+            model: null,
+            model_options: null,
+            resumed_from: null,
+          },
+        },
+        makeCause("start", "launched"),
+      );
+      ledger.close();
+      const world = yield* worldOver(
+        dataDir,
+        Sessions.FactorySessions.of({
+          ...stubSessions,
+          brokenWorktrees: Effect.succeed([
+            { threadId: "child-1", worktreePath: "/wt/t3-factory" },
+            { threadId: "someone-else", worktreePath: "/wt/t3-person" },
+          ]),
+        }),
+      );
+      assert.deepStrictEqual(yield* world.brokenWorktrees(), [
+        { threadId: "child-1", worktreePath: "/wt/t3-factory", run },
+      ]);
+    }),
+  );
+
+  it.effect("reads no ledger while no thread is on a broken worktree", () =>
+    Effect.gen(function* () {
+      // A data dir whose runs folder is a file: any read of the ledger would fail.
+      const dataDir = tempDir();
+      NodeFS.writeFileSync(NodePath.join(dataDir, "runs"), "not a folder");
+      const world = yield* worldOver(dataDir, stubSessions);
+      assert.deepStrictEqual(yield* world.brokenWorktrees(), []);
     }),
   );
 });

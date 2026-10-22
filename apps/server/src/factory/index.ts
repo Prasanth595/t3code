@@ -42,7 +42,7 @@ import type { State } from "./domain/lifecycle.ts";
 import { ledgerCall as ledger, type LedgerError } from "./ledger/errors.ts";
 import { makeCause, type CauseStep, type ErrorKind, type MachineEvent } from "./ledger/events.ts";
 import { Ledger } from "./ledger/ledger.ts";
-import { listUnfinishedRuns } from "./ledger/listRuns.ts";
+import { listUnfinishedRuns, runsByWorktree } from "./ledger/listRuns.ts";
 import { readRun } from "./ledger/read.ts";
 import { runIdToString, type RunId } from "./ledger/runId.ts";
 import {
@@ -648,6 +648,27 @@ export const liveWorld = (
     feedback: (repo, run, base) => feedback(gateContext(repo, runProject(repo.project, base)), run),
     recordError,
     handPause: () => loadHandPause(dataDir),
+    // Only a thread on a worktree a run launched is the factory's to unbind. The ledger is read
+    // only while T3 has a thread on a broken worktree at all.
+    brokenWorktrees: () =>
+      sessions.brokenWorktrees.pipe(
+        Effect.mapError(asPassError("t3")),
+        Effect.flatMap((broken) =>
+          broken.length === 0
+            ? Effect.succeed([])
+            : ledger(() => runsByWorktree(dataDir)).pipe(
+                Effect.mapError(asPassError("ledger")),
+                Effect.map((runs) =>
+                  broken.flatMap((thread) => {
+                    const run = runs.get(thread.worktreePath);
+                    return run === undefined ? [] : [{ ...thread, run }];
+                  }),
+                ),
+              ),
+        ),
+      ),
+    unbindWorktree: (threadId, worktreePath) =>
+      sessions.unbindWorktree(threadId, worktreePath).pipe(Effect.mapError(asPassError("t3"))),
     nowMs: clock,
     attention,
     record: (event: MachineEvent) =>

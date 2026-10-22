@@ -370,3 +370,20 @@ export const listRuns = (
     },
     skip: finishedBefore(options.skipFinishedBefore),
   }).map((run) => run.read ?? unreadableSummary(run.id));
+
+/**
+ * The run whose session was launched on each worktree, from every run's `session_launched` lines;
+ * a worktree two runs launched on is the later run's. Every run file is read whole, so it is for
+ * the rare pass that found a thread on a broken worktree.
+ */
+export const runsByWorktree = (dataDir: string): Map<string, RunId> => {
+  const runs = new Map<string, RunId>();
+  for (const { record, summary } of readRuns(dataDir)) {
+    for (const entry of record?.entries ?? []) {
+      if (entry.event !== "session_launched") continue;
+      const worktree = dataText(entry.data, "worktree");
+      if (worktree !== null) runs.set(worktree, summary.id);
+    }
+  }
+  return runs;
+};
