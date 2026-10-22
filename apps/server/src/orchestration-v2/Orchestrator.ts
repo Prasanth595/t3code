@@ -319,6 +319,8 @@ export interface OrchestratorV2DispatchResult {
 export interface OrchestratorV2Shape {
   readonly resumeQueuedRuns: Effect.Effect<number, OrchestratorV2Error>;
   readonly recoverDelegatedTasks: Effect.Effect<void>;
+  /** Threads with a running T3-run workflow, which the workflow runner resumes after a restart. */
+  readonly getAppWorkflowThreadIds: Effect.Effect<ReadonlyArray<ThreadId>>;
   readonly recoverDelegatedTask: (threadId: ThreadId, sourceRunId: RunId) => Effect.Effect<void>;
   readonly delegatedTaskResultPending: (
     childThreadId: ThreadId,
@@ -13660,6 +13662,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   return OrchestratorV2.of({
     resumeQueuedRuns,
     recoverDelegatedTasks,
+    getAppWorkflowThreadIds: projectionStore
+      .getRecoveryThreadIds("app-workflows")
+      .pipe(Effect.orDie),
     recoverDelegatedTask,
     delegatedTaskResultPending,
     restartContinuationPending: Effect.fn("OrchestratorV2.restartContinuationPending")(

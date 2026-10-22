@@ -166,7 +166,8 @@ export type ProjectionRecoveryKind =
   | "queued-runs"
   | "runtime"
   | "subagent-results"
-  | "delegated-completions";
+  | "delegated-completions"
+  | "app-workflows";
 
 export type ProjectionLimitRecoveryCandidate = Pick<
   OrchestrationV2ThreadShell,
@@ -3872,6 +3873,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE CASE WHEN json_valid(payload_json)
                   THEN json_type(payload_json, '$.delegatedCompletion.delivery') = 'object'
                   ELSE 0 END
+              `;
+            case "app-workflows":
+              return sql`
+                SELECT thread_id FROM orchestration_v2_projection_subagents
+                WHERE origin = 'app_owned'
+                  AND status = 'running'
+                  AND child_thread_id IS NULL
+                  AND CASE WHEN json_valid(payload_json)
+                    THEN json_type(payload_json, '$.workflow') = 'object'
+                    ELSE 0 END
               `;
             case "subagent-results":
               return sql`
