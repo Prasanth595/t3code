@@ -335,6 +335,99 @@ it.layer(layerTest)("CodexDriver", (it) => {
       ),
   );
 
+  it.effect.skipIf(windowsHost)(
+    "runs the standalone updater against the home that holds a shared install",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const tempDir = yield* fs
+          .makeTempDirectoryScoped({ prefix: "t3-codex-driver-" })
+          .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+        // One standalone install, linked onto PATH and used by two account homes.
+        // `İ` gets longer when lowercased, so the home must not be sliced from a
+        // lowercased copy of the path.
+        const installHome = NodePath.join(tempDir, "codex-İnstall");
+        const realBinaryPath = NodePath.join(
+          installHome,
+          "packages",
+          "standalone",
+          "releases",
+          "0.162.1-x86_64-unknown-linux-musl",
+          "bin",
+          "codex",
+        );
+        const binaryPath = NodePath.join(tempDir, "bin", "codex");
+        yield* fs.makeDirectory(NodePath.dirname(realBinaryPath), { recursive: true });
+        yield* fs.makeDirectory(NodePath.dirname(binaryPath), { recursive: true });
+        yield* fs.writeFileString(realBinaryPath, "#!/bin/sh\n");
+        yield* fs.chmod(realBinaryPath, 0o755);
+        yield* fs.symlink(realBinaryPath, binaryPath);
+
+        const updates = yield* Effect.forEach(["codex-p", "codex-vm"], (account) =>
+          Effect.gen(function* () {
+            const homePath = NodePath.join(tempDir, `home-${account}`);
+            yield* fs.makeDirectory(homePath, { recursive: true });
+            const instance = yield* CodexDriver.create({
+              instanceId: ProviderInstanceId.make(account),
+              displayName: account,
+              enabled: false,
+              environment: [],
+              config: { ...CodexDriver.defaultConfig(), binaryPath, homePath },
+            });
+            return (yield* instance.snapshot.resolveMaintenance()).update;
+          }),
+        );
+
+        for (const update of updates) {
+          expect(update).toMatchObject({
+            command: `${binaryPath} update`,
+            args: ["update"],
+            lockKey: "codex-native",
+            env: { CODEX_HOME: installHome },
+          });
+        }
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        Effect.scoped,
+      ),
+  );
+
+  it.effect.skipIf(windowsHost)("preserves root homes in the standalone update environment", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-root-home-" });
+      const binaryPath = NodePath.join(tempDir, "codex");
+      yield* fs.writeFileString(binaryPath, "#!/bin/sh\n");
+      yield* fs.chmod(binaryPath, 0o755);
+
+      for (const installHome of ["/", "C:\\"]) {
+        const instance = yield* CodexDriver.create({
+          instanceId: ProviderInstanceId.make("codex-root-home"),
+          displayName: "Codex root home",
+          enabled: false,
+          environment: [],
+          config: { ...CodexDriver.defaultConfig(), binaryPath, homePath: tempDir },
+        }).pipe(
+          // Virtualize only the executable target: neither root tree belongs to this test.
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            realPath: (path) =>
+              path === binaryPath
+                ? Effect.succeed(
+                    installHome === "/"
+                      ? "/packages/standalone/bin/codex"
+                      : "C:\\Packages\\Standalone\\bin\\codex.exe",
+                  )
+                : fs.realPath(path),
+          }),
+        );
+        expect((yield* instance.snapshot.resolveMaintenance()).update?.env).toEqual({
+          CODEX_HOME: installHome,
+        });
+      }
+    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn), Effect.scoped),
+  );
+
   for (const fixture of [
     {
       name: "leaves mise npm-backend installations manual-only",
