@@ -55,6 +55,7 @@ function allocation(input: {
     updatedAt: "2026-08-25T11:00:00.000Z",
     generation: 1,
     tunnelReleasedAt: null,
+    recoveryEnabledAt: null,
     recoveryEnabled: input.recoveryEnabled,
   };
 }

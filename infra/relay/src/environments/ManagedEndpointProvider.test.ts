@@ -224,6 +224,7 @@ function makeAllocations(calls: AllocationCall[] = []) {
           updatedAt: `generation-${++generation}`,
           generation: 0,
           tunnelReleasedAt: null,
+          recoveryEnabledAt: null,
         };
         allocations.set(allocationKey(input), allocation);
         return allocation;
@@ -276,6 +277,10 @@ function makeAllocations(calls: AllocationCall[] = []) {
           return false;
         }
         recoveryEnabled.add(allocationKey(input));
+        mutate(allocationKey(input), (current) => ({
+          ...current,
+          recoveryEnabledAt: "2026-06-02T00:00:00.000Z",
+        }));
         return true;
       }),
     listByTunnelNames: (tunnelNames) =>
@@ -1278,6 +1283,45 @@ describe("ManagedEndpointProvider", () => {
       expect(tunnelCalls.map((call) => call.operation)).not.toContain("delete");
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect.each([
+    { when: "after", inactiveBefore: "2026-06-01T00:05:00.000Z", released: false },
+    { when: "before", inactiveBefore: "2026-06-02T00:05:00.000Z", released: true },
+  ] as const)(
+    "releases a down tunnel only if its host registered recovery before the cutoff ($when)",
+    ({ inactiveBefore, released }) => {
+      const tunnelCalls: TunnelCall[] = [];
+      const allocations = makeAllocations();
+      const layer = layerProvider(
+        makePersistentTunnelClient(tunnelCalls),
+        makeDnsClient(),
+        allocations,
+      );
+
+      return Effect.gen(function* () {
+        const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+        const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
+        const origin = { localHttpHost: "127.0.0.1", localHttpPort: 3773 } as const;
+        yield* provider.provision({ ...key, origin });
+        yield* allocations.enableRecovery({
+          ...key,
+          tunnelId: "tunnel-id",
+          environmentPublicKey: "environment-public-key",
+          origin,
+        });
+
+        expect(
+          yield* provider.release({
+            ...key,
+            expectedTunnelId: "tunnel-id",
+            expectedStatus: "down",
+            expectedInactiveBefore: inactiveBefore,
+          }),
+        ).toBe(released);
+        expect(tunnelCalls.some((call) => call.operation === "delete")).toBe(released);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect.each([
     { name: "the tunnel is gone", tunnelRemoved: true, released: true },
