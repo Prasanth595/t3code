@@ -34,7 +34,7 @@ const projectId = ProjectId.make("project:reader");
  * under a tracer for the attribute to exist at all.
  */
 const makeConnectionRecorder = () => {
-  const connections: Array<string | undefined> = [];
+  const connections: Array<string> = [];
   const tracer = Tracer.make({
     span: (options) => {
       const span = new Tracer.NativeSpan(options);
@@ -44,7 +44,7 @@ const makeConnectionRecorder = () => {
         const connection = span.attributes.get("db.connection");
         // Only the spans that acquired a connection carry the attribute; the
         // statement spans inside a transaction do not.
-        if (connection !== undefined) connections.push(connection);
+        if (typeof connection === "string") connections.push(connection);
       };
       return span;
     },

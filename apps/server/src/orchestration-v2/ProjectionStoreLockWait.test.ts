@@ -1,17 +1,24 @@
 import { assert, it } from "@effect/vitest";
-import { EventId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EventId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  type ModelSelection,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Result from "effect/Result";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
+import type { SqlError } from "effect/sql/SqlError";
 import * as Statement from "effect/sql/Statement";
 import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
@@ -40,6 +47,19 @@ const FIXED_EPOCH = "2026-01-01T00:00:00.000Z";
 const BLOCKED_TIMEOUT = "3 seconds";
 
 /**
+ * Print a measurement to the test output.
+ *
+ * `Effect.log` on its own is swallowed by the test runner, and the effect
+ * language service rejects `console.log` inside Effect code. The measurement is
+ * the point of the test, so it has to be readable in the output.
+ */
+const printMeasurement = (message: string) =>
+  Effect.sync(() => {
+    // @effect-diagnostics-next-line globalConsoleInEffect:off - the measurement is the test's output, and the test runner captures the console.
+    console.log(message);
+  });
+
+/**
  * The scope the writer's row is written under.
  *
  * The writer's transaction is open while the read runs, so its row is
@@ -64,7 +84,11 @@ const HELD_WRITE_SCOPE = "lockwait-held-write";
  */
 const withWriteLockHeld = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
-): Effect.Effect<{ readonly value: A; readonly heldForMs: number }, E, R | SqlClient.SqlClient> =>
+): Effect.Effect<
+  { readonly value: A; readonly heldForMs: number; readonly uncommittedRows: number },
+  E | SqlError,
+  R | SqlClient.SqlClient
+> =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const lockHeld = yield* Deferred.make<void>();
@@ -73,19 +97,26 @@ const withWriteLockHeld = <A, E, R>(
       .withTransaction(
         Effect.gen(function* () {
           // A real write, with the table's own columns. A row that does not
-          // insert is not write load.
+          // insert is not write load. The id is fixed because the database is
+          // created for this test alone, so it is unique in it.
           yield* sql`INSERT INTO orchestration_v2_projection_checkpoints (
             checkpoint_id, thread_id, scope_id, run_id, node_id, ordinal_within_scope,
             status, captured_at, payload_json
           ) VALUES (
-            ${crypto.randomUUID()}, ${"lockwait-thread"}, ${HELD_WRITE_SCOPE}, ${"run"}, ${"node"},
+            ${"lockwait-checkpoint"}, ${"lockwait-thread"}, ${HELD_WRITE_SCOPE}, ${"run"}, ${"node"},
             1, 'captured', ${FIXED_EPOCH}, '{}'
           )`;
           yield* Deferred.succeed(lockHeld, undefined);
           yield* Deferred.await(release);
         }),
       )
-      .pipe(Effect.forkChild({ startImmediately: true }));
+      .pipe(
+        // If the write fails, the lock is never held and the read would be
+        // measuring nothing. Release the reader instead of leaving it to time
+        // out, and let the writer's own exit report the failure below.
+        Effect.tapError(() => Deferred.succeed(lockHeld, undefined)),
+        Effect.forkChild({ startImmediately: true }),
+      );
     yield* Deferred.await(lockHeld);
     // The write lock is held from here until the effect finishes.
     const started = yield* Clock.currentTimeMillis;
@@ -100,6 +131,8 @@ const withWriteLockHeld = <A, E, R>(
       WHERE scope_id = ${HELD_WRITE_SCOPE}
     `.pipe(NodeSqliteClient.readOnly);
     yield* Deferred.succeed(release, undefined);
+    // Joining the writer propagates its failure, so a row that did not insert
+    // fails the test rather than passing as write load.
     yield* Fiber.join(writer);
     return { value, heldForMs, uncommittedRows: uncommittedRows[0]?.count ?? -1 };
   });
@@ -157,7 +190,7 @@ const measureReadUnderWriteLock = Effect.fn("measureReadUnderWriteLock")(functio
       span.end = (endTime, exit) => {
         end(endTime, exit);
         const connection = span.attributes.get("db.connection");
-        if (connection !== undefined) {
+        if (typeof connection === "string") {
           acquired.push({
             connection,
             lockWaitMs: Number(span.attributes.get("db.lock_wait_ms") ?? 0),
@@ -204,7 +237,7 @@ const measureReadOnWriterConnection = Effect.fn("measureReadOnWriterConnection")
       span.end = (endTime, exit) => {
         end(endTime, exit);
         const connection = span.attributes.get("db.connection");
-        if (connection !== undefined) {
+        if (typeof connection === "string") {
           acquired.push({
             connection,
             lockWaitMs: Number(span.attributes.get("db.lock_wait_ms") ?? 0),
@@ -248,8 +281,7 @@ it.effect("the projection read completes while a writer holds the write lock", (
     const storeLayer = Layer.mergeAll(
       ProjectionStore.layer.pipe(Layer.provideMerge(database)),
       database,
-      NodeServices.layer,
-    );
+    ).pipe(Layer.provideMerge(NodeServices.layer));
 
     const threadId = ThreadId.make("thread:lockwait:reader");
     const { acquired, heldForMs, uncommittedRows } = yield* Effect.gen(function* () {
@@ -276,7 +308,7 @@ it.effect("the projection read completes while a writer holds the write lock", (
     // uncommitted, and so invisible to the reader, when the read finished.
     assert.isAtLeast(heldForMs, 0);
     assert.equal(uncommittedRows, 0);
-    console.log(
+    yield* printMeasurement(
       `MEASURE read-on-reader: connection=${acquired[0]?.connection} lock_wait_ms=${acquired[0]?.lockWaitMs} lock_held_for_ms=${heldForMs} uncommitted_rows_visible=${uncommittedRows}`,
     );
   }).pipe(Effect.provide(NodeServices.layer)),
@@ -291,8 +323,7 @@ it.effect("the same read on the writer connection is blocked by the write lock",
     const storeLayer = Layer.mergeAll(
       ProjectionStore.layer.pipe(Layer.provideMerge(database)),
       database,
-      NodeServices.layer,
-    );
+    ).pipe(Layer.provideMerge(NodeServices.layer));
 
     const threadId = ThreadId.make("thread:lockwait:writer");
     const { acquired, heldForMs, value } = yield* Effect.gen(function* () {
@@ -309,14 +340,14 @@ it.effect("the same read on the writer connection is blocked by the write lock",
     assert.equal(exit._tag, "Failure");
     // A read that failed for some other reason would not have waited for the
     // bound, so the failure has to BE the timeout.
-    const found = Cause.findError(exit.cause);
-    assert.isTrue(Result.isSuccess(found), "expected a typed failure, got " + String(found));
-    const error = found.success;
+    const error = Exit.isFailure(exit)
+      ? Cause.findErrorOption(exit.cause).pipe(Option.getOrElse(() => undefined))
+      : undefined;
     assert.isTrue(Cause.isTimeoutError(error), "expected a timeout, got " + String(error));
     // It waited for the bound, with the lock held the whole time.
     assert.isAtLeast(heldForMs, 2_000);
     assert.deepEqual(acquired, []);
-    console.log(
+    yield* printMeasurement(
       `MEASURE read-on-writer: outcome=TimeoutError lock_held_for_ms=${heldForMs} connections_acquired=${acquired.length}`,
     );
   }).pipe(Effect.provide(NodeServices.layer)),
