@@ -13,6 +13,7 @@ import { makeGhProcess } from "./gitHubCliProcess.ts";
 function spawnedBusAddress(input: {
   readonly platform?: NodeJS.Platform;
   readonly address?: string;
+  readonly spawnAddress?: string;
   /** File contents by path; a path not listed does not exist. */
   readonly files?: Readonly<Record<string, string>>;
   /** A path that exists but cannot be stat'ed or read. */
@@ -42,7 +43,15 @@ function spawnedBusAddress(input: {
     });
   return Effect.gen(function* () {
     const gh = yield* makeGhProcess;
-    yield* gh.run({ operation: "test", command: "gh", args: ["auth", "status"], cwd: "/" });
+    yield* gh.run({
+      operation: "test",
+      command: "gh",
+      args: ["auth", "status"],
+      cwd: "/",
+      ...(input.spawnAddress === undefined
+        ? {}
+        : { env: { DBUS_SESSION_BUS_ADDRESS: input.spawnAddress } }),
+    });
     return envs[0]?.DBUS_SESSION_BUS_ADDRESS;
   }).pipe(
     Effect.provide(
@@ -70,6 +79,10 @@ describe("makeGhProcess", () => {
     Effect.gen(function* () {
       expect(yield* spawnedBusAddress({})).toBe("disabled:");
       expect(yield* spawnedBusAddress({ address: "autolaunch:" })).toBe("disabled:");
+      // A spawn that clears the host's address leaves godbus nothing to use either.
+      expect(yield* spawnedBusAddress({ address: "unix:path=/tmp/bus", spawnAddress: "" })).toBe(
+        "disabled:",
+      );
       // godbus ignores a `dbus-session` file it cannot read or that names no address.
       const session = "/run/user/1000/dbus-session";
       expect(yield* spawnedBusAddress({ unreadable: session })).toBe("disabled:");
@@ -91,6 +104,9 @@ describe("makeGhProcess", () => {
         }),
       ).toBeUndefined();
       expect(yield* spawnedBusAddress({ address: "unix:path=/tmp/bus" })).toBeUndefined();
+      expect(yield* spawnedBusAddress({ spawnAddress: "unix:path=/tmp/bus" })).toBe(
+        "unix:path=/tmp/bus",
+      );
       expect(yield* spawnedBusAddress({ platform: "darwin" })).toBeUndefined();
       // godbus counts a socket it cannot stat as present, so an unreadable one is left alone too.
       expect(yield* spawnedBusAddress({ unreadable: "/run/user/1000/bus" })).toBeUndefined();

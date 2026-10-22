@@ -22,10 +22,8 @@ export const makeGhProcess = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const userId = yield* HostProcess.UserId;
 
-  const busMissing = Effect.gen(function* () {
-    const address = environment.DBUS_SESSION_BUS_ADDRESS?.trim();
+  const noBusToDiscover = Effect.gen(function* () {
     if (platform === "darwin" || userId === undefined) return false;
-    if (address && address !== "autolaunch:") return false;
     const runtimeDir = `/run/user/${userId}`;
     // godbus takes the bus socket if stat finds anything there, but uses `dbus-session` only
     // when it reads as `DBUS_SESSION_BUS_ADDRESS=<address>`; otherwise it still autolaunches.
@@ -42,8 +40,15 @@ export const makeGhProcess = Effect.gen(function* () {
   });
 
   return {
-    run: (input) =>
-      busMissing.pipe(
+    run: (input) => {
+      // The spawn's own env extends the host's, so its address is the one gh will see.
+      const address = (
+        input.env !== undefined && "DBUS_SESSION_BUS_ADDRESS" in input.env
+          ? input.env.DBUS_SESSION_BUS_ADDRESS
+          : environment.DBUS_SESSION_BUS_ADDRESS
+      )?.trim();
+      if (address && address !== "autolaunch:") return process.run(input);
+      return noBusToDiscover.pipe(
         Effect.flatMap((missing) =>
           process.run(
             missing
@@ -51,6 +56,7 @@ export const makeGhProcess = Effect.gen(function* () {
               : input,
           ),
         ),
-      ),
+      );
+    },
   } satisfies SourceControlHost.SourceControlHost["Service"]["process"];
 });
