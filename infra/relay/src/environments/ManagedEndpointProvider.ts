@@ -993,9 +993,9 @@ export const make = Effect.gen(function* () {
       if (input.expectedTunnelId !== undefined && input.expectedTunnelId !== tunnelId) {
         return false;
       }
-      // A starting host registers recovery before its connector comes up, so
-      // Cloudflare still reports the tunnel's old inactivity. A registration
-      // after the cutoff means the host is about to reconnect this tunnel.
+      // A starting host registers recovery while cloudflared is still
+      // connecting, so Cloudflare keeps reporting the tunnel's old inactivity.
+      // A registration after the cutoff means the host is coming back to it.
       if (input.expectedInactiveBefore !== undefined && allocation.recoveryEnabledAt !== null) {
         const registeredAt = DateTime.make(allocation.recoveryEnabledAt);
         const cutoff = DateTime.make(input.expectedInactiveBefore);
