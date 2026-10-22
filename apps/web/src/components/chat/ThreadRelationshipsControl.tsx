@@ -358,7 +358,10 @@ export function ThreadRelationshipsPanel(props: {
     });
     setBusyAction(null);
     if (result._tag === "Failure") {
-      mergeErrorToastId.current = toastManager.add({ type: "error", title: "Could not merge back" });
+      mergeErrorToastId.current = toastManager.add({
+        type: "error",
+        title: "Could not merge back",
+      });
       return;
     }
     openThread(mergeTargetThreadId);
