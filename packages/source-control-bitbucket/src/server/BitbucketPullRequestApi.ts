@@ -1,9 +1,11 @@
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
@@ -337,6 +339,19 @@ function filterLiteral(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }
 
+/**
+ * Bitbucket compares `updated_on` to the microsecond, but the cursor's instant was cut to the
+ * millisecond. Asking up to the end of that millisecond keeps the rows that share it in reach;
+ * the ones already sent are excluded by ID.
+ */
+function updatedBeforeFilter(updatedBefore: string): string {
+  return Option.match(DateTime.make(updatedBefore), {
+    onNone: () => `updated_on <= ${updatedBefore}`,
+    onSome: (instant) =>
+      `updated_on < ${DateTime.formatIso(DateTime.add(instant, { milliseconds: 1 }))}`,
+  });
+}
+
 function mergeStrategy(method: PullRequestMergeMethod | undefined): string {
   switch (method) {
     case "squash":
@@ -565,7 +580,7 @@ export const make = Effect.gen(function* () {
         // Exclude already-sent IDs at the inclusive timestamp before applying the page limit.
         const predicates = [
           ...(search.length === 0 ? [] : [searchFilter(search)]),
-          ...(input.cursor === undefined ? [] : [`updated_on <= ${input.cursor.updatedBefore}`]),
+          ...(input.cursor === undefined ? [] : [updatedBeforeFilter(input.cursor.updatedBefore)]),
           ...(input.cursor?.seenAt ?? []).map((number) => `id != ${number}`),
         ];
         return listPage({

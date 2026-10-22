@@ -513,14 +513,18 @@ it.effect("uses a provider's raw cursor advance when it consumed malformed rows"
 
 it.effect("continues Bitbucket listings through tied timestamps and terminates", () =>
   Effect.gen(function* () {
-    const boundary = "2026-10-12T00:00:00.000Z";
-    const older = "2026-10-11T00:00:00.000Z";
+    // Bitbucket stamps to the microsecond; 3 shares 1 and 2's millisecond but sorts after them.
+    const boundary = "2026-10-12T00:00:00.000500+00:00";
+    const sameMillisecond = "2026-10-12T00:00:00.000200+00:00";
+    const older = "2026-10-11T00:00:00.000000+00:00";
+    const micros = (stamp: string) =>
+      Date.parse(stamp) * 1000 + Number(/\.\d{3}(\d{3})/.exec(stamp)?.[1] ?? 0);
     const rows = [1, 2, 3, 4, 5].map((id) => ({
       id,
       title: `Pull request ${id}`,
       state: "OPEN",
       created_on: older,
-      updated_on: id <= 3 ? boundary : older,
+      updated_on: id <= 2 ? boundary : id === 3 ? sameMillisecond : older,
       source: { branch: { name: `feat/${id}` } },
       destination: { branch: { name: "main" } },
       links: { html: { href: `https://bitbucket.org/acme/web/pull-requests/${id}` } },
@@ -539,13 +543,16 @@ it.effect("continues Bitbucket listings through tied timestamps and terminates",
                 }
                 const filter =
                   new URL(url, "https://api.bitbucket.org").searchParams.get("q") ?? "";
-                const updatedBefore = /updated_on <= (\S+)/.exec(filter)?.[1];
+                const [, operator, bound] = /updated_on (<=?) (\S+)/.exec(filter) ?? [];
                 const excluded = new Set(
                   Array.from(filter.matchAll(/id != (\d+)/g), (match) => Number(match[1])),
                 );
                 const values = rows.filter(
                   (row) =>
-                    (updatedBefore === undefined || row.updated_on <= updatedBefore) &&
+                    (bound === undefined ||
+                      (operator === "<"
+                        ? micros(row.updated_on) < micros(bound)
+                        : micros(row.updated_on) <= micros(bound))) &&
                     !excluded.has(row.id),
                 );
                 return Effect.succeed({ body: JSON.stringify({ values }), truncated: false });
