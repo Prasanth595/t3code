@@ -23,7 +23,8 @@ const errorCode = (error: unknown): string =>
 export const guardLogStream = (
   stream: Writable,
   fd: number,
-  writeFd: WriteFd = (fd, data) => void NodeFS.writeSync(fd, data),
+  writeFd: WriteFd = (fd, data) =>
+    void (typeof data === "string" ? NodeFS.writeSync(fd, data) : NodeFS.writeSync(fd, data)),
 ): void => {
   if (guarded.has(stream)) return;
   guarded.add(stream);
@@ -35,7 +36,7 @@ export const guardLogStream = (
     code = errorCode(error);
   };
   // Without a listener the error ends the process. Each failed line is counted by its own write
-  // callback instead: lines written in the tick a write fails are buffered, and fail with it.
+  // callback instead, once, whether the stream reports it before or after this event.
   stream.on("error", () => {
     broken = true;
   });
@@ -47,7 +48,7 @@ export const guardLogStream = (
   ) => {
     const encoding = typeof encodingOrDone === "function" ? undefined : encodingOrDone;
     const done = typeof encodingOrDone === "function" ? encodingOrDone : callback;
-    if (!broken && !stream.destroyed && !stream.writableErrored) {
+    if (!broken && !stream.destroyed && !stream.errored) {
       const counted = (error?: Error | null) => {
         if (error) {
           broken = true;
