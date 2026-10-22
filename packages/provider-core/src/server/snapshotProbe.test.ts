@@ -159,3 +159,48 @@ describe("ProviderCommandNotFoundError", () => {
     });
   });
 });
+
+describe("ProviderCommandOutputLimitError", () => {
+  it.effect("fails instead of returning output past the byte cap", () => {
+    // 9 MiB, one chunk past the 8 MiB cap, from a single shared buffer.
+    const mebibyte = new Uint8Array(1024 * 1024).fill(0x61);
+    const chunks = Array.from({ length: 9 }, () => mebibyte);
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.fromIterable(chunks),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        }),
+      ),
+    );
+    return Effect.gen(function* () {
+      const outcome = yield* spawnAndCollect(
+        "/usr/local/bin/claude",
+        ChildProcess.make("claude", ["--version"]),
+      ).pipe(
+        Effect.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        Effect.provideService(HostProcess.Platform, "linux"),
+        // Report a success as its byte count rather than printing 9 MiB of output.
+        Effect.match({
+          onFailure: (error) => ({ error: error._tag, message: error.message }),
+          onSuccess: (result) => ({ stdoutBytes: result.stdout.length }),
+        }),
+      );
+
+      expect(outcome).toEqual({
+        error: "ProviderCommandOutputLimitError",
+        message:
+          "Provider command /usr/local/bin/claude wrote more than 8388608 bytes to stdout or stderr.",
+      });
+    });
+  });
+});
