@@ -1,3 +1,5 @@
+import { useWorkspaceSidebarHeaderItem } from "../layout/useWorkspaceSidebarHeaderItem";
+import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { submittedThreadParams } from "./thread-route-state";
 import { NativeScrollEdgeEffectsContext } from "../../native/NativeScrollViewMarker";
 import { ThreadScreenBinding, ThreadScreenFallback } from "./ThreadScreenHost";
@@ -167,6 +169,8 @@ export function NewTaskDraftScreen(props: {
   readonly incomingShareId?: string;
 }) {
   const [creationMetadata] = useState(makeTurnCommandMetadata);
+  const { layout } = useAdaptiveWorkspaceLayout();
+  const sidebarHeaderItem = useWorkspaceSidebarHeaderItem();
   const projects = useProjects();
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
@@ -1377,13 +1381,16 @@ export function NewTaskDraftScreen(props: {
     <>
       <AppBar
         title="New thread"
+        sidebar={false}
+        optionsVersion={sidebarHeaderItem}
         onBack={closeNewTask}
         hideBottomBorder
         options={{
           title: "New thread",
           headerTitle: "New thread",
           unstable_headerSubtitle: undefined,
-          unstable_headerLeftItems: undefined,
+          headerBackVisible: !layout.usesSplitView,
+          unstable_headerLeftItems: layout.usesSplitView ? () => [sidebarHeaderItem] : undefined,
           unstable_headerRightItems: () => [],
           unstable_headerToolbarItems: () => [],
           headerShadowVisible: false,

@@ -1,3 +1,4 @@
+import { useWorkspaceSidebarHeaderItem } from "../layout/useWorkspaceSidebarHeaderItem";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useMemo } from "react";
 import { Platform } from "react-native";
@@ -28,7 +29,8 @@ export function useThreadHeaderOptions(props: {
   const deviceType = useDeviceType();
   const usesDuoHeader = usesNativeWorkspaceColumns && isDuoDevice(deviceType);
   const navigation = useNavigation();
-  const { layout, panes, togglePrimarySidebar, startNewTask } = useAdaptiveWorkspaceLayout();
+  const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
+  const sidebarHeaderItem = useWorkspaceSidebarHeaderItem();
   const threadCenterHeaderItems = useThreadGitCenterHeaderItems(props.gitControls);
   const compactRightHeaderItems = useThreadGitRightHeaderItems(props.gitControls);
   const splitLeftHeaderItems = useMemo<NativeHeaderItems>(
@@ -52,20 +54,7 @@ export function useThreadHeaderOptions(props: {
             }),
           ]
         : []),
-      withNativeGlassHeaderItem({
-        axisBehavior: usesNativeWorkspaceColumns ? "horizontalOnly" : undefined,
-        accessibilityLabel: panes.primarySidebarVisible
-          ? "Maximize content"
-          : "Show thread sidebar",
-        icon: {
-          name: panes.primarySidebarVisible ? "arrow.up.left.and.arrow.down.right" : "sidebar.left",
-          type: "sfSymbol" as const,
-        },
-        identifier: "thread-left-sidebar",
-        label: panes.primarySidebarVisible ? "Maximize content" : "Show thread sidebar",
-        onPress: togglePrimarySidebar,
-        type: "button" as const,
-      }),
+      sidebarHeaderItem,
       ...(!usesDuoHeader
         ? [
             withNativeGlassHeaderItem({
@@ -80,9 +69,8 @@ export function useThreadHeaderOptions(props: {
         : []),
     ],
     [
-      panes.primarySidebarVisible,
+      sidebarHeaderItem,
       props.onReturnToThread,
-      togglePrimarySidebar,
       startNewTask,
       usesDuoHeader,
       usesNativeWorkspaceColumns,
