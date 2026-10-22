@@ -38,6 +38,11 @@ export const AssetResource = Schema.Union([
     itemId: TurnItemId,
     index: NonNegativeInt,
   }),
+  Schema.TaggedStruct("tool-input-html", {
+    threadId: ThreadId,
+    itemId: TurnItemId,
+    revision: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  }),
   Schema.TaggedStruct("project-favicon", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     // A cache-key hint only. The server reads the authoritative path from the

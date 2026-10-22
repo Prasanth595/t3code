@@ -2721,6 +2721,7 @@ export const layerWsRpc = (
               input.resource._tag === "attachment" ||
               input.resource._tag === "native-app-icon" ||
               input.resource._tag === "tool-output-image" ||
+              input.resource._tag === "tool-input-html" ||
               input.resource._tag === "github-media" ||
               // A network path is served only from the thread's project, looked up below.
               (input.resource._tag === "media-file" &&

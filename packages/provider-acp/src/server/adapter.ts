@@ -32,7 +32,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
-import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
+import { HTML_RENDER_TOOL_NAME, isHtmlRenderTool } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
@@ -3713,8 +3713,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             let output = rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput);
             const isHtmlRender = resolveT3McpToolId(toolName) === HTML_RENDER_TOOL_NAME;
             const isError =
+              previous?.status === "failed" ||
               compactDynamicToolOutput(output)?.isError === true ||
               compactDynamicToolOutput(rawOutputRecord?.result)?.isError === true;
+            if (isHtmlRenderTool(toolName) && isError) {
+              // Providers can replace a terminal error with a summary in later updates.
+              context.tools.set(toolCall.toolCallId, { ...toolCall, status: "failed" });
+            }
             if (
               isHtmlRender &&
               (status === "failed" || (status === "completed" && isError)) &&
@@ -3749,6 +3754,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
             turnItem = {
               ...base,
+              status:
+                status === "completed" && isError && isHtmlRenderTool(toolName)
+                  ? "failed"
+                  : base.status,
               title: null,
               ...mcpToolPresentation({
                 serverName: mcpIdentity.server,
