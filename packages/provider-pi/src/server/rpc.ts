@@ -163,9 +163,8 @@ function parsePiRecord(line: string): PiRpcRecord | undefined {
 }
 
 /**
- * `hasExited` is consulted before each signal. Once the original child is
- * gone its pid/pgid can be recycled by the OS, so escalating blindly could
- * deliver SIGKILL to an unrelated process.
+ * Stop signaling once the owned process group no longer exists. Its leader
+ * can exit before children that still need SIGTERM or SIGKILL.
  */
 const terminatePiProcess = Effect.fn("PiRpc.terminatePiProcess")(function* (
   kill: (signal: NodeJS.Signals) => boolean,
@@ -199,9 +198,11 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
     .pipe(Effect.mapError((cause) => new PiRpcError({ operation: "spawn", cause })));
 
   let childExited = false;
+  let processGroupRetired = false;
   let diagnosingStdoutClose = false;
 
   const killProcessGroup = (signal: NodeJS.Signals): boolean => {
+    if (processGroupRetired) return false;
     try {
       if (platform === "win32") {
         process.kill(Number(child.pid), signal);
@@ -210,17 +211,20 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
       }
       return true;
     } catch {
+      processGroupRetired = true;
       return false;
     }
   };
 
   const hasExited = (): boolean => {
-    if (childExited) return true;
+    if (processGroupRetired) return true;
+    if (platform === "win32" && childExited) return true;
     try {
       if (platform === "win32") process.kill(Number(child.pid), 0);
       else signalProcessGroup(Number(child.pid), 0);
       return false;
     } catch {
+      processGroupRetired = true;
       return true;
     }
   };
@@ -238,8 +242,21 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
     yield* taskkill.exitCode;
   }).pipe(Effect.scoped, Effect.ignore);
 
-  const terminateProcess =
-    platform === "win32" ? terminateWindowsTree : terminatePiProcess(killProcessGroup, hasExited);
+  // Explicit termination, exit cleanup, and the scope finalizer share one attempt.
+  // Never probe or signal the saved group ID again after cleanup: it may be reused.
+  const terminateProcess = yield* Effect.cached(
+    (platform === "win32"
+      ? terminateWindowsTree
+      : terminatePiProcess(killProcessGroup, hasExited)
+    ).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          processGroupRetired = true;
+        }),
+      ),
+      Effect.uninterruptible,
+    ),
+  );
 
   // Registered before any further setup: an interrupt or failure between the
   // spawn and the rest of this constructor would otherwise leak a detached
@@ -296,9 +313,11 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
       onFailure: (cause) =>
         Deferred.fail(exitDeferred, new PiRpcError({ operation: "exit", cause })),
       onSuccess: (code) =>
-        Effect.suspend(() => {
+        Effect.gen(function* () {
           childExited = true;
-          return Deferred.succeed(exitDeferred, Number(code));
+          // Reap surviving children on exit, before a delayed consumer closes the session scope.
+          if (platform !== "win32") yield* terminateProcess.pipe(Effect.forkIn(scope));
+          return yield* Deferred.succeed(exitDeferred, Number(code));
         }),
     }),
     Effect.forkIn(scope),

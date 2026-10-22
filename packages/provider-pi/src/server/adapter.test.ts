@@ -28,6 +28,8 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import { vi } from "vite-plus/test";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -4052,5 +4054,50 @@ describe("PiRpc early process exit", () => {
       assert.isFalse(error.message.includes("API_KEY"));
       assert.isFalse(error.message.includes("super-secret"));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([false, true])(
+    "terminates POSIX children after Pi exits (ignores TERM: %s)",
+    (ignoresTerm) =>
+      Effect.gen(function* () {
+        let groupAlive = true;
+        const signals: Array<string | number | undefined> = [];
+        using _kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+          assert.equal(pid, -FAKE_PID);
+          if (!groupAlive) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+          if (signal !== 0) signals.push(signal);
+          if (signal === "SIGKILL" || (signal === "SIGTERM" && !ignoresTerm)) groupAlive = false;
+          return true;
+        });
+        const spawner = ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            makeHandle({
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+              stderr: Stream.empty,
+            }),
+          ),
+        );
+        const connection = yield* makePiRpcConnection({
+          command: "pi",
+          args: ["--mode", "rpc"],
+          cwd: undefined,
+          env: {},
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+        yield* connection.exited;
+        yield* TestClock.adjust("1 second");
+        assert.isFalse(groupAlive);
+        yield* connection.terminate;
+        assert.deepEqual(signals, ignoresTerm ? ["SIGTERM", "SIGKILL"] : ["SIGTERM"]);
+        assert.isFalse(groupAlive);
+        // A later process can reuse the old group ID before this session scope closes.
+        groupAlive = true;
+        yield* connection.terminate;
+        assert.deepEqual(signals, ignoresTerm ? ["SIGTERM", "SIGKILL"] : ["SIGTERM"]);
+        assert.isTrue(groupAlive);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(NodeServices.layer),
+        Effect.provideService(HostProcess.Platform, "linux"),
+      ),
   );
 });
