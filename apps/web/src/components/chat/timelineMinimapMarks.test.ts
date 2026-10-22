@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  createTimelineMinimapViewportStore,
   resolveTimelineMinimapHeightStyle,
   resolveTimelineMinimapIndexFromPointer,
   resolveTimelineMinimapMarkIndices,
@@ -117,5 +118,24 @@ describe("timeline minimap mark spacing", () => {
     expect(resolveTimelineMinimapIndexFromPointer({ ...rail, pointerY: 10_000 })).toBe(
       DENSE_COUNT - 1,
     );
+  });
+
+  it("rereads font size at the same height and keeps an unchanged snapshot", () => {
+    let fontSize = 16;
+    let fontReads = 0;
+    const store = createTimelineMinimapViewportStore({
+      readHeight: () => 800,
+      readFontSize: () => {
+        fontReads += 1;
+        return fontSize;
+      },
+    });
+    const first = store.getSnapshot();
+    expect(store.getSnapshot()).toBe(first);
+    expect(fontReads).toBe(2);
+    fontSize = 20;
+    const next = store.getSnapshot();
+    expect(next).toEqual({ height: 800, fontSize: 20 });
+    expect(store.getSnapshot()).toBe(next);
   });
 });

@@ -345,6 +345,26 @@ export function resolveTimelineMinimapHeightStyle(itemCount: number): string {
   return `min(${naturalHeight}px, ${TIMELINE_MINIMAP_MAX_HEIGHT_CSS})`;
 }
 
+// Same object when height and root font size are unchanged. A new object on
+// every read loops useSyncExternalStore, and the font size is read every time
+// because the interface size can change while the window height stays put.
+export function createTimelineMinimapViewportStore(input: {
+  readonly initial?: { readonly height: number; readonly fontSize: number };
+  readonly readHeight: () => number;
+  readonly readFontSize: () => number;
+}) {
+  let snapshot = input.initial ?? { height: 0, fontSize: 16 };
+  const getSnapshot = () => {
+    const height = input.readHeight();
+    const parsed = input.readFontSize();
+    const fontSize = Number.isFinite(parsed) && parsed > 0 ? parsed : 16;
+    if (snapshot.height === height && snapshot.fontSize === fontSize) return snapshot;
+    snapshot = { height, fontSize };
+    return snapshot;
+  };
+  return { getSnapshot };
+}
+
 /**
  * Pixel height of the rail: `(count - 1) * 8`, capped at `calc(100vh - 18rem)`.
  * An unknown viewport returns the uncapped height so marks stay spaced at 8px

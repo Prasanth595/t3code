@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type MouseEvent } fr
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import {
+  createTimelineMinimapViewportStore,
   resolveTimelineMinimapHeightStyle,
   resolveTimelineMinimapIndexFromPointer,
   resolveTimelineMinimapInteractiveWidth,
@@ -16,34 +17,28 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 
 const SERVER_MINIMAP_VIEWPORT = { height: 0, fontSize: 16 };
-let minimapViewportSnapshot = SERVER_MINIMAP_VIEWPORT;
+const minimapViewportStore = createTimelineMinimapViewportStore({
+  initial: SERVER_MINIMAP_VIEWPORT,
+  readHeight: () => window.innerHeight,
+  readFontSize: () => Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+});
 
 function subscribeTimelineMinimapViewport(onChange: () => void) {
   window.addEventListener("resize", onChange);
-  return () => window.removeEventListener("resize", onChange);
+  // Interface font size is written to the root style after paint, with no resize.
+  const rootStyle = new MutationObserver(onChange);
+  rootStyle.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["style"],
+  });
+  return () => {
+    window.removeEventListener("resize", onChange);
+    rootStyle.disconnect();
+  };
 }
 
 function getServerTimelineMinimapViewport() {
   return SERVER_MINIMAP_VIEWPORT;
-}
-
-// Stable snapshot: a fresh object on every read loops useSyncExternalStore, and
-// reading the root font size on each hover forces layout.
-function readTimelineMinimapViewport() {
-  const height = window.innerHeight;
-  if (
-    minimapViewportSnapshot !== SERVER_MINIMAP_VIEWPORT &&
-    minimapViewportSnapshot.height === height
-  ) {
-    return minimapViewportSnapshot;
-  }
-  const parsed = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
-  const fontSize = Number.isFinite(parsed) && parsed > 0 ? parsed : 16;
-  if (minimapViewportSnapshot.height === height && minimapViewportSnapshot.fontSize === fontSize) {
-    return minimapViewportSnapshot;
-  }
-  minimapViewportSnapshot = { height, fontSize };
-  return minimapViewportSnapshot;
 }
 
 function timelineMinimapEventTargetsPreview(target: EventTarget): boolean {
@@ -87,7 +82,7 @@ export function TimelineMinimap({
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const viewport = useSyncExternalStore(
     subscribeTimelineMinimapViewport,
-    readTimelineMinimapViewport,
+    minimapViewportStore.getSnapshot,
     getServerTimelineMinimapViewport,
   );
   const wheelTargetRef = (node: HTMLDivElement | null) => {
@@ -294,9 +289,7 @@ export function TimelineMinimap({
                   }}
                   style={{ top }}
                 >
-                  {painted ? (
-                    <span className="absolute inset-0 rounded-full bg-foreground/90 opacity-0 transition-opacity duration-150 group-data-[in-view=true]/strip:opacity-100" />
-                  ) : null}
+                  <span className="absolute inset-0 rounded-full bg-foreground/90 opacity-0 transition-opacity duration-150 group-data-[in-view=true]/strip:opacity-100" />
                 </span>
               );
             })}
