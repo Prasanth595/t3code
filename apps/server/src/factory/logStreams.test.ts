@@ -45,12 +45,14 @@ describe("guardLogStream", () => {
     // A writer that waits on its callback is not left hanging by a dropped line.
     const written = await new Promise((resolve) => stream.write("four\n", resolve));
     assert.isUndefined(written);
+    const encoded = await new Promise((resolve) => stream.write("five\n", "utf8", resolve));
+    assert.isUndefined(encoded);
     assert.deepEqual(fd, []);
 
     full = false;
     log.log("back");
     log.log("again");
-    assert.deepEqual(fd, ["4 log lines dropped (ENOSPC)\n", "back\n", "again\n"]);
+    assert.deepEqual(fd, ["5 log lines dropped (ENOSPC)\n", "back\n", "again\n"]);
   });
 
   // The guard is in place as soon as server.ts imports the factory, before any layer builds, so a
