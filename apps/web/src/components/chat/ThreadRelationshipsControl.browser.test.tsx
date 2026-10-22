@@ -4,7 +4,7 @@ import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
-const state = vi.hoisted(() => ({ projection: null as unknown }));
+const state = vi.hoisted(() => ({ projection: null as unknown, commandSucceeds: false }));
 
 vi.mock(import("@effect/atom-react"), async (original) => ({
   ...(await original()),
@@ -26,7 +26,9 @@ vi.mock(import("../../lib/archivedThreadsState"), () => ({
 }));
 vi.mock(import("../../state/use-atom-command"), () => ({
   useAtomCommand: (() => async () =>
-    AsyncResult.failure(Cause.fail(new Error("Connection lost")))) as never,
+    state.commandSucceeds
+      ? AsyncResult.success(undefined)
+      : AsyncResult.failure(Cause.fail(new Error("Connection lost")))) as never,
 }));
 
 import { render } from "../../../test/render";
@@ -37,6 +39,7 @@ const environmentId = EnvironmentId.make("environment");
 const threadId = ThreadId.make("fork");
 
 function setup() {
+  state.commandSucceeds = false;
   state.projection = {
     thread: {
       id: threadId,
@@ -79,4 +82,43 @@ it.each([
       }),
     )
     .toBeEnabled();
+});
+
+it.each([
+  ["merge", "Could not merge back"],
+  ["disconnect", "Could not disconnect agent session"],
+])("clears the previous %s error after a successful retry", async (action, title) => {
+  setup();
+  await using screen = await render(
+    <ToastProvider timeout={0}>
+      <ThreadRelationshipsPanel environmentId={environmentId} threadId={threadId} />
+    </ToastProvider>,
+    { router: "/environment/fork" },
+  );
+
+  const runAction = async () => {
+    if (action === "merge") {
+      await screen.getByRole("button", { name: "Merge back to source conversation" }).click();
+    } else {
+      await screen.getByRole("button", { name: "More thread actions" }).click();
+      await page.getByRole("menuitem", { name: "Disconnect agent session" }).click();
+    }
+  };
+
+  await runAction();
+  await expect.element(page.getByText(title, { exact: true })).toBeVisible();
+  expect(screen.router?.state.location.pathname).toBe("/environment/fork");
+
+  state.commandSucceeds = true;
+  await runAction();
+
+  await expect.element(page.getByText(title, { exact: true })).not.toBeInTheDocument();
+  await vi.waitFor(() => {
+    expect(screen.router?.state.location.pathname).toBe(
+      action === "merge" ? "/environment/source" : "/environment/fork",
+    );
+  });
+  if (action === "disconnect") {
+    await expect.element(screen.getByRole("button", { name: "More thread actions" })).toBeEnabled();
+  }
 });
