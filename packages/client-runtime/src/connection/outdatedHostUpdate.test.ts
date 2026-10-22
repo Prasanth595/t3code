@@ -152,7 +152,7 @@ class OutdatedHostSocket {
 }
 
 describe("updateOutdatedHost", () => {
-  it.effect("updates a protocol-1 host over a bare socket, then switches it back on", () =>
+  it.effect("checks an outdated host before updating it and switching it back on", () =>
     Effect.gen(function* () {
       const blocked = orchestrationProtocolCompatibilityError(descriptor(undefined, "0.0.45"));
       expect(blocked).toMatchObject({ serverUpdateRequired: true });
@@ -206,11 +206,35 @@ describe("updateOutdatedHost", () => {
         ),
       );
 
-      const result = yield* updateOutdatedHost(
-        TARGET.environmentId,
-        { targetVersion: "0.0.46" },
-        () => Effect.void,
-      ).pipe(
+      const result = yield* Effect.gen(function* () {
+        const before = yield* describeOutdatedHost(TARGET.environmentId);
+        expect(before.serverVersion).toBe("0.0.45");
+        expect(orchestrationProtocolCompatibilityError(before)).toMatchObject({
+          serverUpdateRequired: true,
+        });
+        expect(sockets).toHaveLength(0);
+        expect(calls).toEqual([]);
+
+        served = descriptor(ORCHESTRATION_PROTOCOL_VERSION + 1, "0.0.99");
+        const unsupported = orchestrationProtocolCompatibilityError(served);
+        const futureError = yield* updateOutdatedHost(
+          TARGET.environmentId,
+          { targetVersion: "0.0.46" },
+          () => Effect.void,
+        ).pipe(Effect.match({ onFailure: (error) => error, onSuccess: () => null }));
+        expect(sockets).toHaveLength(0);
+        expect(calls).toEqual([]);
+        expect(futureError).toMatchObject({
+          message: unsupported?.message,
+        });
+
+        served = descriptor(undefined, "0.0.45");
+        return yield* updateOutdatedHost(
+          TARGET.environmentId,
+          { targetVersion: "0.0.46" },
+          () => Effect.void,
+        );
+      }).pipe(
         Effect.provide(
           Layer.mergeAll(
             Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, registry),
