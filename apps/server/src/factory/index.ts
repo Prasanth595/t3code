@@ -37,6 +37,7 @@ import {
 } from "./config.ts";
 import { readLowestFreeSpace, type FreeSpace } from "./disk.ts";
 import * as Gate from "./gate.ts";
+import { guardLogStreams } from "./logStreams.ts";
 import { FactoryGate, clearGateLocks, gateLockFile } from "./gate.ts";
 import type { State } from "./domain/lifecycle.ts";
 import { ledgerCall as ledger, type LedgerError } from "./ledger/errors.ts";
@@ -1011,8 +1012,13 @@ export const factoryRuntime = (options: RuntimeOptions = {}) =>
 
 export const FactoryRuntime = factoryRuntime();
 
-/** The factory's root layer. server.ts merges it into the runtime; nothing else imports it. */
+/**
+ * The factory's root layer. server.ts merges it into the runtime; nothing else imports it. It
+ * guards stdout and stderr before the factory starts, so a full disk under launchd drops log lines instead of
+ * ending the server.
+ */
 export const FactoryLayer = FactoryRuntime.pipe(
+  Layer.provideMerge(Layer.effectDiscard(Effect.sync(guardLogStreams))),
   Layer.provideMerge(Paths.layer),
   Layer.provideMerge(ServerExitService.layer),
   Layer.provide(Gate.layer),
