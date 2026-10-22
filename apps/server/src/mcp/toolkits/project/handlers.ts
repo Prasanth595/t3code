@@ -123,6 +123,18 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           Effect.mapError(unavailable),
           Effect.map(Option.getOrUndefined),
         );
+        // A retry of an accepted launch replays it: it keeps the model it started
+        // with and skips the checks only a new launch needs, which the project
+        // may no longer pass, such as a base branch deleted since.
+        const launched =
+          input.clientRequestId === undefined
+            ? null
+            : yield* context.threads.getThreadShell(threadId).pipe(Effect.mapError(unavailable));
+        const launchedModel =
+          launched === null || launched.deletedAt !== null ? undefined : launched.modelSelection;
+        const replaying = launchedModel !== undefined;
+        // A retry may bind a workspace to an idle accepted launch, so membership
+        // is checked on every launch, unlike the checks below.
         if (input.workspaceStrategy?.type === "existing_worktree") {
           const project = yield* readProject;
           if (project === undefined)
@@ -135,7 +147,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // A launch is accepted before its worktree is provisioned, so a base
         // ref that cannot resolve is refused while the agent can still act on it.
         const strategy = input.workspaceStrategy;
-        if (acceptedLaunch === undefined && strategy?.type === "worktree")
+        if (acceptedLaunch === undefined && !replaying && strategy?.type === "worktree")
           yield* ThreadLaunch.ThreadLaunchService.pipe(
             Effect.flatMap((launches) =>
               launches.checkWorktreeBase({ projectId, workspaceStrategy: strategy }),
@@ -152,19 +164,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 }),
             ),
           );
-        // A retry of an accepted launch keeps the model it started with, even if
-        // the project's defaults changed since, and the launch service replays it.
-        const launched =
-          input.clientRequestId === undefined
-            ? null
-            : yield* context.threads.getThreadShell(threadId).pipe(Effect.mapError(unavailable));
-        const launchedModel =
-          launched === null || launched.deletedAt !== null ? undefined : launched.modelSelection;
         // A caller outside a thread has nothing to inherit, so it starts with the
         // project's effective defaults, as the composer does. Its mode stays
         // within the ceiling it was approved with.
         const projectDefaults =
-          caller === undefined && launchedModel === undefined
+          caller === undefined && !replaying
             ? yield* ServerSettings.ServerSettingsService.pipe(
                 Effect.flatMap((settings) => settings.getSettings),
                 Effect.mapError(unavailable),
