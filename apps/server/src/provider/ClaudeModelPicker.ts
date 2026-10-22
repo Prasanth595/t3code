@@ -30,8 +30,8 @@ const decodeModelPickerRow = Schema.decodeUnknownOption(ModelPickerRow);
 
 export interface ClaudeModelPicker {
   readonly replaceBuiltInOptions: boolean;
-  /** Display names keyed by model id, in picker order. */
-  readonly names: ReadonlyMap<string, string>;
+  /** Configured labels keyed by model id, in picker order. */
+  readonly labels: ReadonlyMap<string, string | undefined>;
 }
 
 // Claude Code ignores a project checkout's `modelPicker`, and the highest source
@@ -59,13 +59,15 @@ export const readClaudeModelPicker = Effect.fn("readClaudeModelPicker")(function
     ))?.modelPicker;
     if (!picker) continue;
 
-    const names = new Map<string, string>();
+    const labels = new Map<string, string | undefined>();
     for (const option of picker.options) {
       const row = Option.getOrUndefined(decodeModelPickerRow(option));
       const slug = row?.model.trim();
-      if (row && slug && !names.has(slug)) names.set(slug, row.label?.trim() || slug);
+      if (row && slug && !labels.has(slug)) labels.set(slug, row.label?.trim() || undefined);
     }
-    return { replaceBuiltInOptions: picker.replaceBuiltInOptions === true, names };
+    return labels.size === 0
+      ? undefined
+      : { replaceBuiltInOptions: picker.replaceBuiltInOptions === true, labels };
   }
   return undefined;
 });
@@ -78,11 +80,14 @@ export function applyClaudeModelPicker(
   const builtInBySlug = new Map(builtInModels.map((model) => [model.slug, model]));
   // Rows naming a bundled model keep its effort and context controls. Any other
   // id goes to Claude Code verbatim with no controls, like a custom model.
-  const listed = [...picker.names].map(
-    ([slug, name]): ServerProviderModel =>
-      builtInBySlug.get(slug) ?? { slug, name, isCustom: false, capabilities: null },
-  );
+  const listed = [...picker.labels].map(([slug, label]): ServerProviderModel => {
+    const builtIn = builtInBySlug.get(slug);
+    if (!builtIn) return { slug, name: label ?? slug, isCustom: false, capabilities: null };
+    if (!label) return builtIn;
+    const { shortName: _shortName, ...rest } = builtIn;
+    return { ...rest, name: label };
+  });
   return picker.replaceBuiltInOptions
     ? listed
-    : [...listed, ...builtInModels.filter((model) => !picker.names.has(model.slug))];
+    : [...listed, ...builtInModels.filter((model) => !picker.labels.has(model.slug))];
 }
