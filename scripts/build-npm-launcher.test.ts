@@ -200,8 +200,8 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
           VERSION,
         ]);
 
-        // Clearing a folder an interrupted install left behind never deletes a
-        // complete install another launcher publishes right after the check.
+        // A peer's executable and sidecar stay available at every recovery boundary,
+        // even when it publishes after our missing-marker read.
         const staleHome = path.join(root, "stale-home");
         const staleDir = path.join(staleHome, "runtime/versions", VERSION);
         const peerDir = path.join(root, "peer-runtime");
@@ -211,20 +211,44 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         yield* fs.writeFileString(path.join(peerDir, "t3"), '#!/bin/sh\necho "peer $*"\nexit 7\n');
         yield* fs.chmod(path.join(peerDir, "t3"), 0o755);
         yield* fs.writeFileString(path.join(peerDir, ".install-complete"), `${VERSION}\n`);
+        yield* fs.writeFileString(path.join(peerDir, "sidecar"), "peer sidecar");
+        const peerChecks = path.join(root, "peer-checks.txt");
         // The peer publishes after the launcher's rename fails and it reads the marker.
         const peerHook = path.join(root, "peer-publishes.mjs");
         yield* fs.writeFileString(
           peerHook,
           `import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 const dir = ${JSON.stringify(staleDir)};
-const { readFileSync, renameSync } = fs;
+const { readFileSync, renameSync, rmSync } = fs;
 let checking = false;
+let published = false;
+const checkPeer = () => {
+  const child = spawnSync(dir + "/t3", ["--version"], { encoding: "utf8" });
+  let sidecar;
+  try {
+    sidecar = readFileSync(dir + "/sidecar", "utf8");
+  } catch (error) {
+    sidecar = error.code;
+  }
+  fs.appendFileSync(${JSON.stringify(peerChecks)},
+    [child.status, child.error?.code ?? child.stdout.trim(), sidecar].join("|") + "\\n");
+};
 fs.renameSync = (from, to) => {
   try {
     return renameSync(from, to);
   } catch (error) {
     checking ||= to === dir;
     throw error;
+  } finally {
+    if (published) checkPeer();
+  }
+};
+fs.rmSync = (...args) => {
+  try {
+    return rmSync(...args);
+  } finally {
+    if (published) checkPeer();
   }
 };
 fs.readFileSync = (file, ...rest) => {
@@ -233,8 +257,10 @@ fs.readFileSync = (file, ...rest) => {
   } finally {
     if (checking && file === dir + "/.install-complete") {
       checking = false;
-      fs.rmSync(dir, { recursive: true });
+      rmSync(dir, { recursive: true });
       renameSync(${JSON.stringify(peerDir)}, dir);
+      published = true;
+      checkPeer();
     }
   }
 };
@@ -245,11 +271,32 @@ fs.readFileSync = (file, ...rest) => {
           ["--import", peerHook, launcher, "--version"],
           { cwd: root, env: { ...env, T3CODE_HOME: staleHome } },
         );
-        assert.equal(recovered.stdout.trim(), "peer --version", recovered.stderr);
-        assert.equal(recovered.exitCode, 7);
+        const checks = (yield* fs.readFileString(peerChecks)).trim().split("\n");
+        assert.isAtLeast(checks.length, 2);
+        assert.deepStrictEqual([...new Set(checks)], ["7|peer --version|peer sidecar"]);
+        assert.equal(recovered.exitCode, 1);
+        assert.equal(recovered.stdout, "");
+        assert.match(recovered.stderr, /rename/);
         assert.deepStrictEqual(yield* fs.readDirectory(path.join(staleHome, "runtime/versions")), [
           VERSION,
         ]);
+
+        // Without a peer, a nonempty incomplete install is left for manual repair.
+        const staleOnlyHome = path.join(root, "stale-only-home");
+        const staleOnlyDir = path.join(staleOnlyHome, "runtime/versions", VERSION);
+        yield* fs.makeDirectory(staleOnlyDir, { recursive: true });
+        yield* fs.writeFileString(path.join(staleOnlyDir, "t3"), "incomplete");
+        const refused = yield* run(process.execPath, [launcher, "--version"], {
+          cwd: root,
+          env: { ...env, T3CODE_HOME: staleOnlyHome },
+        });
+        assert.equal(refused.exitCode, 1);
+        assert.match(refused.stderr, /rename/);
+        assert.equal(yield* fs.readFileString(path.join(staleOnlyDir, "t3")), "incomplete");
+        assert.deepStrictEqual(
+          yield* fs.readDirectory(path.join(staleOnlyHome, "runtime/versions")),
+          [VERSION],
+        );
 
         // A download that does not match the release checksums is never installed.
         release.corruptChecksum();
