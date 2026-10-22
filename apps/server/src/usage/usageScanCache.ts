@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 import { CLAUDE_SYNTHETIC_MODEL } from "../provider/Drivers/claudeUsage.ts";
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 
-const USAGE_SCAN_CACHE_VERSION = 8 as const;
+const USAGE_SCAN_CACHE_VERSION = 9 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
@@ -58,7 +58,8 @@ type SerializedRecord = readonly [
   reportedCostUsd: number | null,
   speed: number,
   rateModelIndex?: number | null,
-  unresolvedServiceTierTurnId?: string,
+  unresolvedServiceTierTurnId?: string | null,
+  oneHourCacheCreationTokens?: number,
 ];
 
 interface SerializedFile {
@@ -117,9 +118,8 @@ function serializeFile(entry: CachedFile, tables: InternTables): SerializedFile 
     record.rateModel === undefined
       ? null
       : intern(tables.models, tables.modelIndex, record.rateModel),
-    ...(record.unresolvedServiceTierTurnId === undefined
-      ? ([] as const)
-      : ([record.unresolvedServiceTierTurnId] as const)),
+    record.unresolvedServiceTierTurnId ?? null,
+    record.oneHourCacheCreationTokens ?? 0,
   ];
   return {
     s: entry.size,
@@ -232,6 +232,7 @@ export function decodeScanCache(
         speedIndex,
         rateModelIndex,
         unresolvedServiceTierTurnId,
+        oneHourCacheCreation,
       ] = row as SerializedRecord;
       const speed = typeof speedIndex === "number" ? SPEEDS[speedIndex] : undefined;
 
@@ -241,8 +242,8 @@ export function decodeScanCache(
         typeof timestampMs !== "number" ||
         !Number.isFinite(timestampMs) ||
         model === undefined ||
-        (unresolvedServiceTierTurnId !== undefined &&
-          typeof unresolvedServiceTierTurnId !== "string") ||
+        (unresolvedServiceTierTurnId != null && typeof unresolvedServiceTierTurnId !== "string") ||
+        (oneHourCacheCreation !== undefined && !Number.isFinite(oneHourCacheCreation)) ||
         (rateModelIndex != null && rateModel === undefined) ||
         !Number.isFinite(uncached) ||
         !Number.isFinite(cached) ||
@@ -273,8 +274,11 @@ export function decodeScanCache(
         },
         reportedCostUsd: typeof reportedCostUsd === "number" ? reportedCostUsd : null,
         speed,
-        ...(version >= 7 && unresolvedServiceTierTurnId !== undefined
+        ...(version >= 7 && typeof unresolvedServiceTierTurnId === "string"
           ? { unresolvedServiceTierTurnId }
+          : {}),
+        ...(oneHourCacheCreation !== undefined && oneHourCacheCreation > 0
+          ? { oneHourCacheCreationTokens: oneHourCacheCreation }
           : {}),
         dedupeKey: typeof dedupeKey === "string" ? dedupeKey : null,
       });
@@ -312,8 +316,10 @@ export function decodeScanCache(
     }
     // Keep history for deleted rollouts, but re-parse incompatible reducer state.
     // Older Codex entries lack provenance state (v7) or misread compaction and resume counters (v8).
+    // Older Claude entries lack the one-hour cache-write split (v9).
     const legacy =
-      format.state !== undefined && (version < 6 || (entry.p === "codex" && version < 8));
+      (format.state !== undefined && (version < 6 || (entry.p === "codex" && version < 8))) ||
+      (entry.p === "claude" && version < 9);
     // A corrupt state disqualifies the entry: resuming with it would attach
     // appended usage to the wrong model or replay fork-copied history.
     if (!legacy && !isValidState.get(entry.p)?.(entry.cs)) continue;

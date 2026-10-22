@@ -171,6 +171,20 @@ describe("usage pricing", () => {
     });
   });
 
+  it("prices one-hour cache writes at the one-hour write rate", () => {
+    const table = parseRateTable({
+      "claude-opus-5-5": {
+        ...rate(4e-6, 4e-7),
+        cache_creation_input_token_cost: 5e-6,
+        cache_creation_input_token_cost_above_1hr: 8e-6,
+      },
+    });
+
+    expect(
+      priceUsage(table, { ...record("claude-opus-5-5"), oneHourCacheCreationTokens: 600_000 }),
+    ).toMatchObject({ categoryCostUsd: { cacheWrite: expect.closeTo(0.4 * 5 + 0.6 * 8) } });
+  });
+
   it("prices Codex priority and ultrafast requests at their published tier rates", () => {
     const table = parseRateTable({
       "gpt-6-astra": {
