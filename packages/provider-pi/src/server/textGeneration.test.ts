@@ -134,3 +134,14 @@ it.effect("keeps the reply when Pi answers after a failed attempt", () =>
     assert.equal(result.subject, "Update README");
   }),
 );
+
+it.effect("drops an earlier error once a later attempt succeeds", () =>
+  Effect.gen(function* () {
+    const error = yield* generateCommitMessage([
+      failedTurn,
+      { type: "message_end", message: { role: "assistant", stopReason: "stop" } },
+    ]).pipe(Effect.flip);
+
+    assert.equal(error.detail, "Pi returned empty output.");
+  }),
+);
