@@ -1,7 +1,7 @@
 import type { SensorProps } from "@dnd-kit/core";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { fakeTimers } from "../../test/render";
-import { SidebarPointerSensor } from "./Sidebar.pointer";
+import { SidebarPointerSensor, guardSidebarStalePress } from "./Sidebar.pointer";
 
 const sensors: SidebarPointerSensor[] = [];
 
@@ -84,5 +84,223 @@ describe("sidebar pointer lifecycle", () => {
     expect(drag.onCancel).toHaveBeenCalledOnce();
     expect(drag.onEnd).not.toHaveBeenCalled();
     expect(drag.onFinish).toHaveBeenCalledExactlyOnceWith(true);
+  });
+});
+
+describe("sidebar stale press guard", () => {
+  function list() {
+    const stack = new DisposableStack();
+    const node = document.createElement("ul");
+    // The default pointer point, (10, 10), rests on whichever row is first.
+    node.style.cssText =
+      "position: fixed; inset: 0 auto auto 0; margin: 0; padding: 0; width: 200px";
+    const rows = ["alpha", "beta", "gamma"].map((name) => {
+      const row = node.appendChild(document.createElement("li"));
+      row.textContent = name;
+      row.style.cssText = "display: block; height: 20px";
+      return row;
+    });
+    document.body.append(node);
+    stack.defer(() => node.remove());
+    const guard = guardSidebarStalePress(node);
+    stack.defer(guard.release);
+    const clicked: string[] = [];
+    node.addEventListener("click", (event) => {
+      clicked.push((event.target as HTMLElement).textContent ?? "");
+    });
+    const press = (row: HTMLElement) => {
+      row.dispatchEvent(pointer("pointerdown", { pointerType: "mouse" }));
+      row.dispatchEvent(pointer("pointerup", { pointerType: "mouse", buttons: 0 }));
+      row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+    };
+    return { stack, guard, rows, clicked, press };
+  }
+
+  it("swallows the first press on a row another client slid under the mouse", () => {
+    const { stack, rows, clicked, press } = list();
+    using _list = stack;
+    const [alpha, beta] = rows;
+    alpha!.dispatchEvent(pointer("pointermove", { pointerType: "mouse", buttons: 0 }));
+    alpha!.remove();
+
+    press(beta!);
+    press(beta!);
+
+    expect(clicked).toEqual(["beta"]);
+  });
+
+  // regression: settling a row must not swallow the deliberate click on the row that replaces it
+  it("trusts the row that slides in after the user's own settle", () => {
+    const { stack, guard, rows, clicked, press } = list();
+    using _list = stack;
+    const [alpha, beta] = rows;
+    alpha!.addEventListener("click", () => {
+      guard.trust();
+      alpha!.remove();
+      guard.rowsChanged();
+    });
+    alpha!.dispatchEvent(pointer("pointermove", { pointerType: "mouse", buttons: 0 }));
+    press(alpha!);
+
+    press(beta!);
+
+    expect(clicked).toEqual(["alpha", "beta"]);
+  });
+
+  // regression: a click that keeps its row must not disarm the guard for a later remote shift
+  it("still swallows a remote shift after a click that kept its row", () => {
+    const { stack, rows, clicked, press } = list();
+    using _list = stack;
+    const [alpha, beta] = rows;
+    alpha!.dispatchEvent(pointer("pointermove", { pointerType: "mouse", buttons: 0 }));
+    press(alpha!);
+    alpha!.remove();
+
+    press(beta!);
+    press(beta!);
+
+    expect(clicked).toEqual(["alpha", "beta"]);
+  });
+
+  // regression: a trusted press must still arm the guard for a remote shift that follows it
+  it("swallows a remote shift after an untracked press that follows the user's own settle", () => {
+    const { stack, guard, rows, clicked, press } = list();
+    using _list = stack;
+    const [alpha, beta, gamma] = rows;
+    alpha!.addEventListener("click", () => {
+      guard.trust();
+      alpha!.remove();
+      guard.rowsChanged();
+    });
+    alpha!.dispatchEvent(pointer("pointermove", { pointerType: "mouse", buttons: 0 }));
+    press(alpha!);
+    press(beta!);
+    beta!.remove();
+
+    press(gamma!);
+    press(gamma!);
+
+    expect(clicked).toEqual(["alpha", "beta", "gamma"]);
+  });
+
+  // regression: the user's own settle must not disarm the guard for a remote shift before any press
+  it("swallows a remote shift that follows the user's own settle before any press", () => {
+    const { stack, guard, rows, clicked, press } = list();
+    using _list = stack;
+    const [alpha, beta, gamma] = rows;
+    alpha!.addEventListener("click", () => {
+      guard.trust();
+      alpha!.remove();
+      guard.rowsChanged();
+    });
+    alpha!.dispatchEvent(pointer("pointermove", { pointerType: "mouse", buttons: 0 }));
+    press(alpha!);
+    beta!.remove();
+    guard.rowsChanged();
+
+    press(gamma!);
+    press(gamma!);
+
+    expect(clicked).toEqual(["alpha", "gamma"]);
+  });
+
+  // regression: a local action that fails must not lend its trust to a later remote shift
+  it("swallows a remote shift after the user's own action fails", () => {
+    const { stack, guard, rows, clicked, press } = list();
+    using _list = stack;
+    const [alpha, beta] = rows;
+    let revoke: (() => void) | undefined;
+    alpha!.addEventListener("click", () => {
+      revoke = guard.trust();
+    });
+    alpha!.dispatchEvent(pointer("pointermove", { pointerType: "mouse", buttons: 0 }));
+    press(alpha!);
+    revoke?.();
+    alpha!.remove();
+    guard.rowsChanged();
+
+    press(beta!);
+    press(beta!);
+
+    expect(clicked).toEqual(["alpha", "beta"]);
+  });
+
+  // regression: trust granted before the mouse left must not survive its return
+  it("swallows a remote shift after the mouse leaves and returns during a local action", () => {
+    const { stack, guard, rows, clicked, press } = list();
+    using _list = stack;
+    const [alpha, beta] = rows;
+    alpha!.addEventListener("click", () => guard.trust());
+    alpha!.dispatchEvent(pointer("pointermove", { pointerType: "mouse", buttons: 0 }));
+    press(alpha!);
+    alpha!.parentElement!.dispatchEvent(new PointerEvent("pointerleave", { pointerType: "mouse" }));
+    alpha!.dispatchEvent(pointer("pointermove", { pointerType: "mouse", buttons: 0, clientY: 12 }));
+    alpha!.remove();
+    guard.rowsChanged();
+
+    press(beta!);
+    press(beta!);
+
+    expect(clicked).toEqual(["alpha", "beta"]);
+  });
+
+  // regression: a remote shift while the user's own action is pending must not take its trust
+  it("swallows a remote shift that lands while the user's own action is pending", () => {
+    const { stack, guard, rows, clicked, press } = list();
+    using _list = stack;
+    const [alpha, beta] = rows;
+    alpha!.addEventListener("click", () => guard.trust(() => false));
+    alpha!.dispatchEvent(pointer("pointermove", { pointerType: "mouse", buttons: 0 }));
+    press(alpha!);
+    alpha!.remove();
+    guard.rowsChanged();
+
+    press(beta!);
+    press(beta!);
+
+    expect(clicked).toEqual(["alpha", "beta"]);
+  });
+
+  function scrolledList() {
+    const { stack, guard, rows, clicked, press } = list();
+    const scroller = document.createElement("div");
+    scroller.style.cssText = "height: 40px; overflow: auto";
+    document.body.append(scroller);
+    stack.defer(() => scroller.remove());
+    const node = rows[0]!.parentElement!;
+    node.style.position = "static";
+    scroller.append(node);
+    scroller.scrollTop = scroller.scrollHeight;
+    return { stack, guard, rows, clicked, press, scroller };
+  }
+
+  // regression: the browser clamping scrollTop after a remote removal is not the user scrolling
+  it("swallows a remote removal that clamps the list's scroll position", async () => {
+    const { stack, rows, clicked, press, scroller } = scrolledList();
+    using _list = stack;
+    const [alpha, beta, gamma] = rows;
+    gamma!.dispatchEvent(pointer("pointermove", { pointerType: "mouse", buttons: 0 }));
+    const clamped = new Promise((resolve) =>
+      scroller.addEventListener("scroll", resolve, { once: true }),
+    );
+    alpha!.remove();
+    await clamped;
+
+    press(beta!);
+    press(beta!);
+
+    expect(clicked).toEqual(["beta"]);
+  });
+
+  it("trusts the row the user's own wheel scrolls under the mouse", () => {
+    const { stack, rows, clicked, press } = scrolledList();
+    using _list = stack;
+    const [, beta, gamma] = rows;
+    gamma!.dispatchEvent(pointer("pointermove", { pointerType: "mouse", buttons: 0 }));
+    gamma!.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -20 }));
+
+    press(beta!);
+
+    expect(clicked).toEqual(["beta"]);
   });
 });

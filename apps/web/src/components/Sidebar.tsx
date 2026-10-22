@@ -173,7 +173,11 @@ import {
   createSidebarSortingStrategy,
   restrictBelowSidebarLabel,
 } from "./Sidebar.drag";
-import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer";
+import {
+  SidebarDragLifecycle,
+  SidebarPointerSensor,
+  guardSidebarStalePress,
+} from "./Sidebar.pointer";
 import { createSidebarListMotion } from "./Sidebar.motion";
 import { resolveSnoozePresets, snoozeWakeLabel, type SnoozePreset } from "./Sidebar.snooze";
 import { ProjectFavicon } from "./ProjectFavicon";
@@ -878,6 +882,7 @@ export default function Sidebar() {
   const threadListRef = useRef<HTMLUListElement | null>(null);
   const dragLabelOffsetRef = useRef(0);
   const listMotionRef = useRef<ReturnType<typeof createSidebarListMotion> | null>(null);
+  const listPressGuardRef = useRef<ReturnType<typeof guardSidebarStalePress> | null>(null);
   const [dragState, setDragState] = useState<{
     readonly activeKey: string;
     readonly activeSection: SidebarSection;
@@ -1280,6 +1285,25 @@ export default function Sidebar() {
         : () => void router.navigate({ to: "/" });
   };
 
+  // A remote change can land while the action is pending; only a change to where this
+  // thread sits counts as the action's own.
+  const trustThreadChange = (threadRef: ScopedThreadRef) => {
+    const placement = () => {
+      const thread = readThreadShell(threadRef);
+      return thread === null
+        ? null
+        : [
+            thread.archivedAt,
+            thread.settledOverride,
+            thread.snoozedUntil,
+            thread.pinnedAt,
+            thread.pinOrderKey,
+            thread.activeOrderKey,
+          ].join("|");
+    };
+    const before = placement();
+    return listPressGuardRef.current?.trust(() => placement() !== before);
+  };
   const attemptSettle = (
     threadRef: ScopedThreadRef,
     opts: { coSettlingKeys?: ReadonlySet<string> } = {},
@@ -1288,10 +1312,12 @@ export default function Sidebar() {
       const threadKey = scopedThreadKey(threadRef);
       if (settlingThreadKeysRef.current.has(threadKey)) return;
       settlingThreadKeysRef.current.add(threadKey);
+      const revokeTrust = trustThreadChange(threadRef);
       const navigateAfterSettle = planForwardNavigation(threadKey, opts.coSettlingKeys);
       const result = await settleThread(threadRef);
       settlingThreadKeysRef.current.delete(threadKey);
       if (result._tag === "Failure") {
+        revokeTrust?.();
         if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
           toastManager.add(
@@ -1327,8 +1353,10 @@ export default function Sidebar() {
     }
   };
   const attemptUnsettle = (threadRef: ScopedThreadRef) => {
+    const revokeTrust = trustThreadChange(threadRef);
     void (async () => {
       const result = await unsettleThread(threadRef);
+      if (result._tag === "Failure") revokeTrust?.();
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         toastManager.add(
@@ -1342,8 +1370,10 @@ export default function Sidebar() {
     })();
   };
   const attemptUnsnooze = (threadRef: ScopedThreadRef) => {
+    const revokeTrust = trustThreadChange(threadRef);
     void (async () => {
       const result = await unsnoozeThread(threadRef);
+      if (result._tag === "Failure") revokeTrust?.();
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         toastManager.add(
@@ -1369,6 +1399,8 @@ export default function Sidebar() {
     listMotionRef.current?.dispose();
     listMotionRef.current = node === null ? null : createSidebarListMotion(node);
     listMotionRef.current?.update(false);
+    listPressGuardRef.current?.release();
+    listPressGuardRef.current = node === null ? null : guardSidebarStalePress(node);
   };
 
   // Working rows can supply chat context, but never preview sidebar movement.
@@ -1379,6 +1411,7 @@ export default function Sidebar() {
     contextDragKeyRef.current = null;
     endThreadContextDrag();
     if (started) {
+      listPressGuardRef.current?.forget();
       listMotionRef.current?.release();
       setDragState(null);
     }
@@ -1518,12 +1551,14 @@ export default function Sidebar() {
     setOptimisticDrop(null);
   }
   const attemptPin = (threadRef: ScopedThreadRef) => {
+    const revokeTrust = trustThreadChange(threadRef);
     void (async () => {
       // Fresh pins take the top of the arranged run: pinThread computes a
       // key before the smallest key across ALL pinned shells — including
       // snoozed pins hidden from this list, whose keys are still part of
       // the run — so the new pin can't land beneath a hidden head.
       const result = await pinThread(threadRef);
+      if (result._tag === "Failure") revokeTrust?.();
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         toastManager.add(
@@ -1537,8 +1572,12 @@ export default function Sidebar() {
     })();
   };
   const attemptUnpin = (threadRef: ScopedThreadRef) => {
+    const revokeTrust = trustThreadChange(threadRef);
     void (async () => {
       const result = await confirmAndUnpinThread(threadRef);
+      // A cancelled confirmation also succeeds; the thread is then still pinned.
+      if (result._tag === "Failure" || readThreadShell(threadRef)?.pinnedAt != null)
+        revokeTrust?.();
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         toastManager.add(
@@ -1657,6 +1696,7 @@ export default function Sidebar() {
   // so a new layout key alone also triggers it.
   const listMotionPass = { layoutKey: listMotionLayoutKey, animate: listMotionAnimate };
   useLayoutEffect(() => {
+    listPressGuardRef.current?.rowsChanged();
     listMotionRef.current?.update(listMotionPass.animate);
   }, [listMotionPass]);
   const handleThreadDragOver = (event: DragOverEvent) => {
@@ -1792,6 +1832,7 @@ export default function Sidebar() {
       assignedKeys: new Map(assignments.map(({ id, orderKey }) => [id, orderKey])),
     };
     setOptimisticDrop(drop);
+    const revokeTrust = listPressGuardRef.current?.trust();
     void (async () => {
       const run = async (
         operation: Promise<AtomCommandResult<unknown, unknown>>,
@@ -1799,6 +1840,7 @@ export default function Sidebar() {
       ) => {
         const result = await operation;
         if (result._tag === "Success") return true;
+        revokeTrust?.();
         setOptimisticDrop((current) => (current === drop ? null : current));
         if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
@@ -1883,10 +1925,12 @@ export default function Sidebar() {
       return { status: "skipped" } as const;
     }
     snoozingThreadKeysRef.current.add(threadKey);
+    const revokeTrust = trustThreadChange(threadRef);
     const navigateAfterSnooze = planForwardNavigation(threadKey, opts.coSnoozingKeys);
     const result = await snoozeThread(threadRef, preset.snoozedUntil);
     snoozingThreadKeysRef.current.delete(threadKey);
     if (result._tag === "Failure") {
+      revokeTrust?.();
       return isAtomCommandInterrupted(result)
         ? ({ status: "interrupted" } as const)
         : ({ status: "failure", error: squashAtomCommandFailure(result) } as const);
@@ -2175,6 +2219,11 @@ export default function Sidebar() {
     },
   );
 
+  const discardDraft = useStableCallback((draftId: DraftId) => {
+    listPressGuardRef.current?.trust();
+    discardComposerDraft(draftId);
+  });
+
   const handleDraftContextMenu = useStableCallback(
     (draftId: DraftId, position: { x: number; y: number }) => {
       void (async () => {
@@ -2219,7 +2268,7 @@ export default function Sidebar() {
             // The menu can stay open while the draft sends; discarding a
             // promoting draft would strand the send.
             const current = useComposerDraftStore.getState().getDraftSession(draftId);
-            if (current && !current.promotedTo) discardComposerDraft(draftId);
+            if (current && !current.promotedTo) discardDraft(draftId);
             return;
           }
         }
@@ -2959,6 +3008,7 @@ export default function Sidebar() {
                           routeDraftId={routeDraftIdForRows}
                           onNavigateToDraft={navigateToDraft}
                           onDraftContextMenu={handleDraftContextMenu}
+                          onDiscardDraft={discardDraft}
                         />,
                       ];
                       for (const item of sidebarListItems) {
@@ -3091,7 +3141,10 @@ export default function Sidebar() {
                       <li className="list-none">
                         <button
                           type="button"
-                          onClick={showMoreSettled}
+                          onClick={() => {
+                            listPressGuardRef.current?.trust();
+                            showMoreSettled();
+                          }}
                           className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/55 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
                         >
                           <PlusIcon aria-hidden className="size-4 shrink-0" />
