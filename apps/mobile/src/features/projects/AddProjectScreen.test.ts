@@ -2,7 +2,11 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
+import {
+  AuthFilesystemReadScope,
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { isValidElement, type ReactNode } from "react";
@@ -12,13 +16,38 @@ const state = vi.hoisted(() => ({
   scopes: new Set<string>(),
   baseDirectory: "",
   projects: [] as string[],
+  home: "/home/tester",
+  os: "linux",
+  supportsCloneTracking: false,
+  registered: [] as Array<{
+    environmentId: string;
+    id: string;
+    title: string;
+    workspaceRoot: string;
+  }>,
+  cloneCalls: [] as string[],
+  alerts: [] as string[],
+  navigations: [] as unknown[],
+  draftLoadError: false,
+  stateUpdates: [] as unknown[],
+  draftTexts: [] as Array<{ draftId: string; text: string }>,
 }));
+
+// Stands in for the server's `~` expansion, which filesystem.browse reports as parentPath.
+function expandHome(path: string): string {
+  if (path !== "~" && !path.startsWith("~/") && !path.startsWith("~\\")) return path;
+  const expanded = `${state.home}${path.slice(1)}`;
+  return state.os === "windows" ? expanded.replaceAll("/", "\\") : expanded;
+}
 
 vi.mock("react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react")>()),
   useCallback: (callback: unknown) => callback,
   useMemo: (factory: () => unknown) => factory(),
-  useState: (initial: unknown) => [typeof initial === "function" ? initial() : initial, () => {}],
+  useState: (initial: unknown) => [
+    typeof initial === "function" ? initial() : initial,
+    (value: unknown) => state.stateUpdates.push(value),
+  ],
   useRef: (current: unknown) => ({ current }),
   useEffect: () => {},
 }));
@@ -30,13 +59,13 @@ vi.mock("../../components/ui/ThemedSwitch", () => ({ ThemedSwitch: "Switch" }));
 vi.mock("react-native", () => ({
   Platform: { OS: "ios" },
   ActivityIndicator: "ActivityIndicator",
-  Alert: { alert: () => {} },
+  Alert: { alert: (title: string) => state.alerts.push(title) },
   Pressable: "Pressable",
   ScrollView: "ScrollView",
   View: "View",
 }));
 vi.mock("@react-navigation/native", () => ({
-  useNavigation: () => ({ dispatch: () => {} }),
+  useNavigation: () => ({ dispatch: (action: unknown) => state.navigations.push(action) }),
   CommonActions: { reset: (input: unknown) => input },
   StackActions: {},
 }));
@@ -55,14 +84,26 @@ vi.mock("../../state/session", () => ({
   useEnvironmentScope: (_environmentId: string, scope: string) => state.scopes.has(scope),
   readEnvironmentScope: (_environmentId: string, scope: string) => state.scopes.has(scope),
 }));
+vi.mock("../../state/use-composer-drafts", () => ({
+  waitForComposerDraftsLoaded: async () => {
+    if (state.draftLoadError) throw new Error("Draft storage unavailable");
+  },
+  createNewTaskDraft: () => "draft",
+  setComposerDraftText: (draftId: string, text: string) => state.draftTexts.push({ draftId, text }),
+}));
 vi.mock("../../state/entities", () => ({
-  useProjects: () => [],
+  useProjects: () => state.registered,
+  waitForProject: async ({ projectId }: { projectId: string }) =>
+    state.registered.find((project) => project.id === projectId) ?? null,
   useServerConfigs: () =>
     new Map([
       [
         "environment",
         {
-          environment: { platform: { os: "linux" }, capabilities: {} },
+          environment: {
+            platform: { os: state.os },
+            capabilities: { projectCloneTracking: state.supportsCloneTracking },
+          },
           settings: { addProjectBaseDirectory: state.baseDirectory },
         },
       ],
@@ -80,17 +121,56 @@ vi.mock("../../state/use-remote-environment-registry", () => ({
   }),
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
-vi.mock("../../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => () => {} }));
-vi.mock("../../state/query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));
+function browseResult(target: unknown) {
+  const partialPath = (target as { input?: { partialPath?: string } } | null)?.input?.partialPath;
+  if (partialPath === undefined || partialPath === "") return null;
+  const expanded = expandHome(partialPath);
+  return {
+    parentPath: expanded.slice(
+      0,
+      Math.max(expanded.lastIndexOf("/"), expanded.lastIndexOf("\\")) + 1,
+    ),
+    entries: [],
+  };
+}
+vi.mock("../../state/use-atom-query-runner", () => ({
+  useAtomQueryRunner: () => async (target: unknown) => {
+    // filesystem.browse requires a non-empty partialPath.
+    if ((target as { input?: { partialPath?: string } } | null)?.input?.partialPath === "") {
+      return AsyncResult.failure(Cause.fail(new Error("Invalid filesystem.browse input")));
+    }
+    const data = browseResult(target);
+    return data ? AsyncResult.success(data) : AsyncResult.success(null);
+  },
+}));
+vi.mock("../../state/query", () => ({
+  useEnvironmentQuery: (target: unknown) => ({
+    data: browseResult(target),
+    error: null,
+    isPending: false,
+    isSuccess: true,
+    refresh: () => {},
+  }),
+}));
 vi.mock("../../state/presentation", () => ({
   useEnvironmentPresentation: () => ({ isReady: true, presentation: null }),
 }));
-vi.mock("../../state/filesystem", () => ({ filesystemEnvironment: {} }));
+vi.mock("../../state/filesystem", () => ({
+  filesystemEnvironment: { browse: (target: unknown) => target },
+}));
 vi.mock("../../state/sourceControl", () => ({
   sourceControlEnvironment: {
     cloneRepository: async ({ input }: { input: { destinationPath: string } }) => {
+      state.cloneCalls.push(input.destinationPath);
+      if (input.destinationPath.startsWith("~")) {
+        return AsyncResult.success({ cwd: input.destinationPath });
+      }
       NodeFS.mkdirSync(input.destinationPath);
       return AsyncResult.success({ cwd: input.destinationPath });
+    },
+    startProjectClone: async ({ input }: { input: { destinationPath: string } }) => {
+      state.cloneCalls.push(input.destinationPath);
+      return AsyncResult.success(undefined);
     },
   },
 }));
@@ -100,13 +180,17 @@ vi.mock("../../state/projects", () => ({
       if (!state.scopes.has(AuthOrchestrationOperateScope)) {
         return AsyncResult.failure(Cause.fail(new Error("Project creation denied")));
       }
+      const root = expandHome(input.workspaceRoot).replace(/\/+$/, "");
+      if (state.registered.some((project) => project.workspaceRoot === root)) {
+        return AsyncResult.failure(Cause.fail(new Error("Failed to mutate project")));
+      }
       state.projects.push(input.workspaceRoot);
       return AsyncResult.success(undefined);
     },
   },
 }));
 
-import { AddProjectDestinationScreen } from "./AddProjectScreen";
+import { AddProjectDestinationScreen, AddProjectLocalFolderScreen } from "./AddProjectScreen";
 
 function findAction(node: ReactNode, label: string): (() => unknown) | null {
   if (Array.isArray(node)) {
@@ -166,6 +250,155 @@ describe("clone project permissions", () => {
 
       expect(NodeFS.existsSync(NodePath.join(state.baseDirectory, "repo"))).toBe(false);
       expect(state.projects).toEqual([]);
+    },
+  );
+});
+
+describe("adding an already registered project", () => {
+  const existing = {
+    environmentId: "environment",
+    id: "existing-project",
+    title: "Bike documents",
+    workspaceRoot: "/home/tester/repro/bike-documents",
+  };
+  const existingDraft = {
+    index: 0,
+    routes: [
+      {
+        name: "NewTaskDraft",
+        params: { environmentId: "environment", projectId: existing.id, title: existing.title },
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    state.scopes = new Set([
+      AuthSourceControlWriteScope,
+      AuthOrchestrationOperateScope,
+      AuthFilesystemReadScope,
+    ]);
+    state.projects = [];
+    state.registered = [existing];
+    state.cloneCalls = [];
+    state.alerts = [];
+    state.navigations = [];
+    state.draftTexts = [];
+    state.draftLoadError = false;
+    state.stateUpdates = [];
+    state.supportsCloneTracking = false;
+    state.home = "/home/tester";
+    state.os = "linux";
+  });
+
+  async function submitLocalFolder(path: string) {
+    state.baseDirectory = path;
+    const action = findAction(
+      AddProjectLocalFolderScreen({ environmentId: "environment" }),
+      "Add project",
+    );
+    if (!action) throw new Error("Add project action missing");
+    await action();
+  }
+
+  it.each(["~/repro/bike-documents/", "/home/tester/repro/bike-documents/"])(
+    "opens the existing project's draft without an alert for local folder %s",
+    async (path) => {
+      await submitLocalFolder(path);
+
+      expect(state.alerts).toEqual([]);
+      expect(state.navigations).toEqual([existingDraft]);
+    },
+  );
+
+  it("opens the existing project's draft for a Windows ~\\ folder", async () => {
+    state.os = "windows";
+    state.home = "C:\\Users\\tester";
+    state.registered = [{ ...existing, workspaceRoot: "C:\\Users\\tester\\repro\\bike-documents" }];
+
+    await submitLocalFolder("~\\repro\\bike-documents");
+
+    expect(state.alerts).toEqual([]);
+    expect(state.navigations).toEqual([existingDraft]);
+  });
+
+  it("opens the home directory's project for ~/", async () => {
+    const home = { ...existing, id: "home-project", title: "Home", workspaceRoot: "/home/tester" };
+    state.registered = [home];
+
+    await submitLocalFolder("~/");
+
+    expect(state.alerts).toEqual([]);
+    expect(state.navigations).toEqual([
+      {
+        index: 0,
+        routes: [
+          {
+            name: "NewTaskDraft",
+            params: { environmentId: "environment", projectId: home.id, title: home.title },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("keeps the prompt available and reports draft failure before retrying", async () => {
+    state.baseDirectory = "~/repro";
+    state.draftLoadError = true;
+    const action = findAction(
+      AddProjectDestinationScreen({
+        environmentId: "environment",
+        remoteUrl: "https://example.com/bike-documents.git",
+        repositoryName: "bike-documents",
+        prompt: "Fix the bike",
+      }),
+      "Clone project",
+    );
+    if (!action) throw new Error("Clone action missing");
+    await action();
+
+    expect(state.navigations).toEqual([]);
+    expect(state.cloneCalls).toEqual([]);
+    expect(state.stateUpdates).toContain("Draft storage unavailable");
+    expect(state.stateUpdates.at(-1)).toBe(false);
+
+    state.draftLoadError = false;
+    await action();
+    expect(state.draftTexts).toEqual([{ draftId: "draft", text: "Fix the bike" }]);
+    expect(state.navigations).toHaveLength(1);
+    expect(state.cloneCalls).toEqual([]);
+  });
+
+  it.each([false, true])(
+    "opens the existing project's draft with the prompt before cloning (clone tracking: %s)",
+    async (supportsCloneTracking) => {
+      state.supportsCloneTracking = supportsCloneTracking;
+      state.baseDirectory = "~/repro";
+      const action = findAction(
+        AddProjectDestinationScreen({
+          environmentId: "environment",
+          remoteUrl: "https://example.com/bike-documents.git",
+          repositoryName: "bike-documents",
+          prompt: "Fix the bike",
+        }),
+        "Clone project",
+      );
+      if (!action) throw new Error("Clone action missing");
+      await action();
+
+      expect(state.cloneCalls).toEqual([]);
+      expect(state.alerts).toEqual([]);
+      expect(state.draftTexts).toEqual([{ draftId: "draft", text: "Fix the bike" }]);
+      expect(state.navigations).toEqual([
+        {
+          ...existingDraft,
+          routes: [
+            {
+              ...existingDraft.routes[0],
+              params: { ...existingDraft.routes[0]!.params, draftId: "draft" },
+            },
+          ],
+        },
+      ]);
     },
   );
 });
