@@ -276,7 +276,7 @@ export function workEntryIsVisibleInGroup(
 const TIMELINE_MINIMAP_ITEM_SPACING = 8;
 export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
 const TIMELINE_MINIMAP_MAX_HEIGHT_REM = 18;
-const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = `calc(100vh - ${TIMELINE_MINIMAP_MAX_HEIGHT_REM}rem)`;
+const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = `max(1px, calc(100vh - ${TIMELINE_MINIMAP_MAX_HEIGHT_REM}rem))`;
 const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 48;
 // Idle ticks are `h-0.5` (2px). Centers closer than this read as one bar.
 const TIMELINE_MINIMAP_MARK_MIN_SPACING_PX = 6;
@@ -366,9 +366,9 @@ export function createTimelineMinimapViewportStore(input: {
 }
 
 /**
- * Pixel height of the rail: `(count - 1) * 8`, capped at `calc(100vh - 18rem)`.
+ * Pixel height of the rail: `(count - 1) * 8`, capped at `max(1px, calc(100vh - 18rem))`.
  * An unknown viewport returns the uncapped height so marks stay spaced at 8px
- * until the real cap is known.
+ * until the real cap is known. The 1px floor matches a non-positive CSS cap.
  */
 export function resolveTimelineMinimapRailHeightPx(
   itemCount: number,
@@ -381,8 +381,7 @@ export function resolveTimelineMinimapRailHeightPx(
   }
   const fontSize = Number.isFinite(rootFontSizePx) && rootFontSizePx > 0 ? rootFontSizePx : 16;
   const cap = viewportHeightPx - TIMELINE_MINIMAP_MAX_HEIGHT_REM * fontSize;
-  if (cap <= 0) return naturalHeight;
-  return Math.min(naturalHeight, cap);
+  return Math.min(naturalHeight, Math.max(1, cap));
 }
 
 /**

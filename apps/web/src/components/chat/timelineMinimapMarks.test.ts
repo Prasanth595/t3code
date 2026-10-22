@@ -36,13 +36,14 @@ function expectSeparated(
 
 describe("timeline minimap mark spacing", () => {
   it("keeps the rail on the 8px track until the viewport cap binds", () => {
-    expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, calc(100vh - 18rem))");
+    expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, max(1px, calc(100vh - 18rem)))");
     expect(resolveTimelineMinimapRailHeightPx(5, REPRO_VIEWPORT_HEIGHT)).toBe(32);
     expect(resolveTimelineMinimapRailHeightPx(50, REPRO_VIEWPORT_HEIGHT)).toBe(49 * 8);
     expect(resolveTimelineMinimapRailHeightPx(DENSE_COUNT, REPRO_VIEWPORT_HEIGHT)).toBe(
       REPRO_RAIL_HEIGHT,
     );
     expect(resolveTimelineMinimapRailHeightPx(DENSE_COUNT, 0)).toBe(599 * 8);
+    expect(resolveTimelineMinimapRailHeightPx(5, 100)).toBe(1);
     expect(resolveTimelineMinimapRailHeightPx(DENSE_COUNT, REPRO_VIEWPORT_HEIGHT, 20)).toBe(
       800 - 18 * 20,
     );
