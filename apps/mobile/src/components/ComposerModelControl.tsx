@@ -19,7 +19,6 @@ export function ComposerModelControl(props: {
   readonly disabled?: boolean;
   readonly size?: "regular" | "large";
   readonly iconOnly?: boolean;
-  readonly showSummary?: boolean;
   readonly onPress: () => void;
 }) {
   const descriptors = resolveProviderOptionDescriptors({
@@ -74,7 +73,7 @@ export function ComposerModelControl(props: {
       label={label}
       iconOnly={props.iconOnly}
       suffix={
-        props.showSummary !== false && summary ? (
+        summary ? (
           <Text
             className={
               props.size === "large"

@@ -850,7 +850,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         prompt={draftMessage}
         surfaceColor={composerPanel}
         iconOnly={draftMessage.length > 0 && !compactEditor.isExpanded}
-        showSummary={false}
         onPress={openSettings}
       />
     </View>
