@@ -172,6 +172,29 @@ describe("evaluatePullRequestWatch", () => {
     ]);
   });
 
+  it("keeps a baseline taken without a head SHA once the SHA appears", () => {
+    const green = detail({ checks: [check("test", "success")] });
+    const baseline = evaluatePullRequestWatch(
+      watch({ awaitingBaseline: true }),
+      { ...green, headSha: undefined },
+      noRemarks,
+    );
+    const known = evaluatePullRequestWatch(baseline.next, green, noRemarks);
+    assert.deepEqual(known.changes, []);
+    assert.equal(known.next.headSha, green.headSha);
+    const unknown = evaluatePullRequestWatch(
+      known.next,
+      { ...green, headSha: undefined },
+      noRemarks,
+    );
+    assert.equal(unknown.next.headSha, green.headSha);
+    assert.deepEqual(
+      evaluatePullRequestWatch(unknown.next, { ...green, headSha: "bbbbbbbbbb" }, noRemarks)
+        .changes,
+      [{ kind: "checks-passed", count: 1, required: false }],
+    );
+  });
+
   it("reports each failure at once, even while another check never finishes", () => {
     const bot = check("CodeRabbit", "pending");
     const first = detail({ checks: [check("lint", "failure"), check("test", "pending"), bot] });

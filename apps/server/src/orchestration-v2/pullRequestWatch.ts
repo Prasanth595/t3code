@@ -36,10 +36,11 @@ export function evaluatePullRequestWatch(
   remarks: ReadonlyArray<PullRequestComment> | null,
 ): PullRequestWatchReport {
   const changes: Array<PullRequestWatchChange> = [];
-  const headSha = detail.headSha ?? null;
+  // A read without a head says nothing about pushes, so it keeps the last known one.
+  const headSha = detail.headSha ?? watch.headSha;
   // Remarks already have their baseline in startedAt.
   const baseline = watch.awaitingBaseline === true;
-  const headMoved = headSha !== watch.headSha;
+  const headMoved = watch.headSha !== null && headSha !== watch.headSha;
 
   // An empty list keeps the last state: a host can answer with one when its check read fails.
   let failedChecks = headMoved ? [] : watch.failedChecks;
