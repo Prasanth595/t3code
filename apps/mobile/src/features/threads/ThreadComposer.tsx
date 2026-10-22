@@ -161,25 +161,40 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
       (compactWidth > 0 && contentSize.width > compactWidth));
   const compactRowHeight = Math.max(44, minimum);
   const animatedHeight = useSharedValue(height);
+  const surfaceHeight = useSharedValue(compactRowHeight);
+  const targetSurfaceHeight = isExpanded ? height + 52 : compactRowHeight;
   const expansion = useSharedValue(0);
   useLayoutEffect(() => {
     const config = { duration: 180, reduceMotion: ReduceMotion.System };
-    animatedHeight.set(Platform.OS === "android" ? height : withTiming(height, config));
-    expansion.set(
-      Platform.OS === "android" ? Number(isExpanded) : withTiming(Number(isExpanded), config),
-    );
-  }, [animatedHeight, expansion, height, isExpanded]);
+    if (Platform.OS === "android") {
+      animatedHeight.set(height);
+      surfaceHeight.set(targetSurfaceHeight);
+      expansion.set(Number(isExpanded));
+      return;
+    }
+    // Resolve wrapping at the destination width before animating vertically.
+    // Intermediate widths otherwise produce taller measurements mid-transition.
+    let nextFrame: number | undefined;
+    const frame = requestAnimationFrame(() => {
+      nextFrame = requestAnimationFrame(() => {
+        animatedHeight.set(withTiming(height, config));
+        surfaceHeight.set(withTiming(targetSurfaceHeight, config));
+        expansion.set(withTiming(Number(isExpanded), config));
+      });
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      if (nextFrame !== undefined) cancelAnimationFrame(nextFrame);
+    };
+  }, [animatedHeight, expansion, height, isExpanded, surfaceHeight, targetSurfaceHeight]);
   const containerStyle = useAnimatedStyle(() => ({
-    height: compactRowHeight + expansion.value * (animatedHeight.value + 52 - compactRowHeight),
+    height: surfaceHeight.value,
   }));
   const editorStyle = useAnimatedStyle(() => ({
     position: "absolute",
     height: animatedHeight.value,
-    left: editorX.value + 4 + expansion.value * (10 - editorX.value),
-    right:
-      (rowWidth.value - editorX.value - editorWidth.value) * (1 - expansion.value) +
-      4 +
-      expansion.value * 10,
+    left: isExpanded ? 14 : editorX.value + 4,
+    right: isExpanded ? 14 : rowWidth.value - editorX.value - editorWidth.value + 4,
     bottom:
       (compactRowHeight - minimum) / 2 + expansion.value * (52 - (compactRowHeight - minimum) / 2),
   }));
