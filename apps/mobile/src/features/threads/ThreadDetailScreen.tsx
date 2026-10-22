@@ -107,6 +107,7 @@ import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspace
 import {
   useDuoBottomBarInset,
   useNativeColumnLayoutMetrics,
+  useNativeLayoutMetrics,
 } from "../../native/native-layout-metrics";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
@@ -510,6 +511,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const navigationHeaderHeight = useContext(HeaderHeightContext) ?? insets.top + 44;
   const [screenMetrics, setScreenMetrics] = useState<NativeLayoutMetrics | null>(null);
   const columnMetrics = useNativeColumnLayoutMetrics();
+  const windowMetrics = useNativeLayoutMetrics();
   const nativeMetrics = usesNativeWorkspaceColumns ? columnMetrics : screenMetrics;
   const controlInsets = deriveBottomControlInsets(nativeMetrics);
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
@@ -544,11 +546,15 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   // fixed through the animation and cancel it with matching composer/list offsets.
   const bottomBarInset = useDuoBottomBarInset();
   const hasSidebarTabBar = useSidebarWorkspaceTabs() === "picker";
+  // A pushed screen temporarily inherits the outgoing tab bar's safe area.
+  // Use the window edge so hiding that bar cannot move the composer mid-push.
+  const bottomSafeArea =
+    Platform.OS === "ios" ? (windowMetrics?.safeArea.bottom ?? insets.bottom) : insets.bottom;
   // The pill already adds its own gutter; iPad and Duo align its edge with the native bar.
   const alignedBottomInset =
     bottomBarInset ??
     (Platform.OS === "ios" && Platform.isPad
-      ? Math.max(insets.bottom, 12) - (hasSidebarTabBar ? 5 : 0)
+      ? Math.max(bottomSafeArea, 12) - (hasSidebarTabBar ? 5 : 0)
       : undefined);
   // A hardware keyboard can focus the editor without occupying any screen height.
   const composerBottomInset =
@@ -556,7 +562,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       ? 0
       : alignedBottomInset !== undefined
         ? Math.max(0, alignedBottomInset - THREAD_COMPOSER_BOTTOM_GUTTER)
-        : Math.max(insets.bottom, 12);
+        : Math.max(bottomSafeArea, 12);
   const composerKeyboardOffset = Platform.OS === "android" ? composerBottomInset : 0;
   const contentPresentationKind = props.contentPresentation.kind;
   const realThreadSyncLabel = (() => {

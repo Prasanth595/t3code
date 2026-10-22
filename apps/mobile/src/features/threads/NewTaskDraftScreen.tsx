@@ -401,10 +401,7 @@ export function NewTaskDraftScreen(props: {
     // route, otherwise the transfer guard can swallow the fallback action.
     const frame = requestAnimationFrame(() => {
       navigation.dispatch(
-        CommonActions.navigate("NewTaskSheet", {
-          screen: "NewTask",
-          params: { incomingShareId: props.incomingShareId },
-        }),
+        CommonActions.navigate("NewTaskProject", { incomingShareId: props.incomingShareId }),
       );
     });
     return () => cancelAnimationFrame(frame);
@@ -453,7 +450,7 @@ export function NewTaskDraftScreen(props: {
         return;
       }
       attemptedDraftIdRef.current = draftId;
-      navigation.dispatch(CommonActions.navigate("NewTaskSheet", { screen: "NewTask" }));
+      navigation.dispatch(CommonActions.navigate("NewTaskProject"));
     });
     return () => {
       cancelled = true;
@@ -470,7 +467,7 @@ export function NewTaskDraftScreen(props: {
     }
     attemptedPendingTaskIdRef.current = props.pendingTaskId;
     if (!beginEditingPendingTask(props.pendingTaskId)) {
-      navigation.dispatch(CommonActions.navigate("NewTaskSheet", { screen: "NewTask" }));
+      navigation.dispatch(CommonActions.navigate("NewTaskProject"));
     }
   }, [beginEditingPendingTask, editingPendingTask?.messageId, navigation, props.pendingTaskId]);
 
@@ -554,7 +551,7 @@ export function NewTaskDraftScreen(props: {
       return;
     }
 
-    navigation.dispatch(CommonActions.navigate("NewTaskSheet", { screen: "NewTask" }));
+    navigation.dispatch(CommonActions.navigate("NewTaskProject"));
   }, [
     projectScopes,
     projects,
@@ -1230,10 +1227,7 @@ export function NewTaskDraftScreen(props: {
     }
     promptInputRef.current?.blur();
     void KeyboardController.dismiss({ animated: true });
-    navigation.navigate("NewTaskSheet", {
-      screen: "NewTask",
-      params: { incomingShareId: props.incomingShareId },
-    });
+    navigation.navigate("NewTaskProject", { incomingShareId: props.incomingShareId });
   };
   const openContextPicker = (routeName: "NewTaskBranch" | "NewTaskEnvironment") => {
     if (isComposerInteractionLocked) {
@@ -1241,7 +1235,7 @@ export function NewTaskDraftScreen(props: {
     }
     promptInputRef.current?.blur();
     void KeyboardController.dismiss({ animated: true });
-    navigation.navigate("NewTaskSheet", { screen: routeName });
+    navigation.navigate(routeName);
   };
 
   const environmentControl = (

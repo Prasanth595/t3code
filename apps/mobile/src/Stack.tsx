@@ -562,6 +562,9 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "GitConfirm",
   "GitOverview",
   "NewTaskSheet",
+  "NewTaskProject",
+  "NewTaskEnvironment",
+  "NewTaskBranch",
   "SettingsLegal",
   "SettingsSheet",
   "ThreadAgents",
@@ -789,6 +792,19 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: ThreadRouteScreen,
       linking: "threads/:environmentId?/:threadId?",
       options: DETAIL_HEADER_OPTIONS,
+    }),
+    NewTaskProject: createNativeStackScreen({
+      screen: NewTaskRouteScreen,
+      linking: "new/project",
+      options: { ...SHEET_GLASS_HEADER_OPTIONS, title: "Choose project" },
+    }),
+    NewTaskEnvironment: createNativeStackScreen({
+      screen: NewTaskEnvironmentPickerRouteScreen,
+      options: { ...SHEET_GLASS_HEADER_OPTIONS, title: "Environment" },
+    }),
+    NewTaskBranch: createNativeStackScreen({
+      screen: NewTaskBranchPickerRouteScreen,
+      options: { ...SHEET_GLASS_HEADER_OPTIONS, title: "Branch" },
     }),
     ThreadTerminal: createNativeStackScreen({
       screen: ThreadTerminalRouteScreen,

@@ -1,6 +1,4 @@
 import { isDraftThreadRoute } from "./thread-route-state";
-import { Toolbar } from "../../components/ui/Toolbar";
-import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
 import * as Dialog from "../../components/ui/Dialog";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { NavigationRow } from "../../components/ui/NavigationRow";
@@ -122,14 +120,11 @@ function NewTaskHeader(props: {
   };
   return (
     <>
-      <Toolbar placement="left">
-        <ScreenHeaderButton accessibilityLabel="Back" icon="chevron.left" onPress={goBack} />
-      </Toolbar>
       <AppBar
         title={props.title}
         subtitle={props.subtitle ?? undefined}
         sidebar={false}
-        options={{ headerBackVisible: false }}
+        options={{ headerBackVisible: true }}
         hideBottomBorder
         onBack={goBack}
         actions={
@@ -138,7 +133,10 @@ function NewTaskHeader(props: {
                 {
                   accessibilityLabel: "Add project",
                   icon: "plus",
-                  onPress: () => navigation.dispatch(StackActions.push("AddProject")),
+                  onPress: () =>
+                    navigation.getState()?.routeNames.includes("NewTaskProject")
+                      ? navigation.navigate("NewTaskSheet", { screen: "AddProject" })
+                      : navigation.dispatch(StackActions.push("AddProject")),
                 },
               ]
             : []
@@ -226,7 +224,9 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         return;
       }
     }
-    const root = navigation.getParent();
+    const root = navigation.getState()?.routeNames.includes("NewTaskProject")
+      ? navigation
+      : navigation.getParent();
     const rootState = root?.getState();
     const threadRoute = rootState?.routes[rootState.index - 1];
     if (isDraftThreadRoute(threadRoute)) {
@@ -286,7 +286,10 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       return;
     }
     resumedDestinationKeyRef.current = destinationKey;
-    navigation.getParent()?.navigate("Thread", {
+    (navigation.getState()?.routeNames.includes("NewTaskProject")
+      ? navigation
+      : navigation.getParent()
+    )?.navigate("Thread", {
       draft: {
         environmentId: reservedDestinationProject.environmentId,
         projectId: reservedDestinationProject.id,
@@ -397,7 +400,9 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                     tone="primary"
                     onPress={() =>
                       catalogState.hasReadyEnvironment
-                        ? navigation.dispatch(StackActions.push("AddProject"))
+                        ? navigation.getState()?.routeNames.includes("NewTaskProject")
+                          ? navigation.navigate("NewTaskSheet", { screen: "AddProject" })
+                          : navigation.dispatch(StackActions.push("AddProject"))
                         : navigation.navigate("ConnectionsNew")
                     }
                   />
@@ -423,7 +428,11 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                     <Button
                       label="Add new project"
                       tone="primary"
-                      onPress={() => navigation.dispatch(StackActions.push("AddProject"))}
+                      onPress={() =>
+                        navigation.getState()?.routeNames.includes("NewTaskProject")
+                          ? navigation.navigate("NewTaskSheet", { screen: "AddProject" })
+                          : navigation.dispatch(StackActions.push("AddProject"))
+                      }
                     />
                   </View>
                   {canStartScratch ? (
