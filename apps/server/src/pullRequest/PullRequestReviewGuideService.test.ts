@@ -536,7 +536,19 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
         }),
       ),
   );
-  it.effect.each(["git", "missing", "size", "framing-size", "write", "model"] as const)(
+  it.effect.each([
+    "change",
+    "change-size",
+    "git",
+    "history",
+    "missing",
+    "size",
+    "framing-size",
+    "directory",
+    "write",
+    "manifest",
+    "model",
+  ] as const)(
     "cleans the checkout and evidence after a %s failure without publishing an incomplete bundle",
     (failure) =>
       Effect.scoped(
@@ -577,13 +589,30 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
                   ...driver,
                   execute: (call) =>
                     Effect.gen(function* () {
+                      if (
+                        call.operation === "PullRequestReviewGuideService.readChange" &&
+                        (failure === "change" || failure === "change-size")
+                      ) {
+                        return yield* new GitCommandError({
+                          operation: call.operation,
+                          command: "git",
+                          cwd: call.cwd,
+                          detail: "Fixture main change failed",
+                          ...(failure === "change-size"
+                            ? { outputLength: 64 * 1024 * 1024 + 1 }
+                            : {}),
+                        });
+                      }
                       if (call.operation === "PullRequestReviewGuideService.readEvidence") {
                         assert.isFalse(
                           yield* fs
                             .exists(`${call.cwd}/../evidence/manifest.json`)
                             .pipe(Effect.orDie),
                         );
-                        if (failure === "git")
+                        if (
+                          failure === "git" ||
+                          (failure === "history" && call.args.includes("log"))
+                        )
                           return yield* new GitCommandError({
                             operation: call.operation,
                             command: "git",
@@ -606,13 +635,24 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
                             .pipe(Effect.orDie);
                         }
                         if (
-                          (failure === "size" || failure === "framing-size") &&
+                          failure === "size" &&
+                          call.args.some((arg) => arg.includes(repositories.upperSha))
+                        ) {
+                          return yield* new GitCommandError({
+                            operation: call.operation,
+                            command: "git",
+                            cwd: call.cwd,
+                            detail: "Fixture Git output exceeded its byte limit",
+                            outputLength: 64 * 1024 * 1024 + 1,
+                          });
+                        }
+                        if (
+                          failure === "framing-size" &&
                           call.args.some((arg) => arg.includes(repositories.upperSha))
                         ) {
                           const result = yield* driver.execute(call);
                           // The 430 KiB margin covers the index, but cannot also cover chunk preambles.
-                          const margin = failure === "framing-size" ? 430 * 1024 : 0;
-                          return { ...result, stdout: "x".repeat(64 * 1024 * 1024 - margin) };
+                          return { ...result, stdout: "x".repeat(64 * 1024 * 1024 - 430 * 1024) };
                         }
                       }
                       return yield* driver.execute(call);
@@ -622,6 +662,17 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
               Layer.provide(
                 Layer.succeed(FileSystem.FileSystem, {
                   ...fs,
+                  makeDirectory: (path, options) =>
+                    failure === "directory" && path.endsWith("/evidence")
+                      ? Effect.fail(
+                          PlatformError.systemError({
+                            _tag: "PermissionDenied",
+                            module: "FileSystem",
+                            method: "makeDirectory",
+                            pathOrDescriptor: path,
+                          }),
+                        )
+                      : fs.makeDirectory(path, options),
                   writeFile: (path, bytes, options) =>
                     failure === "write" && path.includes("/evidence/")
                       ? Effect.fail(
@@ -633,6 +684,17 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
                           }),
                         )
                       : fs.writeFile(path, bytes, options),
+                  writeFileString: (path, text, options) =>
+                    failure === "manifest" && path.endsWith("/evidence/manifest.json")
+                      ? Effect.fail(
+                          PlatformError.systemError({
+                            _tag: "PermissionDenied",
+                            module: "FileSystem",
+                            method: "writeFileString",
+                            pathOrDescriptor: path,
+                          }),
+                        )
+                      : fs.writeFileString(path, text, options),
                 }),
               ),
             ),
@@ -641,9 +703,11 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
             context,
             PullRequestReviewGuideService.PullRequestReviewGuideService,
           );
+          const storedGuide = (yield* service.get(reference)).guide;
           yield* runs.generate(service, reference);
           const result = yield* runs.settled(service, reference);
           assert.equal(result.run?._tag, "Failed");
+          assert.deepEqual(result.guide, storedGuide);
           assert.isFalse(yield* Deferred.isDone(stored));
           assert.equal(descriptorReturned, failure === "model");
           if (failure === "missing") {
@@ -658,8 +722,20 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
               ),
             );
           }
-          if (failure === "size" || failure === "framing-size")
-            assert.include(result.run?._tag === "Failed" ? result.run.detail : "", "64 MiB");
+          const expectedDetail = {
+            change: "Could not read the main change for the review guide.",
+            "change-size": "Complete review guide evidence exceeds the 64 MiB limit.",
+            git: "Could not read review guide stat evidence.",
+            history: "Could not read review guide history evidence.",
+            missing: `Could not read review guide stackComparison evidence for pinned stack head ${repositories.upperSha}.`,
+            size: "Complete review guide evidence exceeds the 64 MiB limit.",
+            "framing-size": "Complete review guide evidence exceeds the 64 MiB limit.",
+            directory: "Could not create the review guide evidence directory.",
+            write: "Could not write review guide changedPaths evidence chunk 0-0.txt.",
+            manifest: "Could not write the review guide evidence manifest.json.",
+            model: "Fixture model failed",
+          }[failure];
+          assert.equal(result.run?._tag === "Failed" ? result.run.detail : "", expectedDetail);
           yield* assertCleaned(repositories.workspace, paths);
         }),
       ),

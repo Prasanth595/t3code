@@ -8,12 +8,19 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { PATCH_RENDER_PREFIX_ARGS } from "../vcs/GitVcsDriverCore.ts";
 
 const MAX_EVIDENCE_BYTES = 64 * 1024 * 1024;
+const EVIDENCE_SIZE_DETAIL = "Complete review guide evidence exceeds the 64 MiB limit.";
 const CHUNK_BYTES = 32 * 1024;
 // Native readers sniff image signatures regardless of extension, even in continuation chunks.
 const CHUNK_PREAMBLE = Buffer.from("T3 review guide evidence\n", "utf8");
 const encodePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 const encodeManifest = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
-const isTextGenerationError = Schema.is(TextGenerationError);
+
+export const reviewGuideGitError = (cause: GitCommandError, detail: string) =>
+  new TextGenerationError({
+    operation: "generateReviewGuide",
+    detail: cause.outputLength === undefined ? detail : EVIDENCE_SIZE_DETAIL,
+    cause,
+  });
 
 export const REVIEW_GUIDE_DIFF_ARGS = [
   "--no-pager",
@@ -49,18 +56,27 @@ export const prepareReviewGuideEvidence = Effect.fn(
     readonly baseCommit: string;
     readonly headCommit: string;
     readonly stack: ReadonlyArray<ReviewGuideStackLayer>;
-    readonly change: Effect.Effect<{ nameOnly: string; patch: string }, GitCommandError>;
+    readonly change: Effect.Effect<{ nameOnly: string; patch: string }, TextGenerationError>;
   }) {
     const fs = yield* FileSystem.FileSystem;
     const git = yield* GitVcsDriver.GitVcsDriver;
     const directory = `${input.directory}/evidence`;
-    yield* fs.makeDirectory(directory);
+    yield* fs.makeDirectory(directory).pipe(
+      Effect.mapError(
+        (cause) =>
+          new TextGenerationError({
+            operation: "generateReviewGuide",
+            detail: "Could not create the review guide evidence directory.",
+            cause,
+          }),
+      ),
+    );
     let bytesWritten = 0;
     const streams: Array<EvidenceStream> = [];
     const sizeError = () =>
       new TextGenerationError({
         operation: "generateReviewGuide",
-        detail: "Complete review guide evidence exceeds the 64 MiB limit.",
+        detail: EVIDENCE_SIZE_DETAIL,
       });
     // All chunk writes belong to the preparation span; tracing every chunk adds no useful boundary.
     const writeStream = Effect.fnUntraced(function* (
@@ -86,7 +102,16 @@ export const prepareReviewGuideEvidence = Effect.fn(
         const file = `${streams.length}-${stream.chunks.length}.txt`;
         const framed = Buffer.concat([CHUNK_PREAMBLE, bytes.subarray(offset, end)]);
         if (bytesWritten + framed.length > MAX_EVIDENCE_BYTES) return yield* sizeError();
-        yield* fs.writeFile(`${directory}/${file}`, framed);
+        yield* fs.writeFile(`${directory}/${file}`, framed).pipe(
+          Effect.mapError(
+            (cause) =>
+              new TextGenerationError({
+                operation: "generateReviewGuide",
+                detail: `Could not write review guide ${kind} evidence chunk ${file}.`,
+                cause,
+              }),
+          ),
+        );
         bytesWritten += framed.length;
         stream.chunks.push({
           file,
@@ -100,7 +125,7 @@ export const prepareReviewGuideEvidence = Effect.fn(
       }
       streams.push(stream);
     });
-    const read = (args: ReadonlyArray<string>) =>
+    const read = (kind: EvidenceStream["kind"], args: ReadonlyArray<string>, headCommit?: string) =>
       git
         .execute({
           operation: "PullRequestReviewGuideService.readEvidence",
@@ -109,7 +134,15 @@ export const prepareReviewGuideEvidence = Effect.fn(
           timeoutMs: 60_000,
           maxOutputBytes: Math.max(1, MAX_EVIDENCE_BYTES - bytesWritten),
         })
-        .pipe(Effect.map((result) => result.stdout));
+        .pipe(
+          Effect.map((result) => result.stdout),
+          Effect.mapError((cause) =>
+            reviewGuideGitError(
+              cause,
+              `Could not read review guide ${kind} evidence${headCommit === undefined ? "" : ` for pinned stack head ${headCommit}`}.`,
+            ),
+          ),
+        );
 
     const change = yield* input.change;
     yield* writeStream(
@@ -123,7 +156,7 @@ export const prepareReviewGuideEvidence = Effect.fn(
     yield* writeStream("patch", change.patch);
     yield* writeStream(
       "stat",
-      yield* read([
+      yield* read("stat", [
         ...REVIEW_GUIDE_DIFF_ARGS,
         "--stat",
         `${input.baseCommit}...${input.headCommit}`,
@@ -132,7 +165,7 @@ export const prepareReviewGuideEvidence = Effect.fn(
     );
     yield* writeStream(
       "history",
-      yield* read([
+      yield* read("history", [
         "--no-pager",
         "log",
         "--no-show-signature",
@@ -149,7 +182,11 @@ export const prepareReviewGuideEvidence = Effect.fn(
       yield* writeStream(
         "stackComparison",
         // A stale layer contributes its branch changes, without reversing unrelated main drift.
-        yield* read([...REVIEW_GUIDE_DIFF_ARGS, `${input.headCommit}...${layer.headSha}`, "--"]),
+        yield* read(
+          "stackComparison",
+          [...REVIEW_GUIDE_DIFF_ARGS, `${input.headCommit}...${layer.headSha}`, "--"],
+          layer.headSha,
+        ),
         layer.headSha,
       );
     }
@@ -165,18 +202,18 @@ export const prepareReviewGuideEvidence = Effect.fn(
     }
     // The descriptor is published only after all streams and their index are complete.
     const manifestPath = `${directory}/manifest.json`;
-    yield* fs.writeFileString(manifestPath, manifest);
+    yield* fs.writeFileString(manifestPath, manifest).pipe(
+      Effect.mapError(
+        (cause) =>
+          new TextGenerationError({
+            operation: "generateReviewGuide",
+            detail: "Could not write the review guide evidence manifest.json.",
+            cause,
+          }),
+      ),
+    );
     return { manifestPath, headCommit: input.headCommit };
   },
-  Effect.mapError((cause) =>
-    isTextGenerationError(cause)
-      ? cause
-      : new TextGenerationError({
-          operation: "generateReviewGuide",
-          detail: "Could not prepare complete Git evidence for the review guide.",
-          cause,
-        }),
-  ),
   Effect.timeoutOrElse({
     duration: 60_000,
     orElse: () =>

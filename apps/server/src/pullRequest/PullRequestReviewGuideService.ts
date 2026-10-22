@@ -40,6 +40,7 @@ import { normalizeReviewGuide, parseReviewGuideChange } from "./pullRequestRevie
 import {
   prepareReviewGuideEvidence,
   REVIEW_GUIDE_DIFF_ARGS,
+  reviewGuideGitError,
 } from "./pullRequestReviewGuideEvidence.ts";
 
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,64}$/;
@@ -353,7 +354,12 @@ const make = Effect.gen(function* () {
           timeoutMs: 60_000,
           maxOutputBytes: 64 * 1024 * 1024,
         })
-        .pipe(Effect.map((result) => result.stdout));
+        .pipe(
+          Effect.map((result) => result.stdout),
+          Effect.mapError((cause) =>
+            reviewGuideGitError(cause, "Could not read the main change for the review guide."),
+          ),
+        );
     const [nameOnly, patch] = yield* Effect.all(
       [diff(["--name-only", "-z"]), diff(["--unified=0"])],
       { concurrency: "unbounded" },
