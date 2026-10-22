@@ -1,6 +1,7 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -137,6 +138,83 @@ it.effect.each([
       ),
     ),
   ),
+);
+
+const forgejoMergeProvider = (repository: Effect.Effect<string, ForgejoCli.ForgejoCliError>) => {
+  const writes: Array<ForgejoCli.ForgejoApiInput> = [];
+  const provider = ForgejoPullRequestProvider.make.pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        api: (input) => {
+          if (input.method !== undefined && input.method !== "GET") writes.push(input);
+          return (input.path === "repos/reviewer/project" ? repository : Effect.succeed("")).pipe(
+            Effect.map((stdout) => ({
+              exitCode: ChildProcessSpawner.ExitCode(0),
+              stdout,
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            })),
+          );
+        },
+      }),
+    ),
+  );
+  return { provider, writes };
+};
+const forgejoMergeInput = {
+  cwd: "/forgejo",
+  repository: "reviewer/project",
+  host: "forge.example:3000",
+  number: 1,
+  action: "merge",
+  mergeMethod: "squash",
+} as const;
+
+it.effect("follows the Forgejo repository's delete-branch-after-merge setting", () =>
+  Effect.gen(function* () {
+    for (const [setting, deleteBranch] of [
+      [{ default_delete_branch_after_merge: true }, true],
+      [{ default_delete_branch_after_merge: false }, false],
+      [{}, false],
+    ] as const) {
+      const { provider, writes } = forgejoMergeProvider(
+        Effect.succeed(JSON.stringify({ full_name: "reviewer/project", ...setting })),
+      );
+      yield* (yield* provider).runAction(forgejoMergeInput);
+      assert.deepStrictEqual(
+        writes.map((write) => [write.path, write.body]),
+        [
+          [
+            "repos/reviewer/project/pulls/1/merge",
+            { Do: "squash", delete_branch_after_merge: deleteBranch },
+          ],
+        ],
+        `repository setting ${JSON.stringify(setting)}`,
+      );
+    }
+  }),
+);
+
+it.effect("does not merge on Forgejo when the repository settings cannot be read", () =>
+  Effect.gen(function* () {
+    const { provider, writes } = forgejoMergeProvider(
+      Effect.fail(
+        new ForgejoCli.ForgejoCliError({
+          command: "tea",
+          cwd: "/forgejo",
+          detail: "Forgejo is unavailable.",
+        }),
+      ),
+    );
+    const exit = yield* Effect.exit((yield* provider).runAction(forgejoMergeInput));
+    assert.deepStrictEqual(
+      writes.map((write) => write.path),
+      [],
+      "merged without knowing whether to delete the source branch",
+    );
+    assert.isTrue(Exit.isFailure(exit));
+  }),
 );
 
 it.effect.each([
