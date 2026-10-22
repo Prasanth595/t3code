@@ -59,11 +59,13 @@ describe("missing shared-content project recovery", () => {
       }),
       options,
     )!;
+    if (staleDraft.stale !== false) throw new Error("Draft route was not initialized");
     const picker = router.getStateForAction(
       staleDraft,
       StackActions.replace("NewTaskProject", { incomingShareId: "share" }),
       options,
     )!;
+    if (picker.stale !== false) throw new Error("Project picker was not initialized");
     expect(picker.routes.some(isDraftThreadRoute)).toBe(false);
     expect(picker.routes.at(-1)?.params).toEqual({ incomingShareId: "share" });
     const recovered = router.getStateForAction(

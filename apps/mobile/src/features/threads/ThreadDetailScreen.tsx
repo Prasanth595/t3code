@@ -264,7 +264,7 @@ export interface ThreadDetailScreenProps {
   readonly canSwitchThreadProvider: boolean;
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => void;
-  readonly onUpdateThreadInteractionMode: (interactionMode: ProviderInteractionMode) => void;
+  readonly onUpdateThreadInteractionMode?: (interactionMode: ProviderInteractionMode) => void;
   readonly onRespondToApproval: ApprovalResponder;
   readonly onSelectUserInputOption: (
     requestId: RuntimeRequestId,

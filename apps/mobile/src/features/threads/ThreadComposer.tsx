@@ -272,7 +272,7 @@ export interface ThreadComposerProps {
   readonly canSwitchProvider: boolean;
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
-  readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
+  readonly onUpdateInteractionMode?: (interactionMode: ProviderInteractionMode) => void;
   readonly onHeightChange?: (height: number) => void;
   readonly onEditorFocusChange?: (focused: boolean) => void;
 }
