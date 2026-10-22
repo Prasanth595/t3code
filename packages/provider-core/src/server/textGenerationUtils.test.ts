@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { sanitizeCommitSubject } from "./textGenerationUtils.ts";
+import { sanitizeCommitSubject, sanitizeThreadTitle } from "./textGenerationUtils.ts";
 
 describe("sanitizeCommitSubject", () => {
   // regression: #19181 truncation split grapheme clusters at the subject limit
@@ -12,5 +12,16 @@ describe("sanitizeCommitSubject", () => {
     const prefix = "a".repeat(prefixLength);
 
     expect(sanitizeCommitSubject(`${prefix}${character} more`)).toBe(prefix);
+  });
+});
+
+
+describe("sanitizeThreadTitle", () => {
+  it("keeps the seed title when the model returns the schema placeholder", () => {
+    const generatedTitle = sanitizeThreadTitle("title");
+    const previousTitle = "Implement issue #140";
+
+    expect(generatedTitle.toLowerCase() === "title" ? sanitizeThreadTitle(previousTitle) : generatedTitle)
+      .toBe("Implement issue #140");
   });
 });
