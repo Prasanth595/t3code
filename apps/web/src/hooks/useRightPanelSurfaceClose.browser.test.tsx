@@ -35,10 +35,14 @@ vi.mock("../state/entities", () => ({
 vi.mock("../state/terminalSessions", () => ({ useKnownTerminalSessions: () => null }));
 vi.mock("../composerDraftStore", async () => {
   const Schema = await import("effect/Schema");
-  return { useComposerDraftStore: () => null, DraftId: Schema.String.pipe(Schema.brand("DraftId")) };
+  return {
+    useComposerDraftStore: () => null,
+    DraftId: Schema.String.pipe(Schema.brand("DraftId")),
+  };
 });
 vi.mock("../state/use-atom-command", () => ({
-  useAtomCommand: (_command: unknown, label: string) =>
+  useAtomCommand:
+    (_command: unknown, label: string) =>
     async (request: {
       environmentId: string;
       input: { threadId: string; terminalId: string; data?: string };
@@ -74,12 +78,12 @@ function setup() {
     fixture.sessions.set(`${ref.environmentId}/${ref.threadId}/term-1`, "history to preserve");
     useRightPanelStore.getState().openTerminal(ref, "term-1");
   }
-  const surface = selectThreadRightPanelState(
-    useRightPanelStore.getState().byThreadKey,
-    original,
-  ).surfaces[0]!;
+  const surface = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, original)
+    .surfaces[0]!;
   let resolve!: (confirmed: boolean) => void;
-  const confirmation = new Promise<boolean>((done) => { resolve = done; });
+  const confirmation = new Promise<boolean>((done) => {
+    resolve = done;
+  });
   fixture.confirm = () => confirmation;
   function Harness({ threadRef }: { threadRef: ScopedThreadRef }) {
     const { closeSurface } = useRightPanelSurfaceClose({
@@ -91,28 +95,40 @@ function setup() {
   return { original, other, Harness, resolve };
 }
 
-it.each([false, true])("keeps a pending close on its original environment and thread, fallback=%s", async (failClose) => {
-  const { original, other, Harness, resolve } = setup();
-  fixture.failClose = failClose;
-  await using screen = await render(<Harness threadRef={original} />);
-  await screen.getByRole("button").click();
-  await screen.rerender(<Harness threadRef={other} />);
-  await act(async () => { resolve(true); });
-  expect([...fixture.sessions]).toEqual([
-    ["environment-b/thread-b/term-1", "history to preserve"],
-  ]);
-  const panels = useRightPanelStore.getState().byThreadKey;
-  expect(selectThreadRightPanelState(panels, original).surfaces).toEqual([]);
-  expect(selectThreadRightPanelState(panels, other).surfaces).toHaveLength(1);
-});
+it.each([false, true])(
+  "keeps a pending close on its original environment and thread, fallback=%s",
+  async (failClose) => {
+    const { original, other, Harness, resolve } = setup();
+    fixture.failClose = failClose;
+    await using screen = await render(<Harness threadRef={original} />);
+    await screen.getByRole("button").click();
+    await screen.rerender(<Harness threadRef={other} />);
+    await act(async () => {
+      resolve(true);
+    });
+    expect([...fixture.sessions]).toEqual([
+      ["environment-b/thread-b/term-1", "history to preserve"],
+    ]);
+    const panels = useRightPanelStore.getState().byThreadKey;
+    expect(selectThreadRightPanelState(panels, original).surfaces).toEqual([]);
+    expect(selectThreadRightPanelState(panels, other).surfaces).toHaveLength(1);
+  },
+);
 
-it.each(["cancel", "revoked"])("leaves both sessions intact when confirmation is %s", async (outcome) => {
-  const { original, other, Harness, resolve } = setup();
-  await using screen = await render(<Harness threadRef={original} />);
-  await screen.getByRole("button").click();
-  await screen.rerender(<Harness threadRef={other} />);
-  if (outcome === "revoked") fixture.allowed.delete(original.environmentId);
-  await act(async () => { resolve(outcome !== "cancel"); });
-  expect(fixture.sessions.size).toBe(2);
-  expect(useRightPanelStore.getState().byThreadKey[scopedThreadKey(other)]?.surfaces).toHaveLength(1);
-});
+it.each(["cancel", "revoked"])(
+  "leaves both sessions intact when confirmation is %s",
+  async (outcome) => {
+    const { original, other, Harness, resolve } = setup();
+    await using screen = await render(<Harness threadRef={original} />);
+    await screen.getByRole("button").click();
+    await screen.rerender(<Harness threadRef={other} />);
+    if (outcome === "revoked") fixture.allowed.delete(original.environmentId);
+    await act(async () => {
+      resolve(outcome !== "cancel");
+    });
+    expect(fixture.sessions.size).toBe(2);
+    expect(
+      useRightPanelStore.getState().byThreadKey[scopedThreadKey(other)]?.surfaces,
+    ).toHaveLength(1);
+  },
+);
