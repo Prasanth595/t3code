@@ -21,6 +21,8 @@ vi.mock("../components/ChatView.logic", () => ({
 vi.mock("../previewStateStore", () => ({
   useThreadPreviewState: () => ({ sessions: {}, desktopByTabId: {} }),
   setActivePreviewTab: () => {},
+  beginPreviewSessionClose: () => {},
+  cancelPreviewSessionClose: () => {},
 }));
 vi.mock("../state/session", () => ({
   useEnvironmentScope: (id: string) => fixture.allowed.has(id),
@@ -31,7 +33,10 @@ vi.mock("../state/entities", () => ({
   useProject: () => null,
 }));
 vi.mock("../state/terminalSessions", () => ({ useKnownTerminalSessions: () => null }));
-vi.mock("../composerDraftStore", () => ({ useComposerDraftStore: () => null }));
+vi.mock("../composerDraftStore", async () => {
+  const Schema = await import("effect/Schema");
+  return { useComposerDraftStore: () => null, DraftId: Schema.String.pipe(Schema.brand("DraftId")) };
+});
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: (_command: unknown, label: string) =>
     async (request: {
