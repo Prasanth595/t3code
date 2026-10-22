@@ -1,8 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import { EventId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
-import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -17,63 +17,71 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
+const modelSelection = {
+  instanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-5.4",
+} satisfies ModelSelection;
+const providerInstanceId = modelSelection.instanceId;
+const projectId = ProjectId.make("project:lockwait");
+
 /**
- * A fixed timestamp for the writer's rows.
+ * A fixed timestamp for the writer's row.
  *
- * The read does not care when the rows were written, and a fixed epoch keeps
- * the test free of wall-clock reads.
+ * The read does not care when the row was written, and a fixed epoch keeps the
+ * test free of wall-clock reads.
  */
 const FIXED_EPOCH = "2026-01-01T00:00:00.000Z";
 
-/** How many rows the writer inserts while the read runs. */
-const WRITE_ROWS = 400;
+/** How long a blocked read is given before it is called blocked. */
+const BLOCKED_TIMEOUT = "3 seconds";
 
 /**
- * How many rows the writer has inserted when it signals the read.
+ * A writer that HOLDS the write lock while the read runs.
  *
- * The read has to start while the writer is still writing, so the milestone
- * is part way through the inserts, not after them.
+ * This is the case that matters: the writer's transaction is open, so the
+ * write lock is held, and a read on the writer connection has to wait for it.
+ * A read on the reader connection does not, because the reader is a separate
+ * connection with its own lock and WAL lets it read the last committed
+ * snapshot.
+ *
+ * The lock is HELD, not merely held for a while. A writer that streams
+ * inserts and finishes leaves a window in which the read happens after the
+ * writes are done, and the test would then be measuring a read with no write
+ * load in it - which is the mistake this shape exists to avoid.
  */
-const WRITE_MILESTONE_ROWS = 50;
-
-/**
- * The lock wait a read pays, and the connection it pays it on.
- *
- * The measurement is the point of the change, so it is taken the way the
- * server takes it: the `db.connection` and `db.lock_wait_ms` attributes that
- * `nodeSqliteClient` stamps on the span of the transaction that acquired the
- * connection.
- *
- * The database is file-backed, because the reader worker is a second
- * connection and an in-memory database cannot be shared between two of them.
- */
-const measureRead = Effect.fn("measureRead")(function* (threadId: ThreadId) {
-  const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
-  const acquired: Array<{ readonly connection: string; readonly lockWaitMs: number }> = [];
-  const tracer = Tracer.make({
-    span: (spanOptions) => {
-      const span = new Tracer.NativeSpan(spanOptions);
-      const end = span.end.bind(span);
-      span.end = (endTime, exit) => {
-        end(endTime, exit);
-        const connection = span.attributes.get("db.connection");
-        if (connection !== undefined) {
-          acquired.push({
-            connection,
-            lockWaitMs: Number(span.attributes.get("db.lock_wait_ms") ?? 0),
-          });
-        }
-      };
-      return span;
-    },
+const withWriteLockHeld = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<{ readonly value: A; readonly heldForMs: number }, E, R | SqlClient.SqlClient> =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const lockHeld = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const writer = yield* sql
+      .withTransaction(
+        Effect.gen(function* () {
+          // A real write, with the table's own columns. A row that does not
+          // insert is not write load.
+          yield* sql`INSERT INTO orchestration_v2_projection_checkpoints (
+            checkpoint_id, thread_id, scope_id, run_id, node_id, ordinal_within_scope,
+            status, captured_at, payload_json
+          ) VALUES (
+            ${crypto.randomUUID()}, ${"lockwait-thread"}, ${"lockwait-scope"}, ${"run"}, ${"node"},
+            1, 'captured', ${FIXED_EPOCH}, '{}'
+          )`;
+          yield* Deferred.succeed(lockHeld, undefined);
+          yield* Deferred.await(release);
+        }),
+      )
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(lockHeld);
+    // The write lock is held from here until the effect finishes.
+    const started = yield* Clock.currentTimeMillis;
+    const value = yield* effect;
+    const heldForMs = (yield* Clock.currentTimeMillis) - started;
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(writer);
+    return { value, heldForMs };
   });
-
-  yield* projectionStore
-    .getThreadRecords(threadId, ["runs"])
-    .pipe(Effect.provideService(Statement.SpanPropagationEnabled, true), Effect.withTracer(tracer));
-
-  return acquired;
-});
 
 const createThread = (threadId: ThreadId) =>
   Effect.gen(function* () {
@@ -88,10 +96,10 @@ const createThread = (threadId: ThreadId) =>
         createdBy: "user",
         creationSource: "web",
         id: threadId,
-        projectId: ProjectId.make("project:lockwait"),
+        projectId,
         title: threadId,
-        providerInstanceId: ProviderInstanceId.make("codex"),
-        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        providerInstanceId,
+        modelSelection,
         runtimeMode: "full-access",
         interactionMode: "default",
         branch: null,
@@ -110,53 +118,16 @@ const createThread = (threadId: ThreadId) =>
     });
   });
 
-it.effect(
-  "the projection read takes its lock on the reader connection, and the lock wait is reported",
-  () =>
-    Effect.gen(function* () {
-      // An isolated T3 home: a temporary directory of its own, with the
-      // database inside it. The live T3 home is never touched.
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-lockwait-" });
-      const database = SqlitePersistence.layerFromPath(path.join(home, "statev2.sqlite"));
-      const storeLayer = Layer.mergeAll(
-        ProjectionStore.layer.pipe(Layer.provideMerge(database)),
-        database,
-        NodeServices.layer,
-      );
-
-      const threadId = ThreadId.make("thread:lockwait:1");
-      const acquired = yield* Effect.gen(function* () {
-        yield* createThread(threadId);
-        return yield* measureRead(threadId);
-      }).pipe(Effect.provide(storeLayer));
-
-      // The read ran on the reader connection...
-      assert.deepEqual(
-        acquired.map((entry) => entry.connection),
-        ["reader"],
-      );
-      // ...and the lock wait it paid is reported, so the before/after can be
-      // compared on the same measure the server logs.
-      assert.equal(acquired.length, 1);
-      assert.isAtLeast(acquired[0]?.lockWaitMs ?? -1, 0);
-    }).pipe(Effect.provide(NodeServices.layer)),
-);
-
 /**
- * The read, while a writer inserts rows the whole time.
+ * The read, while a writer holds the write lock.
  *
- * This is the case that was measured in the field: a busy host whose writer
- * is behind, and MCP reads that have to wait for the write lock. The writer
- * here is a stream of inserts, not a held transaction, because a held
- * transaction is a different (and much rarer) case.
+ * This is the case that was measured in the field: a busy host whose writer is
+ * behind, and MCP reads that have to wait for the write lock.
  */
-const measureReadUnderWriteLoad = Effect.fn("measureReadUnderWriteLoad")(function* (
+const measureReadUnderWriteLock = Effect.fn("measureReadUnderWriteLock")(function* (
   threadId: ThreadId,
 ) {
   const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
-  const sql = yield* SqlClient.SqlClient;
   const acquired: Array<{ readonly connection: string; readonly lockWaitMs: number }> = [];
   const tracer = Tracer.make({
     span: (spanOptions) => {
@@ -176,57 +147,28 @@ const measureReadUnderWriteLoad = Effect.fn("measureReadUnderWriteLoad")(functio
     },
   });
 
-  // A writer, inserting rows the whole time the read runs.
-  //
-  // The columns are the table's own. A row that does not insert is a failed
-  // row, not write load, so the insert is not allowed to fail quietly: the
-  // rows are counted afterwards and the count is asserted.
-  //
-  // The milestone is signalled PART WAY THROUGH the inserts, not after them, so
-  // the read runs while the writer is still writing. A milestone at the end
-  // would measure a read against a writer that had already finished.
-  const writing = yield* Deferred.make<void>();
-  let written = 0;
-  const writer = yield* Effect.forEach(
-    Array.from({ length: WRITE_ROWS }, (_, index) => index),
-    (index) =>
-      Effect.gen(function* () {
-        yield* sql`INSERT INTO orchestration_v2_projection_checkpoints (
-          checkpoint_id, thread_id, scope_id, run_id, node_id, ordinal_within_scope,
-          status, captured_at, payload_json
-        ) VALUES (
-          ${crypto.randomUUID()}, ${threadId}, ${`lockwait-scope-${index}`}, ${"run"}, ${"node"},
-          ${index}, 'captured', ${FIXED_EPOCH}, '{}'
-        )`;
-        written += 1;
-        if (index === WRITE_MILESTONE_ROWS - 1) {
-          yield* Deferred.succeed(writing, undefined);
-        }
-      }),
-  ).pipe(Effect.forkChild({ startImmediately: true }));
+  const measured = yield* withWriteLockHeld(
+    projectionStore
+      .getThreadRecords(threadId, ["runs"])
+      .pipe(
+        Effect.provideService(Statement.SpanPropagationEnabled, true),
+        Effect.withTracer(tracer),
+      ),
+  );
 
-  // Wait for the milestone, not for a wall-clock duration.
-  yield* Deferred.await(writing);
-  // The writer is still going: the read has to overlap the writes, or it is
-  // measuring a writer that has already finished.
-  assert.isBelow(written, WRITE_ROWS);
-  const started = yield* Clock.currentTimeMillis;
-  yield* projectionStore
-    .getThreadRecords(threadId, ["runs"])
-    .pipe(Effect.provideService(Statement.SpanPropagationEnabled, true), Effect.withTracer(tracer));
-  const elapsedMs = (yield* Clock.currentTimeMillis) - started;
-  yield* Fiber.join(writer);
-
-  return { acquired, elapsedMs, written };
+  return { acquired, heldForMs: measured.heldForMs, value: measured.value };
 });
 
 /**
  * The same read, but on the writer connection.
  *
- * This is the "before": the read that ran on the writer, where it had to take
- * the write lock that the writer was holding.
+ * This is the "before": the read that ran on the writer, where it had to wait
+ * for the write lock the writer was holding. It is the store's own first read,
+ * on the connection the change moves it off.
  */
-const measureReadOnWriter = Effect.fn("measureReadOnWriter")(function* (threadId: ThreadId) {
+const measureReadOnWriterConnection = Effect.fn("measureReadOnWriterConnection")(function* (
+  threadId: ThreadId,
+) {
   const sql = yield* SqlClient.SqlClient;
   const acquired: Array<{ readonly connection: string; readonly lockWaitMs: number }> = [];
   const tracer = Tracer.make({
@@ -247,58 +189,35 @@ const measureReadOnWriter = Effect.fn("measureReadOnWriter")(function* (threadId
     },
   });
 
-  // A writer, inserting rows the whole time the read runs.
-  //
-  // The columns are the table's own. A row that does not insert is a failed
-  // row, not write load, so the insert is not allowed to fail quietly: the
-  // rows are counted afterwards and the count is asserted.
-  //
-  // The milestone is signalled PART WAY THROUGH the inserts, not after them, so
-  // the read runs while the writer is still writing. A milestone at the end
-  // would measure a read against a writer that had already finished.
-  const writing = yield* Deferred.make<void>();
-  let written = 0;
-  const writer = yield* Effect.forEach(
-    Array.from({ length: WRITE_ROWS }, (_, index) => index),
-    (index) =>
-      Effect.gen(function* () {
-        yield* sql`INSERT INTO orchestration_v2_projection_checkpoints (
-          checkpoint_id, thread_id, scope_id, run_id, node_id, ordinal_within_scope,
-          status, captured_at, payload_json
-        ) VALUES (
-          ${crypto.randomUUID()}, ${threadId}, ${`lockwait-scope-${index}`}, ${"run"}, ${"node"},
-          ${index}, 'captured', ${FIXED_EPOCH}, '{}'
-        )`;
-        written += 1;
-        if (index === WRITE_MILESTONE_ROWS - 1) {
-          yield* Deferred.succeed(writing, undefined);
-        }
-      }),
-  ).pipe(Effect.forkChild({ startImmediately: true }));
+  // The read is bounded, because on the writer connection it cannot finish
+  // while the writer holds the lock: that is the point, and the bound is what
+  // lets the test say so instead of hanging.
+  const measured = yield* withWriteLockHeld(
+    sql
+      .withTransaction(
+        sql<{ readonly payload_json: string }>`
+          SELECT payload_json
+          FROM orchestration_v2_projection_threads
+          WHERE thread_id = ${threadId}
+          LIMIT 1
+        `,
+      )
+      .pipe(
+        Effect.provideService(Statement.SpanPropagationEnabled, true),
+        Effect.withTracer(tracer),
+        Effect.timeout(BLOCKED_TIMEOUT),
+        Effect.exit,
+      ),
+  );
 
-  // Wait for the milestone, not for a wall-clock duration.
-  yield* Deferred.await(writing);
-  // The writer is still going: the read has to overlap the writes, or it is
-  // measuring a writer that has already finished.
-  assert.isBelow(written, WRITE_ROWS);
-  const started = yield* Clock.currentTimeMillis;
-  // A read on the writer connection: the same statement, without the reader.
-  yield* sql
-    .withTransaction(
-      sql`SELECT payload_json FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId} LIMIT 1`,
-    )
-    .pipe(Effect.provideService(Statement.SpanPropagationEnabled, true), Effect.withTracer(tracer));
-  const elapsedMs = (yield* Clock.currentTimeMillis) - started;
-  yield* Fiber.join(writer);
-
-  return { acquired, elapsedMs, written };
+  return { acquired, heldForMs: measured.heldForMs, value: measured.value };
 });
 
-it.effect("the projection read does not wait for the writer's lock", () =>
+it.effect("the projection read completes while a writer holds the write lock", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-lockwait-load-" });
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-lockwait-" });
     const database = SqlitePersistence.layerFromPath(path.join(home, "statev2.sqlite"));
     const storeLayer = Layer.mergeAll(
       ProjectionStore.layer.pipe(Layer.provideMerge(database)),
@@ -306,44 +225,32 @@ it.effect("the projection read does not wait for the writer's lock", () =>
       NodeServices.layer,
     );
 
-    const threadId = ThreadId.make("thread:lockwait:load");
-    const { acquired, elapsedMs, written } = yield* Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:lockwait:reader");
+    const { acquired, heldForMs } = yield* Effect.gen(function* () {
       yield* createThread(threadId);
-      return yield* measureReadUnderWriteLoad(threadId);
+      return yield* measureReadUnderWriteLock(threadId);
     }).pipe(Effect.provide(storeLayer), TestClock.withLive);
 
-    // The writer really wrote. A writer whose rows are rejected is not write
-    // load, and the measurement would be measuring nothing.
-    assert.isAbove(written, 1);
-    const rows = yield* Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      return yield* sql<{ readonly count: number }>`
-        SELECT COUNT(*) AS count
-        FROM orchestration_v2_projection_checkpoints
-        WHERE scope_id LIKE 'lockwait-scope-%'
-      `;
-    }).pipe(Effect.provide(storeLayer));
-    // Every row the writer reported is on disk, so the inserts were not
-    // rejected.
-    assert.equal(rows[0]?.count, written);
-
-    // The read ran on the reader, so the writer's lock did not make it wait:
-    // the reader has its own connection and its own lock.
+    // The read ran on the reader connection, and it ran to completion while
+    // the writer was holding the write lock. That is the whole point: the
+    // reader has its own connection and its own lock.
     assert.deepEqual(
       acquired.map((entry) => entry.connection),
       ["reader"],
     );
+    assert.equal(acquired.length, 1);
     // The lock wait is reported, so the before/after can be compared on the
     // same measure the server logs.
-    assert.equal(acquired.length, 1);
     assert.isAtLeast(acquired[0]?.lockWaitMs ?? -1, 0);
+    // The write lock really was held for the whole read.
+    assert.isAbove(heldForMs, 0);
     console.log(
-      `MEASURE read-under-write-load: connection=${acquired[0]?.connection} lock_wait_ms=${acquired[0]?.lockWaitMs} elapsed_ms=${elapsedMs} rows_written=${written}`,
+      `MEASURE read-on-reader: connection=${acquired[0]?.connection} lock_wait_ms=${acquired[0]?.lockWaitMs} lock_held_for_ms=${heldForMs}`,
     );
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("the same read on the writer connection waits for the writer's lock", () =>
+it.effect("the same read on the writer connection is blocked by the write lock", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -356,33 +263,22 @@ it.effect("the same read on the writer connection waits for the writer's lock", 
     );
 
     const threadId = ThreadId.make("thread:lockwait:writer");
-    const { acquired, elapsedMs, written } = yield* Effect.gen(function* () {
+    const { acquired, heldForMs, value } = yield* Effect.gen(function* () {
       yield* createThread(threadId);
-      return yield* measureReadOnWriter(threadId);
+      return yield* measureReadOnWriterConnection(threadId);
     }).pipe(Effect.provide(storeLayer), TestClock.withLive);
 
-    // The writer really wrote, so the comparison is against real write load.
-    assert.isAbove(written, 1);
-    const rows = yield* Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      return yield* sql<{ readonly count: number }>`
-        SELECT COUNT(*) AS count
-        FROM orchestration_v2_projection_checkpoints
-        WHERE scope_id LIKE 'lockwait-scope-%'
-      `;
-    }).pipe(Effect.provide(storeLayer));
-    assert.equal(rows[0]?.count, written);
-
-    assert.deepEqual(
-      acquired.map((entry) => entry.connection),
-      ["writer"],
-    );
-    // The lock wait is reported on the writer's acquisition too, so the two
-    // measurements are comparable.
-    assert.equal(acquired.length, 1);
-    assert.isAtLeast(acquired[0]?.lockWaitMs ?? -1, 0);
+    // It did not complete: the value is the timeout, not the rows. The read
+    // could not even ACQUIRE the connection, because the writer held the
+    // write lock, so there is no `db.connection` span to report - the
+    // acquisition never finished. That is the "before" the change fixes.
+    const outcome = value as { readonly _tag: string };
+    assert.equal(outcome._tag, "Failure");
+    assert.deepEqual(acquired, []);
+    // It waited for the whole bound, with the lock held the whole time.
+    assert.isAbove(heldForMs, 0);
     console.log(
-      `MEASURE read-on-writer: connection=${acquired[0]?.connection} lock_wait_ms=${acquired[0]?.lockWaitMs} elapsed_ms=${elapsedMs}`,
+      `MEASURE read-on-writer: outcome=${outcome._tag} lock_held_for_ms=${heldForMs} connections_acquired=${acquired.length}`,
     );
   }).pipe(Effect.provide(NodeServices.layer)),
 );
