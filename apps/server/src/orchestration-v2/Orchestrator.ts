@@ -10046,6 +10046,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
   );
 
+  const enqueueDelegatedTasksStop = (
+    command: Extract<
+      OrchestrationV2ServerCommand,
+      { readonly type: "run.interrupt" | "thread.stop" }
+    >,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) =>
+    Ref.update(effects, (existing) => [
+      ...existing,
+      {
+        id: `effect:${command.commandId}:delegated-tasks.stop`,
+        commandId: command.commandId,
+        threadId: command.threadId,
+        request: {
+          type: "delegated-tasks.stop",
+          ...(command.reason === undefined ? {} : { reason: command.reason }),
+        },
+      } satisfies PendingOrchestrationEffectV2,
+    ]);
+
   const dispatchThreadStop = Effect.fn("Orchestrator.dispatchThreadStop")(function* (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.stop" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -10062,6 +10082,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
     if (projection.thread.deletedAt !== null) return undefined;
+    const hasDelegatedTaskThread = projection.subagents.some(
+      (task) => task.origin === "app_owned" && task.childThreadId !== null,
+    );
+    const finalizeDelegatedTasksStop = Effect.gen(function* () {
+      if (!hasDelegatedTaskThread) return;
+      yield* enqueueDelegatedTasksStop(command, effects);
+      if ((yield* Ref.get(events)).length > 0) return;
+      // A receipt-only command cannot persist effects. Anchor an idle parent's recursive Stop.
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        providerInstanceId: projection.thread.providerInstanceId,
+        occurredAt: yield* DateTime.now,
+        payload: projection.thread,
+      });
+    });
     const latestRun = projection.runs.findLast((run) => run.status !== "queued");
     const target =
       projection.runs.findLast(
@@ -10101,6 +10140,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* Ref.update(events, (existing) => [...existing, ...written]);
         yield* Ref.update(effects, (existing) => [...existing, ...enqueued]);
         yield* cancelIdleOrphans({ command, events, projection });
+        yield* finalizeDelegatedTasksStop;
         return interrupted.value;
       }
       yield* Effect.logWarning("thread.stop could not interrupt the running turn", {
@@ -10121,6 +10161,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     yield* holdStoppedThread({ command, events, projection, cohortRunIds: [], now });
     yield* cancelIdleOrphans({ command, events, projection });
+    yield* finalizeDelegatedTasksStop;
     return undefined;
   });
 
@@ -11419,18 +11460,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               threadId: command.threadId,
               cause: repaired.cause,
             });
-          yield* Ref.update(effects, (existing) => [
-            ...existing,
-            {
-              id: `effect:${command.commandId}:delegated-tasks.stop`,
-              commandId: command.commandId,
-              threadId: command.threadId,
-              request: {
-                type: "delegated-tasks.stop",
-                ...(command.reason === undefined ? {} : { reason: command.reason }),
-              },
-            } satisfies PendingOrchestrationEffectV2,
-          ]);
+          yield* enqueueDelegatedTasksStop(command, effects);
         }
         break;
       case "thread.stop":
