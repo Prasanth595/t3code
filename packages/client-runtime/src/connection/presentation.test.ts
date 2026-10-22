@@ -175,11 +175,17 @@ describe("connection presentation", () => {
   });
 
   it("offers pairing again only when the paired address's credential is refused", () => {
-    const blocked = (reason: "authentication" | "configuration") =>
+    const blocked = (
+      reason: "authentication" | "configuration",
+      failure: Partial<Pick<ConnectionBlockedError, "hop" | "via">> = {
+        hop: "server",
+        via: "direct",
+      },
+    ) =>
       presentConnectionState(
         supervisorState({
           phase: "blocked",
-          lastFailure: new ConnectionBlockedError({ reason, detail: "Refused." }),
+          lastFailure: new ConnectionBlockedError({ reason, detail: "Refused.", ...failure }),
         }),
       );
     const relay = new RelayConnectionTarget({
@@ -196,6 +202,17 @@ describe("connection presentation", () => {
     expect(
       pairAgainAddress({ entry: relayOnly, connection: blocked("authentication") }),
     ).toBeNull();
+    // With a T3 Connect route as well, a refused sign-in says nothing about the paired address.
+    const mixed: ConnectionCatalogEntry = {
+      ...ENTRY,
+      alternateRoutes: [{ target: relay, profile: Option.none() }],
+    };
+    expect(
+      pairAgainAddress({ entry: mixed, connection: blocked("authentication", { hop: "relay" }) }),
+    ).toBeNull();
+    expect(pairAgainAddress({ entry: mixed, connection: blocked("authentication") })).toBe(
+      "https://environment.example.test",
+    );
 
     // A learned route borrows the paired route's credential, so pairing it would
     // mint nothing; the paired address is the one to pair again.

@@ -62,7 +62,11 @@ export function presentConnectionState(
         phase: state.lastFailure?.reason === "unsupported" ? "unsupported" : "error",
         error: state.lastFailure?.message ?? null,
         traceId: state.lastFailure?.traceId ?? null,
-        ...(state.lastFailure?.reason === "authentication" ? { credentialRejected: true } : {}),
+        // T3 Connect sign-in refusals are also "authentication"; only a paired
+        // address refusing its saved credential is fixed by pairing again.
+        ...(state.lastFailure?.reason === "authentication" && state.lastFailure.via === "direct"
+          ? { credentialRejected: true }
+          : {}),
       };
   }
 }

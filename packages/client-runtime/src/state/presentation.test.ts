@@ -99,7 +99,12 @@ describe("environment summary subscriptions", () => {
       AsyncResult.success({
         ...AVAILABLE_CONNECTION_STATE,
         phase: "blocked" as const,
-        lastFailure: new ConnectionBlockedError({ reason, detail: "Refused." }),
+        lastFailure: new ConnectionBlockedError({
+          reason,
+          detail: "Refused.",
+          hop: "server",
+          via: "direct",
+        }),
       });
     try {
       h.registry.set(h.state, blocked("configuration"));
