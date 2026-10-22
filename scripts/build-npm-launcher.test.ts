@@ -200,6 +200,57 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
           VERSION,
         ]);
 
+        // Clearing a folder an interrupted install left behind never deletes a
+        // complete install another launcher publishes right after the check.
+        const staleHome = path.join(root, "stale-home");
+        const staleDir = path.join(staleHome, "runtime/versions", VERSION);
+        const peerDir = path.join(root, "peer-runtime");
+        yield* fs.makeDirectory(staleDir, { recursive: true });
+        yield* fs.writeFileString(path.join(staleDir, "t3"), "");
+        yield* fs.makeDirectory(peerDir);
+        yield* fs.writeFileString(path.join(peerDir, "t3"), '#!/bin/sh\necho "peer $*"\nexit 7\n');
+        yield* fs.chmod(path.join(peerDir, "t3"), 0o755);
+        yield* fs.writeFileString(path.join(peerDir, ".install-complete"), `${VERSION}\n`);
+        // The peer publishes after the launcher's rename fails and it reads the marker.
+        const peerHook = path.join(root, "peer-publishes.mjs");
+        yield* fs.writeFileString(
+          peerHook,
+          `import fs from "node:fs";
+const dir = ${JSON.stringify(staleDir)};
+const { readFileSync, renameSync } = fs;
+let checking = false;
+fs.renameSync = (from, to) => {
+  try {
+    return renameSync(from, to);
+  } catch (error) {
+    checking ||= to === dir;
+    throw error;
+  }
+};
+fs.readFileSync = (file, ...rest) => {
+  try {
+    return readFileSync(file, ...rest);
+  } finally {
+    if (checking && file === dir + "/.install-complete") {
+      checking = false;
+      fs.rmSync(dir, { recursive: true });
+      renameSync(${JSON.stringify(peerDir)}, dir);
+    }
+  }
+};
+`,
+        );
+        const recovered = yield* run(
+          process.execPath,
+          ["--import", peerHook, launcher, "--version"],
+          { cwd: root, env: { ...env, T3CODE_HOME: staleHome } },
+        );
+        assert.equal(recovered.stdout.trim(), "peer --version", recovered.stderr);
+        assert.equal(recovered.exitCode, 7);
+        assert.deepStrictEqual(yield* fs.readDirectory(path.join(staleHome, "runtime/versions")), [
+          VERSION,
+        ]);
+
         // A download that does not match the release checksums is never installed.
         release.corruptChecksum();
         const corrupt = yield* run(process.execPath, [launcher, "--version"], {
