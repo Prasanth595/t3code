@@ -65,26 +65,25 @@ function readTokenRates(
   const input = finiteNumber(entry[`input_cost_per_token${suffix}`]);
   const output = finiteNumber(entry[`output_cost_per_token${suffix}`]);
   if (input === null || output === null) return null;
-  const cacheRate = (name: string, field: keyof TokenRates, fallback: number) =>
+  const cacheRate = (name: string, field: "cacheReadCostPerToken" | "cacheCreationCostPerToken") =>
     finiteNumber(entry[`${name}${suffix}`]) ??
     (standard !== undefined && standard.inputCostPerToken > 0
       ? (standard[field] / standard.inputCostPerToken) * input
-      : fallback);
-  const cacheCreation = cacheRate(
-    "cache_creation_input_token_cost",
-    "cacheCreationCostPerToken",
-    input,
-  );
+      : input);
+  const cacheCreation = cacheRate("cache_creation_input_token_cost", "cacheCreationCostPerToken");
+  // Without its own one-hour rate, a tier keeps the standard tier's one-hour premium over writes.
+  const oneHourCacheCreation =
+    finiteNumber(entry[`cache_creation_input_token_cost_above_1hr${suffix}`]) ??
+    (standard !== undefined && standard.cacheCreationCostPerToken > 0
+      ? (standard.oneHourCacheCreationCostPerToken / standard.cacheCreationCostPerToken) *
+        cacheCreation
+      : cacheCreation);
   return {
     inputCostPerToken: input,
     outputCostPerToken: output,
-    cacheReadCostPerToken: cacheRate("cache_read_input_token_cost", "cacheReadCostPerToken", input),
+    cacheReadCostPerToken: cacheRate("cache_read_input_token_cost", "cacheReadCostPerToken"),
     cacheCreationCostPerToken: cacheCreation,
-    oneHourCacheCreationCostPerToken: cacheRate(
-      "cache_creation_input_token_cost_above_1hr",
-      "oneHourCacheCreationCostPerToken",
-      cacheCreation,
-    ),
+    oneHourCacheCreationCostPerToken: oneHourCacheCreation,
   };
 }
 
