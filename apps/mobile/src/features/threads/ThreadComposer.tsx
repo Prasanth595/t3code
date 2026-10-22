@@ -156,7 +156,10 @@ export function useCompactComposerEditor(text: ScaledTextRole) {
         : withTiming(height, { duration: 180, reduceMotion: ReduceMotion.System }),
     );
   }, [animatedHeight, height]);
-  const containerStyle = useAnimatedStyle(() => ({ height: animatedHeight.value }));
+  const containerStyle = useAnimatedStyle(() => ({
+    height: animatedHeight.value,
+    alignSelf: "center",
+  }));
   return {
     containerStyle,
     isMultiline: contentHeight > text.lineHeight * 1.5,
