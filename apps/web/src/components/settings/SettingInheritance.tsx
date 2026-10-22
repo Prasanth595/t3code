@@ -51,7 +51,9 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
               ? "Source control writer model"
               : key === "defaultThreadEnvMode" || key === "worktreeSubmodules"
                 ? "Inherit"
-                : "Not set";
+                : key === "terminalShell"
+                  ? "Automatic"
+                  : "Not set";
   }
   if (typeof value === "boolean") return value ? "On" : "Off";
   if (typeof value === "number") {
@@ -63,6 +65,7 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
     if (key === "defaultThreadEnvMode" && (value === "local" || value === "worktree")) {
       return resolveEnvModeLabel(value);
     }
+    if (key === "terminalShell" && value === "auto") return "Automatic";
     if (key === "worktreeSubmodules" && value in WORKTREE_SUBMODULES_LABELS) {
       return WORKTREE_SUBMODULES_LABELS[value as WorktreeSubmodules];
     }
@@ -76,6 +79,7 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
   if (Array.isArray(value)) return `${value.length} ${value.length === 1 ? "item" : "items"}`;
   if (typeof value === "object") {
     if ("model" in value && typeof value.model === "string") return value.model;
+    if ("command" in value && typeof value.command === "string") return value.command;
     if ("mode" in value && typeof value.mode === "string") {
       return WRITING_STYLE_LABELS[value.mode] ?? value.mode;
     }

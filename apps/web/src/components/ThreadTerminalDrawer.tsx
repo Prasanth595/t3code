@@ -26,6 +26,7 @@ import {
   type ProviderInstanceId,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
+  type TerminalShellSetting,
   type ThreadId,
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
@@ -42,6 +43,7 @@ import {
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
@@ -79,7 +81,8 @@ import { readLocalApi } from "~/localApi";
 import { confirmTerminalClose } from "~/lib/terminalCloseConfirm";
 import { useClientSettings } from "../hooks/useSettings";
 import { useLocalStorage } from "../hooks/useLocalStorage";
-import { useAttachedTerminalSession } from "../state/terminalSessions";
+import { useAttachedTerminalSession, useKnownTerminalSessions } from "../state/terminalSessions";
+import { NewTerminalShellMenu } from "./terminal/NewTerminalShellMenu";
 import { serverEnvironment } from "../state/server";
 import { previewEnvironment } from "../state/preview";
 import { readEnvironmentScope } from "../state/session";
@@ -1163,7 +1166,7 @@ interface ThreadTerminalDrawerProps {
   focusRequestId: number;
   onSplitTerminal: () => void;
   onSplitTerminalVertical: () => void;
-  onNewTerminal: () => void;
+  onNewTerminal: (shell?: TerminalShellSetting) => void;
   splitShortcutLabel?: string | undefined;
   splitVerticalShortcutLabel?: string | undefined;
   newShortcutLabel?: string | undefined;
@@ -1321,6 +1324,7 @@ function TerminalSidebarGroup({
   activeTerminalId,
   showHeader,
   terminalLabelById,
+  terminalShellById,
   closeShortcutLabel,
   canOperateTerminal,
   onActiveTerminalChange,
@@ -1330,6 +1334,7 @@ function TerminalSidebarGroup({
   activeTerminalId: string;
   showHeader: boolean;
   terminalLabelById: ReadonlyMap<string, string>;
+  terminalShellById: ReadonlyMap<string, string>;
   closeShortcutLabel: string | undefined;
   canOperateTerminal: boolean;
   onActiveTerminalChange: (terminalId: string) => void;
@@ -1374,6 +1379,16 @@ function TerminalSidebarGroup({
         {terminalGroup.terminalIds.map((terminalId) => {
           const isActive = terminalId === activeTerminalId;
           const terminalLabel = terminalLabelById.get(terminalId) ?? "Terminal";
+          const terminalShell = terminalShellById.get(terminalId);
+          const tabButton = (
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-left"
+              onClick={() => onActiveTerminalChange(terminalId)}
+            >
+              <span className="truncate">{terminalLabel}</span>
+            </button>
+          );
           const closeTerminalLabel = `Close ${terminalLabel}${
             isActive && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""
           }`;
@@ -1398,13 +1413,16 @@ function TerminalSidebarGroup({
               ) : (
                 <TerminalSquare className="size-3 shrink-0" />
               )}
-              <button
-                type="button"
-                className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-left"
-                onClick={() => onActiveTerminalChange(terminalId)}
-              >
-                <span className="truncate">{terminalLabel}</span>
-              </button>
+              {terminalShell ? (
+                <Tooltip>
+                  <TooltipTrigger render={tabButton}>
+                    <span className="truncate">{terminalLabel}</span>
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">{terminalShell}</TooltipPopup>
+                </Tooltip>
+              ) : (
+                tabButton
+              )}
             </div>
           );
         })}
@@ -1639,6 +1657,26 @@ export default function ThreadTerminalDrawer({
     if (!canOperateTerminal) return;
     onNewTerminal();
   };
+  const onNewTerminalWithShell = (shell: TerminalShellSetting) => {
+    if (!canOperateTerminal) return;
+    onNewTerminal(shell);
+  };
+  const knownSessions = useKnownTerminalSessions({
+    environmentId: threadRef.environmentId,
+    threadId,
+  });
+  const terminalShellById = new Map<string, string>();
+  for (const session of knownSessions ?? []) {
+    const summary = session.state.summary;
+    if (summary?.shell) {
+      terminalShellById.set(
+        session.target.terminalId,
+        summary.shellFallbackFrom
+          ? `${summary.shell} · couldn't start ${summary.shellFallbackFrom}`
+          : summary.shell,
+      );
+    }
+  }
   const confirmCloseTerminal = (terminalId: string) => {
     if (!canOperateTerminal) return;
     const label = terminalLabelById.get(terminalId) ?? getTerminalLabel(terminalId);
@@ -1867,6 +1905,11 @@ export default function ThreadTerminalDrawer({
             >
               <Plus className="size-3.25" />
             </TerminalActionButton>
+            <NewTerminalShellMenu
+              threadRef={threadRef}
+              disabled={!canOperateTerminal}
+              onSelect={onNewTerminalWithShell}
+            />
             <div className="h-4 w-px bg-border/80" />
             <TerminalActionButton
               disabled={!canOperateTerminal}
@@ -1944,6 +1987,11 @@ export default function ThreadTerminalDrawer({
                   >
                     <Plus className="size-3.25" />
                   </TerminalActionButton>
+                  <NewTerminalShellMenu
+                    threadRef={threadRef}
+                    disabled={!canOperateTerminal}
+                    onSelect={onNewTerminalWithShell}
+                  />
                   <TerminalActionButton
                     disabled={!canOperateTerminal}
                     className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
@@ -1963,6 +2011,7 @@ export default function ThreadTerminalDrawer({
                     activeTerminalId={resolvedActiveTerminalId}
                     showHeader={showGroupHeaders}
                     terminalLabelById={terminalLabelById}
+                    terminalShellById={terminalShellById}
                     closeShortcutLabel={closeShortcutLabel}
                     canOperateTerminal={canOperateTerminal}
                     onActiveTerminalChange={onActiveTerminalChange}

@@ -3,6 +3,7 @@ import {
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
+  type TerminalShellSetting,
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
@@ -208,10 +209,14 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     storeSetTerminalHeight(threadRef, height);
   };
 
-  const launchDrawerTerminal = (place: (terminalId: string) => void) => {
+  const launchDrawerTerminal = (
+    place: (terminalId: string) => void,
+    shell?: TerminalShellSetting,
+  ) => {
     if (!cwd) return;
     const launched = terminalActions.launchTerminal({
       place,
+      ...(shell !== undefined ? { shell } : {}),
       location: { cwd, worktreePath: effectiveWorktreePath },
     });
     if (!launched) return;
@@ -224,8 +229,8 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   const splitTerminalVertical = useStableCallback(() =>
     launchDrawerTerminal((terminalId) => storeSplitTerminalVertical(threadRef, terminalId)),
   );
-  const createNewTerminal = useStableCallback(() =>
-    launchDrawerTerminal((terminalId) => storeNewTerminal(threadRef, terminalId)),
+  const createNewTerminal = useStableCallback((shell?: TerminalShellSetting) =>
+    launchDrawerTerminal((terminalId) => storeNewTerminal(threadRef, terminalId), shell),
   );
 
   const activateTerminal = (terminalId: string) => {
@@ -307,7 +312,7 @@ export interface PersistentThreadTerminalPanelProps {
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   onSplitTerminal: () => void;
   onSplitTerminalVertical: () => void;
-  onNewTerminal: () => void;
+  onNewTerminal: (shell?: TerminalShellSetting) => void;
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => void;
   splitShortcutLabel?: string | undefined;

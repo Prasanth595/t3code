@@ -6,10 +6,18 @@ import {
   type TerminalEvent,
   type TerminalOpenInput,
   type TerminalRestartInput,
+  type TerminalShellProfile,
+  type TerminalShellSetting,
+  type TerminalSummary,
   ProviderDriverKind,
   ProviderInstanceId,
   TerminalProviderInstanceNotFoundError,
+  DEFAULT_SERVER_SETTINGS,
+  ProjectId,
+  ThreadId,
+  type T3ProjectFile,
 } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -225,6 +233,10 @@ const historyLogPath = (logsDir: string, threadId = "thread-1") =>
 
 interface CreateManagerOptions {
   shellResolver?: () => string;
+  shellProfiles?: ReadonlyArray<TerminalShellProfile>;
+  resolveConfiguredShell?: Parameters<
+    typeof TerminalManager.makeWithOptions
+  >[0]["resolveConfiguredShell"];
   env?: NodeJS.ProcessEnv;
   subprocessInspector?: (terminalPid: number) => Effect.Effect<{
     readonly hasRunningSubprocess: boolean;
@@ -281,6 +293,12 @@ const createManager = (
           ? { historyByteLimit: options.historyByteLimit }
           : {}),
         ...(options.shellResolver !== undefined ? { shellResolver: options.shellResolver } : {}),
+        ...(options.shellProfiles !== undefined
+          ? { shellProfiles: Effect.succeed(options.shellProfiles) }
+          : {}),
+        ...(options.resolveConfiguredShell !== undefined
+          ? { resolveConfiguredShell: options.resolveConfiguredShell }
+          : {}),
         ...(options.env !== undefined ? { env: options.env } : {}),
         ...(options.subprocessInspector !== undefined
           ? { subprocessInspector: options.subprocessInspector }
@@ -885,6 +903,171 @@ it.layer(
       expect(yield* pathExists(nextPath)).toBe(true);
       expect(yield* readFileString(nextPath)).toBe("legacy-line\n");
       expect(yield* pathExists(legacyPath)).toBe(false);
+    }),
+  );
+
+  const zsh: TerminalShellProfile = {
+    id: "zsh",
+    label: "zsh",
+    command: "/bin/zsh",
+    args: ["-o", "nopromptsp"],
+  };
+  const fish: TerminalShellProfile = { id: "fish", label: "fish", command: "/bin/fish", args: [] };
+  const shellProfiles = [zsh, fish];
+  const configured = (setting: TerminalShellSetting) => () => Effect.succeed(setting);
+
+  it.effect("prefers the explicit shell over the configured one", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellProfiles,
+        resolveConfiguredShell: configured("zsh"),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+
+      const snapshot = yield* manager.open(openInput({ shell: "fish" }));
+
+      expect(ptyAdapter.spawnInputs[0]?.shell).toBe("/bin/fish");
+      expect(snapshot.history).toBe("");
+      const metadata = yield* manager.subscribeMetadata((event) =>
+        event.type === "snapshot"
+          ? Effect.sync(() => {
+              expect(event.terminals[0]?.shell).toBe("fish");
+            })
+          : Effect.void,
+      );
+      metadata();
+    }),
+  );
+
+  it.effect("uses the configured shell, and auto when nothing is configured", () =>
+    Effect.gen(function* () {
+      const first = yield* createManager(5, {
+        shellProfiles,
+        resolveConfiguredShell: configured("zsh"),
+        shellResolver: () => "/bin/sh",
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* first.manager.open(openInput());
+      expect(first.ptyAdapter.spawnInputs[0]).toMatchObject({
+        shell: "/bin/zsh",
+        args: ["-o", "nopromptsp"],
+      });
+
+      const second = yield* createManager(5, {
+        shellProfiles,
+        resolveConfiguredShell: configured("auto"),
+        shellResolver: () => "/bin/sh",
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* second.manager.open(openInput());
+      expect(second.ptyAdapter.spawnInputs[0]?.shell).toBe("/bin/sh");
+    }),
+  );
+
+  it.effect("treats a profile id this machine lacks as auto", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellProfiles,
+        resolveConfiguredShell: configured("nushell"),
+        shellResolver: () => "/bin/sh",
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+
+      const snapshot = yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs[0]?.shell).toBe("/bin/sh");
+      expect(snapshot.history).toBe("");
+    }),
+  );
+
+  it.effect("reports the fallback in metadata when a custom shell cannot start", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellProfiles,
+        shellResolver: () => "/bin/sh",
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      ptyAdapter.spawnFailures.push(new Error("spawn /opt/missing ENOENT"));
+      const summaries = Effect.gen(function* () {
+        let terminals: ReadonlyArray<TerminalSummary> = [];
+        const unsubscribe = yield* manager.subscribeMetadata((event) =>
+          Effect.sync(() => {
+            if (event.type === "snapshot") terminals = event.terminals;
+          }),
+        );
+        unsubscribe();
+        return terminals;
+      });
+
+      const snapshot = yield* manager.open(
+        openInput({ shell: { command: "/opt/missing", args: ["-l"] } }),
+      );
+
+      expect(ptyAdapter.spawnInputs[0]).toMatchObject({ shell: "/opt/missing", args: ["-l"] });
+      expect(snapshot.status).toBe("running");
+      expect(snapshot.history).toBe("");
+      const [fellBack] = yield* summaries;
+      expect(fellBack).toMatchObject({ shell: "sh", shellFallbackFrom: "missing" });
+
+      yield* manager.restart(restartInput());
+      const [recovered] = yield* summaries;
+      expect(recovered?.shell).toBe("missing");
+      expect(recovered?.shellFallbackFrom).toBeUndefined();
+    }),
+  );
+
+  it.effect("restart and respawn keep the terminal's shell", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellProfiles,
+        resolveConfiguredShell: configured("zsh"),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+
+      yield* manager.open(openInput({ shell: "fish" }));
+      yield* manager.restart(restartInput());
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual([
+        "/bin/fish",
+        "/bin/fish",
+      ]);
+
+      yield* manager.restart(restartInput({ shell: "zsh" }));
+      yield* manager.restart(restartInput());
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell).slice(2)).toEqual([
+        "/bin/zsh",
+        "/bin/zsh",
+      ]);
+    }),
+  );
+
+  const projectId = ProjectId.make("project-a");
+  const threads = {
+    getThreadShell: () => Effect.succeed({ projectId } as never),
+  };
+  const resolve = (input: {
+    readonly environment?: TerminalShellSetting;
+    readonly project?: TerminalShellSetting;
+    readonly file?: T3ProjectFile;
+  }) =>
+    TerminalManager.resolveConfiguredTerminalShell({
+      serverSettings: {
+        getSettings: Effect.succeed({
+          ...DEFAULT_SERVER_SETTINGS,
+          terminalShell: input.environment ?? null,
+          projectSettingsOverrides:
+            input.project === undefined ? {} : { [projectId]: { terminalShell: input.project } },
+        }),
+      },
+      projectFiles: {
+        load: () => Effect.succeed(input.file ? Option.some(input.file) : Option.none()),
+      },
+      threads,
+      threadId: ThreadId.make("thread-1"),
+      cwd: "/repo",
+    });
+
+  it.effect("orders project override, environment default, t3.json, then auto", () =>
+    Effect.gen(function* () {
+      const file = { terminalShell: "cmd" } satisfies T3ProjectFile;
+      expect(yield* resolve({ project: "zsh", environment: "bash", file })).toBe("zsh");
+      expect(yield* resolve({ environment: "bash", file })).toBe("bash");
+      expect(yield* resolve({ file })).toBe("cmd");
+      expect(yield* resolve({})).toBe("auto");
+      expect(yield* resolve({ project: "auto", file })).toBe("auto");
     }),
   );
 
