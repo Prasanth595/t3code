@@ -646,7 +646,7 @@ export function NewTaskDraftScreen(props: {
   const foregroundColor = theme["--color-foreground"];
   const regularFontFamily = FONT_FAMILIES.regular;
   const bodyText = useScaledTextRole("body");
-  const compactEditor = useCompactComposerEditor(bodyText);
+  const compactEditor = useCompactComposerEditor(bodyText, flow.prompt);
 
   const lastInitialProjectRefRef = useRef(props.initialProjectRef);
 
@@ -1708,7 +1708,7 @@ export function NewTaskDraftScreen(props: {
           </View>
         ) : null}
 
-        <View>
+        <View onLayout={compactEditor.onRowLayout}>
           <ComposerToolbarRow
             paddingBottom={0}
             paddingHorizontal={0}
@@ -1745,11 +1745,10 @@ export function NewTaskDraftScreen(props: {
                 onPickFiles={handlePickFiles}
               />
               <Animated.View
-                className="min-w-0 flex-1 px-[4px]"
+                className="min-w-0 flex-1"
+                onLayout={compactEditor.onEditorLayout}
                 style={compactEditor.containerStyle}
-              >
-                {promptEditor}
-              </Animated.View>
+              ></Animated.View>
               <View className="min-w-0 shrink flex-row items-center gap-2">
                 <View className="min-w-0 shrink">
                   <ComposerModelControl
@@ -1820,6 +1819,9 @@ export function NewTaskDraftScreen(props: {
               />
             ) : null}
           </ComposerToolbarRow>
+          {!isVoiceInputPresented ? (
+            <Animated.View style={compactEditor.editorStyle}>{promptEditor}</Animated.View>
+          ) : null}
         </View>
       </ComposerSurface>
       <VideoPreviewModal source={previewVideo} onRequestClose={closeMediaPreview} />
