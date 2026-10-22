@@ -1,5 +1,15 @@
+import {
+  AVAILABLE_CONNECTION_STATE,
+  BearerConnectionProfile,
+  BearerConnectionTarget,
+  type ConnectionCatalogEntry,
+  presentEnvironmentConnection,
+  RelayConnectionTarget,
+} from "@t3tools/client-runtime/connection";
+import { projectEnvironmentConnectionSummary } from "@t3tools/client-runtime/state/presentation";
 import { EnvironmentId } from "@t3tools/contracts";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
+import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { splitEnvironmentSections } from "./environmentSections";
@@ -15,6 +25,7 @@ function connectedEnvironment(
     environmentLabel: input.environmentLabel ?? input.environmentId,
     displayUrl: input.displayUrl ?? `https://${input.environmentId}.example.test/`,
     isRelayManaged: input.isRelayManaged,
+    hasRelayRoute: input.hasRelayRoute ?? input.isRelayManaged,
     isEnabled: input.isEnabled ?? true,
     connectionState: input.connectionState ?? "connected",
     connectionError: input.connectionError ?? null,
@@ -35,7 +46,68 @@ function cloudEnvironment(environmentId: string): RelayClientEnvironmentRecord {
   };
 }
 
+function savedEnvironment(
+  environmentId: string,
+  options: { readonly learnedLan: boolean },
+): ConnectedEnvironmentSummary {
+  const id = EnvironmentId.make(environmentId);
+  const lan = new BearerConnectionProfile({
+    connectionId: "lan",
+    environmentId: id,
+    label: "Mac mini",
+    httpBaseUrl: "http://192.168.1.106:3773/",
+    wsBaseUrl: "ws://192.168.1.106:3773/",
+    ...(options.learnedLan ? { learned: true } : {}),
+  });
+  const entry: ConnectionCatalogEntry = {
+    target: new BearerConnectionTarget({
+      environmentId: id,
+      label: "Mac mini",
+      connectionId: "lan",
+    }),
+    profile: Option.some(lan),
+    enabled: true,
+    alternateRoutes: [
+      {
+        target: new RelayConnectionTarget({ environmentId: id, label: "Mac mini" }),
+        profile: Option.none(),
+      },
+    ],
+  };
+  return projectEnvironmentConnectionSummary(id, {
+    entry,
+    connection: presentEnvironmentConnection(AVAILABLE_CONNECTION_STATE),
+    serverConfig: null,
+  });
+}
+
 describe("mobile environment settings sections", () => {
+  it("keeps a LAN-paired environment local after T3 Connect is added to it", () => {
+    const paired = savedEnvironment("environment-mini", { learnedLan: false });
+
+    const sections = splitEnvironmentSections({
+      connectedEnvironments: [paired],
+      cloudEnvironments: [cloudEnvironment("environment-mini")],
+    });
+
+    expect(sections.localEnvironments).toEqual([paired]);
+    expect(sections.connectedCloudEnvironments).toEqual([]);
+    expect(sections.availableCloudEnvironments).toEqual([]);
+  });
+
+  it("keeps a T3 Connect environment under T3 Connect after it learns a LAN address", () => {
+    const relay = savedEnvironment("environment-mini", { learnedLan: true });
+
+    const sections = splitEnvironmentSections({
+      connectedEnvironments: [relay],
+      cloudEnvironments: [cloudEnvironment("environment-mini")],
+    });
+
+    expect(sections.localEnvironments).toEqual([]);
+    expect(sections.connectedCloudEnvironments).toEqual([relay]);
+    expect(sections.availableCloudEnvironments).toEqual([]);
+  });
+
   it("keeps saved relay-managed connections under T3 Connect", () => {
     const local = connectedEnvironment({
       environmentId: "environment-local",
