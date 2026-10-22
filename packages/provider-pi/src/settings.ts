@@ -37,7 +37,7 @@ export const PiSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Load every T3 tool on completion gateways",
         description:
-          "Declare all T3 tool schemas on OpenAI-compatible chat completion requests, for gateways that drop calls to undeclared tools. Turn off if your gateway runs tools found through tool_search. Requests then declare the orchestration tools, tool_search and the T3 tools tool_search loaded or the conversation already called. Existing threads keep tools they already loaded, including eagerly loaded ones, so the reduction applies to new threads and tools not yet loaded.",
+          "Send all T3 tool schemas to OpenAI-compatible completion gateways. Turn off if your gateway supports tools loaded through tool_search. Smaller requests require Pi 0.99 or newer and built-in tool_search. Start a new thread to avoid keeping an earlier eager loadout.",
         providerSettingsForm: { control: "switch" },
       }),
     ),

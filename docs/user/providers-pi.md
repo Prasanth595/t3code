@@ -23,14 +23,13 @@ directory, endpoint, or model configuration. `--provider` must be paired with `-
 rejects launch arguments that change Pi's execution mode or select a session because T3 owns those
 parts of the process lifecycle.
 
-Pi models on OpenAI-compatible chat completion gateways receive every T3 Code tool schema on each
-request, because some gateways drop calls to tools the request does not declare. If your gateway
-runs tools that Pi loads through `tool_search`, turn off **Load every T3 tool on completion
-gateways** in the Pi instance's settings to send smaller requests. Pi then declares the orchestration
-tools, `tool_search`, the T3 Code tools `tool_search` loaded, and any T3 Code tool the conversation
-has already called. An existing thread keeps every tool it already loaded, including the full set
-loaded before you turned the switch off, so the smaller requests apply to new threads and to tools
-not yet loaded.
+Pi sends every T3 Code tool schema to OpenAI-compatible completion gateways because some gateways
+drop calls to undeclared tools. On Pi 0.99 or newer with built-in `tool_search` enabled, turn off
+**Load every T3 tool on completion gateways** in the Pi instance's settings if your gateway supports
+tools loaded through `tool_search`. Requests then include orchestration tools, `tool_search`, tools
+loaded by search, and tools already called in the retained conversation history. Start a new thread
+to avoid keeping an earlier eager loadout. Older Pi versions and sessions without built-in
+`tool_search` keep all schemas.
 
 On a remote or headless server, connect to that machine over SSH and run `pi`, then `/login`.
 Open the authorization URL on your own computer. If the callback cannot reach the server,

@@ -423,10 +423,8 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // mcp.json configures it; retry a failed connection at session_start.
   await ensureStarted().catch(() => undefined);
 
-  // Instances whose gateway runs tools found through tool_search opt out of
-  // the full catalog and keep only T3 tools already called in this branch,
-  // plus whatever tool_search loaded into the active loadout. Tools already
-  // active stay, including ones eagerly loaded before the opt-out.
+  // Opting out keeps orchestration and called tools alongside the active
+  // loadout. Previously discovered or eagerly loaded tools remain active.
   const eagerGatewayTools = env(GATEWAY_TOOLS_ENV) !== "called";
   const calledToolNames = (ctx: Pick<ExtensionContext, "sessionManager">) => {
     const names = new Set<string>();
@@ -447,17 +445,15 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     deferOptionalTools = hasToolSearch;
     if (exposureChanged) registerTools();
     const active = pi.getActiveTools();
-    // Completion gateways can silently drop calls to undeclared tools named
-    // in history or guidance. Eagerly load T3 schemas, including after tree
-    // restores, while retaining deferred exposure for Pi's allowlist rules.
-    // Pi still applies --tools/--exclude-tools to this active loadout.
+    // Gateways can drop undeclared calls. Keep all schemas unless the instance
+    // opts out with native discovery available. Pi still applies its native
+    // --tools/--exclude-tools rules to this loadout, including after restores.
     let gatewayTools: string[] = [];
     if (ctx.model?.api === "openai-completions") {
-      gatewayTools = catalog.map((tool) => "mcp__t3-code__" + tool.name);
-      if (!eagerGatewayTools) {
-        const called = calledToolNames(ctx);
-        gatewayTools = gatewayTools.filter((name) => called.has(name));
-      }
+      const called = !eagerGatewayTools && hasToolSearch ? calledToolNames(ctx) : undefined;
+      gatewayTools = catalog
+        .filter((tool) => called === undefined || directTools.has(tool.name) || called.has("mcp__t3-code__" + tool.name))
+        .map((tool) => "mcp__t3-code__" + tool.name);
     }
     const required = [...(hasToolSearch ? ["tool_search"] : []), ...gatewayTools];
     const missing = required.filter((name) => !active.includes(name));
