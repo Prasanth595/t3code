@@ -64,7 +64,7 @@ function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
 }
 
 describe("environment shell synchronization", () => {
-  it.live.each([
+  it.effect.each([
     { bufferSize: Infinity, expectedSequences: [51], existingRows: false },
     { bufferSize: Infinity, expectedSequences: [51], existingRows: true },
     // RpcClient defaults to a 16-event buffer, which splits larger server chunks.
