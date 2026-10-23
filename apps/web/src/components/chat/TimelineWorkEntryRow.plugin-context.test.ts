@@ -41,9 +41,10 @@ it.each([
           generation: 3,
         },
       },
-      output: "context" in output
-        ? { context: output.context.map((block) => ({ ...block })) }
-        : { reason: output.reason },
+      output:
+        "context" in output
+          ? { context: output.context.map((block) => ({ ...block })) }
+          : { reason: output.reason },
       startedAt: null,
       completedAt: null,
       updatedAt: DateTime.makeUnsafe("2026-10-01T00:00:00Z"),
