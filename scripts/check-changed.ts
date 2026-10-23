@@ -22,8 +22,13 @@ import { decide, readWorkspace } from "../.github/scripts/ci-changes.cjs";
 const root = NodePath.resolve(import.meta.dirname, "..");
 const CODE = /\.[cm]?[jt]sx?$/;
 
+// quotePath=false keeps non-ASCII paths as real paths instead of quoted escapes.
 const git = (...args: Array<string>) =>
-  NodeChildProcess.execFileSync("git", args, { cwd: root, encoding: "utf8" })
+  NodeChildProcess.execFileSync("git", ["-c", "core.quotePath=false", ...args], {
+    cwd: root,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  })
     .split("\n")
     .filter(Boolean);
 
@@ -60,7 +65,8 @@ console.log(`check:changed: ${files.length} files since ${base.slice(0, 12)}`);
 // cached as passing.
 const inputKey = () => {
   const hash = NodeCrypto.createHash("sha256");
-  hash.update(`${process.version}\0${base}\0`);
+  // CI changes test behavior (vite.config.ts rejects .only under CI).
+  hash.update(`${process.version}\0${base}\0${process.env.CI ?? ""}\0`);
   hash.update(
     NodeChildProcess.execFileSync(
       "git",
