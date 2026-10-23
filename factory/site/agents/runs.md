@@ -121,7 +121,7 @@ On the server (`http://127.0.0.1:3876` in the LaunchAgent install), authenticate
 | POST   | `/api/factory/claims/resume`     | `orchestration:operate` | Resume claims.                                                                              |
 | POST   | `/api/factory/attention/dismiss` | `orchestration:operate` | Body `{ "ids": [...] }`; answers `{ "dismissed": [...] }`.                                  |
 | GET    | `/api/factory/config`            | `orchestration:read`    | Machine config report and watched repos.                                                    |
-| PUT    | `/api/factory/config`            | `settings:write`        | Save machine config keys; 422 `invalid_config` on errors.                                   |
+| POST   | `/api/factory/config`            | `settings:write`        | Save machine config keys; 422 `invalid_config` on errors.                                   |
 | POST   | `/api/factory/restart`           | `environment:maintain`  | 202, then the server exits; launchd restarts it. 409 `restart_pending` if one is under way. |
 
 Unauthenticated: 401.
