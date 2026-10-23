@@ -1,7 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { describe } from "vite-plus/test";
@@ -6192,6 +6194,112 @@ describe("pr feedback", () => {
         ),
       );
       assert.strictEqual(garbled._tag, "GitHubParse");
+    }),
+  );
+});
+
+describe("retrying a call GitHub never received", () => {
+  const TLS =
+    'Get "https://api.github.com/repos/rawphp/softfac/issues": net/http: TLS handshake timeout';
+  const DIAL_TIMEOUT =
+    'Post "https://api.github.com/graphql": dial tcp 140.82.112.6:443: i/o timeout';
+  const REFUSED =
+    'Get "https://api.github.com/x": dial tcp 140.82.112.6:443: connect: connection refused';
+  const NO_HOST = 'Get "https://api.github.com/x": dial tcp: lookup api.github.com: no such host';
+
+  it.effect("a TLS handshake timeout is retried and the second attempt's answer is returned", () =>
+    Effect.gen(function* () {
+      const t = setup(fail(1, TLS), reply(LIST_ONE));
+      const fiber = yield* Effect.forkChild(t.ok(t.github.listIssues("ready")), {
+        startImmediately: true,
+      });
+      yield* TestClock.adjust("3 seconds");
+      const issues = yield* Fiber.join(fiber);
+      assert.strictEqual(issues.length, 1);
+      assert.strictEqual(t.inputs.length, 2);
+      assert.deepEqual(t.calls()[0], t.calls()[1]);
+    }),
+  );
+
+  it.effect("each dial failure is retried too", () =>
+    Effect.gen(function* () {
+      for (const stderr of [DIAL_TIMEOUT, REFUSED, NO_HOST]) {
+        const t = setup(fail(1, stderr), reply(LIST_ONE));
+        const fiber = yield* Effect.forkChild(t.ok(t.github.listIssues("ready")), {
+          startImmediately: true,
+        });
+        yield* TestClock.adjust("3 seconds");
+        yield* Fiber.join(fiber);
+        assert.strictEqual(t.inputs.length, 2, stderr);
+      }
+    }),
+  );
+
+  it.effect("three failed attempts return the last failure unchanged", () =>
+    Effect.gen(function* () {
+      const t = setup(fail(1, TLS), fail(1, DIAL_TIMEOUT), fail(1, "third: " + TLS));
+      const fiber = yield* Effect.forkChild(t.err(t.github.listIssues("ready")), {
+        startImmediately: true,
+      });
+      yield* TestClock.adjust("9 seconds");
+      const error = yield* Fiber.join(fiber);
+      assert.strictEqual(t.inputs.length, 3);
+      assert.strictEqual(error._tag, "GitHubFailed");
+      if (error._tag !== "GitHubFailed") return;
+      assert.strictEqual(error.status, 1);
+      assert.strictEqual(error.stderr, "third: " + TLS);
+    }),
+  );
+
+  it.effect("the retries wait 2 s then 5 s, each plus up to 1 s", () =>
+    Effect.gen(function* () {
+      const t = setup(fail(1, TLS), fail(1, TLS), reply(LIST_ONE));
+      const fiber = yield* Effect.forkChild(t.ok(t.github.listIssues("ready")), {
+        startImmediately: true,
+      });
+      assert.strictEqual(t.inputs.length, 1);
+      yield* TestClock.adjust("1999 millis");
+      assert.strictEqual(t.inputs.length, 1);
+      yield* TestClock.adjust("1001 millis");
+      assert.strictEqual(t.inputs.length, 2);
+      yield* TestClock.adjust("3999 millis");
+      assert.strictEqual(t.inputs.length, 2);
+      yield* TestClock.adjust("2001 millis");
+      assert.strictEqual(t.inputs.length, 3);
+      yield* Fiber.join(fiber);
+      for (const input of t.inputs) assert.strictEqual(input.timeoutMs, 60_000);
+    }),
+  );
+
+  it.effect("a failure GitHub may have applied is not retried", () =>
+    Effect.gen(function* () {
+      const stderrs = [
+        "HTTP 502: Bad Gateway (https://api.github.com/graphql)",
+        'Post "https://api.github.com/graphql": unexpected EOF',
+        'Get "https://api.github.com/x": read tcp 10.0.0.2:5000->140.82.112.6:443: read: connection reset by peer',
+        'Get "https://api.github.com/x": read tcp 10.0.0.2:5000->140.82.112.6:443: i/o timeout',
+        "HTTP 404: Not Found",
+      ];
+      for (const stderr of stderrs) {
+        const t = setup(fail(1, stderr), reply(LIST_ONE));
+        const error = yield* t.err(t.github.listIssues("ready"));
+        assert.strictEqual(error._tag, "GitHubFailed", stderr);
+        assert.strictEqual(t.inputs.length, 1, stderr);
+      }
+    }),
+  );
+
+  it.effect("a rate limit and a timed-out call are not retried", () =>
+    Effect.gen(function* () {
+      const limited = setup(fail(1, "HTTP 429: API rate limit exceeded"), reply(LIST_ONE));
+      assert.strictEqual(
+        (yield* limited.err(limited.github.listIssues("ready")))._tag,
+        "GitHubRateLimited",
+      );
+      assert.strictEqual(limited.inputs.length, 1);
+      const slow = setup(timedOut(), reply(LIST_ONE));
+      assert.strictEqual((yield* slow.err(slow.github.listIssues("ready")))._tag, "GitHubTimedOut");
+      assert.strictEqual(slow.inputs.length, 1);
     }),
   );
 });
