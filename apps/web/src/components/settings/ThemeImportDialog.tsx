@@ -249,7 +249,7 @@ export function ThemeImportDialog({
       }
     }
     if (installed.length > 0) onImportedMany(installed, { updated: false });
-    if (failures.length > 0) setError(failures.join(" — "));
+    if (failures.length > 0) setError(failures.join("; "));
     if (conflicting.length > 0) {
       setConflicts(conflicting);
     } else if (installed.length > 0 && failures.length === 0) {
@@ -351,7 +351,7 @@ export function ThemeImportDialog({
     }
     if (resolved.length > 0) onImportedMany(resolved, { updated: mode === "update" });
     setConflicts(null);
-    if (failures.length > 0) setError(failures.join(" — "));
+    if (failures.length > 0) setError(failures.join("; "));
     else onOpenChange(false);
   };
 
