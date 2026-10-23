@@ -111,18 +111,35 @@ const seed = Effect.fn("seedAutoSettleEvidence")(function* (databasePath: string
 });
 await Effect.runPromise(
   Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    // Resolve before checking so `..` segments cannot leave this worktree's .t3.
-    const isolatedHome = path.resolve(import.meta.dirname, "../../../.t3");
+    // SQLite follows symlinks, so compare real paths. Missing tails resolve
+    // through their nearest existing ancestor and are created as plain entries;
+    // a dangling symlink has no real path but SQLite would still create its target.
+    const realPathOf: (target: string) => Effect.Effect<string | undefined> = Effect.fn(
+      "seedAutoSettleEvidence.realPathOf",
+    )(function* (target: string) {
+      const real = yield* Effect.option(fs.realPath(target));
+      if (Option.isSome(real)) return real.value;
+      const parent = path.dirname(target);
+      if (parent === target || Option.isSome(yield* Effect.option(fs.readLink(target))))
+        return undefined;
+      const realParent = yield* realPathOf(parent);
+      return realParent && path.join(realParent, path.basename(target));
+    });
+    // Resolve the worktree but not .t3 itself: a .t3 link elsewhere is rejected.
+    const worktree = yield* realPathOf(path.resolve(import.meta.dirname, "../../.."));
+    const isolatedHome = worktree && path.join(worktree, ".t3");
     const databasePath = path.resolve(databaseArg ?? "");
-    const relative = path.relative(isolatedHome, databasePath);
-    if (
-      databaseArg === undefined ||
-      !relative ||
-      relative.startsWith("..") ||
-      path.isAbsolute(relative)
-    )
-      return yield* Effect.die(new Error(`Expected a database inside ${isolatedHome}`));
+    const isInside = (real: string | undefined) => {
+      const relative = isolatedHome && real && path.relative(isolatedHome, real);
+      return !!relative && !relative.startsWith("..") && !path.isAbsolute(relative);
+    };
+    // Sidecar files are opened next to the database and could be planted links too.
+    for (const suffix of ["", "-wal", "-shm", "-journal"]) {
+      if (databaseArg === undefined || !isInside(yield* realPathOf(databasePath + suffix)))
+        return yield* Effect.die(new Error(`Expected a database inside ${isolatedHome}`));
+    }
     const database = Sqlite.layerFromPath(databasePath);
     const stores = Layer.mergeAll(
       database,
