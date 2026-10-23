@@ -36,36 +36,38 @@ describe("dedupeChecks", () => {
     ).toEqual(["failure", "failure"]);
   });
 
-  it.each([["2026-10-16T12:00:00Z", "2026-10-16T14:00:00+02:00"]])(
-    "takes the last copy for equal instants %s and %s",
-    (first, second) => {
-      const forward = dedupeChecks([
-        entry("build", "success", { at: first }),
-        entry("build", "failure", { at: second }),
-      ]);
-      const reversed = dedupeChecks([
-        entry("build", "success", { at: second }),
-        entry("build", "failure", { at: first }),
-      ]);
+  it.each([
+    ["2026-10-16T12:00:00Z", "2026-10-16T14:00:00+02:00"],
+    ["2026-10-16T24:00:00.000Z", "2026-10-17T00:00:00Z"],
+    ["2026-10-16T12:00Z", "2026-10-16T12:00:00Z"],
+  ])("takes the last copy for equal instants %s and %s", (first, second) => {
+    const forward = dedupeChecks([
+      entry("build", "success", { at: first }),
+      entry("build", "failure", { at: second }),
+    ]);
+    const reversed = dedupeChecks([
+      entry("build", "success", { at: second }),
+      entry("build", "failure", { at: first }),
+    ]);
 
-      expect([forward[0]?.status, reversed[0]?.status]).toEqual(["failure", "failure"]);
-    },
-  );
+    expect([forward[0]?.status, reversed[0]?.status]).toEqual(["failure", "failure"]);
+  });
 
-  it.each([["2026-10-16", "2026-10-15T23:00:00-02:00", "success"]])(
-    "uses text fallback for incomplete or invalid timestamp %s",
-    (malformed, valid, expected) => {
-      const malformedRun = entry("build", "success", { at: malformed });
-      const validRun = entry("build", "failure", { at: valid });
+  it.each([
+    ["2026-10-16", "2026-10-15T23:00:00-02:00", "success"],
+    ["2026-10-16T00:00:00", "2026-10-15T23:00:00-02:00", "success"],
+    ["2026-10-16T24:00:00.0001Z", "2026-10-17T00:00:00Z", "failure"],
+  ])("uses text fallback for incomplete or invalid timestamp %s", (malformed, valid, expected) => {
+    const malformedRun = entry("build", "success", { at: malformed });
+    const validRun = entry("build", "failure", { at: valid });
 
-      expect(
-        [
-          [malformedRun, validRun],
-          [validRun, malformedRun],
-        ].map((runs) => dedupeChecks(runs)[0]?.status),
-      ).toEqual([expected, expected]);
-    },
-  );
+    expect(
+      [
+        [malformedRun, validRun],
+        [validRun, malformedRun],
+      ].map((runs) => dedupeChecks(runs)[0]?.status),
+    ).toEqual([expected, expected]);
+  });
 
   it.each([["2026-02-30T00:00:00Z", "2026-03-01T00:00:00Z"]])(
     "uses text fallback for impossible date %s",

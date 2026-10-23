@@ -11,6 +11,7 @@ describe("desktop-approved window capture shortcut labels", () => {
     ["<Super>Left", ["Super", "Left"]],
     ["<Control>space", ["Ctrl", "Space"]],
     ["<Control>plus", ["Ctrl", "+"]],
+    ["Ctrl++", ["Ctrl", "+"]],
   ])("formats %s using the shared keycap labels", (label, expected) => {
     const shortcut = parseDesktopSnapShotShortcut(label);
     expect(shortcut).not.toBeNull();

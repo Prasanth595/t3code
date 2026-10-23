@@ -457,7 +457,7 @@ export function formatConnectReachable(
  * Sections of docs/user/t3-connect-troubleshooting.md. Each is the GitHub anchor of a
  * heading there; the test fails when a heading is renamed without updating this list.
  */
-const T3_CONNECT_TROUBLESHOOTING_SECTIONS = [
+export const T3_CONNECT_TROUBLESHOOTING_SECTIONS = [
   "the-hosts-tunnel-is-offline",
   "port-7844-is-blocked-on-the-host",
   "the-tunnel-works-but-t3-code-does-not-answer",

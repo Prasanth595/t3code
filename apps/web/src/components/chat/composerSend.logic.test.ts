@@ -79,12 +79,14 @@ describe("multipleModelSendBlock", () => {
     ).toBe("server-outdated");
   });
 
-  it.each([{ branch: null }, { selectionCount: 0 }])(
-    "needs a new Git thread with a branch and models (%o)",
-    (override) => {
-      expect(multipleModelSendBlock({ ...ready, ...override })).toBe("needs-new-git-thread");
-    },
-  );
+  it.each([
+    { isLocalDraftThread: false },
+    { isGitRepo: false },
+    { branch: null },
+    { selectionCount: 0 },
+  ])("needs a new Git thread with a branch and models (%o)", (override) => {
+    expect(multipleModelSendBlock({ ...ready, ...override })).toBe("needs-new-git-thread");
+  });
 });
 
 describe("approvalRedirectNotice", () => {
