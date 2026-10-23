@@ -161,7 +161,9 @@ interface FakePi {
   readonly deferNextState: () => void;
   readonly resolveDeferredState: (data: unknown) => Effect.Effect<void>;
   readonly failNextState: () => void;
-  readonly deferNextLifecycle: (type: "switch_session" | "new_session" | "fork") => void;
+  readonly deferNextLifecycle: (
+    type: "switch_session" | "new_session" | "fork" | "get_entries",
+  ) => void;
   readonly deferNextModelSelection: () => void;
   readonly queueModels: (models: ReadonlyArray<unknown>) => void;
   readonly vetoNextNewSession: () => void;
@@ -1390,6 +1392,52 @@ describe("PiAdapterV2", () => {
       assert.lengthOf(yield* takeRoster(), 1);
       assert.lengthOf(yield* takeRoster(), 0);
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps background work reported while a thread registers", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      fake.deferNextLifecycle("get_entries");
+      const registering = yield* runtime
+        .ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        })
+        .pipe(Effect.forkScoped);
+      const entries = yield* fake.takeRequest("get_entries");
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "status",
+        method: "setStatus",
+        statusKey: "t3:background",
+        statusText: "Build running",
+      });
+      yield* takeEvent(
+        (event) =>
+          event.type === "provider_thread.updated" &&
+          event.providerThread.pendingBackgroundTasks?.length === 1,
+      );
+      yield* fake.emit({
+        type: "response",
+        id: entries["id"],
+        command: "get_entries",
+        success: true,
+        data: { entries: [], leafId: null },
+      });
+      const providerThread = yield* Fiber.join(registering);
+      const registered = yield* takeEvent((event) => event.type === "provider_thread.updated");
+      for (const thread of [
+        providerThread,
+        registered.type === "provider_thread.updated" ? registered.providerThread : null,
+      ]) {
+        assert.deepStrictEqual(
+          thread?.pendingBackgroundTasks?.map((task) => task.taskId),
+          ["t3:background"],
+        );
+      }
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
