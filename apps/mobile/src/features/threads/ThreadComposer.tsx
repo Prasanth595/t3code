@@ -149,6 +149,7 @@ export function useCompactComposerEditor(
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
   const [compactWidth, setCompactWidth] = useState(0);
   const [labelYielded, setLabelYielded] = useState(false);
+  const [measuredRowWidth, setMeasuredRowWidth] = useState(0);
   if (labelYielded && value.length === 0) setLabelYielded(false);
   const contentHeight = contentSize.height;
   const rowWidth = useSharedValue(0);
@@ -220,7 +221,12 @@ export function useCompactComposerEditor(
     containerStyle,
     editorStyle,
     onRowLayout: (event: { nativeEvent: { layout: { width: number } } }) => {
-      rowWidth.set(event.nativeEvent.layout.width);
+      const width = event.nativeEvent.layout.width;
+      rowWidth.set(width);
+      if (width !== measuredRowWidth) {
+        setMeasuredRowWidth(width);
+        setCompactWidth(0);
+      }
     },
     onEditorLayout: (event: { nativeEvent: { layout: { x: number; width: number } } }) => {
       // The expanded toolbar gives this slot to the model control. Keep the
