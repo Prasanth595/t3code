@@ -12,7 +12,6 @@ import {
   projectScriptRuntimeEnv,
   projectScriptCwd,
   projectScriptReservesPort,
-  projectScriptTerminalId,
   projectScriptTerminalInput,
   resolveProjectScripts,
   settleProjectScript,
@@ -279,7 +278,10 @@ export const make = Effect.gen(function* () {
             cleaned.length === 0 ||
             cleaned.includes(input.sentinel) ||
             input.echoedWrapperLines.some(
-              (echoed) => cleaned === echoed || cleaned.endsWith(` ${echoed}`),
+              (echoed) =>
+                cleaned.trimStart() === echoed ||
+                (cleaned.endsWith(` ${echoed}`) &&
+                  /[$%#>] $/.test(cleaned.slice(0, -echoed.length))),
             ) ||
             input.onOutputLine === undefined
           ) {
@@ -401,50 +403,32 @@ export const make = Effect.gen(function* () {
       ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
       ...(input.projectCwd === undefined ? {} : { projectCwd: input.projectCwd }),
     };
+    const operationError =
+      (operation: ProjectSetupScriptOperationError["operation"]) => (cause: unknown) =>
+        new ProjectSetupScriptOperationError({ ...errorContext, operation, cause });
     // A thread whose origin cannot be read might be a link's: run nothing.
-    const thread = yield* threads.getThreadShell(ThreadId.make(input.threadId)).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProjectSetupScriptOperationError({
-            ...errorContext,
-            operation: "readThread",
-            cause,
-          }),
-      ),
-    );
+    const thread = yield* threads
+      .getThreadShell(ThreadId.make(input.threadId))
+      .pipe(Effect.mapError(operationError("readThread")));
     if (thread?.linkOrigin !== undefined && linkOriginIsFenced(thread.linkOrigin))
       return { status: "skipped-for-link" } as const;
-    const suppliedProject = input.project;
-    const projectById =
-      suppliedProject ??
-      (input.projectId
-        ? yield* projects.getById(ProjectId.make(input.projectId)).pipe(
-            Effect.map(Option.getOrUndefined),
-            Effect.mapError(
-              (cause) =>
-                new ProjectSetupScriptOperationError({
-                  ...errorContext,
-                  operation: "resolveProject",
-                  cause,
-                }),
-            ),
-          )
-        : null);
     const project =
-      suppliedProject ??
-      projectById ??
+      input.project ??
+      (input.projectId
+        ? yield* projects
+            .getById(ProjectId.make(input.projectId))
+            .pipe(
+              Effect.map(Option.getOrUndefined),
+              Effect.mapError(operationError("resolveProject")),
+            )
+        : null) ??
       (input.projectCwd
-        ? yield* projects.getByWorkspaceRoot(input.projectCwd).pipe(
-            Effect.map(Option.getOrUndefined),
-            Effect.mapError(
-              (cause) =>
-                new ProjectSetupScriptOperationError({
-                  ...errorContext,
-                  operation: "resolveProject",
-                  cause,
-                }),
-            ),
-          )
+        ? yield* projects
+            .getByWorkspaceRoot(input.projectCwd)
+            .pipe(
+              Effect.map(Option.getOrUndefined),
+              Effect.mapError(operationError("resolveProject")),
+            )
         : null);
 
     if (!project) {
@@ -452,14 +436,7 @@ export const make = Effect.gen(function* () {
     }
 
     const settings = yield* serverSettings.getSettings.pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProjectSetupScriptOperationError({
-            ...errorContext,
-            operation: "readSettings",
-            cause,
-          }),
-      ),
+      Effect.mapError(operationError("readSettings")),
     );
     const trigger = input.trigger ?? "setup";
     const scripts = resolveProjectScripts(settings, project);
@@ -479,16 +456,9 @@ export const make = Effect.gen(function* () {
       worktreePath: input.worktreePath,
     });
     const port = projectScriptReservesPort(script)
-      ? yield* scriptPorts.reserve({ cwd, scriptId: script.id }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProjectSetupScriptOperationError({
-                ...errorContext,
-                operation: "reservePort",
-                cause,
-              }),
-          ),
-        )
+      ? yield* scriptPorts
+          .reserve({ cwd, scriptId: script.id })
+          .pipe(Effect.mapError(operationError("reservePort")))
       : undefined;
     const launch = Effect.gen(function* () {
       const active = port === undefined ? undefined : activeRuns.get(port);
@@ -498,9 +468,11 @@ export const make = Effect.gen(function* () {
           : ({ status: "no-script" } as const);
       }
 
+      // A resumed thread can settle again while its earlier settle shell is still busy.
+      // Give each settle run a new terminal rather than typing into the foreground program.
       const terminalId =
         port !== undefined
-          ? projectScriptTerminalId(port)
+          ? `script-${port}`
           : trigger === "settle"
             ? `settle-${script.id}-${(yield* crypto.randomUUIDv4().pipe(Effect.orDie)).slice(0, 8)}`
             : `setup-${script.id}`;
@@ -544,16 +516,7 @@ export const make = Effect.gen(function* () {
           worktreePath: input.worktreePath,
           env,
         })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProjectSetupScriptOperationError({
-                ...errorContext,
-                operation: "openTerminal",
-                cause,
-              }),
-          ),
-        );
+        .pipe(Effect.mapError(operationError("openTerminal")));
       const expectedPid = opened.pid;
       if (expectedPid === null || opened.status !== "running") {
         return yield* new ProjectSetupScriptOperationError({
@@ -588,14 +551,7 @@ export const make = Effect.gen(function* () {
               data: projectScriptTerminalInput(commandLine),
             })
             .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProjectSetupScriptOperationError({
-                    ...errorContext,
-                    operation: "writeCommand",
-                    cause,
-                  }),
-              ),
+              Effect.mapError(operationError("writeCommand")),
               Effect.onError(() => Effect.sync(() => observed?.unsubscribe())),
             );
 

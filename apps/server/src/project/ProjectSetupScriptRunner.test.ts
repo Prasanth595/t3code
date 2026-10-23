@@ -26,6 +26,8 @@ it.effect("ReservedScript-overlappingStarts-reusesOwnerAndRetriesAfterCompletion
     const listeners = new Set<
       Parameters<TerminalManager.TerminalManager["Service"]["subscribe"]>[0]
     >();
+    const publish = (event: TerminalEvent) =>
+      Effect.forEach([...listeners], (listener) => listener(event), { discard: true });
     let openCount = 0;
     const openRequests: Array<Parameters<TerminalManager.TerminalManager["Service"]["open"]>[0]> =
       [];
@@ -41,7 +43,6 @@ it.effect("ReservedScript-overlappingStarts-reusesOwnerAndRetriesAfterCompletion
       icon: "play" as const,
       runOnWorktreeCreate: true,
       runOnSettle: true,
-      reservePort: true,
       previewUrl: "http://localhost:${T3CODE_PREVIEW_PORT}",
       async: false,
     };
@@ -82,15 +83,13 @@ it.effect("ReservedScript-overlappingStarts-reusesOwnerAndRetriesAfterCompletion
                 }
                 terminalExited = exitBeforeSubscribe;
                 if (terminalExited) {
-                  yield* Effect.forEach([...listeners], (listener) =>
-                    listener({
-                      type: "exited",
-                      threadId: request.threadId,
-                      terminalId: request.terminalId,
-                      exitCode: 1,
-                      exitSignal: null,
-                    }),
-                  );
+                  yield* publish({
+                    type: "exited",
+                    threadId: request.threadId,
+                    terminalId: request.terminalId,
+                    exitCode: 1,
+                    exitSignal: null,
+                  });
                 }
                 return {
                   ...request,
@@ -185,14 +184,12 @@ it.effect("ReservedScript-overlappingStarts-reusesOwnerAndRetriesAfterCompletion
       );
 
       const token = /__T3_SETUP_DONE___(\w+):/.exec(writes[0]!)![1];
-      yield* Effect.forEach([...listeners], (listener) =>
-        listener({
-          type: "output",
-          threadId: input.threadId,
-          terminalId: "script-43123",
-          data: `\r\n__T3_SETUP_DONE___${token}:0\r\n$ `,
-        }),
-      );
+      yield* publish({
+        type: "output",
+        threadId: input.threadId,
+        terminalId: "script-43123",
+        data: `\r\n__T3_SETUP_DONE___${token}:0\r\n$ `,
+      });
       assert.equal((yield* lifecycle.completion!).exitCode, 0);
       assert.equal(listeners.size, 0);
       failWrite = true;
@@ -211,26 +208,24 @@ it.effect("ReservedScript-overlappingStarts-reusesOwnerAndRetriesAfterCompletion
         projectId,
         worktreePath: input.worktreePath,
       });
-      yield* Effect.forEach([...listeners], (listener) =>
-        listener({
-          type: "restarted",
+      yield* publish({
+        type: "restarted",
+        threadId: input.threadId,
+        terminalId: "script-43123",
+        snapshot: {
           threadId: input.threadId,
           terminalId: "script-43123",
-          snapshot: {
-            threadId: input.threadId,
-            terminalId: "script-43123",
-            cwd: input.worktreePath,
-            worktreePath: input.worktreePath,
-            status: "running",
-            pid: 456,
-            history: "",
-            exitCode: null,
-            exitSignal: null,
-            label: "Shell",
-            updatedAt: project.createdAt,
-          },
-        }),
-      );
+          cwd: input.worktreePath,
+          worktreePath: input.worktreePath,
+          status: "running",
+          pid: 456,
+          history: "",
+          exitCode: null,
+          exitSignal: null,
+          label: "Shell",
+          updatedAt: project.createdAt,
+        },
+      });
       assert.equal(restarted.status, "started");
       if (restarted.status === "started") {
         assert.equal((yield* restarted.completion!).exitCode, null);
@@ -252,15 +247,13 @@ it.effect("ReservedScript-overlappingStarts-reusesOwnerAndRetriesAfterCompletion
         projectId,
         worktreePath: input.worktreePath,
       });
-      yield* Effect.forEach([...listeners], (listener) =>
-        listener({
-          type: "exited",
-          threadId: input.threadId,
-          terminalId: "script-43123",
-          exitCode: 0,
-          exitSignal: null,
-        }),
-      );
+      yield* publish({
+        type: "exited",
+        threadId: input.threadId,
+        terminalId: "script-43123",
+        exitCode: 0,
+        exitSignal: null,
+      });
       if (interruptedRun.status === "started") yield* interruptedRun.completion!;
 
       exitBeforeSubscribe = true;
@@ -284,7 +277,7 @@ it.effect("ReservedScript-overlappingStarts-reusesOwnerAndRetriesAfterCompletion
         },
       });
 
-      script.reservePort = false;
+      script.previewUrl = "http://localhost:5173";
       const outputLines: string[] = [];
       const observed = yield* runner.runForThread({
         threadId: input.threadId,
@@ -302,16 +295,14 @@ it.effect("ReservedScript-overlappingStarts-reusesOwnerAndRetriesAfterCompletion
       if (observed.status !== "started") return;
       const wrapper = writes.at(-1)!;
       const outputToken = /__T3_SETUP_DONE___(\w+):/.exec(wrapper)![1];
-      yield* Effect.forEach([...listeners], (listener) =>
-        listener({
-          type: "output",
-          threadId: input.threadId,
-          terminalId: "setup-output",
-          data: `${wrapper}\r\nReady (vite)\r\nbackend\r\n__T3_SETUP_DONE___${outputToken}:0\r\n$ `,
-        }),
-      );
+      yield* publish({
+        type: "output",
+        threadId: input.threadId,
+        terminalId: "setup-output",
+        data: `${wrapper}\r\n% (\r\nsubsh> )\r\nReady (vite)\r\nBuild complete ( 42 files )\r\nbackend\r\n__T3_SETUP_DONE___${outputToken}:0\r\n$ `,
+      });
       assert.equal((yield* observed.completion!).exitCode, 0);
-      assert.deepEqual(outputLines, ["Ready (vite)", "backend"]);
+      assert.deepEqual(outputLines, ["Ready (vite)", "Build complete ( 42 files )", "backend"]);
     }).pipe(Effect.provide(layer));
     assert.equal(listeners.size, 0);
   }),

@@ -235,7 +235,6 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
           scriptId: script.id,
         },
       });
-      if (currentRouteThreadKeyRef.current !== routeThreadKey) return;
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
@@ -249,11 +248,11 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       if (result.value.status === "no-script") {
         setThreadError(
           activeThreadId,
-          `"${script.name}" is no longer saved with a reserved port. Check the action and try again.`,
+          `"${script.name}" is no longer available. Check the action and try again.`,
         );
         return;
       }
-      if (!activeThreadRef) return;
+      if (currentRouteThreadKeyRef.current !== routeThreadKey || !activeThreadRef) return;
       previewPort = result.value.port;
       if (result.value.threadId === activeThreadId) {
         setTerminalUiLaunchContext({
@@ -315,7 +314,6 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       const targetTerminalId = launched.terminalId;
       focusTerminal(activeThreadRef, targetTerminalId);
       const openResult = await launched.result;
-      if (currentRouteThreadKeyRef.current !== routeThreadKey) return;
       if (openResult._tag === "Failure") {
         if (!isAtomCommandInterrupted(openResult)) {
           const error = squashAtomCommandFailure(openResult);
@@ -327,6 +325,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         return;
       }
 
+      if (currentRouteThreadKeyRef.current !== routeThreadKey) return;
       const writeResult = await terminalActions.writeToTerminal(
         targetTerminalId,
         options?.shellHistory === "preserve"
@@ -345,13 +344,12 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         return;
       }
     }
-    if (script.autoOpenPreview && script.previewUrl && isPreviewSupportedInRuntime()) {
+    if (currentRouteThreadKeyRef.current !== routeThreadKey) return;
+    const previewUrl = script.previewUrl && projectScriptPreviewUrl(script.previewUrl, previewPort);
+    if (script.autoOpenPreview && previewUrl && isPreviewSupportedInRuntime()) {
       const previewResult = await openUrlInPreview({
         threadRef: activeThreadRef,
-        url: resolveDiscoveredServerUrl(
-          activeThreadRef.environmentId,
-          projectScriptPreviewUrl(script, previewPort) ?? script.previewUrl,
-        ),
+        url: resolveDiscoveredServerUrl(activeThreadRef.environmentId, previewUrl),
         openPreview,
       });
       if (previewResult._tag === "Failure" && !isAtomCommandInterrupted(previewResult)) {
