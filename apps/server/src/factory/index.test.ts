@@ -35,7 +35,6 @@ import type { State } from "./domain/lifecycle.ts";
 import {
   factoryRuntime,
   FactoryLoop,
-  FactoryRuntime,
   gateDecided,
   gateItem,
   regateWords,
@@ -170,7 +169,10 @@ min_free_gib: 0
 const INVALID = VALID.replace("max_concurrent_runs: 1\n", "");
 const MISSING = "max_concurrent_runs: is missing";
 
-/** Builds FactoryRuntime over a temp base dir whose factory dir holds `config` (or no file) and returns the log lines. */
+// The host's own load would hold claims on a busy machine, such as the gate's.
+const idleLoad = () => ({ oneMinute: 0, cores: 1 });
+
+/** Builds the factory runtime over a temp base dir whose factory dir holds `config` (or no file) and returns the log lines. */
 const logsFor = (
   config: string | undefined,
   setup: (
@@ -197,7 +199,7 @@ const logsFor = (
 
       const built = yield* Effect.scoped(
         Layer.build(
-          FactoryRuntime.pipe(
+          factoryRuntime({ readLoad: idleLoad }).pipe(
             Layer.provide(
               Layer.succeed(Paths.FactoryPaths, {
                 baseDir,
@@ -366,7 +368,7 @@ describe("attention", () => {
   ) =>
     Effect.scoped(
       Layer.build(
-        FactoryRuntime.pipe(
+        factoryRuntime({ readLoad: idleLoad }).pipe(
           Layer.provide(Layer.succeed(Paths.FactoryPaths, dirs)),
           Layer.provide(Layer.succeed(FactoryProcess, process)),
           Layer.provide(noSessions),
@@ -447,7 +449,7 @@ describe("attention", () => {
         const dirs = yield* dirWith(config);
         const { calls, process } = recordingProcess();
         const context = yield* Layer.build(
-          FactoryRuntime.pipe(
+          factoryRuntime({ readLoad: idleLoad }).pipe(
             Layer.provide(Layer.succeed(Paths.FactoryPaths, dirs)),
             Layer.provide(Layer.succeed(FactoryProcess, process)),
             Layer.provide(noSessions),
@@ -607,7 +609,7 @@ describe("waking the pass when a factory thread's run changes status", () => {
     events: Stream.Stream<string, EventsError>,
   ) =>
     Layer.build(
-      factoryRuntime({ restartDelay: 0 }).pipe(
+      factoryRuntime({ restartDelay: 0, readLoad: idleLoad }).pipe(
         Layer.provide(Layer.succeed(Paths.FactoryPaths, dirs)),
         Layer.provide(noGh),
         Layer.provide(noSessions),
@@ -671,7 +673,7 @@ describe("waking the pass when a factory thread's run changes status", () => {
           }),
         );
         const loop = yield* Layer.build(
-          factoryRuntime({ restartDelay: 0 }).pipe(
+          factoryRuntime({ restartDelay: 0, readLoad: idleLoad }).pipe(
             Layer.provide(
               Layer.succeed(Paths.FactoryPaths, {
                 baseDir,
@@ -2341,7 +2343,7 @@ describe("reloading the machine config", () => {
       const machineConfigPath = join(factoryDir, "config.yml");
       if (config !== undefined) yield* fs.writeFileString(machineConfigPath, config);
       const context = yield* Layer.build(
-        factoryRuntime(options).pipe(
+        factoryRuntime({ readLoad: idleLoad, ...options }).pipe(
           Layer.provide(
             Layer.succeed(Paths.FactoryPaths, {
               baseDir,

@@ -514,6 +514,8 @@ const scenario = (spec: Spec) =>
       const factory = factoryRuntime({
         restartDelay: "100 millis",
         gateRemoteBase: `file://${remotes}`,
+        // The host's own load would hold the claim on a busy machine, such as the gate's.
+        readLoad: () => ({ oneMinute: 0, cores: 1 }),
       }).pipe(
         Layer.provide(
           Layer.mergeAll(

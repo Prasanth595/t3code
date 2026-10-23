@@ -58,7 +58,7 @@ const machine: MachineConfig = {
   feedbackSeconds: 600,
   notify: true,
   minFreeGib: 0,
-  maxLoadPerCore: 1,
+  maxLoadPerCore: 0,
 };
 
 const repo: Repo = {
