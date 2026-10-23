@@ -148,7 +148,6 @@ describe("bundled side panels", () => {
       pullRequest: 0,
       pullRequests: 0,
       files: 0,
-      pluginView: 0,
     });
   });
 });
