@@ -480,13 +480,15 @@ export const liveWorld = (
    * takes no slot (it records the conflict without a checkout), so it starts even when every slot
    * is taken. A run with no pull request on record, or a read that fails, is no conflict.
    */
-  const conflicting = (repo: Repo, run: RunId): Effect.Effect<boolean> =>
-    Effect.gen(function* () {
+  const conflicting = Effect.fn("Factory.conflicting")(
+    function* (repo: Repo, run: RunId) {
       const last = (yield* ledger(() => readProgress(readRun(dataDir, run).entries))).lastPr;
       if (last === null) return false;
       const pull = yield* trackerFor(repo.watched).pullRequest(last.pr);
       return pull !== null && pull.open && pull.mergeable === "conflicting";
-    }).pipe(Effect.orElseSucceed(() => false));
+    },
+    Effect.orElseSucceed(() => false),
+  );
   /**
    * The gate as a background fiber: its line is logged when it ends, as the pass's lines are, an
    * error goes to the run's ledger, a `stuck` or `abandoned` end raises its attention item, and the loop is
