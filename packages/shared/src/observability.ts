@@ -152,6 +152,11 @@ export interface TraceSink {
 export interface LocalFileTracerOptions extends TraceSinkOptions {
   readonly delegate?: Tracer.Tracer;
   readonly sink?: TraceSink;
+  /** Also hands each sampled span that ran at least `minDurationMs` to `record` as it ends. */
+  readonly onSlowSpan?: {
+    readonly minDurationMs: number;
+    readonly record: (record: EffectTraceRecord) => void;
+  };
 }
 
 type OtlpSpan = OtlpTracer.ScopeSpan["spans"][number];
@@ -587,9 +592,18 @@ export const makeLocalFileTracer = Effect.fn("makeLocalFileTracer")(function* (
       span: (spanOptions) => new Tracer.NativeSpan(spanOptions),
     });
 
+  const onSlowSpan = options.onSlowSpan;
+  const push =
+    onSlowSpan === undefined
+      ? sink.push
+      : (record: EffectTraceRecord) => {
+          sink.push(record);
+          if (record.durationMs >= onSlowSpan.minDurationMs) onSlowSpan.record(record);
+        };
+
   return Tracer.make({
     span(spanOptions) {
-      return new LocalFileSpan(spanOptions, delegate.span(spanOptions), sink.push);
+      return new LocalFileSpan(spanOptions, delegate.span(spanOptions), push);
     },
     ...(delegate.context ? { context: delegate.context } : {}),
   });

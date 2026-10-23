@@ -16,6 +16,7 @@ import * as ServerConfig from "../config.ts";
 import * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.ts";
 import * as ServerLogger from "../serverLogger.ts";
 import * as BrowserTraceCollector from "./BrowserTraceCollector.ts";
+import * as EventLoopMonitor from "./EventLoopMonitor.ts";
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
@@ -64,17 +65,25 @@ export const layer = Layer.unwrap(
                 resource,
               });
 
+        // The trace ring rotates in minutes on a busy host, so stall attribution keeps
+        // its own short list of the spans that could have blocked the loop.
+        const slowSpans = EventLoopMonitor.makeSlowSpanRing();
         const tracer = yield* makeLocalFileTracer({
           filePath: config.serverTracePath,
           maxBytes: config.traceMaxBytes,
           maxFiles: config.traceMaxFiles,
           batchWindowMs: config.traceBatchWindowMs,
           sink,
+          onSlowSpan: {
+            minDurationMs: EventLoopMonitor.SLOW_SPAN_MIN_MS,
+            record: slowSpans.record,
+          },
           ...(delegate ? { delegate } : {}),
         });
 
         return Layer.mergeAll(
           Layer.succeed(Tracer.Tracer, tracer),
+          Layer.succeed(EventLoopMonitor.RecentSlowSpans, slowSpans),
           BrowserTraceCollector.layer(sink),
         );
       }),

@@ -68,6 +68,30 @@ export class ServerSelfUpdate extends Context.Service<
   }
 >()("t3/cloud/selfUpdate/ServerSelfUpdate") {}
 
+/**
+ * Every log line of an update a client asked for, including the launcher handoff that
+ * carries the update ID, names the connection that asked.
+ */
+export const withUpdateRequester = (
+  selfUpdate: ServerSelfUpdate["Service"],
+  requestedBy: Readonly<Record<string, unknown>>,
+): ServerSelfUpdate["Service"] => {
+  const audited = <A>(
+    request: Readonly<Record<string, unknown>>,
+    effect: Effect.Effect<A, ServerSelfUpdateError>,
+  ) =>
+    Effect.logInfo("Server update requested", request).pipe(
+      Effect.andThen(effect),
+      Effect.annotateLogs({ requestedBy }),
+    );
+  return ServerSelfUpdate.of({
+    update: (input, reportProgress, onHandoffAccepted) =>
+      audited(input, selfUpdate.update(input, reportProgress, onHandoffAccepted)),
+    commitDesktopUpdate: (requestId, onHandoffAccepted) =>
+      audited({ requestId }, selfUpdate.commitDesktopUpdate(requestId, onHandoffAccepted)),
+  });
+};
+
 export const withRunningThreadContinuation = Effect.fn(
   "cloud.server_self_update.withRunningThreadContinuation",
 )(function* (input: {

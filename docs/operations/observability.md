@@ -103,9 +103,10 @@ the loop stalled for more than 2 s since the previous sample, it records a root
 on. The span time is when the sample ran, not when the stall happened.
 
 The trace file rotates in well under an hour on a busy server, so each stall is also appended as one
-NDJSON line to `event-loop-stalls.ndjson`, next to the trace file. A line has `time` and the span
-attributes. The file keeps the last 1000 or more stalls, with one rotated backup
-(`event-loop-stalls.ndjson.1`). Use it to see how often a server stalls over days.
+NDJSON line to `event-loop-stalls.ndjson`, next to the trace file, and logged with the same
+attributes. A line has `time` and the span attributes. Each file holds about 700 stalls, with one
+rotated backup (`event-loop-stalls.ndjson.1`). Use it to see how often a server stalls over days.
+`windowStartedAt` and `time` bound the window the stall happened in.
 
 Some delay is not recorded:
 
@@ -130,6 +131,27 @@ waiting. Read CPU together with page faults:
 - Low CPU with few major page faults points at synchronous disk I/O, such as SQLite reads or trace
   file writes.
 - Many `involuntaryContextSwitches` mean other processes were competing for the CPU.
+
+On Linux, the `mainThread*` fields cover only the main thread, not the SQLite worker.
+`mainThreadBlockedMs` is busy time spent neither on a CPU nor waiting for one: a wait in the kernel.
+With a large `mainThreadReadMb`, that wait was the main thread reading from disk. Both cover the
+window, not just the stall.
+
+`candidates` lists up to 3 spans that lasted at least as long as the stall and overlap the window,
+tightest first. When the blocking code is traced, the first is the span that blocked, often a
+`sqlite` span with its `db.connection` and query. A span that awaited I/O across the stall also
+matches, so treat the list as suspects. Its `traceId` joins it to the client connection below.
+
+### WebSocket Closes And Update Requests
+
+The server log records one `WebSocket closed` line per `/ws` connection: `endedBy`, the close code
+and reason, the connection's length, how long before the close the last frame arrived, the client
+session, surface and address, and the connection's `traceId`. `endedBy` is `connection_lost` (code
+1006, no close frame: a network drop or a killed client), `close_frame`, `session_invalidated`,
+`server_interrupted` or `server_error`. The connection's `GET /ws` span carries the same fields.
+
+An update a client asks for logs `Server update requested`, and every log line of that update,
+including the launcher handoff with its `updateId`, carries `requestedBy` with the same client fields.
 
 ### Related Artifacts
 

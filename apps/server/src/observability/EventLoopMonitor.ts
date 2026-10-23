@@ -1,9 +1,12 @@
-// @effect-diagnostics nodeBuiltinImport:off - only node:perf_hooks exposes the event loop delay histogram, and node:os the load average.
+// @effect-diagnostics nodeBuiltinImport:off - only node:perf_hooks exposes the event loop delay histogram, node:os the load average, and a synchronous procfs read the main thread's own counters.
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePerfHooks from "node:perf_hooks";
 
 import type { ServerEventLoopStall } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { RotatingFileSink } from "@t3tools/shared/logging";
+import type { EffectTraceRecord } from "@t3tools/shared/observability";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -25,11 +28,51 @@ import * as Metrics from "./Metrics.ts";
 const RESOLUTION_MS = 1000;
 const STALL_THRESHOLD_MS = 2000;
 const SAMPLE_INTERVAL = "30 seconds";
-const STALL_LOG_MAX_BYTES = 256 * 1024;
+// A line with candidates is about 1.5 KB. A host that stalls a few hundred times a
+// day still keeps a day of them, one rotated file at most.
+const STALL_LOG_MAX_BYTES = 1024 * 1024;
 // Long enough that users felt it. Shorter stalls stay in the log only.
 const NOTICEABLE_STALL_MS = 5000;
 // Clients show what they get, so an old stall must not explain a new drop.
 const NOTICEABLE_STALL_MAX_AGE_MS = 5 * 60_000;
+// A span that blocked the loop for a stall lasted at least the stall, and stalls start
+// above STALL_THRESHOLD_MS, so shorter spans can't be the cause.
+export const SLOW_SPAN_MIN_MS = STALL_THRESHOLD_MS - RESOLUTION_MS;
+// Long subscriptions and network calls also end up here. 128 holds a few sample
+// windows of them on a busy host, so the span that blocked is still there at the tick.
+const SLOW_SPAN_RING_SIZE = 128;
+const STALL_CANDIDATE_LIMIT = 3;
+const CANDIDATE_ATTRIBUTE_KEYS = [
+  "rpc.method",
+  "db.connection",
+  "db.lock_wait_ms",
+  "effect.sql.method",
+  "db.query.text",
+] as const;
+const CANDIDATE_QUERY_MAX_CHARS = 200;
+
+export interface SlowSpanRing {
+  readonly record: (span: EffectTraceRecord) => void;
+  readonly snapshot: () => ReadonlyArray<EffectTraceRecord>;
+}
+
+export const makeSlowSpanRing = (size = SLOW_SPAN_RING_SIZE): SlowSpanRing => {
+  const spans: Array<EffectTraceRecord> = [];
+  let next = 0;
+  return {
+    record: (span) => {
+      spans[next] = span;
+      next = (next + 1) % size;
+    },
+    snapshot: () => spans.slice(),
+  };
+};
+
+/** Recently ended slow spans, fed by the server's tracer. Empty without one. */
+export class RecentSlowSpans extends Context.Reference<SlowSpanRing>(
+  "t3/observability/RecentSlowSpans",
+  { defaultValue: () => ({ record: () => {}, snapshot: () => [] }) },
+) {}
 
 export class EventLoopMonitor extends Context.Reference<{
   /**
@@ -61,7 +104,43 @@ export interface EventLoopReadings {
   /** One-minute load average, undefined on Windows. */
   readonly loadAverage: number | undefined;
   readonly cpuCount: number;
+  /** The main thread's own counters over the readings, Linux only. */
+  readonly mainThread: MainThreadCounters | undefined;
 }
+
+/** CPU and runqueue time in ns, storage bytes the thread caused to be read. */
+export interface MainThreadCounters {
+  readonly cpuNs: number;
+  readonly runqueueNs: number;
+  readonly readBytes: number;
+  readonly readSyscalls: number;
+}
+
+// process.resourceUsage() sums every thread, including the SQLite worker. A synchronous
+// read of thread-self runs on the main thread, so it names that thread. Procfs files are
+// generated in memory, never read from disk.
+const readMainThreadCounters = (): MainThreadCounters | undefined => {
+  try {
+    const [cpuNs = Number.NaN, runqueueNs = Number.NaN] = NodeFS.readFileSync(
+      "/proc/thread-self/schedstat",
+      "utf8",
+    )
+      .trim()
+      .split(" ")
+      .map(Number);
+    const io = NodeFS.readFileSync("/proc/thread-self/io", "utf8");
+    const field = (name: string) => Number(new RegExp(`^${name}: (\\d+)$`, "m").exec(io)?.[1]);
+    const counters = {
+      cpuNs,
+      runqueueNs,
+      readBytes: field("read_bytes"),
+      readSyscalls: field("syscr"),
+    };
+    return Object.values(counters).every(Number.isFinite) ? counters : undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 // Node skips the first gap after a reset, so a stall right at a sample boundary can be missed.
 const makeNodeSampler = Effect.gen(function* () {
@@ -75,12 +154,16 @@ const makeNodeSampler = Effect.gen(function* () {
   );
   let elu = NodePerfHooks.performance.eventLoopUtilization();
   let usage = process.resourceUsage();
+  const readMainThread =
+    (yield* HostProcess.Platform) === "linux" ? readMainThreadCounters : () => undefined;
+  let mainThread = readMainThread();
   let sampledAt = NodePerfHooks.performance.now();
 
   // @effect-diagnostics-next-line returnEffectInGen:off - the read effect is the result.
   return Effect.sync(() => {
     const nextElu = NodePerfHooks.performance.eventLoopUtilization();
     const nextUsage = process.resourceUsage();
+    const nextMainThread = readMainThread();
     const nextSampledAt = NodePerfHooks.performance.now();
     const memory = process.memoryUsage();
     const loop = NodePerfHooks.performance.eventLoopUtilization(nextElu, elu);
@@ -102,10 +185,20 @@ const makeNodeSampler = Effect.gen(function* () {
       // Windows has no load average and reports 0, which a running process never sees elsewhere.
       loadAverage: NodeOS.loadavg()[0] || undefined,
       cpuCount: NodeOS.availableParallelism(),
+      mainThread:
+        mainThread === undefined || nextMainThread === undefined
+          ? undefined
+          : {
+              cpuNs: nextMainThread.cpuNs - mainThread.cpuNs,
+              runqueueNs: nextMainThread.runqueueNs - mainThread.runqueueNs,
+              readBytes: nextMainThread.readBytes - mainThread.readBytes,
+              readSyscalls: nextMainThread.readSyscalls - mainThread.readSyscalls,
+            },
     };
     histogram.reset();
     elu = nextElu;
     usage = nextUsage;
+    mainThread = nextMainThread;
     sampledAt = nextSampledAt;
     return readings;
   });
@@ -118,6 +211,65 @@ export const stallMs = ({ delayMaxNs, activeMs }: EventLoopReadings) => {
   if (delayMs <= STALL_THRESHOLD_MS || activeMs < delayMs) return undefined;
   return delayMs;
 };
+
+/**
+ * Where the main thread's busy time went. The loop was active but the thread was
+ * neither on a CPU nor waiting for one for `blockedMs`: it waited in the kernel, on a
+ * disk read, a page fault, or a lock.
+ */
+export const mainThreadAttributes = ({ activeMs, mainThread }: EventLoopReadings) => {
+  if (mainThread === undefined) return {};
+  const cpuMs = Math.round(mainThread.cpuNs / 1e6);
+  const runqueueMs = Math.round(mainThread.runqueueNs / 1e6);
+  return {
+    mainThreadCpuMs: cpuMs,
+    mainThreadRunqueueMs: runqueueMs,
+    mainThreadBlockedMs: Math.max(0, Math.round(activeMs) - cpuMs - runqueueMs),
+    mainThreadReadMb: Math.round(mainThread.readBytes / 1024 / 1024),
+    mainThreadReadSyscalls: mainThread.readSyscalls,
+  };
+};
+
+const startMs = (span: EffectTraceRecord) => Number(BigInt(span.startTimeUnixNano) / 1_000_000n);
+const endMs = (span: EffectTraceRecord) => Number(BigInt(span.endTimeUnixNano) / 1_000_000n);
+
+/**
+ * Spans that could have held the loop for this stall: they ran at least as long as it,
+ * minus the histogram's resolution, and overlap the sampled window. The tightest
+ * cover comes first, which is the innermost blocking span when the blocking code is
+ * traced. These are candidates: a span that awaited I/O across the stall also matches.
+ */
+export const stallCandidates = (
+  spans: ReadonlyArray<EffectTraceRecord>,
+  window: { readonly startMs: number; readonly endMs: number },
+  stallMs: number,
+) =>
+  spans
+    .filter(
+      (span) =>
+        span.durationMs >= stallMs - RESOLUTION_MS &&
+        startMs(span) <= window.endMs &&
+        endMs(span) >= window.startMs,
+    )
+    .toSorted((left, right) => left.durationMs - right.durationMs)
+    .slice(0, STALL_CANDIDATE_LIMIT)
+    .map((span) => {
+      const attributes: Record<string, unknown> = {};
+      for (const key of CANDIDATE_ATTRIBUTE_KEYS) {
+        const value = span.attributes[key];
+        if (value === undefined) continue;
+        attributes[key] =
+          typeof value === "string" ? value.slice(0, CANDIDATE_QUERY_MAX_CHARS) : value;
+      }
+      return {
+        name: span.name,
+        durationMs: Math.round(span.durationMs),
+        startedAt: DateTime.formatIso(DateTime.makeUnsafe(startMs(span))),
+        traceId: span.traceId,
+        spanId: span.spanId,
+        attributes,
+      };
+    });
 
 // Untraced: it runs inside every 30-second tick, which already has the monitor's own span.
 const recordGauges = Effect.fnUntraced(function* (readings: EventLoopReadings) {
@@ -149,6 +301,7 @@ const layerWith = (
     EventLoopMonitor,
     Effect.gen(function* () {
       const sample = yield* makeSampler;
+      const slowSpans = yield* RecentSlowSpans;
       // Clients sample on connect as well as the timer, and the sampler resets shared state.
       const sampling = yield* Semaphore.make(1);
       const warmedUp = yield* Ref.make(false);
@@ -175,9 +328,11 @@ const layerWith = (
         yield* recordGauges(readings);
         const delayMaxMs = stallMs(readings);
         if (delayMaxMs === undefined) return;
-        const { utilization, usage, rssBytes, loadAverage, cpuCount } = readings;
+        const { utilization, usage, rssBytes, loadAverage, cpuCount, elapsedMs } = readings;
         const now = yield* DateTime.now;
         const detectedAt = DateTime.formatIso(now);
+        const windowEndMs = DateTime.toEpochMillis(now);
+        const windowStartMs = windowEndMs - Math.round(elapsedMs);
         if (delayMaxMs >= NOTICEABLE_STALL_MS) {
           yield* Ref.set(latestNoticeableStall, {
             detectedAtMs: DateTime.toEpochMillis(now),
@@ -200,8 +355,16 @@ const layerWith = (
           minorPageFaults: usage.minorPageFault,
           involuntaryContextSwitches: usage.involuntaryContextSwitches,
           rssMb: Math.round(rssBytes / 1024 / 1024),
+          // The stall happened somewhere in this window; the sample only knows its length.
+          windowStartedAt: DateTime.formatIso(DateTime.makeUnsafe(windowStartMs)),
+          ...mainThreadAttributes(readings),
+          candidates: stallCandidates(
+            slowSpans.snapshot(),
+            { startMs: windowStartMs, endMs: windowEndMs },
+            delayMaxMs,
+          ),
         };
-        yield* Effect.logWarning(`event loop stalled for ${delayMaxMs} ms`).pipe(
+        yield* Effect.logWarning(`event loop stalled for ${delayMaxMs} ms`, attributes).pipe(
           Effect.withSpan("server.eventLoop.stall", { root: true, level: "Warn", attributes }),
         );
         if (stallSink !== undefined) {

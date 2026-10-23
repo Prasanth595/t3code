@@ -7,7 +7,9 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
+import * as References from "effect/References";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -474,3 +476,42 @@ it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
     }),
   );
 });
+
+it.effect("names the requesting connection on the launcher handoff line", () =>
+  Effect.gen(function* () {
+    const logs: Array<{ readonly text: unknown; readonly requestedBy: unknown }> = [];
+    const logger = Logger.make(({ fiber, message }) => {
+      logs.push({
+        text: Array.isArray(message) ? message[0] : message,
+        requestedBy: fiber.getRef(References.CurrentLogAnnotations)["requestedBy"],
+      });
+    });
+    const launcher = ServerSelfUpdate.ServerSelfUpdate.of({
+      update: (input) =>
+        Effect.logInfo("Server update prepared; handing off to the service launcher.", {
+          updateId: "359a409a",
+        }).pipe(
+          Effect.as({
+            targetVersion: input.targetVersion,
+            method: "boot-service" as const,
+            updateId: "359a409a",
+          }),
+        ),
+      commitDesktopUpdate: () => Effect.never,
+    });
+    const requestedBy = {
+      sessionId: "session-mbp",
+      surface: "desktop",
+      forwardedFor: "100.64.0.7",
+    };
+
+    yield* ServerSelfUpdate.withUpdateRequester(launcher, requestedBy)
+      .update({ targetVersion: "0.1.3-nightly.20261023.3553" })
+      .pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+
+    expect(logs).toEqual([
+      { text: "Server update requested", requestedBy },
+      { text: "Server update prepared; handing off to the service launcher.", requestedBy },
+    ]);
+  }),
+);
