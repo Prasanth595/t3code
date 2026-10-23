@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { DesktopBrowserEvent } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as NodeEvents from "node:events";
@@ -15,9 +16,7 @@ const decodeCdpReply = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ id: Schema.Number })),
 );
 const key = { threadId: "thread-1", tabId: "tab-1" };
-// The relay sends after a few microtasks; one macrotask lets them all land.
-// oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- a zero-delay macrotask boundary, not a wait for time
-const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+/** Sends a page command whose id the fake debugger records as it receives it. */
 const command = (
   host: DesktopBrowserHost.DesktopBrowserHost["Service"],
   id: number,
@@ -27,23 +26,25 @@ const command = (
     encodeJson({
       type: "cdp",
       ...key,
-      message: encodeJson({ id, method, sessionId: "t3-preview-page" }),
+      message: encodeJson({ id, method, params: { id }, sessionId: "t3-preview-page" }),
     }),
   );
 
 const makeDebuggee = () => {
   const emitter = new NodeEvents.EventEmitter();
   const pending: Array<() => void> = [];
-  const sent: Array<string> = [];
+  const sent: Array<unknown> = [];
+  const sendWaiters: Array<() => void> = [];
   const debuggee = Object.assign(emitter, {
-    sendCommand: (method: string) =>
+    sendCommand: (method: string, params?: { id?: number }) =>
       new Promise((resolve) => {
         if (method === "Target.getTargetInfo") {
           resolve({ targetInfo: { targetId: "GUEST" } });
           return;
         }
-        sent.push(method);
+        sent.push(params?.id);
         pending.push(() => resolve({ method }));
+        sendWaiters.shift()?.();
       }),
   });
   const webContents = Object.assign(new NodeEvents.EventEmitter(), {
@@ -58,7 +59,9 @@ const makeDebuggee = () => {
     },
     emit: (method: string, params: unknown) => emitter.emit("message", {}, method, params, ""),
     navigate: () => webContents.emit("did-navigate"),
+    /** Ids of the commands the debugger received, in order. */
     sent,
+    nextSend: () => new Promise<void>((resolve) => sendWaiters.push(resolve)),
     release: () => pending.splice(0).forEach((resolve) => resolve()),
     releaseFirst: () => pending.shift()?.(),
   };
@@ -70,6 +73,25 @@ const takeEvents = (host: DesktopBrowserHost.DesktopBrowserHost["Service"], coun
     Stream.runCollect,
     Effect.map((lines) => lines.map((line) => decodeEvent(new TextDecoder().decode(line)))),
   );
+
+/**
+ * Ids of the replies the host sends, in order. A screenshot's reply leaves after its turn
+ * has passed on, so by then the next waiting screenshot, if any, has been sent. Subscribe
+ * before sending commands: a new subscriber releases the tab's relay.
+ */
+const watchReplies = (host: DesktopBrowserHost.DesktopBrowserHost["Service"]) =>
+  Effect.gen(function* () {
+    const replies = yield* Queue.unbounded<number>();
+    yield* host.events.pipe(
+      Stream.map((line) => decodeEvent(new TextDecoder().decode(line))),
+      Stream.runForEach((event) =>
+        event.type === "cdp" ? Queue.offer(replies, decodeCdpReply(event.message).id) : Effect.void,
+      ),
+      Effect.forkScoped,
+    );
+    yield* Effect.yieldNow;
+    return replies;
+  });
 
 describe("DesktopBrowserHost", () => {
   it.effect("announces tabs already attached to a backend that starts later", () =>
@@ -114,20 +136,17 @@ describe("DesktopBrowserHost", () => {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
       host.attach(key, debuggee.tab);
-      const screenshots = () =>
-        debuggee.sent.filter((method) => method === "Page.captureScreenshot").length;
+      const replies = yield* watchReplies(host);
 
       yield* command(host, 1, "Page.captureScreenshot");
       yield* command(host, 2, "Page.captureScreenshot");
       yield* command(host, 3, "DOM.enable");
-      yield* Effect.promise(settle);
-      expect(screenshots()).toBe(1);
-      expect(debuggee.sent).toContain("DOM.enable");
+      expect(debuggee.sent).toEqual([1, 3]);
 
-      debuggee.release();
-      yield* Effect.promise(settle);
-      expect(screenshots()).toBe(2);
-    }),
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(1);
+      expect(debuggee.sent).toEqual([1, 3, 2]);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("stops waiting on a screenshot the page navigated away from", () =>
@@ -135,23 +154,23 @@ describe("DesktopBrowserHost", () => {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
       host.attach(key, debuggee.tab);
+      const replies = yield* watchReplies(host);
 
       yield* command(host, 1, "Page.captureScreenshot");
       yield* command(host, 2, "Page.captureScreenshot");
       yield* command(host, 3, "Page.captureScreenshot");
-      yield* Effect.promise(settle);
       debuggee.navigate();
-      yield* Effect.promise(settle);
-      expect(debuggee.sent).toEqual(["Page.captureScreenshot", "Page.captureScreenshot"]);
+      expect(debuggee.sent).toEqual([1, 2]);
 
       // The superseded screenshot answering late must not start a third beside the second.
       debuggee.releaseFirst();
-      yield* Effect.promise(settle);
-      expect(debuggee.sent).toHaveLength(2);
-      debuggee.release();
-      yield* Effect.promise(settle);
-      expect(debuggee.sent).toHaveLength(3);
-    }),
+      expect(yield* Queue.take(replies)).toBe(1);
+      expect(debuggee.sent).toEqual([1, 2]);
+
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(2);
+      expect(debuggee.sent).toEqual([1, 2, 3]);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("drops screenshots a released relay left waiting", () =>
@@ -164,13 +183,12 @@ describe("DesktopBrowserHost", () => {
       yield* command(host, 2, "Page.captureScreenshot");
       yield* host.handleCommandLine(encodeJson({ type: "release", ...key }));
       yield* command(host, 3, "Page.captureScreenshot");
-      yield* Effect.promise(settle);
+      expect(debuggee.sent).toEqual([1]);
+
+      const sent = debuggee.nextSend();
       debuggee.release();
-      yield* Effect.promise(settle);
-      expect(debuggee.sent).toEqual(["Page.captureScreenshot", "Page.captureScreenshot"]);
-      debuggee.release();
-      yield* Effect.promise(settle);
-      expect(debuggee.sent).toEqual(["Page.captureScreenshot", "Page.captureScreenshot"]);
+      yield* Effect.promise(() => sent);
+      expect(debuggee.sent).toEqual([1, 3]);
     }),
   );
 
