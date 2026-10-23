@@ -1,9 +1,9 @@
+import { act, render as renderScreen, type Screen } from "../../../test/render";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import { act, cloneElement, Suspense, use, type ReactElement, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { cloneElement, Suspense, use, type ReactElement, type ReactNode } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { useRightPanelStore } from "~/rightPanelStore";
 
@@ -18,42 +18,79 @@ const { siblingsByEnvironment, Wrapper, MenuContext, RadioContext } = await vi.h
   };
 });
 
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
-vi.mock("~/state/server", () => ({
-  primaryServerKeybindingsAtom: {},
-  serverEnvironment: { configValueAtom: () => null },
+vi.mock("@effect/atom-react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@effect/atom-react")>()),
+  useAtomValue: () => [],
 }));
+vi.mock("~/state/server", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    environmentServerConfigsAtom: Atom.make(new Map()),
+    primaryServerKeybindingsAtom: {},
+    serverEnvironment: { configValueAtom: () => null },
+  };
+});
 // This client holds every scope, so files can be read, written and previewed.
 vi.mock("~/state/filesystem", () => ({
+  filesystemEnvironment: {},
   useFilesystemReadAccess: () => ({ canReadFiles: true, isPending: false, error: null }),
 }));
-vi.mock("~/state/session", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/state/session")>()),
-  useEnvironmentScope: () => true,
-  readEnvironmentScope: () => true,
-}));
+vi.mock("~/state/session", async () => {
+  const { Atom, AsyncResult } = await import("effect/reactivity");
+  const Option = await import("effect/Option");
+  return {
+    environmentSession: {
+      initialConfigValueAtom: Atom.family(() => Atom.make(null)),
+      preparedConnectionValueAtom: Atom.family(() => Atom.make(Option.none())),
+      sessionStateAtom: Atom.family(() => Atom.make(AsyncResult.initial())),
+    },
+    environmentSessionStatesAtom: () => Atom.make([]),
+    readPreparedConnection: () => null,
+    usePreparedConnection: () => null,
+
+    useEnvironmentScope: () => true,
+    readEnvironmentScope: () => true,
+  };
+});
 // The desktop app hosts these browsers itself, so no environment's server browser is consulted.
-vi.mock("~/browser/previewRuntime", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/browser/previewRuntime")>()),
+vi.mock("~/browser/previewRuntime", () => ({
   previewRuntimeFor: () => undefined,
   isPreviewAvailableFor: () => true,
   usePreviewAvailable: () => true,
 }));
 vi.mock("~/state/environments", () => ({
-  useEnvironmentHttpBaseUrl: () => null,
+  useEnvironmentHttpBaseUrl: () => "http://localhost:3773/",
   usePrimaryEnvironmentId: () => null,
+  useEnvironment: () => ({ label: "Local" }),
 }));
-vi.mock("~/remoteOpen", () => ({ useRemoteOpenState: () => ({ mode: "local-exec" }) }));
+vi.mock("~/remoteOpen", () => ({
+  openRemoteEditorUrl: vi.fn(),
+  useRemoteCapableEditors: () => [],
+  useRemoteOpenHint: () => null,
+  resolveRemoteOpenState: () => ({ mode: "local-exec" }),
+  useRemoteOpenResolution: () => ({ mode: "local-exec" }),
+  useRemoteOpenState: () => ({ mode: "local-exec" }),
+}));
 vi.mock("~/hooks/useSettings", () => ({
+  updateClientSettings: vi.fn(),
+  ensureClientSettingsHydrated: () => Promise.resolve(),
+  getClientSettings: () => DEFAULT_CLIENT_SETTINGS,
   useClientSettings: (select: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
     select(DEFAULT_CLIENT_SETTINGS),
   useUpdateClientSettings: () => vi.fn(),
 }));
-vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "light" }) }));
+vi.mock("~/hooks/useTheme", () => ({
+  useRenderedAppearance: () => "light",
+  useTheme: () => ({ resolvedTheme: "light" }),
+}));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("~/state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
-vi.mock("~/components/files/projectFilesQueryState", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/components/files/projectFilesQueryState")>()),
+vi.mock("~/components/files/projectFilesQueryState", () => ({
+  confirmProjectFileQueryData: vi.fn(),
+  getUnsavedProjectFileQueryData: () => null,
+  getOptimisticProjectFileQueryData: () => null,
+  getProjectFileContents: () => undefined,
+  setProjectFileQueryData: vi.fn(),
   useProjectFileQuery: () => ({
     data: null,
     error: null,
@@ -90,6 +127,11 @@ vi.mock("~/components/ui/tooltip", () => ({
 }));
 // Menus render through a portal; these stand-ins keep their open and pick semantics.
 vi.mock("~/components/ui/menu", () => ({
+  MenuItemLabel: Wrapper,
+  MenuShortcut: () => null,
+  MenuSub: Wrapper,
+  MenuSubTrigger: Wrapper,
+  MenuSubPopup: Wrapper,
   Menu: ({
     children,
     onOpenChange,
@@ -139,10 +181,8 @@ const refOn = (environmentId: string): ScopedThreadRef => ({
   environmentId: EnvironmentId.make(environmentId),
   threadId,
 });
-let root: Root;
-let container: HTMLDivElement;
 
-async function renderFileFor(threadRef: ScopedThreadRef) {
+async function renderFileFor(screen: Screen, threadRef: ScopedThreadRef) {
   const host: PanelHost = {
     threadRef,
     visible: true,
@@ -171,7 +211,7 @@ async function renderFileFor(threadRef: ScopedThreadRef) {
     </PanelHostContext>
   );
   await act(async () => {
-    root.render(element);
+    await screen.rerender(element);
   });
 }
 
@@ -179,14 +219,16 @@ async function press(node: HTMLButtonElement) {
   await act(async () => node.click());
 }
 
-async function openSrcFolder() {
-  const browse = container.querySelectorAll<HTMLButtonElement>('button[aria-label="Browse src"]');
+async function openSrcFolder(screen: Screen) {
+  const browse = screen.container.querySelectorAll<HTMLButtonElement>(
+    'button[aria-label="Browse src"]',
+  );
   expect(browse).toHaveLength(1);
   await press(browse[0]!);
 }
 
-const siblingValues = () =>
-  Array.from(container.querySelectorAll<HTMLButtonElement>("button[data-value]")).map(
+const siblingValues = (screen: Screen) =>
+  Array.from(screen.container.querySelectorAll<HTMLButtonElement>("button[data-value]")).map(
     (node) => node.dataset.value,
   );
 
@@ -194,13 +236,43 @@ const surfacesOf = (threadRef: ScopedThreadRef) =>
   useRightPanelStore.getState().byThreadKey[scopedThreadKey(threadRef)]?.surfaces;
 
 // Transform the lazy body once up front, so mounting it settles inside one act().
-beforeAll(() => import("./FilesSidePanel"), 30_000);
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
 
+describe("files side panel", () => {
+  it("opens a sibling file as a tab in the host's own thread", async () => {
+    resetFixture();
+    await import("./FilesSidePanel");
+    await using screen = await renderScreen(null, { router: false });
+    const threadRef = refOn("environment-a");
+    await renderFileFor(screen, threadRef);
+    await openSrcFolder(screen);
+    expect(siblingValues(screen)).toEqual(["src/a.ts", "src/b.ts"]);
+
+    await press(
+      screen.container.querySelector<HTMLButtonElement>('button[data-value="src/b.ts"]')!,
+    );
+    expect(surfacesOf(threadRef)).toMatchObject([{ kind: "file", relativePath: "src/b.ts" }]);
+    expect(surfacesOf(refOn("environment-b"))).toBeUndefined();
+  });
+
+  it("follows the host to another environment's thread with the same id", async () => {
+    resetFixture();
+    await import("./FilesSidePanel");
+    await using screen = await renderScreen(null, { router: false });
+    await renderFileFor(screen, refOn("environment-a"));
+    const threadRef = refOn("environment-b");
+    await renderFileFor(screen, threadRef);
+    await openSrcFolder(screen);
+    expect(siblingValues(screen)).toEqual(["src/a.ts", "src/c.ts"]);
+
+    await press(
+      screen.container.querySelector<HTMLButtonElement>('button[data-value="src/c.ts"]')!,
+    );
+    expect(surfacesOf(threadRef)).toMatchObject([{ kind: "file", relativePath: "src/c.ts" }]);
+    expect(surfacesOf(refOn("environment-a"))).toBeUndefined();
+  });
+});
+
+function resetFixture() {
   localStorage.clear();
   siblingsByEnvironment.clear();
   siblingsByEnvironment.set("environment-a", ["src/a.ts", "src/b.ts"]);
@@ -210,34 +282,4 @@ beforeEach(() => {
     threadPanelVisibilityByThreadKey: {},
     userActionRevisionByThreadKey: {},
   });
-});
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
-
-describe("files side panel", () => {
-  it("opens a sibling file as a tab in the host's own thread", async () => {
-    const threadRef = refOn("environment-a");
-    await renderFileFor(threadRef);
-    await openSrcFolder();
-    expect(siblingValues()).toEqual(["src/a.ts", "src/b.ts"]);
-
-    await press(container.querySelector<HTMLButtonElement>('button[data-value="src/b.ts"]')!);
-    expect(surfacesOf(threadRef)).toMatchObject([{ kind: "file", relativePath: "src/b.ts" }]);
-    expect(surfacesOf(refOn("environment-b"))).toBeUndefined();
-  });
-
-  it("follows the host to another environment's thread with the same id", async () => {
-    await renderFileFor(refOn("environment-a"));
-    const threadRef = refOn("environment-b");
-    await renderFileFor(threadRef);
-    await openSrcFolder();
-    expect(siblingValues()).toEqual(["src/a.ts", "src/c.ts"]);
-
-    await press(container.querySelector<HTMLButtonElement>('button[data-value="src/c.ts"]')!);
-    expect(surfacesOf(threadRef)).toMatchObject([{ kind: "file", relativePath: "src/c.ts" }]);
-    expect(surfacesOf(refOn("environment-a"))).toBeUndefined();
-  });
-});
+}
