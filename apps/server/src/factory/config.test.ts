@@ -179,13 +179,12 @@ describe("project config", () => {
       expect(project(inline).limits).toEqual(c.limits);
     });
 
-    it("must still be an integer of at least one", () => {
-      for (const bad of ['"many"', "0", "-1", "1.5", "[1]", "null", "true"]) {
-        const errs = projectErr(edit(PROJECT, (t) => set(t, "factory.limits.regates", bad)));
-        assertOne(errs, "factory.limits.regates", PFILE);
+    it("is ignored whatever its value", () => {
+      const without = project(PROJECT).limits;
+      for (const value of ["5", "0", "-1", '"many"', "[1]", "null"]) {
+        const c = project(edit(PROJECT, (t) => set(t, "factory.limits.regates", value)));
+        expect(c.limits).toEqual(without);
       }
-      const errs = projectErr(edit(PROJECT, (t) => set(t, "factory.limits.regates", "0")));
-      expect(errs[0]!.message).toBe("must be an integer of at least 1");
     });
   });
 

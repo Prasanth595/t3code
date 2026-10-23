@@ -2579,7 +2579,7 @@ describe("gate: the base branch moves", () => {
           ...passingOn(BASE, 1),
           regateLine(BASE, MOVED),
         ] as ReadonlyArray<RunEvent>);
-        baseAndHeadMoved(rig);
+        baseMoved(rig, 0);
         assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
         assert.strictEqual(rig.ws.gateCalls, 1);
         assert.strictEqual(eventsOf(rig, "gate_regate").length, 1);
@@ -4357,7 +4357,7 @@ describe("regate: the head or the base of a ready pull request moved", () => {
   );
 });
 
-describe("regate: what the run's line says moved", () => {
+describe("regate: what the run's line says started it", () => {
   const movedOf = (rig: Rig): Moved | null =>
     readProgress(readRun(rig.dataDir, rig.run).entries).regateMoved;
 
@@ -4436,7 +4436,7 @@ describe("regate: what the run's line says moved", () => {
     }),
   );
 
-  it.effect("a pass whose base was not recorded is said as such and not as no pass", () =>
+  it.effect("a conflict is said for a pass whose base was not recorded, not as no pass", () =>
     Effect.gen(function* () {
       // A ledger written before checkout lines existed: the pass has a head and no base. The
       // head did not move, so only a conflict GitHub reports gates it again, and the line must
@@ -4446,8 +4446,22 @@ describe("regate: what the run's line says moved", () => {
       rig.gh.pr = { ...rig.gh.pr!, mergeable: "conflicting" };
       assert.deepStrictEqual(yield* regateIn(rig), {
         step: { kind: "sent-back", attempt: 2 },
-        moved: "unknown",
+        moved: "conflict",
       });
+    }),
+  );
+
+  it.effect("a conflict is said when the base also moved and the head did not", () =>
+    Effect.gen(function* () {
+      const rig = yield* prOpenRun();
+      baseMoved(rig, 0);
+      rig.gh.pr = { ...rig.gh.pr!, mergeable: "conflicting" };
+      passThenFail(rig);
+      assert.deepStrictEqual(yield* regateIn(rig), {
+        step: { kind: "sent-back", attempt: 2 },
+        moved: "conflict",
+      });
+      assert.strictEqual(movedOf(rig), "conflict");
     }),
   );
 
