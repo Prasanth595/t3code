@@ -1,8 +1,15 @@
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  type PullRequestReviewGuide,
+} from "@t3tools/contracts";
 import { useEffect } from "react";
 import { expect, it } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
+import { GuideTour } from "../pullRequest/guide/GuideTour";
 import type { ChatComposerHandle } from "./ChatComposer";
 import { useChatShortcuts } from "./useChatShortcuts";
 
@@ -93,4 +100,46 @@ it("still types other letters into the composer while the launcher is open", asy
 
   expect(composerKeys).toEqual(["a"]);
   expect(received).toEqual([]);
+});
+
+const guide: PullRequestReviewGuide = {
+  headSha: "head",
+  generatedAt: "2026-09-01T00:00:00Z",
+  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+  stops: ["First change", "Second change", "Third change"].map((title) => ({
+    title,
+    summary: "",
+    attention: null,
+    excerpts: [],
+    files: [],
+    notes: [],
+    questions: [],
+  })),
+};
+
+it("steps the review guide with J after clicking its prose instead of typing into the composer", async () => {
+  const composerKeys: string[] = [];
+  await using screen = await render(<Chat composerKeys={composerKeys} />, options);
+  await screen.rerender(
+    <>
+      <Chat composerKeys={composerKeys} />
+      <GuideTour
+        environmentId={EnvironmentId.make("env-1")}
+        reference={{ projectId: ProjectId.make("project-1"), repository: "acme/app", number: 1 }}
+        guide={guide}
+        banner={null}
+        active
+        commenting={null}
+        onAsk={null}
+        onFinish={null}
+        onOpenFile={() => {}}
+      />
+    </>,
+  );
+  await page.getByRole("heading", { name: "First change" }).click();
+
+  await userEvent.keyboard("j");
+
+  expect(composerKeys).toEqual([]);
+  await expect.element(page.getByRole("heading", { name: "Second change" })).toBeVisible();
 });
