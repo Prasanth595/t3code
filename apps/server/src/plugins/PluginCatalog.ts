@@ -208,7 +208,7 @@ export class PluginCatalog extends Context.Service<
      * stays disabled, and consent is never granted.
      */
     readonly settleReplace: (
-      input: PluginConsentInput,
+      input: PluginConsentInput & { readonly attemptId?: string },
       files?: {
         readonly paths: ReadonlyArray<string>;
         readonly restore: Effect.Effect<void, PluginCatalogError>;
