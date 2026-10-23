@@ -875,34 +875,47 @@ export function GeneralSettingsPanel() {
   // saved model, so substituting one here would show a model that never runs.
   const textGenerationFallbackSelection =
     settings.textGenerationFallbackModelSelection ?? textGenerationModelSelection;
-  // Turning the fallback on starts from another provider, since a model on the
+  // Every target's saved primary, not the one shown above: the server tries the
+  // saved model even when the picker substitutes a ready provider for it.
+  const textGenerationPrimaries = targets.map(
+    (candidate) => candidate.settings.textGenerationModelSelection,
+  );
+  const isTextGenerationPrimary = (instanceId: ProviderInstanceId, model: string) =>
+    textGenerationPrimaries.some(
+      (primary) => primary.instanceId === instanceId && primary.model === model,
+    );
+  // Turning the fallback on starts from another provider, since a model on a
   // primary's provider goes down with it.
   const textGenerationFallbackSeeds = textGenerationProviders
-    .filter((provider) =>
-      textGenerationModelInstanceEntries.some(
-        (entry) =>
-          entry.instanceId === provider.instanceId &&
-          entry.instanceId !== textGenInstanceId &&
-          entry.enabled &&
-          entry.isAvailable,
-      ),
+    .filter(
+      (provider) =>
+        !textGenerationPrimaries.some((primary) => primary.instanceId === provider.instanceId) &&
+        textGenerationModelInstanceEntries.some(
+          (entry) => entry.instanceId === provider.instanceId && entry.enabled && entry.isAvailable,
+        ),
     )
     .map((provider) => resolveAppModelSelectionState(settings, [provider]));
-  // Generation never retries the model that just failed, so the primary model
+  // Generation never retries the model that just failed, so a primary model
   // would be a fallback that never runs.
   const textGenerationFallbackDisabledReason = (instanceId: ProviderInstanceId, model: string) =>
-    instanceId === textGenInstanceId && model === textGenModel
+    isTextGenerationPrimary(instanceId, model)
       ? "This is already the text generation model."
       : textGenerationModelDisabledReason(instanceId, model);
-  // For the same reason, a primary model that lands on the fallback turns the
-  // fallback off rather than leaving a switch on that never retries.
+  // For the same reason, a primary that lands on the fallback turns the fallback
+  // off. The clear is written to every target, so it is skipped when another
+  // target keeps a different fallback that still works.
   const textGenerationModelPatch = (selection: ModelSelection) => {
-    const fallback = settings.textGenerationFallbackModelSelection;
+    const isSelection = (fallback: ModelSelection | null) =>
+      fallback !== null &&
+      fallback.instanceId === selection.instanceId &&
+      fallback.model === selection.model;
+    const fallbacks = targets.map(
+      (candidate) => candidate.settings.textGenerationFallbackModelSelection,
+    );
     return {
       textGenerationModelSelection: selection,
-      ...(fallback &&
-      fallback.instanceId === selection.instanceId &&
-      fallback.model === selection.model
+      ...(fallbacks.some(isSelection) &&
+      fallbacks.every((fallback) => fallback === null || isSelection(fallback))
         ? { textGenerationFallbackModelSelection: null }
         : {}),
     };
