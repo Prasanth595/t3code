@@ -458,12 +458,15 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
       assert.equal(launched.serverKind, "managed");
       const pid = yield* readManagedPid("old-alias");
 
+      // Earlier launchers recorded the renamed key as external.
+      yield* fs.makeDirectory(stateDir("new-alias"), { recursive: true });
+      yield* fs.writeFileString(`${stateDir("new-alias")}/managed`, "external\n");
       assert.deepEqual(yield* launch("new-alias"), launched);
       assert.equal(yield* readManagedPid("new-alias"), pid);
       assert.isFalse(yield* fs.exists(`${stateDir("old-alias")}/managed`));
       assert.isTrue(isAlive(pid));
 
-      // The server came from new-alias's runner, so a different runner under
+      // new-alias now holds the server's runner, so a different runner under
       // the next key is an update and replaces it.
       yield* fs.writeFileString(`${stateDir("new-alias")}/run-t3.sh`, "# previous runner\n");
       assert.equal((yield* launch("newer-alias")).serverKind, "managed");

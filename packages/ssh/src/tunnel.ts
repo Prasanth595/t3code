@@ -669,6 +669,10 @@ elif [ -n "$DEFAULT_REMOTE_PORT" ] && PREVIOUS_STATE_DIR="$(launcher_state_dir_f
   else
     RUNNER_CHANGED=1
   fi
+  if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+    kill "$REMOTE_PID" 2>/dev/null || true
+    wait_for_pid_exit "$REMOTE_PID"
+  fi
   REMOTE_PID="$DEFAULT_RUNTIME_PID"
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   REMOTE_MANAGED="managed"
