@@ -46,7 +46,8 @@ vi.mock("~/state/session", async () => {
     },
     environmentSessionStatesAtom: () => Atom.make([]),
     readPreparedConnection: () => null,
-    usePreparedConnection: () => null,
+    usePreparedConnection: (): ReturnType<typeof import("~/state/session").usePreparedConnection> =>
+      Option.none(),
 
     useEnvironmentScope: () => true,
     readEnvironmentScope: () => true,
@@ -213,6 +214,9 @@ async function renderFileFor(screen: Screen, threadRef: ScopedThreadRef) {
   await act(async () => {
     await screen.rerender(element);
   });
+  await expect
+    .element(screen.getByRole("navigation", { name: "File path", exact: true }))
+    .toBeVisible();
 }
 
 async function press(node: HTMLButtonElement) {
@@ -220,6 +224,9 @@ async function press(node: HTMLButtonElement) {
 }
 
 async function openSrcFolder(screen: Screen) {
+  await expect
+    .element(screen.getByRole("button", { name: "Browse src", exact: true }))
+    .toBeVisible();
   const browse = screen.container.querySelectorAll<HTMLButtonElement>(
     'button[aria-label="Browse src"]',
   );
