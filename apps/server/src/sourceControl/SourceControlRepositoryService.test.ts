@@ -321,15 +321,19 @@ it.effect("reports both failures when the HTTPS retry fails too", () =>
   }),
 );
 
-it.effect("retries an Azure SSH clone using its HTTPS host and repository path", () =>
+it.effect.each([
+  "git@ssh.dev.azure.com:v3/Fabrikam/Project1/fab_repo",
+  "ssh://user:pa@rt@ssh.dev.azure.com/v3/Fabrikam/Project1/fab_repo",
+  "ssh://us%40er:pa%40ss@ssh.dev.azure.com/v3/Fabrikam/Project1/fab_repo",
+])("retries Azure SSH URL %s using its HTTPS host and repository path", (remoteUrl) =>
   Effect.gen(function* () {
     const urls: Array<string> = [];
     const result = yield* cloneInTemporaryDirectory(rejectingSsh(urls, false), {
-      remoteUrl: "git@ssh.dev.azure.com:v3/Fabrikam/Project1/fab_repo",
+      remoteUrl,
     });
 
     assert.deepStrictEqual(urls, [
-      "git@ssh.dev.azure.com:v3/Fabrikam/Project1/fab_repo",
+      remoteUrl,
       "https://dev.azure.com/Fabrikam/Project1/_git/fab_repo",
     ]);
     assert.strictEqual(result.remoteUrl, "https://dev.azure.com/Fabrikam/Project1/_git/fab_repo");
