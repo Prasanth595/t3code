@@ -132,7 +132,8 @@ A project whose remote is an `entire://` clone URL is an Entire repository; one 
 repositories; T3 Code lists and reviews its change in your repository, and links to a change on
 entire.com open it in T3 Code. Diffs are read from your checkout, fetching the change from the
 `entire://` remote without moving your branches. A line comment is an Entire finding, and the
-repository's gates show as `Entire:` checks. Descriptions with formatting Entire can't keep, such
+repository's gates show as `Entire:` checks. A change shows its trail's description, and editing it
+edits the trail's. Descriptions with formatting Entire can't keep, such
 as strikethrough or nested lists, are edited on entire.com. Create repositories with
 `entire repo create`.
 

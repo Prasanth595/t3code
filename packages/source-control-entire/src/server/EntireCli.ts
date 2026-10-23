@@ -60,6 +60,13 @@ export interface EntireRepositoryCoordinates {
   readonly cluster: string | null;
 }
 
+/** One of Entire's processing cells, as `entire cluster list` names it. */
+export interface EntireCell {
+  readonly slug: string;
+  readonly jurisdiction: string;
+  readonly apiUrl: string;
+}
+
 export class EntireCli extends Context.Service<
   EntireCli,
   {
@@ -69,8 +76,18 @@ export class EntireCli extends Context.Service<
     readonly token: Effect.Effect<Redacted.Redacted<string>, EntireCliError>;
     readonly invalidateToken: Effect.Effect<void>;
     readonly viewer: Effect.Effect<string, EntireCliError>;
+    /** Where a project trail is served: its project's processing cell, not a repository's. */
+    readonly cells: Effect.Effect<ReadonlyArray<EntireCell>, EntireCliError>;
   }
 >()("@t3tools/source-control-entire/server/EntireCli") {}
+
+const decodeClusterList = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Array(
+      Schema.Struct({ slug: Schema.String, jurisdiction: Schema.String, apiUrl: Schema.String }),
+    ),
+  ),
+);
 
 const decodeRepositoryView = Schema.decodeUnknownOption(
   Schema.fromJsonString(
@@ -197,6 +214,19 @@ export const make = Effect.gen(function* () {
     return login;
   });
 
+  const lookupCells = Effect.fn("EntireCli.cells")(function* () {
+    const output = yield* run("EntireCli.cells", ["cluster", "list", "--json"]);
+    const cells = output.exitCode === 0 ? decodeClusterList(output.stdout.trim()) : Option.none();
+    if (Option.isNone(cells))
+      return yield* new EntireCliFailedError({
+        operation: "list Entire's cells",
+        detail:
+          boundedDetail(Option.getOrUndefined(firstNonEmptyLine(output.stderr))) ??
+          `\`entire cluster list\` exited ${output.exitCode}.`,
+      });
+    return cells.value;
+  });
+
   const repositories = yield* Cache.makeWith(lookupRepository, {
     capacity: 64,
     timeToLive: (exit) => (Exit.isSuccess(exit) ? REPOSITORY_TTL : Duration.zero),
@@ -211,6 +241,10 @@ export const make = Effect.gen(function* () {
         : MISSING_TTL;
   const tokens = yield* Cache.makeWith(lookupToken, { capacity: 1, timeToLive: signedInTtl });
   const viewers = yield* Cache.makeWith(lookupViewer, { capacity: 1, timeToLive: signedInTtl });
+  const cells = yield* Cache.makeWith(lookupCells, {
+    capacity: 1,
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? REPOSITORY_TTL : Duration.zero),
+  });
 
   return EntireCli.of({
     repository: Effect.fn("EntireCli.repository")((reference) =>
@@ -222,6 +256,7 @@ export const make = Effect.gen(function* () {
       Cache.invalidate(viewers, "viewer"),
     ),
     viewer: Cache.get(viewers, "viewer"),
+    cells: Cache.get(cells, "cells"),
   });
 });
 

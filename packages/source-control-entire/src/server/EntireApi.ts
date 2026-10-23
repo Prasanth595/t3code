@@ -45,6 +45,11 @@ export interface EntireApiRequest {
   readonly method?: "GET" | "POST" | "PATCH" | "PUT";
   readonly path: string;
   readonly scope?: "repository" | "project" | "collection";
+  /**
+   * Sends the request to this processing cell instead of the repository's: a project trail is
+   * served by its project's cell, which a repository mirrored elsewhere does not share.
+   */
+  readonly cell?: { readonly slug: string; readonly jurisdiction: string };
   readonly headers?: Readonly<Record<string, string>>;
   readonly body?: unknown;
 }
@@ -172,18 +177,44 @@ export const make = Effect.gen(function* () {
     return { repository, coordinates };
   });
 
+  // Matched on slug and jurisdiction both, as the CLI does: a cell is never guessed.
+  const cellApiUrl = Effect.fn("EntireApi.cellApiUrl")(function* (
+    cell: NonNullable<EntireApiRequest["cell"]>,
+    fail: ReturnType<typeof failure>,
+  ) {
+    const cells = yield* cli.cells.pipe(
+      Effect.mapError((cause) =>
+        fail({ status: null, reason: cliFailure(cause), detail: cause.message, cause }),
+      ),
+    );
+    const match = cells.find(
+      (candidate) =>
+        candidate.slug === cell.slug &&
+        candidate.jurisdiction.toLowerCase() === cell.jurisdiction.toLowerCase(),
+    );
+    if (match === undefined)
+      return yield* fail({
+        status: null,
+        reason: "failed",
+        detail: `Entire's cell list has no ${cell.slug} in ${cell.jurisdiction}.`,
+      });
+    return match.apiUrl;
+  });
+
   const requestJson = Effect.fn("EntireApi.requestJson")(function* <S extends JsonSchema>(
     input: EntireApiRequest,
     schema: S,
   ) {
     const fail = failure(input.operation);
     const { repository, coordinates } = yield* locate(input);
-    const origin = entireApiOrigin(coordinates.apiUrl);
+    const apiUrl =
+      input.cell === undefined ? coordinates.apiUrl : yield* cellApiUrl(input.cell, fail);
+    const origin = entireApiOrigin(apiUrl);
     if (origin === null)
       return yield* fail({
         status: null,
         reason: "failed",
-        detail: `The Entire CLI named ${coordinates.apiUrl} as the API, which is not an Entire API host.`,
+        detail: `The Entire CLI named ${apiUrl} as the API, which is not an Entire API host.`,
       });
     yield* Effect.annotateCurrentSpan({
       "entire.operation": input.operation,

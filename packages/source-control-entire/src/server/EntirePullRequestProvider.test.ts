@@ -6,7 +6,13 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as EntirePullRequestProvider from "./EntirePullRequestProvider.ts";
 import * as Fixtures from "./entireFixtures.ts";
-import { Answer, fakeEntire, TRAIL_COLLECTION } from "./entireTestServer.ts";
+import {
+  Answer,
+  fakeEntire,
+  PROJECT_CELL_ORIGIN,
+  PROJECT_TRAILS,
+  TRAIL_COLLECTION,
+} from "./entireTestServer.ts";
 
 const target = { cwd: "/repo", host: "entire.io", repository: "gh/acme/web", number: 7 };
 
@@ -150,63 +156,122 @@ describe("EntirePullRequestProvider", () => {
     },
   );
 
-  it.effect("renames a trail, and rewrites its description against the version read", () => {
-    const parent = { number: 1070, url: "https://entire.com/et/acme/-/trails/1070" };
-    const reads: Array<unknown> = [
-      { ...Fixtures.detail, parent, body_document: { text_snapshot: "Old", etag: 'W/"d1"' } },
-      // No document yet: there is no version to name.
-      { ...Fixtures.detail, body_document: { text_snapshot: "", etag: "" } },
-    ];
+  it.effect("renames a trail, and refuses a description it can't route to a project trail", () => {
     const server = fakeEntire({
       "PATCH /trails/7": { trail: {} },
-      "GET /trails/7": () => reads.shift(),
-      "PUT /trails/7/body": { etag: 'W/"d2"' },
+      "GET /trails/7": {
+        ...Fixtures.detail,
+        body_document: { text_snapshot: "Old", etag: 'W/"d1"' },
+      },
     });
     return Effect.gen(function* () {
       const provider = yield* EntirePullRequestProvider.make;
       yield* provider.updateChangeRequest!({ ...target, title: "Add the other thing" });
-      yield* provider.updateChangeRequest!({
+      const error = yield* provider.updateChangeRequest!({
         ...target,
-        body: `Part of trail [#1070](${parent.url}) on Entire.\n\nNew`,
-      });
-      yield* provider.updateChangeRequest!({ ...target, body: "First" });
-      const writes = server.sent.filter((request) => request.method !== "GET");
+        title: "Renamed",
+        body: "New",
+      }).pipe(Effect.flip);
+      assert.strictEqual(
+        error.detail,
+        "T3 Code couldn't reach this change's project trail to save the description. Try again, or edit it on entire.com.",
+      );
+      // Neither the description nor the title was written.
       assert.deepStrictEqual(
-        writes.map((request) => [
-          `${request.method} ${request.path}`,
-          request.body,
-          request.headers["if-match"],
-        ]),
-        [
-          ["PATCH /trails/7", { title: "Add the other thing" }, undefined],
-          ["PUT /trails/7/body", { markdown: "New", overwrite: false }, 'W/"d1"'],
-          ["PUT /trails/7/body", { markdown: "First", overwrite: false }, undefined],
-        ],
+        server.sent
+          .filter((request) => request.method !== "GET")
+          .map((request) => [`${request.method} ${request.path}`, request.body]),
+        [["PATCH /trails/7", { title: "Add the other thing" }]],
       );
     }).pipe(Effect.provide(server.layer));
   });
 
-  it.effect.each([412, 409])(
-    "asks for a refresh when the description changed elsewhere (%s)",
-    (status) => {
+  describe("a change's project trail", () => {
+    const trailPath = `${PROJECT_TRAILS}/01J0PARENT0000000000000000`;
+    const parent = {
+      number: 1070,
+      url: "https://entire.com/gh/acme/-/trails/1070",
+      path: trailPath,
+      primary_processing_cell: "aws-eu-central-1",
+      jurisdiction: "eu",
+    };
+    const link = `Part of trail [#1070](${parent.url}) on Entire.`;
+    const change = {
+      ...Fixtures.detail,
+      parent,
+      body_document: { text_snapshot: "The copy taken at linking", etag: 'W/"c1"' },
+    };
+
+    it.effect("shows the project trail's description, read from its project's cell", () => {
       const server = fakeEntire({
-        "GET /trails/7": Fixtures.detail,
-        "PUT /trails/7/body": new Answer(status, { detail: "If-Match does not match" }),
-        "PATCH /trails/7": { trail: {} },
+        "GET /trails/7": change,
+        [`GET ${trailPath}`]: { bodyDocument: { text_snapshot: "The intent, as edited" } },
       });
+      return Effect.gen(function* () {
+        const provider = yield* EntirePullRequestProvider.make;
+        const detail = yield* provider.getChangeRequest(target);
+        assert.strictEqual(detail.body, `${link}\n\nThe intent, as edited`);
+        assert.strictEqual(
+          server.sent.find((request) => request.path === trailPath)?.origin,
+          PROJECT_CELL_ORIGIN,
+        );
+      }).pipe(Effect.provide(server.layer));
+    });
+
+    it.effect("falls back to the change's copy when the project trail can't be read", () => {
+      const server = fakeEntire({ "GET /trails/7": change });
+      return Effect.gen(function* () {
+        const provider = yield* EntirePullRequestProvider.make;
+        const detail = yield* provider.getChangeRequest(target);
+        assert.strictEqual(detail.body, `${link}\n\nThe copy taken at linking`);
+      }).pipe(Effect.provide(server.layer));
+    });
+
+    it.effect("saves a description edit to the project trail, against the version read", () => {
+      const server = fakeEntire(
+        {
+          "GET /trails/7": change,
+          [`GET ${trailPath}`]: { bodyDocument: { text_snapshot: "Old intent" } },
+          [`PATCH ${trailPath}`]: {},
+        },
+        { etag: 'W/"p1"' },
+      );
+      return Effect.gen(function* () {
+        const provider = yield* EntirePullRequestProvider.make;
+        yield* provider.updateChangeRequest!({ ...target, body: `${link}\n\nNew intent` });
+        assert.deepStrictEqual(server.writes(), [`PATCH ${trailPath}`]);
+        const write = server.sent.at(-1);
+        assert.deepStrictEqual(write?.body, { body: "New intent" });
+        assert.strictEqual(write?.headers["if-match"], 'W/"p1"');
+        assert.strictEqual(write?.origin, PROJECT_CELL_ORIGIN);
+      }).pipe(Effect.provide(server.layer));
+    });
+
+    it.effect("asks for a refresh when the project trail changed since it was read", () => {
+      const server = fakeEntire(
+        {
+          "GET /trails/7": change,
+          [`GET ${trailPath}`]: { bodyDocument: { text_snapshot: "Old intent" } },
+          [`PATCH ${trailPath}`]: new Answer(412, { title: "Precondition Failed" }),
+        },
+        { etag: 'W/"p1"' },
+      );
       return Effect.gen(function* () {
         const provider = yield* EntirePullRequestProvider.make;
         const error = yield* provider.updateChangeRequest!({
           ...target,
           title: "Renamed",
-          body: "Mine",
+          body: "New intent",
         }).pipe(Effect.flip);
-        assert.include(error.detail, "changed elsewhere");
+        assert.strictEqual(
+          error.detail,
+          "The description changed elsewhere. Refresh and try again.",
+        );
         // The title is left as it was.
-        assert.deepStrictEqual(server.writes(), ["PUT /trails/7/body"]);
+        assert.deepStrictEqual(server.writes(), [`PATCH ${trailPath}`]);
       }).pipe(Effect.provide(server.layer));
-    },
-  );
+    });
+  });
 
   it.effect("refuses to rewrite formatting Entire's markdown would lose, title and all", () => {
     const server = fakeEntire({
@@ -214,7 +279,6 @@ describe("EntirePullRequestProvider", () => {
         ...Fixtures.detail,
         body_document: { text_snapshot: "Plain", etag: 'W/"d1"' },
       },
-      "PUT /trails/7/body": { etag: 'W/"d2"' },
     });
     return Effect.gen(function* () {
       const provider = yield* EntirePullRequestProvider.make;

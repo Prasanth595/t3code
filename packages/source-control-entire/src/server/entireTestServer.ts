@@ -20,6 +20,8 @@ const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown
 
 export const API_ORIGIN = "https://aws-us-east-2.api.entire.io";
 export const REPO_ID = "01J0REPO";
+/** A project's processing cell, apart from the repository's. */
+export const PROJECT_CELL_ORIGIN = "https://aws-eu-central-1.api.entire.io";
 export const PROJECT_ID = "01J0PROJECT";
 /** Where repository-scoped project trails of `gh/acme/*` live. */
 export const PROJECT_TRAILS = "/api/v1/gh/acme/trails";
@@ -141,6 +143,10 @@ export function fakeEntire(
         invalidations++;
       }),
       viewer: Effect.succeed("alice"),
+      cells: Effect.succeed([
+        { slug: "aws-us-east-2", jurisdiction: "us", apiUrl: API_ORIGIN },
+        { slug: "aws-eu-central-1", jurisdiction: "eu", apiUrl: PROJECT_CELL_ORIGIN },
+      ]),
     }),
   );
   const remoteUrl = options.remoteUrl === undefined ? REMOTE_URL : options.remoteUrl;

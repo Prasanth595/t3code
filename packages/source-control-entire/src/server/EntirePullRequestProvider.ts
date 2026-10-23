@@ -116,16 +116,18 @@ export const make = Effect.gen(function* () {
       ...(cause === undefined ? {} : { cause }),
     });
 
-  const read = <S extends Schema.Codec<unknown, unknown, never, never>>(
+  const readVersioned = <S extends Schema.Codec<unknown, unknown, never, never>>(
     operation: string,
     input: ProviderRepositoryRef,
-    request: Pick<EntireApi.EntireApiRequest, "method" | "path" | "body" | "headers" | "scope">,
+    request: Pick<
+      EntireApi.EntireApiRequest,
+      "method" | "path" | "body" | "headers" | "scope" | "cell"
+    >,
     schema: S,
   ) =>
     api
       .requestJson({ ...request, cwd: input.cwd, repository: input.repository, operation }, schema)
       .pipe(
-        Effect.map(({ body }) => body),
         Effect.mapError(
           (error) =>
             new PullRequestProviderError({
@@ -138,7 +140,44 @@ export const make = Effect.gen(function* () {
         ),
       );
 
+  const read = <S extends Schema.Codec<unknown, unknown, never, never>>(
+    operation: string,
+    input: ProviderRepositoryRef,
+    request: Parameters<typeof readVersioned>[2],
+    schema: S,
+  ) => readVersioned(operation, input, request, schema).pipe(Effect.map(({ body }) => body));
+
   const trailPath = (input: TrailRef) => `/trails/${input.number}`;
+
+  const readProjectTrail = (
+    operation: string,
+    input: TrailRef,
+    route: NonNullable<ReturnType<typeof Json.projectTrailRoute>>,
+  ) =>
+    readVersioned(
+      operation,
+      input,
+      { scope: "collection", path: route.path, cell: route.cell },
+      Json.EntireProjectTrail,
+    );
+
+  /** The change's description, which is its project trail's wherever that can be read. */
+  const description = Effect.fn("EntirePullRequestProvider.description")(function* (
+    input: TrailRef,
+    trail: Json.EntireTrailDetail,
+  ) {
+    const route = Json.projectTrailRoute(trail);
+    if (route === null) return Json.changeBody(trail);
+    return yield* readProjectTrail("getChangeRequest", input, route).pipe(
+      Effect.map(({ body }) => Json.changeBody(trail, body.bodyDocument ?? null)),
+      // The change keeps a copy from when it was linked, which beats no description.
+      Effect.catch((error) =>
+        Effect.logDebug("Entire project trail unreadable; showing the change's copy", {
+          detail: error.detail,
+        }).pipe(Effect.as(Json.changeBody(trail))),
+      ),
+    );
+  });
 
   const readTrail = (operation: string, input: TrailRef) =>
     read(operation, input, { path: trailPath(input) }, Json.EntireTrailDetail);
@@ -606,39 +645,59 @@ export const make = Effect.gen(function* () {
     yield* Cache.invalidate(revisions, revisionsKey(input));
   });
 
+  const refreshSentences = {
+    409: "The description changed elsewhere. Refresh and try again.",
+    412: "The description changed elsewhere. Refresh and try again.",
+  };
+
+  // The description lives on the change's project trail, as on entire.com; a change without
+  // one keeps its own. Either write is conditional on the version just read.
   const bodyRewrite = Effect.fn("EntirePullRequestProvider.bodyRewrite")(function* (
     input: TrailRef,
     body: string,
   ) {
     const trail = yield* readTrail("updateChangeRequest", input);
     const markdown = Json.ownBody(trail, body);
+    const route = Json.projectTrailRoute(trail);
+    const projectTrail = route
+      ? yield* readProjectTrail("updateChangeRequest", input, route)
+      : null;
+    const current = projectTrail
+      ? Json.changeBody(trail, projectTrail.body.bodyDocument ?? null)
+      : Json.changeBody(trail);
     // Entire converts the markdown back to rich text; refuse what the round trip would drop.
     const lost =
-      EntireTrailBody.unpreservedMarkdown(Json.ownBody(trail, Json.changeBody(trail))) ??
+      EntireTrailBody.unpreservedMarkdown(Json.ownBody(trail, current)) ??
       EntireTrailBody.unpreservedMarkdown(markdown);
     if (lost !== null)
       return yield* failure(
         "updateChangeRequest",
         `This description has formatting T3 Code can't preserve; edit it on ${ENTIRE_WEB_HOST} (${lost}).`,
       );
-    const etag = trail.body_document?.etag;
-    yield* read(
+    if (route && projectTrail) {
+      if (projectTrail.etag === null)
+        return yield* failure(
+          "updateChangeRequest",
+          `Entire sent no version to save the description against; edit it on ${ENTIRE_WEB_HOST}.`,
+        );
+      return yield* readVersioned(
+        "updateChangeRequest",
+        input,
+        {
+          method: "PATCH",
+          scope: "collection",
+          path: route.path,
+          cell: route.cell,
+          headers: { "if-match": projectTrail.etag },
+          body: { body: markdown },
+        },
+        Ignored,
+      ).pipe(Effect.asVoid, Effect.mapError(explained(refreshSentences)));
+    }
+    // Entire keeps a change's description only on its project trail.
+    return yield* failure(
       "updateChangeRequest",
-      input,
-      {
-        method: "PUT",
-        path: `${trailPath(input)}/body`,
-        ...(etag ? { headers: { "if-match": etag } } : {}),
-        body: { markdown, overwrite: false },
-      },
-      Ignored,
-    ).pipe(
-      Effect.mapError(
-        explained({
-          409: "The description changed elsewhere. Refresh and try again.",
-          412: "The description changed elsewhere. Refresh and try again.",
-        }),
-      ),
+      `T3 Code couldn't reach this change's project trail to save the description. Try again, or edit it on ${ENTIRE_WEB_HOST}.`,
     );
   });
 
@@ -843,7 +902,7 @@ export const make = Effect.gen(function* () {
       return {
         ...Json.toDetailChangeRequest(trail, input.repository),
         headSha: Json.headSha(trail),
-        body: Json.changeBody(trail),
+        body: yield* description(input, trail),
         changedFiles: yield* changedFiles(input, trail),
         closedAt: null,
         mergedAt: trail.merged_at ?? null,

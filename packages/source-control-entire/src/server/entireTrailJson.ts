@@ -58,6 +58,10 @@ export const EntireTrail = Schema.Struct({
         number: PositiveInt,
         url: Schema.optional(Schema.String),
         project_id: Schema.optional(Schema.String),
+        /** The project trail's own route, served by the project's cell. */
+        path: Schema.optional(Schema.String),
+        primary_processing_cell: Schema.optional(Schema.String),
+        jurisdiction: Schema.optional(Schema.String),
       }),
     ),
   ),
@@ -474,8 +478,43 @@ function projectTrailLink(detail: EntireTrailDetail): string | null {
     : null;
 }
 
-export function changeBody(detail: EntireTrailDetail): string {
-  const body = detail.body_document ? EntireTrailBody.trailBodyMarkdown(detail.body_document) : "";
+const BodyDocument = Schema.Struct({
+  text_snapshot: Schema.String,
+  content_json: Schema.optional(Schema.Unknown),
+});
+type BodyDocument = typeof BodyDocument.Type;
+
+/** A project trail, as far as its description goes. */
+export const EntireProjectTrail = Schema.Struct({
+  bodyDocument: Schema.optional(Schema.NullOr(BodyDocument)),
+});
+
+const PROJECT_TRAIL_PATH = /^\/api\/v1(\/(?:gh|et)\/[a-z0-9-]+\/trails\/[0-9A-HJKMNP-TV-Z]{26})$/u;
+
+/**
+ * Where the change's project trail is read and written: its route below `/api/v1`, and the cell
+ * that serves it. Null for a change with no project trail, or a reference too thin to route.
+ */
+export function projectTrailRoute(detail: EntireTrailDetail): {
+  readonly path: string;
+  readonly cell: { readonly slug: string; readonly jurisdiction: string };
+} | null {
+  const parent = detail.parent;
+  const path = parent?.path ? PROJECT_TRAIL_PATH.exec(parent.path)?.[1] : undefined;
+  const slug = parent?.primary_processing_cell?.trim();
+  const jurisdiction = parent?.jurisdiction?.trim();
+  return path && slug && jurisdiction ? { path, cell: { slug, jurisdiction } } : null;
+}
+
+/**
+ * The description shown for a change: its project trail's when that was read, since the
+ * change's own is a copy taken when it was linked, else the change's.
+ */
+export function changeBody(
+  detail: EntireTrailDetail,
+  description: BodyDocument | null | undefined = detail.body_document,
+): string {
+  const body = description ? EntireTrailBody.trailBodyMarkdown(description) : "";
   const link = projectTrailLink(detail);
   if (link === null) return body;
   return body.length === 0 ? link : `${link}\n\n${body}`;
