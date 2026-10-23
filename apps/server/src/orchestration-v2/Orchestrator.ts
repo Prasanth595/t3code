@@ -708,6 +708,20 @@ function isTerminalDelegatedTaskStatus(status: OrchestrationV2Subagent["status"]
   );
 }
 
+/**
+ * A workflow member's result is final once its turn completes. Its run then waits only for the
+ * checkpoint capture that records the files it changed, which diffs and revert read once it
+ * lands; the workflow takes the result now instead of after the capture.
+ */
+function settledWorkflowMemberRun<R extends OrchestrationV2Run | undefined>(
+  thread: Pick<OrchestrationV2ThreadProjection["thread"], "lineage">,
+  run: R,
+): R {
+  return run !== undefined && run.status === "waiting" && thread.lineage.workflowId !== undefined
+    ? { ...run, status: "completed" }
+    : run;
+}
+
 function delegatedTaskTerminalStatus(
   status: OrchestrationV2Run["status"],
 ): OrchestrationV2Subagent["status"] | null {
@@ -12110,12 +12124,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
       const taskRuns = childControls.runs.filter((run) => run.delegatedTaskId === options.task.id);
-      const childRun =
+      const childRun = settledWorkflowMemberRun(
+        childControls.thread,
         taskRuns.length === 0
           ? options.task.id === forkedFrom.nodeId
             ? options.resultRun
             : undefined
-          : taskRuns.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+          : taskRuns.toSorted((a, b) => b.ordinal - a.ordinal)[0],
+      );
       if (childRun === undefined) return;
       const stopRequested =
         childRun.status === "completed" &&
@@ -12410,6 +12426,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     )
       return;
     const progress = delegatedTaskProgress(childControls);
+    const latestRun = childControls.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+    const settledMemberRun = settledWorkflowMemberRun(childControls.thread, latestRun);
+    const memberTurnSettled = settledMemberRun !== latestRun;
     const parent = yield* projectionStore.getThreadRecords(parentThreadId, [
       "subagents",
       "contextTransfers",
@@ -12419,7 +12438,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         task.origin !== "app_owned" ||
         task.childThreadId !== childThreadId ||
         (task.id === childControls.thread.forkedFrom.nodeId &&
-          progress.state !== "result_available") ||
+          progress.state !== "result_available" &&
+          !memberTurnSettled) ||
         (task.result !== null &&
           parent.contextTransfers.some(
             (transfer) =>
@@ -12427,10 +12447,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ))
       )
         continue;
+      const resultRun = memberTurnSettled ? settledMemberRun : progress.resultRun;
       yield* finalizeAppOwnedSubagentTask(childControls, {
         ...options,
         task,
-        ...(progress.resultRun === undefined ? {} : { resultRun: progress.resultRun }),
+        ...(resultRun === undefined ? {} : { resultRun }),
       });
     }
 
@@ -13404,6 +13425,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (stored.event.type !== "run.updated") return;
       const threadId = stored.event.threadId;
       const run = stored.event.payload;
+      // A completed turn persists as waiting until its checkpoint capture lands. Only a
+      // workflow member's result is taken then (see settledWorkflowMemberRun).
+      if (
+        run.status === "waiting" &&
+        !(yield* projectionStore.getThread(threadId).pipe(
+          Effect.map((thread) => thread.lineage.workflowId !== undefined),
+          // This stream also promotes queued runs, so a failed read must not end it.
+          Effect.orElseSucceed(() => false),
+        ))
+      ) {
+        return;
+      }
       // Take parent and child locks sequentially, never nested: delegation holds the parent
       // while writing child events, so nesting parent inside child would invert the order.
       // The keyed semaphores are neither reentrant nor deadlock-aware.
@@ -13462,6 +13495,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ((stored.event.payload.delegatedTaskId !== undefined &&
             (stored.event.payload.status === "queued" ||
               stored.event.payload.status === "starting")) ||
+            stored.event.payload.status === "waiting" ||
             stored.event.payload.status === "completed" ||
             stored.event.payload.status === "interrupted" ||
             stored.event.payload.status === "failed" ||
