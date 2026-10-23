@@ -22,6 +22,7 @@ import {
   MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH,
 } from "@t3tools/shared/toolOutput";
 
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 
 export class PiRpcError extends Schema.TaggedError<PiRpcError>()("PiRpcError", {
@@ -146,11 +147,17 @@ function summarizePiError(error: unknown): string {
  * Stdout closure is not enough to diagnose an early crash: Pi 0.84+ can exit 1
  * on import before writing any protocol line.
  */
-function describePiStdoutClosure(exitCode: number | undefined): string {
+function describePiStdoutClosure(exitCode: number | undefined, startupStderr: string): string {
   if (exitCode === undefined || !Number.isFinite(exitCode)) {
     return "pi process closed stdout";
   }
-  return `pi process exited with code ${exitCode}`;
+  const diagnostic = startupStderr
+    .split("\n")
+    .filter((line) =>
+      /^(?:Error(?: \[[A-Z_]+\])?|SyntaxError|TypeError|ReferenceError):/.test(line),
+    )
+    .join("\n");
+  return `pi process exited with code ${exitCode}${diagnostic.length === 0 ? "" : `; startup stderr: ${makeProviderFailure({ message: diagnostic }).message}`}`;
 }
 
 function parsePiRecord(line: string): PiRpcRecord | undefined {
@@ -200,6 +207,9 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
 
   let childExited = false;
   let diagnosingStdoutClose = false;
+  let receivedProtocolRecord = false;
+  let startupStderr = "";
+  const stderrDrained = yield* Deferred.make<void>();
 
   const killProcessGroup = (signal: NodeJS.Signals): boolean => {
     try {
@@ -267,6 +277,8 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
   const routeRecord =
     /* Protocol records and writes include streaming deltas; avoid a span per record. */
     Effect.fnUntraced(function* (record: PiRpcRecord) {
+      receivedProtocolRecord = true;
+      startupStderr = "";
       if (record["type"] === "response" && typeof record["id"] === "string") {
         const pending = pendingRequests.get(record["id"]);
         if (pending !== undefined) {
@@ -288,6 +300,20 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
       }
       yield* Queue.offer(events, record);
     });
+
+  yield* child.stderr.pipe(
+    Stream.decodeText(),
+    Stream.runForEach((chunk) =>
+      Effect.sync(() => {
+        // Only retain bounded startup diagnostics; later stderr can contain
+        // model output. Redaction happens before inclusion in the error detail.
+        if (!receivedProtocolRecord) startupStderr = (startupStderr + chunk).slice(0, 4096);
+      }),
+    ),
+    Effect.ignore,
+    Effect.ensuring(Deferred.succeed(stderrDrained, undefined)),
+    Effect.forkIn(scope),
+  );
 
   // Watch exit before the reader so an immediate crash can populate
   // `exitDeferred` before stdout-close diagnosis runs.
@@ -350,29 +376,23 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
                 Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
                 Effect.orElseSucceed(() => Option.none<number>()),
               );
+          if (Option.isSome(maybeExitCode) && maybeExitCode.value !== 0) {
+            yield* Deferred.await(stderrDrained).pipe(
+              Effect.timeoutOption(Duration.millis(250)),
+              Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+            );
+          }
           return yield* failTransport(
             new PiRpcError({
               operation: "read",
               detail: describePiStdoutClosure(
                 Option.isSome(maybeExitCode) ? maybeExitCode.value : undefined,
+                startupStderr,
               ),
             }),
           );
         }),
     }),
-    Effect.forkIn(scope),
-  );
-
-  yield* child.stderr.pipe(
-    Stream.decodeText(),
-    Stream.runForEach((chunk) =>
-      chunk.trim().length === 0
-        ? Effect.void
-        : // Length only: pi's stderr is unbounded remote output and can carry
-          // credentials or prompt text, so it never enters a log annotation.
-          Effect.logDebug("pi stderr", { stderrLength: chunk.length }),
-    ),
-    Effect.ignore,
     Effect.forkIn(scope),
   );
 

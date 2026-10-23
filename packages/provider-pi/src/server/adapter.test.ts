@@ -4099,6 +4099,7 @@ describe("PiRpc early process exit", () => {
   const makeHandle = (options: {
     readonly exitCode: Effect.Effect<ChildProcessSpawner.ExitCode>;
     readonly stderr: Stream.Stream<Uint8Array>;
+    readonly stdout?: Stream.Stream<Uint8Array>;
   }) =>
     ChildProcessSpawner.makeHandle({
       pid: ChildProcessSpawner.ProcessId(FAKE_PID),
@@ -4107,12 +4108,125 @@ describe("PiRpc early process exit", () => {
       kill: () => Effect.void,
       unref: Effect.succeed(Effect.void),
       stdin: Sink.drain,
-      stdout: Stream.empty,
+      stdout: options.stdout ?? Stream.empty,
       stderr: options.stderr,
       all: Stream.empty,
       getInputFd: () => Sink.drain,
       getOutputFd: () => Stream.empty,
     });
+
+  it.effect("includes a split extension import error in the startup failure", () =>
+    Effect.gen(function* () {
+      const diagnostic = `Error: Failed to load extension "difft.ts": Cannot find module '../apps/difft-review/launcher.ts'`;
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          makeHandle({
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+            stderr: Stream.fromIterable(
+              [diagnostic.slice(0, 25), diagnostic.slice(25), "\nRequire stack:\n- difft.ts\n"].map(
+                (text) => new TextEncoder().encode(text),
+              ),
+            ),
+          }),
+        ),
+      );
+      const connection = yield* makePiRpcConnection({
+        command: "pi",
+        args: ["--mode", "rpc"],
+        cwd: undefined,
+        env: {},
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      const error = yield* Queue.take(connection.events).pipe(Effect.flip);
+      assert.include(error.message, diagnostic);
+      assert.notInclude(error.message, "Require stack:");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("bounds and redacts startup diagnostics", () =>
+    Effect.gen(function* () {
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          makeHandle({
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+            stderr: Stream.fromIterable([
+              new TextEncoder().encode(
+                "Error: api_key=super-secret Bearer private-token " + "x".repeat(10_000),
+              ),
+            ]),
+          }),
+        ),
+      );
+      const connection = yield* makePiRpcConnection({
+        command: "pi",
+        args: ["--mode", "rpc"],
+        cwd: undefined,
+        env: {},
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      const error = yield* Queue.take(connection.events).pipe(Effect.flip);
+      assert.include(error.message, "[REDACTED]");
+      assert.notInclude(error.message, "super-secret");
+      assert.notInclude(error.message, "private-token");
+      assert.isBelow(error.message.length, 4200);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("waits for startup stderr after stdout has closed", () =>
+    Effect.gen(function* () {
+      const closed = yield* Deferred.make<void>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          makeHandle({
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+            stdout: Stream.empty.pipe(Stream.ensuring(Deferred.succeed(closed, undefined))),
+            stderr: Stream.fromEffect(
+              Deferred.await(closed).pipe(
+                Effect.as(new TextEncoder().encode("Error: Cannot find module 'missing.ts'")),
+              ),
+            ),
+          }),
+        ),
+      );
+      const connection = yield* makePiRpcConnection({
+        command: "pi",
+        args: ["--mode", "rpc"],
+        cwd: undefined,
+        env: {},
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      const error = yield* Queue.take(connection.events).pipe(Effect.flip);
+      assert.include(error.message, "Cannot find module 'missing.ts'");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not retain stderr after a protocol record", () =>
+    Effect.gen(function* () {
+      const initialized = yield* Deferred.make<void>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          makeHandle({
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+            stdout: Stream.make(new TextEncoder().encode('{"type":"ready"}\n')).pipe(
+              Stream.ensuring(Deferred.succeed(initialized, undefined)),
+            ),
+            stderr: Stream.fromEffect(
+              Deferred.await(initialized).pipe(
+                Effect.as(new TextEncoder().encode("Error: private model output")),
+              ),
+            ),
+          }),
+        ),
+      );
+      const connection = yield* makePiRpcConnection({
+        command: "pi",
+        args: ["--mode", "rpc"],
+        cwd: undefined,
+        env: {},
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      assert.equal((yield* Queue.take(connection.events))["type"], "ready");
+      const error = yield* Queue.take(connection.events).pipe(Effect.flip);
+      assert.equal(error.detail, "pi process exited with code 1");
+      assert.notInclude(error.message, "private model output");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 
   it.effect("reports a nonzero exit code instead of an unexplained stdout close", () =>
     Effect.gen(function* () {
