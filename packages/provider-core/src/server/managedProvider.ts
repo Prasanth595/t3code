@@ -24,6 +24,23 @@ interface ProviderSnapshotState {
   readonly enrichmentGeneration: number;
 }
 
+// A probe that reached the executable but produced no verdict (a version
+// check that timed out, a crashed process) must not stay authoritative until
+// the next periodic refresh, which defaults to minutes. Retry a few times
+// first. The delay only spaces retries out; the refresh semaphore is what keeps
+// a retry from overlapping a probe still in flight.
+const INCONCLUSIVE_PROBE_RETRY_LIMIT = 3;
+const INCONCLUSIVE_PROBE_RETRY_DELAY = Duration.seconds(30);
+
+function isInconclusiveProbe(snapshot: ServerProvider): boolean {
+  return (
+    snapshot.enabled &&
+    snapshot.installed &&
+    snapshot.status === "error" &&
+    snapshot.auth.status === "unknown"
+  );
+}
+
 function withUsageLimits(
   snapshot: ServerProvider,
   usageLimits: ServerProvider["usageLimits"],
@@ -72,6 +89,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   });
   const settingsRef = yield* Ref.make(initialSettings);
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
+  const inconclusiveProbesRef = yield* Ref.make(0);
+  const probeRetryFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
   const scope = yield* Effect.scope;
 
   const publishEnrichedSnapshot = Effect.fn("publishEnrichedSnapshot")(function* (
@@ -187,6 +206,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     yield* Ref.set(settingsRef, nextSettings);
     yield* PubSub.publish(changesPubSub, nextSnapshot);
     yield* restartSnapshotEnrichment(nextSettings, nextSnapshot, nextGeneration);
+    yield* scheduleInconclusiveProbeRetry(nextSnapshot);
     return nextSnapshot;
   });
   const applySnapshot = (nextSettings: Settings, options?: { readonly forceRefresh?: boolean }) =>
@@ -243,6 +263,57 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           ),
           Effect.orElseSucceed(() => DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL),
         );
+  // An interval of zero is the supported way to turn background refreshes off.
+  const refreshesInBackground = (refreshInterval: Duration.Input) =>
+    input.refreshOnInterval !== false &&
+    Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) > 0;
+
+  // Annotated: the retry refreshes, and a refresh schedules a retry, so
+  // inference cannot close the loop on its own.
+  const scheduleInconclusiveProbeRetry = Effect.fn("scheduleInconclusiveProbeRetry")(function* (
+    snapshot: ServerProvider,
+  ): Effect.fn.Return<void> {
+    const previousFiber = yield* Ref.getAndSet(probeRetryFiberRef, null);
+    if (previousFiber) {
+      yield* Fiber.interrupt(previousFiber).pipe(Effect.ignore);
+    }
+    if (!isInconclusiveProbe(snapshot)) {
+      yield* Ref.set(inconclusiveProbesRef, 0);
+      return;
+    }
+    const failures = yield* Ref.updateAndGet(inconclusiveProbesRef, (count) => count + 1);
+    if (failures > INCONCLUSIVE_PROBE_RETRY_LIMIT) {
+      return;
+    }
+    // Decided under the refresh semaphore, right before probing: the failure
+    // count doubles as a probe generation, so a refresh that ran meanwhile
+    // (which scheduled its own retry) makes this one a no-op, and a setting
+    // that turned background refreshes off while sleeping is honored.
+    const retry = refreshSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        if ((yield* Ref.get(inconclusiveProbesRef)) !== failures) {
+          return;
+        }
+        if (!refreshesInBackground(yield* getRefreshInterval)) {
+          return;
+        }
+        if (!(yield* hasProviderStatusDemand)) {
+          return;
+        }
+        const nextSettings = yield* input.getSettings;
+        yield* applySnapshotBase(nextSettings, { forceRefresh: true });
+      }),
+    );
+    const fiber = yield* Effect.sleep(INCONCLUSIVE_PROBE_RETRY_DELAY).pipe(
+      // The retry's own probe schedules the next one; clear the slot first so
+      // that scheduling does not try to interrupt this fiber.
+      Effect.andThen(Ref.set(probeRetryFiberRef, null)),
+      Effect.andThen(retry),
+      Effect.ignoreCause({ log: true }),
+      Effect.forkIn(scope),
+    );
+    yield* Ref.set(probeRetryFiberRef, fiber);
+  });
 
   const refreshIntervalChanges = yield* Queue.sliding<void>(1);
   if (input.refreshInterval === undefined) {
@@ -276,9 +347,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           Queue.take(refreshIntervalChanges).pipe(Effect.as(false)),
         ).pipe(
           Effect.flatMap((intervalElapsed) =>
-            input.refreshOnInterval !== false &&
-            intervalElapsed &&
-            Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) > 0
+            intervalElapsed && refreshesInBackground(refreshInterval)
               ? hasProviderStatusDemand.pipe(
                   Effect.flatMap((shouldRefresh) =>
                     shouldRefresh ? refreshSnapshot().pipe(Effect.asVoid) : Effect.void,
