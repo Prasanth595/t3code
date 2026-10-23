@@ -637,18 +637,79 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
-  it("matches punctuation shortcuts by physical key across keyboard layouts", () => {
+  it.each(["MacIntel", "Win32", "Linux"])(
+    "leaves German mod+plus available for native zoom on %s",
+    (platform) => {
+      assert.isNull(
+        resolveShortcutCommand(
+          event({
+            key: "+",
+            code: "BracketRight",
+            metaKey: platform === "MacIntel",
+            ctrlKey: platform !== "MacIntel",
+          }),
+          DEFAULT_RESOLVED_KEYBINDINGS,
+          { platform },
+        ),
+      );
+    },
+  );
+
+  it.each(["MacIntel", "Win32", "Linux"])(
+    "preserves mod+] history navigation on %s",
+    (platform) => {
+      assert.strictEqual(
+        resolveShortcutCommand(
+          event({
+            key: "]",
+            code: "BracketRight",
+            metaKey: platform === "MacIntel",
+            ctrlKey: platform !== "MacIntel",
+          }),
+          DEFAULT_RESOLVED_KEYBINDINGS,
+          { platform },
+        ),
+        "navigation.forward",
+      );
+    },
+  );
+
+  it.each(["MacIntel", "Win32", "Linux"])(
+    "preserves shifted bracket thread navigation on %s",
+    (platform) => {
+      for (const [key, code, command] of [
+        ["{", "BracketLeft", "thread.previous"],
+        ["}", "BracketRight", "thread.next"],
+      ] as const) {
+        assert.strictEqual(
+          resolveShortcutCommand(
+            event({
+              key,
+              code,
+              shiftKey: true,
+              metaKey: platform === "MacIntel",
+              ctrlKey: platform !== "MacIntel",
+            }),
+            DEFAULT_RESOLVED_KEYBINDINGS,
+            { platform },
+          ),
+          command,
+        );
+      }
+    },
+  );
+
+  it("matches punctuation shortcuts by layout regardless of their US position", () => {
     const keybindings = compile([
       { shortcut: modShortcut("'", { shiftKey: true }), command: "diff.toggle" },
     ]);
 
-    assert.strictEqual(
+    assert.isNull(
       resolveShortcutCommand(
         event({ key: "@", code: "Quote", metaKey: true, shiftKey: true }),
         keybindings,
         { platform: "MacIntel" },
       ),
-      "diff.toggle",
     );
     assert.isNull(
       resolveShortcutCommand(
@@ -656,6 +717,36 @@ describe("resolveShortcutCommand", () => {
         keybindings,
         { platform: "MacIntel" },
       ),
+    );
+    assert.isNull(
+      resolveShortcutCommand(
+        event({ key: '"', code: "Quote", metaKey: true, shiftKey: true }),
+        keybindings,
+        { platform: "MacIntel" },
+      ),
+    );
+  });
+
+  it("matches custom layout punctuation independently of its physical position", () => {
+    const keybindings = compile([{ shortcut: modShortcut("+"), command: "diff.toggle" }]);
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "+", code: "BracketRight", ctrlKey: true }),
+        keybindings,
+        { platform: "Linux" },
+      ),
+      "diff.toggle",
+    );
+  });
+
+  it("retains physical punctuation fallback for non-printable key values", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "Unidentified", code: "BracketRight", ctrlKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        { platform: "Linux" },
+      ),
+      "navigation.forward",
     );
   });
 
@@ -673,25 +764,25 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
-  it("matches Option-modified letters using the physical key code on macOS", () => {
+  it("does not alias Option-produced printable characters on macOS", () => {
     assert.strictEqual(
       resolveShortcutCommand(
         event({ key: "∫", code: "KeyB", metaKey: true, altKey: true }),
         DEFAULT_BINDINGS,
         { platform: "MacIntel" },
       ),
-      "rightPanel.toggle",
+      null,
     );
   });
 
-  it("matches non-Latin layout letters using the physical key code", () => {
+  it("does not alias printable non-Latin layout letters", () => {
     const keybindings = compile([{ shortcut: modShortcut("d"), command: "diff.toggle" }]);
 
     assert.strictEqual(
       resolveShortcutCommand(event({ key: "в", code: "KeyD", metaKey: true }), keybindings, {
         platform: "MacIntel",
       }),
-      "diff.toggle",
+      null,
     );
   });
 
@@ -713,12 +804,12 @@ describe("resolveShortcutCommand", () => {
 });
 
 describe("isRichTextBoldShortcut", () => {
-  it("matches the B key on non-Latin layouts, like the sidebar toggle does", () => {
+  it("does not alias a printable non-Latin B position", () => {
     const cyrillicB = event({ key: "и", code: "KeyB", ctrlKey: true });
-    assert.isTrue(isRichTextBoldShortcut(cyrillicB));
+    assert.isFalse(isRichTextBoldShortcut(cyrillicB));
     assert.strictEqual(
       resolveShortcutCommand(cyrillicB, DEFAULT_BINDINGS, { platform: "Win32" }),
-      "sidebar.toggle",
+      null,
     );
   });
 
@@ -815,7 +906,7 @@ describe("composer and pull request shortcuts", () => {
         resolveShortcutCommand({ ...input, getModifierState: () => false }, altEffortBindings, {
           platform,
         }),
-        "composer.effort",
+        null,
       );
     }
   });
@@ -832,7 +923,7 @@ describe("composer and pull request shortcuts", () => {
     );
     assert.strictEqual(
       resolveShortcutCommand(
-        event({ key: "´", code: "KeyE", metaKey: true, altKey: true, getModifierState }),
+        event({ key: "e", code: "KeyE", metaKey: true, altKey: true, getModifierState }),
         altEffortBindings,
         { platform: "MacIntel" },
       ),
@@ -865,6 +956,36 @@ describe("Usage shortcuts", () => {
       );
     },
   );
+
+  it.each([
+    ["1", "!", "usage.period.day"],
+    ["2", "@", "usage.period.week"],
+    ["3", "#", "usage.period.month"],
+    ["4", "$", "usage.period.quarter"],
+  ] as const)("supports AZERTY digit %s and US shifted glyph %s", (digit, glyph, command) => {
+    for (const key of [digit, glyph]) {
+      assert.strictEqual(
+        resolveShortcutCommand(
+          event({ key, code: `Digit${digit}`, ctrlKey: true, shiftKey: true }),
+          DEFAULT_RESOLVED_KEYBINDINGS,
+          { platform: "Linux", context: { usagePageOpen: true } },
+        ),
+        command,
+      );
+    }
+    const remapped = mergeWithDefaultKeybindings(
+      compileResolvedKeybindingsConfig([{ key: "mod+shift+x", command }]),
+    );
+    for (const key of [digit, glyph]) {
+      assert.isNull(
+        resolveShortcutCommand(
+          event({ key, code: `Digit${digit}`, ctrlKey: true, shiftKey: true }),
+          remapped,
+          { platform: "Linux", context: { usagePageOpen: true } },
+        ),
+      );
+    }
+  });
 
   it("matches shifted number keys for periods and only on Usage", () => {
     const shortcut = event({ key: "!", code: "Digit1", ctrlKey: true, shiftKey: true });
