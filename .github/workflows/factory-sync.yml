@@ -61,6 +61,7 @@ jobs:
       issues: write
     env:
       SYNC_APP_ID: ${{ secrets.SYNC_APP_ID }}
+      SYNC_APP_PRIVATE_KEY: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
     steps:
       # GITHUB_TOKEN cannot push a tag that changes .github/workflows/, so pushes
       # use a GitHub App's token (SYNC_APP_ID, SYNC_APP_PRIVATE_KEY), else a
@@ -68,11 +69,13 @@ jobs:
       # Contents and Workflows write on this repository. gh keeps GITHUB_TOKEN.
       - name: Mint the push token
         id: app-token
-        if: env.SYNC_APP_ID != ''
+        if: env.SYNC_APP_ID != '' && env.SYNC_APP_PRIVATE_KEY != ''
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.SYNC_APP_ID }}
           private-key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
 
       - name: Checkout
         uses: actions/checkout@v6
