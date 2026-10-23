@@ -6,6 +6,7 @@ import {
   QUEUED_TURN_START_GRACE_MS,
   resolveSnoozePresets,
   snoozeWakeLabel,
+  threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -154,6 +155,20 @@ export function threadHasUnseenCompletion(
   return completedAtMs > lastVisitedAtMs;
 }
 
+export function resolveThreadListV2WokeAt(
+  thread: EnvironmentThreadShell,
+  options: { readonly now: string },
+): string | null {
+  // Older servers cannot persist an acknowledgement.
+  if (thread.lastVisitedAt === undefined || thread.settledOverride === "settled") return null;
+  const wokeAt = threadWokeAt(thread, options);
+  const wokeAtMs = Date.parse(wokeAt ?? "");
+  const lastVisitedAtMs = Date.parse(thread.lastVisitedAt ?? "");
+  return !Number.isNaN(wokeAtMs) && (Number.isNaN(lastVisitedAtMs) || lastVisitedAtMs < wokeAtMs)
+    ? wokeAt
+    : null;
+}
+
 export function resolveThreadListV2Status(
   thread: Pick<
     EnvironmentThreadShell,
@@ -249,6 +264,7 @@ export interface ThreadListV2Item {
   readonly variant: "card" | "slim";
   readonly snoozed: boolean;
   readonly pinned: boolean;
+  readonly wokeAt: string | null;
   readonly isLast: boolean;
 }
 
@@ -360,6 +376,7 @@ export function threadListV2ListItemsAreEqual(
         previous.item.variant === item.item.variant &&
         previous.item.snoozed === item.item.snoozed &&
         previous.item.pinned === item.item.pinned &&
+        previous.item.wokeAt === item.item.wokeAt &&
         previous.snoozeWakeLabelText === item.snoozeWakeLabelText &&
         previous.timeLabel === item.timeLabel &&
         previous.snoozePresetMinute === item.snoozePresetMinute &&
@@ -408,7 +425,9 @@ function resolveThreadListV2ItemTimeLabel(
   if (showSnoozeWakeLabel) return "";
   if (
     variant === "card" &&
-    (resolveThreadListV2Status(thread) !== "ready" || threadHasUnseenCompletion(thread))
+    (resolveThreadListV2Status(thread) !== "ready" ||
+      item.wokeAt !== null ||
+      threadHasUnseenCompletion(thread))
   )
     return "";
   const settledTimestamp =
@@ -697,6 +716,7 @@ export function buildThreadListV2Items(input: {
       variant: "card",
       snoozed: false,
       pinned: true,
+      wokeAt: resolveThreadListV2WokeAt(thread, { now }),
       isLast: false,
     });
   }
@@ -706,6 +726,7 @@ export function buildThreadListV2Items(input: {
       variant: "card",
       snoozed: false,
       pinned: false,
+      wokeAt: resolveThreadListV2WokeAt(thread, { now }),
       isLast: false,
     });
   }
@@ -716,6 +737,7 @@ export function buildThreadListV2Items(input: {
       variant: "card",
       snoozed: false,
       pinned: false,
+      wokeAt: resolveThreadListV2WokeAt(thread, { now }),
       isLast: false,
     });
   }
@@ -726,6 +748,7 @@ export function buildThreadListV2Items(input: {
       variant: "slim",
       snoozed: true,
       pinned: false,
+      wokeAt: null,
       isLast: false,
     });
   }
@@ -736,6 +759,7 @@ export function buildThreadListV2Items(input: {
       variant: "slim",
       snoozed: false,
       pinned: false,
+      wokeAt: null,
       isLast: false,
     });
   }

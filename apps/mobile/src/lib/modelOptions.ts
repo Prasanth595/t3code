@@ -1,3 +1,8 @@
+import {
+  normalizeProviderAccentColor,
+  resolveProviderInstanceDisplayName,
+  shouldShowInstanceBadge,
+} from "@t3tools/client-runtime/state/provider-instance-display";
 import type { MenuAction } from "@react-native-menu/menu";
 import type {
   ModelCapabilities,
@@ -27,6 +32,11 @@ export type ModelOption = {
     readonly badgeLabel?: string | undefined;
     readonly displayName: string;
     readonly accentColor?: string | undefined;
+  };
+  readonly providerBadge?: {
+    readonly displayName: string;
+    readonly accentColor?: string;
+    readonly showBadge: boolean;
   };
   readonly isDefault: boolean;
   readonly isLegacy: boolean;
@@ -242,10 +252,61 @@ export function buildModelOptions(
   includeHidden = false,
 ): ReadonlyArray<ModelOption> {
   const options = new Map<string, ModelOption>();
+  const lockedProvider = config?.providers.find(
+    (provider) => provider.instanceId === providerInstanceId,
+  );
+  const matchesLockedProvider = (provider: T3ServerConfig["providers"][number]) => {
+    if (providerInstanceId === undefined || provider.instanceId === providerInstanceId) return true;
+    if (!lockedProvider || provider.driver !== lockedProvider.driver) return false;
+    const groupKey = lockedProvider.continuation?.groupKey;
+    if (groupKey) return provider.continuation?.groupKey === groupKey;
+    return provider.driver !== "antigravity";
+  };
+  const registryAgentId = (instanceId: ModelSelection["instanceId"]) => {
+    const configValue = config?.settings?.providerInstances[instanceId]?.config;
+    if (configValue === null || typeof configValue !== "object") return undefined;
+    const agentId = "agentId" in configValue ? configValue.agentId : undefined;
+    return "source" in configValue && configValue.source === "local"
+      ? undefined
+      : typeof agentId === "string"
+        ? agentId.trim() || undefined
+        : undefined;
+  };
+  const badgeEntries = (config?.providers ?? []).map((provider) => ({
+    driverKind: provider.driver,
+    enabled: provider.enabled,
+    acpRegistryAgentId: registryAgentId(provider.instanceId),
+  }));
+  const providerBadgeFor = (instanceId: ModelSelection["instanceId"]) => {
+    const snapshot = config?.providers.find((provider) => provider.instanceId === instanceId);
+    const instance = config?.settings?.providerInstances[instanceId];
+    const driver = snapshot?.driver ?? instance?.driver;
+    if (!driver) return undefined;
+    const accentColor = normalizeProviderAccentColor(
+      snapshot?.accentColor ?? instance?.accentColor,
+    );
+    return {
+      displayName: resolveProviderInstanceDisplayName({
+        instanceId,
+        driver,
+        displayName: snapshot?.displayName ?? instance?.displayName,
+      }),
+      ...(accentColor ? { accentColor } : {}),
+      showBadge: shouldShowInstanceBadge(
+        {
+          driverKind: driver,
+          accentColor,
+          acpRegistryAgentId: registryAgentId(instanceId),
+          enabled: snapshot?.enabled ?? instance?.enabled ?? false,
+        },
+        badgeEntries,
+      ),
+    };
+  };
 
   for (const provider of config?.providers ?? []) {
     if (
-      (providerInstanceId !== undefined && provider.instanceId !== providerInstanceId) ||
+      !matchesLockedProvider(provider) ||
       !isProviderEnabledForProject(config, provider, projectId) ||
       !provider.installed ||
       provider.auth.status === "unauthenticated" ||
@@ -255,6 +316,7 @@ export function buildModelOptions(
     }
 
     const providerLabel = providerDisplayLabel(provider);
+    const providerBadge = providerBadgeFor(provider.instanceId);
     const updateRequired = provider.updateRequiredModels?.length
       ? { driver: provider.driver, updateRequiredModels: provider.updateRequiredModels }
       : undefined;
@@ -275,6 +337,7 @@ export function buildModelOptions(
         providerKey: provider.instanceId,
         providerLabel,
         providerDriver: provider.driver,
+        providerBadge,
         ...(provider.supportedRuntimeModes === undefined
           ? {}
           : { supportedRuntimeModes: provider.supportedRuntimeModes }),
@@ -351,6 +414,7 @@ export function buildModelOptions(
           displayName: providerLabel,
           accentColor: provider?.accentColor ?? instanceConfig?.accentColor,
         },
+        providerBadge: providerBadgeFor(fallbackModelSelection.instanceId),
         isDefault: false,
         isLegacy: model?.isLegacy === true,
         ...(isModelSelectionUnavailable(config, fallbackModelSelection, projectId) ||
