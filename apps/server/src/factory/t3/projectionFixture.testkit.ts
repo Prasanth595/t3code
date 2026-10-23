@@ -2,6 +2,10 @@
  * A projection database of chosen shape for the factory's read tests and benchmark. One thread, run
  * and turn item go through the store's own `apply`, so their payloads are ones its decoders accept;
  * the rest are copies of those rows made in SQL, which is fast enough for tens of thousands.
+ *
+ * Payloads are padded to the sizes of the personal Mac's database (a read-only snapshot: threads
+ * 1724 bytes on average, runs 1500, turn items 4913), in free-text fields the schemas accept, so
+ * a read's decode costs what it does there.
  */
 import {
   EventId,
@@ -44,6 +48,18 @@ export interface SeededThread {
 
 /** The thread id of the n-th seeded thread (from 1). */
 export const seededThreadId = (n: number) => `thread:seed:${n}`;
+
+const THREAD_PAYLOAD_BYTES = 1724;
+const RUN_PAYLOAD_BYTES = 1500;
+const ITEM_PAYLOAD_BYTES = 4913;
+
+/** Plain prose, no quotes or backslashes, so a JSON string made of it is as long as the text. */
+const FILLER = Array.from(
+  { length: 400 },
+  (_, i) => `Line ${i}: the build output was checked and the changes were summarised for review.`,
+)
+  .join(" ")
+  .slice(0, 6000);
 
 const TPL = {
   thread: "thread:tpl",
@@ -156,6 +172,32 @@ const applyTemplates = Effect.fn("applyTemplates")(function* () {
   });
 });
 
+/** Grows the template payloads to the target sizes by lengthening one free-text field each. */
+const padTemplates = Effect.fn("padTemplates")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`
+    UPDATE orchestration_v2_projection_threads SET payload_json = json_set(
+      payload_json, '$.title',
+      json_extract(payload_json, '$.title') ||
+        substr(${FILLER}, 1, max(0, ${THREAD_PAYLOAD_BYTES} - length(payload_json)))
+    ) WHERE thread_id = ${TPL.thread}
+  `;
+  yield* sql`
+    UPDATE orchestration_v2_projection_runs SET payload_json = json_set(
+      payload_json, '$.userMessageId',
+      json_extract(payload_json, '$.userMessageId') ||
+        substr(${FILLER}, 1, max(0, ${RUN_PAYLOAD_BYTES} - length(payload_json)))
+    ) WHERE run_id = ${TPL.run}
+  `;
+  yield* sql`
+    UPDATE orchestration_v2_projection_turn_items SET payload_json = json_set(
+      payload_json, '$.input',
+      json_extract(payload_json, '$.input') ||
+        substr(${FILLER}, 1, max(0, ${ITEM_PAYLOAD_BYTES} - length(payload_json)))
+    ) WHERE turn_item_id = ${TPL.item}
+  `;
+});
+
 /**
  * Seeds `threads` as threads 1..n, in one transaction, copying the template rows. The template rows
  * are removed afterwards. Needs a store and client over a migrated database.
@@ -164,6 +206,7 @@ export const seedProjection = Effect.fn("seedProjection")(function* (
   threads: ReadonlyArray<SeededThread>,
 ) {
   yield* applyTemplates();
+  yield* padTemplates();
   const sql = yield* SqlClient.SqlClient;
   yield* sql.withTransaction(
     Effect.gen(function* () {

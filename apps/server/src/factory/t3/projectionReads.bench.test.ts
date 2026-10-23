@@ -10,6 +10,7 @@ import * as Layer from "effect/Layer";
 import * as HttpPlatform from "effect/http/HttpPlatform";
 import * as Etag from "effect/http/Etag";
 import * as HttpRouter from "effect/http/HttpRouter";
+import * as SqlClient from "effect/sql/SqlClient";
 import { describe } from "vite-plus/test";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
@@ -37,7 +38,12 @@ import * as Sessions from "./sessions.ts";
 /**
  * The factory's reads over a database the size of the personal Mac's (about 2,000 threads, 300
  * runs, 50,000 turn items), against the budgets in issue #188: a read the loop or the status page
- * makes blocks the main thread under 50 ms, and the status route answers under 250 ms.
+ * makes blocks the main thread under 50 ms, and the status route answers under 250 ms. The
+ * payloads are the size of the Mac's (see projectionFixture.testkit.ts).
+ *
+ * Routed here: `getThreadsWithPullRequests` for both PR reactors, and `getShellSnapshot` for the
+ * consumers server.ts provides with `ProjectionStoreV2.layer`. ThreadLaunchService's snapshot is
+ * not: it still runs on the writer, and its line is measured through the upstream layer.
  *
  * A block is the longest gap a 1 ms timer saw while the call ran. Each call is repeated and the
  * best repetition counts: a host loaded by other work preempts the process in any single run, and
@@ -80,6 +86,23 @@ const fixture = (): ReadonlyArray<SeededThread> =>
   });
 
 const tempDir = useTempDirs();
+
+/** The fixture's payloads must be the size of the Mac's: thread 1724, run 1500, item 4913 bytes. */
+const assertPayloadSizes = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const averages = (table: string) =>
+    sql.unsafe<{ readonly bytes: number }>(
+      `SELECT AVG(LENGTH(payload_json)) AS bytes FROM ${table}`,
+    );
+  for (const [table, bytes] of [
+    ["orchestration_v2_projection_threads", 1724],
+    ["orchestration_v2_projection_runs", 1500],
+    ["orchestration_v2_projection_turn_items", 4913],
+  ] as const) {
+    const [row] = yield* averages(table);
+    assert.approximately(row?.bytes ?? 0, bytes, bytes * 0.05, table);
+  }
+});
 
 const layerBench = () =>
   Layer.mergeAll(
@@ -182,7 +205,8 @@ describe("the projection reads on a database the size of the personal Mac's", ()
       const store = yield* Routed.ProjectionStoreV2;
       const sessions = yield* Sessions.FactorySessions;
 
-      report("seeding the fixture", yield* timed(seedProjection(fixture())));
+      yield* timed("seeding the fixture", seedProjection(fixture()));
+      yield* assertPayloadSizes;
       assert.strictEqual((yield* store.getShellSnapshot()).threads.length, THREADS * 0.8);
 
       assert.strictEqual(yield* sessions.runningThreads, AT_WORK);
@@ -190,28 +214,37 @@ describe("the projection reads on a database the size of the personal Mac's", ()
       report("runningThreads", running);
 
       const pullRequests = yield* best(store.getThreadsWithPullRequests());
-      report("routed getThreadsWithPullRequests", pullRequests);
+      report("routed getThreadsWithPullRequests (both PR reactors)", pullRequests);
 
       const status = yield* statusCall(sessions, yield* EnvironmentAuth.EnvironmentAuth);
       const route = yield* best(status.call).pipe(Effect.ensuring(status.dispose));
       report("GET /api/factory/status", route);
 
-      // ThreadLaunchService's call: unfiltered, so archived threads too. Not asserted; it is the
-      // decode that stays on the main thread once the rows come from the reader.
-      report("routed getShellSnapshot()", yield* best(store.getShellSnapshot(), 3));
-
-      // For comparison: the same reads as upstream runs them, on the writer.
+      // The unfiltered snapshot (ThreadLaunchService's prepare loop calls it) twice. Not asserted.
+      // ThreadLaunchService reaches the store through runtimeLayer.ts's own upstream
+      // ProjectionStore.layer, so today that call runs on the writer, SQL and decode both on the
+      // main thread. The routed one is what the consumers server.ts provides with
+      // ProjectionStoreV2.layer get: the SQL on the reader, the decode still on the main thread.
       const upstream = yield* Effect.provide(
         Effect.service(ProjectionStore.ProjectionStoreV2),
         ProjectionStore.layer,
       );
-      report("upstream getShellSnapshot()", yield* best(upstream.getShellSnapshot(), 2));
       report(
-        "upstream getThreadsWithPullRequests",
+        "unfiltered getShellSnapshot(), upstream layer on the writer (ThreadLaunchService today)",
+        yield* best(upstream.getShellSnapshot(), 3),
+      );
+      report(
+        "unfiltered getShellSnapshot(), routed to the reader (not ThreadLaunchService's path)",
+        yield* best(store.getShellSnapshot(), 3),
+      );
+
+      // The pull request reads as upstream runs them, on the writer.
+      report(
+        "upstream getThreadsWithPullRequests, on the writer",
         yield* best(upstream.getThreadsWithPullRequests(), 2),
       );
       report(
-        "upstream shell-snapshot running count",
+        "upstream active getShellSnapshot (the old running count), on the writer",
         yield* best(upstream.getShellSnapshot({ location: "active" }), 2),
       );
 
