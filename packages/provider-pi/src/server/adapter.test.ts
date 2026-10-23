@@ -1395,6 +1395,54 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("binds a replacement session's work only after Pi's teardown is applied", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const setStatus = (statusKey: string, statusText: string) =>
+        fake.emit({
+          type: "extension_ui_request",
+          id: `status-${statusKey}`,
+          method: "setStatus",
+          statusKey,
+          statusText,
+        });
+      yield* setStatus("t3:background:build", "Build running");
+      fake.deferNextLifecycle("new_session");
+      fake.queueState({ sessionFile: "/fake/replaced.jsonl" });
+      const switching = yield* runtime
+        .ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        })
+        .pipe(Effect.forkScoped);
+      const newSession = yield* fake.takeRequest("new_session");
+      // Pi writes the teardown, the replacement's start hooks and its reply in
+      // one burst; the reply skips the event queue the statuses wait in.
+      yield* setStatus("t3:session-end", "new");
+      yield* setStatus("t3:background:watch", "Watching");
+      yield* fake.emit({
+        type: "response",
+        id: newSession["id"],
+        command: "new_session",
+        success: true,
+        data: { cancelled: false },
+      });
+      const replacement = yield* Fiber.join(switching);
+      assert.deepStrictEqual(
+        replacement.pendingBackgroundTasks?.map((task) => task.taskId),
+        ["t3:background:watch"],
+      );
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(replacement));
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("keeps the thread binding when Pi reloads its extensions", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
