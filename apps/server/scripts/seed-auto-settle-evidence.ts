@@ -1,5 +1,3 @@
-import * as NodeFS from "node:fs";
-import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ApplicationProjectCreatedEvent,
@@ -8,9 +6,13 @@ import {
   OrchestrationV2DomainEvent,
   ProjectId,
 } from "@t3tools/contracts";
+import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Sqlite from "../src/persistence/Sqlite.ts";
@@ -24,8 +26,16 @@ import fixture from "./auto-settle-evidence.fixture.json" with { type: "json" };
 const databasePath = process.argv[2];
 if (!databasePath?.includes("/issue-24041/.t3/"))
   throw new Error("Expected isolated issue-24041 database");
-const anchor = process.argv[3] ? Date.parse(process.argv[3]) : Date.now();
-if (!Number.isFinite(anchor)) throw new Error("Expected ISO anchor timestamp");
+const decodeProjectCreated = Schema.decodeEffect(ApplicationProjectCreatedEvent);
+const decodeDomainEvent = Schema.decodeUnknownEffect(OrchestrationV2DomainEvent);
+const anchorArg = process.argv[3];
+const parsedAnchor =
+  anchorArg === undefined
+    ? undefined
+    : Option.getOrThrowWith(
+        DateTime.make(anchorArg),
+        () => new Error("Expected ISO anchor timestamp"),
+      );
 const database = Sqlite.layerFromPath(databasePath);
 const stores = Layer.mergeAll(
   database,
@@ -35,20 +45,23 @@ const stores = Layer.mergeAll(
 const services = Layer.mergeAll(stores, EventSink.layer.pipe(Layer.provide(stores)));
 await Effect.runPromise(
   Effect.gen(function* () {
+    const anchor = parsedAnchor ?? (yield* DateTime.now);
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const sql = yield* SqlClient.SqlClient;
     const sink = yield* EventSink.EventSinkV2;
     const projectId = ProjectId.make(fixture.project.projectId);
     const projectExists =
       yield* sql`SELECT 1 FROM projection_projects WHERE project_id = ${projectId}`;
     if (!projectExists.length) {
-      const workspaceRoot = NodePath.join(
-        NodePath.dirname(NodePath.dirname(databasePath)),
+      const workspaceRoot = path.join(
+        path.dirname(path.dirname(databasePath)),
         "evidence-workspace",
       );
-      NodeFS.mkdirSync(workspaceRoot, { recursive: true });
-      const occurredAt = new Date(anchor).toISOString();
+      yield* fs.makeDirectory(workspaceRoot, { recursive: true });
+      const occurredAt = DateTime.formatIso(anchor);
       const commandId = CommandId.make("evidence:project:create");
-      const { sequence: _, ...event } = Schema.decodeUnknownSync(ApplicationProjectCreatedEvent)({
+      const { sequence: _, ...event } = yield* decodeProjectCreated({
         sequence: 0,
         eventId: "evidence:project:created",
         aggregateKind: "project",
@@ -70,7 +83,7 @@ await Effect.runPromise(
         commandId,
         projectId,
         commandType: "project.create",
-        acceptedAt: DateTime.makeUnsafe(anchor),
+        acceptedAt: anchor,
         event,
       });
     }
@@ -79,8 +92,8 @@ await Effect.runPromise(
       const existing =
         yield* sql`SELECT 1 FROM orchestration_v2_projection_threads WHERE thread_id = ${id}`;
       if (existing.length) continue;
-      const at = DateTime.makeUnsafe(anchor - ageDays * 86400000);
-      const event = Schema.decodeUnknownSync(OrchestrationV2DomainEvent)({
+      const at = DateTime.subtract(anchor, { days: ageDays });
+      const event = yield* decodeDomainEvent({
         id: EventId.make(`evidence:created:${suffix}`),
         type: "thread.created",
         threadId: id,
@@ -104,7 +117,9 @@ await Effect.runPromise(
         },
       });
       const events = yield* sink.write({ events: [event] });
-      console.log(JSON.stringify({ id, at, events }));
+      yield* Console.log(
+        `${id} at ${DateTime.formatIso(at)}: ${events.map((stored) => stored.sequence).join(",")}`,
+      );
     }
-  }).pipe(Effect.provide(services), Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.provide(services.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
