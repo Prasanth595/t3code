@@ -116,7 +116,7 @@ function RunCard({
           {stateBadge(run)}
         </span>
         <span className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-          <span className="min-w-0 break-words">{run.step ?? run.last_event ?? "—"}</span>
+          <span className="min-w-0 break-words">{run.step ?? run.last_event ?? "-"}</span>
           <span>{formatAge(startedMs(run), nowMs)}</span>
           {showEnvironment ? <span className="min-w-0 break-words">{label}</span> : null}
         </span>
@@ -232,13 +232,13 @@ export function RunsTable({
             const pr = prRef(run.pr_url);
             return (
               <TableRow key={`${environmentId} ${run.id}`}>
-                <TableCell>{parsed ? `${parsed.owner}/${parsed.repo}` : "—"}</TableCell>
+                <TableCell>{parsed ? `${parsed.owner}/${parsed.repo}` : "-"}</TableCell>
                 {showEnvironment ? <TableCell>{label}</TableCell> : null}
-                <TableCell>{issue ? <Ref {...issue} /> : "—"}</TableCell>
+                <TableCell>{issue ? <Ref {...issue} /> : "-"}</TableCell>
                 <TableCell>{stateBadge(run)}</TableCell>
-                <TableCell>{run.step ?? run.last_event ?? "—"}</TableCell>
+                <TableCell>{run.step ?? run.last_event ?? "-"}</TableCell>
                 <TableCell>{formatAge(startedMs(run), nowMs)}</TableCell>
-                <TableCell>{pr ? <Ref {...pr} /> : "—"}</TableCell>
+                <TableCell>{pr ? <Ref {...pr} /> : "-"}</TableCell>
                 <TableCell>
                   <Link
                     className="font-mono text-xs underline-offset-2 hover:underline"
