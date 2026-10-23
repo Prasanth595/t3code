@@ -128,12 +128,12 @@ describe("fetchFactoryConfig", () => {
 });
 
 describe("saveFactoryConfig", () => {
-  it("PUTs the values as JSON with a bearer token and no cookies", async () => {
+  it("POSTs the values as JSON with a bearer token and no cookies", async () => {
     answer(200, JSON.stringify(report));
     const result = await saveFactoryConfig(bearerConnection, values);
     expect(result.kind).toBe("ok");
     const request = sent();
-    expect(request.method).toBe("PUT");
+    expect(request.method).toBe("POST");
     expect(request.url).toBe(`${REMOTE_BASE}/api/factory/config`);
     expect(request.headers.get("content-type")).toBe("application/json");
     expect(request.headers.get("authorization")).toBe("Bearer tok-1");
