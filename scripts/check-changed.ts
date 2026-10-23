@@ -53,39 +53,41 @@ console.log(`check:changed: ${files.length} files since ${base.slice(0, 12)}`);
 // Ignored files outside node_modules (generated sources, .astro types) and the
 // install state can change results too, so they are part of the key.
 // tsbuildinfo files are excluded: typecheck rewrites them on every run.
-const hash = NodeCrypto.createHash("sha256");
-const hashFile = (file: string) => {
-  hash.update(`\0${file}\0`);
-  const path = NodePath.join(root, file);
-  if (NodeFS.existsSync(path)) hash.update(NodeFS.readFileSync(path));
+// Computed again after a passing run, so edits made during the run are never
+// cached as passing.
+const inputKey = () => {
+  const hash = NodeCrypto.createHash("sha256");
+  hash.update(`${process.version}\0${base}\0`);
+  hash.update(
+    NodeChildProcess.execFileSync("git", ["diff", "--binary", "--no-renames", base, "--"], {
+      cwd: root,
+      maxBuffer: 1024 * 1024 * 1024,
+    }),
+  );
+  const ignored = git(
+    "ls-files",
+    "--others",
+    "--ignored",
+    "--exclude-standard",
+    "--",
+    ":!node_modules/**",
+    ":!**/node_modules/**",
+    ":!.t3/**",
+    ":!**/*.tsbuildinfo",
+  );
+  for (const file of [
+    ...git("ls-files", "--others", "--exclude-standard"),
+    ...ignored,
+    "node_modules/.modules.yaml",
+    "node_modules/.pnpm/lock.yaml",
+  ]) {
+    hash.update(`\0${file}\0`);
+    const path = NodePath.join(root, file);
+    if (NodeFS.existsSync(path)) hash.update(NodeFS.readFileSync(path));
+  }
+  return hash.digest("hex");
 };
-hash.update(`${process.version}\0${base}\0`);
-hash.update(
-  NodeChildProcess.execFileSync("git", ["diff", "--binary", "--no-renames", base, "--"], {
-    cwd: root,
-    maxBuffer: 1024 * 1024 * 1024,
-  }),
-);
-const ignored = git(
-  "ls-files",
-  "--others",
-  "--ignored",
-  "--exclude-standard",
-  "--",
-  ":!node_modules/**",
-  ":!**/node_modules/**",
-  ":!.t3/**",
-  ":!**/*.tsbuildinfo",
-);
-for (const file of [
-  ...untracked,
-  ...ignored,
-  "node_modules/.modules.yaml",
-  "node_modules/.pnpm/lock.yaml",
-]) {
-  hashFile(file);
-}
-const key = hash.digest("hex");
+const key = inputKey();
 const cachePath = NodePath.join(root, "node_modules/.cache/check-changed.json");
 const cached = NodeFS.existsSync(cachePath)
   ? (JSON.parse(NodeFS.readFileSync(cachePath, "utf8")) as { key: string; summary: Array<string> })
@@ -214,7 +216,13 @@ console.log(`\n${summary.join("\n")}`);
 // would cut off a failing step's output.
 if (results.some((result) => !result.ok)) {
   process.exitCode = 1;
+} else if (inputKey() !== key) {
+  console.log("  pass not cached: files changed during the run");
 } else {
-  NodeFS.mkdirSync(NodePath.dirname(cachePath), { recursive: true });
-  NodeFS.writeFileSync(cachePath, JSON.stringify({ key, summary }));
+  try {
+    NodeFS.mkdirSync(NodePath.dirname(cachePath), { recursive: true });
+    NodeFS.writeFileSync(cachePath, JSON.stringify({ key, summary }));
+  } catch (error) {
+    console.warn(`  pass not cached: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }

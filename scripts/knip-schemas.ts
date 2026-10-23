@@ -140,23 +140,26 @@ const preprocess = async (options: Parameters<Preprocessor>[0]) => {
         files: [...files].map(([file, names]) => [file, [...names]]),
       });
     });
+  const workers = shares
+    .filter((share) => share.length > 0)
+    .map((share) => new NodeWorkerThreads.Worker(new URL(import.meta.url), { workerData: share }));
   const results = await Promise.all(
-    shares
-      .filter((share) => share.length > 0)
-      .map(
-        (share) =>
-          new Promise<ReturnType<typeof findSchemas>>((resolve, reject) => {
-            const worker = new NodeWorkerThreads.Worker(new URL(import.meta.url), {
-              workerData: share,
-            });
-            worker.once("message", resolve);
-            worker.once("error", reject);
-            worker.once("exit", (code) => {
-              if (code !== 0) reject(new Error(`knip-schemas worker exited with code ${code}`));
-            });
-          }),
-      ),
-  );
+    workers.map(
+      (worker) =>
+        new Promise<ReturnType<typeof findSchemas>>((resolve, reject) => {
+          worker.once("message", resolve);
+          worker.once("error", reject);
+          worker.once("exit", (code) => {
+            if (code !== 0) reject(new Error(`knip-schemas worker exited with code ${code}`));
+          });
+        }),
+    ),
+  ).catch(async (error: unknown) => {
+    // knip only sets an exit code on a failed preprocessor, so stop the
+    // siblings or the failed run waits for their work.
+    await Promise.allSettled(workers.map((worker) => worker.terminate()));
+    throw error;
+  });
 
   for (const [filePath, names] of results.flat()) {
     for (const category of categories) {
