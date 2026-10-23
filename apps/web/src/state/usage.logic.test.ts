@@ -10,6 +10,7 @@ import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 import {
   dailyFallback,
+  baselineCoversCurrent,
   distinctLabels,
   environmentsNeedingBaseline,
   isRejectedWindow,
@@ -160,5 +161,34 @@ describe("isRejectedWindow", () => {
       false,
     );
     expect(isRejectedWindow(AsyncResult.success(1))).toBe(false);
+  });
+});
+
+describe("baselineCoversCurrent", () => {
+  it("holds a comparison while a cached baseline source refreshes, even after another source answered", () => {
+    const current = [environment("fast", 2), environment("slow", 4)];
+    const fast = environment("fast", 1);
+    const slow = { ...environment("slow", 2), isPending: true };
+    expect(baselineCoversCurrent(current, [fast, slow])).toBe(false);
+    expect(baselineCoversCurrent(current, [fast, { ...slow, isPending: false }])).toBe(true);
+  });
+  it("requires an answer for each current source, including zero-usage sources", () => {
+    const current = [environment("fast", 2), environment("quiet", 0)];
+    expect(baselineCoversCurrent(current, [environment("fast", 1)])).toBe(false);
+    expect(baselineCoversCurrent(current, [environment("fast", 1), environment("quiet", 0)])).toBe(
+      true,
+    );
+  });
+  it("rejects errored baseline cache and waits for a previous-only contributor", () => {
+    const current = [environment("fast", 2)];
+    expect(baselineCoversCurrent(current, [{ ...environment("fast", 1), error: "offline" }])).toBe(
+      false,
+    );
+    expect(
+      baselineCoversCurrent(current, [
+        environment("fast", 1),
+        { ...environment("older", 3), isPending: true },
+      ]),
+    ).toBe(false);
   });
 });

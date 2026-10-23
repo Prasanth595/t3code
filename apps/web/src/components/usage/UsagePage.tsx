@@ -44,7 +44,7 @@ import { isModelPickerOpen } from "../../modelPickerVisibility";
 import { shortcutLabelForCommand } from "../../keybindings";
 import {
   dailyFallback,
-  environmentsNeedingBaseline,
+  baselineCoversCurrent,
   useUsage,
   type EnvironmentUsageStatus,
 } from "../../state/usage";
@@ -248,11 +248,9 @@ export function UsagePage() {
   );
   // Change compares like for like only when every environment that counts now,
   // even with no usage, also answered for the span before.
-  const previousCoversCurrent = environmentsNeedingBaseline(selectedEnvironments).every(
-    (environmentId) =>
-      previous.selectedEnvironments.some(
-        (entry) => entry.environmentId === environmentId && entry.summary !== null,
-      ),
+  const previousCoversCurrent = baselineCoversCurrent(
+    selectedEnvironments,
+    previous.selectedEnvironments,
   );
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const presentationsWithProviders = useAtomValue(

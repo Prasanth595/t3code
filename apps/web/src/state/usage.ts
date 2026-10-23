@@ -316,6 +316,27 @@ export function environmentsNeedingBaseline(
   );
 }
 
+/** Comparisons wait for every contributing baseline source, including cached refreshes. */
+export function baselineCoversCurrent(
+  current: readonly EnvironmentUsageStatus[],
+  baseline: readonly EnvironmentUsageStatus[],
+): boolean {
+  return (
+    [...answeredSummaries(baseline).keys()].every(
+      (entry) => !entry.isPending && entry.error === null,
+    ) &&
+    environmentsNeedingBaseline(current).every((environmentId) =>
+      baseline.some(
+        (entry) =>
+          entry.environmentId === environmentId &&
+          entry.summary !== null &&
+          !entry.isPending &&
+          entry.error === null,
+      ),
+    )
+  );
+}
+
 /** Each answered environment's summary, with saved reads trimmed to the folders they keep. */
 function answeredSummaries(
   environments: readonly EnvironmentUsageStatus[],
