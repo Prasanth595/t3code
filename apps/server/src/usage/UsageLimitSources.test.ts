@@ -111,7 +111,9 @@ const VALID_COMMAND_OUTPUT = JSON.stringify({
 });
 
 const commandSpawnerLayer = (
-  outputs: Readonly<Record<string, { stdout: string; stderr?: string; exitCode: number }>>,
+  outputs: Readonly<
+    Record<string, { stdout: string | Uint8Array; stderr?: string; exitCode: number }>
+  >,
 ) =>
   Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
@@ -123,6 +125,8 @@ const commandSpawnerLayer = (
         );
       }
       const encode = new TextEncoder();
+      const stdoutBytes =
+        typeof result.stdout === "string" ? encode.encode(result.stdout) : result.stdout;
       return Effect.succeed(
         ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),
@@ -131,8 +135,7 @@ const commandSpawnerLayer = (
           kill: () => Effect.void,
           unref: Effect.succeed(Effect.void),
           stdin: Sink.drain,
-          stdout:
-            result.stdout.length > 0 ? Stream.make(encode.encode(result.stdout)) : Stream.empty,
+          stdout: stdoutBytes.length > 0 ? Stream.make(stdoutBytes) : Stream.empty,
           stderr:
             (result.stderr ?? "").length > 0
               ? Stream.make(encode.encode(result.stderr ?? ""))
@@ -152,7 +155,7 @@ it.effect("reads accounts from command sources and reports command failures", ()
     const snapshots = yield* sources.current;
 
     const byId = new Map(snapshots.map((snapshot) => [snapshot.id, snapshot]));
-    expect(snapshots.length).toBe(4);
+    expect(snapshots.length).toBe(5);
 
     const ok = byId.get(UsageLimitSourceId.make("command-ok"));
     expect(ok?.kind).toBe("command");
@@ -194,6 +197,10 @@ it.effect("reads accounts from command sources and reports command failures", ()
       "The command failed with exit code 3. pool is locked by another process",
     );
 
+    const overflow = byId.get(UsageLimitSourceId.make("command-overflow"));
+    expect(overflow?.accounts).toEqual([]);
+    expect(overflow?.error).toBe("The command produced more than 4 MiB of output.");
+
     const reset = yield* sources
       .consumeResetCredit({
         sourceId: UsageLimitSourceId.make("command-ok"),
@@ -233,6 +240,11 @@ it.effect("reads accounts from command sources and reports command failures", ()
             command: "/usr/local/bin/fails",
             enabled: true,
           },
+          [UsageLimitSourceId.make("command-overflow")]: {
+            kind: "command",
+            command: "/usr/local/bin/overflow",
+            enabled: true,
+          },
           [UsageLimitSourceId.make("command-off")]: {
             kind: "command",
             command: "/usr/local/bin/droidpool",
@@ -255,6 +267,10 @@ it.effect("reads accounts from command sources and reports command failures", ()
           stdout: "",
           stderr: "warning: something minor\npool is locked by another process\n",
           exitCode: 3,
+        },
+        "/usr/local/bin/overflow": {
+          stdout: new Uint8Array(5 * 1024 * 1024),
+          exitCode: 0,
         },
       }),
       NodeCrypto.layer,

@@ -36,8 +36,58 @@ function sourceIdFromUrl(url: string): UsageLimitSourceId {
   return UsageLimitSourceId.make(`cliproxy-${slugify(host) || "hub"}`);
 }
 
-function sourceIdFromCommand(command: string): UsageLimitSourceId {
-  return UsageLimitSourceId.make(`command-${slugify(command) || "usage"}`);
+function sourceIdFromCommand(command: string, args: ReadonlyArray<string>): UsageLimitSourceId {
+  const slug = slugify([command, ...args].join(" "))
+    .slice(0, 48)
+    .replace(/-+$/g, "");
+  return UsageLimitSourceId.make(`command-${slug || "usage"}`);
+}
+
+/**
+ * Whitespace separates arguments; single and double quotes group them, and a
+ * backslash escapes the next character outside single quotes. An unclosed
+ * quote just runs to the end of the input.
+ */
+function parseArgsText(text: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+  let pending = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (quote === "'") {
+      if (ch === "'") quote = null;
+      else current += ch;
+      continue;
+    }
+    if (ch === "\\" && i + 1 < text.length) {
+      current += text[++i];
+      pending = true;
+      continue;
+    }
+    if (quote === '"') {
+      if (ch === '"') quote = null;
+      else current += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      pending = true;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (pending || current.length > 0) {
+        args.push(current);
+        current = "";
+        pending = false;
+      }
+      continue;
+    }
+    current += ch;
+    pending = true;
+  }
+  if (pending || current.length > 0) args.push(current);
+  return args;
 }
 
 /**
@@ -80,14 +130,15 @@ export function AddUsageLimitSourceDialog({
   const save = () => {
     if (!canSave) return;
     const labelField = label.trim() ? { label: label.trim() } : {};
+    const args = parseArgsText(argsText);
     updateSettings({
       usageLimitSources: isCommand
         ? {
-            [sourceIdFromCommand(trimmedCommand)]: {
+            [sourceIdFromCommand(trimmedCommand, args)]: {
               kind: "command" as const,
               ...labelField,
               command: trimmedCommand,
-              args: argsText.trim().length ? argsText.trim().split(/\s+/) : [],
+              args,
               enabled: true,
             },
           }

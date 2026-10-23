@@ -1678,9 +1678,15 @@ export function requiredScopesForServerSettingsPatch(
       changesSettings = true;
     }
   }
+  // A command source spawns a configured process on the server host, so saving
+  // one needs the same grant as launching an agent or a shell.
+  const needsExecution = Object.values(patch.usageLimitSources ?? {}).some(
+    (source) => source?.kind === "command",
+  );
   return [
     ...(changesSettings || !changesProviders ? [AuthSettingsWriteScope] : []),
     ...(changesProviders ? [AuthProvidersManageScope] : []),
+    ...(needsExecution ? [AuthOrchestrationOperateScope] : []),
   ];
 }
 
