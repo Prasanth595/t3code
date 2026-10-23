@@ -500,9 +500,9 @@ it.effect("names the requesting connection on the launcher handoff line", () =>
       commitDesktopUpdate: () => Effect.never,
     });
     const requestedBy = {
-      sessionId: "session-mbp",
+      sessionId: "session-remote",
       surface: "desktop",
-      forwardedFor: "100.64.0.7",
+      forwardedFor: "192.0.2.7",
     };
 
     yield* ServerSelfUpdate.withUpdateRequester(launcher, requestedBy)
