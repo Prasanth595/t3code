@@ -5,11 +5,13 @@ import {
   type PullRequestReviewGuide,
 } from "@t3tools/contracts";
 import { useEffect } from "react";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import { GuideTour } from "../pullRequest/guide/GuideTour";
+import type { useReviewGuideWriter } from "../pullRequest/guide/useReviewGuideWriter";
+import { PullRequestGuideTab } from "../pullRequest/PullRequestGuideTab";
 import type { ChatComposerHandle } from "./ChatComposer";
 import { useChatShortcuts } from "./useChatShortcuts";
 
@@ -75,6 +77,21 @@ function Chat(props: { composerKeys: string[]; launcher?: { keys: string; receiv
   return props.launcher ? <Launcher {...props.launcher} /> : null;
 }
 
+// The guide tab's server query, swapped so a test can deliver the guide after mount.
+const guideWriter = vi.hoisted(() => ({ guide: null as PullRequestReviewGuide | null }));
+vi.mock(import("../pullRequest/guide/useReviewGuideWriter"), () => ({
+  useReviewGuideWriter: () =>
+    ({
+      query: { isPending: false, error: null },
+      data: { currentHeadSha: "head", run: null, guide: guideWriter.guide },
+      running: false,
+      canWrite: false,
+      write: async () => {},
+    }) as Partial<ReturnType<typeof useReviewGuideWriter>> as ReturnType<
+      typeof useReviewGuideWriter
+    >,
+}));
+
 // router: false because the chat shortcuts and the launcher stand-in never navigate.
 const options = { router: false } as const;
 
@@ -129,6 +146,7 @@ it("steps the review guide with J after clicking its prose instead of typing int
         guide={guide}
         banner={null}
         active
+        engaged
         commenting={null}
         onAsk={null}
         onFinish={null}
@@ -141,5 +159,49 @@ it("steps the review guide with J after clicking its prose instead of typing int
   await userEvent.keyboard("j");
 
   expect(composerKeys).toEqual([]);
+  await expect.element(page.getByRole("heading", { name: "Second change" })).toBeVisible();
+});
+
+it("leaves J to the composer when the chat was clicked while the guide was loading", async () => {
+  const composerKeys: string[] = [];
+  // A PR of its own, so the tour does not resume where the previous test left it.
+  const besideChat = () => (
+    <>
+      <Chat composerKeys={composerKeys} />
+      <div data-testid="chat-transcript">Transcript</div>
+      <div data-right-panel-surface-content>
+        <PullRequestGuideTab
+          environmentId={EnvironmentId.make("env-1")}
+          reference={{ projectId: ProjectId.make("project-1"), repository: "acme/app", number: 2 }}
+          title={null}
+          workspaceRoot="/repo"
+          active
+          canComment={false}
+          onAskAboutLines={null}
+          onAskAboutStop={null}
+          onFinishReview={null}
+          onOpenFile={() => {}}
+        />
+      </div>
+    </>
+  );
+  guideWriter.guide = null;
+  await using screen = await render(<Chat composerKeys={composerKeys} />, options);
+  await screen.rerender(besideChat());
+  await expect.element(page.getByText("No review guide yet", { exact: true })).toBeVisible();
+  await page.getByTestId("chat-transcript").click();
+
+  guideWriter.guide = guide;
+  await screen.rerender(besideChat());
+  await expect.element(page.getByRole("heading", { name: "First change" })).toBeVisible();
+  await userEvent.keyboard("j");
+
+  expect(composerKeys).toEqual(["j"]);
+  await expect.element(page.getByRole("heading", { name: "First change" })).toBeVisible();
+
+  await page.getByRole("heading", { name: "First change" }).click();
+  await userEvent.keyboard("j");
+
+  expect(composerKeys).toEqual(["j"]);
   await expect.element(page.getByRole("heading", { name: "Second change" })).toBeVisible();
 });

@@ -27,6 +27,7 @@ export function GuideTour({
   guide,
   banner,
   active,
+  engaged,
   commenting,
   onAsk,
   onFinish,
@@ -37,6 +38,8 @@ export function GuideTour({
   guide: PullRequestReviewGuide;
   banner: ReactNode;
   active: boolean;
+  /** Whether the user's last click or focus landed in the guide's panel rather than the chat. */
+  engaged: boolean;
   commenting: ExcerptCommenting | null;
   onAsk: ((stop: number, question: string) => void) | null;
   onFinish: (() => void) | null;
@@ -68,30 +71,6 @@ export function GuideTour({
   });
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Opening the guide precedes this mount, so it starts engaged; the last click or focus
-  // decides whether J/K belong to the guide or type into the chat composer.
-  const [engaged, setEngaged] = useState(true);
-  useEffect(() => {
-    const panel =
-      scrollRef.current?.closest("[data-right-panel-surface-content]") ?? scrollRef.current;
-    const record = (event: Event) => {
-      // The hosting sheet takes focus when its non-focusable content is clicked.
-      if (
-        event.type === "focusin" &&
-        event.target instanceof Node &&
-        event.target.contains(panel)
-      ) {
-        return;
-      }
-      setEngaged(panel !== null && event.composedPath().includes(panel));
-    };
-    window.addEventListener("pointerdown", record, true);
-    window.addEventListener("focusin", record, true);
-    return () => {
-      window.removeEventListener("pointerdown", record, true);
-      window.removeEventListener("focusin", record, true);
-    };
-  }, []);
   const goTo = (next: number) => {
     update((current) => ({
       position: next,
