@@ -982,6 +982,102 @@ describe("build.sh --print-version", () => {
   });
 });
 
+// build.sh reads the SEA Node version where upstream's vite config reads it: root
+// package.json engines.node, with the SEA_NODE_VERSION constant of older upstreams as fallback.
+describe("build.sh --print-node-version", () => {
+  let repo: string;
+
+  const write = (file: string, content: string) => {
+    const full = NodePath.join(repo, file);
+    NodeFS.mkdirSync(NodePath.dirname(full), { recursive: true });
+    NodeFS.writeFileSync(full, content);
+  };
+
+  const printNodeVersion = (cwd: string) => {
+    const result = NodeChildProcess.spawnSync(
+      "bash",
+      [NodePath.join(scripts, "build.sh"), "--print-node-version"],
+      { cwd, env: { ...process.env, T3FAC_REPO_ROOT: cwd }, encoding: "utf8" },
+    );
+    return { status: result.status, stdout: result.stdout.trim(), stderr: result.stderr };
+  };
+
+  // build.sh names the version from HEAD before it reads anything else, so the fixture is a
+  // repo with one commit.
+  beforeEach(() => {
+    repo = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3fac-node-version-"));
+    write(
+      "factory/UPSTREAM",
+      "v1.2.3-nightly.20260101.1 0123456789abcdef0123456789abcdef01234567\n",
+    );
+    write("apps/server/package.json", '{ "name": "t3", "version": "9.9.9" }\n');
+    for (const args of [
+      ["init", "-q"],
+      ["config", "user.name", "Test"],
+      ["config", "user.email", "test@example.com"],
+      ["config", "commit.gpgsign", "false"],
+      ["add", "-A"],
+      ["commit", "-q", "-m", "fixture"],
+    ]) {
+      const result = NodeChildProcess.spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+      if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
+    }
+  });
+
+  afterEach(() => {
+    NodeFS.rmSync(repo, { recursive: true, force: true });
+  });
+
+  it("reads engines.node from the root package.json", () => {
+    write("package.json", '{ "name": "root", "engines": { "node": "26.12.1" } }\n');
+    write("apps/server/vite.config.ts", "export default {};\n");
+    const result = printNodeVersion(repo);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("26.12.1");
+  });
+
+  it("prefers engines.node over a legacy SEA_NODE_VERSION constant", () => {
+    write("package.json", '{ "engines": { "node": "26.12.1" } }\n');
+    write("apps/server/vite.config.ts", 'const SEA_NODE_VERSION = "26.8.2";\n');
+    const result = printNodeVersion(repo);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("26.12.1");
+  });
+
+  it("falls back to the legacy SEA_NODE_VERSION constant in the vite config", () => {
+    write("package.json", '{ "name": "root" }\n');
+    write("apps/server/vite.config.ts", 'const SEA_NODE_VERSION = "26.8.2";\n');
+    const result = printNodeVersion(repo);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe("26.8.2");
+  });
+
+  it("fails and names both sources when neither holds a version", () => {
+    write("package.json", '{ "name": "root", "engines": {} }\n');
+    write("apps/server/vite.config.ts", "export default {};\n");
+    const result = printNodeVersion(repo);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("could not read the SEA Node version");
+    expect(result.stderr).toContain("engines.node in package.json");
+    expect(result.stderr).toContain("SEA_NODE_VERSION in apps/server/vite.config.ts");
+  });
+
+  // The real tree, so the next upstream move of the Node pin fails CI instead of autodeploy.
+  it("reads the Node version upstream pins in this repo", () => {
+    const root = NodePath.resolve(scripts, "../..");
+    const pinned = (
+      JSON.parse(NodeFS.readFileSync(NodePath.join(root, "package.json"), "utf8")) as {
+        engines?: { node?: string };
+      }
+    ).engines?.node;
+    const result = printNodeVersion(root);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(result.stdout).toBe(pinned);
+  });
+});
+
 // The whole of build.sh in a throwaway repo, with `vp` and `cargo` stubbed so the archive
 // holds a fake `t3`. FAKE_T3_MODE picks how that server behaves in the smoke test.
 describe("build.sh smoke test", () => {
@@ -1062,10 +1158,7 @@ describe("build.sh smoke test", () => {
       NodePath.join(repo, "apps/server/package.json"),
       '{ "name": "t3", "version": "9.9.9" }\n',
     );
-    write(
-      NodePath.join(repo, "apps/server/vite.config.ts"),
-      'const SEA_NODE_VERSION = "24.0.0";\n',
-    );
+    write(NodePath.join(repo, "package.json"), '{ "engines": { "node": "24.0.0" } }\n');
     write(NodePath.join(repo, "native/resource-monitor/Cargo.toml"), "");
     write(NodePath.join(repo, ".gitignore"), "release/\nnative/**/target/\n");
     git("init", "-q");
@@ -1080,6 +1173,7 @@ describe("build.sh smoke test", () => {
       NodePath.join(sandbox, "bin/vp"),
       [
         "#!/bin/sh",
+        '[ -z "${VP_NODE_VERSION:-}" ] || echo "$VP_NODE_VERSION" >> "$FAKE_WORK/node-versions"',
         'if [ "$1 $2" = "node scripts/build-cli-archive.ts" ]; then',
         "  shift 2",
         "  while [ $# -gt 0 ]; do",
@@ -1146,6 +1240,10 @@ describe("build.sh smoke test", () => {
     expect(result.stdout.split("\n").at(-1)).toBe(NodePath.join(repo, "release", archive));
     expect(result.tmpLeft).toEqual([]);
     expect(serverAlive()).toBe(false);
+    // Both SEA steps, build-exe and the archive, ran under the Node version the fixture pins.
+    expect(NodeFS.readFileSync(NodePath.join(sandbox, "work/node-versions"), "utf8")).toBe(
+      "24.0.0\n24.0.0\n",
+    );
   });
 
   it.each([
