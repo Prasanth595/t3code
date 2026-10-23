@@ -176,6 +176,43 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(green.next, botDone, noRemarks).changes, []);
   });
 
+  it("reports an owed non-required failure once after the required notice", () => {
+    const required = { ...check("test", "success"), required: true };
+    const early = detail({ checks: [required, check("e2e", "pending")] });
+    const first = evaluatePullRequestWatch(watch(), early, noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "checks-passed", count: 1, required: true }]);
+    const failed = detail({ checks: [required, check("e2e", "failure")] });
+    const failure = evaluatePullRequestWatch(first.next, failed, noRemarks);
+    assert.deepEqual(failure.changes, [
+      { kind: "checks-failed", failed: [check("e2e", "failure")] },
+    ]);
+    const repeated = evaluatePullRequestWatch(failure.next, failed, noRemarks);
+    assert.deepEqual(repeated.changes, []);
+    const recovered = detail({ checks: [required, check("e2e", "success")] });
+    const final = evaluatePullRequestWatch(repeated.next, recovered, noRemarks);
+    assert.deepEqual(final.changes, [{ kind: "checks-passed", count: 2, required: false }]);
+    assert.deepEqual(evaluatePullRequestWatch(final.next, recovered, noRemarks).changes, []);
+  });
+
+  it("clears old-head owed checks when a new head is pushed", () => {
+    const required = { ...check("test", "success"), required: true };
+    const early = detail({ checks: [required, check("e2e", "pending")] });
+    const first = evaluatePullRequestWatch(watch(), early, noRemarks);
+    assert.deepEqual(first.next.owedChecks, ["e2e"]);
+    const unreadHead = detail({ headSha: "bbbbbbbbbb", checks: [] });
+    const unread = evaluatePullRequestWatch(first.next, unreadHead, noRemarks);
+    assert.deepEqual(unread.changes, []);
+    assert.deepEqual(unread.next.owedChecks, []);
+    const pushed = detail({ ...unreadHead, checks: [required] });
+    const newHead = evaluatePullRequestWatch(unread.next, pushed, noRemarks);
+    assert.deepEqual(newHead.changes, [{ kind: "checks-passed", count: 1, required: true }]);
+    assert.deepEqual(newHead.next.owedChecks, []);
+    const lateResult = detail({ ...pushed, checks: [required, check("e2e", "success")] });
+    const final = evaluatePullRequestWatch(newHead.next, lateResult, noRemarks);
+    assert.deepEqual(final.changes, []);
+    assert.deepEqual(evaluatePullRequestWatch(final.next, lateResult, noRemarks).changes, []);
+  });
+
   // regression: #16208 PR watches burned GitHub's rate limit and gave up
   it("does not report passed again for a new passed check where none is required", () => {
     const first = evaluatePullRequestWatch(
