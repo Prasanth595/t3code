@@ -1,3 +1,4 @@
+import { composerRecallContext } from "@t3tools/shared/composerContextReferences";
 import { useComposerAttachmentActions } from "./use-composer-attachment-actions";
 import * as Dialog from "../components/ui/Dialog";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
@@ -507,7 +508,10 @@ export function useThreadComposerState() {
         edit: {
           messageId: edit.messageId,
           attachments: payload.attachments,
-          ...(payload.context ? { context: payload.context } : {}),
+          context: composerRecallContext(text, draft.text, payload.context) ?? {
+            version: 1,
+            records: [],
+          },
         },
       },
     });
@@ -706,7 +710,7 @@ export function useThreadComposerState() {
       commandId: CommandId.make(metadata.commandId),
       text,
       attachments,
-      context: draft.context,
+      context: composerRecallContext(text, draft.text, draft.context),
       modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
       interactionMode: resolveProviderInteractionMode(

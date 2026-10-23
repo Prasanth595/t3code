@@ -1,3 +1,4 @@
+import { composerRecallContext } from "@t3tools/shared/composerContextReferences";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -135,16 +136,20 @@ async function submitQueuedRunEdit(input: {
         edit: {
           messageId: editing.messageId,
           attachments: uploads,
-          context: {
-            version: 1,
-            records: [
-              ...new Map(
-                [...keptRecords, ...newRecords].map(
-                  (record) => [record.contextId, record] as const,
-                ),
-              ).values(),
-            ],
-          },
+          context: composerRecallContext(
+            editText.length === 0 ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT : editText,
+            content.prompt,
+            {
+              version: 1,
+              records: [
+                ...new Map(
+                  [...keptRecords, ...newRecords].map(
+                    (record) => [record.contextId, record] as const,
+                  ),
+                ).values(),
+              ],
+            },
+          ) ?? { version: 1, records: [] },
         },
       },
     });
