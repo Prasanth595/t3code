@@ -47,15 +47,11 @@ export function Toast(props: ToastProps) {
             </AppText>
           ) : null}
         </View>
+        {props.action ? <Button label={props.action.label} onPress={props.action.onPress} /> : null}
         {props.onDismiss ? (
           <IconButton accessibilityLabel="Dismiss message" icon="xmark" onPress={props.onDismiss} />
         ) : null}
       </View>
-      {props.action ? (
-        <View className="mt-2 self-end">
-          <Button label={props.action.label} onPress={props.action.onPress} />
-        </View>
-      ) : null}
     </GlassSurface>
   );
 }
