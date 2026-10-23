@@ -6214,8 +6214,8 @@ describe("retrying a call GitHub never received", () => {
         startImmediately: true,
       });
       yield* TestClock.adjust("3 seconds");
-      const issues = yield* Fiber.join(fiber);
-      assert.strictEqual(issues.length, 1);
+      const listing = yield* Fiber.join(fiber);
+      assert.strictEqual(listing.items.length, 1);
       assert.strictEqual(t.inputs.length, 2);
       assert.deepEqual(t.calls()[0], t.calls()[1]);
     }),

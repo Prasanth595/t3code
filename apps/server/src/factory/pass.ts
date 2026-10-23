@@ -256,6 +256,11 @@ export interface PassWorld {
   /** Archives the thread: `archive` on the sessions. */
   readonly archiveThread: (threadId: string) => Effect.Effect<void, PassError>;
   readonly brokenThreads: BrokenThreadMemo;
+  /**
+   * How many passes in a row each repo's project config has not loaded, by lower-cased
+   * `owner/name`; kept from pass to pass, and from scratch after a restart.
+   */
+  readonly configSkips: Map<string, number>;
   readonly nowMs: () => number;
   /** Writes one event to the machine log. */
   readonly record: (event: MachineEvent) => Effect.Effect<void, LedgerError>;
@@ -870,10 +875,17 @@ const brokenWorktrees = Effect.fn("Pass.brokenWorktrees")(function* (world: Pass
   }
 });
 
+/** After this many passes in a row without a repo's config, a person is told. */
+const CONFIG_SKIPS_BEFORE_ATTENTION = 3;
+
+const configNotLoadedId = (key: string): string => `config-not-loaded:${key}`;
+
 /**
  * The project config and tracker login of every watched repo. A repo whose config cannot be
  * loaded is reported and its issues are left alone; so is one whose tracker login cannot be read,
- * and one that two T3 projects name (`ambiguousRepos`).
+ * and one that two T3 projects name (`ambiguousRepos`). A config that has not loaded for
+ * {@link CONFIG_SKIPS_BEFORE_ATTENTION} passes in a row raises an attention item, which the
+ * next pass that loads it clears: one failed call is a skipped pass, a broken setup is not.
  */
 const loadRepos = Effect.fn("Pass.loadRepos")(function* (
   world: PassWorld,
@@ -914,9 +926,27 @@ const loadRepos = Effect.fn("Pass.loadRepos")(function* (
         event: "repo_skipped",
         data: { repo: watched.repo, reason: "config-not-loaded", message: prepareText(message) },
       });
+      const skips = (world.configSkips.get(key) ?? 0) + 1;
+      world.configSkips.set(key, skips);
+      if (skips >= CONFIG_SKIPS_BEFORE_ATTENTION) {
+        pass.report.attention += 1;
+        yield* world.attention.raise({
+          id: configNotLoadedId(key),
+          kind: "attention",
+          repo: watched.repo,
+          issue: null,
+          run: null,
+          message: plain(
+            `${watched.repo}: project config not loaded for ${CONFIG_SKIPS_BEFORE_ATTENTION} passes in a row, issues are not being picked up; last error: ${message}`,
+          ),
+        });
+      }
       repos.push({ kind: "broken", name: watched.repo });
       continue;
     }
+    world.configSkips.delete(key);
+    // Cleared whether or not this process counted the skips: the item outlives a restart.
+    yield* world.attention.clear((item) => item.id === configNotLoadedId(key));
     const user = yield* Effect.result(world.trackerUser(watched));
     if (user._tag === "Failure") {
       yield* pass.fail(

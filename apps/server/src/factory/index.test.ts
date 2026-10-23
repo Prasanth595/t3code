@@ -482,7 +482,8 @@ describe("attention", () => {
       const { items, osascript } = yield* untilPassErrors(VALID);
       assert.include(items[0]!.message, "3 times in a row");
       assert.include(items[0]!.message, "a/b: project config not loaded");
-      assert.strictEqual(osascript.length, 1);
+      // One for this item, and one for the config-not-loaded item the same three passes raise.
+      assert.strictEqual(osascript.length, 2);
     }),
   );
 
@@ -1882,6 +1883,7 @@ describe("the gate in the background", () => {
             claimMemo: new ClaimMemo(),
             stuckReads: new Map<string, number>(),
             brokenThreads: { notFactory: new Set<string>(), unsettled: new Map<string, number>() },
+            configSkips: new Map<string, number>(),
           },
         );
         const repo: Repo = {
@@ -2044,6 +2046,7 @@ describe("the gate in the background", () => {
         claimMemo: new ClaimMemo(),
         stuckReads: new Map<string, number>(),
         brokenThreads: { notFactory: new Set<string>(), unsettled: new Map<string, number>() },
+        configSkips: new Map<string, number>(),
       };
       const build = () =>
         liveWorld(
