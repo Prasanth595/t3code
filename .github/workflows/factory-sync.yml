@@ -76,14 +76,17 @@ jobs:
       # Dispatches Factory CI, desktop and mobile on a landed sync, which
       # GITHUB_TOKEN's own push does not start.
       actions: write
+    env:
+      # Only whether the App is set up; its key stays in the Mint step.
+      SYNC_APP_CONFIGURED: ${{ secrets.SYNC_APP_ID != '' && secrets.SYNC_APP_PRIVATE_KEY != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      # As in prepare. git push then uses gh's credential helper, so GH_TOKEN
-      # is the only token that pushes.
+      # As in prepare. git then fetches, and pushes when no sync secret is set,
+      # through gh's credential helper with GH_TOKEN.
       - name: Remove checkout's token
         run: |
           { git config --local --name-only --get-regexp '^includeif\.gitdir:' || true; } |
@@ -97,9 +100,28 @@ jobs:
           name: sync
           path: ${{ runner.temp }}/sync
 
+      # GITHUB_TOKEN cannot push a tag that changes .github/workflows/, so
+      # sync.sh pushes with a GitHub App's token (SYNC_APP_ID,
+      # SYNC_APP_PRIVATE_KEY), else a fine-grained token (SYNC_TOKEN), else
+      # GITHUB_TOKEN. Either secret needs Contents and Workflows write on this
+      # repository. A failed mint leaves sync.sh no App token, so its push fails
+      # and files `cannot be pushed` rather than failing the job here.
+      - name: Mint the push token
+        id: app-token
+        if: env.SYNC_APP_CONFIGURED == 'true'
+        continue-on-error: true
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.SYNC_APP_ID }}
+          private-key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
       - name: Publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SYNC_APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
         run: |
           gh auth setup-git
           factory/scripts/sync.sh publish "$RUNNER_TEMP/sync"

@@ -37,12 +37,20 @@
 # origin waits on its open pull request, or files `is stuck` when it has none.
 # gh targets origin's GitHub repository, never the fork's parent.
 #
+# publish's pushes use the GitHub App's token when SYNC_APP_CONFIGURED is true
+# (SYNC_APP_TOKEN, empty when the workflow could not mint it, which fails the
+# push), else SYNC_TOKEN when set, else whatever git is configured with:
+# GITHUB_TOKEN in the workflow. A refused push names the token, and when it was
+# GITHUB_TOKEN the secrets to add. Fetches and gh calls never use a sync secret.
+#
 # Pull requests opened with GITHUB_TOKEN trigger no workflows, which is why the
 # checks run here and the landing happens only when they pass. The landing push
 # triggers none either, so inside the workflow (GITHUB_ACTIONS set) publish
 # dispatches Factory CI, Factory desktop and, when the merge touched apps/mobile
-# or packages, Factory mobile on the landed main. A failed dispatch leaves the
-# landing in place and exits 1. Run locally, the person's own push starts them.
+# or packages, Factory mobile on the landed main. A landing pushed with a sync
+# secret starts them itself, so publish then dispatches only Factory mobile, for
+# the reason dispatch() gives. A failed dispatch leaves the landing in place
+# and exits 1. Run locally, the person's own push starts them.
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -62,6 +70,39 @@ run_logged() {
   status=${PIPESTATUS[0]}
   set -e
   return "$status"
+}
+
+# The token publish pushes with, as the workflow passes it; see the header.
+push_with=
+if [[ ${SYNC_APP_CONFIGURED:-} == true ]]; then
+  push_with=SYNC_APP_ID
+elif [[ -n ${SYNC_TOKEN:-} ]]; then
+  push_with=SYNC_TOKEN
+elif [[ -n ${GITHUB_ACTIONS:-} ]]; then
+  push_with=GITHUB_TOKEN
+fi
+dispatched=
+
+# git push with the sync secret's token in place of git's own credentials. The
+# token reaches git's credential helper through the environment, not argv.
+push_origin() {
+  local token
+  case $push_with in
+    SYNC_APP_ID) token=${SYNC_APP_TOKEN:-} ;;
+    SYNC_TOKEN) token=$SYNC_TOKEN ;;
+    *)
+      git push "$@"
+      return
+      ;;
+  esac
+  if [[ -z $token ]]; then
+    echo "sync: no SYNC_APP_ID token was minted; the workflow's Mint step says why" >&2
+    return 1
+  fi
+  # shellcheck disable=SC2016 # the helper's shell expands it, from git's env
+  SYNC_PUSH_TOKEN=$token git -c credential.helper= \
+    -c credential.helper='!f() { echo username=x-access-token; echo "password=$SYNC_PUSH_TOKEN"; }; f' \
+    push "$@"
 }
 
 # Records the outcome for publish and ends prepare.
@@ -198,14 +239,20 @@ fails_checks() {
   exit 1
 }
 
-# Dispatches the workflows a push to main would have started, on the landed
-# main, and sets $dispatched to their files. <before> is main before the landing.
+# Dispatches the workflows a push to main would have started and the landing
+# push did not, on the landed main, and sets $dispatched to their files. <before>
+# is main before the landing. A push with a sync secret starts Factory CI and
+# desktop, but GitHub matches Factory mobile's paths filter against only the
+# first 300 changed files, which a sync can pass, so mobile is dispatched after
+# any push; its concurrency group keeps one build when the push started it too.
 # Every one is tried; each that fails gets its own line, then publish exits 1.
 dispatch() {
-  local before=$1 workflow failed=0 workflows=(factory-ci.yml factory-desktop.yml)
+  local before=$1 workflow failed=0 workflows=()
+  [[ $push_with != GITHUB_TOKEN ]] || workflows=(factory-ci.yml factory-desktop.yml)
   if [[ -n $(git diff --name-only "$before..$candidate" -- apps/mobile packages) ]]; then
     workflows+=(factory-mobile.yml)
   fi
+  ((${#workflows[@]})) || return 0
   for workflow in "${workflows[@]}"; do
     if ! gh workflow run "$workflow" --ref "$base"; then
       echo "sync: $tag merged into $base through $pr_url; dispatch of $workflow failed" >&2
@@ -342,13 +389,24 @@ publish() {
   fi
 
   verify_candidate
-  if ! git push --quiet origin "$candidate:refs/heads/$branch" 2> "$scratch/push.log"; then
+  if ! push_origin --quiet origin "$candidate:refs/heads/$branch" 2> "$scratch/push.log"; then
     cat "$scratch/push.log" >&2
     echo "sync: push of $branch failed; $tag is not synced" >&2
     {
       echo "\`$branch\` merges \`$tag\` ($sha), but pushing it failed, so nothing reached \`$base\`."
-      echo "\`GITHUB_TOKEN\` cannot push changes under \`.github/workflows/\`; when the tag changes"
-      echo "upstream's workflows, the push needs a token with the workflows permission."
+      if [[ $push_with == GITHUB_TOKEN ]]; then
+        echo "This run pushed with \`GITHUB_TOKEN\`, which cannot push changes under"
+        echo "\`.github/workflows/\`. Add the \`SYNC_APP_ID\` and \`SYNC_APP_PRIVATE_KEY\` repository"
+        echo "secrets (a GitHub App installed on this repository with Contents and Workflows"
+        echo "read/write), or a \`SYNC_TOKEN\` secret (a fine-grained token for this repository"
+        echo "with Contents and Workflows write), then run the sync again."
+      elif [[ -n $push_with ]]; then
+        echo "This run pushed with \`$push_with\`; check that it is current and can still write"
+        echo "contents and workflows on this repository."
+      else
+        echo "When the tag changes \`.github/workflows/\`, the push needs a token with the"
+        echo "workflows permission."
+      fi
       echo
       echo '```'
       tail -n 50 "$scratch/push.log"
@@ -390,9 +448,9 @@ publish() {
     # meanwhile, the push is refused and the pull request waits for a person.
     local before
     before=$(git rev-parse "origin/$base")
-    if git push --quiet origin "$candidate:refs/heads/$base" 2> "$scratch/land.log"; then
-      if [[ -n ${GITHUB_ACTIONS:-} ]]; then
-        dispatch "$before"
+    if push_origin --quiet origin "$candidate:refs/heads/$base" 2> "$scratch/land.log"; then
+      [[ -z ${GITHUB_ACTIONS:-} ]] || dispatch "$before"
+      if [[ -n $dispatched ]]; then
         echo "sync: $tag merged into $base through $pr_url; dispatched $dispatched"
       else
         echo "sync: $tag merged into $base through $pr_url"
