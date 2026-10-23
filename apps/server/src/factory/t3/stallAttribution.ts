@@ -82,7 +82,11 @@ const attributionLayer = (options: StallAttributionOptions) =>
             thresholdMs: options.thresholdMs ?? 2000,
             onStall: ({ stallMs, windowStartMs, windowEndMs }) => {
               const spans = registry.active(windowStartMs, windowEndMs, REPORTED_SPANS);
-              const summary = spans.map((s) => `${s.name} (${s.ageMs} ms)`).join(", ");
+              const summary = spans
+                .map(
+                  (s) => `${s.name} (${s.ageMs} ms)${s.query === undefined ? "" : ` ${s.query}`}`,
+                )
+                .join(", ");
               if (sink !== undefined) {
                 try {
                   sink.write(

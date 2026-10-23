@@ -90,7 +90,7 @@ describe("withStallAttribution", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live(
+  it.effect(
     "names the child span that blocked, not the long-lived spans that were already open",
     () =>
       Effect.gen(function* () {
@@ -101,21 +101,24 @@ describe("withStallAttribution", () => {
           thresholdMs: 100,
           profile: false,
         })(Layer.succeed(Tracer.Tracer, base));
-        const warned = yield* Deferred.make<string>();
+        const warnings = [yield* Deferred.make<string>(), yield* Deferred.make<string>()];
+        let warned = 0;
         const capture = Logger.make<unknown, void>(({ message }) => {
           const text = String(Array.isArray(message) ? message[0] : message);
           if (text.startsWith("factory event loop stalled"))
-            Deferred.doneUnsafe(warned, Effect.succeed(text));
+            Deferred.doneUnsafe(warnings[warned++]!, Effect.succeed(text));
         });
         const warning = yield* Effect.gen(function* () {
           // Connection and worker spans that never end, as in a server that has been up a while.
           for (let i = 0; i < 6; i += 1) yield* Effect.makeSpan(`http.server GET /ws ${i}`);
-          yield* Effect.sleep("60 millis");
+          // The first stall puts a detector tick after those spans started.
+          yield* Effect.sync(() => blockThread(150));
+          yield* Deferred.await(warnings[0]!);
           yield* Effect.sync(() => blockThread(250)).pipe(
             Effect.withSpan("PullRequestSyncReactor.sweep"),
             Effect.withSpan("PullRequestSyncReactor.run"),
           );
-          return yield* Deferred.await(warned);
+          return yield* Deferred.await(warnings[1]!);
         }).pipe(
           Effect.provide(
             decorated.pipe(
@@ -126,12 +129,14 @@ describe("withStallAttribution", () => {
         );
         assert.include(warning, "in flight: PullRequestSyncReactor.sweep (");
 
-        const record = JSON.parse(
-          NodeFS.readFileSync(NodePath.join(logsDir, "factory-event-loop-stalls.ndjson"), "utf8")
-            .trim()
-            .split("\n")[0]!,
-        );
-        assert.strictEqual(record.spans[0].name, "PullRequestSyncReactor.sweep");
+        const lines = NodeFS.readFileSync(
+          NodePath.join(logsDir, "factory-event-loop-stalls.ndjson"),
+          "utf8",
+        )
+          .trim()
+          .split("\n");
+        assert.strictEqual(lines.length, 2);
+        assert.strictEqual(JSON.parse(lines[1]!).spans[0].name, "PullRequestSyncReactor.sweep");
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

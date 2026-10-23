@@ -13,22 +13,22 @@ describe("makeSpanRegistry.active", () => {
   it("reports a span still open at the end of the window, with its age", () => {
     const c = clock();
     const registry = makeSpanRegistry({ now: c.now });
-    c.set(100);
-    registry.start("ThreadLaunchService.prepare", "root");
+    c.set(600);
+    registry.start("ThreadLaunchService.prepare", "span");
     expect(registry.active(500, 3000, 10)).toEqual([
-      { name: "ThreadLaunchService.prepare", kind: "root", ageMs: 2900, open: true },
+      { name: "ThreadLaunchService.prepare", kind: "span", ageMs: 2400, open: true },
     ]);
   });
 
   it("reports a span that ended inside the window, because a blocked loop cannot report it in time", () => {
     const c = clock();
     const registry = makeSpanRegistry({ now: c.now });
-    c.set(100);
+    c.set(600);
     const id = registry.start("sqlite", "sql");
     c.set(2500);
     registry.end(id);
     expect(registry.active(500, 3000, 10)).toEqual([
-      { name: "sqlite", kind: "sql", ageMs: 2900, open: false },
+      { name: "sqlite", kind: "sql", ageMs: 2400, open: false },
     ]);
   });
 
@@ -36,27 +36,53 @@ describe("makeSpanRegistry.active", () => {
     const c = clock();
     const registry = makeSpanRegistry({ now: c.now });
     c.set(10);
-    registry.end(registry.start("early", "root"));
+    registry.end(registry.start("early", "span"));
     c.set(600);
-    registry.start("during", "root");
+    registry.start("during", "span");
     c.set(3500);
-    registry.start("late", "root");
+    registry.start("late", "span");
     expect(registry.active(500, 3000, 10).map((s) => s.name)).toEqual(["during"]);
   });
 
-  it("lists the oldest first and honours the limit", () => {
+  it("ranks SQL, then the span with the most window time of its own, ahead of open spans from before the window", () => {
     const c = clock();
     const registry = makeSpanRegistry({ now: c.now });
     c.set(1);
-    registry.start("a", "root");
+    registry.start("connection", "span");
     c.set(2);
-    const b = registry.start("b", "sql");
-    c.set(3);
-    registry.start("c", "root");
-    c.set(4);
-    registry.end(b);
-    expect(registry.active(0, 10, 10).map((s) => s.name)).toEqual(["a", "b", "c"]);
-    expect(registry.active(0, 10, 2).map((s) => s.name)).toEqual(["a", "b"]);
+    registry.start("worker", "span");
+    c.set(600);
+    const parent = registry.start("parent", "span");
+    c.set(700);
+    const child = registry.start("child", "span", parent);
+    c.set(2700);
+    registry.end(child);
+    c.set(2800);
+    registry.end(parent);
+    c.set(2900);
+    registry.end(registry.start("sqlite", "sql"));
+    expect(registry.active(500, 3000, 10).map((s) => s.name)).toEqual([
+      "sqlite",
+      "child",
+      "parent",
+      "worker",
+      "connection",
+    ]);
+    expect(registry.active(500, 3000, 2).map((s) => s.name)).toEqual(["sqlite", "child"]);
+  });
+
+  it("lists open spans from before the window most recently started first", () => {
+    const c = clock();
+    const registry = makeSpanRegistry({ now: c.now });
+    for (const [t, name] of [
+      [1, "a"],
+      [2, "b"],
+      [3, "c"],
+    ] as const) {
+      c.set(t);
+      registry.start(name, "span");
+    }
+    expect(registry.active(500, 3000, 10).map((s) => s.name)).toEqual(["c", "b", "a"]);
   });
 
   it("stays bounded: the open map and the recent ring drop their oldest entries", () => {
@@ -64,12 +90,12 @@ describe("makeSpanRegistry.active", () => {
     const registry = makeSpanRegistry({ now: c.now, maxInFlight: 3, maxRecent: 2 });
     for (let i = 0; i < 10; i++) {
       c.set(i);
-      registry.start(`open-${i}`, "root");
+      registry.start(`open-${i}`, "span");
     }
     expect(registry.active(0, 100, 100).map((s) => s.name)).toEqual(["open-7", "open-8", "open-9"]);
     for (let i = 0; i < 10; i++) {
       c.set(20 + i);
-      registry.end(registry.start(`done-${i}`, "root"));
+      registry.end(registry.start(`done-${i}`, "span"));
     }
     const names = registry.active(0, 100, 100).map((s) => s.name);
     expect(names).toContain("done-9");
@@ -80,8 +106,8 @@ describe("makeSpanRegistry.active", () => {
 
   it("ignores an end for a span it already dropped", () => {
     const registry = makeSpanRegistry({ maxInFlight: 1 });
-    const first = registry.start("first", "root");
-    registry.start("second", "root");
+    const first = registry.start("first", "span");
+    registry.start("second", "span");
     expect(() => registry.end(first)).not.toThrow();
   });
 });
@@ -131,7 +157,7 @@ describe("wrapTracer", () => {
   const parentSpan = { _tag: "Span" } as unknown as Tracer.AnySpan;
   const externalParent = { _tag: "ExternalSpan" } as unknown as Tracer.AnySpan;
 
-  it("tracks root spans and client spans until they end, and still ends the delegate's span", () => {
+  it("tracks every span until it ends, and still ends the delegate's span", () => {
     const { c, registry, created, tracer } = setup();
     c.set(5);
     const root = tracer.span(spanOptions("rpc.request", Option.none()));
@@ -140,11 +166,11 @@ describe("wrapTracer", () => {
     sql.attribute("db.query.text", "SELECT 1");
     const external = tracer.span(spanOptions("http.server", Option.some(externalParent)));
     expect(registry.active(0, 10, 10).map((s) => [s.name, s.kind])).toEqual([
-      ["rpc.request", "root"],
       ["sqlite", "sql"],
-      ["http.server", "root"],
+      ["rpc.request", "span"],
+      ["http.server", "span"],
     ]);
-    expect(registry.active(0, 10, 10)[1]?.query).toBe("SELECT 1");
+    expect(registry.active(0, 10, 10)[0]?.query).toBe("SELECT 1");
     c.set(7);
     root.end(9n, undefined as never);
     sql.end(9n, undefined as never);
@@ -162,15 +188,20 @@ describe("wrapTracer", () => {
     sql.attribute("db.system.name", "sqlite");
     sql.attribute("db.query.text", "x".repeat(500));
     const spans = registry.active(0, 10, 10);
-    expect(spans.map((s) => s.kind)).toEqual(["root", "sql"]);
-    expect(spans[1]?.query).toHaveLength(160);
+    expect(spans.map((s) => s.kind)).toEqual(["sql", "span"]);
+    expect(spans[0]?.query).toHaveLength(160);
   });
 
-  it("returns the delegate's own span, untouched, for other child spans", () => {
-    const { registry, created, tracer } = setup();
-    const child = tracer.span(spanOptions("ProjectionStore.read", Option.some(parentSpan)));
-    expect(child).toBe(created.get("ProjectionStore.read")?.span);
-    expect(registry.active(0, 10, 10)).toEqual([]);
+  it("links a span to its parent, so the parent's own time excludes the child's", () => {
+    const { c, registry, tracer } = setup();
+    c.set(10);
+    const parent = tracer.span(spanOptions("parent", Option.none()));
+    const child = tracer.span(spanOptions("child", Option.some(parent)));
+    c.set(900);
+    child.end(1n, undefined as never);
+    c.set(910);
+    parent.end(1n, undefined as never);
+    expect(registry.active(0, 1000, 10).map((s) => s.name)).toEqual(["child", "parent"]);
   });
 
   it("keeps the delegate's context hook", () => {
