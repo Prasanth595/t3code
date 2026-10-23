@@ -1504,7 +1504,9 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
     .filter((context) => !terminalContexts.includes(context))
     .reduce(
       (text, context) =>
-        removeInlineContextReference(text, terminalContextReference(context).contextId).prompt,
+        removeInlineContextReference(text, terminalContextReference(context).contextId, {
+          preserveTrailingWhitespace: true,
+        }).prompt,
       contents.prompt,
     );
   return {
