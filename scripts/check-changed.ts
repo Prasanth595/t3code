@@ -83,15 +83,18 @@ const runPatchCheck = files.some(
   (file) =>
     file === "pnpm-workspace.yaml" ||
     file === "pnpm-lock.yaml" ||
+    file === ".pnpmfile.cjs" ||
     file.startsWith("patches/") ||
+    file.startsWith("apps/mobile/deps/") ||
     NodePath.basename(file) === "package.json",
 );
 
-// The same fresh install Release Smoke runs: it copies the workspace
-// manifests to a temp dir, deletes the lockfile, and installs with
-// --lockfile-only. Copy the same files here (the mobile modules are mobile
-// file: dependencies, not workspace packages) and skip the lockfile, so the
-// working tree and its lockfile stay untouched.
+// Mirror Release Smoke's temp-copy install: copy the workspace manifests to
+// a temp dir, omit the lockfile, and install with --lockfile-only, so the
+// working tree and its lockfile stay untouched (the mobile modules are
+// mobile file: dependencies, not workspace packages). Local pnpm may resolve
+// from cached registry metadata, so this catches patches stranded by your
+// own change, not registry drift.
 const checkPatches = (): boolean => {
   const temp = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-patch-check-"));
   try {
@@ -110,22 +113,24 @@ const checkPatches = (): boolean => {
         if (NodeFS.existsSync(NodePath.join(root, manifest))) copy(manifest);
       }
     }
-    for (const dir of ["apps/mobile/deps", "patches"]) {
-      if (NodeFS.existsSync(NodePath.join(root, dir))) copy(dir);
+    for (const extra of ["apps/mobile/deps", "patches", ".pnpmfile.cjs"]) {
+      if (NodeFS.existsSync(NodePath.join(root, extra))) copy(extra);
     }
-    const { status, stdout, stderr } = NodeChildProcess.spawnSync(
+    const { status, stdout, stderr, error } = NodeChildProcess.spawnSync(
       "vp",
       ["install", "--lockfile-only", "--ignore-scripts"],
       { cwd: temp, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
     );
     if (status === 0) return true;
-    console.log(stdout);
-    console.error(stderr);
-    if (`${stdout}${stderr}`.includes("ERR_PNPM_UNUSED_PATCH")) {
+    if (stdout) console.log(stdout);
+    if (stderr) console.error(stderr);
+    if (error) console.error(error.message);
+    if (`${stdout ?? ""}${stderr ?? ""}`.includes("ERR_PNPM_UNUSED_PATCH")) {
       console.error(
         "Unused dependency patches: remove each patch named above from " +
           "patchedDependencies in pnpm-workspace.yaml and from patches/, " +
-          "or update it to the version the install resolves.",
+          "update it to the version the install resolves, " +
+          "or pin the dependency that pulls it in to the patched version.",
       );
     }
     return false;
@@ -141,7 +146,7 @@ const graphql = ["apps/server", "packages/source-control-github"].filter((dir) =
 
 const filters = (names: ReadonlyArray<string>) => names.flatMap((name) => ["--filter", name]);
 const steps = [
-  // First, so a stranded patch fails in seconds, before knip and typecheck.
+  // Runs first; it takes about a second.
   runPatchCheck && { name: "unused patches", run: checkPatches },
   present.length > 0 && {
     name: "format",
