@@ -18,6 +18,10 @@ does the same. Change these shortcuts in **Settings → Keybindings** under
 or **Composer: Send and Start New Thread**. These bindings take priority over the
 send shortcut. Click the send button to use the configured follow-up behavior.
 
+Turn on **Settings → General → Start new threads in background** to make sending
+from a new thread start it in the background. `mod+Enter` then opens the thread
+instead.
+
 When an active turn has queued messages, `mod+Shift+Enter` sends the first as a
 steer. Change it under **Queue: Send First Queued Message as Steer** in Keybindings.
 

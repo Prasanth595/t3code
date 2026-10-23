@@ -63,6 +63,7 @@ import {
   type ComposerTrigger,
   type ComposerSubmissionIntent,
   collapseExpandedComposerCursor,
+  composerDefaultSendIntent,
   composerRequiresModifier,
   composerStateAtPromptEnd,
   detectComposerTrigger,
@@ -2160,6 +2161,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
   };
   const submitComposerStable = useStableCallback(submitComposer);
+  const defaultSendIntent = composerDefaultSendIntent({
+    isDraftThread: routeKind === "draft",
+    startNewThreadsInBackground: settings.startNewThreadsInBackground,
+  });
   const handleSubmitMessage = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     submitComposer(
@@ -2170,6 +2175,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         activeTurnDefault: followUpBehavior,
         canSteer: !isCompacting,
       }),
+      defaultSendIntent,
     );
   };
   const handleSubmitMessageStable = useStableCallback(handleSubmitMessage);
@@ -2182,6 +2188,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         activeTurnDefault: followUpBehavior,
         canSteer: !isCompacting,
       }),
+      defaultSendIntent,
     );
   };
   const submitCitationAndSendStable = useStableCallback(submitCitationAndSend);
@@ -2242,6 +2249,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       phase,
       isCompacting,
       followUpBehavior,
+      startNewThreadsInBackground: settings.startNewThreadsInBackground,
       isSoftwareKeyboardOpen,
       planModeUiEnabled,
       isLiteralPendingAnswer,
