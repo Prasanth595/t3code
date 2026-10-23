@@ -1002,6 +1002,8 @@ describe("build.sh --print-node-version", () => {
     return { status: result.status, stdout: result.stdout.trim(), stderr: result.stderr };
   };
 
+  // build.sh names the version from HEAD before it reads anything else, so the fixture is a
+  // repo with one commit.
   beforeEach(() => {
     repo = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3fac-node-version-"));
     write(
@@ -1009,6 +1011,17 @@ describe("build.sh --print-node-version", () => {
       "v1.2.3-nightly.20260101.1 0123456789abcdef0123456789abcdef01234567\n",
     );
     write("apps/server/package.json", '{ "name": "t3", "version": "9.9.9" }\n');
+    for (const args of [
+      ["init", "-q"],
+      ["config", "user.name", "Test"],
+      ["config", "user.email", "test@example.com"],
+      ["config", "commit.gpgsign", "false"],
+      ["add", "-A"],
+      ["commit", "-q", "-m", "fixture"],
+    ]) {
+      const result = NodeChildProcess.spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+      if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
+    }
   });
 
   afterEach(() => {
