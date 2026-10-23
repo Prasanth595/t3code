@@ -76,7 +76,7 @@ const inputKey = () => {
     ":(glob)**/.astro/**",
     ":(glob)**/*.d.ts",
     ":(glob)**/.env*",
-    ":!**/node_modules/**",
+    ":(exclude,glob)**/node_modules/**",
   );
   for (const file of [
     // Raw bytes of changed files too: .gitattributes normalizes line endings in
