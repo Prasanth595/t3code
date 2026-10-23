@@ -3000,11 +3000,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   FROM eligible
                   WHERE ordinal >= (SELECT ordinal FROM boundary)
                   ORDER BY ordinal DESC, turn_item_id DESC
-                  LIMIT CASE
-                    WHEN ${window.rowLimit} = 0 THEN 0
-                    WHEN (SELECT COUNT(*) FROM user_anchors) > 0 THEN -1
-                    ELSE ${window.rowLimit}
-                  END
+                  LIMIT ${window.rowLimit}
                 ), retained AS MATERIALIZED (
                   SELECT item_rowid, ordinal, turn_item_id FROM selected
                   UNION
@@ -5535,12 +5531,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 };
               }),
             );
-            if (hasUserTurns)
-              return {
-                ...page,
-                snapshotSequence,
-                items: items.map((row, position) => ({ ...row, position })),
-              };
             const bounded = selectRecentTimelineWindow({
               items,
               snapshotSequence,
@@ -7448,7 +7438,9 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   ? rawStart
                   : anchors.at(-anchorLimit)!
                 : Math.max(0, anchorIndex - options.rowLimit);
-            const visibleTurnItems = candidates.slice(start);
+            const visibleTurnItems = candidates.slice(
+              Math.max(start, anchorIndex - Math.max(0, options.rowLimit)),
+            );
             return {
               ...snapshot,
               projection: { ...snapshot.projection, visibleTurnItems },
