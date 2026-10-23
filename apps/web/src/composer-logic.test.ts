@@ -203,6 +203,26 @@ describe("composerSubmissionIntentForKey", () => {
     },
   );
 
+  it.each([
+    [true, enter, "background"],
+    [true, { ...enter, ctrlKey: true }, "foreground"],
+    [true, { ...enter, ctrlKey: true, altKey: true }, "foreground"],
+    [false, enter, "foreground"],
+    [false, { ...enter, ctrlKey: true, altKey: true }, "background"],
+  ] as const)(
+    "starts new threads in the background when enabled (draft %s, %j)",
+    (isDraftThread, event, expected) => {
+      expect(
+        composerSubmissionIntentForKey({
+          ...input,
+          isDraftThread,
+          startNewThreadsInBackground: true,
+          event,
+        }),
+      ).toBe(expected);
+    },
+  );
+
   it.each(["MacIntel", "Win32", "Linux"])(
     "keeps modifier submission available with the software keyboard open on %s",
     (platform) => {

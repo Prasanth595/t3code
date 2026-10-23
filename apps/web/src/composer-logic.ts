@@ -20,6 +20,7 @@ import { resolveShortcutCommand, type ShortcutEventLike } from "./keybindings";
 export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 export type ComposerSubmissionIntent = "foreground" | "background" | "alternate";
+export type ComposerSendIntent = Exclude<ComposerSubmissionIntent, "alternate">;
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
@@ -56,6 +57,17 @@ export function composerRequiresModifier(
   );
 }
 
+/**
+ * Intent for a plain send (Enter, the send button). The Start in Background
+ * binding does the opposite in a new thread.
+ */
+export function composerDefaultSendIntent(input: {
+  isDraftThread: boolean;
+  startNewThreadsInBackground: boolean;
+}): ComposerSendIntent {
+  return input.isDraftThread && input.startNewThreadsInBackground ? "background" : "foreground";
+}
+
 export function composerSubmissionIntentForKey(input: {
   event: ShortcutEventLike & { isComposing?: boolean; keyCode?: number; repeat?: boolean };
   keybindings: ResolvedKeybindingsConfig;
@@ -65,6 +77,7 @@ export function composerSubmissionIntentForKey(input: {
   isRunning?: boolean;
   sendShortcut?: ClientSettings["sendShortcut"];
   prompt?: string;
+  startNewThreadsInBackground?: boolean;
 }): ComposerSubmissionIntent | null {
   const { event } = input;
   if (event.isComposing || event.keyCode === 229 || event.repeat) return null;
@@ -79,8 +92,13 @@ export function composerSubmissionIntentForKey(input: {
       composerRequiresModifier: composerRequiresModifier(input.sendShortcut, input.prompt ?? ""),
     },
   });
+  const defaultIntent = composerDefaultSendIntent({
+    isDraftThread: input.isDraftThread,
+    startNewThreadsInBackground: input.startNewThreadsInBackground === true,
+  });
   if (command === "composer.sendAlternate" && input.isRunning) return "alternate";
-  if (command === "composer.sendBackground" && input.isDraftThread) return "background";
+  if (command === "composer.sendBackground" && input.isDraftThread)
+    return defaultIntent === "background" ? "foreground" : "background";
   if (command === "composer.sendAndNewThread" && !input.isDraftThread) return "background";
   if (command !== null || event.key !== "Enter" || event.shiftKey || event.altKey) return null;
   if (
@@ -89,7 +107,7 @@ export function composerSubmissionIntentForKey(input: {
     !event.ctrlKey
   )
     return null;
-  return "foreground";
+  return defaultIntent;
 }
 
 const isInlineTokenSegment = (segment: ComposerPromptSegment): boolean => segment.type !== "text";
