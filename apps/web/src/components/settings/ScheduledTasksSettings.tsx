@@ -141,6 +141,7 @@ const EMPTY_DRAFT: DraftState = {
   timeOfDay: "09:00",
   weekdays: new Set([1, 2, 3, 4, 5]),
   timeZone: "",
+  savedTimeZone: "",
   projectId: "",
   threadId: "",
   workspaceMode: "worktree",

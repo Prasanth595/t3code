@@ -51,7 +51,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
-import { localTimeZone, parseTimeZoneDraft } from "@t3tools/client-runtime/scheduled-task-schedule";
+import { localTimeZone, timeZoneForSave } from "@t3tools/client-runtime/scheduled-task-schedule";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { usePreparedConnection } from "../../state/session";
 import { buildModelOptions } from "../../lib/modelOptions";
@@ -719,7 +719,7 @@ function TaskForm({
     }
     if (
       draft.schedule.mode === "fixed_time" &&
-      parseTimeZoneDraft(draft.schedule.timeZone) === undefined
+      timeZoneForSave(draft.schedule.timeZone, draft.schedule.savedTimeZone) === undefined
     ) {
       Dialog.alert(
         "Unknown time zone",

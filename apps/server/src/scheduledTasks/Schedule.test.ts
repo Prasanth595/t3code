@@ -56,6 +56,10 @@ describe("scheduled task schedule calculation", () => {
       expect(next({ timeOfDay: "02:30" }, "2026-03-08T08:31:00.000Z")).toBe(
         "2026-03-09T07:30:00.000Z",
       );
+      // Lord Howe Island moves forward 30 minutes on October 4, so 02:15 runs at 02:45.
+      expect(
+        next({ timeOfDay: "02:15", timeZone: "Australia/Lord_Howe" }, "2026-10-03T14:00:00.000Z"),
+      ).toBe("2026-10-03T15:45:00.000Z");
     });
 
     it("keeps the wall-clock time across the fall-back change and runs a repeated time once", () => {

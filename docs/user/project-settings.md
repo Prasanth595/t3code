@@ -82,7 +82,8 @@ Leaving an edited form asks before discarding unsaved changes.
 A task that runs **At a time** uses the environment's clock unless you set a
 **Time zone**, such as `America/Chicago`. It then keeps that local time when
 daylight saving starts or ends. A time skipped when clocks move forward runs
-an hour later that day, and a time that repeats when they move back runs once.
+later by the size of the change, and a time that repeats when they move back
+runs once.
 
 ## Webhook automations
 

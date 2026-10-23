@@ -18,7 +18,7 @@ import {
   webhookFilterDraftsChanged,
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
-import { parseTimeZoneDraft } from "@t3tools/client-runtime/scheduled-task-schedule";
+import { timeZoneForSave } from "@t3tools/client-runtime/scheduled-task-schedule";
 
 import {
   resolveProjectSettings,
@@ -67,6 +67,8 @@ export interface DraftState {
   readonly weekdays: ReadonlySet<number>;
   /** Blank runs at the environment's local time. */
   readonly timeZone: string;
+  /** The zone the form opened with. */
+  readonly savedTimeZone: string;
   readonly projectId: string;
   readonly threadId: string;
   readonly workspaceMode: WorkspaceMode;
@@ -104,7 +106,10 @@ export const WEBHOOK_SIGNATURE_DEFAULTS = {
 
 export function scheduleDraftErrors(draft: DraftState) {
   if (draft.scheduleMode === "webhook") return webhookDraftErrors(draft);
-  if (draft.scheduleMode === "fixed" && parseTimeZoneDraft(draft.timeZone) === undefined)
+  if (
+    draft.scheduleMode === "fixed" &&
+    timeZoneForSave(draft.timeZone, draft.savedTimeZone) === undefined
+  )
     return [
       {
         title: "Unknown time zone",
@@ -208,7 +213,7 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
     type: "fixed_time",
     timeOfDay: draft.timeOfDay || "09:00",
     ...(selectedEveryDay ? {} : { weekdays: [...draft.weekdays].toSorted() }),
-    timeZone: parseTimeZoneDraft(draft.timeZone) ?? null,
+    ...timeZoneForSave(draft.timeZone, draft.savedTimeZone),
   };
 }
 
@@ -231,6 +236,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     timeOfDay: schedule.type === "fixed_time" ? schedule.timeOfDay : "09:00",
     weekdays,
     timeZone: schedule.type === "fixed_time" ? (schedule.timeZone ?? "") : "",
+    savedTimeZone: schedule.type === "fixed_time" ? (schedule.timeZone ?? "") : "",
     projectId: task.projectId,
     threadId: task.threadId ?? "",
     workspaceMode: task.workspaceStrategy.type,
