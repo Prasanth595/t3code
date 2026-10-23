@@ -7,6 +7,8 @@ import { PLUGIN_VIEW_SCRIPT_MAX_BYTES, type PluginViewsSnapshot } from "@t3tools
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -147,6 +149,39 @@ const withDatabase = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
 it.layer(NodeServices.layer)("PluginViews", (it) => {
   describe("bundles", () => {
+    it.effect("revokes cached bundles immediately when the disabled record cannot be saved", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const fs = yield* FileSystem.FileSystem;
+          const { catalog, views } = yield* startViews(yield* Scope.Scope);
+          const plugin = yield* preparePlugin();
+          const installation = yield* install(catalog, plugin.directory);
+          yield* awaitViews(views, (snapshot) => snapshot.views.length > 0);
+          const target = {
+            installationId: installation.installationId,
+            generation: installation.generation,
+            viewId: "panel",
+          };
+          expect((yield* views.readBundle(target)).script.text).toBe(VIEW_SCRIPT);
+          yield* sql`CREATE TRIGGER refuse_view_revocation BEFORE UPDATE ON plugin_installations BEGIN SELECT RAISE(FAIL, 'test write failure'); END`;
+          yield* fs.writeFileString(plugin.script, `${VIEW_SCRIPT}// changed after consent\n`);
+          const failed = yield* catalog
+            .refresh({ installationId: installation.installationId })
+            .pipe(Effect.flip);
+          expect(failed.reason).toBe("storage");
+          expect(Exit.isFailure(yield* views.readBundle(target).pipe(Effect.exit))).toBe(true);
+          expect((yield* catalog.list).installations[0]?.enabled).toBe(false);
+          yield* sql`DROP TRIGGER refuse_view_revocation`;
+          yield* catalog.refresh({ installationId: installation.installationId });
+          const saved = yield* sql<{
+            readonly record_json: string;
+          }>`SELECT record_json FROM plugin_installations`;
+          expect(JSON.parse(saved[0]!.record_json).enabled).toBe(false);
+        }),
+      ),
+    );
+
     it.effect("bounds reads when an asset grows after its handle was statted", () =>
       withDatabase(
         Effect.gen(function* () {

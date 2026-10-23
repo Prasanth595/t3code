@@ -133,8 +133,7 @@ vi.mock("~/state/environments", () => ({
 vi.mock("~/state/preview", () => ({ previewEnvironment: { open: {}, resize: {} } }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 // This client holds every scope, so preview and annotation sends stay enabled.
-vi.mock("~/state/session", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/state/session")>()),
+vi.mock("~/state/session", () => ({
   useEnvironmentScope: () => true,
   readEnvironmentScope: () => true,
 }));

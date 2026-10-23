@@ -12,7 +12,7 @@ import * as Fiber from "effect/Fiber";
 import * as Result from "effect/Result";
 import type * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -125,10 +125,7 @@ function PluginViewMount(props: { environmentId: EnvironmentId; view: PluginView
       },
     }),
   );
-  const document = useMemo(
-    () => (bundle.data === null ? null : buildPluginViewDocument(bundle.data, view.title)),
-    [bundle.data, view.title],
-  );
+  const document = bundle.data === null ? null : buildPluginViewDocument(bundle.data, view.title);
   const [ended, setEnded] = useState<MountEnd | null>(null);
   const [attempt, setAttempt] = useState(0);
 
