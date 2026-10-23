@@ -22,10 +22,8 @@ const packageName = (specifier: string) =>
 /**
  * Factory code (except factory/t3/) may not import T3 code: neither relative paths outside
  * factory/ nor the server's workspace packages. Nothing outside factory/ may import it,
- * except server.ts, and runtimeLayer.ts for the routed projection store.
+ * except server.ts.
  */
-const ROUTED_STORE_IMPORTER = "orchestration-v2/runtimeLayer.ts";
-const ROUTED_STORE = "factory/t3/projectionStoreReadRouting.ts";
 
 export const findBoundaryViolations = (
   files: ReadonlyArray<SourceFile>,
@@ -49,7 +47,6 @@ export const findBoundaryViolations = (
     } else if (file.path !== "server.ts") {
       for (const specifier of relative) {
         const target = resolveRelative(file.path, specifier);
-        if (file.path === ROUTED_STORE_IMPORTER && target === ROUTED_STORE) continue;
         if (target.startsWith("factory/")) {
           violations.push(`${file.path} imports ${specifier} from factory/`);
         }
@@ -150,21 +147,6 @@ describe("factory boundary", () => {
     );
     expect(violations).toHaveLength(1);
     expect(violations[0]).toContain("orchestration-v2/x.ts");
-  });
-
-  it("lets runtimeLayer.ts import the routed projection store and nothing else of the factory", () => {
-    const violations = findBoundaryViolations(
-      [
-        {
-          path: "orchestration-v2/runtimeLayer.ts",
-          imports: ["../factory/t3/projectionStoreReadRouting.ts", "../factory/index.ts"],
-        },
-      ],
-      new Set(),
-    );
-    expect(violations).toEqual([
-      "orchestration-v2/runtimeLayer.ts imports ../factory/index.ts from factory/",
-    ]);
   });
 
   it("extracts static, side-effect and dynamic imports", () => {

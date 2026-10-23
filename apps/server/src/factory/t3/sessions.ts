@@ -29,7 +29,6 @@ import * as ThreadManagement from "../../orchestration-v2/ThreadManagementServic
 import * as ServerSettings from "../../serverSettings.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import { resolveWorktreesDirectory } from "../../worktreesDirectory.ts";
-import * as ReadRouting from "./projectionStoreReadRouting.ts";
 
 /**
  * Agent sessions as the factory sees them: softfac's `Sessions` trait
@@ -713,7 +712,7 @@ export const layer = Layer.effect(FactorySessions, make);
  * `layer` with the projection store it reads provided: `server.ts` has the
  * project store, the launch and management services and git in scope where
  * the factory is merged in, but not the projection store, which upstream
- * provides to each worker that reads it. The store is the read-routed one
- * `server.ts` provides everywhere else, memoized with it.
+ * provides to each worker that reads it. It is the same layer `server.ts`
+ * provides everywhere else, memoized with it.
  */
-export const layerLive = layer.pipe(Layer.provide(ReadRouting.layer));
+export const layerLive = layer.pipe(Layer.provide(ProjectionStore.layer));
