@@ -354,6 +354,8 @@ import {
   ScheduledTaskSetEnabledInput,
   ScheduledTaskUpsertInput,
   ScheduledTaskMutationResult,
+  ScheduledTaskPreviewInput,
+  ScheduledTaskPreviewResult,
 } from "./scheduledTask.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
@@ -511,6 +513,7 @@ export const WS_METHODS = {
   serverRefreshUsageRates: "server.refreshUsageRates",
 
   scheduledTasksList: "scheduledTasks.list",
+  scheduledTasksPreview: "scheduledTasks.preview",
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
   scheduledTasksSetEnabled: "scheduledTasks.setEnabled",
@@ -1790,6 +1793,12 @@ const WsScheduledTasksListRpc = Rpc.make(WS_METHODS.scheduledTasksList, {
   error: Schema.Union([ScheduledTaskError, EnvironmentAuthorizationError]),
 });
 
+const WsScheduledTasksPreviewRpc = Rpc.make(WS_METHODS.scheduledTasksPreview, {
+  payload: ScheduledTaskPreviewInput,
+  success: ScheduledTaskPreviewResult,
+  error: Schema.Union([ScheduledTaskError, EnvironmentAuthorizationError]),
+});
+
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -1932,6 +1941,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,
   WsScheduledTasksListRpc,
+  WsScheduledTasksPreviewRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,
   WsScheduledTasksSetEnabledRpc,
