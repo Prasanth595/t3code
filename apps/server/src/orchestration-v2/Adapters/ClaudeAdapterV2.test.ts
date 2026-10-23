@@ -1395,11 +1395,12 @@ describe("ClaudeAdapterV2 resume compaction", () => {
             return yield* Fiber.join(refusalDialog);
           });
         assert.deepEqual(
-          yield* answerRefusalDialog("dialog-refusal-1", "Retry with Claude Opus 4.8"),
+          yield* answerRefusalDialog("dialog-refusal-1", "Switch to Claude Opus 4.8"),
           { behavior: "completed", result: "retry_fallback" },
         );
-        assert.deepEqual(yield* answerRefusalDialog("dialog-refusal-2", "Stop"), {
-          behavior: "cancelled",
+        assert.deepEqual(yield* answerRefusalDialog("dialog-refusal-2", "Edit message"), {
+          behavior: "completed",
+          result: "edit_prompt",
         });
 
         const cancelledController = new AbortController();

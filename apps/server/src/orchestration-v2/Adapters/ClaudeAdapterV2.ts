@@ -63,6 +63,10 @@ import {
   formatClaudeResumeCompactionQuestion,
 } from "@t3tools/shared/claudeCompaction";
 import {
+  CLAUDE_REFUSAL_FALLBACK_EDIT_ANSWER,
+  formatClaudeRefusalFallbackQuestion,
+} from "@t3tools/shared/claudeRefusalFallback";
+import {
   type ChatAttachment,
   ClaudeSettings,
   TrimmedNonEmptyString,
@@ -9100,21 +9104,28 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 if (typeof originalModel !== "string" || typeof fallbackModel !== "string") {
                   return { behavior: "cancelled" as const };
                 }
-                const retryLabel = `Retry with ${formatModelSlugName(fallbackModel)}`;
+                const originalModelName = formatModelSlugName(originalModel);
+                const switchLabel = `Switch to ${formatModelSlugName(fallbackModel)}`;
                 const selection = yield* askDialogQuestion(request, callbackOptions, {
                   header: "Message flagged",
-                  question: `${formatModelSlugName(originalModel)}'s safeguards flagged this message.`,
+                  question: formatClaudeRefusalFallbackQuestion(originalModelName),
                   options: [
                     {
-                      label: retryLabel,
+                      label: switchLabel,
                       description: "Send the same message again on the fallback model.",
                     },
-                    { label: "Stop", description: "End the turn without a response." },
+                    {
+                      label: CLAUDE_REFUSAL_FALLBACK_EDIT_ANSWER,
+                      description: `Change it, then send it again on ${originalModelName}.`,
+                    },
                   ],
                 });
-                return Option.isSome(selection) && selection.value === retryLabel
+                if (Option.isNone(selection)) return { behavior: "cancelled" as const };
+                return selection.value === switchLabel
                   ? { behavior: "completed" as const, result: "retry_fallback" as const }
-                  : { behavior: "cancelled" as const };
+                  : selection.value === CLAUDE_REFUSAL_FALLBACK_EDIT_ANSWER
+                    ? { behavior: "completed" as const, result: "edit_prompt" as const }
+                    : { behavior: "cancelled" as const };
               }
               if (request.dialogKind !== "resume_return") {
                 return { behavior: "cancelled" as const };
