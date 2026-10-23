@@ -624,8 +624,9 @@ export const runPass = Effect.fn("Pass.runPass")(function* (
     yield* world.attention.clear(
       (item) => item.repo !== null && listing.departed.some((repo) => sameRepo(repo, item.repo!)),
     );
-    // The config skips are counted in a row: a repo not watched this pass starts over. A list
-    // that could not be read says nothing about any repo, so the counts stay.
+    // The config skips are counted in a row: a repo not in this pass's list, whether it left or
+    // its checkout could not be settled this time, starts over. Only a list that could not be
+    // read at all says nothing about any repo, so then every count stays.
     const watchedKeys = new Set(watched.map((repo) => asciiLower(repo.repo)));
     for (const key of world.configSkips.keys()) {
       if (!watchedKeys.has(key)) world.configSkips.delete(key);
