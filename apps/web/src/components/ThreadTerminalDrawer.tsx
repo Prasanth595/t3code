@@ -686,7 +686,8 @@ function TerminalSessionViewport({
         selection: TerminalContextSelection;
       } | null => {
         const activeTerminal = terminalRef.current;
-        if (!activeTerminal || !activeTerminal.hasSelection()) {
+        const mountElement = containerRef.current;
+        if (!activeTerminal || !mountElement || !activeTerminal.hasSelection()) {
           return null;
         }
         const selectionText = activeTerminal.getSelection();
