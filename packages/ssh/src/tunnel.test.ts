@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
@@ -372,16 +373,22 @@ describe("ssh tunnel scripts", () => {
 // the picker's probe and the holder sets it too.
 
 describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("launch script", () => {
-  // Stands in for `t3 serve`: answers HTTP and writes the default home's runtime file.
+  // Stands in for `t3 serve`: answers HTTP and writes its home's runtime file.
+  // An \`unready\` file in its home makes it answer 503, like a stuck server.
   const FAKE_SERVER = `const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const args = process.argv.slice(2);
 const flag = (name) => args[args.indexOf(name) + 1];
-const server = http.createServer((_request, response) => response.end("ok"));
+const baseDir = flag("--base-dir");
+const server = http.createServer((_request, response) => {
+  response.statusCode = fs.existsSync(path.join(baseDir, "unready")) ? 503 : 200;
+  response.end();
+});
 server.listen(Number(flag("--port")), "127.0.0.1", () => {
   const port = server.address().port;
-  const userdata = path.join(flag("--base-dir"), "userdata");
+  console.log(port);
+  const userdata = path.join(baseDir, "userdata");
   fs.mkdirSync(userdata, { recursive: true });
   fs.writeFileSync(
     path.join(userdata, "server-runtime.json"),
@@ -448,7 +455,36 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
           serverKind: string;
         };
       });
-    return { fs, stateDir, readManagedPid, launch };
+    // A live server this key manages, outside the default home.
+    const startOwnServer = (stateKey: string, runnerFrom: string) =>
+      Effect.gen(function* () {
+        const server = yield* spawner.spawn(
+          ChildProcess.make("node", [
+            fakeServer,
+            "serve",
+            "--port",
+            "0",
+            "--base-dir",
+            `${root}/own`,
+          ]),
+        );
+        const port = yield* server.stdout.pipe(
+          Stream.decodeText(),
+          Stream.splitLines,
+          Stream.runHead,
+        );
+        yield* fs.makeDirectory(stateDir(stateKey), { recursive: true });
+        yield* fs.copyFile(`${stateDir(runnerFrom)}/run-t3.sh`, `${stateDir(stateKey)}/run-t3.sh`);
+        yield* fs.writeFileString(`${stateDir(stateKey)}/pid`, `${server.pid}\n`);
+        yield* fs.writeFileString(`${stateDir(stateKey)}/port`, `${Option.getOrThrow(port)}\n`);
+        yield* fs.writeFileString(`${stateDir(stateKey)}/managed`, "managed\n");
+        return {
+          pid: Number(server.pid),
+          port: Number(Option.getOrThrow(port)),
+          exitCode: server.exitCode,
+        };
+      });
+    return { fs, home, stateDir, readManagedPid, launch, startOwnServer };
   });
 
   it.live("keeps managing its server after the connection's state key changes", () =>
@@ -474,6 +510,27 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
       assert.notEqual(replacementPid, pid);
       assert.isFalse(isAlive(pid));
       assert.isTrue(isAlive(replacementPid));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("keeps its own server while the other key's server does not answer", () =>
+    Effect.gen(function* () {
+      const { fs, home, stateDir, readManagedPid, launch, startOwnServer } = yield* prepareLaunch;
+      yield* launch("old-alias");
+      const otherPid = yield* readManagedPid("old-alias");
+      const own = yield* startOwnServer("own-alias", "old-alias");
+
+      yield* fs.writeFileString(`${home}/.t3/unready`, "");
+      assert.deepEqual(yield* launch("own-alias"), { remotePort: own.port, serverKind: "managed" });
+      assert.equal(yield* readManagedPid("own-alias"), own.pid);
+      assert.equal(yield* readManagedPid("old-alias"), otherPid);
+
+      // Once it answers, the takeover stops this key's own server.
+      yield* fs.remove(`${home}/.t3/unready`);
+      assert.equal((yield* launch("own-alias")).serverKind, "managed");
+      yield* Effect.flip(own.exitCode);
+      assert.equal(yield* readManagedPid("own-alias"), otherPid);
+      assert.isFalse(yield* fs.exists(`${stateDir("old-alias")}/pid`));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
