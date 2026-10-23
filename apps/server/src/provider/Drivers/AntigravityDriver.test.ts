@@ -329,12 +329,21 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
               options?.recursive
             ) {
               removals.push(directory);
+              return fs
+                .remove(directory, options)
+                .pipe(Effect.andThen(TestClock.adjust("4 minutes")));
             }
             return fs.remove(directory, options);
           },
         }),
       });
-      yield* h.refresh();
+      expect(
+        yield* h.instance.textGeneration.generateThreadTitle({
+          cwd: h.profileDirectory,
+          message: "Repair login",
+          modelSelection: { instanceId: h.instance.instanceId, model: "gemini-test-high" },
+        }),
+      ).toEqual({ title: "Repair login" });
       expect(removals).toEqual([]);
     }).pipe(Effect.scoped),
   );
