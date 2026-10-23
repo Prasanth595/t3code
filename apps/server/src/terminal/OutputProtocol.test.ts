@@ -83,7 +83,28 @@ describe("terminal output window", () => {
     }).pipe(Effect.provide(RpcSerialization.layerJson), Effect.scoped),
   );
 
-  it.effect("charges error messages against the pending-byte limit", () =>
+  const bigChunkEvents = [
+    {
+      name: "error messages",
+      event: {
+        threadId: "thread-1",
+        terminalId: "default",
+        type: "error" as const,
+        message: "e".repeat(64 * 1024),
+      },
+    },
+    {
+      name: "thread ids",
+      event: {
+        threadId: "t".repeat(64 * 1024),
+        terminalId: "default",
+        type: "output" as const,
+        data: "x",
+      },
+    },
+  ];
+
+  it.effect.each(bigChunkEvents)("charges $name against the pending-byte limit", ({ event }) =>
     Effect.gen(function* () {
       const tag = WS_METHODS.terminalAttach;
       const group = RpcGroup.make(Rpc.make(tag, { success: TerminalEventSchema, stream: true }));
@@ -116,18 +137,12 @@ describe("terminal output window", () => {
       const write = yield* Deferred.await(receive);
       yield* write(0, { _tag: "Request", id: "1", tag, payload: null, headers: [] });
 
-      const errorEvent = {
-        threadId: "thread-1",
-        terminalId: "default",
-        type: "error" as const,
-        message: "e".repeat(64 * 1024),
-      };
-      yield* Queue.offer(output, errorEvent);
+      yield* Queue.offer(output, event);
       yield* TestClock.adjust(0);
       assert.equal(yield* Queue.size(responses), 1);
       yield* Queue.take(responses);
-      // One 64 KiB error message fills the byte window on its own.
-      yield* Queue.offer(output, errorEvent);
+      // One 64 KiB field fills the byte window on its own.
+      yield* Queue.offer(output, event);
       yield* TestClock.adjust(0);
       assert.equal(yield* Queue.size(responses), 0);
       yield* write(0, { _tag: "Ack", requestId: "1" });

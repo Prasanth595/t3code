@@ -20,6 +20,7 @@ const byteLengthOf = (value: unknown) => (typeof value === "string" ? Buffer.byt
 // budgets below cannot be bypassed by a large payload in an uncharged field.
 const queuedSize = (event: TerminalEvent | TerminalAttachStreamEvent) =>
   EVENT_OVERHEAD +
+  ("threadId" in event ? byteLengthOf(event.threadId) + byteLengthOf(event.terminalId) : 0) +
   (event.type === "output"
     ? byteLengthOf(event.data)
     : event.type === "error"
@@ -27,7 +28,9 @@ const queuedSize = (event: TerminalEvent | TerminalAttachStreamEvent) =>
       : event.type === "activity"
         ? byteLengthOf(event.label)
         : "snapshot" in event
-          ? byteLengthOf(event.snapshot.history) +
+          ? byteLengthOf(event.snapshot.threadId) +
+            byteLengthOf(event.snapshot.terminalId) +
+            byteLengthOf(event.snapshot.history) +
             byteLengthOf(event.snapshot.cwd) +
             byteLengthOf(event.snapshot.worktreePath) +
             byteLengthOf(event.snapshot.label)
