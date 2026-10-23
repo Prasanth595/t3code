@@ -77,31 +77,22 @@ jobs:
       # GITHUB_TOKEN's own push does not start.
       actions: write
     env:
-      SYNC_APP_ID: ${{ secrets.SYNC_APP_ID }}
-      SYNC_APP_PRIVATE_KEY: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
+      # Only whether the App is set up; its key stays in the Mint step.
+      SYNC_APP_CONFIGURED: ${{ secrets.SYNC_APP_ID != '' && secrets.SYNC_APP_PRIVATE_KEY != '' }}
     steps:
-      # GITHUB_TOKEN cannot push a tag that changes .github/workflows/, so pushes
-      # use a GitHub App's token (SYNC_APP_ID, SYNC_APP_PRIVATE_KEY), else a
-      # fine-grained token (SYNC_TOKEN), else GITHUB_TOKEN. Either secret needs
-      # Contents and Workflows write on this repository. gh keeps GITHUB_TOKEN.
-      - name: Mint the push token
-        id: app-token
-        if: env.SYNC_APP_ID != '' && env.SYNC_APP_PRIVATE_KEY != ''
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.SYNC_APP_ID }}
-          private-key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
-          permission-contents: write
-          permission-workflows: write
-
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          # Every git push in this job uses this token, so unlike prepare the
-          # job keeps it.
-          token: ${{ steps.app-token.outputs.token || secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
-          persist-credentials: true
+
+      # As in prepare. git then fetches, and pushes when no sync secret is set,
+      # through gh's credential helper with GH_TOKEN.
+      - name: Remove checkout's token
+        run: |
+          { git config --local --name-only --get-regexp '^includeif\.gitdir:' || true; } |
+            xargs -r -n 1 git config --local --unset-all
+          rm -f "$RUNNER_TEMP"/git-credentials-*.config
+          if git config --get-regexp 'extraheader'; then exit 1; fi
 
       - name: Download the prepared sync
         uses: actions/download-artifact@v8
@@ -109,8 +100,28 @@ jobs:
           name: sync
           path: ${{ runner.temp }}/sync
 
+      # GITHUB_TOKEN cannot push a tag that changes .github/workflows/, so
+      # sync.sh pushes with a GitHub App's token (SYNC_APP_ID,
+      # SYNC_APP_PRIVATE_KEY), else a fine-grained token (SYNC_TOKEN), else
+      # GITHUB_TOKEN. Either secret needs Contents and Workflows write on this
+      # repository. A failed mint leaves sync.sh no App token, so its push fails
+      # and files `cannot be pushed` rather than failing the job here.
+      - name: Mint the push token
+        id: app-token
+        if: env.SYNC_APP_CONFIGURED == 'true'
+        continue-on-error: true
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.SYNC_APP_ID }}
+          private-key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
       - name: Publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SYNC_PUSH_WITH: ${{ steps.app-token.outputs.token && 'SYNC_APP_ID' || secrets.SYNC_TOKEN && 'SYNC_TOKEN' || 'GITHUB_TOKEN' }}
-        run: factory/scripts/sync.sh publish "$RUNNER_TEMP/sync"
+          SYNC_APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          gh auth setup-git
+          factory/scripts/sync.sh publish "$RUNNER_TEMP/sync"

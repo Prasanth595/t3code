@@ -87,6 +87,26 @@ fi
 echo "regenerated route tree" > "$(git rev-parse --show-toplevel)/${ROUTE_TREE}"
 `;
 
+// Runs the real git, and for every `git push` appends to $SYNC_TEST_LOG.push the
+// password the last `-c credential.helper=!...` would hand git, run as git
+// runs it, or "git's own" when the push brings no helper of its own.
+const gitStub = (realGit: string) => `#!/usr/bin/env bash
+helper= pushing=
+for ((i = 1; i <= $#; i++)); do
+  j=$((i + 1))
+  [[ \${!i} == push ]] && pushing=1
+  [[ \${!i} == -c && \${!j:-} == credential.helper=* ]] && helper=\${!j#credential.helper=}
+done
+if [[ -n $pushing ]]; then
+  if [[ $helper == '!'* ]]; then
+    sh -c "\${helper#!} get" | sed -n 's/^password=//p' >> "$SYNC_TEST_LOG.push"
+  else
+    echo "git's own" >> "$SYNC_TEST_LOG.push"
+  fi
+fi
+exec ${realGit} "$@"
+`;
+
 let dir: string;
 let upstream: string;
 let fork: string;
@@ -151,7 +171,14 @@ const makeFork = (upstreamLine: string, forkChanges: Record<string, string> = {}
 // GITHUB_ACTIONS is empty unless a test sets it, since the suite itself runs
 // under Factory CI, where it is set.
 const phaseEnv = (log: string, env: Record<string, string>, token: boolean) => {
-  const { GH_TOKEN: _ghToken, GITHUB_TOKEN: _githubToken, ...rest } = process.env;
+  const {
+    GH_TOKEN: _ghToken,
+    GITHUB_TOKEN: _githubToken,
+    SYNC_APP_CONFIGURED: _syncAppConfigured,
+    SYNC_APP_TOKEN: _syncAppToken,
+    SYNC_TOKEN: _syncToken,
+    ...rest
+  } = process.env;
   return {
     ...rest,
     PATH: `${NodePath.join(dir, "bin")}:${process.env.PATH}`,
@@ -201,6 +228,7 @@ const results = (log: string, prepared: number) => {
     tokens: readLines(`${log}.env`),
     repos: readLines(`${log}.repo`),
     dispatchedOn: readLines(`${log}.main`),
+    pushes: readLines(`${log}.push`),
     body: NodeFS.existsSync(`${log}.body`) ? NodeFS.readFileSync(`${log}.body`, "utf8") : "",
   };
 };
@@ -233,6 +261,10 @@ describe("sync.sh", () => {
     origin = NodePath.join(dir, "origin.git");
     write(dir, "bin/gh", ghStub, 0o755);
     write(dir, "bin/vp", vpStub, 0o755);
+    const realGit = NodeChildProcess.execFileSync("sh", ["-c", "command -v git"], {
+      encoding: "utf8",
+    }).trim();
+    write(dir, "bin/git", gitStub(realGit), 0o755);
 
     // Three nightly tags whose version order differs from their lexical order,
     // plus release tags the pattern must skip, one of them newer than every nightly.
@@ -344,20 +376,43 @@ describe("sync.sh", () => {
     expect(git(origin, "rev-parse", "main")).toBe(git(origin, "rev-parse", `sync/${NEWEST}`));
   });
 
-  it("dispatches nothing when a sync secret pushed the landing, which starts them itself", () => {
+  it("pushes with git's own credentials when no sync secret is set", () => {
     makeFork(`${OLD} ${oldSha}`);
-    const { status, stdout, calls } = run({ GITHUB_ACTIONS: "true", SYNC_PUSH_WITH: "SYNC_TOKEN" });
+    const { status, pushes } = run({ GITHUB_ACTIONS: "true" });
     expect(status).toBe(0);
-    expect(stdout.trim().split("\n").at(-1)).toBe(
-      `sync: ${NEWEST} merged into main through https://example.test/pr/1`,
-    );
-    expect(calls).not.toContainEqual(expect.stringMatching(/^gh workflow run/));
-    expect(git(origin, "rev-parse", "main")).toBe(git(origin, "rev-parse", `sync/${NEWEST}`));
+    expect(pushes).toEqual(["git's own", "git's own"]);
   });
 
-  it.each(["apps/mobile/App.tsx", "packages/shared/index.ts"])(
-    "also dispatches Factory mobile when the merge touches %s",
-    (file) => {
+  it.each([
+    { secret: "SYNC_TOKEN", env: { SYNC_TOKEN: "pat" }, password: "pat" },
+    {
+      secret: "the App",
+      env: { SYNC_APP_CONFIGURED: "true", SYNC_APP_TOKEN: "app", SYNC_TOKEN: "pat" },
+      password: "app",
+    },
+  ])(
+    "pushes the branch and the landing with $secret and dispatches nothing, since that push starts them",
+    ({ env, password }) => {
+      makeFork(`${OLD} ${oldSha}`);
+      const { status, stdout, calls, pushes } = run({ GITHUB_ACTIONS: "true", ...env });
+      expect(status).toBe(0);
+      expect(stdout.trim().split("\n").at(-1)).toBe(
+        `sync: ${NEWEST} merged into main through https://example.test/pr/1`,
+      );
+      expect(pushes).toEqual([password, password]);
+      expect(calls).not.toContainEqual(expect.stringMatching(/^gh workflow run/));
+      expect(git(origin, "rev-parse", "main")).toBe(git(origin, "rev-parse", `sync/${NEWEST}`));
+    },
+  );
+
+  it.each([
+    { file: "apps/mobile/App.tsx", pushedWith: "GITHUB_TOKEN", env: {} },
+    { file: "packages/shared/index.ts", pushedWith: "GITHUB_TOKEN", env: {} },
+    // GitHub can skip Factory mobile's paths filter on a push that big.
+    { file: "apps/mobile/App.tsx", pushedWith: "SYNC_TOKEN", env: { SYNC_TOKEN: "pat" } },
+  ])(
+    "also dispatches Factory mobile when the merge touches $file, pushed with $pushedWith",
+    ({ file, pushedWith, env }) => {
       const tag = "v0.0.11-nightly.20261016.1";
       git(upstream, "checkout", "-q", "--detach", newestSha);
       write(upstream, file, "changed\n");
@@ -365,16 +420,18 @@ describe("sync.sh", () => {
       git(upstream, "checkout", "-q", "main");
       try {
         makeFork(`${OLD} ${oldSha}`);
-        const { status, stdout, calls } = run({ GITHUB_ACTIONS: "true" });
+        const { status, stdout, calls } = run({ GITHUB_ACTIONS: "true", ...env });
+        const workflows = [
+          ...(pushedWith === "GITHUB_TOKEN" ? ["factory-ci.yml", "factory-desktop.yml"] : []),
+          "factory-mobile.yml",
+        ];
         expect(status).toBe(0);
         expect(stdout.trim().split("\n").at(-1)).toBe(
-          `sync: ${tag} merged into main through https://example.test/pr/1; dispatched factory-ci.yml, factory-desktop.yml, factory-mobile.yml`,
+          `sync: ${tag} merged into main through https://example.test/pr/1; dispatched ${workflows.join(", ")}`,
         );
-        expect(calls.filter((call) => call.startsWith("gh workflow "))).toEqual([
-          "gh workflow run factory-ci.yml --ref main",
-          "gh workflow run factory-desktop.yml --ref main",
-          "gh workflow run factory-mobile.yml --ref main",
-        ]);
+        expect(calls.filter((call) => call.startsWith("gh workflow "))).toEqual(
+          workflows.map((workflow) => `gh workflow run ${workflow} --ref main`),
+        );
       } finally {
         git(upstream, "tag", "-d", tag);
       }
@@ -734,7 +791,7 @@ describe("sync.sh", () => {
   it("stops and files an issue when the branch cannot be pushed", () => {
     makeFork(`${OLD} ${oldSha}`);
     write(origin, "hooks/pre-receive", "#!/usr/bin/env bash\necho 'refusing' >&2\nexit 1\n", 0o755);
-    const { status, stderr, calls, body } = run({ SYNC_PUSH_WITH: "GITHUB_TOKEN" });
+    const { status, stderr, calls, body } = run({ GITHUB_ACTIONS: "true" });
     expect(status).toBe(1);
     expect(stderr).toContain(`sync: push of sync/${NEWEST} failed`);
     expect(calls.slice(0, 2)).toEqual(["vp i", "check.sh"]);
@@ -761,17 +818,37 @@ describe("sync.sh", () => {
       `gh issue edit 8 --title Sync to ${NEWEST} cannot be pushed`,
       expect.stringMatching(/^gh issue comment 8 --body-file /),
     ]);
+    // Run locally, it names no secrets, which only the workflow reads.
+    expect(second.body).toContain("needs a token with the");
+    expect(second.body).not.toContain("SYNC_APP_PRIVATE_KEY");
     expect(originBranches()).toEqual(["main"]);
   });
 
   it("names the push token, not missing secrets, when a sync token is refused", () => {
     makeFork(`${OLD} ${oldSha}`);
     write(origin, "hooks/pre-receive", "#!/usr/bin/env bash\necho 'refusing' >&2\nexit 1\n", 0o755);
-    const { status, body } = run({ SYNC_PUSH_WITH: "SYNC_TOKEN" });
+    const { status, body } = run({ GITHUB_ACTIONS: "true", SYNC_TOKEN: "pat" });
     expect(status).toBe(1);
     expect(body).toContain("refusing");
     expect(body).toContain("pushed with `SYNC_TOKEN`");
     expect(body).not.toContain("SYNC_APP_PRIVATE_KEY");
+  });
+
+  it("files cannot be pushed, not falling back to another token, when the App token was not minted", () => {
+    makeFork(`${OLD} ${oldSha}`);
+    const { status, calls, body, pushes } = run({
+      GITHUB_ACTIONS: "true",
+      SYNC_APP_CONFIGURED: "true",
+      SYNC_TOKEN: "pat",
+    });
+    expect(status).toBe(1);
+    expect(pushes).toEqual([]);
+    expect(calls.at(-1)).toMatch(
+      new RegExp(`^gh issue create --title Sync to ${NEWEST} cannot be pushed --body-file `),
+    );
+    expect(body).toContain("no SYNC_APP_ID token was minted");
+    expect(body).toContain("pushed with `SYNC_APP_ID`");
+    expect(originBranches()).toEqual(["main"]);
   });
 
   it("publishes nothing when the prepared branch is not the merge it claims", () => {
