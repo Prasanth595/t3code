@@ -31,7 +31,7 @@ import * as ServerExitService from "./exit.ts";
 import { FactoryRoutes, STATUS_PATH } from "./http.ts";
 import { FactoryPaths } from "./paths.ts";
 import { type SeededThread, seedProjection } from "./projectionFixture.testkit.ts";
-import { best, report, timed } from "./mainThreadBlocks.testkit.ts";
+import { best, report, reportWall, timed } from "./mainThreadBlocks.testkit.ts";
 import * as Routed from "./projectionStoreReadRouting.ts";
 import * as Sessions from "./sessions.ts";
 
@@ -205,7 +205,7 @@ describe("the projection reads on a database the size of the personal Mac's", ()
       const store = yield* Routed.ProjectionStoreV2;
       const sessions = yield* Sessions.FactorySessions;
 
-      yield* timed("seeding the fixture", seedProjection(fixture()));
+      reportWall("seeding the fixture", yield* timed(seedProjection(fixture())));
       yield* assertPayloadSizes;
       assert.strictEqual((yield* store.getShellSnapshot()).threads.length, THREADS * 0.8);
 

@@ -15,12 +15,15 @@ export interface Measured {
 }
 
 /** Wall time alone, for work whose main-thread blocks are not the point (seeding). */
-export const timed = <A, E, R>(name: string, call: Effect.Effect<A, E, R>) =>
+export const timed = <A, E, R>(call: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
     const start = performance.now();
     yield* call;
-    console.log(`bench: ${name}: wall ${(performance.now() - start).toFixed(1)} ms`);
+    return performance.now() - start;
   });
+
+export const reportWall = (name: string, wallMs: number) =>
+  console.log(`bench: ${name}: wall ${wallMs.toFixed(1)} ms`);
 
 export const measure = <A, E, R>(call: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
