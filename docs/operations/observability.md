@@ -104,8 +104,9 @@ on. The span time is when the sample ran, not when the stall happened.
 
 The trace file rotates in well under an hour on a busy server, so each stall is also appended as one
 NDJSON line to `event-loop-stalls.ndjson`, next to the trace file, and logged with the same
-attributes. A line has `time` and the span attributes. Each file holds about 700 stalls, with one
-rotated backup (`event-loop-stalls.ndjson.1`). Use it to see how often a server stalls over days.
+attributes. A line has `time` and the span attributes. Each file is capped at 1.5 MB, about 1,000
+stalls, so with one rotated backup (`event-loop-stalls.ndjson.1`) the log keeps the last 1000 or more
+stalls. Use it to see how often a server stalls over days.
 `windowStartedAt` and `time` bound the window the stall happened in.
 
 Some delay is not recorded:
@@ -137,10 +138,11 @@ On Linux, the `mainThread*` fields cover only the main thread, not the SQLite wo
 With a large `mainThreadReadMb`, that wait was the main thread reading from disk. Both cover the
 window, not just the stall.
 
-`candidates` lists up to 3 spans that lasted at least as long as the stall and overlap the window,
-tightest first. When the blocking code is traced, the first is the span that blocked, often a
-`sqlite` span with its `db.connection` and query. A span that awaited I/O across the stall also
-matches, so treat the list as suspects.
+`candidates` lists up to 3 spans that lasted at least as long as the stall, less the 1 s
+resolution, and overlap the window, shortest first. Treat them as leads to check, often a `sqlite`
+span with its `db.connection` and query. None is known to be the span that blocked: the match is
+against the whole window, so a slow span that ended before the stall can come first, and a span that
+awaited I/O across the stall also matches.
 
 ### WebSocket closes and update requests
 

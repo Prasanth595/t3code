@@ -28,9 +28,9 @@ import * as Metrics from "./Metrics.ts";
 const RESOLUTION_MS = 1000;
 const STALL_THRESHOLD_MS = 2000;
 const SAMPLE_INTERVAL = "30 seconds";
-// A line with candidates is about 1.5 KB. A host that stalls a few hundred times a
-// day still keeps a day of them, one rotated file at most.
-const STALL_LOG_MAX_BYTES = 1024 * 1024;
+// A line with candidates is about 1.5 KB, so a file holds about 1,000 stalls and the
+// rotated backup keeps the documented last 1000 or more.
+const STALL_LOG_MAX_BYTES = 1536 * 1024;
 // Long enough that users felt it. Shorter stalls stay in the log only.
 const NOTICEABLE_STALL_MS = 5000;
 // Clients show what they get, so an old stall must not explain a new drop.
@@ -235,9 +235,10 @@ const endMs = (span: EffectTraceRecord) => Number(BigInt(span.endTimeUnixNano) /
 
 /**
  * Spans that could have held the loop for this stall: they ran at least as long as it,
- * minus the histogram's resolution, and overlap the sampled window. The tightest
- * cover comes first, which is the innermost blocking span when the blocking code is
- * traced. These are candidates: a span that awaited I/O across the stall also matches.
+ * minus the histogram's resolution, and overlap the sampled window, shortest first.
+ * They are leads, not the cause. The match is against the whole window, so a slow span
+ * that ended before the stall can come first, and a span that awaited I/O across the
+ * stall also matches.
  */
 export const stallCandidates = (
   spans: ReadonlyArray<EffectTraceRecord>,
