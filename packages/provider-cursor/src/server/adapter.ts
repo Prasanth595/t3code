@@ -871,6 +871,7 @@ interface ActiveCursorTurn {
   readonly reasoning: ActiveCursorTextStream;
   interrupted: boolean;
   finalized: boolean;
+  turnEnded: boolean;
 }
 
 interface CursorLiveAgent {
@@ -1911,7 +1912,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           context: ActiveCursorTurn,
           update: InteractionUpdate,
         ) {
-          if (context.finalized) {
+          // After turn-ended the answer is complete. A retryable stream error
+          // can still make Cursor's SDK resume from an older checkpoint inside
+          // the same run and regenerate the closing; that is not new work.
+          if (context.finalized || context.turnEnded) {
             return;
           }
           switch (update.type) {
@@ -1953,6 +1957,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               return;
             case "step-completed":
             case "turn-ended":
+              context.turnEnded ||= update.type === "turn-ended";
               yield* completeAssistant(context);
               yield* completeReasoning(context);
               return;
@@ -2115,7 +2120,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             case "cancelled":
               return "cancelled";
             case "error":
-              return "failed";
+              // The SDK's failed resume after turn-ended does not undo the answer.
+              return context.turnEnded ? "completed" : "failed";
           }
         };
 
@@ -2319,6 +2325,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               },
               interrupted: false,
               finalized: false,
+              turnEnded: false,
             };
             yield* Ref.set(activeTurn, context);
             yield* emitProviderEvent({
@@ -2360,6 +2367,17 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                       kind: "assistant",
                       text: result.result,
                     });
+                  }
+                  if (context !== null && context.turnEnded && result.status === "error") {
+                    yield* Effect.logWarning(
+                      "orchestration-v2.cursor-run-failed-after-turn-ended",
+                      {
+                        providerSessionId: input.providerSessionId,
+                        providerThreadId: turnInput.providerThread.id,
+                        providerTurnId,
+                        error: result.error?.message,
+                      },
+                    );
                   }
                   if (context !== null) {
                     const transportFailure = context.assistantReply.failure;
