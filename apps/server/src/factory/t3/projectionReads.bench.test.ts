@@ -53,6 +53,7 @@ const RUNS = 300;
 const TURN_ITEMS = 50_000;
 const BLOCK_BUDGET_MS = 50;
 const STATUS_BUDGET_MS = 250;
+const SEED_TIMEOUT_MS = 300_000;
 
 /**
  * Threads 1..RUNS have one run each. A fifth of the threads are archived (the multiples of 5), so
@@ -199,59 +200,63 @@ const statusCall = (
   });
 
 describe("the projection reads on a database the size of the personal Mac's", () => {
-  it.live("keep the main thread free and the status route fast", () =>
-    Effect.gen(function* () {
-      const store = yield* Routed.ProjectionStoreV2;
-      const sessions = yield* Sessions.FactorySessions;
+  it.live(
+    "keep the main thread free and the status route fast",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* Routed.ProjectionStoreV2;
+        const sessions = yield* Sessions.FactorySessions;
 
-      reportWall("seeding the fixture", yield* timed(seedProjection(fixture())));
-      yield* assertPayloadSizes;
-      assert.strictEqual((yield* store.getShellSnapshot()).threads.length, THREADS * 0.8);
+        reportWall("seeding the fixture", yield* timed(seedProjection(fixture())));
+        yield* assertPayloadSizes;
+        assert.strictEqual((yield* store.getShellSnapshot()).threads.length, THREADS * 0.8);
 
-      assert.strictEqual(yield* sessions.runningThreads, AT_WORK);
-      const running = yield* best(sessions.runningThreads);
-      report("runningThreads", running);
+        assert.strictEqual(yield* sessions.runningThreads, AT_WORK);
+        const running = yield* best(sessions.runningThreads);
+        report("runningThreads", running);
 
-      const pullRequests = yield* best(store.getThreadsWithPullRequests());
-      report("routed getThreadsWithPullRequests (both PR reactors)", pullRequests);
+        const pullRequests = yield* best(store.getThreadsWithPullRequests());
+        report("routed getThreadsWithPullRequests (both PR reactors)", pullRequests);
 
-      const status = yield* statusCall(sessions, yield* EnvironmentAuth.EnvironmentAuth);
-      const route = yield* best(status.call).pipe(Effect.ensuring(status.dispose));
-      report("GET /api/factory/status", route);
+        const status = yield* statusCall(sessions, yield* EnvironmentAuth.EnvironmentAuth);
+        const route = yield* best(status.call).pipe(Effect.ensuring(status.dispose));
+        report("GET /api/factory/status", route);
 
-      // The unfiltered snapshot (ThreadLaunchService's prepare loop calls it) twice. Not asserted.
-      // Upstream's layer runs it on the writer, SQL and decode both on the main thread; the routed
-      // one runs the SQL on the reader, and only the decode stays on the main thread.
-      const upstream = yield* Effect.provide(
-        Effect.service(ProjectionStore.ProjectionStoreV2),
-        ProjectionStore.layer,
-      );
-      report(
-        "unfiltered getShellSnapshot(), upstream layer on the writer (ThreadLaunchService before)",
-        yield* best(upstream.getShellSnapshot(), 3),
-      );
-      report(
-        "unfiltered getShellSnapshot(), routed to the reader (ThreadLaunchService now)",
-        yield* best(store.getShellSnapshot(), 3),
-      );
+        // The unfiltered snapshot (ThreadLaunchService's prepare loop calls it) twice. Not asserted.
+        // Upstream's layer runs it on the writer, SQL and decode both on the main thread; the routed
+        // one runs the SQL on the reader, and only the decode stays on the main thread.
+        const upstream = yield* Effect.provide(
+          Effect.service(ProjectionStore.ProjectionStoreV2),
+          ProjectionStore.layer,
+        );
+        report(
+          "unfiltered getShellSnapshot(), upstream layer on the writer (ThreadLaunchService before)",
+          yield* best(upstream.getShellSnapshot(), 3),
+        );
+        report(
+          "unfiltered getShellSnapshot(), routed to the reader (ThreadLaunchService now)",
+          yield* best(store.getShellSnapshot(), 3),
+        );
 
-      // The pull request reads as upstream runs them, on the writer.
-      report(
-        "upstream getThreadsWithPullRequests, on the writer",
-        yield* best(upstream.getThreadsWithPullRequests(), 2),
-      );
-      report(
-        "upstream active getShellSnapshot (the old running count), on the writer",
-        yield* best(upstream.getShellSnapshot({ location: "active" }), 2),
-      );
+        // The pull request reads as upstream runs them, on the writer.
+        report(
+          "upstream getThreadsWithPullRequests, on the writer",
+          yield* best(upstream.getThreadsWithPullRequests(), 2),
+        );
+        report(
+          "upstream active getShellSnapshot (the old running count), on the writer",
+          yield* best(upstream.getShellSnapshot({ location: "active" }), 2),
+        );
 
-      assert.isBelow(running.blockMs, BLOCK_BUDGET_MS, "runningThreads blocks the main thread");
-      assert.isBelow(
-        pullRequests.blockMs,
-        BLOCK_BUDGET_MS,
-        "getThreadsWithPullRequests blocks the main thread",
-      );
-      assert.isBelow(route.wallMs, STATUS_BUDGET_MS, "GET /api/factory/status is slow");
-    }).pipe(Effect.provide(layerEnvironmentAuth.pipe(Layer.provideMerge(layerBench())))),
+        assert.isBelow(running.blockMs, BLOCK_BUDGET_MS, "runningThreads blocks the main thread");
+        assert.isBelow(
+          pullRequests.blockMs,
+          BLOCK_BUDGET_MS,
+          "getThreadsWithPullRequests blocks the main thread",
+        );
+        assert.isBelow(route.wallMs, STATUS_BUDGET_MS, "GET /api/factory/status is slow");
+      }).pipe(Effect.provide(layerEnvironmentAuth.pipe(Layer.provideMerge(layerBench())))),
+    // Seeding writes about 300 MB: half a minute alone, several on a host busy with the gate.
+    SEED_TIMEOUT_MS,
   );
 });
