@@ -9,13 +9,17 @@ import {
   markdownWithFileEmbeds,
   markdownWithHtml,
   markdownWithInlineFileLinks,
+  markdownWithMermaidDiagrams,
   markdownWithTableBreaks,
 } from "../lib/markdownDocument";
+import type { MermaidPalette } from "../lib/mermaidSvg";
+import { themeColorWithAlpha } from "../lib/mobileTheme";
 import { isValidElement, useCallback, useMemo, useState, type ReactNode } from "react";
 import { Platform, Share, StyleSheet, View } from "react-native";
 import {
   EnrichedMarkdownText,
   type MarkdownImageBlock,
+  type MarkdownImageOccurrence,
   type MarkdownLinkOccurrence,
   type MarkdownStyle,
 } from "react-native-enriched-markdown";
@@ -23,6 +27,7 @@ import type { SelectableMarkdownTextProps } from "./SelectableMarkdownText.types
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { Menu } from "../components/ui/Menu";
+import { MermaidDiagramView, renderMermaidDiagram } from "./MermaidDiagram";
 import { useEnrichedLinkVariants } from "./useEnrichedLinkVariants";
 import { useRetryingImageSource } from "./useRetryingImageSource";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
@@ -155,22 +160,51 @@ function enrichedStyle(
 }
 
 export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
-  const { renderImage, resolveImageSource, fileEmbedLabel } = props;
+  const { renderImage, resolveImageSource, fileEmbedLabel, textStyle } = props;
   const { themeAppearance, mathRenderingEnabled } = useAppearancePreferences();
-  const { markdown, fileHrefs } = useMemo(() => {
+  const mermaidPalette = useMemo(
+    (): MermaidPalette => ({
+      background: textStyle.codeBlockBackgroundColor,
+      foreground: textStyle.color,
+      muted: textStyle.mutedColor,
+      surface: themeColorWithAlpha(textStyle.color, 0.08),
+      surfaceAlt: themeColorWithAlpha(textStyle.color, 0.16),
+      border: themeColorWithAlpha(textStyle.color, 0.28),
+      accent: textStyle.linkColor,
+      monoFontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    }),
+    [
+      textStyle.codeBlockBackgroundColor,
+      textStyle.color,
+      textStyle.mutedColor,
+      textStyle.linkColor,
+    ],
+  );
+  const { markdown, fileHrefs, mermaidDiagrams } = useMemo(() => {
+    let prepared: { markdown: string; fileHrefs: ReadonlySet<string> };
     if (!fileEmbedLabel) {
-      return {
+      prepared = {
         markdown: markdownForNativeRendering(props.markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
         fileHrefs: new Set<string>(),
       };
+    } else {
+      const content = markdownWithInlineFileLinks(
+        markdownWithHtml(props.markdown),
+        ENRICHED_INLINE_FILE_LINK_REGEX,
+      );
+      const files = markdownWithFileEmbeds(content, fileEmbedLabel);
+      prepared = { ...files, markdown: markdownWithTableBreaks(files.markdown) };
     }
-    const content = markdownWithInlineFileLinks(
-      markdownWithHtml(props.markdown),
-      ENRICHED_INLINE_FILE_LINK_REGEX,
+    // Last, so the placeholder images never reach the file-embed or link transforms.
+    const withDiagrams = markdownWithMermaidDiagrams(prepared.markdown, (source) =>
+      renderMermaidDiagram(source, mermaidPalette),
     );
-    const files = markdownWithFileEmbeds(content, fileEmbedLabel);
-    return { ...files, markdown: markdownWithTableBreaks(files.markdown) };
-  }, [props.markdown, fileEmbedLabel]);
+    return {
+      markdown: withDiagrams.markdown,
+      fileHrefs: prepared.fileHrefs,
+      mermaidDiagrams: withDiagrams.diagrams,
+    };
+  }, [props.markdown, fileEmbedLabel, mermaidPalette]);
   const [parsedLinkUrls, setParsedLinkUrls] = useState<ReadonlyArray<string>>([]);
   const onLinksChange = useCallback((links: MarkdownLinkOccurrence[]) => {
     const urls = [...new Set(links.map((link) => link.url))];
@@ -275,10 +309,19 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   );
   const renderers = useMemo(
     () =>
-      renderImage
+      renderImage || mermaidDiagrams.size > 0
         ? {
             image: (block: MarkdownImageBlock) => {
-              const element = renderImage({
+              const diagram = mermaidDiagrams.get(block.url);
+              if (diagram)
+                return (
+                  <MermaidDiagramView
+                    diagram={diagram}
+                    backgroundColor={mermaidPalette.background}
+                    borderColor={textStyle.dividerColor}
+                  />
+                );
+              const element = renderImage?.({
                 href: block.url,
                 alt: block.altText || null,
                 title: block.title || null,
@@ -287,9 +330,17 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
             },
           }
         : undefined,
-    [renderImage],
+    [renderImage, mermaidDiagrams, mermaidPalette.background, textStyle.dividerColor],
   );
-  const resolveNativeImageSource = useRetryingImageSource(resolveImageSource);
+  const resolveRetryingImageSource = useRetryingImageSource(resolveImageSource);
+  // A diagram's placeholder URL is not a file, so the caller's resolver would only fail and retry.
+  const resolveNativeImageSource = useMemo(
+    () =>
+      resolveRetryingImageSource &&
+      ((image: MarkdownImageOccurrence) =>
+        mermaidDiagrams.has(image.url) ? undefined : resolveRetryingImageSource(image)),
+    [resolveRetryingImageSource, mermaidDiagrams],
+  );
   const renderMarkdown = (openAndroidMenu?: () => void) => {
     const onLinkLongPress =
       Platform.OS === "android" && props.fileContextMenu
