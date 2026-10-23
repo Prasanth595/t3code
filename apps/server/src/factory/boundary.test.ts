@@ -22,8 +22,11 @@ const packageName = (specifier: string) =>
 /**
  * Factory code (except factory/t3/) may not import T3 code: neither relative paths outside
  * factory/ nor the server's workspace packages. Nothing outside factory/ may import it,
- * except server.ts.
+ * except server.ts, and runtimeLayer.ts for the routed projection store.
  */
+const ROUTED_STORE_IMPORTER = "orchestration-v2/runtimeLayer.ts";
+const ROUTED_STORE = "factory/t3/projectionStoreReadRouting.ts";
+
 export const findBoundaryViolations = (
   files: ReadonlyArray<SourceFile>,
   workspacePackages: ReadonlySet<string>,
@@ -45,7 +48,9 @@ export const findBoundaryViolations = (
       }
     } else if (file.path !== "server.ts") {
       for (const specifier of relative) {
-        if (resolveRelative(file.path, specifier).startsWith("factory/")) {
+        const target = resolveRelative(file.path, specifier);
+        if (file.path === ROUTED_STORE_IMPORTER && target === ROUTED_STORE) continue;
+        if (target.startsWith("factory/")) {
           violations.push(`${file.path} imports ${specifier} from factory/`);
         }
       }

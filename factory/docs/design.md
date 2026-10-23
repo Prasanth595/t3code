@@ -85,7 +85,7 @@ A seam is acceptable when it is a hook, not a feature: the smallest edit that ca
 ### Boundary rules, checked by a test
 
 - Only `apps/server/src/factory/t3/**` may import T3 code: files outside `apps/server/src/factory/`, or the workspace packages (`@t3tools/*` and the rest) the server depends on.
-- No file outside `factory/` may import from it, except the two lines in `server.ts`.
+- No file outside `factory/` may import from it, except the two lines in `server.ts` and the routed projection store import in `orchestration-v2/runtimeLayer.ts`.
 - The checks run as a vitest test in `apps/server/src/factory/boundary.test.ts`, so they run with the factory suite.
 
 When upstream changes an internal API, the break lands as a type error in `factory/t3/`. Everything above the adapter uses softfac-shaped types (`Launched`, `ThreadStatus`, `Thread`) that we own.

@@ -41,9 +41,8 @@ import * as Sessions from "./sessions.ts";
  * makes blocks the main thread under 50 ms, and the status route answers under 250 ms. The
  * payloads are the size of the Mac's (see projectionFixture.testkit.ts).
  *
- * Routed here: `getThreadsWithPullRequests` for both PR reactors, and `getShellSnapshot` for the
- * consumers server.ts provides with `ProjectionStoreV2.layer`. ThreadLaunchService's snapshot is
- * not: it still runs on the writer, and its line is measured through the upstream layer.
+ * Routed here: `getThreadsWithPullRequests` for both PR reactors, and `getShellSnapshot`, including
+ * ThreadLaunchService's unfiltered one. Upstream's layer is measured beside it for comparison.
  *
  * A block is the longest gap a 1 ms timer saw while the call ran. Each call is repeated and the
  * best repetition counts: a host loaded by other work preempts the process in any single run, and
@@ -221,20 +220,18 @@ describe("the projection reads on a database the size of the personal Mac's", ()
       report("GET /api/factory/status", route);
 
       // The unfiltered snapshot (ThreadLaunchService's prepare loop calls it) twice. Not asserted.
-      // ThreadLaunchService reaches the store through runtimeLayer.ts's own upstream
-      // ProjectionStore.layer, so today that call runs on the writer, SQL and decode both on the
-      // main thread. The routed one is what the consumers server.ts provides with
-      // ProjectionStoreV2.layer get: the SQL on the reader, the decode still on the main thread.
+      // Upstream's layer runs it on the writer, SQL and decode both on the main thread; the routed
+      // one runs the SQL on the reader, and only the decode stays on the main thread.
       const upstream = yield* Effect.provide(
         Effect.service(ProjectionStore.ProjectionStoreV2),
         ProjectionStore.layer,
       );
       report(
-        "unfiltered getShellSnapshot(), upstream layer on the writer (ThreadLaunchService today)",
+        "unfiltered getShellSnapshot(), upstream layer on the writer (ThreadLaunchService before)",
         yield* best(upstream.getShellSnapshot(), 3),
       );
       report(
-        "unfiltered getShellSnapshot(), routed to the reader (not ThreadLaunchService's path)",
+        "unfiltered getShellSnapshot(), routed to the reader (ThreadLaunchService now)",
         yield* best(store.getShellSnapshot(), 3),
       );
 
