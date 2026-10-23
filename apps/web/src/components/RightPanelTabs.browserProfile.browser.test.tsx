@@ -10,8 +10,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 // The profile list normally comes from client settings; the built-ins are enough to choose from.
-vi.mock("~/browser/browserDefaults", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/browser/browserDefaults")>()),
+vi.mock("~/browser/browserDefaults", () => ({
   useBrowserDefaults: () => ({ profiles: BUILT_IN_BROWSER_PROFILES }),
 }));
 

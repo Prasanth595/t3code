@@ -841,9 +841,9 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
         installationId: input.installationId,
       });
     }
-    // Recovery reads consent to the new digest as a finished swap, which these files already have.
+    // Consent records approval, not the bytes currently installed on disk.
     const row = yield* catalogRow(input.installationId);
-    if (row.source?.digest === input.digest || row.consent?.digest === input.digest) {
+    if (row.source?.digest === input.digest) {
       yield* discardStaged(entry);
       return yield* new PluginCatalogError({
         reason: "npm-no-update",
