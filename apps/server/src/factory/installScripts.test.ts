@@ -1173,6 +1173,7 @@ describe("build.sh smoke test", () => {
       NodePath.join(sandbox, "bin/vp"),
       [
         "#!/bin/sh",
+        '[ -z "${VP_NODE_VERSION:-}" ] || echo "$VP_NODE_VERSION" >> "$FAKE_WORK/node-versions"',
         'if [ "$1 $2" = "node scripts/build-cli-archive.ts" ]; then',
         "  shift 2",
         "  while [ $# -gt 0 ]; do",
@@ -1239,6 +1240,10 @@ describe("build.sh smoke test", () => {
     expect(result.stdout.split("\n").at(-1)).toBe(NodePath.join(repo, "release", archive));
     expect(result.tmpLeft).toEqual([]);
     expect(serverAlive()).toBe(false);
+    // Both SEA steps, build-exe and the archive, ran under the Node version the fixture pins.
+    expect(NodeFS.readFileSync(NodePath.join(sandbox, "work/node-versions"), "utf8")).toBe(
+      "24.0.0\n24.0.0\n",
+    );
   });
 
   it.each([
