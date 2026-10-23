@@ -206,7 +206,8 @@ export function splitOutputLines(
   partialLine: string,
   text: string,
 ): { readonly lines: ReadonlyArray<string>; readonly partialLine: string } {
-  const parts = (partialLine + text).split(/\r\n|\r|\n/);
+  // oxlint-disable-next-line no-control-regex -- ANSI cursor-to-column-1 redraws delimit spinner frames.
+  const parts = (partialLine + text).split(/\r\n|\r|\n|\u001b\[(?:0|1)?G/);
   return { partialLine: (parts.pop() ?? "").slice(-UPDATE_PARTIAL_LINE_MAX_LENGTH), lines: parts };
 }
 

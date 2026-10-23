@@ -400,6 +400,22 @@ describe("providerMaintenanceRunner", () => {
     assert.strictEqual(ProviderMaintenanceRunner.toProgressLine("x".repeat(300))?.length, 200);
   });
 
+  it("keeps only the latest installer spinner frame across chunk boundaries", () => {
+    const output = "◒ Upgrading\u001b[1G\u001b[0J◐ Upgrading.\u001b[1G\u001b[0J◓ Upgrading..";
+    for (let boundary = 0; boundary <= output.length; boundary++) {
+      let partialLine = "";
+      for (const chunk of [output.slice(0, boundary), output.slice(boundary)]) {
+        const split = ProviderMaintenanceRunner.splitOutputLines(partialLine, chunk);
+        partialLine = split.partialLine;
+      }
+      assert.strictEqual(
+        ProviderMaintenanceRunner.toProgressLine(partialLine),
+        "◓ Upgrading..",
+        `chunk boundary ${boundary}`,
+      );
+    }
+  });
+
   it.effect("aborts without running when the installation changed since the advisory", () => {
     const calls: Array<string> = [];
     return Effect.gen(function* () {
