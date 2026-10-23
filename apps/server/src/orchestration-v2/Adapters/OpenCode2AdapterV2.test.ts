@@ -2219,7 +2219,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("reconciles slow sessions without spending one shared deadline", () =>
+  it.effect.each([
+    ["slow sessions without a shared deadline", false],
+    ["a session deleted after the active snapshot", true],
+  ] as const)("reconciles %s", ([_scenario, deleted]) =>
     Effect.gen(function* () {
       const otherId = "ses_other_stalled_session";
       const otherPrompt = "msg_other_stalled_prompt";
@@ -2267,16 +2270,29 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             [SESSION]: { type: "running" },
             [otherId]: { type: "running" },
           }),
-          ...history(SESSION, PROMPT_ID),
+          ...(deleted
+            ? [
+                out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
+                reply("message.list", {
+                  status: 404,
+                  body: {
+                    _tag: "SessionNotFoundError",
+                    sessionID: SESSION,
+                    message: "Deleted during recovery",
+                  },
+                }),
+              ]
+            : history(SESSION, PROMPT_ID)),
           ...history(otherId, otherPrompt),
-          ...requests(SESSION),
+          ...(deleted ? [] : requests(SESSION)),
           ...requests(otherId),
-          event("session.execution.succeeded", { sessionID: SESSION }),
+          ...(deleted ? [] : [event("session.execution.succeeded", { sessionID: SESSION })]),
           event("session.execution.succeeded", { sessionID: otherId }),
         ],
         {
           beforeResponse: (path) =>
             recovering &&
+            !deleted &&
             (path === "/api/session/active" || /\/(message|permission|form)$/.test(path))
               ? Effect.gen(function* () {
                   const release = yield* Deferred.make<void>();
@@ -2309,17 +2325,20 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         runId: RunId.make("run:other"),
         attemptId: RunAttemptId.make("attempt:other"),
       });
-      // Each response is within the old per-attempt budget; their sum is not.
-      for (let read = 0; read < 7; read += 1) {
-        const release = yield* Queue.take(reads);
-        yield* TestClock.adjust("8 seconds");
-        yield* Deferred.succeed(release, undefined);
+      if (!deleted) {
+        // Each response fits the old deadline; their sum does not.
+        for (let read = 0; read < 7; read += 1) {
+          const release = yield* Queue.take(reads);
+          yield* TestClock.adjust("8 seconds");
+          yield* Deferred.succeed(release, undefined);
+        }
       }
       const ended = yield* Fiber.join(terminals);
       assert.deepEqual(
         ended.map((event) => event.status),
-        ["completed", "completed"],
+        [deleted ? "interrupted" : "completed", "completed"],
       );
+      if (deleted) assert.equal(ended[0]?.threadDisposition, "broken");
       assert.sameMembers(
         ended.map((event) => event.providerThreadId),
         [thread.id, other.id],

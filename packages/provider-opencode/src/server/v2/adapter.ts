@@ -2540,10 +2540,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ).pipe(
         Stream.takeUntil((message) => message.id === start),
         Stream.runCollect,
+        Effect.catchTags({ SessionNotFoundError: () => Effect.succeed(null) }),
       );
       return yield* lock.withPermit(
         Effect.gen(function* () {
           if (state.active !== turn) return undefined;
+          if (read === null) return { outcome: "missing" as const };
           // Without its start the history holds only earlier turns (the stream
           // dropped before the prompt landed): none of it is this turn's.
           const found = start === null || read.at(-1)?.id === start;
@@ -2632,7 +2634,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ) {
         return;
       }
-      const active = yield* client.session.active();
+      const active = { ...(yield* client.session.active()) };
       for (const sessionId of busy) if (!(sessionId in active)) busy.delete(sessionId);
       for (const state of threads.values()) {
         if (state.unsettled && !(state.sessionId in active)) state.unsettledStarted = true;
@@ -2642,6 +2644,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         const turn = state.active;
         if (turn === undefined) continue;
         const ended = yield* backfill(sessionId, state);
+        if (ended?.outcome === "missing") {
+          delete active[Session.ID.make(sessionId)];
+          busy.delete(sessionId);
+        }
         if (sessionId in active) continue;
         yield* lock.withPermit(
           Effect.gen(function* () {
@@ -2660,6 +2666,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                       }),
                     }
                   : { status: "interrupted" },
+              ended?.outcome === "missing" ? "broken" : "reusable",
             );
           }),
         );
