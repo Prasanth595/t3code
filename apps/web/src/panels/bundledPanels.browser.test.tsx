@@ -49,7 +49,7 @@ vi.mock("./preview/PreviewSidePanel", () => {
   return {
     default: function PreviewSidePanel(props: unknown) {
       loaded.previewRenders.push({ props, host: usePanelHost() });
-      return null;
+      return <span>Preview body</span>;
     },
   };
 });
@@ -112,6 +112,7 @@ describe("bundled side panels", () => {
       files: 0,
       pluginView: 0,
     });
+    await expect.element(screen.getByText("Preview body", { exact: true })).toBeVisible();
     expect(loaded.previewRenders).toEqual([{ props: { tabId: "tab-1" }, host }]);
   });
 
@@ -144,6 +145,7 @@ describe("bundled side panels", () => {
       </PanelHostContext>,
     );
     await act(() => imports.terminal.promise);
+    await expect.element(screen.getByText("Terminal body", { exact: true })).toBeVisible();
     expect(screen.container.textContent).toBe("Terminal body");
     expect(loaded).toMatchObject({
       diff: 0,

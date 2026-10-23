@@ -771,31 +771,39 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
   describe("update", () => {
     it.effect.each(["changed", "missing"] as const)(
       "restores %s installed bytes even when their approved digest is unchanged",
-      (damage) => withDatabase(Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const { catalog, npm, registry, plugin } = yield* setup();
-        registry.publish("restore", "1.0.0", { tarball: plugin("restore", "1.0.0") });
-        registry.publish("restore", "1.1.0", { tarball: plugin("restore", "1.1.0") });
-        const added = yield* npm.add({ name: "restore", version: "1.0.0" });
-        const installationId = added.installation.installationId;
-        const staged = (yield* npm.stageUpdate({ installationId, version: "1.1.0" })).package.stagedUpdate!;
-        yield* npm.applyUpdate({ installationId, digest: staged.source.digest });
-        const entry = path.join(added.installation.directory, "dist/main.mjs");
-        const approved = yield* fs.readFileString(entry);
-        if (damage === "changed") yield* fs.writeFileString(entry, `${approved}// damaged\n`);
-        else yield* fs.remove(entry);
-        yield* catalog.refresh({ installationId });
-        const row = (yield* catalog.list).installations[0]!;
-        expect(row.consent?.digest).toBe(staged.source.digest);
-        expect(row.source?.digest).not.toBe(staged.source.digest);
-        const again = (yield* npm.stageUpdate({ installationId, version: "1.1.0" })).package.stagedUpdate!;
-        expect(again.source.digest).toBe(staged.source.digest);
-        const restored = yield* npm.applyUpdate({ installationId, digest: again.source.digest });
-        expect(restored.installation.source?.digest).toBe(staged.source.digest);
-        expect(yield* fs.readFileString(entry)).toBe(approved);
-        expect(restored.package.stagedUpdate).toBeNull();
-      })),
+      (damage) =>
+        withDatabase(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const { catalog, npm, registry, plugin } = yield* setup();
+            registry.publish("restore", "1.0.0", { tarball: plugin("restore", "1.0.0") });
+            registry.publish("restore", "1.1.0", { tarball: plugin("restore", "1.1.0") });
+            const added = yield* npm.add({ name: "restore", version: "1.0.0" });
+            const installationId = added.installation.installationId;
+            const staged = (yield* npm.stageUpdate({ installationId, version: "1.1.0" })).package
+              .stagedUpdate!;
+            yield* npm.applyUpdate({ installationId, digest: staged.source.digest });
+            const entry = path.join(added.installation.directory, "dist/main.mjs");
+            const approved = yield* fs.readFileString(entry);
+            if (damage === "changed") yield* fs.writeFileString(entry, `${approved}// damaged\n`);
+            else yield* fs.remove(entry);
+            yield* catalog.refresh({ installationId });
+            const row = (yield* catalog.list).installations[0]!;
+            expect(row.consent?.digest).toBe(staged.source.digest);
+            expect(row.source?.digest).not.toBe(staged.source.digest);
+            const again = (yield* npm.stageUpdate({ installationId, version: "1.1.0" })).package
+              .stagedUpdate!;
+            expect(again.source.digest).toBe(staged.source.digest);
+            const restored = yield* npm.applyUpdate({
+              installationId,
+              digest: again.source.digest,
+            });
+            expect(restored.installation.source?.digest).toBe(staged.source.digest);
+            expect(yield* fs.readFileString(entry)).toBe(approved);
+            expect(restored.package.stagedUpdate).toBeNull();
+          }),
+        ),
     );
 
     it.effect("stages a version beside the running one and swaps it in with new consent", () =>
@@ -896,6 +904,88 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
           expect((yield* callVersion(catalog, installationId)).version).toBe("1.0.0");
         }),
       ),
+    );
+
+    it.effect("does not report a prior same-digest commit as a failed repair's success", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sql = yield* SqlClient.SqlClient;
+          const { catalog, npm, registry, plugin } = yield* setup();
+          for (const version of ["1.0.0", "1.1.0"])
+            registry.publish("repair-attempt", version, {
+              tarball: plugin("repair-attempt", version),
+            });
+          const added = yield* npm.add({ name: "repair-attempt", version: "1.0.0" });
+          const installationId = added.installation.installationId;
+          const staged = yield* npm.stageUpdate({ installationId, version: "1.1.0" });
+          const digest = staged.package.stagedUpdate!.source.digest;
+          yield* npm.applyUpdate({ installationId, digest });
+          const filename = path.join(added.installation.directory, "dist", "main.mjs");
+          const original = yield* fs.readFileString(filename);
+          yield* fs.writeFileString(filename, "damaged files");
+          yield* catalog.refresh({ installationId });
+          yield* npm.stageUpdate({ installationId, version: "1.1.0" });
+          // Fail before this attempt can record its outcome or move a directory.
+          yield* sql`CREATE TRIGGER refuse_repair BEFORE UPDATE ON plugin_installations
+          WHEN json_extract(NEW.record_json, '$.replacement.committed') = 0
+          BEGIN SELECT RAISE(ABORT, 'refused repair'); END`;
+          const failed = yield* npm.applyUpdate({ installationId, digest }).pipe(Effect.exit);
+          expect(Exit.isFailure(failed)).toBe(true);
+          expect(yield* fs.readFileString(filename)).toBe("damaged files");
+          expect((yield* npm.list).packages[0]!.stagedUpdate?.source.digest).toBe(digest);
+          yield* sql`DROP TRIGGER refuse_repair`;
+          const repaired = yield* npm.applyUpdate({ installationId, digest });
+          expect(repaired.installation.source?.digest).toBe(digest);
+          expect(yield* fs.readFileString(filename)).toBe(original);
+          expect(repaired.package.stagedUpdate).toBeNull();
+        }),
+      ),
+    );
+
+    it.effect(
+      "does not authenticate a new repair journal with a prior same-digest commit after restart",
+      () =>
+        withDatabase(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const scope = yield* Scope.Scope;
+            const { catalog, npm, registry, plugin, root } = yield* setup();
+            for (const version of ["1.0.0", "1.1.0"])
+              registry.publish("repair-restart", version, {
+                tarball: plugin("repair-restart", version),
+              });
+            const added = yield* npm.add({ name: "repair-restart", version: "1.0.0" });
+            const installationId = added.installation.installationId;
+            const staged = yield* npm.stageUpdate({ installationId, version: "1.1.0" });
+            const digest = staged.package.stagedUpdate!.source.digest;
+            const applied = yield* npm.applyUpdate({ installationId, digest });
+            const filename = path.join(added.installation.directory, "dist", "main.mjs");
+            yield* fs.writeFileString(filename, "damaged before restart");
+            yield* catalog.refresh({ installationId });
+            const record = path.join(path.dirname(added.installation.directory), "npm.json");
+            // A crash after journaling, before catalogue admission: the old commit remains.
+            yield* fs.writeFileString(
+              record,
+              toJson({
+                source: applied.package.source,
+                swap: {
+                  source: { ...applied.package.source, installedAt: "2099-01-01T00:00:00.000Z" },
+                  digest,
+                  attemptId: "new-unstarted-repair",
+                },
+              }),
+            );
+            const recovered = yield* startNpm(scope, catalog, registry, root);
+            expect((yield* recovered.list).packages[0]!.source).toEqual(applied.package.source);
+            expect(fromJson(yield* fs.readFileString(record))).toEqual({
+              source: applied.package.source,
+            });
+            expect(yield* fs.readFileString(filename)).toBe("damaged before restart");
+          }),
+        ),
     );
 
     it.effect("summarizes a downloaded update's declarations as the catalogue does", () =>
