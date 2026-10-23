@@ -20,7 +20,8 @@ send shortcut. Click the send button to use the configured follow-up behavior.
 
 Turn on **Settings → General → Start new threads in background** to make sending
 from a new thread start it in the background. `mod+Enter` or `mod+Alt+Enter` then
-opens the thread instead. When your send shortcut requires `mod+Enter`, use
+opens the thread instead. When your send shortcut requires `mod+Enter`, including
+for a multiline prompt, `mod+Enter` starts the thread in the background, so use
 `mod+Alt+Enter`.
 
 When an active turn has queued messages, `mod+Shift+Enter` sends the first as a
