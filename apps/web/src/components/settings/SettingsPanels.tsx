@@ -1121,7 +1121,7 @@ export function GeneralSettingsPanel() {
             <SettingsRow
               serverScoped
               settingKeys={["sidebarAutoSettleAfterDays"]}
-              title={searchableSetting("days-before-auto-settle").title}
+              {...searchableSetting("days-before-auto-settle")}
               description="Any new activity un-settles a thread automatically."
               control={
                 <AutoSettleDaysInput
