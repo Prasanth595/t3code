@@ -134,6 +134,29 @@ describe("evaluatePullRequestWatch", () => {
     ]);
   });
 
+  // regression: #23712 required checks woke the agent early and the rest finishing never did
+  it("wakes again when the other checks finish after the required ones passed", () => {
+    const required = (name: string, status: PullRequestCheck["status"]) => ({
+      ...check(name, status),
+      required: true,
+    });
+    const early = detail({
+      checks: [required("test", "success"), check("e2e", "pending")],
+    });
+    const first = evaluatePullRequestWatch(watch(), early, noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "checks-passed", count: 1, required: true }]);
+
+    const done = detail({
+      checks: [required("test", "success"), check("e2e", "success")],
+    });
+    const final = evaluatePullRequestWatch(first.next, done, noRemarks);
+    assert.deepEqual(
+      final.changes.map((change) => change.kind),
+      ["checks-passed"],
+    );
+    assert.deepEqual(evaluatePullRequestWatch(final.next, done, noRemarks).changes, []);
+  });
+
   // regression: #16208 PR watches burned GitHub's rate limit and gave up
   it("does not report passed again for a new passed check where none is required", () => {
     const first = evaluatePullRequestWatch(
