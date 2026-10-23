@@ -156,7 +156,7 @@ function normalizeRefName(refName: string): string {
   return refName.trim().replace(/^refs\/heads\//, "");
 }
 
-/** A login has to compare against `az account show`, which reports an email. */
+/** A login has to compare against the connectionData account, which is an email. */
 function toActor(raw: Schema.Schema.Type<typeof RawIdentitySchema> | null | undefined) {
   const login = trimmed(raw?.uniqueName) ?? trimmed(raw?.displayName);
   return login === null
