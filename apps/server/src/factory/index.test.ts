@@ -1753,13 +1753,19 @@ describe("the gate in the background", () => {
         const dataDir = tempDir();
         const run = prOpenRun(dataDir);
         let mergeable = "MERGEABLE";
+        let prState: "OPEN" | "MERGED" | "fails" = "OPEN";
         const prReads: Array<string> = [];
         const gh: FactoryProcess["Service"] = {
           run: (input) => {
             const args = input.args ?? [];
             if (args.includes("pr") && args.includes("view")) {
-              prReads.push(mergeable);
-              return answered(PR_VIEW("OPEN", HEAD, mergeable));
+              prReads.push(`${prState} ${mergeable}`);
+              if (prState === "fails") {
+                return Effect.fail(
+                  new RunSpawnError({ shell: false, cause: new Error("gh died") }),
+                );
+              }
+              return answered(PR_VIEW(prState, HEAD, mergeable));
             }
             if (readsIssue(input)) return answered(OPEN_ISSUE);
             return answered(JSON.stringify({ object: { type: "commit", sha: BASE } }));
@@ -1807,9 +1813,22 @@ describe("the gate in the background", () => {
           running: 1,
           max: 1,
         });
-        assert.deepStrictEqual(prReads, ["MERGEABLE"]);
+        assert.deepStrictEqual(prReads, ["OPEN MERGEABLE"]);
         assert.isFalse(world.gateRunning(run));
         assert.strictEqual(NodeFS.readFileSync(runPath(dataDir, run), "utf8"), before);
+        // A merged pull request that read as conflicting, and a read that fails, wait for the slot too.
+        mergeable = "CONFLICTING";
+        for (const state of ["MERGED", "fails"] as const) {
+          prState = state;
+          assert.deepStrictEqual(
+            yield* world.gate(repo, run),
+            { kind: "queued", running: 1, max: 1 },
+            state,
+          );
+        }
+        assert.deepStrictEqual(prReads.slice(1), ["MERGED CONFLICTING", "fails CONFLICTING"]);
+        assert.strictEqual(NodeFS.readFileSync(runPath(dataDir, run), "utf8"), before);
+        prState = "OPEN";
         // Conflicting: the gate starts though the slot is taken, and records the conflict with no
         // gate run, so no lock.
         mergeable = "CONFLICTING";
