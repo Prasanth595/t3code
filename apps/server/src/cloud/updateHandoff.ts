@@ -1,6 +1,8 @@
-import { DESKTOP_UPDATE_RESTART_MARKER_FILE } from "@t3tools/contracts";
+import {
+  DESKTOP_UPDATE_RESTART_MARKER_FILE,
+  DESKTOP_UPDATE_RESTART_MARKER_TTL_MS,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -12,8 +14,6 @@ import {
   SERVICE_STOP_MARKER_FILE,
   serviceStateHasPendingUpdate,
 } from "./serviceProtocol.ts";
-
-const DESKTOP_UPDATE_RESTART_MARKER_TTL = Duration.minutes(1);
 
 export const pendingServiceUpdateExists = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
@@ -59,7 +59,6 @@ export const desktopUpdateRestartPending = Effect.gen(function* () {
   const now = yield* Clock.currentTimeMillis;
   return Option.match(marker.value.mtime, {
     onNone: () => false,
-    onSome: (writtenAt) =>
-      now - writtenAt.getTime() < Duration.toMillis(DESKTOP_UPDATE_RESTART_MARKER_TTL),
+    onSome: (writtenAt) => now - writtenAt.getTime() < DESKTOP_UPDATE_RESTART_MARKER_TTL_MS,
   });
 });

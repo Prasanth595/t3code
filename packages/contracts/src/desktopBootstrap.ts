@@ -43,3 +43,6 @@ export type DesktopBackendBootstrap = typeof DesktopBackendBootstrap.Type;
     away, so a backend that sees a fresh marker at shutdown keeps its managed
     tunnel. */
 export const DESKTOP_UPDATE_RESTART_MARKER_FILE = "desktop-update-restart";
+/** How long the marker counts as fresh: past this, the update restart failed
+    or happened long ago. */
+export const DESKTOP_UPDATE_RESTART_MARKER_TTL_MS = 60_000;

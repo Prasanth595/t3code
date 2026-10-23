@@ -125,7 +125,23 @@ const runtimePort = Command.make("runtime-port", {
   ),
 );
 
+/** Exits 0 when the file was modified less than `max-age-ms` ago. */
+const fileFresh = Command.make("file-fresh", {
+  file: Argument.String("file"),
+  maxAgeMs: Argument.Int("max-age-ms"),
+}).pipe(
+  Command.withHandler(({ file, maxAgeMs }) =>
+    Effect.sync(() => {
+      try {
+        process.exitCode = Date.now() - NodeFS.statSync(file).mtimeMs < maxAgeMs ? 0 : 1;
+      } catch {
+        process.exitCode = 1;
+      }
+    }),
+  ),
+);
+
 export const sshHelperCommand = Command.make("__ssh-helper").pipe(
   Command.unlisted,
-  Command.withSubcommands([pickPort, waitReady, runtimePort]),
+  Command.withSubcommands([pickPort, waitReady, runtimePort, fileFresh]),
 );

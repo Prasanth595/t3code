@@ -1,6 +1,8 @@
-import type {
-  DesktopSshEnvironmentBootstrap,
-  DesktopSshEnvironmentTarget,
+import {
+  DESKTOP_UPDATE_RESTART_MARKER_FILE,
+  DESKTOP_UPDATE_RESTART_MARKER_TTL_MS,
+  type DesktopSshEnvironmentBootstrap,
+  type DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
 import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
 import { cliReleaseDownloadBaseUrl } from "@t3tools/shared/cliRelease";
@@ -62,6 +64,9 @@ const REMOTE_ARCHIVE_DOWNLOAD_SECONDS = 240;
 const REMOTE_ARCHIVE_LOCK_WAIT_SECONDS = 360;
 const REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS = 900_000;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
+// The updated desktop app is back within seconds; this bounds the wait when
+// it is not, and stays well inside REMOTE_LAUNCH_TIMEOUT_MS.
+const REMOTE_DESKTOP_UPDATE_WAIT_SECONDS = 20;
 
 export interface RemoteT3RunnerOptions {
   readonly nodeScriptPath?: string | null;
@@ -540,6 +545,7 @@ STATE_KEY="$1"
 STATE_DIR="$HOME/.t3/ssh-launch/$STATE_KEY"
 DEFAULT_SERVER_HOME="$HOME/.t3"
 DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
+DESKTOP_UPDATE_MARKER="$DEFAULT_SERVER_HOME/runtime/@@T3_DESKTOP_UPDATE_MARKER_FILE@@"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
 MANAGED_FILE="$STATE_DIR/managed"
@@ -630,10 +636,34 @@ try {
 }
 NODE
 }
+desktop_update_restart_pending() {
+  if [ "$T3_ARCHIVE_MODE" = "1" ]; then
+    "$RUNNER_FILE" __ssh-helper file-fresh "$DESKTOP_UPDATE_MARKER" "@@T3_DESKTOP_UPDATE_MARKER_TTL_MS@@"
+    return
+  fi
+  node - "$DESKTOP_UPDATE_MARKER" "@@T3_DESKTOP_UPDATE_MARKER_TTL_MS@@" <<'NODE'
+const fs = require("node:fs");
+try {
+  process.exit(Date.now() - fs.statSync(process.argv[2]).mtimeMs < Number(process.argv[3]) ? 0 : 1);
+} catch {
+  process.exit(1);
+}
+NODE
+}
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+# A desktop app installing an update stops its server and starts the new
+# version on the default home seconds later. A server launched into that gap
+# owns the home, so the updated app cannot start. Wait for the app's server
+# instead and let the adopt path below take it.
+DESKTOP_UPDATE_WAITED=0
+while [ -z "$DEFAULT_RUNTIME_INFO" ] && [ "$DESKTOP_UPDATE_WAITED" -lt @@T3_DESKTOP_UPDATE_WAIT_SECONDS@@ ] && desktop_update_restart_pending; do
+  sleep 1
+  DESKTOP_UPDATE_WAITED=$((DESKTOP_UPDATE_WAITED + 1))
+  DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+done
 DEFAULT_RUNTIME_PID=""
 DEFAULT_REMOTE_PORT=""
 ADOPTED_PID=""
@@ -836,7 +866,7 @@ export function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string 
   );
 }
 
-function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
+export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_LAUNCH_SCRIPT, {
     T3_ARCHIVE_MODE: isNodeScriptRunner(input) ? "0" : "1",
     T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
@@ -848,6 +878,9 @@ function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
     T3_READY_TIMEOUT_MS: String(REMOTE_READY_TIMEOUT_MS),
     T3_REUSE_READY_TIMEOUT_MS: String(REMOTE_REUSE_READY_TIMEOUT_MS),
     T3_READY_PROBE_TIMEOUT_MS: String(SSH_READY_PROBE_TIMEOUT_MS),
+    T3_DESKTOP_UPDATE_MARKER_FILE: DESKTOP_UPDATE_RESTART_MARKER_FILE,
+    T3_DESKTOP_UPDATE_MARKER_TTL_MS: String(DESKTOP_UPDATE_RESTART_MARKER_TTL_MS),
+    T3_DESKTOP_UPDATE_WAIT_SECONDS: String(REMOTE_DESKTOP_UPDATE_WAIT_SECONDS),
   });
 }
 
