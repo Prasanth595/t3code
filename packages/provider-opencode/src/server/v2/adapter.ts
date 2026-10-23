@@ -2688,7 +2688,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       for (const sessionId of Object.keys(active)) {
         const owner = ownerOf(sessionId);
         if (owner === undefined) continue;
-        const turn = owner.active;
+        const turn = requestTurn(sessionId)?.turn;
         // Replies may settle during these reads; an older snapshot must not ask again.
         const known = new Set([...pending.values()].map((entry) => entry.native.id));
         const sessionID = Session.ID.make(sessionId);
@@ -2698,7 +2698,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ]);
         yield* lock.withPermit(
           Effect.gen(function* () {
-            if (ownerOf(sessionId) !== owner || owner.active !== turn) return;
+            if (ownerOf(sessionId) !== owner || requestTurn(sessionId)?.turn !== turn) return;
             listed.set(sessionId, new Set([...permissions, ...forms].map((request) => request.id)));
             const shown = new Set([...pending.values()].map((entry) => entry.native.id));
             for (const request of permissions) {
@@ -2729,7 +2729,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const scope = yield* Scope.make();
       const { next, stream } = yield* Effect.gen(function* () {
         const next = yield* borrow.pipe(Effect.provideService(Scope.Scope, scope));
-        return { next, stream: yield* next.events };
+        return { next, stream: yield* next.events.pipe(Effect.provideService(Scope.Scope, scope)) };
       }).pipe(Effect.onError(() => Scope.close(scope, Exit.void)));
       const previous = currentScope;
       connection = next;
@@ -2738,9 +2738,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* Scope.close(previous, Exit.void);
       // A restarted server forgot T3's MCP servers; the next turn adds them again.
       for (const state of threads.values()) state.mcp = undefined;
-      // A live owned process may still be serving its turns. Recovery waits for its
-      // reads, outside the event lock so Stop can settle independently. External
-      // servers have no process lifetime signal, so retain their bounded recovery.
+      // An owned process's exit, rather than a read deadline, bounds recovery.
+      // HTTP waits stay outside the event lock so Stop can still settle.
       yield* connection.processExit === undefined
         ? reconcile.pipe(Effect.timeout(RECONCILE_TIMEOUT))
         : reconcile.pipe(Effect.retry({ schedule: OWNED_RECONNECT_SCHEDULE }));
@@ -2793,7 +2792,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ),
       );
     // Subscribed before any session or prompt call, so no event of theirs is missed.
-    const following = follow(yield* connection.events);
+    const following = follow(
+      yield* connection.events.pipe(Effect.provideService(Scope.Scope, currentScope)),
+    );
     yield* (
       connection.processExit === undefined
         ? following
@@ -3894,9 +3895,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 }),
               ),
             );
-          if (reply._tag === "None") {
-            markUnsettled(state);
-            return yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
+          // Recovery may hold the terminal event behind a blocked history read.
+          if (reply._tag === "None" || (reply.value.interrupted && streamFailure !== undefined)) {
+            return yield* lock.withPermit(
+              Effect.gen(function* () {
+                if (state.active !== turn) return;
+                markUnsettled(state);
+                yield* finishTurn(state, { status: "interrupted" });
+              }),
+            );
           }
           // Between the executions a late steer spans nothing runs yet. The
           // steers are taken back, and a run they already started is skipped.
