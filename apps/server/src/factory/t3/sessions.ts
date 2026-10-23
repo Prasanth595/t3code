@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -18,6 +19,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
@@ -27,6 +29,7 @@ import * as ThreadManagement from "../../orchestration-v2/ThreadManagementServic
 import * as ServerSettings from "../../serverSettings.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import { resolveWorktreesDirectory } from "../../worktreesDirectory.ts";
+import * as ReadRouting from "./projectionStoreReadRouting.ts";
 
 /**
  * Agent sessions as the factory sees them: softfac's `Sessions` trait
@@ -404,6 +407,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const sql = yield* SqlClient.SqlClient;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const settings = yield* ServerSettings.ServerSettingsService;
 
@@ -589,20 +593,32 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.retry(LEFTOVER_REMOVE_ATTEMPTS), Effect.mapError(removeWorktreeFailed));
   });
 
-  const runningThreads: FactorySessions["Service"]["runningThreads"] = projections
-    .getShellSnapshot({ location: "active" })
-    .pipe(
-      Effect.map(
-        ({ threads }) =>
-          threads.filter(
-            ({ activityRunStatus }) =>
-              activityRunStatus === "preparing" ||
-              activityRunStatus === "starting" ||
-              activityRunStatus === "running",
-          ).length,
-      ),
-      Effect.mapError((cause) => new SessionsError({ operation: "running-threads", cause })),
-    );
+  // The shell snapshot's `activity_run_status` (ProjectionStore `selectShellThreadRows`) without
+  // the snapshot: a thread's latest run among the unfinished statuses decides. The runs table
+  // drives it, so a thread's payload is read only when it has an unfinished run, and the read
+  // runs on the reader worker, off the event loop.
+  const runningThreads: FactorySessions["Service"]["runningThreads"] = sql<{
+    readonly count: number;
+  }>`
+    SELECT COUNT(*) AS count
+    FROM (
+      SELECT
+        r.thread_id,
+        r.status,
+        ROW_NUMBER() OVER (PARTITION BY r.thread_id ORDER BY r.ordinal DESC, r.run_id DESC) AS rank
+      FROM orchestration_v2_projection_runs r
+      WHERE r.status IN ('preparing', 'starting', 'running', 'waiting')
+    ) latest
+    JOIN orchestration_v2_projection_threads t ON t.thread_id = latest.thread_id
+    WHERE latest.rank = 1
+      AND latest.status IN ('preparing', 'starting', 'running')
+      AND t.deleted_at IS NULL
+      AND json_extract(t.payload_json, '$.archivedAt') IS NULL
+  `.pipe(
+    Effect.map((rows) => rows[0]?.count ?? 0),
+    NodeSqliteClient.readOnly,
+    Effect.mapError((cause) => new SessionsError({ operation: "running-threads", cause })),
+  );
 
   const worktreesDirectory: FactorySessions["Service"]["worktreesDirectory"] = Effect.fn(
     "Sessions.worktreesDirectory",
@@ -633,6 +649,7 @@ export const layer = Layer.effect(FactorySessions, make);
  * `layer` with the projection store it reads provided: `server.ts` has the
  * project store, the launch and management services and git in scope where
  * the factory is merged in, but not the projection store, which upstream
- * provides to each worker that reads it.
+ * provides to each worker that reads it. The store is the read-routed one
+ * `server.ts` provides everywhere else, memoized with it.
  */
-export const layerLive = layer.pipe(Layer.provide(ProjectionStore.layer));
+export const layerLive = layer.pipe(Layer.provide(ReadRouting.layer));
