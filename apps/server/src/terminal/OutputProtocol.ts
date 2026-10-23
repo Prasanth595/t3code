@@ -61,7 +61,6 @@ const chunkSize = (values: ReadonlyArray<unknown>) =>
     ) {
       return total + queuedSize(value as TerminalEvent | TerminalAttachStreamEvent);
     }
-    // @effect-diagnostics-next-line preferSchemaOverJson:off
     return total + Buffer.byteLength(JSON.stringify(value) ?? "");
   }, EVENT_OVERHEAD);
 
