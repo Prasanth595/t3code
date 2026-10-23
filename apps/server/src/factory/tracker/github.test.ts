@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as TestClock from "effect/testing/TestClock";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -6209,15 +6210,30 @@ describe("retrying a call GitHub never received", () => {
 
   it.effect("a TLS handshake timeout is retried and the second attempt's answer is returned", () =>
     Effect.gen(function* () {
-      const t = setup(fail(1, TLS), reply(LIST_ONE));
-      const fiber = yield* Effect.forkChild(t.ok(t.github.listIssues("ready")), {
-        startImmediately: true,
+      const logs: Array<{ level: string; text: string }> = [];
+      const capture = Logger.make(({ logLevel, message }) => {
+        const first = Array.isArray(message) ? message[0] : message;
+        logs.push({ level: logLevel, text: String(first) });
       });
+      const t = setup(fail(1, TLS), reply(LIST_ONE));
+      const fiber = yield* Effect.forkChild(
+        t
+          .ok(t.github.listIssues("ready"))
+          .pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: false }))),
+        { startImmediately: true },
+      );
       yield* TestClock.adjust("3 seconds");
       const listing = yield* Fiber.join(fiber);
       assert.strictEqual(listing.items.length, 1);
       assert.strictEqual(t.inputs.length, 2);
       assert.deepEqual(t.calls()[0], t.calls()[1]);
+      // One info line names the redacted command, the attempt and the reason; nothing louder.
+      assert.strictEqual(logs.length, 1);
+      assert.strictEqual(logs[0]!.level, "Info");
+      assert.match(
+        logs[0]!.text,
+        /^`gh issue list --state open --repo rawphp\/softfac .*` attempt 1 of 3 failed \(TLS handshake timeout\); trying again in [23]\.\d s$/,
+      );
     }),
   );
 

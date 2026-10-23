@@ -978,18 +978,55 @@ describe("claiming new issues", () => {
       }),
     );
 
-    it.effect("each repo is counted on its own", () =>
+    it.effect("each repo is counted on its own, under its lower-cased name", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        const spelled = "RawPHP/Softfac";
+        fake.projects[spelled] = "boom";
+        yield* pass(fake, [spelled, OTHER], 3);
+        yield* pass(fake, [spelled, OTHER], 3);
+        fake.projects[OTHER] = "other boom";
+        yield* pass(fake, [spelled, OTHER], 3);
+        assert.deepEqual(
+          fake.items.map((item) => [item.id, item.repo]),
+          [[ITEM_ID, spelled]],
+        );
+      }),
+    );
+
+    it.effect("a successful load clears an item raised before this process started", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.items.push({
+          id: ITEM_ID,
+          kind: "attention",
+          repo: REPO,
+          issue: null,
+          run: null,
+          message: "stale",
+          firstSeenMs: T0 - 60_000,
+        });
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+      }),
+    );
+
+    it.effect("a pass that does not watch the repo starts its count over", () =>
       Effect.gen(function* () {
         const fake = new Fake();
         fake.projects[REPO] = "boom";
-        yield* pass(fake, [REPO, OTHER], 3);
-        yield* pass(fake, [REPO, OTHER], 3);
-        fake.projects[OTHER] = "other boom";
-        yield* pass(fake, [REPO, OTHER], 3);
-        assert.deepEqual(
-          fake.items.map((item) => item.id),
-          [ITEM_ID],
-        );
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [OTHER], 3);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        // A listing that cannot be read says nothing about the repo, so the count stays.
+        yield* pass(fake, [REPO], 3);
+        fake.watchedFails = true;
+        yield* pass(fake, [REPO], 3);
+        fake.watchedFails = false;
+        yield* pass(fake, [REPO], 3);
+        assert.equal(items(fake).length, 1);
       }),
     );
   });
