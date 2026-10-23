@@ -140,17 +140,15 @@ window, not just the stall.
 `candidates` lists up to 3 spans that lasted at least as long as the stall and overlap the window,
 tightest first. When the blocking code is traced, the first is the span that blocked, often a
 `sqlite` span with its `db.connection` and query. A span that awaited I/O across the stall also
-matches, so treat the list as suspects. A candidate that ran for a `/ws` RPC has the same `traceId`
-as that connection's `WebSocket closed` line below.
+matches, so treat the list as suspects.
 
 ### WebSocket closes and update requests
 
 The server log records one `WebSocket closed` line per `/ws` connection: `endedBy`, the close code
 and reason, the connection's length, how long before the close the last frame arrived, the client
-session, surface and address, and the connection's `traceId`. `endedBy` is `connection_lost` (code
-1006, no close frame: a network drop or a killed client), `close_frame`, `session_invalidated`,
-`server_interrupted`, `server_error`, or `unknown` when the connection ended cleanly with no close
-code. The connection's HTTP server span (`GET` with `url.path` `/ws`) carries the client fields as
+session, surface and address. `endedBy` is `connection_lost` (code 1006, no close frame: a network
+drop or a killed client), `close_frame`, `session_invalidated`, `server_interrupted`,
+`server_error`, or `unknown` when the connection ended cleanly with no close code. The connection's HTTP server span (`GET` with `url.path` `/ws`) carries the client fields as
 `t3.connection` and the close fields as `ws.close`.
 
 An update a client asks for logs `Server update requested`, and every log line of that update,

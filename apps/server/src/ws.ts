@@ -3240,8 +3240,8 @@ export const layer = Layer.unwrap(
           ...clientOrigin,
           ...WsConnectionLog.wsPeerAttributes(request),
         };
-        // This request's span parents every RPC span on the socket, so the session
-        // here binds each request, and each stall candidate's trace, to a client.
+        // This request's span parents every RPC span on the socket. Its traceId comes
+        // from the server-lifetime span, so only these attributes tell connections apart.
         yield* Effect.annotateCurrentSpan("t3.connection", connection);
         const observation = WsConnectionLog.makeObservation();
         const connectedAt = yield* DateTime.now;
@@ -3352,15 +3352,8 @@ export const layer = Layer.unwrap(
                 connectedAtMs: DateTime.toEpochMillis(connectedAt),
                 closedAtMs: DateTime.toEpochMillis(yield* DateTime.now),
               });
-              const traceId = Option.getOrUndefined(
-                yield* Effect.option(Effect.currentSpan),
-              )?.traceId;
               yield* Effect.annotateCurrentSpan("ws.close", closed);
-              yield* Effect.logInfo("WebSocket closed", {
-                ...closed,
-                ...connection,
-                ...(traceId === undefined ? {} : { traceId }),
-              });
+              yield* Effect.logInfo("WebSocket closed", { ...closed, ...connection });
               yield* sessions.markDisconnected(session.sessionId);
             }),
         );
