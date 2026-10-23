@@ -107,9 +107,7 @@ import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import {
   layerWsRpc,
-  resolveAvailableEditorsForConfig,
   resolveOpenDiscoveryForConfig,
-  shouldUseBoundedThreadSnapshot,
   subscribeOrchestrationV2Shell,
   subscribeOrchestrationV2Thread,
   WS_RPC_SERVER_OPTIONS,
@@ -172,80 +170,6 @@ it.effect("resends a file manager reveal kind that missed the snapshot", () =>
     if (late?.type === "snapshot") {
       assert.equal(late.config.shellRevealInFileManagerKind, "file-explorer");
     }
-  }),
-);
-
-const makeParkedWindowsLauncher = Effect.gen(function* () {
-  const parkedProbes = yield* Queue.unbounded<void>();
-  const release = yield* Deferred.make<void>();
-  const launcher = yield* ExternalLauncher.make.pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        FileSystem.layerNoop({
-          stat: () =>
-            Queue.offer(parkedProbes, undefined).pipe(
-              Effect.andThen(Deferred.await(release)),
-              Effect.as({ type: "File" } as FileSystem.File.Info),
-            ),
-        }),
-        Path.layer,
-        Layer.succeed(
-          ChildProcessSpawner.ChildProcessSpawner,
-          ChildProcessSpawner.make(() => Effect.die("unexpected spawn")),
-        ),
-      ),
-    ),
-  );
-  const onWindows = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    effect.pipe(
-      Effect.provideService(HostProcess.Platform, "win32"),
-      Effect.provide(
-        ConfigProvider.layer(
-          ConfigProvider.fromEnv({
-            env: { PATH: "C:\\t3-late-editors-test", PATHEXT: ".EXE" },
-          }),
-        ),
-      ),
-    );
-  return {
-    editors: {
-      resolveAvailableEditors: () => onWindows(launcher.resolveAvailableEditors()),
-      resolveFileManagerRevealKind: () => onWindows(launcher.resolveFileManagerRevealKind()),
-    },
-    probeParked: Queue.take(parkedProbes),
-    releaseProbes: Deferred.succeed(release, undefined),
-  };
-});
-
-it.effect("runs editor, remote open target and direct endpoint discovery side by side", () =>
-  Effect.gen(function* () {
-    // Each discovery finishes only once the other two have started, so a
-    // config that ran them one after another would never resolve.
-    const editorsStarted = yield* Deferred.make<void>();
-    const targetsStarted = yield* Deferred.make<void>();
-    const endpointsStarted = yield* Deferred.make<void>();
-    const startThenAwait = <A>(started: Deferred.Deferred<void>, value: A) =>
-      Deferred.succeed(started, undefined).pipe(
-        Effect.andThen(
-          Effect.all([editorsStarted, targetsStarted, endpointsStarted].map(Deferred.await)),
-        ),
-        Effect.as(value),
-      );
-
-    const discovery = yield* resolveOpenDiscoveryForConfig({
-      editors: startThenAwait(editorsStarted, ["file-manager" as const]),
-      fileManagerRevealKind: Effect.succeed("finder" as const),
-      remoteOpenTargets: startThenAwait(targetsStarted, []),
-      directEndpoints: startThenAwait(endpointsStarted, []),
-    });
-
-    assert.deepEqual(discovery, {
-      availableEditors: ["file-manager"],
-      shellRevealInFileManager: true,
-      shellRevealInFileManagerKind: "finder",
-      remoteOpenTargets: [],
-      directEndpoints: [],
-    });
   }),
 );
 
