@@ -21,6 +21,17 @@ const { commands, linksByThread, Wrapper, Trigger } = vi.hoisted(() => ({
     </>
   ),
 }));
+vi.mock("~/hooks/useHandleNewThread", () => ({ useNewThreadHandler: () => vi.fn() }));
+vi.mock("~/state/pullRequests", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    useSharedPullRequestSummary: () => null,
+    pullRequestEnvironment: {
+      changeBreakdown: () => null,
+      runAction: { permissionAtom: () => Atom.make(false) },
+    },
+  };
+});
 // The panel's list behavior is exercised without the virtualizer's browser geometry.
 vi.mock("@legendapp/list/react", () => ({
   LegendList: <T,>({
@@ -36,8 +47,12 @@ vi.mock("@legendapp/list/react", () => ({
       <Fragment key={keyExtractor(item, index)}>{renderItem({ item, index })}</Fragment>
     )),
 }));
-vi.mock("~/state/entities", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/state/entities")>()),
+vi.mock("~/state/entities", () => ({
+  readProject: () => null,
+  readProjects: () => [],
+  readThreadShell: () => null,
+  readThreadShells: () => [],
+  useQuietThreadShell: () => null,
   // No projects, so rows offer no project-scoped fast actions.
   useProjects: () => [],
   // Only environment-new supports linked pull requests.
@@ -56,8 +71,7 @@ vi.mock("~/state/entities", async (importOriginal) => ({
     pullRequests: linksByThread.get(scopedThreadKey(threadRef)) ?? [],
   }),
 }));
-vi.mock("~/state/threads", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/state/threads")>()),
+vi.mock("~/state/threads", () => ({
   threadEnvironment: { unlinkPullRequest: "unlink", watchPullRequest: "watch" },
 }));
 vi.mock("~/state/use-atom-command", () => ({

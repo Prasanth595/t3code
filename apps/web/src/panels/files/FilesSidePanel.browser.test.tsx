@@ -57,46 +57,65 @@ vi.mock("@effect/atom-react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@effect/atom-react")>()),
   useAtomValue: () => [],
 }));
-vi.mock("~/state/server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/state/server")>()),
-  primaryServerKeybindingsAtom: {},
-  serverEnvironment: { configValueAtom: () => null },
-}));
+vi.mock("~/state/server", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    environmentServerConfigsAtom: Atom.make(new Map()),
+    primaryServerKeybindingsAtom: {},
+    serverEnvironment: { configValueAtom: () => null },
+  };
+});
 // This client holds every scope, so files can be read, written and previewed.
-vi.mock("~/state/filesystem", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/state/filesystem")>()),
+vi.mock("~/state/filesystem", () => ({
+  filesystemEnvironment: {},
   useFilesystemReadAccess: () => ({ canReadFiles: true, isPending: false, error: null }),
 }));
-vi.mock("~/state/session", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/state/session")>()),
-  useEnvironmentScope: () => true,
-  readEnvironmentScope: () => true,
-}));
+vi.mock("~/state/session", async () => {
+  const { Atom, AsyncResult } = await import("effect/reactivity");
+  const Option = await import("effect/Option");
+  return {
+    environmentSession: {
+      initialConfigValueAtom: Atom.family(() => Atom.make(null)),
+      preparedConnectionValueAtom: Atom.family(() => Atom.make(Option.none())),
+      sessionStateAtom: Atom.family(() => Atom.make(AsyncResult.initial())),
+    },
+    environmentSessionStatesAtom: () => Atom.make([]),
+    readPreparedConnection: () => null,
+    usePreparedConnection: () => null,
+
+    useEnvironmentScope: () => true,
+    readEnvironmentScope: () => true,
+  };
+});
 // The desktop app hosts these browsers itself, so no environment's server browser is consulted.
-vi.mock("~/browser/previewRuntime", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/browser/previewRuntime")>()),
+vi.mock("~/browser/previewRuntime", () => ({
   previewRuntimeFor: () => undefined,
   isPreviewAvailableFor: () => true,
   usePreviewAvailable: () => true,
 }));
-vi.mock("~/state/environments", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/state/environments")>()),
+vi.mock("~/state/environments", () => ({
   useEnvironmentHttpBaseUrl: () => "http://localhost:3773/",
   usePrimaryEnvironmentId: () => null,
   useEnvironment: () => ({ label: "Local" }),
 }));
-vi.mock("~/remoteOpen", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/remoteOpen")>()),
+vi.mock("~/remoteOpen", () => ({
+  openRemoteEditorUrl: vi.fn(),
+  useRemoteCapableEditors: () => [],
+  useRemoteOpenHint: () => null,
+  resolveRemoteOpenState: () => ({ mode: "local-exec" }),
+  useRemoteOpenResolution: () => ({ mode: "local-exec" }),
   useRemoteOpenState: () => ({ mode: "local-exec" }),
 }));
-vi.mock("~/hooks/useSettings", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/hooks/useSettings")>()),
+vi.mock("~/hooks/useSettings", () => ({
+  updateClientSettings: vi.fn(),
+  ensureClientSettingsHydrated: () => Promise.resolve(),
+  getClientSettings: () => DEFAULT_CLIENT_SETTINGS,
   useClientSettings: (select: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
     select(DEFAULT_CLIENT_SETTINGS),
   useUpdateClientSettings: () => vi.fn(),
 }));
-vi.mock("~/hooks/useTheme", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/hooks/useTheme")>()),
+vi.mock("~/hooks/useTheme", () => ({
+  useRenderedAppearance: () => "light",
   useTheme: () => ({ resolvedTheme: "light" }),
 }));
 // The panel's only command and query runner: open a preview session, create an asset URL.
@@ -109,13 +128,18 @@ vi.mock("~/state/use-atom-command", () => ({
 vi.mock("~/state/use-atom-query-runner", () => ({
   useAtomQueryRunner: () => () => late.assetUrl.promise,
 }));
-vi.mock("~/browser/browserDefaults", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/browser/browserDefaults")>()),
+vi.mock("~/browser/browserDefaults", () => ({
+  browserDefaultOpenProfileId: () => "default",
+  browserDefaultOpenViewport: () => ({ _tag: "fill" }),
   resolveBrowserDefaults: () =>
     late.browserDefaults ?? Promise.resolve({ viewport: { _tag: "fill" }, profileId: "default" }),
 }));
-vi.mock("~/components/files/projectFilesQueryState", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/components/files/projectFilesQueryState")>()),
+vi.mock("~/components/files/projectFilesQueryState", () => ({
+  confirmProjectFileQueryData: vi.fn(),
+  getUnsavedProjectFileQueryData: () => null,
+  getOptimisticProjectFileQueryData: () => null,
+  getProjectFileContents: () => undefined,
+  setProjectFileQueryData: vi.fn(),
   useProjectFileQuery: () => ({
     data: null,
     error: null,
@@ -186,8 +210,7 @@ vi.mock("~/state/queries", () => ({
 vi.mock("~/fileContextMenu", () => ({
   useFileContextMenu: () => ({ buildItems: () => [], activate: vi.fn() }),
 }));
-vi.mock("~/localApi", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/localApi")>()),
+vi.mock("~/localApi", () => ({
   readLocalApi: () => ({ contextMenu: { show: () => late.menuChoice.promise } }),
 }));
 vi.mock("~/components/chat/PierreEntryIcon", () => ({ PierreEntryIcon: () => null }));

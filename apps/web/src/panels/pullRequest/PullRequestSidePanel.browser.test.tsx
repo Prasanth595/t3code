@@ -42,12 +42,16 @@ vi.mock("@effect/atom-react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@effect/atom-react")>()),
   useAtomValue: () => [],
 }));
-vi.mock("~/state/server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/state/server")>()),
-  primaryServerKeybindingsAtom: {},
-}));
-vi.mock("~/state/entities", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/state/entities")>()),
+vi.mock("~/state/server", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    environmentServerConfigsAtom: Atom.make(new Map()),
+    serverEnvironment: { configValueAtom: () => null },
+    primaryServerKeybindingsAtom: {},
+  };
+});
+vi.mock("~/state/entities", () => ({
+  readProjects: () => [],
   useProjects: () => [],
   useServerConfigs: () =>
     new Map(
@@ -73,8 +77,9 @@ vi.mock("~/lib/sourceControlActions", () => ({
   usePreparePullRequestThreadAction: () => ({ run: vi.fn() }),
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
-vi.mock("~/state/pullRequests", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/state/pullRequests")>()),
+vi.mock("~/state/pullRequests", () => ({
+  newestPullRequestSummary: (current: unknown, observed: unknown) => observed ?? current,
+  pullRequestListEntryToSummary: () => null,
   pullRequestEnvironment: {
     detail: () => "detail",
     activity: () => "activity",
@@ -85,8 +90,7 @@ vi.mock("~/state/pullRequests", async (importOriginal) => ({
   useSharedPullRequestSummary: () => null,
 }));
 vi.mock("~/state/vcs", () => ({ vcsEnvironment: { listRefs: () => null } }));
-vi.mock("~/state/query", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/state/query")>()),
+vi.mock("~/state/query", () => ({
   useEnvironmentQuery: (query: string) => ({
     data: query === "detail" ? detail : null,
     isPending: false,

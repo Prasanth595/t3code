@@ -25,11 +25,23 @@ vi.mock("~/state/terminalSessions", async () => {
   };
 });
 // This client holds every scope, so the terminal accepts typing.
-vi.mock("~/state/session", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/state/session")>()),
-  useEnvironmentScope: () => true,
-  readEnvironmentScope: () => true,
-}));
+vi.mock("~/state/session", async () => {
+  const { Atom, AsyncResult } = await import("effect/reactivity");
+  const Option = await import("effect/Option");
+  return {
+    environmentSession: {
+      initialConfigValueAtom: Atom.family(() => Atom.make(null)),
+      preparedConnectionValueAtom: Atom.family(() => Atom.make(Option.none())),
+      sessionStateAtom: Atom.family(() => Atom.make(AsyncResult.initial())),
+    },
+    environmentSessionStatesAtom: () => Atom.make([]),
+    readPreparedConnection: () => null,
+    usePreparedConnection: () => null,
+
+    useEnvironmentScope: () => true,
+    readEnvironmentScope: () => true,
+  };
+});
 vi.mock("~/state/terminal", () => ({
   terminalEnvironment: { write: "write", resize: "resize", open: "open" },
 }));
@@ -39,8 +51,7 @@ vi.mock("~/state/use-atom-command", () => ({
     return { _tag: "Success" };
   },
 }));
-vi.mock("~/terminal/ghostty/surface", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/terminal/ghostty/surface")>()),
+vi.mock("~/terminal/ghostty/surface", () => ({
   GhosttyTerminalSurface: {
     create: async (_mount: HTMLElement, options: { onData: (data: string) => void }) => {
       transport.surfaces.push(options);

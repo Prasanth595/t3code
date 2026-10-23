@@ -75,8 +75,10 @@ vi.mock("~/browser/browserSurfaceStore", () => ({
   useBrowserSurfaceStore: (select: (state: { byTabId: object }) => unknown) =>
     select({ byTabId: {} }),
 }));
-vi.mock("~/browser/browserDefaults", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/browser/browserDefaults")>()),
+vi.mock("~/browser/browserDefaults", () => ({
+  browserDefaultOpenProfileId: () => DEFAULT_BROWSER_PROFILE_ID,
+  browserDefaultOpenViewport: () => FILL_PREVIEW_VIEWPORT,
+  resolveBrowserDefaults: () => Promise.resolve(BROWSER_DEFAULTS),
   useBrowserDefaults: () => BROWSER_DEFAULTS,
   getBrowserDefaults: () => BROWSER_DEFAULTS,
   browserResponsiveViewportForToggle: () => FILL_PREVIEW_VIEWPORT,
@@ -95,14 +97,23 @@ vi.mock("~/browserHistoryStore", () => ({
   setTitleForThreadUrl: vi.fn(),
   useThreadRecentHistory: () => [],
 }));
-vi.mock("~/composerDraftStore", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/composerDraftStore")>()),
-  useComposerDraftStore: (select: (store: object) => unknown) =>
-    select({ addPreviewAnnotation: mocks.addPreviewAnnotation, addImage: vi.fn() }),
-}));
+vi.mock("~/composerDraftStore", async () => {
+  const Schema = await import("effect/Schema");
+  return {
+    DraftId: Schema.String.pipe(Schema.brand("DraftId")),
+    clearComposerDraftsEnvironment: vi.fn(),
+    useComposerDraftStore: (select: (store: object) => unknown) =>
+      select({ addPreviewAnnotation: mocks.addPreviewAnnotation, addImage: vi.fn() }),
+  };
+});
 vi.mock("~/localApi", () => ({ ensureLocalApi: vi.fn() }));
-vi.mock("~/previewStateStore", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/previewStateStore")>()),
+vi.mock("~/previewStateStore", () => ({
+  beginPreviewSessionClose: vi.fn(),
+  cancelPreviewSessionClose: vi.fn(),
+  applyPreviewServerSnapshot: vi.fn(),
+  readThreadPreviewState: () => ({ sessions: {}, activeTabId: null }),
+  setActivePreviewTab: vi.fn(),
+  whenPreviewTabKnown: vi.fn(),
   isPreviewSupportedInRuntime: () => true,
   rememberPreviewUrl: vi.fn(),
   updatePreviewServerSnapshot: vi.fn(),
@@ -131,12 +142,13 @@ vi.mock("~/previewMiniPlayerStore", () => ({
     { getState: () => ({ open: vi.fn(), close: vi.fn() }) },
   ),
 }));
-vi.mock("~/rightPanelStore", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/rightPanelStore")>()),
+vi.mock("~/rightPanelStore", () => ({
+  selectSelectedRightPanelSurface: () => null,
   useRightPanelStore: { getState: () => ({ close: vi.fn() }) },
 }));
-vi.mock("~/state/environments", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/state/environments")>()),
+vi.mock("~/state/environments", () => ({
+  useEnvironments: () => ({ environments: [] }),
+  usePrimaryEnvironment: () => null,
   useEnvironment: () => ({ label: "Local" }),
   useEnvironmentHttpBaseUrl: () => "http://localhost:3773",
   usePrimaryEnvironmentId: () => null,
@@ -144,11 +156,23 @@ vi.mock("~/state/environments", async (importOriginal) => ({
 vi.mock("~/state/preview", () => ({ previewEnvironment: { open: {}, resize: {} } }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 // This client holds every scope, so preview and annotation sends stay enabled.
-vi.mock("~/state/session", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/state/session")>()),
-  useEnvironmentScope: () => true,
-  readEnvironmentScope: () => true,
-}));
+vi.mock("~/state/session", async () => {
+  const { Atom, AsyncResult } = await import("effect/reactivity");
+  const Option = await import("effect/Option");
+  return {
+    environmentSession: {
+      initialConfigValueAtom: Atom.family(() => Atom.make(null)),
+      preparedConnectionValueAtom: Atom.family(() => Atom.make(Option.none())),
+      sessionStateAtom: Atom.family(() => Atom.make(AsyncResult.initial())),
+    },
+    environmentSessionStatesAtom: () => Atom.make([]),
+    readPreparedConnection: () => null,
+    usePreparedConnection: () => null,
+
+    useEnvironmentScope: () => true,
+    readEnvironmentScope: () => true,
+  };
+});
 vi.mock("~/components/ui/toast", () => ({
   stackedThreadToast: vi.fn(),
   toastManager: { add: vi.fn() },
