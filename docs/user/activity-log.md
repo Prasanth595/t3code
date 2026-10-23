@@ -40,7 +40,7 @@ unavailable, the link opens without copying.
 
 Explain runs only when you choose it, and each use spends credits on the provider behind your text
 generation model. The model sees the error text, the provider and model names, the runtime mode, your
-last message of that run, how many images it had, whether each recent action succeeded, and the
+last message of that run, how many images it had, the kind, tool name, and status of each recent action, and the
 numbers, titles, and states of a few existing GitHub issues. It does not see file contents, command
 text, tool output, or image names, and it runs without access to your project.
 
