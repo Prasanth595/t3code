@@ -464,6 +464,8 @@ describe("attention", () => {
           attention
             .list()
             .pipe(Effect.map((items) => items.filter((item) => item.id === "pass-errors")));
+        const openIds = () =>
+          attention.list().pipe(Effect.map((items) => items.map((item) => item.id).sort()));
         // Each wake is one more pass, and each wait is bounded so a pass that never ends fails
         // the test instead of hanging it.
         const reached = yield* Effect.gen(function* () {
@@ -473,17 +475,25 @@ describe("attention", () => {
           }
         }).pipe(Effect.timeoutOption("30 seconds"), Effect.map(Option.isSome));
         assert.isTrue(reached, "no pass-errors item was raised");
-        return { items: yield* open(), osascript: calls.filter((c) => c.command === "osascript") };
+        return {
+          items: yield* open(),
+          openIds: yield* openIds(),
+          osascript: calls.filter((c) => c.command === "osascript"),
+        };
       }),
     ).pipe(Effect.provide(NodeServices.layer));
 
-  it.effect("passes that keep erroring raise a pass-errors item and one notification", () =>
-    Effect.gen(function* () {
-      const { items, osascript } = yield* untilPassErrors(VALID);
-      assert.include(items[0]!.message, "3 times in a row");
-      assert.include(items[0]!.message, "a/b: project config not loaded");
-      assert.strictEqual(osascript.length, 1);
-    }),
+  it.effect(
+    "passes that keep erroring raise a pass-errors item and one notification per item",
+    () =>
+      Effect.gen(function* () {
+        const { items, openIds, osascript } = yield* untilPassErrors(VALID);
+        assert.include(items[0]!.message, "3 times in a row");
+        assert.include(items[0]!.message, "a/b: project config not loaded");
+        // The same three passes also raise the config-not-loaded item; each posts once.
+        assert.deepStrictEqual(openIds, ["config-not-loaded:a/b", "pass-errors"]);
+        assert.strictEqual(osascript.length, 2);
+      }),
   );
 
   it.effect("notify: false keeps the item and posts nothing", () =>
@@ -1882,6 +1892,7 @@ describe("the gate in the background", () => {
             claimMemo: new ClaimMemo(),
             stuckReads: new Map<string, number>(),
             brokenThreads: { notFactory: new Set<string>(), unsettled: new Map<string, number>() },
+            configSkips: new Map<string, number>(),
           },
         );
         const repo: Repo = {
@@ -2044,6 +2055,7 @@ describe("the gate in the background", () => {
         claimMemo: new ClaimMemo(),
         stuckReads: new Map<string, number>(),
         brokenThreads: { notFactory: new Set<string>(), unsettled: new Map<string, number>() },
+        configSkips: new Map<string, number>(),
       };
       const build = () =>
         liveWorld(

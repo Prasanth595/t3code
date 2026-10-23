@@ -526,6 +526,7 @@ class Fake implements PassWorld {
   /** How often `sessionRuns` read the ledger. */
   sessionReads = 0;
   brokenThreads: BrokenThreadMemo = { notFactory: new Set(), unsettled: new Map() };
+  configSkips = new Map<string, number>();
   /** Threads T3 refuses to archive. */
   archiveRefused: Array<string> = [];
   /** Each thread `archiveThread` archived, in order. */
@@ -903,6 +904,148 @@ describe("claiming new issues", () => {
       );
     }),
   );
+
+  describe("a repo whose config is not loaded pass after pass", () => {
+    const ITEM_ID = "config-not-loaded:rawphp/softfac";
+    const items = (fake: Fake) => fake.items.filter((item) => item.id === ITEM_ID);
+
+    it.effect("two skips in a row raise nothing; the third raises one attention item", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.projects[REPO] = "no .dw/config.yml on main";
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        const { report } = yield* pass(fake, [REPO], 3);
+        assert.equal(report.attention, 1);
+        assert.deepEqual(items(fake), [
+          {
+            id: ITEM_ID,
+            kind: "attention",
+            repo: REPO,
+            issue: null,
+            run: null,
+            message:
+              "rawphp/softfac: project config not loaded for 3 passes in a row, issues are not being picked up; last error: no .dw/config.yml on main",
+            firstSeenMs: T0,
+          },
+        ]);
+        // Later skips keep the one item and still record each skip as before.
+        yield* pass(fake, [REPO], 3);
+        assert.equal(items(fake).length, 1);
+        assert.equal(
+          fake.events.filter(
+            (e) => e.event === "repo_skipped" && e.data.reason === "config-not-loaded",
+          ).length,
+          4,
+        );
+      }),
+    );
+
+    it.effect("a successful load clears the item and the count starts over", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.projects[REPO] = "boom";
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        assert.equal(items(fake).length, 1);
+        delete fake.projects[REPO];
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        fake.projects[REPO] = "boom again";
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        yield* pass(fake, [REPO], 3);
+        assert.equal(items(fake).length, 1);
+        assert.ok(items(fake)[0]!.message.endsWith("last error: boom again"));
+      }),
+    );
+
+    it.effect("a load that succeeds between two skips keeps the count from reaching three", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.projects[REPO] = "boom";
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        delete fake.projects[REPO];
+        yield* pass(fake, [REPO], 3);
+        fake.projects[REPO] = "boom";
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+      }),
+    );
+
+    it.effect("each repo is counted on its own, under its lower-cased name", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        const spelled = "RawPHP/Softfac";
+        fake.projects[spelled] = "boom";
+        yield* pass(fake, [spelled, OTHER], 3);
+        yield* pass(fake, [spelled, OTHER], 3);
+        fake.projects[OTHER] = "other boom";
+        yield* pass(fake, [spelled, OTHER], 3);
+        assert.deepEqual(
+          fake.items.map((item) => [item.id, item.repo]),
+          [[ITEM_ID, spelled]],
+        );
+      }),
+    );
+
+    it.effect("a successful load clears an item raised before this process started", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.items.push({
+          id: ITEM_ID,
+          kind: "attention",
+          repo: REPO,
+          issue: null,
+          run: null,
+          message: "stale",
+          firstSeenMs: T0 - 60_000,
+        });
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+      }),
+    );
+
+    it.effect("a pass in which two T3 projects name the repo starts its count over", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.projects[REPO] = "boom";
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        // Named twice, so skipped as ambiguous: the config is not tried.
+        yield* pass(fake, [REPO, REPO.toUpperCase()], 3);
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        yield* pass(fake, [REPO], 3);
+        assert.equal(items(fake).length, 1);
+      }),
+    );
+
+    it.effect("a pass that does not watch the repo starts its count over", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.projects[REPO] = "boom";
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [OTHER], 3);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        // A listing that cannot be read says nothing about the repo, so the count stays.
+        yield* pass(fake, [REPO], 3);
+        fake.watchedFails = true;
+        yield* pass(fake, [REPO], 3);
+        fake.watchedFails = false;
+        yield* pass(fake, [REPO], 3);
+        assert.equal(items(fake).length, 1);
+      }),
+    );
+  });
 
   it.effect(
     "a repo two T3 projects name is watched from neither: one error line, one event, the rest go on",

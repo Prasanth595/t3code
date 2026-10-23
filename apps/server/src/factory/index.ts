@@ -370,6 +370,7 @@ export interface LiveShared {
   readonly claimMemo: ClaimMemo;
   readonly stuckReads: Map<string, number>;
   readonly brokenThreads: BrokenThreadMemo;
+  readonly configSkips: Map<string, number>;
 }
 
 /**
@@ -404,11 +405,12 @@ export const liveWorld = (
   gateRemoteBase?: string,
   onProject?: (repo: string, reading: RepoConfigReading) => void,
   // Built once per process by the factory, so a reload's new world goes on from the old one's.
-  { gating, claimMemo, stuckReads, brokenThreads }: LiveShared = {
+  { gating, claimMemo, stuckReads, brokenThreads, configSkips }: LiveShared = {
     gating: new Set(),
     claimMemo: new ClaimMemo(),
     stuckReads: new Map(),
     brokenThreads: { notFactory: new Set(), unsettled: new Map() },
+    configSkips: new Map(),
   },
 ): Omit<PassWorld, "watchedRepos" | "freeSpace"> => {
   const load = live.readLoad ?? readLoad;
@@ -686,6 +688,7 @@ export const liveWorld = (
     sessionRuns: () =>
       ledger(() => runsByThread(dataDir)).pipe(Effect.mapError(asPassError("ledger"))),
     brokenThreads,
+    configSkips,
     archiveThread: (threadId) =>
       sessions.archive(threadId).pipe(Effect.mapError(asPassError("t3"))),
     nowMs: clock,
@@ -856,6 +859,7 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
     claimMemo: new ClaimMemo(),
     stuckReads: new Map(),
     brokenThreads: { notFactory: new Set(), unsettled: new Map() },
+    configSkips: new Map(),
   };
   // The threads of the unfinished runs, read at start and after every pass: a pass is what
   // launches and finishes sessions, so between passes the set does not change.

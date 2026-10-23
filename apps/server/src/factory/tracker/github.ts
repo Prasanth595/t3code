@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 
 import { PROJECT_CONFIG_PATH } from "../config.ts";
@@ -165,6 +166,26 @@ const GH_TIMEOUT_MS = 60_000;
 const GH_OUTPUT_LIMIT = 8 * 1024 * 1024;
 /** gh's stderr for the primary limit, the secondary limit, and a 429. */
 const RATE_LIMITED = /API rate limit|secondary rate limit|HTTP 429/i;
+/** How many times one call is tried before its failure is returned. */
+const GH_ATTEMPTS = 3;
+/** The wait before the second and the third attempt, in milliseconds; each gets up to a second more. */
+const GH_RETRY_DELAYS_MS = [2_000, 5_000] as const;
+/**
+ * gh's stderr when GitHub never received the request, so trying again is safe for a write
+ * too: a TLS handshake that timed out, or a dial that timed out, was refused or found no host.
+ * A read that timed out, an unexpected EOF, a reset and an HTTP 5xx may have been applied and
+ * are not here. The name is what the retry log line says.
+ */
+const NOT_RECEIVED: ReadonlyArray<readonly [reason: string, stderr: RegExp]> = [
+  ["TLS handshake timeout", /net\/http: TLS handshake timeout/],
+  ["dial timeout", /dial tcp [^\n]*: i\/o timeout/],
+  ["connection refused", /dial tcp [^\n]*: connect: connection refused/],
+  ["no such host", /dial tcp: lookup [^\n]*no such host/],
+];
+
+/** Why `stderr` says GitHub never received the request, or null when it may have. */
+const notReceived = (stderr: string): string | null =>
+  NOT_RECEIVED.find(([, pattern]) => pattern.test(stderr))?.[0] ?? null;
 
 const utf8Bytes = (text: string): number => new TextEncoder().encode(text).length;
 
@@ -913,8 +934,10 @@ type GitHubGen<A> = Effect.fn.Return<A, GitHubError, FactoryProcess>;
 export const makeGitHub = (options: GitHubOptions) => {
   const { repo } = options;
 
-  /** Runs `gh` and returns stdout, or the typed error. */
-  const gh = Effect.fn("GitHub.gh")(function* (args: ReadonlyArray<string>): GitHubGen<string> {
+  /** Runs `gh` once and returns stdout, or the typed error. */
+  const ghOnce = Effect.fn("GitHub.ghOnce")(function* (
+    args: ReadonlyArray<string>,
+  ): GitHubGen<string> {
     // Node's own spawn error quotes the offending argument, which could be a hidden comment body.
     if (args.some((arg) => arg.includes("\u0000"))) {
       return yield* new GitHubSpawnError({
@@ -955,6 +978,35 @@ export const makeGitHub = (options: GitHubOptions) => {
       });
     }
     return result.tail;
+  });
+
+  /**
+   * Runs `attempt`, trying it again up to {@link GH_ATTEMPTS} times after a failure GitHub
+   * never received ({@link NOT_RECEIVED}). The last failure is returned as it is, so a caller
+   * sees what it would have without the retries.
+   */
+  const retryNotReceived = Effect.fn("GitHub.retryNotReceived")(function* <A>(
+    attempt: Effect.Effect<A, GitHubError, FactoryProcess>,
+  ): GitHubGen<A> {
+    for (let tried = 1; ; tried += 1) {
+      const result = yield* Effect.result(attempt);
+      if (result._tag === "Success") return result.success;
+      const error = result.failure;
+      const reason = error._tag === "GitHubFailed" ? notReceived(error.stderr) : null;
+      if (error._tag !== "GitHubFailed" || reason === null || tried >= GH_ATTEMPTS) {
+        return yield* error;
+      }
+      const delayMs = GH_RETRY_DELAYS_MS[tried - 1]! + (yield* Random.nextIntBetween(0, 1000));
+      yield* Effect.logInfo(
+        `\`${command(error.args)}\` attempt ${tried} of ${GH_ATTEMPTS} failed (${reason}); trying again in ${(delayMs / 1000).toFixed(1)} s`,
+      );
+      yield* Effect.sleep(delayMs);
+    }
+  });
+
+  /** Runs `gh` with {@link retryNotReceived}, each attempt with the full time limit. */
+  const gh = Effect.fn("GitHub.gh")(function* (args: ReadonlyArray<string>): GitHubGen<string> {
+    return yield* retryNotReceived(ghOnce(args));
   });
 
   const parseError = (args: ReadonlyArray<string>, expected: string) =>
@@ -1991,7 +2043,9 @@ export const makeGitHub = (options: GitHubOptions) => {
    * Assigns the issue to `user` and swaps `from` for `to`, in one `gh issue edit`. An issue that
    * already has any assignee is left alone. The view and the edit are two calls, so two
    * machines claiming at the same instant can both win. An error does not mean nothing
-   * changed: GitHub has applied the labels and failed to answer.
+   * changed: GitHub has applied the labels and failed to answer. A failure GitHub never
+   * received retries the view and the edit together, so a retried edit cannot land seconds
+   * after another machine's claim that a fresh view would have seen.
    */
   const claim = Effect.fn("GitHub.claim")(function* (
     number: number,
@@ -2000,11 +2054,7 @@ export const makeGitHub = (options: GitHubOptions) => {
     to: State,
   ): GitHubGen<ClaimOutcome> {
     const view = [...repoArgs(["issue", "view", String(number)]), "--json", "assignees"];
-    const current = yield* ghJson(view, AssigneesView, "an object with `assignees`");
-    if (current.assignees.length > 0) {
-      return { kind: "skipped-assigned", assignees: current.assignees.map((a) => a.login) };
-    }
-    yield* gh([
+    const edit = [
       ...repoArgs(["issue", "edit", String(number)]),
       "--add-assignee",
       user,
@@ -2012,8 +2062,21 @@ export const makeGitHub = (options: GitHubOptions) => {
       stateLabel(from),
       "--add-label",
       stateLabel(to),
-    ]);
-    return { kind: "claimed" };
+    ];
+    return yield* retryNotReceived(
+      Effect.gen(function* () {
+        const stdout = yield* ghOnce(view);
+        const current = yield* decode(AssigneesView, view, "an object with `assignees`", stdout);
+        if (current.assignees.length > 0) {
+          return {
+            kind: "skipped-assigned",
+            assignees: current.assignees.map((a) => a.login),
+          } satisfies ClaimOutcome;
+        }
+        yield* ghOnce(edit);
+        return { kind: "claimed" } satisfies ClaimOutcome;
+      }),
+    );
   });
 
   /**

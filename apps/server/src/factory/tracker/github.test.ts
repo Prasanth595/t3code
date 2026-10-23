@@ -1,7 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as Random from "effect/Random";
+import * as TestClock from "effect/testing/TestClock";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { describe } from "vite-plus/test";
@@ -6192,6 +6196,208 @@ describe("pr feedback", () => {
         ),
       );
       assert.strictEqual(garbled._tag, "GitHubParse");
+    }),
+  );
+});
+
+describe("retrying a call GitHub never received", () => {
+  const TLS =
+    'Get "https://api.github.com/repos/rawphp/softfac/issues": net/http: TLS handshake timeout';
+  const DIAL_TIMEOUT =
+    'Post "https://api.github.com/graphql": dial tcp 140.82.112.6:443: i/o timeout';
+  const REFUSED =
+    'Get "https://api.github.com/x": dial tcp 140.82.112.6:443: connect: connection refused';
+  const NO_HOST = 'Get "https://api.github.com/x": dial tcp: lookup api.github.com: no such host';
+
+  it.effect("a TLS handshake timeout is retried and the second attempt's answer is returned", () =>
+    Effect.gen(function* () {
+      const logs: Array<{ level: string; text: string }> = [];
+      const capture = Logger.make(({ logLevel, message }) => {
+        const first = Array.isArray(message) ? message[0] : message;
+        logs.push({ level: logLevel, text: String(first) });
+      });
+      const t = setup(fail(1, TLS), reply(LIST_ONE));
+      const fiber = yield* Effect.forkChild(
+        t
+          .ok(t.github.listIssues("ready"))
+          .pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: false }))),
+        { startImmediately: true },
+      );
+      yield* TestClock.adjust("3 seconds");
+      const listing = yield* Fiber.join(fiber);
+      assert.strictEqual(listing.items.length, 1);
+      assert.strictEqual(t.inputs.length, 2);
+      assert.deepEqual(t.calls()[0], t.calls()[1]);
+      // One info line names the redacted command, the attempt and the reason; nothing louder.
+      assert.strictEqual(logs.length, 1);
+      assert.strictEqual(logs[0]!.level, "Info");
+      assert.match(
+        logs[0]!.text,
+        /^`gh issue list --repo rawphp\/softfac .*` attempt 1 of 3 failed \(TLS handshake timeout\); trying again in [23]\.\d s$/,
+      );
+    }),
+  );
+
+  it.effect("each dial failure is retried too", () =>
+    Effect.gen(function* () {
+      for (const stderr of [DIAL_TIMEOUT, REFUSED, NO_HOST]) {
+        const t = setup(fail(1, stderr), reply(LIST_ONE));
+        const fiber = yield* Effect.forkChild(t.ok(t.github.listIssues("ready")), {
+          startImmediately: true,
+        });
+        yield* TestClock.adjust("3 seconds");
+        yield* Fiber.join(fiber);
+        assert.strictEqual(t.inputs.length, 2, stderr);
+      }
+    }),
+  );
+
+  it.effect("three failed attempts return the last failure unchanged", () =>
+    Effect.gen(function* () {
+      const t = setup(fail(1, TLS), fail(1, DIAL_TIMEOUT), fail(1, "third: " + TLS));
+      const fiber = yield* Effect.forkChild(t.err(t.github.listIssues("ready")), {
+        startImmediately: true,
+      });
+      yield* TestClock.adjust("9 seconds");
+      const error = yield* Fiber.join(fiber);
+      assert.strictEqual(t.inputs.length, 3);
+      assert.strictEqual(error._tag, "GitHubFailed");
+      if (error._tag !== "GitHubFailed") return;
+      assert.strictEqual(error.status, 1);
+      assert.strictEqual(error.stderr, "third: " + TLS);
+    }),
+  );
+
+  it.effect("the retries wait 2 s then 5 s, each plus the jitter drawn for it", () =>
+    Effect.gen(function* () {
+      // The wrapper draws one jitter per retry; the same seed here gives the same two draws.
+      const seed = "retry-jitter";
+      const [first, second] = yield* Effect.all([
+        Random.nextIntBetween(0, 1000),
+        Random.nextIntBetween(0, 1000),
+      ]).pipe(Random.withSeed(seed));
+      assert.ok(first! > 0 && second! > 0, `draws ${first} and ${second}: pick another seed`);
+      const t = setup(fail(1, TLS), fail(1, TLS), reply(LIST_ONE));
+      const fiber = yield* Effect.forkChild(
+        t.ok(t.github.listIssues("ready")).pipe(Random.withSeed(seed)),
+        { startImmediately: true },
+      );
+      assert.strictEqual(t.inputs.length, 1);
+      yield* TestClock.adjust(2_000 + first! - 1);
+      assert.strictEqual(t.inputs.length, 1);
+      yield* TestClock.adjust(1);
+      assert.strictEqual(t.inputs.length, 2);
+      yield* TestClock.adjust(5_000 + second! - 1);
+      assert.strictEqual(t.inputs.length, 2);
+      yield* TestClock.adjust(1);
+      assert.strictEqual(t.inputs.length, 3);
+      yield* Fiber.join(fiber);
+      for (const input of t.inputs) assert.strictEqual(input.timeoutMs, 60_000);
+    }),
+  );
+
+  it.effect("a failure GitHub may have applied is not retried", () =>
+    Effect.gen(function* () {
+      const stderrs = [
+        "HTTP 502: Bad Gateway (https://api.github.com/graphql)",
+        'Post "https://api.github.com/graphql": unexpected EOF',
+        'Get "https://api.github.com/x": read tcp 10.0.0.2:5000->140.82.112.6:443: read: connection reset by peer',
+        'Get "https://api.github.com/x": read tcp 10.0.0.2:5000->140.82.112.6:443: i/o timeout',
+        "HTTP 404: Not Found",
+      ];
+      for (const stderr of stderrs) {
+        const t = setup(fail(1, stderr), reply(LIST_ONE));
+        const error = yield* t.err(t.github.listIssues("ready"));
+        assert.strictEqual(error._tag, "GitHubFailed", stderr);
+        assert.strictEqual(t.inputs.length, 1, stderr);
+      }
+    }),
+  );
+
+  it.effect("a rate limit and a timed-out call are not retried", () =>
+    Effect.gen(function* () {
+      // Even when its stderr also carries a not-received phrase: the rate limit decides.
+      const limited = setup(
+        fail(1, "net/http: TLS handshake timeout\nHTTP 429: API rate limit exceeded"),
+        reply(LIST_ONE),
+      );
+      assert.strictEqual(
+        (yield* limited.err(limited.github.listIssues("ready")))._tag,
+        "GitHubRateLimited",
+      );
+      assert.strictEqual(limited.inputs.length, 1);
+      const slow = setup(timedOut(), reply(LIST_ONE));
+      assert.strictEqual((yield* slow.err(slow.github.listIssues("ready")))._tag, "GitHubTimedOut");
+      assert.strictEqual(slow.inputs.length, 1);
+    }),
+  );
+
+  it.effect("the retry log line shows a comment body as its size, not its text", () =>
+    Effect.gen(function* () {
+      const texts: Array<string> = [];
+      const capture = Logger.make(({ message }) => {
+        texts.push(String(Array.isArray(message) ? message[0] : message));
+      });
+      const t = setup(fail(1, TLS), reply(""));
+      const fiber = yield* Effect.forkChild(
+        t
+          .ok(t.github.commentOnPr(5, "a hidden review body"))
+          .pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: false }))),
+        { startImmediately: true },
+      );
+      yield* TestClock.adjust("3 seconds");
+      yield* Fiber.join(fiber);
+      assert.strictEqual(t.inputs.length, 2);
+      assert.strictEqual(texts.length, 1);
+      assert.match(
+        texts[0]!,
+        /^`gh pr comment 5 --repo rawphp\/softfac --body <\d+ bytes>` attempt 1/,
+      );
+      assert.notInclude(texts[0]!, "hidden review body");
+    }),
+  );
+
+  it.effect("a claim whose edit GitHub never received views the assignees again first", () =>
+    Effect.gen(function* () {
+      const edit = editCall(
+        "--add-assignee",
+        "rawphp",
+        "--remove-label",
+        "factory:ready",
+        "--add-label",
+        "factory:triage",
+      );
+      const view = ["issue", "view", "6", "--repo", REPO, "--json", "assignees"];
+      // Another machine claimed the issue while this one waited to try again.
+      const lost = setup(
+        reply('{"assignees":[]}'),
+        fail(1, TLS),
+        reply('{"assignees":[{"login":"b"}]}'),
+      );
+      const lostFiber = yield* Effect.forkChild(
+        lost.ok(lost.github.claim(6, "rawphp", "ready", "triage")),
+        { startImmediately: true },
+      );
+      yield* TestClock.adjust("3 seconds");
+      assert.deepStrictEqual(yield* Fiber.join(lostFiber), {
+        kind: "skipped-assigned",
+        assignees: ["b"],
+      });
+      assert.deepStrictEqual(lost.calls(), [view, edit, view]);
+      // Nobody did, so the second attempt claims it.
+      const won = setup(
+        reply('{"assignees":[]}'),
+        fail(1, TLS),
+        reply('{"assignees":[]}'),
+        reply(""),
+      );
+      const wonFiber = yield* Effect.forkChild(
+        won.ok(won.github.claim(6, "rawphp", "ready", "triage")),
+        { startImmediately: true },
+      );
+      yield* TestClock.adjust("3 seconds");
+      assert.deepStrictEqual(yield* Fiber.join(wonFiber), { kind: "claimed" });
+      assert.deepStrictEqual(won.calls(), [view, edit, view, edit]);
     }),
   );
 });
