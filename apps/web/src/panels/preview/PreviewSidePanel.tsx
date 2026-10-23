@@ -1,5 +1,3 @@
-"use client";
-
 import { AuthPreviewOperateScope } from "@t3tools/contracts";
 
 import { PreviewPanelShell } from "~/components/preview/PreviewPanelShell";
