@@ -2184,6 +2184,15 @@ code {
   overflow: visible;
 }
 
+/* The edge fade can land on the gutter between columns and paint nothing, so a
+   clipped table looks complete. The horizontal scrollbar only mounts while the
+   table overflows; keep it visible at rest as the cue. */
+.chat-markdown
+  .chat-markdown-table-container
+  [data-slot="scroll-area-scrollbar"][data-orientation="horizontal"] {
+  opacity: 1;
+}
+
 :root {
   --diff-addition: var(--success);
   --diff-deletion: var(--destructive);
