@@ -50,9 +50,10 @@ if (files.length === 0) {
 console.log(`check:changed: ${files.length} files since ${base.slice(0, 12)}`);
 
 // The checked tree is the merge base plus the diff plus the untracked files.
-// Ignored generated sources, .astro types, env files, and the install state can
-// change results too, so they are part of the key. Other ignored folders (iOS
-// Pods, dist, the Electron runtime) are large and no check reads them.
+// Ignored generated sources, .astro types, generated declarations such as
+// apps/mobile/expo-env.d.ts, env files, and the install state can change results
+// too, so they are part of the key. Other ignored folders (iOS Pods, dist, the
+// Electron runtime) are large and no check reads them.
 // Computed again after a passing run, so edits made during the run are never
 // cached as passing.
 const inputKey = () => {
@@ -73,6 +74,7 @@ const inputKey = () => {
     "--",
     ":(glob)**/.generated/**",
     ":(glob)**/.astro/**",
+    ":(glob)**/*.d.ts",
     ":(glob)**/.env*",
     ":!**/node_modules/**",
   );
