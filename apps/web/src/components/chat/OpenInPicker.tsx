@@ -78,10 +78,7 @@ type OpenInOption = {
   kind: "brand" | "generic";
 };
 
-export const resolveOpenInOptions = (
-  platform: string,
-  availableEditors: ReadonlyArray<EditorId>,
-) => {
+const resolveOpenInOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
   const baseOptions: ReadonlyArray<Omit<OpenInOption, "label">> = [
     {
       Icon: CursorIcon,
@@ -251,7 +248,7 @@ export const OpenInPicker = memo(function OpenInPicker({
     if (remote.mode === "remote-links") {
       const url = buildRemoteOpenUrl({
         editor,
-        host: remote.host.host,
+        ...remote.host,
         absolutePath: openInCwd,
         isFile: openInCwdIsFile,
       });
