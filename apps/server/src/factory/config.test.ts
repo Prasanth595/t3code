@@ -450,6 +450,7 @@ describe("machine config", () => {
       feedbackSeconds: 600,
       notify: true,
       minFreeGib: 10,
+      maxLoadPerCore: 1,
     });
     expect(machineLoaded(MACHINE).warnings).toEqual([]);
   });
@@ -533,6 +534,22 @@ describe("machine config", () => {
     for (const bad of ['"ten"', "-1", "1.5"]) {
       const errs = machineErr(edit(MACHINE, (t) => set(t, "min_free_gib", bad)));
       assertOne(errs, "min_free_gib", MFILE);
+    }
+  });
+
+  it("machine max_load_per_core defaults to 1 and can be zero or more", () => {
+    expect(machine(MACHINE).maxLoadPerCore).toBe(1);
+    for (const given of [0, 1, 4]) {
+      expect(
+        machine(edit(MACHINE, (t) => set(t, "max_load_per_core", String(given)))).maxLoadPerCore,
+      ).toBe(given);
+    }
+  });
+
+  it("machine max_load_per_core must be an integer of at least zero", () => {
+    for (const bad of ['"one"', "-1", "1.5"]) {
+      const errs = machineErr(edit(MACHINE, (t) => set(t, "max_load_per_core", bad)));
+      assertOne(errs, "max_load_per_core", MFILE);
     }
   });
 
@@ -775,6 +792,7 @@ describe("loaders", () => {
             feedbackSeconds: 600,
             notify: true,
             minFreeGib: 10,
+            maxLoadPerCore: 1,
           },
         }),
       );
