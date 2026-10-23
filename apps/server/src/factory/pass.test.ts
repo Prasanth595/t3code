@@ -4746,7 +4746,7 @@ describe("pr-open runs: gated again only when something moved", () => {
     Effect.gen(function* () {
       const fake = new Fake();
       pr(fake, 41);
-      fake.baseTips[REPO] = MOVED;
+      fake.openHeads[`${REPO}#12`] = PUSHED;
       fake.gateStarts[`${REPO}#41`] = { kind: "high-load", oneMinute: 55.2, limit: 12 };
       const { lines } = yield* pass(fake, [REPO], 5);
       assert.deepEqual(lineOf(lines, 41), [
