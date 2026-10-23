@@ -48,6 +48,30 @@ describe("makeStallProfiler", () => {
     expect(Array.isArray(parsed.nodes)).toBe(true);
   });
 
+  it("keeps only the newest 10 profiles", async () => {
+    const dir = NodePath.join(tempDir(), "stall-profiles");
+    const written: Array<string> = [];
+    for (let i = 0; i < 11; i += 1) {
+      await new Promise<void>((resolve, reject) => {
+        const profile = makeStallProfiler({
+          dir,
+          durationMs: 5,
+          thresholdMs: 0,
+          minIntervalMs: 0,
+          onWritten: (path) => {
+            written.push(path);
+            resolve();
+          },
+          onError: reject,
+        });
+        profile(1);
+      });
+    }
+    const left = NodeFS.readdirSync(dir).toSorted();
+    expect(left).toHaveLength(10);
+    expect(left).toEqual(written.slice(1).map((file) => NodePath.basename(file)));
+  });
+
   it("reports a failure instead of throwing", async () => {
     const blocker = NodePath.join(tempDir(), "file");
     NodeFS.writeFileSync(blocker, "x");
