@@ -25,6 +25,7 @@ import { describe } from "vite-plus/test";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import * as SessionStore from "../../auth/SessionStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ServerHttp from "../../http.ts";
@@ -287,6 +288,8 @@ const serving = <A>(
       readonly dir: string;
       readonly wakes: Calls;
       readonly exits: Exits;
+      /** The name of the browser session cookie. */
+      readonly cookieName: string;
       /** Sends a request as it is, for what `call` cannot shape. */
       readonly send: (request: Request) => Promise<Response>;
     },
@@ -294,6 +297,7 @@ const serving = <A>(
 ) =>
   Effect.gen(function* () {
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const { cookieName } = yield* SessionStore.SessionStore;
     const dir = world.dir ?? tempDir("factory");
     const wakes = { count: 0, reloads: 0 };
     const exits = makeExits();
@@ -330,7 +334,14 @@ const serving = <A>(
                 }),
                 context,
               ),
-            { tokens, dir, wakes, exits, send: (request) => handler(request, context) },
+            {
+              tokens,
+              dir,
+              wakes,
+              exits,
+              cookieName,
+              send: (request) => handler(request, context),
+            },
           ),
         ),
       ({ dispose }) => Effect.promise(dispose),
@@ -1332,5 +1343,34 @@ repos:
       assert.strictEqual(response.status, 200);
       assert.strictEqual(response.headers.get("access-control-allow-origin"), "*");
     }),
+  );
+
+  // A POST that is a plain form submit needs no preflight, so the browser sends it, cookie and all,
+  // from any page on the same site. Only the session's origin check stops it.
+  it.effect(
+    "a browser session's save from another origin is refused, from its own it answers",
+    () =>
+      serving({ cors: true }, async (_call, { tokens, dir, wakes, cookieName, send }) => {
+        const formPost = (origin: string) =>
+          send(
+            new Request(`http://127.0.0.1:3773${CONFIG_PATH}`, {
+              method: "POST",
+              headers: {
+                host: "127.0.0.1:3773",
+                origin,
+                cookie: `${cookieName}=${tokens.settingsWrite}`,
+                "content-type": "text/plain",
+              },
+              body: JSON.stringify(VALID_BODY),
+            }),
+          );
+        const foreign = await formPost("http://127.0.0.1:3000");
+        assert.strictEqual(foreign.status, 401);
+        assert.isFalse(NodeFS.existsSync(configFile(dir)));
+        assert.strictEqual(wakes.reloads, 0);
+        const own = await formPost("http://127.0.0.1:3773");
+        assert.strictEqual(own.status, 200);
+        assert.strictEqual(wakes.reloads, 1);
+      }),
   );
 });

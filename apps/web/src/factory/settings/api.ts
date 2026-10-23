@@ -87,6 +87,9 @@ const isObject = (value: unknown): value is object => typeof value === "object" 
 
 const CONFIG_PATH = "/api/factory/config";
 
+export const SAVE_NOT_SERVED_MESSAGE =
+  "This server does not take the save. Its factory may be older than this app: update T3 Code on that machine, then try again.";
+
 const request = async (
   prepared: PreparedConnection,
   method: "GET" | "POST",
@@ -97,6 +100,10 @@ const request = async (
     const parsed = parseJson(response.text);
     if (response.status === 403) return { kind: "forbidden" };
     if (response.status < 200 || response.status >= 300) {
+      // A server from before the save moved to POST has no POST route here.
+      if (method === "POST" && response.status === 404) {
+        return { kind: "error", message: SAVE_NOT_SERVED_MESSAGE };
+      }
       if (response.status === 422 && isObject(parsed)) {
         const errors = (parsed as { errors?: ReadonlyArray<ConfigError> }).errors;
         return { kind: "invalid", errors: errors ?? [] };

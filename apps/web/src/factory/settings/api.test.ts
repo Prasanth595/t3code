@@ -2,7 +2,12 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vite-p
 
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 
-import { fetchFactoryConfig, saveFactoryConfig, type MachineConfigValues } from "./api";
+import {
+  fetchFactoryConfig,
+  SAVE_NOT_SERVED_MESSAGE,
+  saveFactoryConfig,
+  type MachineConfigValues,
+} from "./api";
 
 // Only the wire is stubbed: the real settings API runs against a fetch stand-in, on a connection
 // whose HTTP base is not the window's own origin.
@@ -148,5 +153,11 @@ describe("saveFactoryConfig", () => {
     expect(request.credentials).toBe("include");
     expect(request.headers.get("authorization")).toBeNull();
     expect(request.headers.get("content-type")).toBe("application/json");
+  });
+
+  it("says the server may be too old when it has no POST save", async () => {
+    answer(404, JSON.stringify({ message: "Not Found" }));
+    const result = await saveFactoryConfig(bearerConnection, values);
+    expect(result).toEqual({ kind: "error", message: SAVE_NOT_SERVED_MESSAGE });
   });
 });
