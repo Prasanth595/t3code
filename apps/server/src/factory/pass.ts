@@ -624,6 +624,12 @@ export const runPass = Effect.fn("Pass.runPass")(function* (
     yield* world.attention.clear(
       (item) => item.repo !== null && listing.departed.some((repo) => sameRepo(repo, item.repo!)),
     );
+    // The config skips are counted in a row: a repo not watched this pass starts over. A list
+    // that could not be read says nothing about any repo, so the counts stay.
+    const watchedKeys = new Set(watched.map((repo) => asciiLower(repo.repo)));
+    for (const key of world.configSkips.keys()) {
+      if (!watchedKeys.has(key)) world.configSkips.delete(key);
+    }
     if (listing.unresolved.length > 0) {
       pass.line(
         `watched: ${listing.unresolved.length} project(s) could not be settled this pass (${listing.unresolved.map(plain).join(", ")})`,
@@ -914,6 +920,8 @@ const loadRepos = Effect.fn("Pass.loadRepos")(function* (
         });
         repos.push({ kind: "broken", name: watched.repo });
       }
+      // Not tried, so not a skip in a row.
+      world.configSkips.delete(key);
       continue;
     }
     const project = yield* Effect.result(world.project(watched));
