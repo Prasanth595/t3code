@@ -1011,6 +1011,22 @@ describe("claiming new issues", () => {
       }),
     );
 
+    it.effect("a pass in which two T3 projects name the repo starts its count over", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.projects[REPO] = "boom";
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        // Named twice, so skipped as ambiguous: the config is not tried.
+        yield* pass(fake, [REPO, REPO.toUpperCase()], 3);
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        yield* pass(fake, [REPO], 3);
+        assert.equal(items(fake).length, 1);
+      }),
+    );
+
     it.effect("a pass that does not watch the repo starts its count over", () =>
       Effect.gen(function* () {
         const fake = new Fake();
