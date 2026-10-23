@@ -6232,7 +6232,7 @@ describe("retrying a call GitHub never received", () => {
       assert.strictEqual(logs[0]!.level, "Info");
       assert.match(
         logs[0]!.text,
-        /^`gh issue list --state open --repo rawphp\/softfac .*` attempt 1 of 3 failed \(TLS handshake timeout\); trying again in [23]\.\d s$/,
+        /^`gh issue list --repo rawphp\/softfac .*` attempt 1 of 3 failed \(TLS handshake timeout\); trying again in [23]\.\d s$/,
       );
     }),
   );
