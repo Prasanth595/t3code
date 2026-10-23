@@ -4459,7 +4459,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* Ref.update(pendingBackgroundTasksByNativeThread, rekey);
           yield* Ref.update(wakeEligibleBackgroundTasksByNativeThread, rekey);
           yield* Ref.update(opaqueBackgroundTaskReplayTombstonesByNativeThread, rekey);
-          yield* Ref.update(taskListsByNativeThread, rekey);
+          // Claude keys its task store by session unless CLAUDE_CODE_TASK_LIST_ID is set, so
+          // drop the cached list and let the next task tool reload the new session's store.
+          yield* Ref.update(taskListsByNativeThread, (entries) => {
+            const next = new Map(entries);
+            next.delete(previousId);
+            return next;
+          });
           yield* Ref.update(wakeBuffers, rekey);
           yield* Ref.update(wakeReportsByNativeThread, (state) => ({
             userTurns: rekey(state.userTurns),

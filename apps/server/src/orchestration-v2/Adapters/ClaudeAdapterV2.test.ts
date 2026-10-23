@@ -5754,7 +5754,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             session_id: WAKE_NATIVE_SESSION,
           }),
         );
-      return { configDir, startTurn, call, launchSubagent, finishTurn, plans };
+      return {
+        configDir,
+        startTurn,
+        call,
+        launchSubagent,
+        finishTurn,
+        plans,
+        offer: harness.offerAndWait,
+        nextUuid,
+      };
     });
 
   const makeTaskToolHarness = makeTaskToolHarnessWithOptions();
@@ -5885,6 +5894,33 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
         ),
       ),
+  );
+
+  it.effect("starts a fresh task list when /clear selects a new native session", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeTaskToolHarness;
+      yield* harness.startTurn();
+      yield* harness.call(createTask("1", "Before clear"));
+      yield* harness.call(createTask("2", "Also before clear"));
+      yield* harness.offer(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          session_id: "cleared-native-session",
+          uuid: harness.nextUuid(),
+        }),
+      );
+      yield* harness.call(createTask("1", "After clear"));
+      yield* harness.finishTurn();
+      assert.deepEqual(harness.plans().at(-1)?.steps, [
+        { id: "task-1", text: "After clear", status: "pending" },
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
   );
 
   it.effect("removes deleted tasks without resurrecting them on later updates or turns", () =>
