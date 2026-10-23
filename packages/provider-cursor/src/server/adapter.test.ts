@@ -329,6 +329,31 @@ describe("CursorAdapterV2", () => {
       },
     },
     {
+      reason: "the error a continuation's tool call after the turn ended stopped with",
+      updates: [
+        { type: "text-delta", text: "The answer." },
+        { type: "turn-ended" },
+        {
+          type: "partial-tool-call",
+          modelCallId: "native-model-call",
+          callId: "read-file",
+          toolCall: { type: "read", args: { path: "math.ts" } },
+        },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        requestId: "native-request",
+        status: "error" as const,
+        error: { message: "Agent turn stopped after repeated resume attempts made no progress" },
+        model: { id: "claude-fable-5" },
+        durationMs: 1,
+      }),
+      failure: {
+        class: "provider_error",
+        message: "Agent turn stopped after repeated resume attempts made no progress",
+      },
+    },
+    {
       reason: "no answer from a resume after the turn ended that made no progress",
       updates: [{ type: "turn-ended" }] satisfies ReadonlyArray<InteractionUpdate>,
       wait: Effect.succeed({

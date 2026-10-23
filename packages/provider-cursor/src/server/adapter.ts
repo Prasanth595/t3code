@@ -1924,8 +1924,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           if (update.type === "turn-ended") {
             context.turnEnded = true;
           } else if (
+            update.type === "step-started" ||
+            update.type === "user-message-appended" ||
             update.type === "text-delta" ||
             update.type === "thinking-delta" ||
+            update.type === "partial-tool-call" ||
             update.type === "tool-call-started"
           ) {
             context.turnEnded = false;
