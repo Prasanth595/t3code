@@ -229,14 +229,35 @@ const pageChanged = () =>
     "The page changed while capturing its snapshot. Take another snapshot.",
   );
 
-const snapshotTimedOut = (
-  pendingStages: ReadonlyArray<typeof PreviewAutomationSnapshotStage.Type> = [],
-) =>
+type SnapshotStage = typeof PreviewAutomationSnapshotStage.Type;
+
+/**
+ * Running stages are counted, since a retry can overlap the previous attempt's unanswered
+ * screenshot. A stage whose own timeout fired has stopped running but is still the cause.
+ */
+interface SnapshotStages {
+  readonly running: Map<SnapshotStage, number>;
+  readonly timedOut: Set<SnapshotStage>;
+}
+
+const snapshotTimedOut = (stages?: SnapshotStages) =>
   new ServerBrowserOperationError(
     "PreviewAutomationTimeoutError",
     `Snapshot capture timed out after ${SNAPSHOT_TIMEOUT_MS}ms. Try the snapshot again.`,
-    { timeoutMs: SNAPSHOT_TIMEOUT_MS, pendingStages },
+    {
+      timeoutMs: SNAPSHOT_TIMEOUT_MS,
+      pendingStages: stages ? [...new Set([...stages.timedOut, ...stages.running.keys()])] : [],
+    },
   );
+
+const frameUnanswered = () =>
+  new ServerBrowserOperationError(
+    "PreviewAutomationTimeoutError",
+    `A frame on the page didn't answer within ${FRAME_ANSWER_MS}ms, so its content couldn't be checked for hidden values. Try the snapshot again.`,
+    { timeoutMs: FRAME_ANSWER_MS, pendingStages: ["frames"] },
+  );
+
+const isTimeout = (cause: unknown) => cause instanceof Error && cause.name === "TimeoutError";
 
 const VALUE_TOO_LONG = "A password field holds a value too long to hide, so no snapshot was taken.";
 
@@ -539,20 +560,20 @@ const renderingOf = async (input: SnapshotInput) => {
 const capture = async (
   input: SnapshotInput,
   deadline: number,
-  pending: Map<typeof PreviewAutomationSnapshotStage.Type, number>,
+  stages: SnapshotStages,
 ): Promise<PreviewAutomationSnapshot> => {
-  const track = async <A>(
-    stage: typeof PreviewAutomationSnapshotStage.Type,
-    operation: () => Promise<A>,
-  ) => {
-    // A retry can overlap the previous attempt's unanswered screenshot.
-    pending.set(stage, (pending.get(stage) ?? 0) + 1);
+  const { running } = stages;
+  const track = async <A>(stage: SnapshotStage, operation: () => Promise<A>) => {
+    running.set(stage, (running.get(stage) ?? 0) + 1);
     try {
       return await operation();
+    } catch (cause) {
+      if (isTimeout(cause)) stages.timedOut.add(stage);
+      throw cause;
     } finally {
-      const count = (pending.get(stage) ?? 1) - 1;
-      if (count === 0) pending.delete(stage);
-      else pending.set(stage, count);
+      const count = (running.get(stage) ?? 1) - 1;
+      if (count === 0) running.delete(stage);
+      else running.set(stage, count);
     }
   };
   const { renderScale, viewport, offset } = await track("metrics", () => renderingOf(input));
@@ -604,7 +625,7 @@ const capture = async (
     if (!iframe) throw pageChanged();
     const frame = await iframe.contentFrame();
     void iframe.dispose().catch(constVoid);
-    if (frame && unread.includes(frame)) throw snapshotTimedOut();
+    if (frame && unread.includes(frame)) throw frameUnanswered();
   }
   const [page, data] = await pageAndScreenshot;
   if (state.generation !== generation) throw pageChanged();
@@ -641,29 +662,27 @@ const snapshotTurns = new WeakMap<Page, number>();
 
 export const snapshot = async (input: SnapshotInput): Promise<PreviewAutomationSnapshot> => {
   const deadline = Date.now() + SNAPSHOT_TIMEOUT_MS;
-  const pending = new Map<typeof PreviewAutomationSnapshotStage.Type, number>();
+  const stages: SnapshotStages = { running: new Map(), timedOut: new Set() };
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(snapshotTimedOut([...pending.keys()])), SNAPSHOT_TIMEOUT_MS);
+    timer = setTimeout(() => reject(snapshotTimedOut(stages)), SNAPSHOT_TIMEOUT_MS);
   });
   const turn = (snapshotTurns.get(input.page) ?? 0) + 1;
   snapshotTurns.set(input.page, turn);
   // A page that changed mid-capture, like one rotating ads, has usually settled by a second
   // try. None starts late or after another snapshot began, since it would revoke the refs of
   // whichever snapshot came next.
-  const captured = capture(input, deadline, pending).catch((cause: unknown) =>
+  const captured = capture(input, deadline, stages).catch((cause: unknown) =>
     Date.now() < deadline &&
     snapshotTurns.get(input.page) === turn &&
     !(cause instanceof Error && cause.message === VALUE_TOO_LONG)
-      ? capture(input, deadline, pending)
+      ? capture(input, deadline, stages)
       : Promise.reject(cause),
   );
   try {
     return await Promise.race([captured, expired]);
   } catch (cause) {
-    throw cause instanceof Error && cause.name === "TimeoutError"
-      ? snapshotTimedOut([...pending.keys()])
-      : cause;
+    throw isTimeout(cause) ? snapshotTimedOut(stages) : cause;
   } finally {
     clearTimeout(timer);
   }
