@@ -785,6 +785,14 @@ describe("readProgress: gating again", () => {
     );
   });
 
+  it("says a conflict when a pass is on record and nothing moved, and nothing with no pass", () => {
+    assert.strictEqual(
+      readProgress([...PASS, regated(8, HEAD, BASE, BASE)]).regateMoved,
+      "conflict",
+    );
+    assert.strictEqual(readProgress([launched(1), regated(2, HEAD, BASE, BASE)]).regateMoved, null);
+  });
+
   it("keeps the newest line's answer when the base moves again", () => {
     const seen = readProgress([
       ...PASS,
