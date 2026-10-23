@@ -1,5 +1,13 @@
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EventId, OrchestrationV2DomainEvent } from "@t3tools/contracts";
+import {
+  ApplicationProjectCreatedEvent,
+  CommandId,
+  EventId,
+  OrchestrationV2DomainEvent,
+  ProjectId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
@@ -15,6 +23,11 @@ import * as ProjectionStore from "../src/orchestration-v2/ProjectionStore.ts";
 const databasePath = process.argv[2];
 if (!databasePath?.includes("/issue-24041/.t3/"))
   throw new Error("Expected isolated issue-24041 database");
+const fixture = JSON.parse(
+  NodeFS.readFileSync(new URL("./auto-settle-evidence.fixture.json", import.meta.url), "utf8"),
+);
+const anchor = process.argv[3] ? Date.parse(process.argv[3]) : Date.now();
+if (!Number.isFinite(anchor)) throw new Error("Expected ISO anchor timestamp");
 const database = Sqlite.layerFromPath(databasePath);
 const stores = Layer.mergeAll(
   database,
@@ -26,28 +39,58 @@ await Effect.runPromise(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const sink = yield* EventSink.EventSinkV2;
-    const [source] = yield* sql<{
-      payload_json: string;
-    }>`SELECT payload_json FROM orchestration_v2_projection_threads LIMIT 1`;
-    if (!source) throw new Error("Create a scratch project/thread first");
-    const template = JSON.parse(source.payload_json);
-    for (const [suffix, ageDays] of [
-      ["old", 2],
-      ["fresh", 0],
-    ] as const) {
+    const projectId = ProjectId.make(fixture.project.projectId);
+    const projectExists =
+      yield* sql`SELECT 1 FROM projection_projects WHERE project_id = ${projectId}`;
+    if (!projectExists.length) {
+      const workspaceRoot = NodePath.join(
+        NodePath.dirname(NodePath.dirname(databasePath)),
+        "evidence-workspace",
+      );
+      NodeFS.mkdirSync(workspaceRoot, { recursive: true });
+      const occurredAt = new Date(anchor).toISOString();
+      const commandId = CommandId.make("evidence:project:create");
+      const { sequence: _, ...event } = Schema.decodeUnknownSync(ApplicationProjectCreatedEvent)({
+        sequence: 0,
+        eventId: "evidence:project:created",
+        aggregateKind: "project",
+        aggregateId: projectId,
+        occurredAt,
+        commandId,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "project.created",
+        payload: {
+          ...fixture.project,
+          workspaceRoot,
+          createdAt: occurredAt,
+          updatedAt: occurredAt,
+        },
+      });
+      yield* sink.commitProjectCommand({
+        commandId,
+        projectId,
+        commandType: "project.create",
+        acceptedAt: DateTime.makeUnsafe(anchor),
+        event,
+      });
+    }
+    for (const { suffix, ageDays } of fixture.cases) {
       const id = `evidence:auto-settle:${suffix}`;
       const existing =
         yield* sql`SELECT 1 FROM orchestration_v2_projection_threads WHERE thread_id = ${id}`;
       if (existing.length) continue;
-      const at = DateTime.makeUnsafe(Date.now() - ageDays * 86400000);
+      const at = DateTime.makeUnsafe(anchor - ageDays * 86400000);
       const event = Schema.decodeUnknownSync(OrchestrationV2DomainEvent)({
         id: EventId.make(`evidence:created:${suffix}`),
         type: "thread.created",
         threadId: id,
-        providerInstanceId: template.providerInstanceId,
+        providerInstanceId: fixture.thread.providerInstanceId,
         occurredAt: at,
         payload: {
-          ...template,
+          ...fixture.thread,
+          projectId,
           id,
           title: `Settlement evidence ${suffix}`,
           createdAt: at,
