@@ -4821,6 +4821,7 @@ describe("regate: gated again and the answer", () => {
     () =>
       Effect.gen(function* () {
         const rig = yield* prOpenRun();
+        rig.ws.runs = 0;
         rig.ws.queued = { running: 2, max: 2 };
         rig.gh.pr = { ...rig.gh.pr!, mergeable: "conflicting" };
         assert.deepStrictEqual(yield* regateIn(rig), {
