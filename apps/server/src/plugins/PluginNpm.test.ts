@@ -769,6 +769,35 @@ it.layer(NodeServices.layer)("PluginNpm", (it) => {
   });
 
   describe("update", () => {
+    it.effect.each(["changed", "missing"] as const)(
+      "restores %s installed bytes even when their approved digest is unchanged",
+      (damage) => withDatabase(Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { catalog, npm, registry, plugin } = yield* setup();
+        registry.publish("restore", "1.0.0", { tarball: plugin("restore", "1.0.0") });
+        registry.publish("restore", "1.1.0", { tarball: plugin("restore", "1.1.0") });
+        const added = yield* npm.add({ name: "restore", version: "1.0.0" });
+        const installationId = added.installation.installationId;
+        const staged = (yield* npm.stageUpdate({ installationId, version: "1.1.0" })).package.stagedUpdate!;
+        yield* npm.applyUpdate({ installationId, digest: staged.source.digest });
+        const entry = path.join(added.installation.directory, "dist/main.mjs");
+        const approved = yield* fs.readFileString(entry);
+        if (damage === "changed") yield* fs.writeFileString(entry, `${approved}// damaged\n`);
+        else yield* fs.remove(entry);
+        yield* catalog.refresh({ installationId });
+        const row = (yield* catalog.list).installations[0]!;
+        expect(row.consent?.digest).toBe(staged.source.digest);
+        expect(row.source?.digest).not.toBe(staged.source.digest);
+        const again = (yield* npm.stageUpdate({ installationId, version: "1.1.0" })).package.stagedUpdate!;
+        expect(again.source.digest).toBe(staged.source.digest);
+        const restored = yield* npm.applyUpdate({ installationId, digest: again.source.digest });
+        expect(restored.installation.source?.digest).toBe(staged.source.digest);
+        expect(yield* fs.readFileString(entry)).toBe(approved);
+        expect(restored.package.stagedUpdate).toBeNull();
+      })),
+    );
+
     it.effect("stages a version beside the running one and swaps it in with new consent", () =>
       withDatabase(
         Effect.gen(function* () {
