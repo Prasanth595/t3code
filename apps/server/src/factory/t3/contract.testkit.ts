@@ -234,7 +234,13 @@ export const layerRuntime = (input: {
       return Layer.mergeAll(
         Sessions.layer.pipe(
           Layer.provide(
-            Layer.mergeAll(layerLaunch, layerStores, layerThreadManagement, layerServerSettings),
+            Layer.mergeAll(
+              layerLaunch,
+              layerStores,
+              layerThreadManagement,
+              layerServerSettings,
+              layerDatabase,
+            ),
           ),
         ),
         // Reads the same event sink the orchestrator writes to.
