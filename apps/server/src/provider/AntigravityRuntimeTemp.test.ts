@@ -8,6 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -122,15 +123,17 @@ it.layer(NodeServices.layer)("AntigravityRuntimeTemp", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("retains failed deletions for retry without failing the releasing request", () =>
+  it.effect("retries failed cleanup without dropping pending directories", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-cleanup-retry-" });
+      const pending = path.join(root, "run-failed");
+      yield* fs.makeDirectory(pending);
       const finished = yield* Queue.unbounded<void>();
       let fail = true;
-      const cleanup = yield* AntigravityRuntimeTemp.make(root).pipe(
+      yield* AntigravityRuntimeTemp.make(root).pipe(
         Effect.provideService(
           ChildProcessSpawner.ChildProcessSpawner,
           ChildProcessSpawner.make((command) =>
@@ -149,11 +152,11 @@ it.layer(NodeServices.layer)("AntigravityRuntimeTemp", (it) => {
           ),
         ),
       );
-      const pending = yield* cleanup.makeDirectory.pipe(Effect.scoped);
       yield* Queue.take(finished);
       expect(yield* fs.exists(pending)).toBe(true);
       fail = false;
-      yield* cleanup.drain;
+      yield* TestClock.adjust("1 minute");
+      yield* Queue.take(finished);
       expect(yield* fs.readDirectory(path.dirname(pending))).toEqual([]);
     }).pipe(Effect.scoped),
   );
