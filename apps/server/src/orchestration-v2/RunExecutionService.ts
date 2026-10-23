@@ -51,6 +51,7 @@ import {
   makeProviderFailureTurnItem,
 } from "@t3tools/provider-core/server/failure";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
+import { checkpointCaptureEffectId } from "./RunFinalized.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
 export interface ProviderEventRoutingState {
@@ -731,7 +732,7 @@ export const layer: Layer.Layer<
             input.terminal.status === "cancelled"
               ? [
                   {
-                    id: `effect:checkpoint.capture:${input.run.id}`,
+                    id: checkpointCaptureEffectId(input.run.id),
                     commandId: checkpointCaptureCommandId,
                     threadId: input.run.threadId,
                     request: {
