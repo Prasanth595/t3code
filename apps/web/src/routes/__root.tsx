@@ -195,7 +195,9 @@ function RootRouteBranch() {
         hostedStatic={authGateState.status === "hosted-static"}
       >
         {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
-        {primaryEnvironmentAuthenticated ? <DesktopWebLinkCoordinator /> : null}
+        {primaryEnvironmentAuthenticated || isLocalEnvironmentDisabled() ? (
+          <DesktopWebLinkCoordinator />
+        ) : null}
         {isElectron ? <RunningThreadKeepAlive /> : null}
         <RelayClientInstallDialog />
         <ConnectOnboardingDialog />
