@@ -96,9 +96,8 @@ function formatServiceStatus(
   if (status.otherBaseDir !== undefined) {
     return [
       "T3 Code service",
-      `  Status: installed for another T3 home`,
+      "  Status: installed for another T3 home",
       `  Base dir: ${status.otherBaseDir}`,
-      `  Unit: ${status.unitPath}`,
       `  Next: Pass \`--base-dir ${status.otherBaseDir}\` to manage it.`,
     ].join("\n");
   }
@@ -374,12 +373,6 @@ export const offerServiceDuringOnboarding = Effect.gen(function* () {
   if (installed && current) {
     yield* Console.log("T3 Code is already set up to run in the background on this machine.");
     return "ready" as const;
-  }
-  if (status.otherBaseDir !== undefined) {
-    yield* Console.log(
-      `A T3 Code service for ${status.otherBaseDir} is already installed. Leaving it unchanged.`,
-    );
-    return "skipped" as const;
   }
   for (const problem of status.problems ?? []) {
     yield* Console.warn(`[${problem}] ${BootService.formatBootServiceProblem(problem)}`);
