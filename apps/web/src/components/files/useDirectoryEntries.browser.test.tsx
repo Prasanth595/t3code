@@ -56,6 +56,9 @@ function setup() {
     get activeQueries() {
       return activeQueries;
     },
+    resetPeakQueries() {
+      peakQueries = activeQueries;
+    },
     get peakQueries() {
       return peakQueries;
     },
@@ -119,9 +122,20 @@ it("retains the four-query concurrency bound across directories and refreshes", 
   await state.settle(0, folders);
   await act(async () => {
     for (const folder of folders) void state.view.load(folder.path);
-    for (let index = 0; index < 20; index++) state.view.refresh();
   });
   for (let index = 1; index < state.calls.length; index++) {
+    await state.settle(index);
+  }
+  expect(state.activeQueries).toBe(0);
+  const refreshStart = state.calls.length;
+  state.resetPeakQueries();
+  await act(async () => state.view.refresh());
+  expect(state.peakQueries).toBe(4);
+  expect(state.activeQueries).toBe(4);
+  await act(async () => {
+    for (let index = 0; index < 20; index++) state.view.refresh();
+  });
+  for (let index = refreshStart; index < state.calls.length; index++) {
     await state.settle(index, state.calls[index]!.path === "" ? folders : []);
     expect(state.activeQueries).toBeLessThanOrEqual(4);
   }
