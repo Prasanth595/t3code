@@ -155,6 +155,8 @@ describe("evaluatePullRequestWatch", () => {
       ["checks-passed"],
     );
     assert.deepEqual(evaluatePullRequestWatch(final.next, done, noRemarks).changes, []);
+    const advisory = detail({ checks: [...done.checks, check("bot", "success")] });
+    assert.deepEqual(evaluatePullRequestWatch(final.next, advisory, noRemarks).changes, []);
   });
 
   // regression: #16208 PR watches burned GitHub's rate limit and gave up

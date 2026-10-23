@@ -61,15 +61,27 @@ export function evaluatePullRequestWatch(
     const gate = required.length > 0 ? required : detail.checks;
     const passedNow = gate.every((check) => check.status !== "pending" && !isFailedCheck(check));
     const gateNames = gate.map((check) => check.name);
-    const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;
+    const allNames = detail.checks.map((check) => check.name);
+    const told = passed && passedChecks.length === 0 ? allNames : passedChecks;
     // A required job created and finished between two passes is never seen pending. Without
     // required checks, any check counts, and advisory bots keep adding passed ones: no wake.
     const gateGrew = required.length > 0 && gateNames.some((name) => !told.includes(name));
+    // Once required checks passed early, the rest finishing is news once. The told names hold
+    // only required ones until then, so a later advisory job alone does not wake again.
+    const settled =
+      failed.length === 0 && detail.checks.every((check) => check.status !== "pending");
+    const restSettled =
+      passed &&
+      settled &&
+      required.length < detail.checks.length &&
+      !detail.checks.some((check) => check.required !== true && told.includes(check.name));
     if (passedNow && (!passed || gateGrew)) {
       changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
+    } else if (restSettled) {
+      changes.push({ kind: "checks-passed", count: detail.checks.length, required: false });
     }
     passed = passedNow;
-    passedChecks = passedNow ? gateNames : [];
+    passedChecks = !passedNow ? [] : settled ? allNames : gateNames;
   }
 
   // Only a head never read with checks waits for them: an empty read after checks were seen is
