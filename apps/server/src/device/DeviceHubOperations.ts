@@ -45,6 +45,7 @@ const SimctlDeviceList = Schema.fromJsonString(
     ),
   }),
 );
+const decodeSimctlDeviceList = Schema.decodeUnknownEffect(SimctlDeviceList);
 const HubActionResult = Schema.Struct({
   ok: Schema.Boolean,
   id: Schema.optional(Schema.String),
@@ -64,10 +65,8 @@ export const makeDeviceHubOperations = (options: {
   readonly origin: string;
   readonly http: HttpClient.HttpClient;
   readonly run: DeviceHostReady["run"];
-  /** Whether to list AVDs, which the hub does not report until they boot. */
-  readonly androidAvailable: Effect.Effect<boolean>;
-  /** The hub's iOS list also omits simulators with no usage history. */
-  readonly iosAvailable: Effect.Effect<boolean>;
+  /** Discover both platforms once per refresh, including devices the hub has never seen boot. */
+  readonly availablePlatforms: Effect.Effect<{ readonly ios: boolean; readonly android: boolean }>;
 }): DeviceOperations => {
   const { hostId, origin, run } = options;
   const httpClient = options.http.pipe(HttpClient.withScope);
@@ -125,11 +124,10 @@ export const makeDeviceHubOperations = (options: {
         ),
     );
     const details = warnings?.map((error) => error.message) ?? [];
-    if (yield* options.iosAvailable) {
+    const available = yield* options.availablePlatforms;
+    if (available.ios) {
       const inventory = yield* run("xcrun", ["simctl", "list", "devices", "--json"]);
-      const decoded = yield* Schema.decodeUnknownEffect(SimctlDeviceList)(inventory.stdout).pipe(
-        Effect.result,
-      );
+      const decoded = yield* decodeSimctlDeviceList(inventory.stdout).pipe(Effect.result);
       if (inventory.code !== 0 || Result.isFailure(decoded)) {
         details.push(
           "Could not list all iOS simulators (xcrun simctl list devices --json). Discovered devices remain available.",
@@ -157,7 +155,7 @@ export const makeDeviceHubOperations = (options: {
       }
     }
     let androidDiscoveryIncomplete = false;
-    if (yield* options.androidAvailable) {
+    if (available.android) {
       const avds = yield* run("emulator", ["-list-avds"]);
       // Discovered devices stay listed; the AVDs that could not be listed are a warning.
       if (avds.code !== 0) {

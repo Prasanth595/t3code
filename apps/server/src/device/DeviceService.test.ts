@@ -63,8 +63,7 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
         hostId,
         origin: "http://device.test",
         http,
-        androidAvailable: Effect.succeed(false),
-        iosAvailable: Effect.succeed(true),
+        availablePlatforms: Effect.succeed({ android: false, ios: true }),
         run: (command, args) => {
           expect([command, ...args]).toEqual(["xcrun", "simctl", "list", "devices", "--json"]);
           return Effect.succeed({
@@ -125,8 +124,7 @@ it.effect.each([
         ),
       ),
       run: () => Effect.succeed(enumeration),
-      iosAvailable: Effect.succeed(true),
-      androidAvailable: Effect.succeed(false),
+      availablePlatforms: Effect.succeed({ android: false, ios: true }),
     });
     const listed = yield* operations.list;
     expect(listed.devices).toEqual([device]);
@@ -224,8 +222,7 @@ const fixture = Effect.fn("fixture")(function* (
         origin: "http://device.test",
         http,
         run,
-        androidAvailable: Effect.succeed(true),
-        iosAvailable: Effect.succeed(false),
+        availablePlatforms: Effect.succeed({ android: true, ios: false }),
       }),
       ...(options.endsDevices ? { endsDevices: true } : {}),
     },
@@ -739,8 +736,7 @@ it.effect.each(["shutdown", "close"] as const)(
           origin: "http://device.test",
           http,
           run,
-          androidAvailable: Effect.succeed(true),
-          iosAvailable: Effect.succeed(false),
+          availablePlatforms: Effect.succeed({ android: true, ios: false }),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
         run,
@@ -839,8 +835,7 @@ it.effect.each([
           origin: "http://device.test",
           http,
           run,
-          androidAvailable: Effect.succeed(true),
-          iosAvailable: Effect.succeed(false),
+          availablePlatforms: Effect.succeed({ android: true, ios: false }),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
         run,
@@ -912,8 +907,7 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
           origin: "http://device.test",
           http,
           run,
-          androidAvailable: Effect.succeed(true),
-          iosAvailable: Effect.succeed(false),
+          availablePlatforms: Effect.succeed({ android: true, ios: false }),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
         run,
