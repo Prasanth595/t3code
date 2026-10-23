@@ -931,7 +931,12 @@ it.layer(
                   (yield* registry.getProviders)[0]?.models,
                   restarted
                     ? presentedRetainedModels
-                    : [defaultModel, customModel, presentedCurrentModel, removedModel],
+                    : [
+                        defaultModel,
+                        customModel,
+                        presentedCurrentModel,
+                        { ...removedModel, shortName: "Gemini 2.5 Pro" },
+                      ],
                 );
 
                 yield* registry.refreshInstance(instance.instanceId);
