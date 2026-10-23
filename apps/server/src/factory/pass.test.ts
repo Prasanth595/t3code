@@ -16,6 +16,7 @@ import {
   type ProjectConfig,
   type WatchedProject,
 } from "./config.ts";
+import { readFreeSpace } from "./disk.ts";
 import type { State } from "./domain/lifecycle.ts";
 import { LedgerIoError } from "./ledger/errors.ts";
 import type { CauseStep, ErrorKind, MachineEvent } from "./ledger/events.ts";
@@ -2215,6 +2216,31 @@ describe("low disk space", () => {
       fake.free = "error";
       yield* pass(fake, [REPO], 5);
       assert.deepEqual(lowItems(fake), []);
+    }),
+  );
+
+  it.effect("a floor above the real free space of a directory holds back claims and gates", () =>
+    Effect.gen(function* () {
+      const dir = passTempDir("free");
+      const fake = new Fake();
+      fake.freeSpace = () => Effect.sync(() => readFreeSpace(dir));
+      fake.minFreeGib = Math.ceil(readFreeSpace(dir).freeBytes / GIB) + 1;
+      fake.ready[REPO] = [1];
+      fake.runIn(40, BUILDING, REPO, true);
+      readyForGate(fake, 40);
+      const { report, lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), []);
+      assert.deepEqual(gates(fake), []);
+      const [low, ...more] = lowLines(lines);
+      assert.deepEqual(more, []);
+      assert.match(
+        low ?? "",
+        new RegExp(
+          `^low disk: [\\d.]+ GiB free on .+, below min_free_gib ${fake.minFreeGib}; no issue is claimed`,
+        ),
+      );
+      assert.equal(lowItems(fake).length, 1);
+      assert.equal(report.attention, 1);
     }),
   );
 });

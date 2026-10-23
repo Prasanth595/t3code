@@ -37,6 +37,7 @@ import {
 } from "./config.ts";
 import { readLowestFreeSpace, type FreeSpace } from "./disk.ts";
 import * as Gate from "./gate.ts";
+import { guardLogStreams } from "./logStreams.ts";
 import { FactoryGate, clearGateLocks, gateLockFile } from "./gate.ts";
 import type { State } from "./domain/lifecycle.ts";
 import { ledgerCall as ledger, type LedgerError } from "./ledger/errors.ts";
@@ -106,6 +107,10 @@ import {
   type GitHubError,
   type IssueSummary,
 } from "./tracker/github.ts";
+
+// server.ts imports this module before it builds a layer, so from here on a full disk under
+// launchd drops log lines instead of ending the server, during startup too.
+guardLogStreams();
 
 export type { FactoryStatus } from "./status.ts";
 
