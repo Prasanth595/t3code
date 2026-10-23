@@ -759,7 +759,7 @@ const lowDisk = Effect.fn("Pass.lowDisk")(function* (
  * Whether the 1-minute load is above `max_load_per_core` times the cores. Gates on an overloaded
  * machine fail on timeouts the code did not cause, so while it is the pass claims nothing: one
  * line and one `claim_skipped` event. No attention item: the load drops without a person, and an
- * item would notify each time it flaps. The world's gate holds a second gate on the same reading
+ * item would notify each time it flaps. The world's gate holds a second gate by the same rule
  * (`Factory.startGate`). 0 turns the check off. Session relaunches of runs already claimed are
  * not held back.
  */
