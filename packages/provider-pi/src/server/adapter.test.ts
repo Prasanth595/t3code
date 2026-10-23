@@ -1311,17 +1311,51 @@ describe("PiAdapterV2", () => {
         [providerThread.id, "t3:background:tests", "Tests running"],
       ]);
 
-      // A vetoed switch keeps the outgoing session, so its job is still listed.
-      fake.vetoNextNewSession();
-      const vetoed = yield* runtime
+      // A vetoed switch keeps the outgoing session, so its unfinished jobs are
+      // listed again; a job that ended while the switch was in flight is not.
+      yield* setStatus("t3:background:build", "Build running");
+      yield* setStatus("t3:background:docs", "Docs building");
+      assert.lengthOf(yield* takeRoster(), 2);
+      assert.lengthOf(yield* takeRoster(), 3);
+      fake.deferNextLifecycle("new_session");
+      const vetoing = yield* runtime
         .ensureThread({
           threadId: THREAD_ID,
           modelSelection: modelSelection("default"),
           runtimePolicy,
         })
-        .pipe(Effect.flip);
-      assert.equal(vetoed._tag, "ProviderAdapterEnsureThreadError");
+        .pipe(Effect.flip, Effect.forkScoped);
+      const newSession = yield* fake.takeRequest("new_session");
       assert.lengthOf(yield* takeRoster(), 0);
+      yield* setStatus("t3:background:build");
+      // Pi's events are handled in order, so an answered dialog proves the clear landed.
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "switch-hook-dialog",
+        method: "confirm",
+        title: "Switch sessions?",
+      });
+      const dialog = yield* takeEvent((event) => event.type === "runtime_request.updated");
+      if (dialog.type !== "runtime_request.updated") return;
+      yield* runtime.respondToRuntimeRequest({
+        requestId: dialog.runtimeRequest.id,
+        decision: "accept",
+      });
+      yield* fake.takeRequest("extension_ui_response");
+      yield* fake.emit({
+        type: "response",
+        id: newSession["id"],
+        command: "new_session",
+        success: true,
+        data: { cancelled: true },
+      });
+      assert.equal((yield* Fiber.join(vetoing))._tag, "ProviderAdapterEnsureThreadError");
+      assert.deepStrictEqual(yield* takeRoster(), [
+        [providerThread.id, "t3:background:tests", "Tests running"],
+        [providerThread.id, "t3:background:docs", "Docs building"],
+      ]);
+      // The veto left no bound thread, but the roster still follows the work.
+      yield* setStatus("t3:background:docs");
       assert.lengthOf(yield* takeRoster(), 1);
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
 

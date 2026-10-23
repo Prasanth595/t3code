@@ -549,9 +549,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       let pendingWake: PiWake | null = null;
       // Status key to its text, which becomes the task description.
       const backgroundWork = new Map<string, string>();
-      // The thread whose roster lists backgroundWork, kept past lifecycle
-      // failures that clear threadState so its roster can still be emptied.
+      // The last bound thread, whose roster lists backgroundWork. Unlike
+      // threadState it survives a failed or vetoed session switch.
       let backgroundWorkState: PiThreadState | null = null;
+      // Work dropped by an in-flight lifecycle request, restored if it is vetoed.
+      let outgoingBackgroundWork: Map<string, string> | null = null;
       let rollbackBarrier: Deferred.Deferred<
         void,
         ProviderAdapter.ProviderAdapterProtocolError
@@ -674,16 +676,15 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           description,
         }));
 
-      const syncBackgroundWork = (state: PiThreadState) => {
-        backgroundWorkState = state;
-        return updateProviderThread(state, { pendingBackgroundTasks: pendingBackgroundTasks() });
-      };
+      const syncBackgroundWork = (state: PiThreadState) =>
+        updateProviderThread(state, { pendingBackgroundTasks: pendingBackgroundTasks() });
 
       const lifecycleRequest = Effect.fnUntraced(function* (record: PiRpcRecord) {
         // Pi invalidates the outgoing session's extension context, so its jobs
         // can no longer clear their statuses. Pi's own TUI drops them here too.
         const outgoingWork = new Map(backgroundWork);
         const outgoingState = backgroundWorkState;
+        outgoingBackgroundWork = outgoingWork;
         backgroundWork.clear();
         if (outgoingState !== null && outgoingWork.size > 0)
           yield* syncBackgroundWork(outgoingState);
@@ -702,12 +703,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               connection.terminate.pipe(Effect.andThen(Effect.fail(error))),
           }),
           Effect.onInterrupt(() => connection.terminate),
+          Effect.ensuring(
+            Effect.sync(() => {
+              outgoingBackgroundWork = null;
+            }),
+          ),
         );
-        if (recordField(result, "cancelled") === true && outgoingWork.size > 0) {
+        if (recordField(result, "cancelled") === true && outgoingState !== null) {
+          // A job may have cleared its status while the switch was in flight.
           for (const [key, description] of outgoingWork) {
             if (!backgroundWork.has(key)) backgroundWork.set(key, description);
           }
-          if (outgoingState !== null) yield* syncBackgroundWork(outgoingState);
+          if (backgroundWork.size > 0) yield* syncBackgroundWork(outgoingState);
         }
         return result;
       });
@@ -1289,10 +1296,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           if (description.length > 0) {
             if (backgroundWork.get(statusKey) === description) return;
             backgroundWork.set(statusKey, description);
-          } else if (!backgroundWork.delete(statusKey)) {
-            return;
+          } else {
+            outgoingBackgroundWork?.delete(statusKey);
+            if (!backgroundWork.delete(statusKey)) return;
           }
-          if (threadState !== null) yield* syncBackgroundWork(threadState);
+          if (backgroundWorkState !== null) yield* syncBackgroundWork(backgroundWorkState);
           return;
         }
         if (method === "notify") {
@@ -2444,7 +2452,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           Effect.sync(
             () =>
               (pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id) ||
-              (backgroundWork.size > 0 && threadState?.providerThread.id === providerThread.id),
+              (backgroundWork.size > 0 &&
+                backgroundWorkState?.providerThread.id === providerThread.id),
           ),
         backgroundTasksEndWithProcess: true,
         getModelContextWindow: (selection) => {
