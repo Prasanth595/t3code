@@ -6,14 +6,13 @@ import { assert, it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Statement from "effect/sql/Statement";
-import * as Tracer from "effect/Tracer";
 import { describe } from "vite-plus/test";
 
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { useTempDirs } from "../ledger/testSupport.ts";
 import { seededThreadId, seedProjection } from "./projectionFixture.testkit.ts";
 import * as Routed from "./projectionStoreReadRouting.ts";
+import { connectionsOf } from "./spanConnections.testkit.ts";
 
 const tempDir = useTempDirs();
 
@@ -25,27 +24,6 @@ const routedStore = () =>
       ),
     ),
   );
-
-/**
- * Which connections ran the work of `effect`, read off the spans the SQL client annotates: a
- * transaction is annotated on the span open where it begins, its statements are not.
- */
-const connectionsOf = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.gen(function* () {
-    const spans: Array<Tracer.Span> = [];
-    const tracer = Tracer.make({
-      span(options) {
-        const span = new Tracer.NativeSpan(options);
-        spans.push(span);
-        return span;
-      },
-    });
-    yield* effect.pipe(
-      Effect.withTracer(tracer),
-      Effect.provideService(Statement.SpanPropagationEnabled, true),
-    );
-    return new Set(spans.flatMap((span) => span.attributes.get("db.connection") ?? []));
-  });
 
 describe("the routed projection store", () => {
   it.effect("reads the shell snapshot and the pull request threads on the reader", () =>

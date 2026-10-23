@@ -5,6 +5,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 import { describe } from "vite-plus/test";
 
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
@@ -17,6 +18,7 @@ import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import { useTempDirs } from "../ledger/testSupport.ts";
 import { type SeededThread, seedProjection } from "./projectionFixture.testkit.ts";
 import * as Sessions from "./sessions.ts";
+import { connectionsOf } from "./spanConnections.testkit.ts";
 
 const tempDir = useTempDirs();
 
@@ -109,6 +111,23 @@ describe("FactorySessions.runningThreads", () => {
       const expected = yield* countFromShellSnapshot;
       assert.strictEqual(expected, 6);
       assert.strictEqual(yield* (yield* Sessions.FactorySessions).runningThreads, expected);
+    }).pipe(Effect.provide(layerSessions())),
+  );
+
+  it.effect("counts on the reader connection, off the event loop", () =>
+    Effect.gen(function* () {
+      yield* seedProjection(FIXTURE).pipe(Effect.provide(ProjectionStore.layer));
+      const { runningThreads } = yield* Sessions.FactorySessions;
+      assert.deepStrictEqual(yield* connectionsOf(runningThreads), new Set(["reader"]));
+    }).pipe(Effect.provide(layerSessions())),
+  );
+
+  it.effect("fails as a sessions error when the runs cannot be read", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`DROP TABLE orchestration_v2_projection_runs`;
+      const error = yield* Effect.flip((yield* Sessions.FactorySessions).runningThreads);
+      assert.strictEqual(error.operation, "running-threads");
     }).pipe(Effect.provide(layerSessions())),
   );
 });
