@@ -22,6 +22,18 @@ const post = (session: NodeInspector.Session, method: string, params?: object) =
     session.post(method, params, (error, result) => (error ? reject(error) : resolve(result)));
   });
 
+const KEEP_PROFILES = 10;
+
+/** Deletes all but the newest `keep` profiles in `dir`. Names are ISO times, so they sort by age. */
+const pruneProfiles = async (dir: string, keep: number) => {
+  const names = (await NodeFSP.readdir(dir)).filter((name) => name.endsWith(".cpuprofile")).sort();
+  await Promise.all(
+    names
+      .slice(0, Math.max(0, names.length - keep))
+      .map((name) => NodeFSP.rm(NodePath.join(dir, name), { force: true })),
+  );
+};
+
 /** Profiles this process for `durationMs` and writes the result to `file`. */
 const profileTo = async (file: string, durationMs: number) => {
   const session = new NodeInspector.Session();
@@ -32,10 +44,13 @@ const profileTo = async (file: string, durationMs: number) => {
     await new Promise((resolve) => setTimeout(resolve, durationMs));
     const { profile } = await post(session, "Profiler.stop");
     await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+    // Serializing runs on the main thread, at most once per profile interval (10 min).
     await NodeFSP.writeFile(file, JSON.stringify(profile));
   } finally {
     session.disconnect();
   }
+  // Housekeeping: a failure here must not hide that the profile was written.
+  await pruneProfiles(NodePath.dirname(file), KEEP_PROFILES).catch(() => {});
 };
 
 export interface StallProfilerOptions {
