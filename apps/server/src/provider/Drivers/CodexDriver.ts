@@ -3,6 +3,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
@@ -64,13 +65,39 @@ function isCodexStandaloneCommandPath(commandPath: string): boolean {
   return normalizeCommandPath(commandPath).includes("/packages/standalone/");
 }
 
+const CodexNativeReleaseMetadata = Schema.Struct({ tag_name: Schema.String });
+
+/** The standalone installer consumes this channel, whose rollout can lag npm. */
+const lookupCodexNativeVersion = Effect.gen(function* () {
+  const env = yield* HostProcess.Environment;
+  // Explicit installer overrides are not the default stable channel. An unknown
+  // advisory is safer than promising an npm release this updater will not install.
+  if (
+    (env.CODEX_RELEASE && env.CODEX_RELEASE !== "latest") ||
+    (env.CODEX_INSTALLER_USE_RELEASES_OPENAI_COM &&
+      !/^(1|true|yes)$/i.test(env.CODEX_INSTALLER_USE_RELEASES_OPENAI_COM))
+  )
+    return null;
+  const http = yield* HttpClient.HttpClient;
+  const response = yield* http.get("https://releases.openai.com/codex/channels/latest");
+  if (response.status < 200 || response.status >= 300) return null;
+  const metadata = yield* response.json.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(CodexNativeReleaseMetadata)),
+  );
+  return /^(?:rust-v|v)?(\d+\.\d+\.\d+)$/.exec(metadata.tag_name)?.[1] ?? null;
+}).pipe(
+  Effect.timeoutOption("4 seconds"),
+  Effect.map(Option.getOrNull),
+  Effect.orElseSucceed(() => null),
+);
+
 /**
  * `codex update` replaces the standalone tree under `CODEX_HOME`. That tree
  * lives in the shared home even when an auth-overlay shadow home is in use
  * (the overlay only carries auth and a few local entries), so the updater
  * runs against `sharedHomePath` rather than the instance's effective home.
  */
-function makeCodexMaintenanceResolver(sharedHomePath: string) {
+function makeCodexMaintenanceResolver(sharedHomePath: string, http: HttpClient.HttpClient) {
   return makePackageManagedProviderMaintenanceResolver({
     provider: DRIVER_KIND,
     npmPackageName: "@openai/codex",
@@ -79,6 +106,9 @@ function makeCodexMaintenanceResolver(sharedHomePath: string) {
       isCommandPath: isCodexStandaloneCommandPath,
       requiresCommandPath: true,
       env: { CODEX_HOME: sharedHomePath },
+      lookupLatestVersion: lookupCodexNativeVersion.pipe(
+        Effect.provideService(HttpClient.HttpClient, http),
+      ),
     },
   });
 }
@@ -168,7 +198,7 @@ export const CodexDriver: ProviderDriver<
     } satisfies CodexSettings;
     const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
       resolveProviderMaintenanceCapabilitiesEffect(
-        makeCodexMaintenanceResolver(homeLayout.sharedHomePath),
+        makeCodexMaintenanceResolver(homeLayout.sharedHomePath, httpClient),
         {
           binaryPath: effectiveConfig.binaryPath,
           env: processEnv,

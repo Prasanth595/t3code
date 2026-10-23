@@ -384,6 +384,86 @@ it.layer(layerTest)("CodexDriver", (it) => {
   );
 
   for (const fixture of [
+    { name: "a native release behind npm", tag: "rust-v0.163.0", status: 200, expected: "0.163.0" },
+    { name: "an unavailable native channel", tag: "rust-v0.163.0", status: 503, expected: null },
+    { name: "malformed native metadata", tag: "not-a-version", status: 200, expected: null },
+    { name: "a newer native release", tag: "rust-v0.164.0", status: 200, expected: "0.164.0" },
+    {
+      name: "an explicit release",
+      tag: "rust-v0.164.0",
+      status: 200,
+      expected: null,
+      env: { CODEX_RELEASE: "0.162.0" },
+    },
+    {
+      name: "an alternative installer channel",
+      tag: "rust-v0.164.0",
+      status: 200,
+      expected: null,
+      env: { CODEX_INSTALLER_USE_RELEASES_OPENAI_COM: "false" },
+    },
+  ]) {
+    it.effect.skipIf(windowsHost)(`checks the standalone channel for ${fixture.name}`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const home = yield* fs
+          .makeTempDirectoryScoped({ prefix: "t3-codex-native-channel-" })
+          .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+        const binaryPath = NodePath.join(home, "packages", "standalone", "bin", "codex");
+        yield* fs.makeDirectory(NodePath.dirname(binaryPath), { recursive: true });
+        yield* fs.writeFileString(binaryPath, "#!/bin/sh\n");
+        yield* fs.chmod(binaryPath, 0o755);
+        const requests: string[] = [];
+        const http = HttpClient.make((request) =>
+          Effect.sync(() => {
+            requests.push(request.url);
+            return HttpClientResponse.fromWeb(
+              request,
+              request.url.includes("registry.npmjs.org")
+                ? Response.json({ version: "0.164.0" })
+                : Response.json({ tag_name: fixture.tag }, { status: fixture.status }),
+            );
+          }),
+        );
+        const instance = yield* CodexDriver.create({
+          instanceId: ProviderInstanceId.make("codex-native-channel"),
+          displayName: "Codex channel test",
+          enabled: false,
+          environment: [],
+          config: { ...CodexDriver.defaultConfig(), binaryPath, homePath: home },
+        }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+        const capabilities = yield* instance.snapshot.resolveMaintenance();
+        expect(requests).toEqual([]);
+        const latest = yield* resolveLatestProviderVersion(capabilities).pipe(
+          Effect.provideService(HttpClient.HttpClient, http),
+        );
+        expect(latest).toBe(fixture.expected);
+        expect(requests).toEqual(
+          fixture.env ? [] : ["https://releases.openai.com/codex/channels/latest"],
+        );
+        expect(
+          createProviderVersionAdvisory({
+            driver: CodexDriver.driverKind,
+            currentVersion: "0.163.0",
+            latestVersion: latest,
+            maintenanceCapabilities: capabilities,
+          })?.status,
+        ).toBe(
+          fixture.expected === null
+            ? "unknown"
+            : fixture.expected === "0.163.0"
+              ? "current"
+              : "behind_latest",
+        );
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        Effect.provideService(HostProcess.Environment, fixture.env ?? {}),
+        Effect.scoped,
+      ),
+    );
+  }
+
+  for (const fixture of [
     {
       name: "leaves mise npm-backend installations manual-only",
       installSegments: ["mise", "installs", "npm-openai-codex", "0.110.0"],
