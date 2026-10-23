@@ -347,7 +347,7 @@ export const readLatestMessages = Effect.fn("cli.thread.readLatestMessages")(fun
     { threadId, limit: 1, runLimit: 1 },
     OrchestratorMcpThreadReadResult,
   );
-  const messages: Array<OrchestratorMcpThreadTimelineItem> = [];
+  let messages: Array<OrchestratorMcpThreadTimelineItem> = [];
   // The newest window has no upper bound, so items added since the first
   // read are still shown.
   let before: number | undefined;
@@ -381,7 +381,8 @@ export const readLatestMessages = Effect.fn("cli.thread.readLatestMessages")(fun
       afterPosition = page.nextPosition ?? Number.POSITIVE_INFINITY;
     } while (page.hasMore && afterPosition < (end ?? Number.POSITIVE_INFINITY) - 1);
     thread = page.thread;
-    messages.unshift(...window);
+    // A window can hold the whole --messages count, too many to spread as arguments.
+    messages = window.concat(messages);
     before = start;
     span *= 2;
   } while (messages.length < count && start > 0);

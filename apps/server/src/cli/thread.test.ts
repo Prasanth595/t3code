@@ -80,11 +80,15 @@ const timelineTools = (types: ReadonlyArray<string>) => {
   const served: Array<number> = [];
   const call = ((_tool: string, input: unknown) => {
     const args = input as { readonly afterPosition?: number; readonly limit: number };
-    const matching = items.filter(
-      (item) =>
-        item.position > (args.afterPosition ?? -1) &&
-        ["user_message", "assistant_message", "proposed_plan"].includes(item.type),
-    );
+    // Scanning one match past the page keeps reads of huge fixtures linear.
+    const matching: typeof items = [];
+    for (let position = (args.afterPosition ?? -1) + 1; position < items.length; position++) {
+      const item = items[position]!;
+      if (["user_message", "assistant_message", "proposed_plan"].includes(item.type)) {
+        matching.push(item);
+        if (matching.length > args.limit) break;
+      }
+    }
     const page = matching.slice(0, args.limit);
     served.push(page.length);
     return Effect.succeed({
@@ -141,5 +145,18 @@ it.effect("show widens back to the first item when the thread has fewer messages
       latest(10),
     );
     assert.lengthOf(messages, 5);
+  }),
+);
+
+it.effect("show returns a --messages count larger than one call can spread", () =>
+  Effect.gen(function* () {
+    const { tools, latest } = timelineTools(Array<string>(200_000).fill("assistant_message"));
+
+    const { messages } = yield* readLatestMessages(tools, threadId, 200_000);
+
+    assert.deepStrictEqual(
+      messages.map((item) => item.itemId),
+      latest(200_000),
+    );
   }),
 );
