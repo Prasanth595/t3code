@@ -198,6 +198,9 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
     if (sourceIdentity && known.size === 1) {
       const workspaceId = [...known][0];
       const workspaceSources = sourceWorkspaceAccounts.get(`${key}:${workspaceId}`);
+      if (workspaceSources && workspaceSources.size > 1 && workspaceSources.has(sourceIdentity)) {
+        return `${key}:${workspaceId}:source:${sourceIdentity}`;
+      }
       if (workspaceSources && !workspaceSources.has(sourceIdentity)) {
         return `${key}:source:${sourceIdentity}`;
       }

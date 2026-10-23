@@ -206,6 +206,64 @@ describe("pools", () => {
     ]);
   });
 
+  it("merges mixed workspace reports for one source credential across environments", () => {
+    const account = (
+      id: string,
+      workspaceId?: string,
+      usedPercent = 20,
+      reportCheckedAt = checkedAt,
+    ) => ({
+      id,
+      driver: claude,
+      email: "same@example.com",
+      ...(workspaceId ? { workspaceId } : {}),
+      usageLimits: { checkedAt: reportCheckedAt, windows: [{ ...window, usedPercent }] },
+    });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [
+              {
+                ...source,
+                accounts: [
+                  account("first.json", "workspace-a"),
+                  account("second.json", "workspace-a", 80),
+                ],
+              },
+            ],
+          },
+        },
+      ],
+      [
+        EnvironmentId.make("env-b"),
+        {
+          entry: { target: { label: "Desktop" } },
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [
+              {
+                ...source,
+                accounts: [account("first.json", undefined, 30, "2026-09-03T11:30:00.000Z")],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+
+    const accounts = collectLimitAccounts(input);
+    expect(accounts.map((limitAccount) => limitAccount.key)).toEqual([
+      "hub:first.json:workspace-a",
+      "hub:second.json:workspace-a",
+    ]);
+    expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(30);
+    expect(accounts[1]?.limits.windows[0]?.usedPercent).toBe(80);
+  });
+
   it("deduplicates native reports without joining source credentials", () => {
     const native = provider({
       driver: claude,
