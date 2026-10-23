@@ -12,6 +12,7 @@ import {
   parseEntireTrailUrl,
   WEB_HOSTS,
 } from "./entireUrls.ts";
+import { icon } from "./icon.ts";
 
 const KIND = SourceControlProviderKind.make("entire");
 const BRANCH = /^[A-Za-z0-9._/-]+$/u;
@@ -38,7 +39,7 @@ export const definition = defineSourceControl({
   kind: KIND,
   label: "Entire",
   pickerLabel: "Entire",
-  icon: null,
+  icon,
   changeRequest: {
     shortLabel: "trail",
     shortLabelWithArticle: "a trail",
