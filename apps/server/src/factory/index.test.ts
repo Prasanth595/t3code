@@ -769,7 +769,7 @@ describe("liveWorld", () => {
   const ago = (ms: number) => utcSecond(NOW - ms);
 
   const SHA = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
-  const pullView = (state: string, head: string) =>
+  const pullView = (state: string, head: string, mergeable = "MERGEABLE") =>
     JSON.stringify({
       number: 12,
       isDraft: false,
@@ -778,6 +778,7 @@ describe("liveWorld", () => {
       isCrossRepository: false,
       baseRefName: "main",
       headRefOid: head,
+      mergeable,
     });
 
   it.effect("the base tip is read from the run's base branch, in lower case", () =>
@@ -867,6 +868,7 @@ describe("liveWorld", () => {
               isCrossRepository: false,
               baseRefName: "feature/x",
               headRefOid: SHA,
+              mergeable: "MERGEABLE",
             });
           }
           return null;
@@ -903,15 +905,25 @@ describe("liveWorld", () => {
       }),
   );
 
-  it.effect("the head of an open pull request is read in lower case; one that ended has none", () =>
-    Effect.gen(function* () {
-      const open = ghWith(() => pullView("OPEN", SHA.toUpperCase()));
-      assert.strictEqual(yield* worldOf(open.process).openHead(repo, 12), SHA);
-      for (const state of ["MERGED", "CLOSED"]) {
-        const ended = ghWith(() => pullView(state, SHA));
-        assert.strictEqual(yield* worldOf(ended.process).openHead(repo, 12), null, state);
-      }
-    }),
+  it.effect(
+    "an open pull request is read with its head in lower case and GitHub's mergeable state; one that ended is none",
+    () =>
+      Effect.gen(function* () {
+        const open = ghWith(() => pullView("OPEN", SHA.toUpperCase()));
+        assert.deepStrictEqual(yield* worldOf(open.process).openPull(repo, 12), {
+          head: SHA,
+          mergeable: "mergeable",
+        });
+        const conflicting = ghWith(() => pullView("OPEN", SHA, "CONFLICTING"));
+        assert.deepStrictEqual(yield* worldOf(conflicting.process).openPull(repo, 12), {
+          head: SHA,
+          mergeable: "conflicting",
+        });
+        for (const state of ["MERGED", "CLOSED"]) {
+          const ended = ghWith(() => pullView(state, SHA));
+          assert.strictEqual(yield* worldOf(ended.process).openPull(repo, 12), null, state);
+        }
+      }),
   );
 
   it.effect("a pull request GitHub no longer has has no head, and a failed read is an error", () =>
@@ -926,10 +938,10 @@ describe("liveWorld", () => {
             truncated: false,
           } satisfies RunResult),
       };
-      assert.strictEqual(yield* worldOf(gone).openHead(repo, 12), null);
+      assert.strictEqual(yield* worldOf(gone).openPull(repo, 12), null);
       const broken = ghWith(() => null);
       assert.strictEqual(
-        (yield* Effect.flip(worldOf(broken.process).openHead(repo, 12))).kind,
+        (yield* Effect.flip(worldOf(broken.process).openPull(repo, 12))).kind,
         "tracker",
       );
     }),
@@ -1586,6 +1598,7 @@ describe("the gate in the background", () => {
       isCrossRepository: false,
       baseRefName: "main",
       headRefOid: head,
+      mergeable: "MERGEABLE",
     });
   const HEAD = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
   const BASE = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d";
@@ -2051,6 +2064,10 @@ describe("the gate in the background", () => {
     assert.strictEqual(
       words({ kind: "abandoned" }, null),
       "the issue is closed, the run is closed",
+    );
+    assert.strictEqual(
+      words({ kind: "sent-back", attempt: 2 }, "conflict"),
+      "nothing moved but GitHub says the pull request conflicts with the base branch, the gate failed on attempt 2, the PR is a draft again and the session was told",
     );
     assert.strictEqual(words({ kind: "not-ready" }, null), "the gate waits for the session");
   });

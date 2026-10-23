@@ -1009,6 +1009,7 @@ describe("forward: a closed issue", () => {
               crossRepository: false,
               baseRef: "main",
               headSha: HEAD,
+              mergeable: "mergeable",
             }),
         },
       };
@@ -1262,6 +1263,7 @@ const draftPr = {
   crossRepository: false,
   baseRef: "main",
   headSha: HEAD,
+  mergeable: "mergeable",
 };
 
 const dropOf = (id: number, reason: Dropped["reason"]): Dropped => ({ id: String(id), reason });

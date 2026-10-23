@@ -57,7 +57,7 @@ import type { LastPass } from "./runner/gating.ts";
 import { GateRunningError, type StartError, type StartOutcome } from "./runner/start.ts";
 import type { StopRequestOutcome } from "./runner/stop.ts";
 import { MessageRejectedError, SessionsError, type ThreadOnBrokenWorktree } from "./t3/sessions.ts";
-import { GitHubFailed, type Blocker } from "./tracker/github.ts";
+import { GitHubFailed, type Blocker, type Mergeable } from "./tracker/github.ts";
 
 const REPO = "rawphp/softfac";
 const OTHER = "rawphp/other";
@@ -181,6 +181,8 @@ class Fake implements PassWorld {
   baseTips: Record<string, string | "error"> = {};
   /** The head of each open pull request per `"<repo>#<pr>"`: `HEAD` unless scripted; `null` is one that ended, `"error"` a read that fails. */
   openHeads: Record<string, string | null | "error"> = {};
+  /** GitHub's mergeable state of each open pull request per `"<repo>#<pr>"`: `mergeable` unless scripted. */
+  mergeables: Record<string, Mergeable> = {};
   /** The issues GitHub has closed, per `"<repo>#<issue>"`; `"error"` is a read that fails. Open otherwise. */
   closedIssues: Record<string, boolean | "error"> = {};
   stuckReads = new Map<string, number>();
@@ -612,11 +614,14 @@ class Fake implements PassWorld {
     return found === "error" ? Effect.fail(trackerFailure()) : Effect.succeed(found);
   }
 
-  openHead(repo: Repo, pr: number) {
+  openPull(repo: Repo, pr: number) {
     const key = `${repo.watched.repo}#${pr}`;
-    this.calls.push(`open_head ${key}`);
+    this.calls.push(`open_pull ${key}`);
     const found = this.openHeads[key] === undefined ? HEAD : this.openHeads[key];
-    return found === "error" ? Effect.fail(trackerFailure()) : Effect.succeed(found);
+    if (found === "error") return Effect.fail(trackerFailure());
+    return Effect.succeed(
+      found === null ? null : { head: found, mergeable: this.mergeables[key] ?? "mergeable" },
+    );
   }
 
   gate(repo: Repo, run: RunId) {
@@ -4485,8 +4490,8 @@ describe("pr-open runs: gated again only when something moved", () => {
       assert.equal(report.errors, 0);
       // The comparison reads the ledger, the base tip, and the pull request's head.
       assert.deepEqual(
-        fake.calls.filter((c) => /^(last_pass|base_tip|open_head) /.test(c)),
-        [`last_pass ${REPO}#41`, `base_tip ${REPO} main`, `open_head ${REPO}#12`],
+        fake.calls.filter((c) => /^(last_pass|base_tip|open_pull) /.test(c)),
+        [`last_pass ${REPO}#41`, `base_tip ${REPO} main`, `open_pull ${REPO}#12`],
       );
     }),
   );
@@ -4554,6 +4559,31 @@ describe("pr-open runs: gated again only when something moved", () => {
     }),
   );
 
+  it.effect("a pull request GitHub says conflicts starts the gate with nothing moved", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41);
+      fake.mergeables[`${REPO}#12`] = "conflicting";
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(gated(fake), [`gate ${REPO}#41`]);
+      assert.deepEqual(lineOf(lines, 41), [`${REPO}#41 pr-open: gate started in the background`]);
+    }),
+  );
+
+  it.effect(
+    "a pull request GitHub calls mergeable or unknown, with nothing moved, is not gated",
+    () =>
+      Effect.gen(function* () {
+        for (const mergeable of ["mergeable", "unknown"] as const) {
+          const fake = new Fake();
+          pr(fake, 41);
+          fake.mergeables[`${REPO}#12`] = mergeable;
+          yield* pass(fake, [REPO], 5);
+          assert.deepEqual(gated(fake), [], mergeable);
+        }
+      }),
+  );
+
   it.effect("a head in a different case is the same head", () =>
     Effect.gen(function* () {
       const fake = new Fake();
@@ -4584,7 +4614,7 @@ describe("pr-open runs: gated again only when something moved", () => {
       assert.deepEqual(gated(fake), [`gate ${REPO}#41`]);
       // Nothing is read from GitHub for a run the gate will look at anyway.
       assert.deepEqual(reads(fake, "base_tip"), []);
-      assert.deepEqual(reads(fake, "open_head"), []);
+      assert.deepEqual(reads(fake, "open_pull"), []);
     }),
   );
 
@@ -4609,7 +4639,7 @@ describe("pr-open runs: gated again only when something moved", () => {
         const { report } = yield* pass(fake, [REPO], 5);
         assert.deepEqual(gated(fake), [`gate ${REPO}#41`, `gate ${REPO}#42`]);
         assert.equal(reads(fake, "base_tip").length, 1);
-        assert.deepEqual(reads(fake, "open_head"), []);
+        assert.deepEqual(reads(fake, "open_pull"), []);
         // The gate process reports a failed read itself.
         assert.equal(report.errors, 0);
       }),
@@ -4626,7 +4656,7 @@ describe("pr-open runs: gated again only when something moved", () => {
         yield* pass(fake, [REPO], 5);
         assert.deepEqual(gated(fake), [`gate ${REPO}#41`, `gate ${REPO}#42`]);
         assert.equal(reads(fake, "base_tip").length, 1);
-        assert.equal(reads(fake, "open_head").length, 1);
+        assert.equal(reads(fake, "open_pull").length, 1);
       }),
   );
 
@@ -4773,7 +4803,7 @@ describe("pr-open runs: instructor feedback", () => {
         ]);
         // The comparison with the last pass is not made: the run is no longer waiting.
         assert.deepEqual(
-          fake.calls.filter((c) => /^(base_tip|open_head) /.test(c)),
+          fake.calls.filter((c) => /^(base_tip|open_pull) /.test(c)),
           [],
         );
         assert.deepEqual(fake.feedbacks, [RUN12]);

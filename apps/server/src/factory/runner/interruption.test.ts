@@ -314,6 +314,7 @@ const defaultPr = (): PullRequest => ({
   crossRepository: false,
   baseRef: "main",
   headSha: "abc123",
+  mergeable: "mergeable",
 });
 
 const seed = (

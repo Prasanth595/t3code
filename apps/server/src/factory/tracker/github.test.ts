@@ -1334,9 +1334,9 @@ it("error text escapes newlines in other arguments", () => {
 
 const HEAD_SHA = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
 const PR_VIEW =
-  '{"baseRefName":"main","headRefName":"t3code/2bb65018","headRefOid":"4f1c2d3e4a5b60718293a4b5c6d7e8f901234567","isCrossRepository":false,"isDraft":true,"number":2,"state":"OPEN"}';
+  '{"baseRefName":"main","headRefName":"t3code/2bb65018","headRefOid":"4f1c2d3e4a5b60718293a4b5c6d7e8f901234567","isCrossRepository":false,"isDraft":true,"mergeable":"MERGEABLE","number":2,"state":"OPEN"}';
 const prView = (state: string, draft: boolean) =>
-  `{"baseRefName":"main","headRefName":"x","headRefOid":"${HEAD_SHA}","isCrossRepository":false,"isDraft":${draft},"number":9,"state":"${state}"}`;
+  `{"baseRefName":"main","headRefName":"x","headRefOid":"${HEAD_SHA}","isCrossRepository":false,"isDraft":${draft},"mergeable":"MERGEABLE","number":9,"state":"${state}"}`;
 const prViewCall = (number: string) => [
   "pr",
   "view",
@@ -1344,7 +1344,7 @@ const prViewCall = (number: string) => [
   "--repo",
   REPO,
   "--json",
-  "number,isDraft,state,headRefName,isCrossRepository,baseRefName,headRefOid",
+  "number,isDraft,state,headRefName,isCrossRepository,baseRefName,headRefOid,mergeable",
 ];
 
 it.effect("pullRequest reads the real shape with the exact call", () =>
@@ -1361,7 +1361,24 @@ it.effect("pullRequest reads the real shape with the exact call", () =>
       crossRepository: false,
       baseRef: "main",
       headSha: HEAD_SHA,
+      mergeable: "mergeable",
     });
+  }),
+);
+
+it.effect("pullRequest reads GitHub's mergeable state, and anything else as unknown", () =>
+  Effect.gen(function* () {
+    for (const [raw, mergeable] of [
+      ["MERGEABLE", "mergeable"],
+      ["CONFLICTING", "conflicting"],
+      ["UNKNOWN", "unknown"],
+      ["SOMETHING_NEW", "unknown"],
+    ] as const) {
+      const t = setup(reply(PR_VIEW.replace('"MERGEABLE"', `"${raw}"`)));
+      const pr = yield* t.ok(t.github.pullRequest(2));
+      assert.deepStrictEqual(t.calls(), [prViewCall("2")], raw);
+      assert.strictEqual(pr?.mergeable, mergeable, raw);
+    }
   }),
 );
 
@@ -1382,7 +1399,7 @@ it.effect("pullRequest from a fork and into another base says so", () =>
   Effect.gen(function* () {
     const t = setup(
       reply(
-        `{"baseRefName":"release/1.0","headRefName":"t3code/x","headRefOid":"${HEAD_SHA}","isCrossRepository":true,"isDraft":true,"number":4,"state":"OPEN"}`,
+        `{"baseRefName":"release/1.0","headRefName":"t3code/x","headRefOid":"${HEAD_SHA}","isCrossRepository":true,"isDraft":true,"mergeable":"MERGEABLE","number":4,"state":"OPEN"}`,
       ),
     );
     const pr = yield* t.ok(t.github.pullRequest(4));
@@ -1396,7 +1413,7 @@ it.effect("a pullRequest view without the fork or base fields is a parse error",
   Effect.gen(function* () {
     const t = setup(
       reply(
-        `{"headRefName":"x","headRefOid":"${HEAD_SHA}","isDraft":true,"number":3,"state":"OPEN"}`,
+        `{"headRefName":"x","headRefOid":"${HEAD_SHA}","isDraft":true,"mergeable":"MERGEABLE","number":3,"state":"OPEN"}`,
       ),
     );
     const error = yield* t.err(t.github.pullRequest(3));
@@ -1408,7 +1425,7 @@ it.effect("a pullRequest view without the head commit is a parse error", () =>
   Effect.gen(function* () {
     const t = setup(
       reply(
-        '{"baseRefName":"main","headRefName":"x","isCrossRepository":false,"isDraft":true,"number":3,"state":"OPEN"}',
+        '{"baseRefName":"main","headRefName":"x","isCrossRepository":false,"isDraft":true,"mergeable":"MERGEABLE","number":3,"state":"OPEN"}',
       ),
     );
     const error = yield* t.err(t.github.pullRequest(3));
@@ -1421,7 +1438,7 @@ it.effect("pullRequest reads the head commit as given", () =>
     const sha = "0123456789abcdef0123456789abcdef01234567";
     const t = setup(
       reply(
-        `{"baseRefName":"main","headRefName":"x","headRefOid":"${sha}","isCrossRepository":false,"isDraft":true,"number":3,"state":"OPEN"}`,
+        `{"baseRefName":"main","headRefName":"x","headRefOid":"${sha}","isCrossRepository":false,"isDraft":true,"mergeable":"MERGEABLE","number":3,"state":"OPEN"}`,
       ),
     );
     assert.strictEqual((yield* t.ok(t.github.pullRequest(3)))?.headSha, sha);
