@@ -190,6 +190,7 @@ const runsRoute = factoryRoute(
         step: run.step,
         status: statusWord(run),
         pr_url: run.prUrl,
+        pr_end: run.prEnd,
         finished: run.finished,
         total_ms: run.totalMs,
         unreadable: run.unreadable,

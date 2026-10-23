@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import { isState, type State } from "../domain/lifecycle.ts";
 import { readProgress, type Seen } from "../runner/progress.ts";
 import { errnoCode, LedgerIoError, LedgerNotFoundError } from "./errors.ts";
+import type { PrEnd } from "./events.ts";
 import {
   dataField,
   dataText,
@@ -226,6 +227,8 @@ export interface RunSummary {
   readonly step: string | null;
   /** The `finished` line's pull request URL, else the last `pr_opened` URL. */
   readonly prUrl: string | null;
+  /** How the run's pull request ended, from the `finished` line; its last state predates that. */
+  readonly prEnd: PrEnd | null;
   readonly finished: boolean;
   readonly totalMs: number | null;
   /** The file could not be read; every other field is empty. */
@@ -247,6 +250,7 @@ const unreadableSummary = (id: RunId): RunSummary => ({
   state: null,
   step: null,
   prUrl: null,
+  prEnd: null,
   finished: false,
   totalMs: null,
   unreadable: true,
@@ -256,6 +260,12 @@ const unreadableSummary = (id: RunId): RunSummary => ({
 const totalMsOf = (end: Entry | undefined): number | null => {
   const total = dataField(end?.data, "total_ms");
   return typeof total === "number" ? total : null;
+};
+
+/** The `pr_end` of a `finished` line, when it is one this build knows. */
+const prEndOf = (end: Entry | undefined): PrEnd | null => {
+  const prEnd = dataField(end?.data, "pr_end");
+  return prEnd === "merged" || prEnd === "closed" ? prEnd : null;
 };
 
 /** The summary of a run read whole: its progress, plus what the progress does not carry. */
@@ -270,6 +280,7 @@ const summarise = (id: RunId, { record, seen }: WholeRead): RunSummary => {
       ? null
       : dataText(record.entries.findLast((entry) => entry.event === "step_changed")?.data, "step"),
     prUrl: (end === undefined ? null : dataText(end.data, "pr_url")) ?? seen.lastPr?.url ?? null,
+    prEnd: prEndOf(end),
     finished: seen.finished,
     totalMs: totalMsOf(end),
     unreadable: false,
@@ -314,6 +325,7 @@ const summariseFinished = (id: RunId, path: string): FileRead<RunSummary> =>
         state: state ?? null,
         step: null,
         prUrl,
+        prEnd: prEndOf(end),
         finished: true,
         totalMs: totalMsOf(end),
         unreadable: false,

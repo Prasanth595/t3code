@@ -634,6 +634,7 @@ describe("GET /api/factory/runs", () => {
         "step",
         "status",
         "pr_url",
+        "pr_end",
         "finished",
         "total_ms",
         "unreadable",
