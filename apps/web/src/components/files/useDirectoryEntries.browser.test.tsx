@@ -1,7 +1,7 @@
 import { EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
-import { act, useEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { useEffect } from "react";
+import { act, render } from "../../../test/render";
+import { expect, it, vi } from "vite-plus/test";
 
 const { listEntries } = vi.hoisted(() => ({ listEntries: vi.fn() }));
 vi.mock("~/state/projects", async () => {
@@ -16,40 +16,23 @@ vi.mock("~/state/projects", async () => {
 
 import { useDirectoryEntries } from "./useDirectoryEntries";
 
-let root: Root | null;
-let container: HTMLDivElement;
-let view: ReturnType<typeof useDirectoryEntries>;
-let calls: Array<{ path: string; resolve: (entries: readonly ProjectEntry[]) => void }>;
-let activeQueries: number;
-let peakQueries: number;
+function setup() {
+  let view!: ReturnType<typeof useDirectoryEntries>;
+  const calls: Array<{ path: string; resolve: (entries: readonly ProjectEntry[]) => void }> = [];
+  let activeQueries = 0;
+  let peakQueries = 0;
+  function Probe() {
+    const result = useDirectoryEntries(EnvironmentId.make("files-test"), "/workspace");
+    useEffect(() => {
+      view = result;
+    });
+    return null;
+  }
 
-function Probe() {
-  const result = useDirectoryEntries(EnvironmentId.make("files-test"), "/workspace");
-  useEffect(() => {
-    view = result;
-  });
-  return null;
-}
+  async function settle(index: number, entries: readonly ProjectEntry[] = []) {
+    await act(async () => calls[index]!.resolve(entries));
+  }
 
-async function mount() {
-  await act(async () => {
-    root = createRoot(container);
-    root.render(<Probe />);
-  });
-}
-
-async function settle(index: number, entries: readonly ProjectEntry[] = []) {
-  await act(async () => calls[index]!.resolve(entries));
-}
-
-beforeEach(() => {
-  root = null;
-  container = document.createElement("div");
-  document.body.append(container);
-  calls = [];
-  activeQueries = 0;
-  peakQueries = 0;
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   listEntries.mockReset().mockImplementation((request) => {
     activeQueries++;
     peakQueries = Math.max(peakQueries, activeQueries);
@@ -63,55 +46,66 @@ beforeEach(() => {
       });
     });
   });
-});
-
-afterEach(async () => {
-  await act(async () => root?.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
+  return {
+    Probe,
+    settle,
+    calls,
+    get view() {
+      return view;
+    },
+    get activeQueries() {
+      return activeQueries;
+    },
+    get peakQueries() {
+      return peakQueries;
+    },
+  };
+}
 
 it.each([1, 2, 3, 4, 5])("coalesces 20 overlapping refreshes (sample %s)", async () => {
-  await mount();
-  await settle(0);
+  const state = setup();
+  await using screen = await render(<state.Probe />, { router: false });
+  await state.settle(0);
   await act(async () => {
-    for (let index = 0; index < 20; index++) view.refresh();
+    for (let index = 0; index < 20; index++) state.view.refresh();
   });
-  for (let index = 1; index < calls.length; index++) await settle(index);
-  console.log(`20 overlapping refreshes: ${calls.length - 1} root listing requests`);
-  expect(calls).toHaveLength(3); // Initial load, active refresh, one final rescan.
-  expect(view.isPending).toBe(false);
+  for (let index = 1; index < state.calls.length; index++) await state.settle(index);
+  console.log(`20 overlapping refreshes: ${state.calls.length - 1} root listing requests`);
+  expect(state.calls).toHaveLength(3); // Initial load, active refresh, one final rescan.
+  expect(state.view.isPending).toBe(false);
 });
 
 it("rescans mutations during both the initial listing and the follow-up", async () => {
-  await mount();
-  await act(async () => view.refresh());
-  await settle(0);
-  expect(calls).toHaveLength(2);
+  const state = setup();
+  await using screen = await render(<state.Probe />, { router: false });
+  await act(async () => state.view.refresh());
+  await state.settle(0);
+  expect(state.calls).toHaveLength(2);
   await act(async () => {
-    view.refresh();
-    view.refresh();
+    state.view.refresh();
+    state.view.refresh();
   });
-  await settle(1);
-  expect(calls).toHaveLength(3);
+  await state.settle(1);
+  expect(state.calls).toHaveLength(3);
   const entry = { path: "latest.txt", kind: "file" } as const;
-  await settle(2, [entry]);
-  expect(view.entries).toEqual([entry]);
-  expect(view.isPending).toBe(false);
+  await state.settle(2, [entry]);
+  expect(state.view.entries).toEqual([entry]);
+  expect(state.view.isPending).toBe(false);
 });
 
 it("shares the follow-up promise and does not resolve callers before the final listing", async () => {
-  await mount();
+  const state = setup();
+  await using screen = await render(<state.Probe />, { router: false });
   let completed = false;
-  const first = view.load("", true);
-  const second = view.load("", true);
+  const first = state.view.load("", true);
+  const second = state.view.load("", true);
   expect(second).toBe(first);
   void first.then(() => {
     completed = true;
   });
-  await settle(0);
+  await state.settle(0);
   expect(completed).toBe(false);
-  await settle(1);
+  await state.settle(1);
   expect(completed).toBe(true);
 });
 
@@ -120,32 +114,33 @@ it("retains the four-query concurrency bound across directories and refreshes", 
     path: `folder-${index}`,
     kind: "directory" as const,
   }));
-  await mount();
-  await settle(0, folders);
+  const state = setup();
+  await using screen = await render(<state.Probe />, { router: false });
+  await state.settle(0, folders);
   await act(async () => {
-    for (const folder of folders) void view.load(folder.path);
-    for (let index = 0; index < 20; index++) view.refresh();
+    for (const folder of folders) void state.view.load(folder.path);
+    for (let index = 0; index < 20; index++) state.view.refresh();
   });
-  for (let index = 1; index < calls.length; index++) {
-    await settle(index, calls[index]!.path === "" ? folders : []);
-    expect(activeQueries).toBeLessThanOrEqual(4);
+  for (let index = 1; index < state.calls.length; index++) {
+    await state.settle(index, state.calls[index]!.path === "" ? folders : []);
+    expect(state.activeQueries).toBeLessThanOrEqual(4);
   }
   console.log(
-    `8 folders with 20 overlapping refreshes: ${calls.length} total listing requests, peak ${peakQueries} active queries`,
+    `8 folders with 20 overlapping refreshes: ${state.calls.length} total listing requests, peak ${state.peakQueries} active queries`,
   );
-  expect(peakQueries).toBe(4);
-  expect(new Set(calls.map((call) => call.path)).size).toBe(9);
+  expect(state.peakQueries).toBe(4);
+  expect(new Set(state.calls.map((call) => call.path)).size).toBe(9);
   for (const path of ["", ...folders.map((folder) => folder.path)]) {
-    expect(calls.filter((call) => call.path === path).length).toBeLessThanOrEqual(3);
+    expect(state.calls.filter((call) => call.path === path).length).toBeLessThanOrEqual(3);
   }
-  expect(view.isPending).toBe(false);
+  expect(state.view.isPending).toBe(false);
 });
 
 it("does not start a queued follow-up after unmount", async () => {
-  await mount();
-  await act(async () => view.refresh());
-  await act(async () => root?.unmount());
-  root = null;
-  await settle(0);
-  expect(calls).toHaveLength(1);
+  const state = setup();
+  await using screen = await render(<state.Probe />, { router: false });
+  await act(async () => state.view.refresh());
+  await screen.unmount();
+  await state.settle(0);
+  expect(state.calls).toHaveLength(1);
 });
