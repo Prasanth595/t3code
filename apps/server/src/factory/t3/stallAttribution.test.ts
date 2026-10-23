@@ -127,7 +127,8 @@ describe("withStallAttribution", () => {
           ),
           Effect.scoped,
         );
-        assert.include(warning, "in flight: PullRequestSyncReactor.sweep (");
+        assert.include(warning, "during the stall: PullRequestSyncReactor.sweep (");
+        assert.include(warning, "oldest in flight: http.server GET /ws 0 (");
 
         const lines = NodeFS.readFileSync(
           NodePath.join(logsDir, "factory-event-loop-stalls.ndjson"),
@@ -136,7 +137,44 @@ describe("withStallAttribution", () => {
           .trim()
           .split("\n");
         assert.strictEqual(lines.length, 2);
-        assert.strictEqual(JSON.parse(lines[1]!).spans[0].name, "PullRequestSyncReactor.sweep");
+        const record = JSON.parse(lines[1]!);
+        assert.strictEqual(record.spans[0].name, "PullRequestSyncReactor.sweep");
+        assert.deepStrictEqual(
+          record.oldestInFlight.map((s: { name: string }) => s.name),
+          [0, 1, 2, 3, 4].map((i) => `http.server GET /ws ${i}`),
+        );
       }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("profiles the process into stall-profiles/ after a long stall", () =>
+    Effect.gen(function* () {
+      const logsDir = tempDir();
+      const base = yield* Effect.service(Tracer.Tracer);
+      const decorated = makeWithStallAttribution({
+        intervalMs: 10,
+        thresholdMs: 100,
+        profileThresholdMs: 200,
+        profileDurationMs: 50,
+      })(Layer.succeed(Tracer.Tracer, base));
+      const written = yield* Deferred.make<void>();
+      const capture = Logger.make<unknown, void>(({ message }) => {
+        const text = String(Array.isArray(message) ? message[0] : message);
+        if (text === "factory stall profile written") Deferred.doneUnsafe(written, Effect.void);
+      });
+      yield* Effect.gen(function* () {
+        yield* Effect.sync(() => blockThread(250));
+        yield* Deferred.await(written);
+      }).pipe(
+        Effect.provide(
+          decorated.pipe(
+            Layer.provide(Layer.merge(Logger.layer([capture]), serverConfig(logsDir))),
+          ),
+        ),
+        Effect.scoped,
+      );
+      const profiles = NodeFS.readdirSync(NodePath.join(logsDir, "stall-profiles"));
+      assert.strictEqual(profiles.length, 1);
+      assert.match(profiles[0]!, /\.cpuprofile$/);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

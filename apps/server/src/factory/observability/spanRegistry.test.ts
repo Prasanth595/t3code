@@ -140,6 +140,38 @@ const spanOptions = (
     sampled: true,
   }) as unknown as Parameters<Tracer.Tracer["span"]>[0];
 
+describe("makeSpanRegistry.oldestInFlight", () => {
+  it("lists the open root spans and SQL statements, oldest first, with their age", () => {
+    const c = clock();
+    const registry = makeSpanRegistry({ now: c.now });
+    c.set(10);
+    const root = registry.start("http.server GET /ws", "span");
+    c.set(20);
+    registry.start("child of the socket", "span", root);
+    c.set(30);
+    const sql = registry.start("sqlite", "span", root);
+    registry.markSql(sql, "SELECT 1");
+    c.set(40);
+    const ended = registry.start("ended", "span");
+    registry.end(ended);
+    c.set(50);
+    registry.start("newer root", "span");
+    c.set(60);
+    registry.start("after the window", "span");
+    expect(registry.oldestInFlight(1000, 10)).toEqual([
+      { name: "http.server GET /ws", kind: "span", ageMs: 990, open: true },
+      { name: "sqlite", kind: "sql", ageMs: 970, open: true, query: "SELECT 1" },
+      { name: "newer root", kind: "span", ageMs: 950, open: true },
+      { name: "after the window", kind: "span", ageMs: 940, open: true },
+    ]);
+    expect(registry.oldestInFlight(55, 2).map((s) => s.name)).toEqual([
+      "http.server GET /ws",
+      "sqlite",
+    ]);
+    expect(registry.oldestInFlight(55, 10).map((s) => s.name)).not.toContain("after the window");
+  });
+});
+
 describe("wrapTracer", () => {
   const setup = () => {
     const c = clock();
