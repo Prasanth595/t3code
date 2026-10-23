@@ -30,8 +30,11 @@ describe("withStallAttribution", () => {
     Effect.gen(function* () {
       const base = yield* Effect.service(Tracer.Tracer);
       const seen = yield* Effect.service(Tracer.Tracer).pipe(
-        Effect.provide(withStallAttribution(Layer.succeed(Tracer.Tracer, base))),
-        Effect.provide(serverConfig(tempDir())),
+        Effect.provide(
+          withStallAttribution(Layer.succeed(Tracer.Tracer, base)).pipe(
+            Layer.provide(serverConfig(tempDir())),
+          ),
+        ),
         Effect.scoped,
       );
       assert.notStrictEqual(seen, base);
@@ -61,9 +64,11 @@ describe("withStallAttribution", () => {
           );
           return yield* Deferred.await(warned);
         }).pipe(
-          Effect.provide(decorated),
-          Effect.provide(Logger.layer([capture])),
-          Effect.provide(serverConfig(logsDir)),
+          Effect.provide(
+            decorated.pipe(
+              Layer.provide(Layer.merge(Logger.layer([capture]), serverConfig(logsDir))),
+            ),
+          ),
           Effect.scoped,
         );
         assert.include(warning, "ThreadLaunchService.prepareInBackground");
