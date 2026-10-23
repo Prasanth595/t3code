@@ -1871,23 +1871,26 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           // Muse Code 1.4.12 never starts session MCP servers on a host whose resume replays
           // queued work, and MSP cannot reload them. Closing the host cancels one replayed
           // item, so resume on fresh hosts until one comes back idle.
-          for (let relaunch = 0; config && result.session.activeTurnId; relaunch++) {
-            if (relaunch === 5) {
-              yield* Effect.logWarning("Muse kept replaying queued work; T3 tools are unavailable");
-              break;
+          if (config)
+            for (let relaunch = 0; result.session.activeTurnId; relaunch++) {
+              if (relaunch === 5) {
+                yield* Effect.logWarning(
+                  "Muse kept replaying queued work; T3 tools are unavailable",
+                );
+                break;
+              }
+              yield* Effect.logWarning("Muse replayed queued work without T3 tools; relaunching");
+              const replaying = host;
+              yield* eventPermit.withPermits(1)(
+                Effect.sync(() => {
+                  hostEpoch++;
+                  wake = undefined;
+                }),
+              );
+              yield* Effect.tryPromise(() => replaying.close()).pipe(Effect.ignore);
+              yield* launchHost();
+              result = yield* open;
             }
-            yield* Effect.logWarning("Muse replayed queued work without T3 tools; relaunching");
-            const replaying = host;
-            yield* eventPermit.withPermits(1)(
-              Effect.sync(() => {
-                hostEpoch++;
-                wake = undefined;
-              }),
-            );
-            yield* Effect.tryPromise(() => replaying.close()).pipe(Effect.ignore);
-            yield* launchHost();
-            result = yield* open;
-          }
           if (requestedId)
             yield* request("session/setApprovalMode", {
               mode: museApprovalMode(args.runtimePolicy.runtimeMode),
