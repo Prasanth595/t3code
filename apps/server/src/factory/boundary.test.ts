@@ -147,6 +147,21 @@ describe("factory boundary", () => {
     expect(violations[0]).toContain("orchestration-v2/x.ts");
   });
 
+  it("lets runtimeLayer.ts import the routed projection store and nothing else of the factory", () => {
+    const violations = findBoundaryViolations(
+      [
+        {
+          path: "orchestration-v2/runtimeLayer.ts",
+          imports: ["../factory/t3/projectionStoreReadRouting.ts", "../factory/index.ts"],
+        },
+      ],
+      new Set(),
+    );
+    expect(violations).toEqual([
+      "orchestration-v2/runtimeLayer.ts imports ../factory/index.ts from factory/",
+    ]);
+  });
+
   it("extracts static, side-effect and dynamic imports", () => {
     expect(
       extractImports(

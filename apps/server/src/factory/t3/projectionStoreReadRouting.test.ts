@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - the database is a real file in a temp directory.
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -6,7 +7,7 @@ import { assert, it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { describe } from "vite-plus/test";
+import { describe, expect } from "vite-plus/test";
 
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { useTempDirs } from "../ledger/testSupport.ts";
@@ -51,4 +52,26 @@ describe("the routed projection store", () => {
       assert.strictEqual((yield* store.getShellSnapshot()).threads.length, 2);
     }).pipe(Effect.provide(routedStore())),
   );
+});
+
+/** The one import line each upstream seam swaps to reach the routed store. */
+const hookOf = (file: string) =>
+  NodeFS.readFileSync(NodePath.resolve(import.meta.dirname, "../..", file), "utf8")
+    .split("\n")
+    .filter((line) =>
+      /^import \* as \w+ from ".*ProjectionStore\.ts"|projectionStoreReadRouting/.test(line),
+    );
+
+describe("the routed store's hooks", () => {
+  // ThreadLaunchService reaches the store through ThreadManagementService and the Orchestrator,
+  // which runtimeLayer.ts provides; the other consumers get the store from server.ts. A sync that
+  // takes upstream's side of either seam silently puts those reads back on the writer.
+  it("are the store server.ts and runtimeLayer.ts provide", () => {
+    expect(hookOf("server.ts")).toEqual([
+      'import * as ProjectionStoreV2 from "./factory/t3/projectionStoreReadRouting.ts";',
+    ]);
+    expect(hookOf("orchestration-v2/runtimeLayer.ts")).toEqual([
+      'import * as ProjectionStore from "../factory/t3/projectionStoreReadRouting.ts";',
+    ]);
+  });
 });
