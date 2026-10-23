@@ -19,7 +19,7 @@ const CLIENT_TRACING_RESOURCE = {
   attributes: {
     "service.namespace": "t3code",
     "service.runtime": "t3-web",
-    "service.mode": isElectron ? "electron" : "browser",
+    "t3code.client.surface": isElectron ? "desktop" : "web",
     "service.version": APP_VERSION,
   },
 } as const;
