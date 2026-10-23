@@ -1,11 +1,17 @@
 import { RegistryContext } from "@effect/atom-react";
-import { EnvironmentId, ThreadId, type DeviceServiceState } from "@t3tools/contracts";
+import {
+  EnvironmentAuthorizationError,
+  EnvironmentId,
+  ThreadId,
+  type DeviceServiceState,
+} from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 import { useEffect } from "react";
 
 import { act, render } from "../../test/render";
+import { DevicePanel } from "../components/device/DevicePanel";
 import { useAgentOpenedPreviews } from "../components/preview/useAgentOpenedPreviews";
 import { usePreviewMiniPlayerStore } from "../previewMiniPlayerStore";
 import { readThreadPreviewState } from "../previewStateStore";
@@ -15,6 +21,13 @@ vi.mock(import("../hooks/useSettings"), () => ({
   useClientSettings: ((
     select: (settings: { browserAutoShowFloatingPreview: boolean }) => unknown,
   ) => select({ browserAutoShowFloatingPreview: true })) as never,
+}));
+vi.mock(import("./use-atom-command"), () => {
+  const run = () => Promise.resolve({ _tag: "Success", value: {} });
+  return { useAtomCommand: (() => run) as never };
+});
+vi.mock(import("../components/device/DeviceHostUpdates"), () => ({
+  DeviceHostUpdates: () => null,
 }));
 
 it("baselines the first device snapshot without reopening dismissed devices", async () => {
@@ -110,4 +123,54 @@ it("baselines the first device snapshot without reopening dismissed devices", as
     platform: "ios",
     name: "Tablet",
   });
+});
+
+it("reports a failed first device load and retries it", async () => {
+  let attempts = 0;
+  const stateAtom = Atom.make(
+    (): AsyncResult.AsyncResult<DeviceServiceState, EnvironmentAuthorizationError> => {
+      attempts += 1;
+      return attempts === 1
+        ? AsyncResult.fail(
+            new EnvironmentAuthorizationError({
+              requiredScope: "orchestration:read",
+              message: "Device access denied",
+            }),
+          )
+        : AsyncResult.success({
+            hosts: [],
+            hostStatus: "ready",
+            hostStatuses: {},
+            devices: [],
+            sessions: [],
+            onboardingCompleted: true,
+            agentAccessEnabled: false,
+            hubBasePath: "/api/device-hub",
+            revision: 1,
+          });
+    },
+  ).pipe(Atom.keepAlive);
+  const registry = AtomRegistry.make();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  using _subscription = vi.spyOn(deviceEnvironment, "state").mockReturnValue(stateAtom);
+  await using screen = await render(
+    <RegistryContext.Provider value={registry}>
+      <DevicePanel
+        mode="embedded"
+        threadRef={{
+          environmentId: EnvironmentId.make("device-load-failure"),
+          threadId: ThreadId.make("thread"),
+        }}
+        surface={{ id: "device", kind: "device" }}
+        visible
+        onDismissSetup={() => undefined}
+      />
+    </RegistryContext.Provider>,
+  );
+
+  await expect.element(screen.getByRole("alert").getByText("Device access denied")).toBeVisible();
+
+  await screen.getByRole("button", { name: "Retry" }).click();
+  await expect.element(screen.getByRole("button", { name: "Refresh devices" })).toBeVisible();
+  expect(screen.container.querySelector('[role="alert"]')).toBeNull();
 });
