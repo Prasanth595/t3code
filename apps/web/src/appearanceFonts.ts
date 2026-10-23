@@ -274,6 +274,25 @@ function resolveGenericFamilyLabel(generic: string): string | null {
   return null;
 }
 
+/**
+ * CSS family name that actually renders a given (possibly synthetic) font
+ * label. Labels like "SF Pro" are produced for the macOS system UI face, but
+ * "SF Pro" is not a resolvable CSS family name, so an element styled with it
+ * falls back to the browser default (usually a serif). Map such labels to a
+ * resolvable family so previews and dropdown rows render in the right face.
+ */
+export function displayFontFamily(family: string): string {
+  const trimmed = family.trim();
+  if (trimmed.length === 0) return "";
+  // Strip quotes only for the synthetic-label comparison; keep the original
+  // trimmed value for output and normalize it through cssFontFamilies.
+  const unquoted = trimmed.replace(/^(['"])(.*)\1$/, "$2").trim();
+  const lower = unquoted.toLowerCase();
+  if (lower === "sf pro") return "-apple-system, BlinkMacSystemFont, system-ui, sans-serif";
+  if (lower === "sf mono") return '"SF Mono", "SFMono-Regular", ui-monospace, monospace';
+  return cssFontFamilies(trimmed) ?? trimmed;
+}
+
 export function resolveDefaultFamilyLabel(stack: string): string | null {
   for (const raw of stack.split(",")) {
     const family = raw.trim().replace(/^(['"])(.*)\1$/, "$2");
