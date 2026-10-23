@@ -1,5 +1,6 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off - observes the children the launcher spawns with Node built-ins.
 import type * as NodeChildProcess from "node:child_process";
+import * as NodeSqlite from "node:sqlite";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -250,6 +251,63 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       assert.isFalse(completed);
       yield* Effect.promise(() => launcher.stop("SIGTERM"));
       yield* Effect.promise(() => running);
+    }),
+  );
+
+  it.effect("starts the server again once the other owner releases the T3 home", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-reclaim-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const ownerPath = path.join(root, "userdata", "server-owner.sqlite");
+      yield* fs.makeDirectory(path.dirname(ownerPath), { recursive: true });
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        path.join(root, "runtime", "versions", "1.0.0"),
+        [
+          `const db = new (require("node:sqlite").DatabaseSync)(${JSON.stringify(ownerPath)});`,
+          `try { db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;"); }`,
+          `catch { process.exit(${SERVER_EXIT_CODE_STATE_DIR_OWNED}); }`,
+          "setInterval(() => {}, 1_000);",
+        ].join("\n"),
+      );
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+      const otherOwner = new NodeSqlite.DatabaseSync(ownerPath);
+      otherOwner.exec("BEGIN EXCLUSIVE;");
+      const refused = Promise.withResolvers<void>();
+      const reclaimed = Promise.withResolvers<void>();
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+            if (String(chunk).includes("owns this T3 home")) refused.resolve();
+            if (String(chunk).includes("T3 home is free again")) reclaimed.resolve();
+            return true;
+          }),
+        ),
+        (spy) => Effect.sync(() => spy.mockRestore()),
+      );
+      const spawnsBefore = spawnedChildren.length;
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        {
+          stateDirOwnerPollMs: 10,
+        },
+      );
+      const running = launcher.run();
+      yield* Effect.promise(() => refused.promise);
+      otherOwner.close();
+      yield* Effect.promise(() => reclaimed.promise);
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      yield* Effect.promise(() => running);
+      assert.strictEqual(spawnedChildren.length - spawnsBefore, 2);
     }),
   );
 

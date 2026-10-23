@@ -9,6 +9,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 import * as NodeUtil from "node:util";
 
 import type {
@@ -42,6 +43,7 @@ const TERMINATE_GRACE_MS = 5_000;
 // Matches SERVER_EXIT_CODE_STATE_DIR_OWNED in contracts. The standalone
 // launcher stays independent of the Effect-backed contracts package.
 const STATE_DIR_OWNED_EXIT_CODE = 78;
+const STATE_DIR_OWNER_POLL_MS = 30_000;
 
 type TerminalStatus = "committed" | "rolled-back" | "failed";
 type ChildRole = "active" | "trial";
@@ -458,6 +460,28 @@ async function terminateChild(
   }
 }
 
+/**
+ * Takes and drops the same exclusive transaction the server holds for its
+ * lifetime (see `acquireServerOwnership`). Only SQLITE_BUSY counts as owned:
+ * any other failure is left for the server's own startup to report.
+ */
+function stateDirOwned(baseDir: string): boolean {
+  let db: NodeSqlite.DatabaseSync | undefined;
+  try {
+    db = new NodeSqlite.DatabaseSync(NodePath.join(baseDir, "userdata", "server-owner.sqlite"));
+    db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE; ROLLBACK;");
+    return false;
+  } catch (cause) {
+    return (
+      cause instanceof Error &&
+      (("errcode" in cause && cause.errcode === 5) ||
+        ("code" in cause && cause.code === "SQLITE_BUSY"))
+    );
+  } finally {
+    db?.close();
+  }
+}
+
 const stopMarkerPath = (baseDir: string) =>
   NodePath.join(baseDir, "runtime", SERVICE_STOP_MARKER_FILE);
 const restartPendingPath = (baseDir: string) =>
@@ -476,6 +500,7 @@ export class Launcher {
   readonly #completion = Promise.withResolvers<void>();
   readonly #backupSpaceProbe: Partial<BackupSpaceProbe> | undefined;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
+  readonly #stateDirOwnerPollMs: number;
 
   constructor(
     baseDir: string,
@@ -483,9 +508,11 @@ export class Launcher {
     options: {
       readonly backupSpaceProbe?: Partial<BackupSpaceProbe>;
       readonly environment?: Readonly<NodeJS.ProcessEnv>;
+      readonly stateDirOwnerPollMs?: number;
     } = {},
   ) {
     this.#baseDir = baseDir;
+    this.#stateDirOwnerPollMs = options.stateDirOwnerPollMs ?? STATE_DIR_OWNER_POLL_MS;
     this.#backupSpaceProbe = options.backupSpaceProbe;
     this.#environment = { ...(options.environment ?? process.env) };
     this.#statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
@@ -814,8 +841,9 @@ export class Launcher {
 
   /**
    * Exiting would make systemd or launchd start another refused server, so stay
-   * idle until stopped or restarted. A pending update fails without restoring
-   * its backup: the other owner may have written to the database since.
+   * idle and start the server again once the other owner releases the lock. A
+   * pending update fails without restoring its backup: the other owner may have
+   * written to the database since.
    */
   async #idleWhileStateDirOwned(): Promise<void> {
     this.#clearTimer();
@@ -830,11 +858,22 @@ export class Launcher {
       this.#state = next;
       await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
     }
-    // Signal listeners alone do not keep Node alive.
-    this.#timer = setInterval(() => {}, 2_147_483_647);
     process.stderr.write(
-      "[service-launcher] Another T3 Code server owns this T3 home. Stop it, then restart this service.\n",
+      "[service-launcher] Another T3 Code server owns this T3 home. This service starts again once it stops.\n",
     );
+    // The interval also keeps Node alive: signal listeners alone do not.
+    this.#timer = setInterval(
+      () => this.#enqueue(() => this.#reclaimStateDir()),
+      this.#stateDirOwnerPollMs,
+    );
+  }
+
+  async #reclaimStateDir(): Promise<void> {
+    if (this.#timer === undefined || this.#child !== null || this.#stopping) return;
+    if (stateDirOwned(this.#baseDir)) return;
+    this.#clearTimer();
+    process.stderr.write("[service-launcher] The T3 home is free again. Starting the server.\n");
+    await this.#startChild(this.#state.activeVersion, "active", this.#state.update);
   }
 
   async #returnToPrevious(
