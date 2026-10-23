@@ -1303,7 +1303,7 @@ repos:
   );
 
   it.effect("a remote client's preflight for the save is allowed, and the save then answers", () =>
-    serving({ cors: true }, async (call, { tokens, send }) => {
+    serving({ cors: true }, async (_call, { tokens, send }) => {
       const preflight = await send(
         new Request(`https://backend.example${CONFIG_PATH}`, {
           method: "OPTIONS",
@@ -1319,8 +1319,18 @@ repos:
         .split(",")
         .map((method) => method.trim());
       assert.include(allowed, "POST");
-      const response = await call("POST", CONFIG_PATH, tokens.settingsWrite, VALID_BODY);
+      const response = await send(
+        new Request(`https://backend.example${CONFIG_PATH}`, {
+          method: "POST",
+          headers: {
+            origin: "https://app.t3.codes",
+            authorization: `Bearer ${tokens.settingsWrite}`,
+          },
+          body: JSON.stringify(VALID_BODY),
+        }),
+      );
       assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.headers.get("access-control-allow-origin"), "*");
     }),
   );
 });
