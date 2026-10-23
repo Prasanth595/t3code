@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -115,6 +116,75 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       assert.deepStrictEqual(removed, ["1.0.0"]);
       assert.equal(yield* fs.realPath(launcher), path.join(root, "runtime/versions/2.0.0/t3"));
     }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+  );
+
+  const launcherFixture = Effect.fnUntraced(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+    const oldExe = path.join(root, "runtime/versions/1.0.0/t3");
+    const newExe = path.join(root, "runtime/versions/2.0.0/t3");
+    const launcher = path.join(root, "t3");
+    for (const file of [oldExe, newExe]) {
+      yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+      yield* fs.writeFileString(file, "");
+    }
+    yield* fs.symlink(oldExe, launcher);
+    return { root, oldExe, newExe, launcher, launchersFile: path.join(root, "runtime/launchers") };
+  });
+
+  it.effect("fails instead of repointing a launcher it cannot record", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { root, oldExe, newExe, launcher, launchersFile } = yield* launcherFixture();
+      // Appending to a directory fails the way a read-only or full disk would.
+      yield* fs.makeDirectory(launchersFile);
+
+      const result = yield* repointLauncher({
+        launchedAs: launcher,
+        baseDir: root,
+        targetEntryPath: newExe,
+      }).pipe(Effect.exit);
+
+      assert.isTrue(Exit.isFailure(result));
+      assert.equal(yield* fs.readLink(launcher), oldExe);
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+  );
+
+  it.effect.each(["recording", "repointing"] as const)(
+    "never leaves a repointed launcher unrecorded when t3 update dies while %s",
+    (step) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { root, newExe, launcher, launchersFile } = yield* launcherFixture();
+
+        yield* repointLauncher({
+          launchedAs: launcher,
+          baseDir: root,
+          targetEntryPath: newExe,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            writeFileString: (path, data, options) =>
+              step === "recording" && path === launchersFile
+                ? Effect.die("t3 update was killed")
+                : fs.writeFileString(path, data, options),
+            rename: (from, to) =>
+              step === "repointing" && to === launcher
+                ? Effect.die("t3 update was killed")
+                : fs.rename(from, to),
+          }),
+          Effect.exit,
+        );
+
+        const repointed = (yield* fs.readLink(launcher)) === newExe;
+        const recorded = (yield* fs
+          .readFileString(launchersFile)
+          .pipe(Effect.orElseSucceed(() => "")))
+          .split("\n")
+          .includes(launcher);
+        assert.isFalse(repointed && !recorded);
+      }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect("leaves a plain copy or a foreign symlink alone", () =>
