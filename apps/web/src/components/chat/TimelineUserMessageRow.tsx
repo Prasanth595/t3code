@@ -307,8 +307,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       : null,
   );
   const resolvedContext = resolveUserMessageContext(row.message);
-  // The bootstrap prompt is for the agent, not the reader: the bubble shows a caption instead.
-  const attachmentOnly = isAttachmentOnlyBootstrapText(resolvedContext.text);
+  // The bootstrap prompt is for the agent, not the reader: a person's photo-only message shows a
+  // caption instead. Messages from other agents keep their folded rendering.
+  const attachmentOnly = !folded && isAttachmentOnlyBootstrapText(resolvedContext.text);
   const bodyText = attachmentOnly ? "" : resolvedContext.text;
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const revertTurnCount = row.revertTurnCount;

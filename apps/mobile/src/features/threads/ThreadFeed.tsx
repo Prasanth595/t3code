@@ -1408,8 +1408,10 @@ function renderFeedEntry(
       const foldExpanded = foldRowId !== null && (props.expandedWorkRows[foldRowId] ?? false);
       const bubbleBodyVisible = foldRowId === null || foldExpanded;
       const intentBadge = resolveUserMessageIntentBadge(message.inputIntent);
-      // The bootstrap prompt is for the agent, not the reader: the bubble shows a caption instead.
-      const attachmentOnly = isAttachmentOnlyBootstrapText(message.text);
+      // The bootstrap prompt is for the agent, not the reader: a person's photo-only message shows a
+      // caption instead. Messages from other agents keep their folded rendering.
+      const attachmentOnly =
+        presentation.attribution !== "agent" && isAttachmentOnlyBootstrapText(message.text);
       const referenceIds = new Set(
         collectComposerContextReferences(message.text).map((reference) => reference.contextId),
       );

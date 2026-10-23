@@ -372,6 +372,21 @@ describe("MessagesTimeline attachment-only messages", () => {
     expect(screen.buttons("Image only")).toHaveLength(0);
   });
 
+  it("leaves a photo-only message from another agent as a folded message", async () => {
+    setup();
+    await using screen = await renderTimeline([
+      message(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT, {
+        attachments: [photo],
+        createdBy: "agent",
+        senderThreadId: ThreadId.make("thread-sender"),
+      }),
+    ]);
+    expect(screen.button(/^Agent/).textContent).toContain("without additional text");
+    await click(screen.button(/^Agent/));
+    expect(screen.buttons("Image only")).toHaveLength(0);
+    expect(screen.text()).toContain(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT);
+  });
+
   it("keeps a message that adds text to the bootstrap prompt as a full bubble", async () => {
     setup();
     await using screen = await renderTimeline([
