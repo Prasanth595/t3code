@@ -6316,7 +6316,11 @@ describe("retrying a call GitHub never received", () => {
 
   it.effect("a rate limit and a timed-out call are not retried", () =>
     Effect.gen(function* () {
-      const limited = setup(fail(1, "HTTP 429: API rate limit exceeded"), reply(LIST_ONE));
+      // Even when its stderr also carries a not-received phrase: the rate limit decides.
+      const limited = setup(
+        fail(1, "net/http: TLS handshake timeout\nHTTP 429: API rate limit exceeded"),
+        reply(LIST_ONE),
+      );
       assert.strictEqual(
         (yield* limited.err(limited.github.listIssues("ready")))._tag,
         "GitHubRateLimited",
