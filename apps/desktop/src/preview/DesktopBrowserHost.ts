@@ -132,9 +132,7 @@ export const make = Effect.gen(function* () {
   ) => {
     const wc = tab.debuggee.webContents;
     const host = wc.hostWebContents;
-    if (!host || host.isDestroyed() || wc.isDestroyed()) {
-      throw new Error("The preview render surface is unavailable.");
-    }
+    if (!host || host.isDestroyed() || wc.isDestroyed()) return capture();
     const captureId = NodeCrypto.randomUUID();
     const setSurface = (active: boolean) =>
       host.executeJavaScript(
@@ -143,9 +141,9 @@ export const make = Effect.gen(function* () {
     try {
       // The guest stays offscreen until React commits the activity lease and Electron
       // receives its new bounds. CDP can otherwise wait forever for a composited frame.
-      if ((await setSurface(true)) !== true) {
-        throw new Error("The preview render surface did not become ready for capture.");
-      }
+      // A window that isn't painting, like a minimized one, never reports ready, yet its
+      // on-screen tab can still be captured, so the screenshot is sent either way.
+      await setSurface(true).catch(() => false);
       if (tab.relay !== relay || tab.screenshotTurn !== turn || wc.isDestroyed()) {
         throw new Error("The preview connection that asked for this screenshot closed.");
       }

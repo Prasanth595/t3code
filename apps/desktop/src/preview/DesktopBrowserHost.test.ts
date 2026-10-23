@@ -154,16 +154,21 @@ describe("DesktopBrowserHost", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("does not issue a screenshot when its render surface is unavailable", () =>
+  it.effect.each<[string, () => Promise<unknown>]>([
+    ["never becomes ready", async () => false],
+    ["can't be reached", () => Promise.reject(new Error("Script failed"))],
+  ])("still issues a screenshot when its render surface %s", ([, prepareSurface]) =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
-      const debuggee = makeDebuggee(async () => false);
+      const debuggee = makeDebuggee(prepareSurface);
       host.attach(key, debuggee.tab);
       const replies = yield* watchReplies(host);
 
-      yield* command(host, 1, "Page.captureScreenshot");
+      yield* sendScreenshot(host, debuggee, 1);
+      debuggee.releaseFirst();
       expect(yield* Queue.take(replies)).toBe(1);
-      expect(debuggee.sent).toEqual([]);
+      expect(debuggee.sent).toEqual([1]);
+      expect(debuggee.surfaceRequests).toHaveLength(2);
     }).pipe(Effect.scoped),
   );
 
