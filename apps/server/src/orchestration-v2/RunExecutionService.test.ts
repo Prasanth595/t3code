@@ -2747,6 +2747,13 @@ it.effect.each([
   },
   { name: "count limit", count: 65, bytes: 0, batches: [32, 32, 1] },
   { name: "byte limit", count: 3, bytes: 600_000, batches: [1, 1, 1] },
+  {
+    name: "singleton with multiple events",
+    count: 1,
+    bytes: 600_000,
+    batches: [1, 1],
+    multiple: true,
+  },
   { name: "source pauses", count: 5, bytes: 0, batches: [2, 3], split: true },
   { name: "failed normalization", count: 5, bytes: 0, batches: [1], failAt: 1 },
 ])("persists queued snapshots in bounded ordered batches: $name", (scenario) =>
@@ -2786,12 +2793,21 @@ it.effect.each([
                   payload: input.event.message,
                 },
               ]);
+      const expanded = normalized.pipe(
+        Effect.map((events) =>
+          scenario.multiple
+            ? events.flatMap((event) =>
+                [0, 1].map((copy) => ({ ...event, id: EventId.make(`${event.id}:${copy}`) })),
+              )
+            : events,
+        ),
+      );
       return scenario.stopDuring && index === 1
         ? Deferred.succeed(normalizing, undefined).pipe(
             Effect.andThen(Deferred.await(resume)),
-            Effect.andThen(normalized),
+            Effect.andThen(expanded),
           )
-        : normalized;
+        : expanded;
     };
     const capture = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
       Effect.sync(() => {
@@ -2882,6 +2898,7 @@ it.effect.each([
           : [`event:snapshot:${index}`],
       )
         .flat()
+        .flatMap((id) => (scenario.multiple ? [`${id}:0`, `${id}:1`] : [id]))
         .slice(0, expectedCount),
     );
     if (scenario.failAt !== undefined) assert.include(result.observed, "run:failed");

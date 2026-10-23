@@ -1295,6 +1295,7 @@ export const layer: Layer.Layer<
         // These per-event helpers share the enclosing ingestion span.
         const bufferSnapshot = Effect.fnUntraced(function* (
           snapshot: ProviderEventIngestor.ProviderEventIngestInput,
+          singleSnapshot: boolean,
         ) {
           const events = yield* providerEventIngestor.normalize(snapshot);
           // Node deduplication reads projections. Unchanged repeats need not split a batch,
@@ -1304,6 +1305,11 @@ export const layer: Layer.Layer<
             yield* flushSnapshots;
             pendingSnapshots = [...events];
             yield* flushSnapshots;
+            return [];
+          }
+          // A lone event flushes at group exit; persistence performs its encode.
+          if (singleSnapshot && events.length === 1) {
+            pendingSnapshots.push(events[0]!);
             return [];
           }
           for (const event of events) {
@@ -1392,10 +1398,12 @@ export const layer: Layer.Layer<
           event,
           accepted,
           buffered,
+          singleSnapshot,
         }: {
           event: ProviderAdapter.ProviderAdapterV2Event;
           accepted: boolean;
           buffered: boolean;
+          singleSnapshot: boolean;
         }) {
           if (!accepted) return;
           if (
@@ -1448,7 +1456,7 @@ export const layer: Layer.Layer<
             };
             if (!buffered) yield* flushSnapshots;
             const storedEvents = buffered
-              ? yield* bufferSnapshot(ingestInput)
+              ? yield* bufferSnapshot(ingestInput, singleSnapshot)
               : yield* providerEventIngestor.ingestNormalized(ingestInput);
             storedEventCount = storedEvents.length;
             if (isRootProviderThreadUpdate && rootTerminalAlreadySeen && storedEventCount === 0) {
@@ -1511,9 +1519,10 @@ export const layer: Layer.Layer<
                   )
                     index++;
                 }
+                const singleSnapshot = index - start === 1;
                 const process = Stream.fromArray(events.slice(start, index)).pipe(
                   Stream.mapEffect(routeEvent),
-                  Stream.tap((event) => ingestEvent({ ...event, buffered })),
+                  Stream.tap((event) => ingestEvent({ ...event, buffered, singleSnapshot })),
                   Stream.takeUntilEffect(() =>
                     shouldStopProviderEventIngestion.pipe(
                       Effect.tap((stop) =>
