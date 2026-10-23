@@ -801,7 +801,6 @@ function spanStyle(pen: string, palette: ReadonlyArray<string>): TerminalSpanSty
       background !== undefined &&
       (foreground === undefined || contrastRatio(foreground, background) < 3)
     ) {
-      // White keeps 3:1 only up to luminance 0.30.
       color = luminance(background) > 0.3 ? "#1f2328" : "#ffffff";
     }
   }
