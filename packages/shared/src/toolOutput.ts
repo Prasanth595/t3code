@@ -10,6 +10,7 @@ import {
   type HtmlRenderReference,
 } from "./htmlRender.ts";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference, type McpAppReference } from "./mcpApp.ts";
+import { attachmentIdBelongsToThread } from "./attachmentIds.ts";
 import { resolveT3McpToolId } from "./t3McpToolPresentation.ts";
 
 const MAX_PARSED_BYTES = 16_384;
@@ -208,16 +209,27 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
   return Object.keys(output).length === 0 ? undefined : output;
 }
 
-export function htmlRenderFromToolItem(item: {
-  readonly toolName: string | null | undefined;
-  readonly output?: unknown;
-}): HtmlRenderReference | undefined {
-  // OpenCode 2 Code Mode runs T3 tools inside `execute`, so the item keeps
-  // toolName "execute" even when the script returns html_render's result.
-  if (item.toolName !== "execute" && resolveT3McpToolId(item.toolName) !== HTML_RENDER_TOOL_NAME)
-    return undefined;
+/**
+ * `threadId` is the thread the item belongs to. OpenCode 2 Code Mode runs T3
+ * tools inside `execute`, whose output is whatever the agent's script
+ * returned, so a reference read from it only counts when its page was
+ * published for that thread.
+ */
+export function htmlRenderFromToolItem(
+  item: {
+    readonly toolName: string | null | undefined;
+    readonly output?: unknown;
+  },
+  threadId?: string,
+): HtmlRenderReference | undefined {
+  const fromScript = item.toolName === "execute";
+  if (!fromScript && resolveT3McpToolId(item.toolName) !== HTML_RENDER_TOOL_NAME) return undefined;
   const output = compactDynamicToolOutput(item.output);
-  return output?.isError ? undefined : output?.htmlRender;
+  const render = output?.isError ? undefined : output?.htmlRender;
+  if (render === undefined || !fromScript) return render;
+  return threadId !== undefined && attachmentIdBelongsToThread(render.attachmentId, threadId)
+    ? render
+    : undefined;
 }
 
 /**
