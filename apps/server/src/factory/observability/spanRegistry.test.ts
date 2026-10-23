@@ -24,11 +24,11 @@ describe("makeSpanRegistry.active", () => {
     const c = clock();
     const registry = makeSpanRegistry({ now: c.now });
     c.set(100);
-    const id = registry.start("sql.execute", "sql");
+    const id = registry.start("sqlite", "sql");
     c.set(2500);
     registry.end(id);
     expect(registry.active(500, 3000, 10)).toEqual([
-      { name: "sql.execute", kind: "sql", ageMs: 2900, open: false },
+      { name: "sqlite", kind: "sql", ageMs: 2900, open: false },
     ]);
   });
 
@@ -93,18 +93,23 @@ const fakeSpan = (name: string, parent: Option.Option<Tracer.AnySpan>) => {
     name,
     parent,
     end: (endTime: bigint) => void ended.push(endTime),
+    attribute: () => {},
   } as unknown as Tracer.Span;
   return { span, ended };
 };
 
-const spanOptions = (name: string, parent: Option.Option<Tracer.AnySpan>) =>
+const spanOptions = (
+  name: string,
+  parent: Option.Option<Tracer.AnySpan>,
+  kind: "internal" | "client" = "internal",
+) =>
   ({
     name,
     parent,
     annotations: undefined,
     links: [],
     startTime: 0n,
-    kind: "internal",
+    kind,
     root: Option.isNone(parent),
     sampled: true,
   }) as unknown as Parameters<Tracer.Tracer["span"]>[0];
@@ -126,24 +131,39 @@ describe("wrapTracer", () => {
   const parentSpan = { _tag: "Span" } as unknown as Tracer.AnySpan;
   const externalParent = { _tag: "ExternalSpan" } as unknown as Tracer.AnySpan;
 
-  it("tracks root spans and sql.execute spans until they end, and still ends the delegate's span", () => {
+  it("tracks root spans and client spans until they end, and still ends the delegate's span", () => {
     const { c, registry, created, tracer } = setup();
     c.set(5);
     const root = tracer.span(spanOptions("rpc.request", Option.none()));
-    const sql = tracer.span(spanOptions("sql.execute", Option.some(parentSpan)));
+    const sql = tracer.span(spanOptions("sqlite", Option.some(parentSpan), "client"));
+    sql.attribute("db.system.name", "sqlite");
+    sql.attribute("db.query.text", "SELECT 1");
     const external = tracer.span(spanOptions("http.server", Option.some(externalParent)));
     expect(registry.active(0, 10, 10).map((s) => [s.name, s.kind])).toEqual([
       ["rpc.request", "root"],
-      ["sql.execute", "sql"],
+      ["sqlite", "sql"],
       ["http.server", "root"],
     ]);
+    expect(registry.active(0, 10, 10)[1]?.query).toBe("SELECT 1");
     c.set(7);
     root.end(9n, undefined as never);
     sql.end(9n, undefined as never);
     external.end(9n, undefined as never);
     expect(registry.active(0, 10, 10).every((s) => !s.open)).toBe(true);
     expect(created.get("rpc.request")?.ended).toEqual([9n]);
-    expect(created.get("sql.execute")?.ended).toEqual([9n]);
+    expect(created.get("sqlite")?.ended).toEqual([9n]);
+  });
+
+  it("does not take a client span for SQL until it sets db.system.name, and cuts long query text", () => {
+    const { registry, tracer } = setup();
+    const http = tracer.span(spanOptions("http.client", Option.some(parentSpan), "client"));
+    http.attribute("http.method", "GET");
+    const sql = tracer.span(spanOptions("sqlite", Option.some(parentSpan), "client"));
+    sql.attribute("db.system.name", "sqlite");
+    sql.attribute("db.query.text", "x".repeat(500));
+    const spans = registry.active(0, 10, 10);
+    expect(spans.map((s) => s.kind)).toEqual(["root", "sql"]);
+    expect(spans[1]?.query).toHaveLength(160);
   });
 
   it("returns the delegate's own span, untouched, for other child spans", () => {
