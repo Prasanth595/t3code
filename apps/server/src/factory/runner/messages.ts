@@ -325,9 +325,6 @@ export const droppedCommentMessage = (
 export const END_WITH_DONE =
   "When you have fixed this, end your reply with the line FACTORY-DONE: <PR URL> as before.";
 
-/** The public reason when the base branch moved again and again and the gate could not settle within `limits.regates`. */
-export const BASE_KEPT_MOVING = "the base branch kept moving and the gate could not settle";
-
 /** `1234` as `1.234 s`, `30000` as `30 s`, `800` as `800 ms`: softfac's `format_duration`. */
 const formatDuration = (ms: number): string => {
   if (ms < 1000) return `${ms} ms`;

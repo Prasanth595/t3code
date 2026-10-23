@@ -759,6 +759,9 @@ describe("readProgress: gating again", () => {
     moved(7, "building", "pr-open"),
   ];
   const regated = (ms: number, sha: string, base: string, previous: string) =>
+    line(ms, "gate_regate", { sha, base_sha: base, previous_base_sha: previous, conflict: true });
+  /** A line an older factory wrote: no `conflict` field, whatever started it. */
+  const regatedBefore = (ms: number, sha: string, base: string, previous: string) =>
     line(ms, "gate_regate", { sha, base_sha: base, previous_base_sha: previous });
   const relaunching = (ms: number) =>
     line(ms, "regate_relaunching", { attempt: 2, branch: "t3code/abc", message: "boom" });
@@ -770,14 +773,13 @@ describe("readProgress: gating again", () => {
     assert.strictEqual(seen.regatePassed, false);
     assert.strictEqual(seen.regateSentBack, false);
     assert.strictEqual(seen.relaunch, null);
-    assert.strictEqual(seen.regates, 0);
   });
 
-  it("is under way from a gate_regate line, and says what moved since the recorded pass", () => {
+  it("is under way from a gate_regate line, and says what started it", () => {
     const seen = readProgress([...PASS, regated(8, HEAD, MOVED, BASE)]);
     assert.strictEqual(seen.regating, true);
-    assert.strictEqual(seen.regateMoved, "base");
-    assert.strictEqual(seen.regates, 1);
+    // The head did not move: the base alone starts no gate, so only a conflict is left.
+    assert.strictEqual(seen.regateMoved, "conflict");
     assert.strictEqual(readProgress([...PASS, regated(8, PUSHED, BASE, BASE)]).regateMoved, "head");
     assert.strictEqual(
       readProgress([...PASS, regated(8, PUSHED, MOVED, BASE)]).regateMoved,
@@ -793,14 +795,34 @@ describe("readProgress: gating again", () => {
     assert.strictEqual(readProgress([launched(1), regated(2, HEAD, BASE, BASE)]).regateMoved, null);
   });
 
-  it("keeps the newest line's answer when the base moves again", () => {
+  it("says an earlier factory began it for an older line with the head unchanged", () => {
+    // A base move or a conflict under the older rule: the line does not say which.
+    assert.strictEqual(
+      readProgress([...PASS, regatedBefore(8, HEAD, MOVED, BASE)]).regateMoved,
+      "earlier",
+    );
+    assert.strictEqual(
+      readProgress([...PASS, regatedBefore(8, HEAD, BASE, BASE)]).regateMoved,
+      "earlier",
+    );
+    // A moved head is read from the shas, marker or not.
+    assert.strictEqual(
+      readProgress([...PASS, regatedBefore(8, PUSHED, MOVED, BASE)]).regateMoved,
+      "both",
+    );
+    assert.strictEqual(
+      readProgress([launched(1), regatedBefore(2, HEAD, BASE, BASE)]).regateMoved,
+      null,
+    );
+  });
+
+  it("keeps the newest line's answer when another line follows", () => {
     const seen = readProgress([
       ...PASS,
       regated(8, HEAD, MOVED, BASE),
-      regated(9, HEAD, BASE, MOVED),
+      regated(9, PUSHED, BASE, BASE),
     ]);
-    assert.strictEqual(seen.regates, 2);
-    assert.strictEqual(seen.regateMoved, "base");
+    assert.strictEqual(seen.regateMoved, "head");
   });
 
   it("records a pass of the re-gate, and drops it with the posted results", () => {
@@ -983,7 +1005,6 @@ describe("readProgress: gating again", () => {
         moved(10, "pr-open", "building"),
       ]);
       assert.deepStrictEqual(seen.sending, before.sending);
-      assert.strictEqual(seen.regates, before.regates);
       assert.deepStrictEqual(seen.sentBackAttempts, before.sentBackAttempts);
       assert.deepStrictEqual(seen.commandAttempts, before.commandAttempts);
       assert.strictEqual(nextGateAttempt(seen), nextGateAttempt(before));
@@ -1061,7 +1082,7 @@ describe("readProgress: gating again", () => {
   });
 });
 
-describe("movedSince: what differs from the recorded pass", () => {
+describe("movedSince: whether the head moved since the recorded pass", () => {
   const HEAD = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
   const PUSHED = "7e6d5c4b3a291807f6e5d4c3b2a190817263a4b5";
   const BASE = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d";
@@ -1070,9 +1091,9 @@ describe("movedSince: what differs from the recorded pass", () => {
   it("is nothing without a pass on record, whatever the head and tip are", () => {
     assert.strictEqual(movedSince("", "", HEAD, BASE), null);
   });
-  it("is the base when only the tip differs, with or without a head on record", () => {
-    assert.strictEqual(movedSince("", BASE, HEAD, MOVED), "base");
-    assert.strictEqual(movedSince(HEAD, BASE, HEAD, MOVED), "base");
+  it("is nothing when only the tip differs, with or without a head on record", () => {
+    assert.strictEqual(movedSince("", BASE, HEAD, MOVED), null);
+    assert.strictEqual(movedSince(HEAD, BASE, HEAD, MOVED), null);
   });
   it("is the head when only the head differs and no base is on record", () => {
     assert.strictEqual(movedSince(HEAD, "", PUSHED, BASE), "head");
@@ -1081,9 +1102,9 @@ describe("movedSince: what differs from the recorded pass", () => {
   it("is both when both differ", () => {
     assert.strictEqual(movedSince(HEAD, BASE, PUSHED, MOVED), "both");
   });
-  it("is unknown for a pass with a head and no base when the head did not move", () => {
-    assert.strictEqual(movedSince(HEAD, "", HEAD, MOVED), "unknown");
-    assert.strictEqual(movedSince(HEAD, "", HEAD, BASE), "unknown");
+  it("is nothing for a pass with a head and no base when the head did not move", () => {
+    assert.strictEqual(movedSince(HEAD, "", HEAD, MOVED), null);
+    assert.strictEqual(movedSince(HEAD, "", HEAD, BASE), null);
   });
   it("compares commit ids without regard to case", () => {
     assert.strictEqual(movedSince(HEAD, BASE, HEAD.toUpperCase(), BASE.toUpperCase()), null);

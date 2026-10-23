@@ -221,8 +221,6 @@ export interface PassWorld {
    * `runner/gating.ts` `lastPass`.
    */
   readonly lastPass: (run: RunId) => Effect.Effect<LastPass | null, LedgerError>;
-  /** The tip of the repo's branch `base`, in lower case. */
-  readonly baseTip: (repo: Repo, base: string) => Effect.Effect<string, PassError>;
   /** Whether GitHub has the issue closed. */
   readonly issueClosed: (repo: Repo, issue: number) => Effect.Effect<boolean, PassError>;
   /** When the issue of each stuck attention item was last read, by item id, in epoch milliseconds; kept from pass to pass. */
@@ -1137,7 +1135,7 @@ const relaunched = Effect.fn("Pass.relaunched")(function* (
 
 /**
  * The gate started for every run whose issue is `pr-open`, once each, after the claims (softfac's
- * `pr_open_runs`), unless nothing moved since its last pass (see `unchanged`): such a run costs
+ * `pr_open_runs`), unless its head did not move since its last pass (see `unchanged`): such a run costs
  * no process and no gate slot, and the pass says nothing of it. A stop request left for the run
  * is dropped first, and the pass says so. The gate (`regate`) deals with a merged or closed pull request, a re-gate under
  * way, a relaunch not yet recorded, a run whose worktree line is not written yet, a checkout an
@@ -1150,7 +1148,7 @@ const prOpenRuns = Effect.fn("Pass.prOpenRuns")(function* (
   known: Known,
   pass: Pass,
 ) {
-  const tips = new Map<string, string | null>();
+  const failed = new Set<string>();
   for (const info of [...known.infos]) {
     if (info.unreadable || info.state !== "pr-open") continue;
     const loaded = repos.find(
@@ -1170,7 +1168,7 @@ const prOpenRuns = Effect.fn("Pass.prOpenRuns")(function* (
       // session's first run ends.
       if (yield* actedOnFeedback(world, repo, info, notes, pass)) {
         // Said.
-      } else if (!(yield* unchanged(world, repo, info.id, tips))) {
+      } else if (!(yield* unchanged(world, repo, info.id, failed))) {
         yield* startGate(world, repo, info, notes, pass);
       }
     }
@@ -1182,7 +1180,7 @@ const prOpenRuns = Effect.fn("Pass.prOpenRuns")(function* (
  * Calls the feedback step for a `pr-open` run and says what it did. True when it did anything,
  * which is when the run is not gated in this pass; false for a run with no new feedback, for which
  * nothing was written and nothing is said. A step that fails is said, and then the run is treated
- * as one with no feedback: a read that fails every pass must not keep a moved head or base from
+ * as one with no feedback: a read that fails every pass must not keep a moved head from
  * being gated, or a merged pull request from being ended. The step does not take a gate lock:
  * gates run as fibers of this process and `gateRunning` was asked first.
  */
@@ -1222,38 +1220,30 @@ const actedOnFeedback = Effect.fn("Pass.actedOnFeedback")(function* (
 });
 
 /**
- * Whether `regate` would find the run's pull request and its base tip where its last pass left
- * them, by the reads it makes before it answers `unchanged`. A run it would do more for (one
- * whose pull request GitHub says conflicts is one), or a
- * read that fails, is not unchanged: the gate deals with it, and says what failed. The run's base
- * is the one its launch recorded, else the repo's. `tips` holds each base tip as the pass first
- * read it, by lowercase repo name and base, so it is read at most once a pass. It is read before
- * the pull request, and `null` once a read for that repo and base failed: the other runs on it
- * then go to the gate without a read that could wait for its timeout again.
+ * Whether `regate` would find the run's pull request at the head its last pass ran on, by the
+ * read it makes before it answers `unchanged`. The base branch is not read: a pass stays valid
+ * while the base moves. A run it would do more for (one whose pull request GitHub says conflicts
+ * is one), or a read that fails, is not unchanged: the gate deals with it, and says what failed.
+ * `failed` holds the repos whose pull request read failed this pass, by lowercase repo name: the
+ * other runs on one go to the gate without a read that could wait for its timeout again.
  */
 const unchanged = Effect.fn("Pass.unchanged")(function* (
   world: PassWorld,
   repo: Repo,
   run: RunId,
-  tips: Map<string, string | null>,
+  failed: Set<string>,
 ) {
   const last = yield* Effect.result(world.lastPass(run));
   if (last._tag === "Failure" || last.success === null) return false;
-  const base = last.success.baseBranch ?? repo.project.base;
-  const key = `${asciiLower(repo.watched.repo)} ${base}`;
-  if (!tips.has(key)) {
-    const read = yield* Effect.result(world.baseTip(repo, base));
-    tips.set(key, read._tag === "Success" ? read.success : null);
-  }
-  const tip = tips.get(key) ?? null;
-  if (tip === null) return false;
+  const key = asciiLower(repo.watched.repo);
+  if (failed.has(key)) return false;
   const pull = yield* Effect.result(world.openPull(repo, last.success.pr));
   if (pull._tag === "Failure") {
-    tips.set(key, null);
+    failed.add(key);
     return false;
   }
   if (pull.success === null || pull.success.mergeable === "conflicting") return false;
-  return unchangedSince(last.success.head, last.success.base, pull.success.head, tip);
+  return unchangedSince(last.success.head, pull.success.head);
 });
 
 /**

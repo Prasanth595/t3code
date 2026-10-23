@@ -138,7 +138,6 @@ describe("project config", () => {
     const config = timeLimitOnlyProjectConfig();
     expect(config.limits.minutes).toBe(180);
     expect(config.limits.gateRetries).toBe(0);
-    expect(config.limits.regates).toBe(5);
     expect(config.limits.checksMinutes).toBe(30);
     expect(config.limits.interruptionResumes).toBe(2);
     expect(config.base).toBe("");
@@ -164,35 +163,28 @@ describe("project config", () => {
     });
   });
 
-  describe("the re-gate limit", () => {
-    const regates = (value?: string) =>
-      project(
-        edit(PROJECT, (t) => {
-          if (value !== undefined) set(t, "factory.limits.regates", value);
-        }),
-      ).limits.regates;
-
-    it("project regates defaults to 5 and can be set", () => {
-      expect(regates()).toBe(5);
-      expect(regates("1")).toBe(1);
-      expect(regates("12")).toBe(12);
-    });
-
-    it("project regates is read from a limits block written inline", () => {
-      const t = PROJECT.replace(
+  describe("the retired regates key", () => {
+    it("is accepted and ignored, set as a block key or inline", () => {
+      const c = project(edit(PROJECT, (t) => set(t, "factory.limits.regates", "12")));
+      expect(c.limits).toEqual({
+        minutes: 90,
+        gateRetries: 2,
+        checksMinutes: 30,
+        interruptionResumes: 2,
+      });
+      const inline = PROJECT.replace(
         "limits: { minutes: 90, gate_retries: 2 }",
         "limits: { minutes: 90, gate_retries: 2, regates: 3 }",
       );
-      expect(project(t).limits.regates).toBe(3);
+      expect(project(inline).limits).toEqual(c.limits);
     });
 
-    it("project regates must be an integer of at least one", () => {
-      for (const bad of ['"many"', "0", "-1", "1.5", "[1]", "null", "true"]) {
-        const errs = projectErr(edit(PROJECT, (t) => set(t, "factory.limits.regates", bad)));
-        assertOne(errs, "factory.limits.regates", PFILE);
+    it("is ignored whatever its value", () => {
+      const without = project(PROJECT).limits;
+      for (const value of ["5", "0", "-1", '"many"', "[1]", "null"]) {
+        const c = project(edit(PROJECT, (t) => set(t, "factory.limits.regates", value)));
+        expect(c.limits).toEqual(without);
       }
-      const errs = projectErr(edit(PROJECT, (t) => set(t, "factory.limits.regates", "0")));
-      expect(errs[0]!.message).toBe("must be an integer of at least 1");
     });
   });
 

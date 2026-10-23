@@ -290,20 +290,20 @@ const gateWords = (run: string, step: GateStep): string => {
   }
 };
 
-/** What a re-gate found moved since the last pass, in the run's line. */
+/** What started a re-gate, in the run's line. */
 const MOVED_WORDS: Record<Moved, string> = {
-  base: "the base branch moved",
   head: "the pull request's head moved",
   both: "the pull request's head and the base branch moved",
-  unknown: "the base of the last pass was not recorded",
-  conflict: "nothing moved but GitHub says the pull request conflicts with the base branch",
+  conflict: "GitHub says the pull request conflicts with the base branch",
+  earlier: "an earlier version of the factory began this re-gate",
 };
 
 /**
  * The run's line when the re-gate of its `pr-open` pull request, started in the background, has
- * ended; null for a quiet one, which says nothing. A pass or a failure starts with what moved: the
- * base branch, the pull request's head, both, that the pass on record has no base to compare with,
- * or (when no pass was on record to compare with) that there was none.
+ * ended; null for a quiet one, which says nothing. A pass or a failure starts with what started the
+ * re-gate: the pull request's head moved, the head and the base branch, a conflict GitHub reported,
+ * a re-gate an earlier version began, or (when no pass was on record to compare with) that there
+ * was none.
  */
 export const regateWords = (
   run: string,
@@ -659,13 +659,6 @@ export const liveWorld = (
     hasPendingGateSend: (run) =>
       ledger(() => gateSendPending(readProgress(readRun(dataDir, run).entries))),
     lastPass: (run) => lastPass(dataDir, run),
-    baseTip: (repo, base) =>
-      trackerFor(repo.watched)
-        .branchTip(base)
-        .pipe(
-          Effect.map((tip) => tip.toLowerCase()),
-          Effect.mapError(asPassError("tracker")),
-        ),
     issueClosed: (repo, issue) =>
       withProcess(githubFor(repo.watched).issue(issue)).pipe(
         Effect.map((detail) => detail.closed),

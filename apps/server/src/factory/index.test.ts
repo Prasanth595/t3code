@@ -784,28 +784,6 @@ describe("liveWorld", () => {
       mergeable,
     });
 
-  it.effect("the base tip is read from the run's base branch, in lower case", () =>
-    Effect.gen(function* () {
-      const { process, calls } = ghWith(() =>
-        JSON.stringify({ object: { type: "commit", sha: SHA } }),
-      );
-      const tip = yield* worldOf(process).baseTip(repo, "feature/x");
-      assert.strictEqual(tip, SHA);
-      assert.deepStrictEqual(calls[0]?.slice(0, 2), [
-        "api",
-        "repos/rawphp/softfac/git/ref/heads/feature/x",
-      ]);
-    }),
-  );
-
-  it.effect("a base tip that cannot be read is a tracker error", () =>
-    Effect.gen(function* () {
-      const { process } = ghWith(() => null);
-      const failed = yield* Effect.flip(worldOf(process).baseTip(repo, "main"));
-      assert.strictEqual(failed.kind, "tracker");
-    }),
-  );
-
   it.effect(
     "a step is built for the base the pass hands it: advance binds the PR to that base",
     () =>
@@ -2240,8 +2218,8 @@ describe("the gate in the background", () => {
     ) => regateWords("run-1", REPO, step, moved);
     assert.strictEqual(words({ kind: "unchanged" }, null), null);
     assert.strictEqual(
-      words({ kind: "passed", pr: 12 }, "base"),
-      "the base branch moved, the gate passed again, PR https://github.com/rawphp/softfac/pull/12 stays ready for review",
+      words({ kind: "passed", pr: 12 }, "conflict"),
+      "GitHub says the pull request conflicts with the base branch, the gate passed again, PR https://github.com/rawphp/softfac/pull/12 stays ready for review",
     );
     assert.strictEqual(
       words({ kind: "passed", pr: 12 }, "head"),
@@ -2252,15 +2230,11 @@ describe("the gate in the background", () => {
       "the pull request's head and the base branch moved, the gate failed on attempt 2, the PR is a draft again and the session was told",
     );
     assert.strictEqual(
-      words({ kind: "sent-back", attempt: 3 }, "unknown"),
-      "the base of the last pass was not recorded, the gate failed on attempt 3, the PR is a draft again and the session was told",
-    );
-    assert.strictEqual(
       words({ kind: "passed", pr: 12 }, null),
       "no pass was on record, the gate passed again, PR https://github.com/rawphp/softfac/pull/12 stays ready for review",
     );
     assert.strictEqual(
-      words({ kind: "stuck", reason: "r" }, "base"),
+      words({ kind: "stuck", reason: "r" }, "head"),
       `stuck, the reason is in the ledger of run run-1`,
     );
     assert.strictEqual(
@@ -2273,7 +2247,11 @@ describe("the gate in the background", () => {
     );
     assert.strictEqual(
       words({ kind: "sent-back", attempt: 2 }, "conflict"),
-      "nothing moved but GitHub says the pull request conflicts with the base branch, the gate failed on attempt 2, the PR is a draft again and the session was told",
+      "GitHub says the pull request conflicts with the base branch, the gate failed on attempt 2, the PR is a draft again and the session was told",
+    );
+    assert.strictEqual(
+      words({ kind: "passed", pr: 12 }, "earlier"),
+      "an earlier version of the factory began this re-gate, the gate passed again, PR https://github.com/rawphp/softfac/pull/12 stays ready for review",
     );
     assert.strictEqual(words({ kind: "not-ready" }, null), "the gate waits for the session");
   });

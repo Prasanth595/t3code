@@ -680,7 +680,7 @@ const projectConfig = (): ProjectConfig => {
     instructors: ["rawphp"],
     base: "main",
     gate: [FMT, TEST],
-    limits: { ...config.limits, minutes: 90, gateRetries: 2, regates: 5 },
+    limits: { ...config.limits, minutes: 90, gateRetries: 2 },
   };
 };
 
@@ -815,6 +815,7 @@ const sendBackAttempts = (rig: Rig, retries: number) =>
   });
 
 const MOVED = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
+const PUSHED = "7e6d5c4b3a291807f6e5d4c3b2a190817263a4b5";
 
 /** The tips a base branch that keeps moving goes through, in order. */
 const TIPS = [
@@ -846,10 +847,11 @@ const prOpenRun = () =>
     return rig;
   });
 
-/** The base branch is `MOVED` now, and moves `steps` more times as checkouts merge with it. */
-const baseMoved = (rig: Rig, steps: number) => {
-  baseMoves(rig, steps);
+/** The pull request's head moved after the pass, and the base branch is `MOVED` now. */
+const headAndBaseMoved = (rig: Rig) => {
+  baseMoves(rig, 0);
   rig.gh.tipCell!.tip = MOVED;
+  rig.gh.pr = { ...rig.gh.pr!, headSha: PUSHED };
 };
 
 /** The commands pass on the first run and fail on every later one. */
@@ -1693,12 +1695,12 @@ describe("feedback: the step", () => {
         assert.isTrue(Exit.isFailure(yield* Effect.exit(feedbackIn(rig))));
         rig.gh.failAt = null;
         clearCalls(rig);
-        baseMoved(rig, 0);
+        headAndBaseMoved(rig);
         const bytes = bytesOf(rig);
         assert.deepStrictEqual((yield* regateIn(rig)).step, { kind: "not-ready" });
         assert.strictEqual(bytesOf(rig), bytes, "nothing is written");
         assert.deepStrictEqual(rig.t3.launches, []);
-        assert.deepStrictEqual(rig.ws.calls, [], "a moved base is not gated meanwhile");
+        assert.deepStrictEqual(rig.ws.calls, [], "a moved head is not gated meanwhile");
         // Only the transition is left, and the feedback step makes it.
         assert.strictEqual((yield* feedbackIn(rig)).kind, "relaunched");
         assert.deepStrictEqual(rig.t3.launches, []);
@@ -1842,7 +1844,7 @@ describe("feedback: the step", () => {
   it.effect("a re-gate in progress is left to the gate", () =>
     Effect.gen(function* () {
       const rig = yield* reviewedRun();
-      baseMoved(rig, 0);
+      headAndBaseMoved(rig);
       passThenFail(rig);
       // A re-gate begun and cut short: its `gate_regate` line is in the ledger.
       appendAt(rig, T0, [regateLine(BASE, MOVED)]);
@@ -1857,7 +1859,7 @@ describe("feedback: the step", () => {
   const cutRegateRelaunch = (cut: (rig: Rig) => void) =>
     Effect.gen(function* () {
       const rig = yield* reviewedRun();
-      baseMoved(rig, 0);
+      headAndBaseMoved(rig);
       passThenFail(rig);
       cut(rig);
       assert.isTrue(Exit.isFailure(yield* Effect.exit(regateIn(rig))));
@@ -1932,7 +1934,6 @@ describe("feedback: the step", () => {
         yield* feedbackIn(rig);
         const seen = progressOf(rig);
         assert.strictEqual(nextGateAttempt(seen), nextGateAttempt(before));
-        assert.strictEqual(seen.regates, before.regates);
         assert.strictEqual(seen.feedbackRelaunches, 1);
         // The new session is waited for, and its `FACTORY-DONE` binds the same pull request.
         clearCalls(rig);
@@ -2040,7 +2041,6 @@ describe("feedback: a run whose launch recorded a base other than the project's"
       assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
       assert.ok(rig.gh.calls.includes("branchTip feature/x"), rig.gh.calls.join("\n"));
       assert.ok(!rig.gh.calls.includes("branchTip main"), rig.gh.calls.join("\n"));
-      assert.strictEqual((yield* lastPass(rig.dataDir, rig.run))?.baseBranch, "feature/x");
     }),
   );
 });

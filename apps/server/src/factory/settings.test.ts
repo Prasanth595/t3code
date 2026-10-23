@@ -440,7 +440,6 @@ describe("readMachineConfigReport", () => {
         limits: {
           minutes: 90,
           gateRetries: 1,
-          regates: 5,
           checksMinutes: 30,
           interruptionResumes: 2,
         },

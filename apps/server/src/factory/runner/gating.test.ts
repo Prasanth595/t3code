@@ -95,7 +95,6 @@ const TEST = "cargo test";
 const THREAD_GONE = "the T3 thread no longer exists";
 const CHANGED_DURING_BUILD_TEXT =
   "the issue text was changed during the build by someone who is not an instructor";
-const SETTLED_NEVER = "the base branch kept moving and the gate could not settle";
 const END_WITH_DONE =
   "When you have fixed this, end your reply with the line FACTORY-DONE: <PR URL> as before.";
 const BOOM_MESSAGE =
@@ -806,7 +805,7 @@ const projectConfig = (): ProjectConfig => {
     instructors: ["rawphp"],
     base: "main",
     gate: [FMT, TEST],
-    limits: { ...config.limits, minutes: 90, gateRetries: 2, regates: 5 },
+    limits: { ...config.limits, minutes: 90, gateRetries: 2 },
   };
 };
 
@@ -1026,8 +1025,7 @@ describe("gate: the session's PR becomes ready, or it does not", () => {
           "branchTip main",
           // Read again after the commands, to see that it is still what was gated.
           "pullRequest 12",
-          // And the base branch and the issue text, to see that nothing moved under it.
-          "branchTip main",
+          // And the issue text, to see that nothing moved under it.
           UNCHANGED_READ,
           "markPrReady 12",
           `prComment 12 ${resultsComment(1)}`,
@@ -1334,7 +1332,6 @@ describe("gate: the session's PR becomes ready, or it does not", () => {
         "pullRequest 12",
         "branchTip main",
         "pullRequest 12",
-        "branchTip main",
         UNCHANGED_READ,
         "readyBy 12",
         "markPrReady 12",
@@ -1762,7 +1759,6 @@ describe("gate: a failed attempt goes back into the session", () => {
         "pullRequest 12",
         "branchTip main",
         "pullRequest 12",
-        "branchTip main",
         UNCHANGED_READ,
         "markPrReady 12",
         `prComment 12 ${resultsComment(2)}`,
@@ -2406,7 +2402,7 @@ const gateCrashMatrix = (
 
 describe("gate: every call can fail, and the gate is called again", () => {
   it.effect("the pass path survives a failure of each call", () =>
-    gateCrashMatrix("gate-pass", readyForGate, { kind: "passed", pr: 12 }, { at: 6, on: "pr" }),
+    gateCrashMatrix("gate-pass", readyForGate, { kind: "passed", pr: 12 }, { at: 5, on: "pr" }),
   );
 
   it.effect("the pass path with provision survives a failure of each call", () =>
@@ -2418,7 +2414,7 @@ describe("gate: every call can fail, and the gate is called again", () => {
           return rig;
         }),
       { kind: "passed", pr: 12 },
-      { at: 6, on: "pr" },
+      { at: 5, on: "pr" },
     ),
   );
 
@@ -2449,7 +2445,7 @@ describe("gate: every call can fail, and the gate is called again", () => {
           return rig;
         }),
       { kind: "passed", pr: 12 },
-      { at: 6, on: "pr" },
+      { at: 5, on: "pr" },
     ),
   );
 
@@ -2530,7 +2526,6 @@ describe("gate: every call can fail, and the gate is called again", () => {
 });
 
 const MOVED = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
-const MOVED_SHORT = "9f8e7d6";
 
 /** The tips a base branch that keeps moving goes through, in order. */
 const TIPS = [
@@ -2552,165 +2547,49 @@ const baseMoves = (rig: Rig, steps: number) => {
   };
 };
 
-/** The reads of a gate that runs the commands once and then finds the base has moved. */
-const READS_UNTIL_THE_BASE_MOVED = [
-  "pullRequest 12",
-  "branchTip main",
-  "pullRequest 12",
-  "branchTip main",
-];
+/** The reads of a gate that runs the commands once and finds the pull request as it was. */
+const READS_UNTIL_THE_COMMANDS_PASSED = ["pullRequest 12", "branchTip main", "pullRequest 12"];
 
 describe("gate: the base branch moves", () => {
-  it.effect(
-    "a base that moved while the commands ran is gated again on the new merge and uses no attempt",
-    () =>
-      Effect.gen(function* () {
-        const rig = yield* readyForGate();
-        baseMoves(rig, 1);
-        assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
-        assert.deepStrictEqual(rig.gh.calls, [
-          ...READS_UNTIL_THE_BASE_MOVED,
-          // The second run's own reads: nothing moved, and the text is as approved.
-          "pullRequest 12",
-          "branchTip main",
-          UNCHANGED_READ,
-          "markPrReady 12",
-          `prComment 12 ${resultsComment(1, MOVED_SHORT)}`,
-          "setState 10 pr-open",
-          `status 10 rawphp ${PR_OPEN_BODY}`,
-        ]);
-        // The session is looked at once, and stopped at the pass; the second run is a run of the
-        // same attempt.
-        assert.deepStrictEqual(rig.t3.calls, PASS_T3_CALLS);
-        assert.deepStrictEqual(rig.ws.calls, [
-          ...workspaceCalls(rig, 1, BASE),
-          ...workspaceCalls(rig, 1, MOVED),
-        ]);
-        assert.deepStrictEqual(linesOf(rig), [
-          ...BASE_EVENTS,
-          ...passingOn(BASE, 1),
-          regateLine(BASE, MOVED),
-          ...passingOn(MOVED, 1),
-          ...PASS_TAIL,
-        ]);
-        assert.ok(rig.gh.world.prReady);
-        assert.deepStrictEqual(checkoutsOnDisk(rig), []);
-      }),
-  );
-
-  it.effect("a base that moves twice is gated again each time", () =>
-    Effect.gen(function* () {
-      const rig = yield* readyForGate();
-      baseMoves(rig, 2);
-      assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
-      const regates = rawLines(rig).filter((l) => l.event === "gate_regate");
-      assert.deepStrictEqual(regates, [
-        regateLine(TIPS[0]!, TIPS[1]!),
-        regateLine(TIPS[1]!, TIPS[2]!),
-      ]);
-      assert.strictEqual(rig.ws.gateCalls, 3);
-    }),
-  );
-
-  it.effect("a new merge that fails is sent to the session and uses an attempt", () =>
+  it.effect("a base that moved while the commands ran does not rerun the gate", () =>
     Effect.gen(function* () {
       const rig = yield* readyForGate();
       baseMoves(rig, 1);
-      rig.ws.script = (call, commands) =>
-        call === 0 ? passing(commands) : failingLast(commands, 101, "boom\n");
-      assert.deepStrictEqual(yield* gateIn(rig), { kind: "sent-back", attempt: 1 });
-      assert.deepStrictEqual(rig.gh.calls, [...READS_UNTIL_THE_BASE_MOVED, "pullRequest 12"]);
-      assert.deepStrictEqual(rig.t3.calls, ["status thread-1", sendCall(1, 1, BOOM_MESSAGE)]);
-      assert.deepStrictEqual(linesOf(rig), [
-        ...BASE_EVENTS,
-        ...passingOn(BASE, 1),
-        regateLine(BASE, MOVED),
-        checkoutOf(MOVED, 1),
-        gateCmd(1, FMT, 0, 1_234),
-        gateCmd(1, TEST, 101, 12_300),
-        sending(1, 1),
-        sentBack(1, 1),
-      ]);
-      assert.ok(!rig.gh.world.prReady);
-      assert.strictEqual(rig.gh.world.state, "building");
-
-      // The failure is attempt 1: the session's next finished run is gated as attempt 2.
-      rig.ws.script = (_, commands) => passing(commands);
-      setRun(rig, "completed", 2);
-      assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
-      clearCalls(rig);
       assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
-      assert.ok(
-        rawLines(rig).some(
-          (l) => JSON.stringify(l) === JSON.stringify(gateCmd(2, TEST, 0, 12_300)),
-        ),
-      );
+      // One checkout and one run, recorded against the base the attempt ran against.
+      assert.strictEqual(rig.ws.gateCalls, 1);
+      assert.deepStrictEqual(rig.ws.calls, workspaceCalls(rig, 1, BASE));
+      assert.deepStrictEqual(eventsOf(rig, "gate_regate"), []);
+      assert.deepStrictEqual(linesOf(rig), [...BASE_EVENTS, ...passingOn(BASE, 1), ...PASS_TAIL]);
+      assert.ok(rig.gh.world.prReady);
+      assert.deepStrictEqual(rig.gh.world.prComments, [resultsComment(1, BASE_SHORT)]);
+      assert.deepStrictEqual(checkoutsOnDisk(rig), []);
     }),
   );
 
   it.effect(
-    "a new merge that conflicts is sent to the session as a conflict and uses an attempt",
+    "a ledger whose last gate line is a base-move gate_regate resumes the attempt and passes once",
     () =>
       Effect.gen(function* () {
         const rig = yield* readyForGate();
-        baseMoves(rig, 1);
-        let merges = 0;
-        rig.ws.merge = () => {
-          merges += 1;
-          return merges === 1 ? { _tag: "merged" } : { _tag: "conflict", paths: ["src/a.rs"] };
-        };
-        assert.deepStrictEqual(yield* gateIn(rig), { kind: "sent-back", attempt: 1 });
-        assert.strictEqual(rig.ws.gateCalls, 1, "no command ran in the conflict");
-        assert.deepStrictEqual(linesOf(rig), [
-          ...BASE_EVENTS,
+        // What an older build left: the commands passed, the base had moved, and it died before
+        // the second run.
+        appendLines(rig, [
           ...passingOn(BASE, 1),
           regateLine(BASE, MOVED),
-          checkoutOf(MOVED, 1),
-          conflictCmd(1),
-          sending(1, 1),
-          sentBack(1, 1),
-        ]);
+        ] as ReadonlyArray<RunEvent>);
+        // The base moves again while the resumed attempt runs: the new rule records the pass.
+        baseMoved(rig, 2);
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+        assert.strictEqual(rig.ws.gateCalls, 1);
+        assert.strictEqual(eventsOf(rig, "gate_regate").length, 1);
         assert.strictEqual(
-          rig.t3.calls.at(-1),
-          sendCall(1, 1, mergeConflictMessage("main", ["src/a.rs"])),
+          linesOf(rig).filter((l) => JSON.stringify(l) === JSON.stringify(PASSED_STEP)).length,
+          1,
         );
+        assert.deepStrictEqual(rig.gh.world.prComments, [resultsComment(1, "9f8e7d6")]);
+        assert.ok(rig.gh.world.prReady);
       }),
-  );
-
-  it.effect(
-    "a base that keeps moving past the limit sends the issue to stuck with a fixed reason",
-    () =>
-      Effect.gen(function* () {
-        const rig = yield* readyForGate();
-        rig.project = { ...rig.project, limits: { ...rig.project.limits, regates: 1 } };
-        baseMoves(rig, 5);
-        const step = yield* gateIn(rig);
-        assertGateStuck(
-          rig,
-          step,
-          [...READS_UNTIL_THE_BASE_MOVED, "pullRequest 12", "branchTip main"],
-          { publicReason: SETTLED_NEVER },
-          [...passingOn(BASE, 1), regateLine(BASE, MOVED), ...passingOn(MOVED, 1)],
-        );
-        // The limit was one re-gate, and it was made.
-        assert.strictEqual(rig.ws.gateCalls, 2);
-        assert.deepStrictEqual(checkoutsOnDisk(rig), []);
-      }),
-  );
-
-  it.effect("the limit counts the re-gates the ledger already holds", () =>
-    Effect.gen(function* () {
-      const rig = yield* readyForGate();
-      rig.project = { ...rig.project, limits: { ...rig.project.limits, regates: 2 } };
-      baseMoves(rig, 5);
-      const ledger = Ledger.open(rig.dataDir, rig.run, { clock: () => 1_000 });
-      for (const event of [regateLine("a", "b"), regateLine("b", "c")] as ReadonlyArray<RunEvent>) {
-        ledger.append(event, makeCause("gate", "seed"));
-      }
-      ledger.close();
-      assert.deepStrictEqual(yield* gateIn(rig), { kind: "stuck", reason: SETTLED_NEVER });
-      assert.strictEqual(rig.ws.gateCalls, 1);
-    }),
   );
 
   it.effect(
@@ -2723,7 +2602,7 @@ describe("gate: the base branch moves", () => {
         assertGateStuck(
           rig,
           step,
-          [...READS_UNTIL_THE_BASE_MOVED, UNCHANGED_READ],
+          [...READS_UNTIL_THE_COMMANDS_PASSED, UNCHANGED_READ],
           { publicReason: CHANGED_DURING_BUILD_TEXT },
           passingOn(BASE, 1),
         );
@@ -2793,88 +2672,6 @@ describe("gate: the base branch moves", () => {
       }),
   );
 
-  it.effect("a base that moved is looked at before the issue text", () =>
-    Effect.gen(function* () {
-      const rig = yield* readyForGate();
-      baseMoves(rig, 1);
-      yield* gateIn(rig);
-      const reads = rig.gh.calls.filter(
-        (c) => c.startsWith("branchTip") || c.startsWith("textCheck"),
-      );
-      // Moved at the end of the first run: no text check for a result that is thrown away.
-      assert.deepStrictEqual(reads, [
-        "branchTip main",
-        "branchTip main",
-        "branchTip main",
-        UNCHANGED_READ,
-      ]);
-    }),
-  );
-
-  it.effect("the regate pass path survives a failure of each call", () =>
-    gateCrashMatrix(
-      "gate-regate-pass",
-      () =>
-        Effect.map(readyForGate(), (rig) => {
-          baseMoves(rig, 1);
-          return rig;
-        }),
-      { kind: "passed", pr: 12 },
-      { at: 8, on: "pr" },
-      settledLedger,
-    ),
-  );
-
-  it.effect("the regate fail path survives a failure of each call", () =>
-    gateCrashMatrix(
-      "gate-regate-fail",
-      () =>
-        Effect.map(readyForGate(), (rig) => {
-          baseMoves(rig, 1);
-          // The commands pass on the first run and fail on every later one, keyed on the base.
-          const cell = rig.gh.tipCell!;
-          rig.ws.script = (_, commands) =>
-            cell.tip === BASE ? passing(commands) : failingLast(commands, 101, "boom\n");
-          return rig;
-        }),
-      { kind: "sent-back", attempt: 1 },
-      null,
-      settledLedger,
-    ),
-  );
-
-  it.effect("the regate conflict path survives a failure of each call", () =>
-    gateCrashMatrix(
-      "gate-regate-conflict",
-      () =>
-        Effect.map(readyForGate(), (rig) => {
-          baseMoves(rig, 1);
-          const cell = rig.gh.tipCell!;
-          rig.ws.merge = () =>
-            cell.tip === BASE ? { _tag: "merged" } : { _tag: "conflict", paths: ["src/a.rs"] };
-          return rig;
-        }),
-      { kind: "sent-back", attempt: 1 },
-      null,
-      settledLedger,
-    ),
-  );
-
-  it.effect("the regate limit path survives a failure of each call", () =>
-    gateCrashMatrix(
-      "gate-regate-limit",
-      () =>
-        Effect.map(readyForGate(), (rig) => {
-          rig.project = { ...rig.project, limits: { ...rig.project.limits, regates: 1 } };
-          baseMoves(rig, 5);
-          return rig;
-        }),
-      { kind: "stuck", reason: SETTLED_NEVER },
-      { at: 6, on: "issue" },
-      settledLedger,
-    ),
-  );
-
   it.effect("the changed text path of the gate survives a failure of each call", () =>
     gateCrashMatrix(
       "gate-text-changed",
@@ -2884,7 +2681,7 @@ describe("gate: the base branch moves", () => {
           return rig;
         }),
       { kind: "stuck", reason: CHANGED_DURING_BUILD_TEXT },
-      { at: 5, on: "issue" },
+      { at: 4, on: "issue" },
     ),
   );
 });
@@ -3055,7 +2852,7 @@ describe("gate: the decision that the gate passed is in the ledger", () => {
     Effect.gen(function* () {
       // The crash comes at each call after the pass was recorded, and then a person merges the
       // (ready) pull request before the daemon is back.
-      for (let call = 5; call <= 8; call += 1) {
+      for (let call = 4; call <= 7; call += 1) {
         const rig = yield* readyForGate();
         rig.gh.failAt = call;
         const error = yield* Effect.result(gateIn(rig));
@@ -3107,14 +2904,13 @@ const checksCall = (names: ReadonlyArray<string>) => `checks ${HEAD} ${names.joi
 
 /**
  * What a gate attempt reads on GitHub when it passes and the project has required checks: the
- * binding, the base tip, the pull request again after the commands, the base branch and the
- * issue text again before the pass is recorded, and once more with the checks.
+ * binding, the base tip, the pull request again after the commands, the issue text again
+ * before the pass is recorded, and once more with the checks.
  */
 const passingReads = (names: ReadonlyArray<string>) => [
   "pullRequest 12",
   "branchTip main",
   "pullRequest 12",
-  "branchTip main",
   UNCHANGED_READ,
   "pullRequest 12",
   checksCall(names),
@@ -3620,8 +3416,8 @@ describe("gate: required CI checks", () => {
   it.effect("a failing read of the checks is an error that decides nothing", () =>
     Effect.gen(function* () {
       const rig = yield* readyWithChecks(["gate"]);
-      // The seventh call reads the checks (see `passingReads`).
-      rig.gh.failAt = 6;
+      // The sixth call reads the checks (see `passingReads`).
+      rig.gh.failAt = 5;
       assert.strictEqual((yield* Effect.flip(gateIn(rig)))._tag, "GitHubFailed");
       // The pass is recorded, so the next call only reads the checks.
       rig.gh.failAt = null;
@@ -4197,6 +3993,23 @@ const baseMoved = (rig: Rig, steps: number) => {
   rig.gh.tipCell!.tip = MOVED;
 };
 
+/** The head the recorded pass ran on, in tests where the pull request's head has moved since. */
+const OLD_HEAD = "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567";
+
+/**
+ * The pass on record ran on `OLD_HEAD` and the pull request is at `HEAD` now, and the base is
+ * `MOVED`: the head moved since the pass, so `regate` gates the head it has, merged with the new tip.
+ */
+const baseAndHeadMoved = (rig: Rig) => {
+  baseMoved(rig, 0);
+  const path = runPath(rig.dataDir, rig.run);
+  NodeFS.writeFileSync(path, NodeFS.readFileSync(path, "utf8").replaceAll(HEAD, OLD_HEAD));
+};
+
+/** Lines of the pass on record when the head has moved since: the same lines on `OLD_HEAD`. */
+const onOldHead = (lines: ReadonlyArray<Line>): Array<Line> =>
+  lines.map((l) => JSON.parse(JSON.stringify(l).replaceAll(HEAD, OLD_HEAD)) as Line);
+
 /** A person (or the session) pushed to the pull request's branch after it was ready. */
 const headMoved = (rig: Rig) => {
   rig.gh.pr = { ...rig.gh.pr!, headSha: PUSHED };
@@ -4303,19 +4116,61 @@ const assertRelaunched = (rig: Rig) => {
 };
 
 describe("regate: a pull request that is ready for review", () => {
-  it.effect("a quiet pass costs two reads and writes nothing", () =>
+  it.effect("a quiet pass costs one read and writes nothing", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
       const bytes = bytesOf(rig);
       assert.deepStrictEqual(yield* regateIn(rig), { step: { kind: "unchanged" }, moved: null });
-      // The pull request, for its head and for whether it is still open, and the base tip.
-      assert.deepStrictEqual(rig.gh.calls, [PR_READ, TIP_READ]);
+      // The pull request, for its head and for whether it is still open, and nothing else.
+      assert.deepStrictEqual(rig.gh.calls, [PR_READ]);
       assert.deepStrictEqual(rig.t3.calls, []);
       assert.deepStrictEqual(rig.ws.calls, []);
       assert.strictEqual(bytesOf(rig), bytes);
       // And again, as every pass does.
       assert.deepStrictEqual((yield* regateIn(rig)).step, { kind: "unchanged" });
-      assert.deepStrictEqual(rig.gh.calls, [PR_READ, TIP_READ, PR_READ, TIP_READ]);
+      assert.deepStrictEqual(rig.gh.calls, [PR_READ, PR_READ]);
+    }),
+  );
+});
+
+describe("regate: the base branch moved", () => {
+  it.effect("a moved base with an unchanged head is unchanged and costs one read", () =>
+    Effect.gen(function* () {
+      const rig = yield* prOpenRun();
+      baseMoved(rig, 0);
+      const bytes = bytesOf(rig);
+      assert.deepStrictEqual(yield* regateIn(rig), { step: { kind: "unchanged" }, moved: null });
+      assert.deepStrictEqual(rig.gh.calls, [PR_READ]);
+      assert.deepStrictEqual(rig.ws.calls, []);
+      assert.strictEqual(bytesOf(rig), bytes);
+    }),
+  );
+
+  it.effect("a base-move re-gate an older build left under way is finished and passes once", () =>
+    Effect.gen(function* () {
+      const rig = yield* prOpenRun();
+      baseMoved(rig, 0);
+      appendLines(rig, [regateLine(BASE, MOVED)] as ReadonlyArray<RunEvent>);
+      // Its line names no trigger, and GitHub reported no conflict: it is not called one.
+      assert.deepStrictEqual(yield* regateIn(rig), {
+        step: { kind: "passed", pr: 12 },
+        moved: "earlier",
+      });
+      assert.strictEqual(eventsOf(rig, "gate_regate").length, 1);
+      assert.deepStrictEqual(rig.ws.calls, workspaceCalls(rig, 2, MOVED));
+      assert.deepStrictEqual(rig.gh.world.prComments, [resultsComment(1), againComment(2, MOVED)]);
+    }),
+  );
+
+  it.effect("a base that moves while a re-gate runs does not rerun it", () =>
+    Effect.gen(function* () {
+      const rig = yield* prOpenRun();
+      headMoved(rig);
+      baseMoves(rig, 1);
+      assert.deepStrictEqual(yield* regateStep(rig), { kind: "passed", pr: 12 });
+      assert.strictEqual(eventsOf(rig, "gate_regate").length, 1);
+      // The first pass's run, and the re-gate's one.
+      assert.strictEqual(rig.ws.gateCalls, 2);
     }),
   );
 });
@@ -4327,21 +4182,20 @@ describe("last_pass: what the pass reads before it starts the gate", () => {
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
       const last = yield* pass(rig);
-      assert.deepStrictEqual(last, { pr: 12, head: HEAD, base: BASE, baseBranch: null });
-      const same = (head: string, tip: string) => unchangedSince(last!.head, last!.base, head, tip);
-      assert.isTrue(same(HEAD, BASE));
-      assert.isTrue(same(HEAD.toUpperCase(), BASE.toUpperCase()));
-      assert.isFalse(same(PUSHED, BASE));
-      assert.isFalse(same(HEAD, MOVED));
-      // `regate` agrees: unchanged at the same head and tip.
+      assert.deepStrictEqual(last, { pr: 12, head: HEAD });
+      const same = (head: string) => unchangedSince(last!.head, head);
+      assert.isTrue(same(HEAD));
+      assert.isTrue(same(HEAD.toUpperCase()));
+      assert.isFalse(same(PUSHED));
+      // `regate` agrees: unchanged at the same head, whatever the base tip.
       assert.deepStrictEqual(yield* regateStep(rig), { kind: "unchanged" });
       assert.deepStrictEqual(yield* pass(rig), last);
     }),
   );
 
-  it("a pass with no base recorded is never unchanged", () => {
-    assert.isFalse(unchangedSince(HEAD, "", HEAD, ""));
-    assert.isFalse(unchangedSince("", BASE, "", BASE));
+  it("a pass with no head recorded is never unchanged", () => {
+    assert.isFalse(unchangedSince("", HEAD));
+    assert.isFalse(unchangedSince("", ""));
   });
 
   it.effect("a run with a regate under way is left to the gate", () =>
@@ -4375,12 +4229,7 @@ describe("last_pass: what the pass reads before it starts the gate", () => {
       // The gate's own call removes it, whatever it finds of the pull request.
       assert.deepStrictEqual(yield* regateStep(rig), { kind: "unchanged" });
       assert.deepStrictEqual(checkoutsOnDisk(rig), []);
-      assert.deepStrictEqual(yield* pass(rig), {
-        pr: 12,
-        head: HEAD,
-        base: BASE,
-        baseBranch: null,
-      });
+      assert.deepStrictEqual(yield* pass(rig), { pr: 12, head: HEAD });
     }),
   );
 
@@ -4450,7 +4299,7 @@ describe("regate: the head or the base of a ready pull request moved", () => {
   it.effect("a head that is not a commit id is an error and nothing is written", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       rig.gh.pr = { ...rig.gh.pr!, headSha: "not-a-commit" };
       const before = bytesOf(rig);
       assert.strictEqual((yield* Effect.flip(regateStep(rig)))._tag, "WorkspaceUnexpectedError");
@@ -4468,72 +4317,62 @@ describe("regate: the head or the base of a ready pull request moved", () => {
     }),
   );
 
-  it.effect("a ready pr whose base moved is gated again and stays ready", () =>
-    Effect.gen(function* () {
-      const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
-      assert.deepStrictEqual(yield* regateStep(rig), { kind: "passed", pr: 12 });
-      assert.deepStrictEqual(rig.gh.calls, [
-        // The pull request is still open, and the base moved.
-        PR_READ,
-        TIP_READ,
-        // Then the gate, with its own reads, and a note that it passed again.
-        PR_READ,
-        TIP_READ,
-        PR_READ,
-        TIP_READ,
-        UNCHANGED_READ,
-        `prComment 12 ${againComment(2, MOVED)}`,
-      ]);
-      assert.deepStrictEqual(rig.t3.calls, []);
-      assert.deepStrictEqual(rig.ws.calls, workspaceCalls(rig, 2, MOVED));
-      // Both runs are on record, the state is as it was and the run is still open.
-      assert.deepStrictEqual(linesOf(rig), [
-        ...BASE_EVENTS,
-        ...passingAttempt(1),
-        ...PASS_TAIL,
-        regateLine(BASE, MOVED),
-        ...passingOn(MOVED, 2),
-        PASSED_STEP,
-        RESULTS_POSTED,
-      ]);
-      const world = rig.gh.world;
-      assert.isTrue(world.prReady);
-      assert.strictEqual(world.state, "pr-open");
-      // A new comment, not an edit of the old one: both say what they ran against.
-      assert.deepStrictEqual(world.prComments, [resultsComment(1), againComment(2, MOVED)]);
-      assert.deepStrictEqual(checkoutsOnDisk(rig), []);
-      // It passed against the new tip, so a quiet pass follows.
-      clearCalls(rig);
-      assert.deepStrictEqual(yield* regateStep(rig), { kind: "unchanged" });
-      assert.deepStrictEqual(rig.gh.calls, [PR_READ, TIP_READ]);
-    }),
+  it.effect(
+    "a ready pr whose head moved, on a base that moved too, is gated again and stays ready",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* prOpenRun();
+        baseAndHeadMoved(rig);
+        assert.deepStrictEqual(yield* regateStep(rig), { kind: "passed", pr: 12 });
+        assert.deepStrictEqual(rig.gh.calls, [
+          // The pull request is still open, its head is not the one that passed, and the base tip
+          // is read for the ledger line.
+          PR_READ,
+          TIP_READ,
+          // Then the gate, with its own reads, and a note that it passed again.
+          PR_READ,
+          TIP_READ,
+          PR_READ,
+          UNCHANGED_READ,
+          `prComment 12 ${againComment(2, MOVED)}`,
+        ]);
+        assert.deepStrictEqual(rig.t3.calls, []);
+        assert.deepStrictEqual(rig.ws.calls, workspaceCalls(rig, 2, MOVED));
+        // Both runs are on record, the state is as it was and the run is still open.
+        assert.deepStrictEqual(linesOf(rig), [
+          ...BASE_EVENTS,
+          ...onOldHead([...passingAttempt(1), ...PASS_TAIL]),
+          regateLine(BASE, MOVED),
+          ...passingOn(MOVED, 2),
+          PASSED_STEP,
+          RESULTS_POSTED,
+        ]);
+        const world = rig.gh.world;
+        assert.isTrue(world.prReady);
+        assert.strictEqual(world.state, "pr-open");
+        // A new comment, not an edit of the old one: both say what they ran against.
+        assert.deepStrictEqual(world.prComments, [resultsComment(1), againComment(2, MOVED)]);
+        assert.deepStrictEqual(checkoutsOnDisk(rig), []);
+        // It passed against the new tip, so a quiet pass follows.
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* regateStep(rig), { kind: "unchanged" });
+        assert.deepStrictEqual(rig.gh.calls, [PR_READ]);
+      }),
   );
 });
 
-describe("regate: what the run's line says moved", () => {
+describe("regate: what the run's line says started it", () => {
   const movedOf = (rig: Rig): Moved | null =>
     readProgress(readRun(rig.dataDir, rig.run).entries).regateMoved;
-
-  it.effect("a regate says the base moved when only the base did", () =>
-    Effect.gen(function* () {
-      const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
-      assert.deepStrictEqual(yield* regateIn(rig), {
-        step: { kind: "passed", pr: 12 },
-        moved: "base",
-      });
-    }),
-  );
 
   it.effect("a failed regate says what moved", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       passThenFail(rig);
       assert.deepStrictEqual(yield* regateIn(rig), {
         step: { kind: "sent-back", attempt: 2 },
-        moved: "base",
+        moved: "both",
       });
     }),
   );
@@ -4541,7 +4380,7 @@ describe("regate: what the run's line says moved", () => {
   it.effect("a resumed relaunch of a failed regate says what its line recorded", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       // A call wrote the `gate_regate` line, ran the commands, decided the relaunch, and was cut
       // short before the launch was recorded.
       appendLines(rig, [
@@ -4550,7 +4389,7 @@ describe("regate: what the run's line says moved", () => {
       ] as ReadonlyArray<RunEvent>);
       assert.deepStrictEqual(yield* regateIn(rig), {
         step: { kind: "sent-back", attempt: 2 },
-        moved: "base",
+        moved: "both",
       });
       assert.strictEqual(rig.t3.launches.length, 1);
     }),
@@ -4559,7 +4398,7 @@ describe("regate: what the run's line says moved", () => {
   it.effect("a resumed regate failure that was sent and not committed says what moved", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       // A call wrote the `gate_regate` line, sent the failure, and was cut short before the
       // transition was committed.
       appendLines(rig, [
@@ -4569,46 +4408,31 @@ describe("regate: what the run's line says moved", () => {
       ] as ReadonlyArray<RunEvent>);
       assert.deepStrictEqual(yield* regateIn(rig), {
         step: { kind: "sent-back", attempt: 2 },
-        moved: "base",
+        moved: "both",
       });
     }),
   );
 
-  it.effect("a regate whose base moves while it runs says the same live and from its ledger", () =>
-    Effect.gen(function* () {
-      const rig = yield* prOpenRun();
-      headMoved(rig);
-      // The base moves once while the commands run, so a second `gate_regate` line is written.
-      baseMoves(rig, 1);
-      const { step, moved: live } = yield* regateIn(rig);
-      assert.deepStrictEqual(step, { kind: "passed", pr: 12 });
-      assert.strictEqual(live, movedOf(rig));
-      assert.strictEqual(live, "both");
-    }),
-  );
-
   it.effect(
-    "a regate of a pass with no recorded base says the base moved when it moves mid gate",
+    "a regate says the same live and from its ledger, whatever the base does meanwhile",
     () =>
       Effect.gen(function* () {
         const rig = yield* prOpenRun();
-        // A ledger written before checkout lines existed: the pass has a head and no base.
-        dropLines(rig, '"gate_checkout"');
-        // The head is unchanged and the base is unknown, so the re-gate starts as unknown; the
-        // base then moves once while the commands run, and that move is what the line says.
+        headMoved(rig);
+        // The base moves once while the commands run: no second `gate_regate` line is written.
         baseMoves(rig, 1);
         const { step, moved: live } = yield* regateIn(rig);
         assert.deepStrictEqual(step, { kind: "passed", pr: 12 });
         assert.strictEqual(live, movedOf(rig));
-        assert.strictEqual(live, "base");
+        assert.strictEqual(live, "head");
       }),
   );
 
   it.effect("a regate pass holds only its own commands", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
-      assert.deepStrictEqual((yield* regateIn(rig)).moved, "base");
+      baseAndHeadMoved(rig);
+      assert.deepStrictEqual((yield* regateIn(rig)).moved, "both");
       // The re-gate is a new attempt, and its checkout clears the commands so far.
       const pass = readProgress(readRun(rig.dataDir, rig.run).entries).pass;
       assert.strictEqual(pass?.attempt, 2);
@@ -4616,16 +4440,53 @@ describe("regate: what the run's line says moved", () => {
     }),
   );
 
-  it.effect("a pass whose base was not recorded is said as such and not as no pass", () =>
+  it.effect("a conflict is said for a pass whose base was not recorded, not as no pass", () =>
     Effect.gen(function* () {
-      // A ledger written before checkout lines existed: the pass has a head and no base, so the
-      // run is gated again, and the line must not claim that no pass was on record.
+      // A ledger written before checkout lines existed: the pass has a head and no base. The
+      // head did not move, so only a conflict GitHub reports gates it again, and the line must
+      // not claim that no pass was on record.
       const rig = yield* prOpenRun();
       dropLines(rig, '"gate_checkout"');
+      rig.gh.pr = { ...rig.gh.pr!, mergeable: "conflicting" };
       assert.deepStrictEqual(yield* regateIn(rig), {
-        step: { kind: "passed", pr: 12 },
-        moved: "unknown",
+        step: { kind: "sent-back", attempt: 2 },
+        moved: "conflict",
       });
+    }),
+  );
+
+  it.effect("a conflict is said when the base also moved and the head did not", () =>
+    Effect.gen(function* () {
+      const rig = yield* prOpenRun();
+      baseMoved(rig, 0);
+      rig.gh.pr = { ...rig.gh.pr!, mergeable: "conflicting" };
+      passThenFail(rig);
+      assert.deepStrictEqual(yield* regateIn(rig), {
+        step: { kind: "sent-back", attempt: 2 },
+        moved: "conflict",
+      });
+      assert.strictEqual(movedOf(rig), "conflict");
+      // The line says so: an older line with the same shas and no marker reads `earlier`.
+      assert.deepStrictEqual(eventsOf(rig, "gate_regate"), [
+        {
+          event: "gate_regate",
+          data: { sha: HEAD, base_sha: MOVED, previous_base_sha: BASE, conflict: true },
+        },
+      ]);
+    }),
+  );
+
+  it.effect("a pass whose base was not recorded is unchanged while the head is", () =>
+    Effect.gen(function* () {
+      // Before this change such a pass was always gated again, as nothing showed the base it
+      // ran on. Only the head counts now, and the pull request is mergeable.
+      const rig = yield* prOpenRun();
+      dropLines(rig, '"gate_checkout"');
+      const bytes = bytesOf(rig);
+      assert.deepStrictEqual(yield* regateIn(rig), { step: { kind: "unchanged" }, moved: null });
+      assert.deepStrictEqual(rig.gh.calls, [PR_READ]);
+      assert.deepStrictEqual(rig.ws.calls, []);
+      assert.strictEqual(bytesOf(rig), bytes);
     }),
   );
 
@@ -4647,12 +4508,12 @@ describe("regate: what the run's line says moved", () => {
   it.effect("a regate whose results were not posted says what moved when it resumes", () =>
     Effect.gen(function* () {
       const reference = yield* prOpenRun();
-      baseMoved(reference, 0);
+      baseAndHeadMoved(reference);
       yield* regateIn(reference);
       const at = reference.gh.calls.findIndex((c) => c.startsWith("prComment "));
       assert.ok(at >= 0, "the re-gate posts its results");
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       rig.gh.failAt = at;
       assert.strictEqual((yield* Effect.result(regateIn(rig)))._tag, "Failure");
       rig.gh.failAt = null;
@@ -4660,7 +4521,7 @@ describe("regate: what the run's line says moved", () => {
       assert.strictEqual(eventsOf(rig, "gate_regate").length, 1);
       assert.deepStrictEqual(yield* regateIn(rig), {
         step: { kind: "passed", pr: 12 },
-        moved: "base",
+        moved: "both",
       });
     }),
   );
@@ -4676,8 +4537,7 @@ describe("regate: what the run's line says moved", () => {
   it.effect("a regate says both moved when the head and the base did", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
-      headMoved(rig);
+      baseAndHeadMoved(rig);
       assert.deepStrictEqual((yield* regateIn(rig)).moved, "both");
     }),
   );
@@ -4685,12 +4545,12 @@ describe("regate: what the run's line says moved", () => {
   it.effect("a regate that an earlier call began says what its line recorded", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       // A call wrote the `gate_regate` line and was cut short before the gate ran.
       appendLines(rig, [regateLine(BASE, MOVED)] as ReadonlyArray<RunEvent>);
       assert.deepStrictEqual(yield* regateIn(rig), {
         step: { kind: "passed", pr: 12 },
-        moved: "base",
+        moved: "both",
       });
       assert.strictEqual(eventsOf(rig, "gate_regate").length, 1);
     }),
@@ -4708,16 +4568,20 @@ describe("regate: what the run's line says moved", () => {
 });
 
 describe("regate: gated again and the answer", () => {
-  it.effect("a ready pr whose base moves once more after a re-gate is gated again", () =>
+  it.effect("a ready pr whose head moves once more after a re-gate is gated again", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       yield* regateIn(rig);
+      headMoved(rig);
       rig.gh.tipCell!.tip = TIPS[2]!;
       assert.deepStrictEqual(yield* regateStep(rig), { kind: "passed", pr: 12 });
       assert.deepStrictEqual(eventsOf(rig, "gate_regate"), [
         regateLine(TIPS[0]!, TIPS[1]!),
-        regateLine(TIPS[1]!, TIPS[2]!),
+        {
+          event: "gate_regate",
+          data: { sha: PUSHED, base_sha: TIPS[2]!, previous_base_sha: TIPS[1]! },
+        },
       ]);
     }),
   );
@@ -4725,7 +4589,7 @@ describe("regate: gated again and the answer", () => {
   it.effect("a ready pr that fails the new merge goes back to draft and the session is told", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       passThenFail(rig);
       assert.deepStrictEqual(yield* regateStep(rig), { kind: "sent-back", attempt: 2 });
       assert.deepStrictEqual(rig.gh.calls, [
@@ -4769,7 +4633,7 @@ describe("regate: gated again and the answer", () => {
     () =>
       Effect.gen(function* () {
         const rig = yield* prOpenRun();
-        baseMoved(rig, 0);
+        baseAndHeadMoved(rig);
         passThenFail(rig);
         yield* regateIn(rig);
         clearCalls(rig);
@@ -4798,7 +4662,7 @@ describe("regate: gated again and the answer", () => {
   it.effect("a ready pr whose new merge conflicts goes back to draft with the conflict told", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       conflicting(rig, ["src/a.rs"]);
       assert.deepStrictEqual(yield* regateStep(rig), { kind: "sent-back", attempt: 2 });
       assert.strictEqual(rig.ws.gateCalls, 1, "no command ran in the conflict");
@@ -4830,7 +4694,12 @@ describe("regate: gated again and the answer", () => {
         });
         assert.strictEqual(rig.ws.runs, 0, "the gate was not asked, so no lock was taken");
         assert.deepStrictEqual(rig.ws.calls, []);
-        assert.ok(hasLine(rig, regateLine(BASE, BASE)));
+        assert.ok(
+          hasLine(rig, {
+            event: "gate_regate",
+            data: { sha: HEAD, base_sha: BASE, previous_base_sha: BASE, conflict: true },
+          }),
+        );
         assert.ok(hasLine(rig, conflictCmd(2)));
         assert.strictEqual(rig.t3.launches.length, 1);
         assert.ok(
@@ -4870,7 +4739,7 @@ describe("regate: gated again and the answer", () => {
       assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
       // The base moves and the re-gate conflicts. The pass closed attempt 2, so this is attempt
       // 3, the first failure since the pass: it goes back into a session instead of ending the run.
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       conflicting(rig, ["src/a.rs"]);
       assert.deepStrictEqual(yield* regateStep(rig), { kind: "sent-back", attempt: 3 });
       assert.strictEqual(rig.gh.world.state, "building");
@@ -4881,7 +4750,7 @@ describe("regate: gated again and the answer", () => {
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
       rig.project = { ...rig.project, limits: { ...rig.project.limits, gateRetries: 1 } };
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       passThenFailFromTheMove(rig);
       // Attempt 2, the first failure since the pass on attempt 1, goes into a new session.
       assert.deepStrictEqual(yield* regateStep(rig), { kind: "sent-back", attempt: 2 });
@@ -4910,7 +4779,7 @@ describe("regate: gated again and the answer", () => {
       ];
       for (const [name, pull, prEnd] of cases) {
         const rig = yield* prOpenRun();
-        baseMoved(rig, 0);
+        baseAndHeadMoved(rig);
         rig.gh.pr = pull;
         const before = linesOf(rig);
         assert.deepStrictEqual(yield* regateStep(rig), { kind: "ended" }, name);
@@ -4933,7 +4802,7 @@ describe("regate: gated again and the answer", () => {
   it.effect("a pr merged while the re-gate ran ends the run and posts nothing", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       // The first read of the pull request shows it open, the next one merged.
       rig.gh.laterPr = mergedPull();
       rig.gh.prReads = 0;
@@ -4944,72 +4813,25 @@ describe("regate: gated again and the answer", () => {
     }),
   );
 
-  it.effect("a ready pr whose gate cannot settle sends the issue to stuck", () =>
+  it.effect("a ready pr that waits while many others merge is not gated again", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      rig.project = { ...rig.project, limits: { ...rig.project.limits, regates: 1 } };
-      // The base moves again while the re-gate runs, and keeps moving.
-      baseMoved(rig, 5);
-      assert.deepStrictEqual(yield* regateStep(rig), { kind: "stuck", reason: SETTLED_NEVER });
-      assert.deepStrictEqual(rig.gh.calls, [
-        PR_READ,
-        TIP_READ,
-        PR_READ,
-        TIP_READ,
-        PR_READ,
-        TIP_READ,
-        // The pull request is not left looking ready: nothing vouches for it.
-        "markPrDraft 12",
-        ...stuckCalls(SETTLED_NEVER),
-      ]);
-      assert.deepStrictEqual(linesOf(rig).slice(-3), [
-        { event: "stuck", data: { reason: SETTLED_NEVER } },
-        moved("pr-open", "stuck"),
-        finishedStuck(2),
-      ]);
-      assert.strictEqual(rig.gh.world.state, "stuck");
-      assert.isFalse(rig.gh.world.prReady);
-    }),
-  );
-
-  it.effect("the limit bounds a gate that cannot settle and not the life of a ready pr", () =>
-    Effect.gen(function* () {
-      // Every re-gate that passes starts the count again, so a pull request that waits while
-      // many others merge is gated again each time, however low the limit is.
-      const rig = yield* prOpenRun();
-      rig.project = { ...rig.project, limits: { ...rig.project.limits, regates: 1 } };
       baseMoved(rig, 0);
       for (const tip of TIPS.slice(1)) {
         rig.gh.tipCell!.tip = tip;
-        assert.deepStrictEqual(yield* regateStep(rig), { kind: "passed", pr: 12 }, tip);
+        assert.deepStrictEqual(yield* regateStep(rig), { kind: "unchanged" }, tip);
       }
+      assert.deepStrictEqual(eventsOf(rig, "gate_regate"), []);
+      assert.strictEqual(rig.ws.gateCalls, 1);
       assert.strictEqual(rig.gh.world.state, "pr-open");
       assert.isTrue(rig.gh.world.prReady);
-      assert.strictEqual(eventsOf(rig, "gate_regate").length, TIPS.length - 1);
-    }),
-  );
-
-  it.effect("a pass starts the regate count again for a building run too", () =>
-    Effect.gen(function* () {
-      const rig = yield* readyForGate();
-      rig.project = { ...rig.project, limits: { ...rig.project.limits, regates: 1 } };
-      // A re-gate that passed earlier in this run's life: the limit is spent only by re-gates
-      // that came after the last pass.
-      appendLines(rig, [
-        regateLine("a", "b"),
-        ...passingAttempt(1),
-        PASSED_STEP,
-      ] as ReadonlyArray<RunEvent>);
-      assert.strictEqual(readProgress(readRun(rig.dataDir, rig.run).entries).regates, 0);
-      baseMoves(rig, 0);
-      assert.strictEqual((yield* gateIn(rig)).kind, "passed");
     }),
   );
 
   it.effect("a changed issue text stops a re-gate before the pass is recorded", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       rig.gh.unchanged.push(false);
       assert.deepStrictEqual(yield* regateStep(rig), {
         kind: "stuck",
@@ -5020,14 +4842,18 @@ describe("regate: gated again and the answer", () => {
       assert.isFalse(rig.gh.world.prReady);
       // The second pass was never recorded and nothing new was posted.
       assert.deepStrictEqual(rig.gh.world.prComments, [resultsComment(1)]);
-      assert.strictEqual(linesOf(rig).filter((l) => sameLine(l, PASSED_STEP)).length, 1);
+      assert.strictEqual(
+        linesOf(rig).filter((l) => sameLine(l, onOldHead([PASSED_STEP])[0]!)).length,
+        1,
+      );
+      assert.strictEqual(linesOf(rig).filter((l) => sameLine(l, PASSED_STEP)).length, 0);
     }),
   );
 
   it.effect("a passing regate does not need the session", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       rig.t3.status = () => new ThreadNotFoundError({ threadId: "thread-1" });
       assert.deepStrictEqual(yield* regateStep(rig), { kind: "passed", pr: 12 });
       assert.deepStrictEqual(rig.t3.calls, [], "the thread is never looked up");
@@ -5039,7 +4865,7 @@ describe("regate: gated again and the answer", () => {
   it.effect("a failed regate does not need the old thread to still exist", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       passThenFail(rig);
       rig.t3.status = () => new ThreadNotFoundError({ threadId: "thread-1" });
       assert.deepStrictEqual(yield* regateStep(rig), { kind: "sent-back", attempt: 2 });
@@ -5052,7 +4878,7 @@ describe("regate: gated again and the answer", () => {
   it.effect("a session that is working does not hold a passing regate", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       rig.t3.status = () => statusOf("running", null);
       assert.deepStrictEqual(yield* regateStep(rig), { kind: "passed", pr: 12 });
       assert.deepStrictEqual(rig.t3.calls, []);
@@ -5064,7 +4890,7 @@ describe("regate: gated again and the answer", () => {
     () =>
       Effect.gen(function* () {
         const rig = yield* legacyPrOpenRun();
-        baseMoved(rig, 0);
+        baseAndHeadMoved(rig);
         passThenFail(rig);
         rig.t3.status = () => statusOf("running", null);
         assert.deepStrictEqual(yield* regateStep(rig), { kind: "sent-back", attempt: 2 });
@@ -5124,7 +4950,7 @@ describe("regate: a failed re-gate of a ready pull request", () => {
   const exhaustedRig = () =>
     Effect.map(prOpenRun(), (rig) => {
       rig.project = { ...rig.project, limits: { ...rig.project.limits, gateRetries: 0 } };
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       passThenFailFromTheMove(rig);
       return rig;
     });
@@ -5160,7 +4986,7 @@ describe("regate: a failed re-gate of a ready pull request", () => {
   it.effect("the issue text is checked before a failed regate resumes the session", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       passThenFail(rig);
       rig.gh.unchanged.push(false);
       assert.deepStrictEqual(yield* regateStep(rig), {
@@ -5180,7 +5006,7 @@ describe("regate: a failed re-gate of a ready pull request", () => {
   it.effect("an unchanged issue text lets a failed regate go to the session", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       passThenFail(rig);
       assert.deepStrictEqual(yield* regateStep(rig), { kind: "sent-back", attempt: 2 });
       assert.strictEqual(rig.gh.calls[4], UNCHANGED_READ);
@@ -5190,7 +5016,7 @@ describe("regate: a failed re-gate of a ready pull request", () => {
   it.effect("a failed regate starts a new session from the pr branch on origin", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       passThenFail(rig);
       assert.deepStrictEqual(yield* regateStep(rig), { kind: "sent-back", attempt: 2 });
       assert.strictEqual(rig.t3.launches.length, 1);
@@ -5221,7 +5047,7 @@ describe("regate: a failed re-gate of a ready pull request", () => {
       const options = [{ id: "reasoningEffort", value: "high" }];
       const model = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
       rig.t3.project = { id: "proj-1", model: { ...model, options } };
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       passThenFail(rig);
       assert.deepStrictEqual(yield* regateStep(rig), { kind: "sent-back", attempt: 2 });
       assert.deepStrictEqual(rig.t3.launches[0]!.model, { ...model, options });
@@ -5246,7 +5072,7 @@ describe("regate: a failed re-gate of a ready pull request", () => {
   it.effect("a conflicting regate starts a new session from the pr branch too", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       conflicting(rig, ["src/a.rs"]);
       assert.deepStrictEqual(yield* regateStep(rig), { kind: "sent-back", attempt: 2 });
       assert.strictEqual(rig.t3.launches.length, 1);
@@ -5261,7 +5087,7 @@ describe("regate: a failed re-gate of a ready pull request", () => {
     Effect.gen(function* () {
       for (const bad of ["feature branch", "-x", "a..b", "a;b", "a$(x)", ""]) {
         const rig = yield* prOpenRun();
-        baseMoved(rig, 0);
+        baseAndHeadMoved(rig);
         passThenFail(rig);
         rig.gh.pr = { ...rig.gh.pr!, headRef: bad };
         const step = yield* regateStep(rig);
@@ -5283,11 +5109,11 @@ describe("regate: a failed re-gate of a ready pull request", () => {
     () =>
       Effect.gen(function* () {
         const rig = yield* prOpenRun();
-        baseMoved(rig, 0);
+        baseAndHeadMoved(rig);
         passThenFail(rig);
         // The pull request cannot be drafted: the call dies after the session was launched.
         const probe = yield* prOpenRun();
-        baseMoved(probe, 0);
+        baseAndHeadMoved(probe);
         passThenFail(probe);
         yield* regateIn(probe);
         rig.gh.failAt = probe.gh.calls.indexOf("markPrDraft 12");
@@ -5311,7 +5137,7 @@ describe("regate: a failed re-gate of a ready pull request", () => {
     () =>
       Effect.gen(function* () {
         const rig = yield* prOpenRun();
-        baseMoved(rig, 0);
+        baseAndHeadMoved(rig);
         passThenFail(rig);
         yield* regateIn(rig);
         // The new thread's branch is T3's own, not the pull request's: the resume binds it.
@@ -5333,7 +5159,7 @@ describe("regate: a failed re-gate of a ready pull request", () => {
   it.effect("the relaunched session has a worktree of its own for the next stop to remove", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       passThenFail(rig);
       yield* regateIn(rig);
       const seen = readProgress(readRun(rig.dataDir, rig.run).entries);
@@ -5353,7 +5179,7 @@ describe("regate: a relaunch that an earlier call decided", () => {
   const lostRelaunch = () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       passThenFail(rig);
       rig.t3.dieAfterLaunch = true;
       assert.isTrue(Exit.isFailure(yield* Effect.exit(regateIn(rig))));
@@ -5474,7 +5300,7 @@ describe("regate: a relaunch that an earlier call decided", () => {
   it.effect("a launch T3 refuses goes stuck with the detail in the ledger only", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       passThenFail(rig);
       // archive (0), findProject (1) and the launch (2): the launch is refused.
       rig.t3.failAt = 2;
@@ -5496,7 +5322,7 @@ describe("regate: a relaunch that an earlier call decided", () => {
 describe("regate: every call can fail, and the gate is called again", () => {
   const baseMovedRig = () =>
     Effect.map(prOpenRun(), (rig) => {
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       return rig;
     });
   const failing = () =>
@@ -5557,22 +5383,6 @@ describe("regate: every call can fail, and the gate is called again", () => {
     ),
   );
 
-  it.effect("the re-gate limit of a ready pr survives a failure of each call", () =>
-    gateCrashMatrix(
-      "regate-limit",
-      () =>
-        Effect.map(prOpenRun(), (rig) => {
-          rig.project = { ...rig.project, limits: { ...rig.project.limits, regates: 1 } };
-          baseMoved(rig, 5);
-          return rig;
-        }),
-      { kind: "stuck", reason: SETTLED_NEVER },
-      { at: -1, on: "issue" },
-      settledLedger,
-      REGATE_DRIVERS,
-    ),
-  );
-
   it.effect("the changed text path of a ready pr survives a failure of each call", () =>
     gateCrashMatrix(
       "regate-text",
@@ -5613,7 +5423,7 @@ describe("regate: a failed regate cut short and then passing", () => {
   const halfApplied = (crash: { gh: number } | { t3: number }) =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       passThenFail(rig);
       if ("gh" in crash) rig.gh.failAt = crash.gh;
       else rig.t3.failAt = crash.t3;
@@ -5683,7 +5493,7 @@ describe("regate: a failed regate cut short and then passing", () => {
       Effect.gen(function* () {
         // The failure reached the new session and was recorded; only the draft call was lost.
         const probe = yield* prOpenRun();
-        baseMoved(probe, 0);
+        baseAndHeadMoved(probe);
         passThenFail(probe);
         yield* regateIn(probe);
         const draftAt = probe.gh.calls.indexOf("markPrDraft 12");
@@ -5704,7 +5514,7 @@ describe("regate: a failed regate cut short and then passing", () => {
         const exhaustedAtOnce = () =>
           Effect.map(prOpenRun(), (rig) => {
             withLimits(rig, { gateRetries: 0 });
-            baseMoved(rig, 0);
+            baseAndHeadMoved(rig);
             passThenFailFromTheMove(rig);
             return rig;
           });
@@ -5747,7 +5557,7 @@ describe("regate: a person closed the issue", () => {
   it.effect("before a moved base is gated, the run is abandoned and nothing is gated", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       rig.gh.closed = true;
       const comments = rig.gh.world.prComments.length;
       assert.deepStrictEqual(yield* regateStep(rig), { kind: "abandoned" });
@@ -5761,7 +5571,7 @@ describe("regate: a person closed the issue", () => {
     () =>
       Effect.gen(function* () {
         const rig = yield* prOpenRun();
-        baseMoved(rig, 0);
+        baseAndHeadMoved(rig);
         appendLines(rig, [regateLine(BASE, MOVED)] as ReadonlyArray<RunEvent>);
         rig.gh.closed = true;
         const comments = rig.gh.world.prComments.length;
@@ -5783,7 +5593,7 @@ describe("regate: a person closed the issue", () => {
         ];
         for (const [label, issueClosed, pull, prEnd] of cases) {
           const rig = yield* prOpenRun();
-          baseMoved(rig, 0);
+          baseAndHeadMoved(rig);
           appendLines(rig, [regateLine(BASE, MOVED)] as ReadonlyArray<RunEvent>);
           rig.gh.closed = issueClosed;
           rig.gh.pr = pull;
@@ -5802,7 +5612,7 @@ describe("regate: the relaunched session's pull request", () => {
   it.effect("on another branch than the one it was started from is not bound", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       passThenFail(rig);
       yield* regateIn(rig);
       clearCalls(rig);
@@ -5867,7 +5677,7 @@ describe("regate: a first relaunch with no T3 project", () => {
   it.effect("goes stuck without saying a session may exist, and launches nothing", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       passThenFail(rig);
       rig.t3.project = null;
       const step = yield* regateStep(rig);
@@ -5883,7 +5693,7 @@ describe("regate: a first relaunch with no T3 project", () => {
   it.effect("a project with no default model goes stuck the same way, naming the fix", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
-      baseMoved(rig, 0);
+      baseAndHeadMoved(rig);
       passThenFail(rig);
       rig.t3.project = { id: "proj-1", model: null };
       const step = yield* regateStep(rig);
@@ -5907,7 +5717,7 @@ describe("gate: a run whose launch recorded a base other than the project's", ()
       : event,
   );
 
-  it.effect("gates against that base's tip, and a move of main does not re-gate", () =>
+  it.effect("gates against that base's tip, and a move of any base does not re-gate", () =>
     Effect.gen(function* () {
       const rig = rigFor(onFeature);
       rig.project = runProject(
@@ -5927,20 +5737,16 @@ describe("gate: a run whose launch recorded a base other than the project's", ()
       );
       assert.ok(rig.gh.calls.includes("branchTip feature/x"), rig.gh.calls.join("\n"));
       assert.ok(!rig.gh.calls.includes("branchTip main"), rig.gh.calls.join("\n"));
-      assert.deepStrictEqual(yield* lastPass(rig.dataDir, rig.run), {
-        pr: 12,
-        head: HEAD,
-        base: BASE,
-        baseBranch: "feature/x",
-      });
+      assert.deepStrictEqual(yield* lastPass(rig.dataDir, rig.run), { pr: 12, head: HEAD });
       clearCalls(rig);
-      // `main` moves: nothing to gate again.
+      // Neither `main` nor the run's own base moving gates it again.
       rig.gh.tips.main = PUSHED;
-      assert.deepStrictEqual(yield* regateStep(rig), { kind: "unchanged" });
-      assert.deepStrictEqual(rig.gh.calls, [PR_READ, "branchTip feature/x"]);
-      // The run's own base moves: it is gated again, against that tip.
-      clearCalls(rig);
       rig.gh.tips["feature/x"] = MOVED;
+      assert.deepStrictEqual(yield* regateStep(rig), { kind: "unchanged" });
+      assert.deepStrictEqual(rig.gh.calls, [PR_READ]);
+      // A moved head is gated again, against the run's base tip.
+      clearCalls(rig);
+      headMoved(rig);
       assert.notDeepEqual(yield* regateStep(rig), { kind: "unchanged" });
       assert.deepStrictEqual(
         eventsOf(rig, "gate_checkout")
@@ -5965,8 +5771,10 @@ describe("gate: a run whose launch recorded a base other than the project's", ()
         setRun(rig, "completed", 1);
         assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
         assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
-        // The run's base moves and the commands fail on it: a new session fixes the branch.
+        // The head moves, the base with it, and the commands fail on it: a new session fixes
+        // the branch.
         rig.gh.tips["feature/x"] = MOVED;
+        headMoved(rig);
         passThenFail(rig);
         assert.deepStrictEqual(yield* regateStep(rig), { kind: "sent-back", attempt: 2 });
         assert.deepStrictEqual(
@@ -5982,12 +5790,13 @@ describe("gate: a run whose launch recorded a base other than the project's", ()
         assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
         assert.ok(rig.gh.calls.includes("branchTip feature/x"), rig.gh.calls.join("\n"));
         assert.ok(!rig.gh.calls.includes("branchTip main"), rig.gh.calls.join("\n"));
-        assert.deepStrictEqual(yield* lastPass(rig.dataDir, rig.run), {
-          pr: 12,
-          head: HEAD,
-          base: MOVED,
-          baseBranch: "feature/x",
-        });
+        assert.deepStrictEqual(
+          eventsOf(rig, "gate_checkout")
+            .map((l) => (l.data as { base_sha: string }).base_sha)
+            .at(-1),
+          MOVED,
+        );
+        assert.deepStrictEqual(yield* lastPass(rig.dataDir, rig.run), { pr: 12, head: PUSHED });
       }),
   );
 

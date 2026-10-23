@@ -33,7 +33,6 @@ export class ConfigErrors extends Schema.TaggedError<ConfigErrors>()("FactoryCon
 export interface Limits {
   readonly minutes: number;
   readonly gateRetries: number;
-  readonly regates: number;
   readonly checksMinutes: number;
   readonly interruptionResumes: number;
 }
@@ -52,7 +51,6 @@ export interface ProjectConfig {
 
 const DEFAULT_MINUTES = 180;
 const DEFAULT_CHECKS_MINUTES = 30;
-const DEFAULT_REGATES = 5;
 const DEFAULT_INTERRUPTION_RESUMES = 2;
 export const DEFAULT_POLL_SECONDS = 60;
 export const DEFAULT_MAX_CONCURRENT_GATES = 2;
@@ -82,7 +80,6 @@ export const timeLimitOnlyProjectConfig = (): ProjectConfig => ({
   limits: {
     minutes: DEFAULT_MINUTES,
     gateRetries: 0,
-    regates: DEFAULT_REGATES,
     checksMinutes: DEFAULT_CHECKS_MINUTES,
     interruptionResumes: DEFAULT_INTERRUPTION_RESUMES,
   },
@@ -394,7 +391,6 @@ const projectFrom = (c: Checker, root: Mapping): ProjectConfig | undefined => {
     "factory.limits.gate_retries",
     0,
   );
-  const regates = c.optionalUint(limits, "factory.limits", "regates", DEFAULT_REGATES, 1);
   const checksMinutes = c.optionalUint(
     limits,
     "factory.limits",
@@ -419,7 +415,6 @@ const projectFrom = (c: Checker, root: Mapping): ProjectConfig | undefined => {
     requiredChecks === undefined ||
     minutes === undefined ||
     gateRetries === undefined ||
-    regates === undefined ||
     checksMinutes === undefined ||
     interruptionResumes === undefined ||
     autonomy === undefined
@@ -432,7 +427,7 @@ const projectFrom = (c: Checker, root: Mapping): ProjectConfig | undefined => {
     provision,
     gate,
     requiredChecks,
-    limits: { minutes, gateRetries, regates, checksMinutes, interruptionResumes },
+    limits: { minutes, gateRetries, checksMinutes, interruptionResumes },
     autonomy,
   };
 };
