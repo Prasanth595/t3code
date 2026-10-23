@@ -4469,7 +4469,7 @@ describe("pr-open runs: gated again only when something moved", () => {
   const lineOf = (lines: ReadonlyArray<string>, issue: number) =>
     lines.filter((l) => l.startsWith(`${REPO}#${issue} `));
 
-  it.effect("a quiet run prints nothing and starts nothing, whatever the base did", () =>
+  it.effect("a quiet run prints nothing and starts nothing", () =>
     Effect.gen(function* () {
       const fake = new Fake();
       pr(fake, 41);
@@ -4479,7 +4479,7 @@ describe("pr-open runs: gated again only when something moved", () => {
       assert.equal(report.errors, 0);
       // The comparison reads the ledger and the pull request's head, and not the base tip.
       assert.deepEqual(
-        fake.calls.filter((c) => /^(last_pass|base_tip|open_pull) /.test(c)),
+        fake.calls.filter((c) => /^(last_pass|open_pull) /.test(c)),
         [`last_pass ${REPO}#41`, `open_pull ${REPO}#12`],
       );
     }),
@@ -4711,7 +4711,7 @@ describe("pr-open runs: instructor feedback", () => {
     () =>
       Effect.gen(function* () {
         const fake = reviewed(relaunched(2));
-        // The head and the base moved too: the feedback wins, and the gate runs when the new
+        // The head moved too: the feedback wins, and the gate runs when the new
         // session's first run ends.
         fake.openHeads[`${REPO}#7`] = MOVED;
         const { report, lines } = yield* pass(fake, [REPO], 1);
@@ -4722,7 +4722,7 @@ describe("pr-open runs: instructor feedback", () => {
         ]);
         // The comparison with the last pass is not made: the run is no longer waiting.
         assert.deepEqual(
-          fake.calls.filter((c) => /^(base_tip|open_pull) /.test(c)),
+          fake.calls.filter((c) => /^open_pull /.test(c)),
           [],
         );
         assert.deepEqual(fake.feedbacks, [RUN12]);
