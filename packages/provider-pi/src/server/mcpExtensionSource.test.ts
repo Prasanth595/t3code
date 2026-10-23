@@ -6,7 +6,7 @@ import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
 import { assert, describe, it } from "@effect/vitest";
 
-import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
+import { PI_T3_MCP_EXTENSION_SOURCE, PI_T3_SESSION_END_STATUS_KEY } from "./mcpExtensionSource.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 
 type RequestHook = (
@@ -74,6 +74,19 @@ describe("Pi orchestration prompt section", () => {
       assert.isTrue(result!.systemPrompt.startsWith(`${event.systemPrompt}\n\n`));
       assert.include(result!.systemPrompt, "orchestrator_capabilities");
     }
+  });
+});
+
+describe("Pi session teardown", () => {
+  it("marks where the outgoing session's background work ends", async () => {
+    const bridge = await loadMcpBridge();
+    const statuses: Array<readonly [string, string | undefined]> = [];
+    const ui = {
+      notify: assert.fail,
+      setStatus: (key: string, text: string | undefined) => statuses.push([key, text]),
+    };
+    await bridge.handlers.get("session_shutdown")!({ systemPrompt: "" }, { ui });
+    assert.deepStrictEqual(statuses, [[PI_T3_SESSION_END_STATUS_KEY, "ended"]]);
   });
 });
 

@@ -17,6 +17,12 @@ export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
  */
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 
+/**
+ * The bridge sets this status as Pi tears down a session. Pi's RPC stream does
+ * not mark the boundary otherwise, and the outgoing extension context dies here.
+ */
+export const PI_T3_SESSION_END_STATUS_KEY = "t3:session-end";
+
 export const PI_T3_MCP_EXTENSION_SOURCE = `\
 import { stripFrontmatter, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import * as NodeFSP from "node:fs/promises";
@@ -31,6 +37,7 @@ const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRU
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
+const SESSION_END_STATUS_KEY = ${JSON.stringify(PI_T3_SESSION_END_STATUS_KEY)};
 
 type RuntimeMode = "approval-required" | "auto-accept-edits" | "auto" | "full-access";
 
@@ -337,6 +344,12 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     if (!approved) {
       return { block: true, reason: \`\${event.toolName} was declined in T3 Code.\` };
     }
+  });
+
+  // T3 drops the outgoing session's background work here, where Pi's own TUI
+  // clears extension statuses before invalidating their contexts.
+  pi.on("session_shutdown", (_event, ctx) => {
+    ctx.ui.setStatus(SESSION_END_STATUS_KEY, "ended");
   });
 
   const endpoint = env(URL_ENV);

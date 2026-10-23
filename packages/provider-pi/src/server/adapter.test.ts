@@ -1353,30 +1353,42 @@ describe("PiAdapterV2", () => {
       yield* setStatus("t3:background:docs", "Docs building");
       assert.lengthOf(yield* takeRoster(), 2);
 
-      // A replaced session invalidates the old jobs' context, so they can never
-      // clear. A job's progress update that Pi sent mid-switch is still old work;
-      // a key first set mid-switch comes from the new session's start hooks.
+      // Pi tears the outgoing session down before the replacement starts, and
+      // T3's bridge marks that point. Old jobs can never clear their statuses
+      // after it; statuses set after it come from the replacement's start hooks,
+      // even under a key an old job used.
       fake.queueState({ sessionFile: "/fake/replaced.jsonl" });
       const replaced = yield* switchSession(
         Effect.gen(function* () {
           yield* setStatus("t3:background:tests", "Tests 50%");
+          assert.lengthOf(yield* takeRoster(), 2);
+          yield* setStatus("t3:session-end", "ended");
+          assert.lengthOf(yield* takeRoster(), 0);
+          yield* setStatus("t3:background:tests", "Tests restarted");
           yield* setStatus("t3:background:deploy", "Deploying");
         }),
         false,
       );
       assert.equal(replaced._tag, "Success");
       if (replaced._tag !== "Success") return;
+      // The replacement's jobs land only on the replacement binding.
+      const registered = yield* takeEvent((event) => event.type === "provider_thread.updated");
+      assert.isTrue(
+        registered.type === "provider_thread.updated" &&
+          registered.providerThread.id === replaced.success.id &&
+          replaced.success.id !== providerThread.id,
+      );
       assert.deepStrictEqual(
-        replaced.success.pendingBackgroundTasks?.map((task) => task.taskId),
-        ["t3:background:deploy"],
+        replaced.success.pendingBackgroundTasks?.map((task) => [task.taskId, task.description]),
+        [
+          ["t3:background:tests", "Tests restarted"],
+          ["t3:background:deploy", "Deploying"],
+        ],
       );
+      yield* setStatus("t3:background:tests");
       yield* setStatus("t3:background:deploy");
-      yield* takeEvent(
-        (event) =>
-          event.type === "provider_thread.updated" &&
-          event.providerThread.id === replaced.success.id &&
-          event.providerThread.pendingBackgroundTasks?.length === 0,
-      );
+      assert.lengthOf(yield* takeRoster(), 1);
+      assert.lengthOf(yield* takeRoster(), 0);
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
