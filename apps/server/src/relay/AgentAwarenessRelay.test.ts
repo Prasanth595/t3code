@@ -11,6 +11,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -90,6 +91,31 @@ function shell(overrides: Partial<OrchestrationV2ThreadShell> = {}): Orchestrati
   };
 }
 
+const CHILD_THREAD_ID = ThreadId.make("relay-child-thread");
+
+function waitingChild(
+  overrides: Partial<OrchestrationV2ThreadShell> = {},
+): OrchestrationV2ThreadShell {
+  return shell({
+    id: CHILD_THREAD_ID,
+    title: "Child",
+    lineage: {
+      rootThreadId: THREAD_ID,
+      parentThreadId: THREAD_ID,
+      relationshipToParent: "subagent",
+    },
+    createdBy: "agent",
+    creationSource: "mcp",
+    activityRunStatus: "running",
+    pendingRuntimeRequest: {
+      id: RuntimeRequestId.make("child-request"),
+      kind: "command",
+      createdAt: DateTime.makeUnsafe(NOW),
+    },
+    ...overrides,
+  });
+}
+
 const PublishPayload = Schema.Struct({ state: Schema.NullOr(RelayAgentActivityState) });
 const decodePublishPayload = Schema.decodeUnknownSync(Schema.fromJsonString(PublishPayload));
 const unused = () => Effect.die("Unexpected test dependency call");
@@ -132,6 +158,16 @@ describe("startup agent activity", () => {
       ],
     });
     assert.deepStrictEqual(ids, [THREAD_ID, newCompleted, newFailed]);
+  });
+
+  it("publishes a subagent waiting on the user so its parent is republished", () => {
+    const ids = AgentAwarenessRelay.resolveAgentAwarenessRelayActiveThreadIds({
+      environmentId: EnvironmentId.make("relay-env"),
+      startedAt: DateTime.toEpochMillis(DateTime.makeUnsafe(NOW)),
+      projects: [{ id: PROJECT_ID, title: "Project" }],
+      threads: [shell({ status: "idle" }), waitingChild()],
+    });
+    assert.deepStrictEqual(ids, [CHILD_THREAD_ID]);
   });
 });
 
@@ -288,6 +324,37 @@ const makeTestRelay = Effect.fnUntraced(function* (
 });
 
 describe("AgentAwarenessRelay", () => {
+  it.effect("publishes the parent as needing approval while its subagent waits", () =>
+    Effect.gen(function* () {
+      const shells = yield* Ref.make(
+        new Map<ThreadId, OrchestrationV2ThreadShell>([
+          [THREAD_ID, shell({ status: "completed" })],
+          [CHILD_THREAD_ID, waitingChild({ pendingRuntimeRequest: null })],
+        ]),
+      );
+      const setShell = (next: OrchestrationV2ThreadShell) =>
+        Ref.update(shells, (current) => new Map(current).set(next.id, next));
+      const { relay, publications } = yield* makeTestRelay({
+        readShell: (threadId) =>
+          Ref.get(shells).pipe(Effect.map((current) => current.get(threadId) ?? null)),
+      });
+      yield* setShell(shell({ status: "running" }));
+      yield* relay.publishThread(THREAD_ID);
+      yield* setShell(shell({ status: "completed" }));
+      yield* setShell(waitingChild());
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      assert.equal(publications.length, 2);
+      assert.isTrue(publications[1]?.url.includes(`/threads/${THREAD_ID}/`) ?? false);
+      assert.equal(publications[1]?.state?.phase, "waiting_for_approval");
+      assert.equal(publications[1]?.state?.threadId, THREAD_ID);
+
+      yield* setShell(waitingChild({ pendingRuntimeRequest: null }));
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      assert.equal(publications.length, 3);
+      assert.equal(publications[2]?.state?.phase, "completed");
+    }),
+  );
+
   it.effect("coalesces queued updates and reruns a thread dirtied during publishing", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();

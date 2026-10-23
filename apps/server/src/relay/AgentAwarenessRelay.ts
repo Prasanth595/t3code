@@ -11,7 +11,11 @@ import {
   type RelayAgentActivityPublishProofPayload,
   type RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
-import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
+import {
+  type PendingSubagentRequest,
+  projectThreadAwarenessV2,
+  subagentPendingRequest,
+} from "@t3tools/shared/agentAwareness";
 import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
@@ -287,11 +291,30 @@ function describeThreadShellForAwareness(
   };
 }
 
+interface SubagentRequest {
+  readonly topLevelThreadId: ThreadId;
+  readonly request: PendingSubagentRequest;
+}
+
+function pendingSubagentRequestFor(
+  requests: ReadonlyMap<ThreadId, SubagentRequest>,
+  topLevelThreadId: ThreadId,
+): PendingSubagentRequest | null {
+  let pending: PendingSubagentRequest | null = null;
+  for (const entry of requests.values()) {
+    if (entry.topLevelThreadId !== topLevelThreadId) continue;
+    if (entry.request === "approval") return "approval";
+    pending = entry.request;
+  }
+  return pending;
+}
+
 function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly thread: Option.Option<OrchestrationV2ThreadShell>;
   readonly project: Option.Option<Project>;
+  readonly pendingSubagentRequest: PendingSubagentRequest | null;
 }): {
   readonly projectId: string | null;
   readonly state: RelayAgentActivityState | null;
@@ -318,6 +341,7 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
         environmentId: input.environmentId,
         project: input.project.value,
         thread: input.thread.value,
+        pendingSubagentRequest: input.pendingSubagentRequest,
       }),
     ),
     reason: "snapshot",
@@ -340,6 +364,8 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
   const projectById = new Map(input.projects.map((project) => [project.id, project]));
   return input.threads
     .filter((thread) => {
+      // Publishing a waiting subagent republishes its top-level thread.
+      if (subagentPendingRequest(thread) !== null) return true;
       const project = projectById.get(thread.projectId);
       if (!project) {
         return false;
@@ -372,6 +398,7 @@ export const make = Effect.gen(function* () {
   const activeSnapshotPublishedRef = yield* Ref.make(false);
   const catchUpRequests = yield* Queue.dropping<void>(1);
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
+  const subagentRequests = new Map<ThreadId, SubagentRequest>();
 
   const readSecretString = (name: string) =>
     secrets
@@ -427,6 +454,7 @@ export const make = Effect.gen(function* () {
     Effect.forEach([...publishRetries.keys()], cancelPublishRetry, { discard: true }),
   );
   let schedulePublishRetry: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
+  let enqueueWorkerPublish: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   const resetPublishedConnection = Effect.gen(function* () {
     publishedRelayConfig = undefined;
     cachedRelayClient = undefined;
@@ -515,6 +543,7 @@ export const make = Effect.gen(function* () {
     // domain event, so materializing the full shell here would make the cost
     // of one thread's activity proportional to how many threads exist.
     const threadShell = yield* threads.getThreadShell(threadId);
+    yield* trackSubagentRequest(threadId, threadShell);
     if (
       threadShell?.lineage.relationshipToParent === "subagent" &&
       !(yield* Ref.get(publishedStateByThreadRef)).has(threadId)
@@ -536,6 +565,7 @@ export const make = Effect.gen(function* () {
       threadId,
       thread,
       project,
+      pendingSubagentRequest: pendingSubagentRequestFor(subagentRequests, threadId),
     });
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
@@ -627,6 +657,43 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  const findTopLevelThreadId = Effect.fnUntraced(function* (child: OrchestrationV2ThreadShell) {
+    const seen = new Set<ThreadId>([child.id]);
+    let current: OrchestrationV2ThreadShell | null = child;
+    while (current?.lineage.relationshipToParent === "subagent") {
+      const parentId: ThreadId | null = current.lineage.parentThreadId;
+      if (parentId === null || seen.has(parentId)) return null;
+      seen.add(parentId);
+      current = yield* threads.getThreadShell(parentId);
+    }
+    return current?.id ?? null;
+  });
+
+  // A subagent's request changes its top-level thread's row, so that row is
+  // republished whenever the child's request appears, changes or clears.
+  const trackSubagentRequest = Effect.fnUntraced(function* (
+    threadId: ThreadId,
+    threadShell: OrchestrationV2ThreadShell | null,
+  ) {
+    const request =
+      threadShell === null || threadShell.archivedAt !== null
+        ? null
+        : subagentPendingRequest(threadShell);
+    const previous = subagentRequests.get(threadId);
+    if (previous?.request === (request ?? undefined)) return;
+    if (request === null || threadShell === null) {
+      if (previous === undefined) return;
+      subagentRequests.delete(threadId);
+      yield* enqueueWorkerPublish(previous.topLevelThreadId);
+      return;
+    }
+    const topLevelThreadId =
+      previous?.topLevelThreadId ?? (yield* findTopLevelThreadId(threadShell));
+    if (topLevelThreadId === null) return;
+    subagentRequests.set(threadId, { topLevelThreadId, request });
+    yield* enqueueWorkerPublish(topLevelThreadId);
+  });
+
   const processThreadPublish = Effect.fnUntraced(function* (threadId: ThreadId) {
     const retry = publishRetries.get(threadId);
     if (retry?.timer !== undefined) {
@@ -648,6 +715,7 @@ export const make = Effect.gen(function* () {
   });
 
   const worker = yield* makeAgentAwarenessPublishWorker(processThreadPublish);
+  enqueueWorkerPublish = worker.enqueue;
   const enqueueThreadPublish = (threadId: ThreadId) =>
     cancelPublishRetry(threadId).pipe(Effect.andThen(worker.enqueue(threadId)));
   const publishThread: AgentAwarenessRelay["Service"]["publishThread"] = (threadId) =>

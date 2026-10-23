@@ -1,3 +1,4 @@
+import type { PendingSubagentRequest } from "@t3tools/shared/agentAwareness";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import type {
@@ -245,7 +246,7 @@ export function scopeProject(
   return { ...project, environmentId };
 }
 
-export type PendingSubagentRequest = "approval" | "user_input";
+export type { PendingSubagentRequest } from "@t3tools/shared/agentAwareness";
 
 export function presentThreadShell(
   environmentId: EnvironmentId,
