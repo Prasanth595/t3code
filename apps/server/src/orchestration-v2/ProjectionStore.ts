@@ -325,6 +325,7 @@ export interface ProjectionRecordFilter {
   readonly turnItemRunIds?: ReadonlyArray<RunId | null>;
   readonly runIds?: ReadonlyArray<RunId>;
   readonly turnItemTypes?: ReadonlyArray<OrchestrationV2TurnItem["type"]>;
+  readonly turnItemNodeIds?: ReadonlyArray<NodeId>;
   readonly turnItemStatuses?: ReadonlyArray<OrchestrationV2TurnItem["status"]>;
   readonly omitSettledLeafNodes?: boolean;
 }
@@ -826,6 +827,10 @@ export function applyToProjection(
           ),
         ),
       });
+    // Milestones over state the run rows already hold.
+    case "run.finalized":
+    case "run.finalization-failed":
+      return projection;
     case "run.background-work-cancelled":
       return {
         ...base,
@@ -2057,6 +2062,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `;
               break;
             }
+            case "run.finalized":
+            case "run.finalization-failed":
+              break;
             case "run.background-work-cancelled": {
               // Only this field changes, so a concurrent lifecycle write is never regressed.
               const workJson = yield* encodeRestartCancelledBackgroundWork(
@@ -2793,7 +2801,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             event.type !== "thread.runtime-mode-updated" &&
             event.type !== "thread.interaction-mode-updated" &&
             event.type !== "thread.model-selection-updated" &&
-            event.type !== "thread.provider-switched"
+            event.type !== "thread.provider-switched" &&
+            event.type !== "run.finalized" &&
+            event.type !== "run.finalization-failed"
           ) {
             const updatedAt = yield* encodeThreadUpdatedAt(event.occurredAt);
             yield* sql`
@@ -3028,6 +3038,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 FROM orchestration_v2_projection_turn_items
                 WHERE thread_id = ${threadId}
                   ${filter?.turnItemTypes === undefined ? sql`` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
+                  ${filter?.turnItemNodeIds === undefined ? sql`` : sql`AND node_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemNodeIds)}))`}
                   ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
                   ${filter?.turnItemRunId === undefined ? sql`` : sql`AND run_id = ${filter.turnItemRunId}`}
                   ${filter?.turnItemRunIds === undefined ? sql`` : sql`AND (run_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRunIds.filter((id): id is RunId => id !== null))})) OR (${filter.turnItemRunIds.includes(null) ? 1 : 0} = 1 AND run_id IS NULL))`}
@@ -6919,6 +6930,8 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 (filter?.turnItemRunIds === undefined ||
                   filter.turnItemRunIds.includes(row.runId)) &&
                 (filter?.turnItemTypes === undefined || filter.turnItemTypes.includes(row.type)) &&
+                (filter?.turnItemNodeIds === undefined ||
+                  (row.nodeId !== null && filter.turnItemNodeIds.includes(row.nodeId))) &&
                 (filter?.turnItemStatuses === undefined ||
                   filter.turnItemStatuses.includes(row.status)) &&
                 (filter?.turnItemRunId === undefined || filter.turnItemRunId === row.runId),

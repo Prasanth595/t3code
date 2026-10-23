@@ -417,6 +417,8 @@ interface PendingOpenCodeRequest {
   readonly createdAt: DateTime.Utc;
   readonly permission?: PermissionRequest;
   readonly question?: QuestionRequest;
+  /** T3 is sending, or sent, its own answer, which the orchestrator already recorded. */
+  answering: boolean;
 }
 
 export interface OpenCodeAdapterV2Options {
@@ -1843,6 +1845,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             turnItemId,
             requestKind,
             createdAt: now,
+            answering: false,
             ...(request.type === "permission"
               ? { permission: request.value }
               : { question: request.value }),
@@ -1885,18 +1888,34 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               completedAt: null,
             },
           });
+          // The card comes before the request, so an answer recorded as soon as the
+          // request is pending finds the card to resolve.
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: OPENCODE_PROVIDER,
+            turnItem: runtimeRequestTurnItem(pending, "waiting", null, now),
+          });
           yield* emitProviderEvent({
             type: "runtime_request.updated",
             driver: OPENCODE_PROVIDER,
             threadId: turn.threadId,
             runtimeRequest,
           });
-          yield* emitProviderEvent({
-            type: "turn_item.updated",
-            driver: OPENCODE_PROVIDER,
-            turnItem: runtimeRequestTurnItem(pending, "waiting", null, now),
-          });
           yield* updateProviderSession("waiting", null);
+        });
+
+        /**
+         * Stops tracking a request. Requests T3 answered are only forgotten when
+         * OpenCode confirms them or their turn ends: the orchestrator already
+         * recorded their resolution, decision and who answered.
+         */
+        const forgetRuntimeRequest = Effect.fnUntraced(function* (pending: PendingOpenCodeRequest) {
+          pendingRequests.delete(String(pending.requestId));
+          pendingRequestsByNativeId.delete(pending.nativeRequestId);
+          const hasOtherPending = Array.from(pendingRequests.values()).some(
+            (candidate) => candidate.turn.isRoot,
+          );
+          if (!hasOtherPending) yield* updateProviderSession("running", null);
         });
 
         const resolveRuntimeRequest = Effect.fnUntraced(function* (
@@ -1905,6 +1924,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         ) {
           const pending = pendingRequestsByNativeId.get(nativeRequestId);
           if (pending === undefined) return;
+          if (pending.answering) return yield* forgetRuntimeRequest(pending);
           const now = yield* DateTime.now;
           const current = pending.state.runtimeRequests.get(String(pending.requestId));
           if (current !== undefined) {
@@ -1952,12 +1972,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               now,
             ),
           });
-          pendingRequests.delete(String(pending.requestId));
-          pendingRequestsByNativeId.delete(nativeRequestId);
-          const hasOtherPending = Array.from(pendingRequests.values()).some(
-            (candidate) => candidate.turn.isRoot,
-          );
-          if (!hasOtherPending) yield* updateProviderSession("running", null);
+          yield* forgetRuntimeRequest(pending);
         });
 
         const resolveSessionOwner = Effect.fnUntraced(function* (sessionId: string) {
@@ -3472,6 +3487,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   `No pending OpenCode request ${requestInput.requestId}`,
                 );
               }
+              // An undelivered answer leaves the request open for a retry or its turn's end.
+              const stillPending = () => Effect.sync(() => (pending.answering = false));
               if (pending.question !== undefined) {
                 if (requestInput.answers === undefined) {
                   return yield* protocolError(
@@ -3482,6 +3499,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   pending.question,
                   requestInput.answers,
                 );
+                pending.answering = true;
                 yield* sdkCall(
                   "question.reply",
                   { requestID: pending.nativeRequestId, answers },
@@ -3493,7 +3511,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                       },
                       { signal },
                     ),
-                ).pipe(Effect.timeout("10 seconds"));
+                ).pipe(Effect.timeout("10 seconds"), Effect.onError(stillPending));
                 return;
               }
               if (requestInput.decision === undefined) {
@@ -3502,6 +3520,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 );
               }
               const reply = OpenCodeRuntime.toOpenCodePermissionReply(requestInput.decision);
+              pending.answering = true;
               yield* sdkCall(
                 "permission.reply",
                 { requestID: pending.nativeRequestId, reply },
@@ -3513,7 +3532,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                     },
                     { signal },
                   ),
-              ).pipe(Effect.timeout("10 seconds"));
+              ).pipe(Effect.timeout("10 seconds"), Effect.onError(stillPending));
             },
             (effect, requestInput) =>
               effect.pipe(

@@ -13,6 +13,7 @@ import {
   ContextHandoffId,
   ContextTransferId,
   EventId,
+  ForwardCompatibleOptional,
   IsoDateTime,
   MessageId,
   NodeId,
@@ -533,6 +534,50 @@ export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
   typeof OrchestrationV2ThreadLaunchWorkspaceStrategy.Type;
 
 export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_preparation_failed";
+
+/**
+ * How a finalized run ended. A rolled-back run is discarded, not finalized.
+ */
+export const OrchestrationV2RunFinalizedOutcome = Schema.Literals([
+  "completed",
+  "failed",
+  "interrupted",
+  "cancelled",
+]);
+export type OrchestrationV2RunFinalizedOutcome = typeof OrchestrationV2RunFinalizedOutcome.Type;
+
+/**
+ * A run and its follow-up work are done: checkpoint capture and workspace
+ * refresh succeeded for runs that capture; the terminal write is the
+ * finalization for runs that never enqueue a capture. A run records this or
+ * `run.finalization-failed`, never both, at most once. The event's
+ * `occurredAt` is the finalization time.
+ */
+export const OrchestrationV2RunFinalized = Schema.Struct({
+  runId: RunId,
+  outcome: OrchestrationV2RunFinalizedOutcome,
+  checkpointId: Schema.NullOr(CheckpointId),
+});
+export type OrchestrationV2RunFinalized = typeof OrchestrationV2RunFinalized.Type;
+
+/** The finalization step that failed. */
+export const OrchestrationV2RunFinalizationOperation = Schema.Literals([
+  "capture-checkpoint",
+  "refresh-workspace",
+  "record-finalized",
+]);
+export type OrchestrationV2RunFinalizationOperation =
+  typeof OrchestrationV2RunFinalizationOperation.Type;
+
+/**
+ * A run's finalization gave up after its last attempt, so the run will not
+ * record `run.finalized`. The run row keeps whatever status it reached.
+ */
+export const OrchestrationV2RunFinalizationFailed = Schema.Struct({
+  runId: RunId,
+  operation: OrchestrationV2RunFinalizationOperation,
+});
+export type OrchestrationV2RunFinalizationFailed = typeof OrchestrationV2RunFinalizationFailed.Type;
 
 export const OrchestrationV2Run = Schema.Struct({
   id: RunId,
@@ -1289,6 +1334,20 @@ export const OrchestrationV2UserMessageInputIntent = Schema.Literals([
 export type OrchestrationV2UserMessageInputIntent =
   typeof OrchestrationV2UserMessageInputIntent.Type;
 
+/**
+ * Who answered an approval when it was not the user. Plugins answer approvals
+ * through the server (see PluginApprovals); `decision` is what was sent to the
+ * provider. Clients decode it through `ForwardCompatibleOptional`: absent means
+ * the user answered, or a newer server's resolver this build does not know.
+ */
+export const OrchestrationV2ApprovalResolvedBy = Schema.TaggedStruct("plugin", {
+  pluginId: Schema.String.check(Schema.isMaxLength(128)),
+  pluginName: Schema.String.check(Schema.isMaxLength(100)),
+  decision: Schema.Literals(["accept", "decline"]),
+  reason: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(500))),
+});
+export type OrchestrationV2ApprovalResolvedBy = typeof OrchestrationV2ApprovalResolvedBy.Type;
+
 const OrchestrationV2TurnItemBaseFields = {
   toolNonExecutionKind: Schema.optional(Schema.String),
   toolSurface: Schema.optional(ToolActivitySurface),
@@ -1439,6 +1498,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     fullAccessOverride: Schema.optional(ProviderApprovalFullAccessOverride),
     appName: Schema.optional(Schema.String),
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+    resolvedBy: ForwardCompatibleOptional(OrchestrationV2ApprovalResolvedBy),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1656,6 +1716,16 @@ export const OrchestrationV2DomainEvent = Schema.Union([
     ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("run.background-work-cancelled"),
     payload: OrchestrationV2RunBackgroundWorkCancelled,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("run.finalized"),
+    payload: OrchestrationV2RunFinalized,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("run.finalization-failed"),
+    payload: OrchestrationV2RunFinalizationFailed,
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
@@ -2202,6 +2272,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     fullAccessOverride: Schema.optional(ProviderApprovalFullAccessOverride),
     appName: Schema.optional(Schema.String),
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+    resolvedBy: ForwardCompatibleOptional(OrchestrationV2ApprovalResolvedBy),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -2470,6 +2541,16 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
     ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("run.background-work-cancelled"),
     payload: OrchestrationV2RunBackgroundWorkCancelled,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("run.finalized"),
+    payload: OrchestrationV2RunFinalized,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("run.finalization-failed"),
+    payload: OrchestrationV2RunFinalizationFailed,
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
@@ -3026,6 +3107,18 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  /**
+   * A plugin's answer to a pending approval. Like `runtime-request.respond`, it
+   * is rejected unless the request is still pending, so the first answer
+   * recorded wins. Only approvals of a kind plugins may answer are accepted.
+   */
+  Schema.Struct({
+    type: Schema.Literal("runtime-request.plugin-respond"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    requestId: RuntimeRequestId,
+    resolvedBy: OrchestrationV2ApprovalResolvedBy,
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),
     commandId: CommandId,

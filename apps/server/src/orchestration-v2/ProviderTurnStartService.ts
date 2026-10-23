@@ -51,8 +51,10 @@ import {
   knownProviderFailureMessage,
   makeProviderFailure,
 } from "@t3tools/provider-core/server/failure";
+import * as RunContextEnrichment from "./RunContextEnrichment.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -113,6 +115,7 @@ export const layer: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | RunExecutionService.RunExecutionServiceV2
   | RuntimePolicy.RuntimePolicyV2
+  | ThreadCommandExecutor.ThreadCommandExecutor
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
@@ -130,6 +133,8 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    const contextEnricher = yield* Effect.serviceOption(RunContextEnrichment.RunContextEnricherV2);
+    const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
 
     // These callbacks outlive startup while a run drains background work. Build
@@ -537,6 +542,35 @@ export const layer: Layer.Layer<
         thread: projection.thread,
         modelSelection: run.modelSelection,
       });
+      const providerUserText = projectComposerContextForProvider({
+        text: message.text,
+        records: message.context?.records ?? [],
+      });
+      // Saved before the session opens, so a retried or replayed start reuses
+      // the plugins' answers instead of calling them again.
+      const messageItem = projection.turnItems.find(
+        (item) => item.type === "user_message" && item.messageId === message.id,
+      );
+      const pluginContext =
+        Option.isNone(contextEnricher) || !RunContextEnrichment.enrichesRunTurn(messageItem)
+          ? { _tag: "ready" as const, entries: [] }
+          : yield* RunContextEnrichment.prepareRunContext({
+              enricher: contextEnricher.value,
+              withThreadLock: (effect) => threadCommands.withLock(projection.thread.id, effect),
+              eventSink,
+              idAllocator,
+              threadId: projection.thread.id,
+              projectId: projection.thread.projectId,
+              runId,
+              attemptId: attempt.id,
+              rootNodeId: rootNode.id,
+              providerThreadId: providerThread.id,
+              providerInstanceId: run.providerInstanceId,
+              turnItems: projection.turnItems,
+              userText: providerUserText,
+              cwd: resolvedRuntimePolicy.cwd ?? null,
+            });
+      if (pluginContext._tag === "stale") return;
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
       const existingSessionProjection = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
@@ -1019,10 +1053,10 @@ export const layer: Layer.Layer<
       const routableSubagents = projection.subagents.filter((subagent) =>
         RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
-      const userText = projectComposerContextForProvider({
-        text: message.text,
-        records: message.context?.records ?? [],
-      });
+      const userText = RunContextEnrichment.withPluginContext(
+        providerUserText,
+        pluginContext.entries,
+      );
       // Delivered once: this run's provider turn marks the work as told. A
       // restart continuation is prompted by its own text or resumes natively.
       const noteContinuation = isRestartNoteContinuation(

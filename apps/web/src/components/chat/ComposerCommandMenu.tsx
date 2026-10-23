@@ -5,6 +5,8 @@ import {
   type ProviderSkillSourceKind,
 } from "@t3tools/client-runtime/providerSkills";
 import {
+  type PluginAction,
+  type PluginActionTarget,
   type ProjectEntry,
   type ProviderDriverKind,
   type PullRequestContextMetadata,
@@ -17,6 +19,7 @@ import {
   FolderIcon,
   MessagesSquareIcon,
   PackageIcon,
+  PlugIcon,
   SettingsIcon,
   UserRoundIcon,
   type LucideIcon,
@@ -75,6 +78,14 @@ export type ComposerCommandItem =
       id: string;
       type: "thread";
       thread: ScopedThreadRef;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "plugin-action";
+      action: PluginAction;
+      target: PluginActionTarget;
       label: string;
       description: string;
     };
@@ -228,6 +239,12 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
             kind={skillSourceKind}
             showSkillSuffix={props.triggerKind === "skill"}
           />
+        ) : null}
+        {props.item.type === "plugin-action" ? (
+          <Badge className="ms-auto" variant="secondary">
+            <PlugIcon aria-hidden="true" className="text-current" />
+            {props.item.action.pluginName}
+          </Badge>
         ) : null}
       </span>
     </CommandItem>
