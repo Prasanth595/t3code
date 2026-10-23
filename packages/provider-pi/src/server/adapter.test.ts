@@ -1268,7 +1268,7 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("keeps the session while an extension reports background work", () =>
+  it.effect("lists extension background work until it ends or Pi swaps sessions", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       const { runtime, takeEvent } = yield* openRuntime(fake);
@@ -1277,40 +1277,104 @@ describe("PiAdapterV2", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
-      let barrier = 0;
-      const setStatus = Effect.fnUntraced(function* (statusKey: string, statusText?: string) {
-        yield* fake.emit({
+      const setStatus = (statusKey: string, statusText?: string) =>
+        fake.emit({
           type: "extension_ui_request",
           id: `status-${statusKey}`,
           method: "setStatus",
           statusKey,
           ...(statusText === undefined ? {} : { statusText }),
         });
-        // setStatus is fire-and-forget; a dialog marks that Pi's earlier output was handled.
-        barrier += 1;
-        yield* fake.emit({
-          type: "extension_ui_request",
-          id: `barrier-${barrier}`,
-          method: "confirm",
-          title: `Barrier ${barrier}`,
-        });
-        yield* takeEvent(
-          (event) =>
-            event.type === "runtime_request.updated" &&
-            event.runtimeRequest.nativeRequestRef?.nativeId === `barrier-${barrier}`,
-        );
+      const takeRoster = Effect.fnUntraced(function* () {
+        const event = yield* takeEvent((event) => event.type === "provider_thread.updated");
+        assert.isTrue(event.type === "provider_thread.updated");
+        if (event.type !== "provider_thread.updated") return [];
+        return (event.providerThread.pendingBackgroundTasks ?? []).map((task) => [
+          event.providerThread.id,
+          task.taskId,
+          task.description,
+        ]);
       });
 
+      assert.lengthOf(yield* takeRoster(), 0);
       yield* setStatus("lint", "Lint clean");
-      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
-      yield* setStatus("t3:background:build", "Build running");
+      yield* setStatus("t3:background:build", "\u001b[32mBuild running\u001b[0m");
+      assert.deepStrictEqual(yield* takeRoster(), [
+        [providerThread.id, "t3:background:build", "Build running"],
+      ]);
       yield* setStatus("t3:background:tests", "Tests running");
+      assert.lengthOf(yield* takeRoster(), 2);
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
-      // Completion arrives as a native wake, so the settled run stays closed.
-      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
       yield* setStatus("t3:background:build");
+      assert.deepStrictEqual(yield* takeRoster(), [
+        [providerThread.id, "t3:background:tests", "Tests running"],
+      ]);
+
+      // A vetoed switch keeps the outgoing session, so its job is still listed.
+      fake.vetoNextNewSession();
+      const vetoed = yield* runtime
+        .ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        })
+        .pipe(Effect.flip);
+      assert.equal(vetoed._tag, "ProviderAdapterEnsureThreadError");
+      assert.lengthOf(yield* takeRoster(), 0);
+      assert.lengthOf(yield* takeRoster(), 1);
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
-      yield* setStatus("t3:background:tests", "");
+
+      // A replaced session invalidates the job's context, so it can never clear.
+      const replacement = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      // The vetoed switch already unbound the thread; its roster still empties.
+      assert.lengthOf(yield* takeRoster(), 0);
+      const registered = yield* takeEvent((event) => event.type === "provider_thread.updated");
+      assert.isTrue(
+        registered.type === "provider_thread.updated" &&
+          registered.providerThread.id === replacement.id &&
+          replacement.id !== providerThread.id,
+      );
+      assert.deepStrictEqual(replacement.pendingBackgroundTasks, []);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      yield* setStatus("t3:background:deploy", "Deploying");
+      assert.lengthOf(yield* takeRoster(), 1);
+      yield* setStatus("t3:background:deploy", "");
+      assert.lengthOf(yield* takeRoster(), 0);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("lets Stop end a process kept alive by extension background work", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "status",
+        method: "setStatus",
+        statusKey: "t3:background",
+        statusText: "Build running",
+      });
+      yield* takeEvent((event) => event.type === "provider_thread.updated");
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: ProviderTurnId.make("settled-turn"),
+        requestRuntimeRestart: true,
+      });
+      yield* takeEvent(
+        (event) =>
+          event.type === "provider_session.updated" && event.providerSession.status === "stopped",
+      );
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );

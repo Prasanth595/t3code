@@ -52,12 +52,14 @@ dialogs work in T3 Code. Notifications appear in the work log. Pi terminal decor
 titles, status lines, and widgets does not have a T3 Code equivalent.
 
 T3 Code stops an idle Pi process after 30 minutes. An extension that keeps working after a turn
-ends, such as a background command, can keep the process alive by holding a status under the
-`t3:background` key, or `t3:background:<job>` for several jobs, until the work ends:
+ends, such as a background command, can keep the process alive by setting a non-empty status under
+the `t3:background` key, or `t3:background:<job>` for several jobs, until the work ends:
 `ctx.ui.setStatus("t3:background:build", "Build running")`, then
-`ctx.ui.setStatus("t3:background:build", undefined)`. The process stays up for at most four hours of
-background work. When the extension wakes the agent with the result, the reply appears in the
-thread.
+`ctx.ui.setStatus("t3:background:build", undefined)`. While a status is set, the thread shows as
+waiting on that work, and Stop ends the Pi process along with it. Without other activity, the
+process stays up for about four more hours after the first 30 idle minutes. Starting another Pi
+session in the same process, for example by rolling back, drops these statuses. When the extension
+wakes the agent with the result, the reply appears in the thread.
 
 ## Permission Modes
 
