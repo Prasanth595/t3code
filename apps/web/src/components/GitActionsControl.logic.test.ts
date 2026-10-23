@@ -28,36 +28,6 @@ function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   };
 }
 
-describe("when: local changes are behind upstream", () => {
-  it("keeps the commit action available without pushing, with or without an open PR", () => {
-    const behind = status({ hasWorkingTreeChanges: true, behindCount: 2 });
-    const commit = {
-      label: "Commit",
-      disabled: false,
-      kind: "run_action",
-      action: "commit",
-    } as const;
-    assert.deepEqual(resolveQuickAction(behind, false), commit);
-    assert.deepEqual(
-      resolveQuickAction(
-        {
-          ...behind,
-          pr: {
-            number: 13,
-            title: "Open PR",
-            url: "https://example.com/pr/13",
-            baseRef: "main",
-            headRef: "feature/test",
-            state: "open",
-          },
-        },
-        false,
-      ),
-      commit,
-    );
-  });
-});
-
 describe("when: ref is clean, ahead, and has an open PR", () => {
   it("resolveQuickAction prefers push", () => {
     const quick = resolveQuickAction(
@@ -156,6 +126,36 @@ describe("when: ref has no upstream configured", () => {
       label: "Publish repository",
       disabled: false,
     });
+  });
+});
+
+describe("when: local changes are behind upstream", () => {
+  it("keeps the commit action available without pushing, with or without an open PR", () => {
+    const behind = status({ hasWorkingTreeChanges: true, behindCount: 2 });
+    const commit = {
+      label: "Commit",
+      disabled: false,
+      kind: "run_action",
+      action: "commit",
+    } as const;
+    assert.deepEqual(resolveQuickAction(behind, false), commit);
+    assert.deepEqual(
+      resolveQuickAction(
+        {
+          ...behind,
+          pr: {
+            number: 13,
+            title: "Open PR",
+            url: "https://example.com/pr/13",
+            baseRef: "main",
+            headRef: "feature/test",
+            state: "open",
+          },
+        },
+        false,
+      ),
+      commit,
+    );
   });
 });
 
