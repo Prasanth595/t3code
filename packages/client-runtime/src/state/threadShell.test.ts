@@ -53,6 +53,34 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
 }
 
 describe("v2 thread shell lists", () => {
+  it("hides cached suggestion shells while an environment is unsupported and restores current shells", () => {
+    const { registry, threads, snapshotAtom, catalogValueAtom } = makeHarness();
+    const atom = threads.environmentThreadShellsAtom(environmentId);
+    const dispose = registry.mount(atom);
+    expect(registry.get(atom).map((thread) => thread.id)).toEqual([v2ThreadShell.id]);
+
+    const setUnsupported = (unsupported: boolean) => {
+      const catalog = registry.get(catalogValueAtom);
+      const entries = new Map(catalog.entries);
+      entries.set(environmentId, {
+        ...entries.get(environmentId)!,
+        ...{ unsupportedReason: unsupported ? "Protocol version mismatch" : undefined },
+      });
+      registry.set(catalogValueAtom, { ...catalog, entries });
+    };
+    setUnsupported(true);
+    expect(registry.get(atom)).toEqual([]);
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [{ ...v2ThreadShell, title: "Updated cached thread" }],
+    });
+    expect(registry.get(atom)).toEqual([]);
+    setUnsupported(false);
+    expect(registry.get(atom).map((thread) => thread.title)).toEqual(["Updated cached thread"]);
+    dispose();
+    registry.dispose();
+  });
+
   it("scopes shell lists to enabled environments and reuses unchanged shells", () => {
     const { registry, threads, snapshotAtom, catalogValueAtom } = makeHarness([
       environmentId,

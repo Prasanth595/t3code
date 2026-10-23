@@ -170,11 +170,13 @@ export function createEnvironmentThreadShellAtoms(input: {
   const environmentThreadShellsAtom = Atom.family((environmentId: EnvironmentId) => {
     let previous: ReadonlyArray<EnvironmentThreadShell> = [];
     return Atom.make((get) => {
-      const next = get(input.catalogValueAtom).entries.get(environmentId)?.enabled
-        ? get(environmentThreadsAtom(environmentId)).map((thread) =>
-            scopedThread(environmentId, thread, get(pendingSubagentRequestsAtom(environmentId))),
-          )
-        : [];
+      const entry = get(input.catalogValueAtom).entries.get(environmentId);
+      const next =
+        entry?.enabled && entry.unsupportedReason === undefined
+          ? get(environmentThreadsAtom(environmentId)).map((thread) =>
+              scopedThread(environmentId, thread, get(pendingSubagentRequestsAtom(environmentId))),
+            )
+          : [];
       if (arrayElementsEqual(previous, next)) return previous;
       previous = next;
       return next;
