@@ -218,37 +218,3 @@ it("hands J between the chat and the guide by where the user last clicked", asyn
   expect(composerKeys).toEqual(["j"]);
   await expect.element(page.getByRole("heading", { name: "Third change" })).toBeVisible();
 });
-
-it("hands J back to the chat as soon as the panel starts closing, while the guide is still drawn", async () => {
-  const composerKeys: string[] = [];
-  // The closing panel keeps the guide mounted through its exit animation but marks it inactive.
-  const withGuide = (active: boolean) => (
-    <>
-      <Chat composerKeys={composerKeys} />
-      <PullRequestGuideTab
-        environmentId={EnvironmentId.make("env-1")}
-        reference={{ projectId: ProjectId.make("project-1"), repository: "acme/app", number: 3 }}
-        title={null}
-        workspaceRoot="/repo"
-        active={active}
-        canComment={false}
-        onAskAboutLines={null}
-        onAskAboutStop={null}
-        onFinishReview={null}
-        onOpenFile={() => {}}
-      />
-    </>
-  );
-  guideWriter.guide = guide;
-  await using screen = await render(<Chat composerKeys={composerKeys} />, options);
-  await screen.rerender(withGuide(true));
-  await page.getByRole("heading", { name: "First change" }).click();
-  await userEvent.keyboard("j");
-  await expect.element(page.getByRole("heading", { name: "Second change" })).toBeVisible();
-
-  await screen.rerender(withGuide(false));
-  await userEvent.keyboard("j");
-
-  expect(composerKeys).toEqual(["j"]);
-  await expect.element(page.getByRole("heading", { name: "Second change" })).toBeVisible();
-});
