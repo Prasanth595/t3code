@@ -1007,7 +1007,7 @@ export const MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY = `query($fullPath: ID!, $ii
   project(fullPath: $fullPath) {
     mergeRequest(iid: $iid) {
       diffStatsSummary { fileCount }
-      diffStats { nodes { path additions deletions } }
+      diffStats { path additions deletions }
     }
   }
 }`;
