@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { RegistryContext } from "@effect/atom-react";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
