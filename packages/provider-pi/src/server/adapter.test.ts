@@ -3126,6 +3126,54 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect.each([undefined, "", "1,3; custom answer"])(
+    "maps native text input without turning its placeholder into an answer, placeholder=%s",
+    (placeholder) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        const title = "Where should this run?\n1. Current branch\n2. New worktree";
+        for (const [index, answer] of ["", "  exact answer\n"].entries()) {
+          const id = `ui-input-${index}`;
+          yield* fake.emit({
+            type: "extension_ui_request",
+            id,
+            method: "input",
+            title,
+            ...(placeholder === undefined ? {} : { placeholder }),
+          });
+          const event = yield* takeEvent(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "user_input_request" &&
+              event.turnItem.status === "waiting" &&
+              event.turnItem.questions.some((question) => question.id === id),
+          );
+          if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
+            return assert.fail("expected a user input request");
+          }
+          const [question] = decodeUserInputQuestions(event.turnItem.questions);
+          assert.equal(question?.header, "Question");
+          assert.equal(question?.question, title);
+          assert.deepEqual(question?.options, []);
+          assert.equal(question?.initialAnswer, "");
+          assert.equal(question?.placeholder, placeholder);
+          yield* runtime.respondToRuntimeRequest({
+            requestId: event.turnItem.requestId,
+            answers: { [id]: answer },
+          });
+          const response = yield* fake.takeRequest("extension_ui_response");
+          assert.equal(response["value"], answer);
+          assert.isUndefined(response["cancelled"]);
+        }
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("keeps the complete editor prefill editable and returns exact edited text", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
