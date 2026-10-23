@@ -1,5 +1,6 @@
 import {
   OrchestratorMcpFailure,
+  OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadSendResult,
@@ -457,22 +458,42 @@ const titleFromMessage = (message: string) => {
     : firstLine;
 };
 
-const launchWorkspaceStrategy = (input: {
-  readonly worktree: Option.Option<string>;
-  readonly branch: Option.Option<string>;
-}) =>
-  Option.match(input.worktree, {
-    onNone: () =>
-      Option.isSome(input.branch)
-        ? Effect.fail(new ThreadUsageError({ detail: "--branch needs --worktree <base-ref>." }))
-        : Effect.succeed(undefined),
-    onSome: (baseRef) =>
-      Effect.succeed({
-        type: "worktree" as const,
-        baseRef,
-        ...Option.match(input.branch, { onNone: () => ({}), onSome: (branch) => ({ branch }) }),
-      }),
-  });
+export const launchWorkspaceStrategy = Effect.fn("cli.thread.launchWorkspaceStrategy")(
+  function* (input: {
+    readonly worktree: Option.Option<string>;
+    readonly worktreePath: Option.Option<string>;
+    readonly branch: Option.Option<string>;
+  }) {
+    const branch = Option.match(input.branch, {
+      onNone: () => ({}),
+      onSome: (name) => ({ branch: name }),
+    });
+    if (Option.isSome(input.worktree) && Option.isSome(input.worktreePath)) {
+      return yield* new ThreadUsageError({
+        detail: "Pass --worktree <base-ref> or --worktree-path <path>, not both.",
+      });
+    }
+    if (Option.isSome(input.worktree)) {
+      return { type: "worktree" as const, baseRef: input.worktree.value, ...branch };
+    }
+    if (Option.isSome(input.worktreePath)) {
+      const path = yield* Path.Path;
+      // Relative to the caller, like the project argument; the server's own
+      // working directory means nothing to the caller.
+      const worktreePath = path.resolve(
+        yield* HostProcess.WorkingDirectory,
+        input.worktreePath.value,
+      );
+      return { type: "existing_worktree" as const, worktreePath, ...branch };
+    }
+    if (Option.isSome(input.branch)) {
+      return yield* new ThreadUsageError({
+        detail: "--branch needs --worktree <base-ref> or --worktree-path <path>.",
+      });
+    }
+    return undefined;
+  },
+);
 
 const jsonFlag = Flag.Boolean("json").pipe(
   Flag.withDescription("Print JSON instead of text."),
@@ -556,8 +577,14 @@ const threadStartCommand = Command.make("start", {
     ),
     Flag.optional,
   ),
+  worktreePath: Flag.String("worktree-path").pipe(
+    Flag.withDescription(
+      "Run in this existing git worktree of the project instead of the project folder.",
+    ),
+    Flag.optional,
+  ),
   branch: Flag.String("branch").pipe(
-    Flag.withDescription("Branch name for the new worktree."),
+    Flag.withDescription("Branch name for the new worktree, or the existing worktree's branch."),
     Flag.optional,
   ),
   wait: waitFlag,
@@ -699,12 +726,43 @@ const threadShowCommand = Command.make("show", {
   ),
 );
 
+const threadInterruptCommand = Command.make("interrupt", {
+  ...projectLocationFlags,
+  thread: threadArgument,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("Stop a thread's running turn. An idle thread is left as it is."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const threadId = yield* decodeThreadId(flags.thread);
+      yield* withThreadTools(
+        flags,
+        Effect.fn("cli.thread.interrupt")(function* (tools) {
+          const interrupted = yield* tools.call(
+            "t3_thread_interrupt",
+            { threadId },
+            OrchestratorMcpThreadInterruptResult,
+          );
+          yield* flags.json
+            ? printJson(interrupted)
+            : Console.log(
+                interrupted.status === "interrupt_requested"
+                  ? "Interrupt requested."
+                  : "Nothing is running.",
+              );
+        }),
+      );
+    }).pipe(reportThreadErrors),
+  ),
+);
+
 export const threadCommand = Command.make("thread").pipe(
-  Command.withDescription("Start, message, and read threads on the running server."),
+  Command.withDescription("Start, message, interrupt, and read threads on the running server."),
   Command.withSubcommands([
     threadListCommand,
     threadStartCommand,
     threadSendCommand,
+    threadInterruptCommand,
     threadShowCommand,
   ]),
 );

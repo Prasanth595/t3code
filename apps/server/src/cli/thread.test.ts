@@ -1,8 +1,11 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { RunId, ThreadId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
-import { type ThreadTools, waitForRun } from "./thread.ts";
+import { launchWorkspaceStrategy, type ThreadTools, waitForRun } from "./thread.ts";
 
 const threadId = ThreadId.make("thread-1");
 const runId = RunId.make("run-1");
@@ -72,4 +75,20 @@ it.effect("--wait reports its run's result when a later run is the one waiting",
       status: "completed",
     });
   }),
+);
+
+it.effect("--worktree-path resolves from the caller's working directory", () =>
+  Effect.gen(function* () {
+    const strategy = yield* launchWorkspaceStrategy({
+      worktree: Option.none(),
+      worktreePath: Option.some("../wt"),
+      branch: Option.some("feature/x"),
+    }).pipe(Effect.provideService(HostProcess.WorkingDirectory, "/work/repo"));
+
+    assert.deepStrictEqual(strategy, {
+      type: "existing_worktree",
+      worktreePath: "/work/wt",
+      branch: "feature/x",
+    });
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
