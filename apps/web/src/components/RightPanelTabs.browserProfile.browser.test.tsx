@@ -1,4 +1,4 @@
-import { act, render as renderScreen, stubGlobal, type Screen } from "../../test/render";
+import { render as renderScreen, stubGlobal, type Screen } from "../../test/render";
 import {
   BUILT_IN_BROWSER_PROFILES,
   DEFAULT_BROWSER_PROFILE_ID,
