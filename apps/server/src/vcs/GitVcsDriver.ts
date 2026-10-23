@@ -35,6 +35,7 @@ import {
 } from "@t3tools/contracts";
 import { isMissingExecutable } from "@t3tools/source-control-core/server/discovery";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import {
   makeGitVcsDriverCore,
   PATCH_RENDER_PREFIX_ARGS,
@@ -503,6 +504,18 @@ function parseGitRemoteVerboseOutput(
   return remotes;
 }
 
+const runGitProcess = (
+  process: VcsProcess.VcsProcess["Service"],
+  input: VcsProcess.VcsProcessInput,
+) =>
+  process.run(input).pipe(
+    withMetrics({
+      counter: gitCommandsTotal,
+      timer: gitCommandDuration,
+      attributes: { operation: input.operation },
+    }),
+  );
+
 const gitCommand = (
   process: VcsProcess.VcsProcess["Service"],
   operation: string,
@@ -518,7 +531,7 @@ const gitCommand = (
     readonly appendTruncationMarker?: boolean;
   },
 ) =>
-  process.run({
+  runGitProcess(process, {
     operation,
     command: "git",
     args: ["-C", cwd, ...args],
@@ -903,7 +916,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             let skipped = false;
             let skippedRecord: number[] = [];
             const skippedPaths: string[] = [];
-            yield* vcsProcess.run({
+            yield* runGitProcess(vcsProcess, {
               operation,
               command: "git",
               cwd: input.cwd,
