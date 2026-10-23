@@ -453,6 +453,8 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
               ChildProcessSpawner.ChildProcessSpawner,
               stdoutSpawner(
                 (command, args) => {
+                  // A developer may also have the default MacPorts prefix installed.
+                  if (command === "/opt/local/bin/port") return "";
                   expect(command).toBe(port);
                   expect(args).toEqual(["-q", "provides", resolved, real]);
                   return fixture.owned && !("failedProbe" in fixture) ? "claude-code\n" : "";
