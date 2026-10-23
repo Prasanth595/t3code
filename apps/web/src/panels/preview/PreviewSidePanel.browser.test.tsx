@@ -53,7 +53,7 @@ vi.mock("~/components/preview/PreviewChromeRow", () => ({
   PreviewChromeRow: (props: { onPickElement?: () => void; pickActive?: boolean }) => {
     mocks.togglePick = props.onPickElement ?? null;
     mocks.pickActive = props.pickActive ?? false;
-    return null;
+    return <span>Preview chrome ready</span>;
   },
 }));
 vi.mock("~/components/preview/PreviewPanelShell", () => ({
@@ -230,6 +230,7 @@ const annotation: PreviewAnnotationPayload = {
 describe("registered Preview side panel", () => {
   async function render(screen: Screen, host: PanelHost) {
     await screen.rerender(panel(host));
+    await expect.element(screen.getByText("Preview chrome ready", { exact: true })).toBeVisible();
   }
 
   async function startPick() {

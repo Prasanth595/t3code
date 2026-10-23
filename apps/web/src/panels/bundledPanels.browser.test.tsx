@@ -38,7 +38,7 @@ vi.mock("./preview/PreviewSidePanel", () => {
   return {
     default: function PreviewSidePanel(props: unknown) {
       loaded.previewRenders.push({ props, host: usePanelHost() });
-      return null;
+      return <span>Preview body</span>;
     },
   };
 });
@@ -72,6 +72,7 @@ describe("bundled side panels", async () => {
     await act(async () => {
       await imports.preview.promise;
     });
+    await expect.element(screen.getByText("Preview body", { exact: true })).toBeVisible();
     expect(loaded.previewRenders).toHaveLength(1);
     expect(loaded).toMatchObject({ diff: 0, preview: 1, terminal: 0, device: 0 });
     expect(loaded.previewRenders).toEqual([{ props: { tabId: "tab-1" }, host }]);
@@ -114,6 +115,7 @@ describe("bundled side panels", async () => {
     await act(async () => {
       await imports.terminal.promise;
     });
+    await expect.element(screen.getByText("Terminal body", { exact: true })).toBeVisible();
     expect(screen.container.textContent).toContain("Terminal body");
     expect(loaded).toMatchObject({ diff: 0, terminal: 1, preview: previewBefore, device: 0 });
   });
