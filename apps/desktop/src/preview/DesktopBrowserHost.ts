@@ -28,6 +28,8 @@ const lineEncoder = new TextEncoder();
 const AGENT_INPUT_COMMAND =
   /"method":"(?:Input\.|Page\.navigate"|Runtime\.(?:evaluate|callFunctionOn)")/;
 const AGENT_DOWNLOAD_WINDOW_MS = 5_000;
+// The renderer gives up on readiness after 1s; this only catches a renderer that never answers.
+const CAPTURE_SURFACE_READY_TIMEOUT = "2 seconds";
 
 export interface DesktopBrowserTabKey {
   readonly threadId: string;
@@ -86,6 +88,7 @@ export const make = Effect.gen(function* () {
     readonly y: number;
   }>(16);
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
+  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
   const tabs = new Map<string, AttachedTab>();
   const emit = (event: DesktopBrowserEventType) => runFork(PubSub.publish(outbox, event));
 
@@ -143,13 +146,20 @@ export const make = Effect.gen(function* () {
       // receives its new bounds. CDP can otherwise wait forever for a composited frame.
       // A window that isn't painting, like a minimized one, never reports ready, yet its
       // on-screen tab can still be captured, so the screenshot is sent either way.
-      await setSurface(true).catch(() => false);
+      // A renderer that never answers would hold this screenshot and every one queued behind it.
+      await runPromise(
+        Effect.tryPromise(() => setSurface(true)).pipe(
+          Effect.timeoutOption(CAPTURE_SURFACE_READY_TIMEOUT),
+          Effect.ignore,
+        ),
+      );
       if (tab.relay !== relay || tab.screenshotTurn !== turn || wc.isDestroyed()) {
         throw new Error("The preview connection that asked for this screenshot closed.");
       }
       return await capture();
     } finally {
-      if (!host.isDestroyed()) await setSurface(false).catch(() => undefined);
+      // The renderer bounds its own lease, so the result needn't wait for its answer.
+      if (!host.isDestroyed()) void setSurface(false).catch(() => undefined);
     }
   };
 

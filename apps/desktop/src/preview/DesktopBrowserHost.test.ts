@@ -6,6 +6,7 @@ import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as NodeEvents from "node:events";
 
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
@@ -30,7 +31,10 @@ const command = (
     }),
   );
 
-const makeDebuggee = (prepareSurface: () => Promise<unknown> = async () => true) => {
+const makeDebuggee = (
+  prepareSurface: () => Promise<unknown> = async () => true,
+  restoreSurface: () => Promise<unknown> = async () => true,
+) => {
   const emitter = new NodeEvents.EventEmitter();
   const pending: Array<(cause?: Error) => void> = [];
   const sent: Array<unknown> = [];
@@ -55,7 +59,7 @@ const makeDebuggee = (prepareSurface: () => Promise<unknown> = async () => true)
       isDestroyed: () => false,
       executeJavaScript: (expression: string) => {
         surfaceRequests.push(expression);
-        return surfaceRequests.length === 1 ? prepareSurface() : Promise.resolve(true);
+        return expression.endsWith(", true)") ? prepareSurface() : restoreSurface();
       },
     },
     getURL: () => "http://localhost/",
@@ -169,6 +173,39 @@ describe("DesktopBrowserHost", () => {
       expect(yield* Queue.take(replies)).toBe(1);
       expect(debuggee.sent).toEqual([1]);
       expect(debuggee.surfaceRequests).toHaveLength(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("sends the screenshot when the renderer never answers readiness", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee(() => new Promise(() => {}));
+      host.attach(key, debuggee.tab);
+      const replies = yield* watchReplies(host);
+
+      const sent = debuggee.nextSend();
+      yield* command(host, 1, "Page.captureScreenshot");
+      yield* TestClock.adjust("2 seconds");
+      yield* Effect.promise(() => sent);
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("answers and moves on when the renderer never answers restoring the surface", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee(undefined, () => new Promise(() => {}));
+      host.attach(key, debuggee.tab);
+      const replies = yield* watchReplies(host);
+
+      yield* sendScreenshot(host, debuggee, 1);
+      yield* command(host, 2, "Page.captureScreenshot");
+      const secondSent = debuggee.nextSend();
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(1);
+      yield* Effect.promise(() => secondSent);
+      expect(debuggee.sent).toEqual([1, 2]);
     }).pipe(Effect.scoped),
   );
 
