@@ -58,7 +58,7 @@ import { stopRequestPath } from "./runner/stop.ts";
 import { utcSecond } from "./runner/start.ts";
 import { ClaimMemo, MARKER } from "./tracker/github.ts";
 import { FactoryProcess, RunSpawnError, type RunInput, type RunResult } from "./process.ts";
-import { FactoryGate } from "./gate.ts";
+import { FactoryGate, MERGE_COMMAND } from "./gate.ts";
 import { EventsError, FactoryEvents } from "./t3/events.ts";
 import * as Paths from "./t3/paths.ts";
 import * as Sessions from "./t3/sessions.ts";
@@ -769,7 +769,7 @@ describe("liveWorld", () => {
   const ago = (ms: number) => utcSecond(NOW - ms);
 
   const SHA = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
-  const pullView = (state: string, head: string) =>
+  const pullView = (state: string, head: string, mergeable = "MERGEABLE") =>
     JSON.stringify({
       number: 12,
       isDraft: false,
@@ -778,6 +778,7 @@ describe("liveWorld", () => {
       isCrossRepository: false,
       baseRefName: "main",
       headRefOid: head,
+      mergeable,
     });
 
   it.effect("the base tip is read from the run's base branch, in lower case", () =>
@@ -867,6 +868,7 @@ describe("liveWorld", () => {
               isCrossRepository: false,
               baseRefName: "feature/x",
               headRefOid: SHA,
+              mergeable: "MERGEABLE",
             });
           }
           return null;
@@ -903,15 +905,25 @@ describe("liveWorld", () => {
       }),
   );
 
-  it.effect("the head of an open pull request is read in lower case; one that ended has none", () =>
-    Effect.gen(function* () {
-      const open = ghWith(() => pullView("OPEN", SHA.toUpperCase()));
-      assert.strictEqual(yield* worldOf(open.process).openHead(repo, 12), SHA);
-      for (const state of ["MERGED", "CLOSED"]) {
-        const ended = ghWith(() => pullView(state, SHA));
-        assert.strictEqual(yield* worldOf(ended.process).openHead(repo, 12), null, state);
-      }
-    }),
+  it.effect(
+    "an open pull request is read with its head in lower case and GitHub's mergeable state; one that ended is none",
+    () =>
+      Effect.gen(function* () {
+        const open = ghWith(() => pullView("OPEN", SHA.toUpperCase()));
+        assert.deepStrictEqual(yield* worldOf(open.process).openPull(repo, 12), {
+          head: SHA,
+          mergeable: "mergeable",
+        });
+        const conflicting = ghWith(() => pullView("OPEN", SHA, "CONFLICTING"));
+        assert.deepStrictEqual(yield* worldOf(conflicting.process).openPull(repo, 12), {
+          head: SHA,
+          mergeable: "conflicting",
+        });
+        for (const state of ["MERGED", "CLOSED"]) {
+          const ended = ghWith(() => pullView(state, SHA));
+          assert.strictEqual(yield* worldOf(ended.process).openPull(repo, 12), null, state);
+        }
+      }),
   );
 
   it.effect("a pull request GitHub no longer has has no head, and a failed read is an error", () =>
@@ -926,10 +938,10 @@ describe("liveWorld", () => {
             truncated: false,
           } satisfies RunResult),
       };
-      assert.strictEqual(yield* worldOf(gone).openHead(repo, 12), null);
+      assert.strictEqual(yield* worldOf(gone).openPull(repo, 12), null);
       const broken = ghWith(() => null);
       assert.strictEqual(
-        (yield* Effect.flip(worldOf(broken.process).openHead(repo, 12))).kind,
+        (yield* Effect.flip(worldOf(broken.process).openPull(repo, 12))).kind,
         "tracker",
       );
     }),
@@ -1577,7 +1589,7 @@ describe("the gate in the background", () => {
   const REPO = "rawphp/softfac";
 
   /** What `gh pr view` answers for pull request 12 of `REPO`, as `state`, at `head`. */
-  const PR_VIEW = (state: "OPEN" | "MERGED", head: string) =>
+  const PR_VIEW = (state: "OPEN" | "MERGED", head: string, mergeable = "MERGEABLE") =>
     JSON.stringify({
       number: 12,
       isDraft: false,
@@ -1586,6 +1598,7 @@ describe("the gate in the background", () => {
       isCrossRepository: false,
       baseRefName: "main",
       headRefOid: head,
+      mergeable,
     });
   const HEAD = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
   const BASE = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d";
@@ -1730,6 +1743,107 @@ describe("the gate in the background", () => {
         while (world.gateRunning(run)) yield* Effect.yieldNow;
         assert.strictEqual(yield* Ref.get(woken), 0);
         assert.strictEqual(NodeFS.readFileSync(runPath(dataDir, run), "utf8"), before);
+      }),
+  );
+
+  it.effect(
+    "with every slot taken, a run GitHub says conflicts is gated at once and any other is queued",
+    () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        const run = prOpenRun(dataDir);
+        let mergeable = "MERGEABLE";
+        let prState: "OPEN" | "MERGED" | "fails" = "OPEN";
+        const prReads: Array<string> = [];
+        const gh: FactoryProcess["Service"] = {
+          run: (input) => {
+            const args = input.args ?? [];
+            if (args.includes("pr") && args.includes("view")) {
+              prReads.push(`${prState} ${mergeable}`);
+              if (prState === "fails") {
+                return Effect.fail(
+                  new RunSpawnError({ shell: false, cause: new Error("gh died") }),
+                );
+              }
+              return answered(PR_VIEW(prState, HEAD, mergeable));
+            }
+            if (readsIssue(input)) return answered(OPEN_ISSUE);
+            return answered(JSON.stringify({ object: { type: "commit", sha: BASE } }));
+          },
+        };
+        let gateRuns = 0;
+        const world = liveWorld(
+          background,
+          dataDir,
+          gh,
+          NodeServices.layer,
+          stubSessions,
+          () => 1_000,
+          "mac-mini",
+          noAttention,
+          {
+            gate: {
+              run: () =>
+                Effect.sync(() => {
+                  gateRuns += 1;
+                  return { _tag: "queued", running: 1, max: 1 } as const;
+                }),
+            },
+            wake: Effect.void,
+            scope: yield* Scope.make(),
+          },
+          undefined,
+          undefined,
+          {
+            // Another run's gate holds the only slot.
+            gating: new Set([runIdToString(newRunId(REPO, "99", 1))]),
+            claimMemo: new ClaimMemo(),
+            stuckReads: new Map<string, number>(),
+            brokenThreads: { notFactory: new Set<string>(), unsettled: new Map<string, number>() },
+          },
+        );
+        const repo: Repo = {
+          ...backgroundRepo,
+          project: { ...backgroundRepo.project, gate: ["cargo test"] },
+        };
+        const before = NodeFS.readFileSync(runPath(dataDir, run), "utf8");
+        // Mergeable: it waits for the slot, after one read of its pull request, and nothing is written.
+        assert.deepStrictEqual(yield* world.gate(repo, run), {
+          kind: "queued",
+          running: 1,
+          max: 1,
+        });
+        assert.deepStrictEqual(prReads, ["OPEN MERGEABLE"]);
+        assert.isFalse(world.gateRunning(run));
+        assert.strictEqual(NodeFS.readFileSync(runPath(dataDir, run), "utf8"), before);
+        // A merged pull request that read as conflicting, and a read that fails, wait for the slot too.
+        mergeable = "CONFLICTING";
+        for (const state of ["MERGED", "fails"] as const) {
+          prState = state;
+          assert.deepStrictEqual(
+            yield* world.gate(repo, run),
+            { kind: "queued", running: 1, max: 1 },
+            state,
+          );
+        }
+        assert.deepStrictEqual(prReads.slice(1), ["MERGED CONFLICTING", "fails CONFLICTING"]);
+        assert.strictEqual(NodeFS.readFileSync(runPath(dataDir, run), "utf8"), before);
+        prState = "OPEN";
+        // Conflicting: the gate starts though the slot is taken, and records the conflict with no
+        // gate run, so no lock.
+        mergeable = "CONFLICTING";
+        assert.deepStrictEqual(yield* world.gate(repo, run), { kind: "started" });
+        while (world.gateRunning(run)) yield* Effect.yieldNow;
+        assert.strictEqual(gateRuns, 0);
+        const conflictLines = readRun(dataDir, run).entries.filter(
+          (e) =>
+            e.event === "gate_command" &&
+            (e.data as { command?: string }).command === MERGE_COMMAND,
+        );
+        assert.deepStrictEqual(
+          conflictLines.map((e) => e.data),
+          [{ attempt: 2, command: MERGE_COMMAND, exit_code: 1, duration_ms: 0 }],
+        );
       }),
   );
 
@@ -2051,6 +2165,10 @@ describe("the gate in the background", () => {
     assert.strictEqual(
       words({ kind: "abandoned" }, null),
       "the issue is closed, the run is closed",
+    );
+    assert.strictEqual(
+      words({ kind: "sent-back", attempt: 2 }, "conflict"),
+      "nothing moved but GitHub says the pull request conflicts with the base branch, the gate failed on attempt 2, the PR is a draft again and the session was told",
     );
     assert.strictEqual(words({ kind: "not-ready" }, null), "the gate waits for the session");
   });

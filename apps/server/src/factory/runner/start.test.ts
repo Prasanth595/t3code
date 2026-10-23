@@ -1571,6 +1571,7 @@ const pullOf = (number: number, over: Partial<PullRequest> = {}): PullRequest =>
   crossRepository: false,
   baseRef: "main",
   headSha: "abc123",
+  mergeable: "mergeable",
   ...over,
 });
 

@@ -5,7 +5,8 @@
  * request is marked ready; and `regate`, the same gate for a `pr-open` pull request whose head or
  * base moved since its last pass. The checkout, the commands and the removal are `FactoryGate`'s
  * (`gate.ts`), which also writes the attempt's `gate_checkout` and `gate_command` lines; this
- * module decides what they mean.
+ * module decides what they mean, and writes the conflict line itself for a pull request GitHub
+ * already says conflicts, which never reaches `FactoryGate`.
  *
  * Each call reads the ledger first and does only what it does not record, so calling it again
  * resumes whatever an earlier call left half done. A failure of the tracker, of T3 or of the
@@ -17,6 +18,7 @@ import * as Schema from "effect/Schema";
 
 import { transition, type Action } from "../domain/lifecycle.ts";
 import {
+  MERGE_COMMAND,
   WorkspaceUnexpectedError,
   commandCode,
   gateResultsComment,
@@ -484,7 +486,8 @@ const awaitChecks = Effect.fn("RunnerGating.awaitChecks")(function* (
  * The commands run on the merged tree, so a branch that passes alone and breaks once the base
  * has moved does not pass. A merge conflict is a failed attempt with no command run, told to the
  * session in fixed words. The ledger gets where the gate ran and on which commits, then each
- * command's result.
+ * command's result. A pull request GitHub already says conflicts is that failed attempt at once,
+ * with its conflict line and no checkout, so it never waits for a gate slot.
  *
  * All passed: the pull request is read again (it must still be the session's own and at the
  * commit that was gated; a head that moved is no pass and no failure, and the next call gates
@@ -869,6 +872,47 @@ const gateAttempts = Effect.fn("RunnerGating.gateAttempts")(function* (
   }
   if (ctx.project.gate.length === 0) return yield* new NoGateCommandsError({ repo: ctx.repo });
 
+  /**
+   * A failed attempt: `text` for the session, `why` for the public stuck line. A pull request
+   * someone took out of draft goes back first. Every attempt since the last pass failed;
+   * `gate_retries` of them may go back into the session, and the one after that is the end.
+   */
+  const failed = Effect.fn("RunnerGating.attemptFailed")(function* (text: string, why: string) {
+    const drafted = yield* steps.beforeFailure();
+    if (drafted !== null) return drafted;
+    const since = attemptsSincePass(seen, attempt);
+    if (since > ctx.project.limits.gateRetries) {
+      const failedAfter = `the gate failed after ${attempts(since)}`;
+      // The conflicted paths and the command output are text from the session's repo, and
+      // output can hold what a command printed from its environment: the public comment gets
+      // the factory's fixed line, and the ledger and the caller the whole message. Command
+      // output ends with the error, so a long one is cut from the front.
+      return yield* stuck("gate-retries-used-up", {
+        reason: `${failedAfter}: ${why}`,
+        detail: `${failedAfter}\n\n${prepareOutputTail(text)}`,
+      });
+    }
+    return yield* steps.failed(pull, text);
+  });
+  const conflictWhy = `the branch conflicts with the base branch ${sanitize(ctx.project.base, false)}`;
+
+  // GitHub already says the head conflicts with the base: the attempt is a conflict, recorded
+  // with the line the gate's own merge writes, and no checkout or gate slot is taken for it.
+  // GitHub names no paths; the session sees them when it merges the base itself.
+  if (pull.mergeable === "conflicting") {
+    yield* append(
+      out,
+      {
+        event: "gate_command",
+        data: { attempt, command: MERGE_COMMAND, exit_code: 1, duration_ms: 0 },
+      },
+      "gate",
+      "gate-merge-conflict",
+      { attempt },
+    );
+    return yield* failed(mergeConflictMessage(ctx.project.base, []), conflictWhy);
+  }
+
   // The commit the head is merged with is the tip the base branch has now.
   let baseSha = (yield* ctx.tracker.branchTip(ctx.project.base)).toLowerCase();
   let regates = mode.regates;
@@ -967,30 +1011,12 @@ const gateAttempts = Effect.fn("RunnerGating.gateAttempts")(function* (
       return yield* steps.passed(pass);
     }
 
-    const conflict = ran._tag === "conflict";
-    const text = conflict
-      ? mergeConflictMessage(ctx.project.base, ran.paths)
-      : failureMessage(ran.failure);
-    const drafted = yield* steps.beforeFailure();
-    if (drafted !== null) return drafted;
-    // Every attempt since the last pass failed. `gate_retries` of them may go back into the
-    // session; the one after that is the end.
-    const since = attemptsSincePass(seen, attempt);
-    if (since > ctx.project.limits.gateRetries) {
-      const failedAfter = `the gate failed after ${attempts(since)}`;
-      // The conflicted paths and the command output are text from the session's repo, and
-      // output can hold what a command printed from its environment: the public comment gets
-      // the factory's fixed line, and the ledger and the caller the whole message. Command
-      // output ends with the error, so a long one is cut from the front.
-      const stop: Stop = {
-        reason: conflict
-          ? `${failedAfter}: the branch conflicts with the base branch ${sanitize(ctx.project.base, false)}`
-          : `${failedAfter}: ${commandCode(ran.failure.command)} failed (${howItEnded(ran.failure)})`,
-        detail: `${failedAfter}\n\n${prepareOutputTail(text)}`,
-      };
-      return yield* stuck("gate-retries-used-up", stop);
-    }
-    return yield* steps.failed(pull, text);
+    return yield* ran._tag === "conflict"
+      ? failed(mergeConflictMessage(ctx.project.base, ran.paths), conflictWhy)
+      : failed(
+          failureMessage(ran.failure),
+          `${commandCode(ran.failure.command)} failed (${howItEnded(ran.failure)})`,
+        );
   }
 });
 
@@ -1299,8 +1325,9 @@ export const lastPass = (
  * pass, and nothing else. A pull request that is merged or closed (or gone) finishes the run at
  * once: the session's thread is archived, then the summary line, the only other write, and the
  * answer is `ended`; nothing is gated and nothing is posted. When the head and the tip are the
- * ones the last recorded pass ran against the answer is `unchanged`. A head or a tip that differs
- * (a push to the branch, by anyone, or a moved base) writes a `gate_regate` line and runs the
+ * ones the last recorded pass ran against, and GitHub does not say the pull request conflicts,
+ * the answer is `unchanged`. A head or a tip that differs (a push to the branch, by anyone, or a
+ * moved base), or a conflict GitHub reports, writes a `gate_regate` line and runs the
  * gate on the head merged with the tip, as `gate` runs it, as a new attempt: the pass closed its
  * own. A re-gate that fails or conflicts goes to a new session like any failure, and
  * `gate_retries` counts the failures since the last pass, so a run that passed has its whole
@@ -1416,7 +1443,12 @@ export const regate = (ctx: GateContext, run: RunId): Effect.Effect<Regated, Gat
         const tip = (yield* ctx.tracker.branchTip(ctx.project.base)).toLowerCase();
         const passedHead = seen.pass?.sha ?? "";
         const passedAgainst = seen.pass?.baseSha ?? "";
-        if (unchangedSince(passedHead, passedAgainst, head, tip)) {
+        // A pull request GitHub says conflicts is gated even when nothing moved: the gate
+        // records the conflict without a checkout.
+        if (
+          pull.mergeable !== "conflicting" &&
+          unchangedSince(passedHead, passedAgainst, head, tip)
+        ) {
           return { step: { kind: "unchanged" }, moved: null };
         }
         if (!isCommitId(head)) {

@@ -35,7 +35,7 @@ const DEFAULT_GIT_TIMEOUT_MS = 30_000;
 const DEFAULT_CHECKOUT_TIMEOUT_MS = 10 * 60 * 1000;
 const GIT_TAIL_BYTES = 1024 * 1024;
 /** The `gate_command` line of an attempt that ran no command because the head conflicts with the base. */
-const MERGE_COMMAND = "softfac: merge the base branch into the head";
+export const MERGE_COMMAND = "softfac: merge the base branch into the head";
 
 // The messages are the ones softfac's `WorkspaceError` and `GateError` print.
 

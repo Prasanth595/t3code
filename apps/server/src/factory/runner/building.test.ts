@@ -197,6 +197,7 @@ const defaultPr = (): PullRequest => ({
   crossRepository: false,
   baseRef: "main",
   headSha: "abc123",
+  mergeable: "mergeable",
 });
 
 /** The folder T3 names a new worktree on branch `t3/2e8db933`. */

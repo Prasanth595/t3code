@@ -293,6 +293,7 @@ const MOVED_WORDS: Record<Moved, string> = {
   head: "the pull request's head moved",
   both: "the pull request's head and the base branch moved",
   unknown: "the base of the last pass was not recorded",
+  conflict: "nothing moved but GitHub says the pull request conflicts with the base branch",
 };
 
 /**
@@ -475,13 +476,27 @@ export const liveWorld = (
       }
     });
   /**
+   * Whether GitHub says the run's pull request conflicts with its base. The gate of such a run
+   * takes no slot (it records the conflict without a checkout), so it starts even when every slot
+   * is taken. A run with no pull request on record, or a read that fails, is no conflict.
+   */
+  const conflicting = Effect.fn("Factory.conflicting")(
+    function* (repo: Repo, run: RunId) {
+      const last = (yield* ledger(() => readProgress(readRun(dataDir, run).entries))).lastPr;
+      if (last === null) return false;
+      const pull = yield* trackerFor(repo.watched).pullRequest(last.pr);
+      return pull !== null && pull.open && pull.mergeable === "conflicting";
+    },
+    Effect.orElseSucceed(() => false),
+  );
+  /**
    * The gate as a background fiber: its line is logged when it ends, as the pass's lines are, an
    * error goes to the run's ledger, a `stuck` or `abandoned` end raises its attention item, and the loop is
    * woken so the next pass carries on at once.
    */
   const startGate = Effect.fn("Factory.startGate")(function* (repo: Repo, run: RunId) {
     const id = runIdToString(run);
-    if (gating.size >= machine.maxConcurrentGates) {
+    if (gating.size >= machine.maxConcurrentGates && !(yield* conflicting(repo, run))) {
       return { kind: "queued", running: gating.size, max: machine.maxConcurrentGates } as const;
     }
     gating.add(id);
@@ -645,11 +660,15 @@ export const liveWorld = (
         Effect.mapError(asPassError("tracker")),
       ),
     stuckReads,
-    openHead: (repo, pr) =>
+    openPull: (repo, pr) =>
       trackerFor(repo.watched)
         .pullRequest(pr)
         .pipe(
-          Effect.map((pull) => (pull === null || !pull.open ? null : pull.headSha.toLowerCase())),
+          Effect.map((pull) =>
+            pull === null || !pull.open
+              ? null
+              : { head: pull.headSha.toLowerCase(), mergeable: pull.mergeable },
+          ),
           Effect.mapError(asPassError("tracker")),
         ),
     gate: startGate,

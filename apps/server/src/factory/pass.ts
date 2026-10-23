@@ -44,7 +44,13 @@ import { mention, type StartError, type StartOutcome } from "./runner/start.ts";
 import type { SessionsError, ThreadOnBrokenWorktree } from "./t3/sessions.ts";
 import type { StopRequestOutcome } from "./runner/stop.ts";
 import { sanitize } from "./text.ts";
-import { LIST_LIMIT, type Blocker, type Listing, type UnassignedClaim } from "./tracker/github.ts";
+import {
+  LIST_LIMIT,
+  type Blocker,
+  type Listing,
+  type Mergeable,
+  type UnassignedClaim,
+} from "./tracker/github.ts";
 
 /** An error of the pass's own: what kind it is for the machine log, and what it says. */
 export interface PassError {
@@ -220,8 +226,11 @@ export interface PassWorld {
   readonly issueClosed: (repo: Repo, issue: number) => Effect.Effect<boolean, PassError>;
   /** When the issue of each stuck attention item was last read, by item id, in epoch milliseconds; kept from pass to pass. */
   readonly stuckReads: Map<string, number>;
-  /** The head of the open pull request, in lower case; null for one that is merged, closed or gone. */
-  readonly openHead: (repo: Repo, pr: number) => Effect.Effect<string | null, PassError>;
+  /** The head of the open pull request, in lower case, and GitHub's mergeable state; null for one that is merged, closed or gone. */
+  readonly openPull: (
+    repo: Repo,
+    pr: number,
+  ) => Effect.Effect<{ readonly head: string; readonly mergeable: Mergeable } | null, PassError>;
   /** Appends an `error` line to the run's own ledger. */
   readonly recordError: (
     run: RunId,
@@ -1176,7 +1185,8 @@ const actedOnFeedback = Effect.fn("Pass.actedOnFeedback")(function* (
 
 /**
  * Whether `regate` would find the run's pull request and its base tip where its last pass left
- * them, by the reads it makes before it answers `unchanged`. A run it would do more for, or a
+ * them, by the reads it makes before it answers `unchanged`. A run it would do more for (one
+ * whose pull request GitHub says conflicts is one), or a
  * read that fails, is not unchanged: the gate deals with it, and says what failed. The run's base
  * is the one its launch recorded, else the repo's. `tips` holds each base tip as the pass first
  * read it, by lowercase repo name and base, so it is read at most once a pass. It is read before
@@ -1199,13 +1209,13 @@ const unchanged = Effect.fn("Pass.unchanged")(function* (
   }
   const tip = tips.get(key) ?? null;
   if (tip === null) return false;
-  const head = yield* Effect.result(world.openHead(repo, last.success.pr));
-  if (head._tag === "Failure") {
+  const pull = yield* Effect.result(world.openPull(repo, last.success.pr));
+  if (pull._tag === "Failure") {
     tips.set(key, null);
     return false;
   }
-  if (head.success === null) return false;
-  return unchangedSince(last.success.head, last.success.base, head.success, tip);
+  if (pull.success === null || pull.success.mergeable === "conflicting") return false;
+  return unchangedSince(last.success.head, last.success.base, pull.success.head, tip);
 });
 
 /**

@@ -303,6 +303,7 @@ const makeGitHub = (input: {
           isCrossRepository: false,
           baseRefName: "main",
           headRefOid: input.baseSha,
+          mergeable: "MERGEABLE",
         }),
       );
     });

@@ -178,6 +178,7 @@ const defaultPr = (): PullRequest => ({
   crossRepository: false,
   baseRef: "main",
   headSha: HEAD,
+  mergeable: "mergeable",
 });
 
 const issueDetail = (state: State | null, assignees: ReadonlyArray<string>): IssueDetail => ({

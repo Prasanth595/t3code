@@ -275,6 +275,7 @@ const defaultPr = (): PullRequest => ({
   crossRepository: false,
   baseRef: "main",
   headSha: HEAD,
+  mergeable: "mergeable",
 });
 
 const issueDetail = (state: State | null, assignees: ReadonlyArray<string>): IssueDetail => ({
@@ -642,6 +643,10 @@ class FakeGate {
   /** The server is dead: nothing is removed. Set while a call is meant to crash. */
   dead = false;
   removeFails = false;
+  /** Every call of `run`, whatever it answered. */
+  runs = 0;
+  /** When set, every call answers `queued`, as the real gate does at `max_concurrent_gates`, before it makes anything. */
+  queued: { readonly running: number; readonly max: number } | null = null;
 
   readonly gate: GateContext["gate"] = {
     run: (input) => this.runGate(input),
@@ -693,6 +698,8 @@ class FakeGate {
         // Not empty.
       }
     };
+    this.runs += 1;
+    if (this.queued !== null) return Effect.succeed({ _tag: "queued", ...this.queued });
     return Effect.suspend((): Effect.Effect<GateResult, GateError> => {
       NodeFS.mkdirSync(root, { recursive: true });
       // Leftovers of a call the server died in.
@@ -2112,6 +2119,114 @@ describe("gate: the retries run out", () => {
           [checkoutBlank(1), conflictCmd(1)],
         );
       }),
+  );
+});
+
+describe("gate: GitHub says the pull request conflicts with its base", () => {
+  const conflictingOnGitHub = (rig: Rig) => {
+    rig.gh.pr = { ...rig.gh.pr!, mergeable: "conflicting" };
+  };
+
+  /** Nothing of the gate was asked for or made: no lock, no checkout, no gate directory. */
+  const assertNoGate = (rig: Rig) => {
+    assert.strictEqual(rig.ws.runs, 0, "the gate was not asked, so no lock was taken");
+    assert.deepStrictEqual(rig.ws.calls, []);
+    assert.isFalse(NodeFS.existsSync(gateRoot(rig.dataDir, rig.run)), "no gate directory");
+  };
+
+  it.effect("a building run is sent the conflict without waiting for a gate slot", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyForGate();
+      rig.ws.queued = { running: 2, max: 2 };
+      conflictingOnGitHub(rig);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "sent-back", attempt: 1 });
+      assertNoGate(rig);
+      // The pull request, then again to put a ready one back to draft. The base tip is not read.
+      assert.deepStrictEqual(rig.gh.calls, ["pullRequest 12", "pullRequest 12"]);
+      assert.deepStrictEqual(rig.t3.calls, [
+        "status thread-1",
+        sendCall(1, 1, mergeConflictMessage("main", [])),
+      ]);
+      assert.deepStrictEqual(linesOf(rig), [
+        ...BASE_EVENTS,
+        conflictCmd(1),
+        sending(1, 1),
+        sentBack(1, 1),
+      ]);
+      assert.deepStrictEqual(causeOf(rig, conflictCmd(1)), {
+        step: "gate",
+        reason: "gate-merge-conflict",
+      });
+    }),
+  );
+
+  it.effect("an unknown answer is gated as before, and waits for a slot", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyForGate();
+      rig.ws.queued = { running: 2, max: 2 };
+      rig.gh.pr = { ...rig.gh.pr!, mergeable: "unknown" };
+      const bytes = bytesOf(rig);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "queued", running: 2, max: 2 });
+      assert.strictEqual(rig.ws.runs, 1);
+      assert.deepStrictEqual(rig.gh.calls, ["pullRequest 12", "branchTip main"]);
+      assert.strictEqual(bytesOf(rig), bytes);
+    }),
+  );
+
+  it.effect("a mergeable answer runs the gate's own checkout and merge", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyForGate();
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+      assert.deepStrictEqual(rig.ws.calls, workspaceCalls(rig, 1));
+    }),
+  );
+
+  it.effect("the conflict counts toward gate_retries like a checkout conflict", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyForGate();
+      rig.project = { ...rig.project, limits: { ...rig.project.limits, gateRetries: 0 } };
+      conflictingOnGitHub(rig);
+      const step = yield* gateIn(rig);
+      const message = mergeConflictMessage("main", []);
+      assertGateStuck(
+        rig,
+        step,
+        ["pullRequest 12", "pullRequest 12"],
+        {
+          publicReason: `${exhausted(1)}: the branch conflicts with the base branch main`,
+          recorded: `${exhausted(1)}\n\n${prepareOutputTail(message)}`,
+        },
+        [conflictCmd(1)],
+      );
+      assertNoGate(rig);
+    }),
+  );
+
+  it.effect("a call cut short after the conflict line counts the attempt once", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyForGate();
+      conflictingOnGitHub(rig);
+      // The send's answer is lost: the ledger stops at `gate-sending`.
+      rig.t3.failAt = 1;
+      const error = yield* Effect.flip(gateIn(rig));
+      assert.strictEqual(error._tag, "FactorySessionsError");
+      rig.t3.failAt = null;
+      assert.deepStrictEqual(linesOf(rig), [...BASE_EVENTS, conflictCmd(1), sending(1, 1)]);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "sent-back", attempt: 1 });
+      assertNoGate(rig);
+      assert.deepStrictEqual(withoutRepeatedCommands(linesOf(rig)), [
+        ...BASE_EVENTS,
+        conflictCmd(1),
+        sending(1, 1),
+        sentBack(1, 1),
+      ]);
+      // The next run of the session is gated as attempt 2: the conflict used attempt 1.
+      setRun(rig, "completed", 2);
+      assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+      rig.gh.pr = { ...rig.gh.pr!, mergeable: "mergeable" };
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+      assert.ok(hasLine(rig, checkoutBlank(2)));
+    }),
   );
 });
 
@@ -4698,6 +4813,44 @@ describe("regate: gated again and the answer", () => {
       assert.deepStrictEqual(sends(rig), []);
       assert.isFalse(rig.gh.world.prReady);
       assert.strictEqual(rig.gh.world.state, "building");
+    }),
+  );
+
+  it.effect(
+    "a ready pr GitHub says conflicts is re-gated with nothing moved, with no checkout",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* prOpenRun();
+        rig.ws.runs = 0;
+        rig.ws.queued = { running: 2, max: 2 };
+        rig.gh.pr = { ...rig.gh.pr!, mergeable: "conflicting" };
+        assert.deepStrictEqual(yield* regateIn(rig), {
+          step: { kind: "sent-back", attempt: 2 },
+          moved: "conflict",
+        });
+        assert.strictEqual(rig.ws.runs, 0, "the gate was not asked, so no lock was taken");
+        assert.deepStrictEqual(rig.ws.calls, []);
+        assert.ok(hasLine(rig, regateLine(BASE, BASE)));
+        assert.ok(hasLine(rig, conflictCmd(2)));
+        assert.strictEqual(rig.t3.launches.length, 1);
+        assert.ok(
+          rig.t3.launches[0]!.message.endsWith(
+            `${END_WITH_DONE}\n\n${mergeConflictMessage("main", [])}`,
+          ),
+          rig.t3.launches[0]!.message,
+        );
+        assert.isFalse(rig.gh.world.prReady);
+        assert.strictEqual(rig.gh.world.state, "building");
+      }),
+  );
+
+  it.effect("a ready pr GitHub calls mergeable or unknown, with nothing moved, is unchanged", () =>
+    Effect.gen(function* () {
+      const rig = yield* prOpenRun();
+      for (const mergeable of ["mergeable", "unknown"] as const) {
+        rig.gh.pr = { ...rig.gh.pr!, mergeable };
+        assert.deepStrictEqual((yield* regateIn(rig)).step, { kind: "unchanged" }, mergeable);
+      }
     }),
   );
 
