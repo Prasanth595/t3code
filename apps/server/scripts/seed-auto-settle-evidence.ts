@@ -17,15 +17,13 @@ import * as Sqlite from "../src/persistence/Sqlite.ts";
 import * as EventSink from "../src/orchestration-v2/EventSink.ts";
 import * as EventStore from "../src/orchestration-v2/EventStore.ts";
 import * as ProjectionStore from "../src/orchestration-v2/ProjectionStore.ts";
+import fixture from "./auto-settle-evidence.fixture.json" with { type: "json" };
 
 // Run with the isolated worktree server stopped. The event sink records history
 // and updates projections together; timestamps model an inactive thread.
 const databasePath = process.argv[2];
 if (!databasePath?.includes("/issue-24041/.t3/"))
   throw new Error("Expected isolated issue-24041 database");
-const fixture = JSON.parse(
-  NodeFS.readFileSync(new URL("./auto-settle-evidence.fixture.json", import.meta.url), "utf8"),
-);
 const anchor = process.argv[3] ? Date.parse(process.argv[3]) : Date.now();
 if (!Number.isFinite(anchor)) throw new Error("Expected ISO anchor timestamp");
 const database = Sqlite.layerFromPath(databasePath);
