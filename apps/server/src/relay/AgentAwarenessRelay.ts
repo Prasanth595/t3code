@@ -442,7 +442,7 @@ export const make = Effect.gen(function* () {
     Effect.forEach([...publishRetries.keys()], cancelPublishRetry, { discard: true }),
   );
   let schedulePublishRetry: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
-  let enqueueWorkerPublish: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
+  let enqueueTopLevelPublish: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   const resetPublishedConnection = Effect.gen(function* () {
     publishedRelayConfig = undefined;
     cachedRelayClient = undefined;
@@ -672,14 +672,14 @@ export const make = Effect.gen(function* () {
     if (request === null || threadShell === null) {
       if (previous === undefined) return;
       subagentRequests.delete(threadId);
-      yield* enqueueWorkerPublish(previous.topLevelThreadId);
+      yield* enqueueTopLevelPublish(previous.topLevelThreadId);
       return;
     }
     const topLevelThreadId =
       previous?.topLevelThreadId ?? (yield* findTopLevelThreadId(threadShell));
     if (topLevelThreadId === null) return;
     subagentRequests.set(threadId, { topLevelThreadId, request });
-    yield* enqueueWorkerPublish(topLevelThreadId);
+    yield* enqueueTopLevelPublish(topLevelThreadId);
   });
 
   // The map can miss a child's update while publishing is off or the relay is
@@ -724,9 +724,11 @@ export const make = Effect.gen(function* () {
   });
 
   const worker = yield* makeAgentAwarenessPublishWorker(processThreadPublish);
-  enqueueWorkerPublish = worker.enqueue;
   const enqueueThreadPublish = (threadId: ThreadId) =>
     cancelPublishRetry(threadId).pipe(Effect.andThen(worker.enqueue(threadId)));
+  // A child's new request is fresh activity for its parent, so it gets a fresh
+  // retry budget like any other event.
+  enqueueTopLevelPublish = enqueueThreadPublish;
   const publishThread: AgentAwarenessRelay["Service"]["publishThread"] = (threadId) =>
     enqueueThreadPublish(threadId).pipe(Effect.andThen(worker.drain));
 

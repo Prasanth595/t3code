@@ -371,6 +371,49 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
+  it.effect(
+    "retries a parent publish for a new subagent request after earlier retries ran out",
+    () =>
+      Effect.gen(function* () {
+        const shells = yield* Ref.make(
+          new Map<ThreadId, OrchestrationV2ThreadShell>([
+            [THREAD_ID, shell()],
+            [CHILD_THREAD_ID, waitingChild({ pendingRuntimeRequest: null })],
+          ]),
+        );
+        const { relay, publications } = yield* makeTestRelay({
+          readShell: (threadId) =>
+            Ref.get(shells).pipe(Effect.map((current) => current.get(threadId) ?? null)),
+          respond: (attempt) =>
+            attempt <= 7
+              ? new Response("unavailable", { status: 503 })
+              : Response.json({ ok: true, deliveries: [] }),
+        });
+        yield* relay.publishThread(THREAD_ID);
+        for (const delay of [
+          "1 second",
+          "2 seconds",
+          "4 seconds",
+          "8 seconds",
+          "16 seconds",
+        ] as const) {
+          yield* TestClock.adjust(delay);
+          yield* relay.drain;
+        }
+        assert.equal(publications.length, 6);
+
+        yield* Ref.update(shells, (current) =>
+          new Map(current).set(CHILD_THREAD_ID, waitingChild()),
+        );
+        yield* relay.publishThread(CHILD_THREAD_ID);
+        assert.equal(publications.length, 7);
+        yield* TestClock.adjust("1 second");
+        yield* relay.drain;
+        assert.equal(publications.length, 8);
+        assert.equal(publications[7]?.state?.phase, "waiting_for_approval");
+      }),
+  );
+
   it.effect("drops a subagent request that cleared while publishing was off", () =>
     Effect.gen(function* () {
       const shells = yield* Ref.make(
