@@ -981,23 +981,32 @@ export const makeGitHub = (options: GitHubOptions) => {
   });
 
   /**
-   * Runs `gh`, trying again up to {@link GH_ATTEMPTS} times after a failure GitHub never
-   * received ({@link NOT_RECEIVED}), each attempt with the full time limit. The last failure
-   * is returned as it is, so a caller sees what it would have without the retries.
+   * Runs `attempt`, trying it again up to {@link GH_ATTEMPTS} times after a failure GitHub
+   * never received ({@link NOT_RECEIVED}). The last failure is returned as it is, so a caller
+   * sees what it would have without the retries.
    */
-  const gh = Effect.fn("GitHub.gh")(function* (args: ReadonlyArray<string>): GitHubGen<string> {
-    for (let attempt = 1; ; attempt += 1) {
-      const result = yield* Effect.result(ghOnce(args));
+  const retryNotReceived = Effect.fn("GitHub.retryNotReceived")(function* <A>(
+    attempt: Effect.Effect<A, GitHubError, FactoryProcess>,
+  ): GitHubGen<A> {
+    for (let tried = 1; ; tried += 1) {
+      const result = yield* Effect.result(attempt);
       if (result._tag === "Success") return result.success;
       const error = result.failure;
       const reason = error._tag === "GitHubFailed" ? notReceived(error.stderr) : null;
-      if (reason === null || attempt >= GH_ATTEMPTS) return yield* error;
-      const delayMs = GH_RETRY_DELAYS_MS[attempt - 1]! + (yield* Random.nextIntBetween(0, 1000));
+      if (error._tag !== "GitHubFailed" || reason === null || tried >= GH_ATTEMPTS) {
+        return yield* error;
+      }
+      const delayMs = GH_RETRY_DELAYS_MS[tried - 1]! + (yield* Random.nextIntBetween(0, 1000));
       yield* Effect.logInfo(
-        `\`${command(args)}\` attempt ${attempt} of ${GH_ATTEMPTS} failed (${reason}); trying again in ${(delayMs / 1000).toFixed(1)} s`,
+        `\`${command(error.args)}\` attempt ${tried} of ${GH_ATTEMPTS} failed (${reason}); trying again in ${(delayMs / 1000).toFixed(1)} s`,
       );
       yield* Effect.sleep(delayMs);
     }
+  });
+
+  /** Runs `gh` with {@link retryNotReceived}, each attempt with the full time limit. */
+  const gh = Effect.fn("GitHub.gh")(function* (args: ReadonlyArray<string>): GitHubGen<string> {
+    return yield* retryNotReceived(ghOnce(args));
   });
 
   const parseError = (args: ReadonlyArray<string>, expected: string) =>
@@ -2034,7 +2043,9 @@ export const makeGitHub = (options: GitHubOptions) => {
    * Assigns the issue to `user` and swaps `from` for `to`, in one `gh issue edit`. An issue that
    * already has any assignee is left alone. The view and the edit are two calls, so two
    * machines claiming at the same instant can both win. An error does not mean nothing
-   * changed: GitHub has applied the labels and failed to answer.
+   * changed: GitHub has applied the labels and failed to answer. A failure GitHub never
+   * received retries the view and the edit together, so a retried edit cannot land seconds
+   * after another machine's claim that a fresh view would have seen.
    */
   const claim = Effect.fn("GitHub.claim")(function* (
     number: number,
@@ -2043,11 +2054,7 @@ export const makeGitHub = (options: GitHubOptions) => {
     to: State,
   ): GitHubGen<ClaimOutcome> {
     const view = [...repoArgs(["issue", "view", String(number)]), "--json", "assignees"];
-    const current = yield* ghJson(view, AssigneesView, "an object with `assignees`");
-    if (current.assignees.length > 0) {
-      return { kind: "skipped-assigned", assignees: current.assignees.map((a) => a.login) };
-    }
-    yield* gh([
+    const edit = [
       ...repoArgs(["issue", "edit", String(number)]),
       "--add-assignee",
       user,
@@ -2055,8 +2062,21 @@ export const makeGitHub = (options: GitHubOptions) => {
       stateLabel(from),
       "--add-label",
       stateLabel(to),
-    ]);
-    return { kind: "claimed" };
+    ];
+    return yield* retryNotReceived(
+      Effect.gen(function* () {
+        const stdout = yield* ghOnce(view);
+        const current = yield* decode(AssigneesView, view, "an object with `assignees`", stdout);
+        if (current.assignees.length > 0) {
+          return {
+            kind: "skipped-assigned",
+            assignees: current.assignees.map((a) => a.login),
+          } satisfies ClaimOutcome;
+        }
+        yield* ghOnce(edit);
+        return { kind: "claimed" } satisfies ClaimOutcome;
+      }),
+    );
   });
 
   /**

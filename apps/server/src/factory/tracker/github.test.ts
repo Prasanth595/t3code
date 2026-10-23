@@ -6331,4 +6331,73 @@ describe("retrying a call GitHub never received", () => {
       assert.strictEqual(slow.inputs.length, 1);
     }),
   );
+
+  it.effect("the retry log line shows a comment body as its size, not its text", () =>
+    Effect.gen(function* () {
+      const texts: Array<string> = [];
+      const capture = Logger.make(({ message }) => {
+        texts.push(String(Array.isArray(message) ? message[0] : message));
+      });
+      const t = setup(fail(1, TLS), reply(""));
+      const fiber = yield* Effect.forkChild(
+        t
+          .ok(t.github.commentOnPr(5, "a hidden review body"))
+          .pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: false }))),
+        { startImmediately: true },
+      );
+      yield* TestClock.adjust("3 seconds");
+      yield* Fiber.join(fiber);
+      assert.strictEqual(t.inputs.length, 2);
+      assert.strictEqual(texts.length, 1);
+      assert.match(
+        texts[0]!,
+        /^`gh pr comment 5 --repo rawphp\/softfac --body <\d+ bytes>` attempt 1/,
+      );
+      assert.notInclude(texts[0]!, "hidden review body");
+    }),
+  );
+
+  it.effect("a claim whose edit GitHub never received views the assignees again first", () =>
+    Effect.gen(function* () {
+      const edit = editCall(
+        "--add-assignee",
+        "rawphp",
+        "--remove-label",
+        "factory:ready",
+        "--add-label",
+        "factory:triage",
+      );
+      const view = ["issue", "view", "6", "--repo", REPO, "--json", "assignees"];
+      // Another machine claimed the issue while this one waited to try again.
+      const lost = setup(
+        reply('{"assignees":[]}'),
+        fail(1, TLS),
+        reply('{"assignees":[{"login":"b"}]}'),
+      );
+      const lostFiber = yield* Effect.forkChild(
+        lost.ok(lost.github.claim(6, "rawphp", "ready", "triage")),
+        { startImmediately: true },
+      );
+      yield* TestClock.adjust("3 seconds");
+      assert.deepStrictEqual(yield* Fiber.join(lostFiber), {
+        kind: "skipped-assigned",
+        assignees: ["b"],
+      });
+      assert.deepStrictEqual(lost.calls(), [view, edit, view]);
+      // Nobody did, so the second attempt claims it.
+      const won = setup(
+        reply('{"assignees":[]}'),
+        fail(1, TLS),
+        reply('{"assignees":[]}'),
+        reply(""),
+      );
+      const wonFiber = yield* Effect.forkChild(
+        won.ok(won.github.claim(6, "rawphp", "ready", "triage")),
+        { startImmediately: true },
+      );
+      yield* TestClock.adjust("3 seconds");
+      assert.deepStrictEqual(yield* Fiber.join(wonFiber), { kind: "claimed" });
+      assert.deepStrictEqual(won.calls(), [view, edit, view, edit]);
+    }),
+  );
 });
