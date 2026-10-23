@@ -4,7 +4,7 @@ import type {
   NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
 import { isValidElement, useEffect, useRef } from "react";
-import { StyleSheet } from "react-native";
+import { Platform, StyleSheet } from "react-native";
 import { isDuoDevice } from "../lib/device-type";
 import { useMobileNavigationTheme } from "../lib/useMobileNavigationTheme";
 import { useDeviceType, useNativeLayoutMetrics } from "../native/native-layout-metrics";
@@ -20,6 +20,9 @@ import {
   type HeaderBarButtonItemWithMenu,
   type HeaderBarButtonSearchBarPlacementItem,
 } from "react-native-screens";
+
+// Screens warns about any explicit minimization behavior below iOS 27.
+const SUPPORTS_BAR_MINIMIZATION = Number.parseInt(String(Platform.Version), 10) >= 27;
 
 type HeaderItem = NonNullable<NonNullable<StackHeaderConfigProps["ios"]>["leadingItems"]>[number];
 type ToolbarItem =
@@ -282,11 +285,13 @@ export function V5StackHeader(props: {
       backButtonHidden={options.headerBackVisible === false}
       ios={{
         navigationItemStyle: options.unstable_navigationItemStyle,
-        // Only the Duo's short display needs the room. Its system default hides the bar on
-        // every registered scroll view, so screens that don't opt in keep it fixed.
-        minimizationBehavior: isDuoDevice(deviceType)
-          ? (options.unstable_headerMinimizationBehavior ?? "never")
-          : undefined,
+        // Only the Duo's short display needs the room. Pin every other case to "never"
+        // rather than the system default, which already varies by device.
+        minimizationBehavior: !SUPPORTS_BAR_MINIMIZATION
+          ? undefined
+          : isDuoDevice(deviceType)
+            ? (options.unstable_headerMinimizationBehavior ?? "never")
+            : "never",
         tintColor: options.headerTintColor,
         searchBar:
           mailSearch || searchOptions ? (
