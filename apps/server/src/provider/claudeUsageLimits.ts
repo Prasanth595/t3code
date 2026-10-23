@@ -191,7 +191,10 @@ export function claudeRateLimitEventToUpdate(
   ) {
     const usedPercent = info.utilization * 100;
     const resetsAt = isoFromEpochSeconds(info.resetsAt);
-    if (type in WINDOWS && !windows.some((window) => window.id === type)) {
+    if (type in WINDOWS) {
+      // The top-level window describes this event; unifiedWindows can be an older snapshot.
+      const index = windows.findIndex((window) => window.id === type);
+      if (index !== -1) windows.splice(index, 1);
       windows.push(makeWindow(type, usedPercent, resetsAt));
     } else if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
       windows.push(scopedWindow(names.overageIncluded, usedPercent, resetsAt));

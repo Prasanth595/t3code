@@ -273,6 +273,24 @@ describe("claudeRateLimitEventToUpdate", () => {
     }
   });
 
+  it("takes the current top-level window over its unified snapshot while retaining other windows", () => {
+    const event = {
+      status: "allowed" as const,
+      rateLimitType: "five_hour" as const,
+      utilization: 0.7,
+      unifiedWindows: { five_hour: { utilization: 0.2 }, seven_day: { utilization: 0.3 } },
+    };
+    expect(
+      claudeRateLimitEventToUpdate(event, noNames)?.windows.map(({ id, usedPercent }) => ({
+        id,
+        usedPercent,
+      })),
+    ).toEqual([
+      { id: "seven_day", usedPercent: 30 },
+      { id: "five_hour", usedPercent: 70 },
+    ]);
+  });
+
   it("scales the 0–1 utilization and epoch-second reset onto the probe's window id", () => {
     expect(
       claudeRateLimitEventToUpdate(
