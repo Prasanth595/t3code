@@ -26,11 +26,11 @@ Errors print as `<file>: <field>: <message>`. A missing file means the factory i
 
 ## Reload
 
-| Event                                               | Reads the file                                                                          |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Server start                                        | yes                                                                                     |
-| `PUT /api/factory/config` (Settings → Factory save) | yes, after validating; a failing body is 422 `invalid_config` and the file is unchanged |
-| Hand edit                                           | no; applies at the next save or restart                                                 |
+| Event                                                | Reads the file                                                                          |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Server start                                         | yes                                                                                     |
+| `POST /api/factory/config` (Settings → Factory save) | yes, after validating; a failing body is 422 `invalid_config` and the file is unchanged |
+| Hand edit                                            | no; applies at the next save or restart                                                 |
 
 | Key                    | Applies after a save                                                                                                                                                                                                                                                            |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

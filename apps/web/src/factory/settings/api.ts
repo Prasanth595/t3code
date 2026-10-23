@@ -1,5 +1,5 @@
 /**
- * The factory's machine config over HTTP: `GET` and `PUT /api/factory/config`, sent on the given
+ * The factory's machine config over HTTP: `GET` and `POST /api/factory/config`, sent on the given
  * connection by the factory's shared request helper (see `../http.ts`).
  */
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
@@ -89,7 +89,7 @@ const CONFIG_PATH = "/api/factory/config";
 
 const request = async (
   prepared: PreparedConnection,
-  method: "GET" | "PUT",
+  method: "GET" | "POST",
   body?: MachineConfigValues,
 ): Promise<FactoryConfigResult> => {
   try {
@@ -115,4 +115,4 @@ const request = async (
 export const fetchFactoryConfig = (prepared: PreparedConnection) => request(prepared, "GET");
 
 export const saveFactoryConfig = (prepared: PreparedConnection, values: MachineConfigValues) =>
-  request(prepared, "PUT", values);
+  request(prepared, "POST", values);

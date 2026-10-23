@@ -29,7 +29,7 @@ export class FactoryHttpError extends Error {
 }
 
 export interface FactoryHttpRequest {
-  readonly method: "GET" | "POST" | "PUT";
+  readonly method: "GET" | "POST";
   readonly path: string;
   readonly searchParams?: Record<string, string> | undefined;
   /** Sent as JSON. */
