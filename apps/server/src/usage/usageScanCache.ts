@@ -9,16 +9,18 @@ import * as Schema from "effect/Schema";
 import { CLAUDE_SYNTHETIC_MODEL } from "../provider/Drivers/claudeUsage.ts";
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 
-const USAGE_SCAN_CACHE_VERSION = 9 as const;
+const USAGE_SCAN_CACHE_VERSION = 10 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
- * An older server sharing that directory cannot read a newer cache and would
- * replace it, dropping saved usage for deleted transcripts. Separate files keep
- * both.
+ * Each cache version writes its own file in the state directory. An older
+ * server sharing that directory cannot read a newer cache and would replace
+ * it, dropping saved usage for deleted transcripts. Separate files keep both.
+ * When its own file is missing, a server reads the newest legacy file once.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v9.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v10.json";
 export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v9.json",
   "usage-scan-cache-v8.json",
   "usage-scan-cache-v7.json",
   "usage-scan-cache-v6.json",
@@ -42,6 +44,10 @@ export interface CachedFile {
   /** Whole-file count, including diagnostics from the tentative tail. */
   readonly malformedRecords: number;
   readonly position: TranscriptParsePosition;
+  /** Working directory the session ran in, when the transcript says. */
+  readonly cwd: string | null;
+  /** What a provider-native sub-agent was asked to do, from its metadata. */
+  readonly label: string | null;
 }
 
 export type ScanCache = Map<string, CachedFile>;
@@ -73,6 +79,9 @@ interface SerializedFile {
   readonly gl: number;
   readonly gh: number;
   readonly cs: unknown;
+  /** Working directory and sub-agent label; absent when unknown. */
+  readonly w?: string;
+  readonly l?: string;
 }
 
 interface SerializedCache {
@@ -133,6 +142,8 @@ function serializeFile(entry: CachedFile, tables: InternTables): SerializedFile 
     gl: entry.position.guardLength,
     gh: entry.position.guardHash,
     cs: entry.position.state,
+    ...(entry.cwd === null ? {} : { w: entry.cwd }),
+    ...(entry.label === null ? {} : { l: entry.label }),
   };
 }
 
@@ -311,12 +322,14 @@ export function decodeScanCache(
     ) {
       continue;
     }
-    // Keep history for deleted rollouts, but re-parse incompatible reducer state.
-    // v9 repairs skipped initial Codex requests; clean v8 entries can still resume.
+    // v10 combines folder metadata with v9's Codex recovery. Retain saved history
+    // for deleted transcripts while re-reading live folder-aware formats from either
+    // earlier writer. Formats without folders keep compatible reducer positions.
     const legacy =
-      format.state !== undefined &&
-      (version < 6 ||
-        (entry.p === "codex" && (version < 8 || (version < 9 && malformedRecords > 0))));
+      (format.state !== undefined &&
+        (version < 6 ||
+          (entry.p === "codex" && (version < 8 || (version < 9 && malformedRecords > 0))))) ||
+      (format.workingDirectory !== undefined && version < 10);
     // A corrupt state disqualifies the entry: resuming with it would attach
     // appended usage to the wrong model or replay fork-copied history.
     if (!legacy && !isValidState.get(entry.p)?.(entry.cs)) continue;
@@ -341,6 +354,8 @@ export function decodeScanCache(
             guardHash: entry.gh,
             state: entry.cs,
           },
+      cwd: typeof entry.w === "string" && entry.w.length > 0 ? entry.w : null,
+      label: typeof entry.l === "string" && entry.l.length > 0 ? entry.l : null,
     });
   }
 

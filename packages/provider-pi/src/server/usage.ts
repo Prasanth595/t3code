@@ -11,6 +11,7 @@ import {
   type ProviderUsageReader,
   type TranscriptUsageFormat,
   type UsageRecord,
+  workingDirectoryHook,
 } from "@t3tools/provider-core/server/usage";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { PiSettings } from "../settings.ts";
@@ -109,6 +110,7 @@ export const piUsageFormat: TranscriptUsageFormat<typeof PiScanState.Type> = {
     type: true,
     id: true,
     timestamp: true,
+    cwd: true,
     provider: true,
     model: true,
     usage: true,
@@ -126,6 +128,10 @@ export const piUsageFormat: TranscriptUsageFormat<typeof PiScanState.Type> = {
   },
   parseProjected: parseRecord,
   state: { initial: () => ({ sessionId: "" }), schema: PiScanState },
+  // The session header names the folder the session runs in.
+  workingDirectory: workingDirectoryHook(['"session"'], (record) =>
+    record["type"] === "session" ? record["cwd"] : null,
+  ),
 };
 
 export const piUsageReader: ProviderUsageReader<PiSettings, Path.Path> = {

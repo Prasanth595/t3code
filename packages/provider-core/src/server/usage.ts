@@ -80,6 +80,50 @@ export interface TranscriptUsageFormat<State> {
    * records for cross-file de-duplication.
    */
   readonly sharedSessionsAcrossFiles?: true;
+  /**
+   * Present for formats whose transcripts name the working directory their
+   * session ran in. The server places usage run outside T3 Code in the project
+   * at that folder.
+   *
+   * The engine reads a file's lines that contain one of `markers` until one
+   * names the folder, and keeps that first answer, so lines that only name the
+   * folder need not match `usageMarkers`. A line too large to parse whole is
+   * projected to `selectFields`, which must keep the fields `fromProjected`
+   * reads.
+   */
+  readonly workingDirectory?: {
+    readonly markers: readonly [string, ...string[]];
+    fromLine(line: string, state: State): string | null;
+    fromProjected(projected: unknown, state: State): string | null;
+  };
+}
+
+/**
+ * Builds a `workingDirectory` hook from where a parsed line keeps the folder.
+ * `read` returns the folder, or anything else when the line does not name it.
+ */
+export function workingDirectoryHook<State = unknown>(
+  markers: readonly [string, ...string[]],
+  read: (record: Record<string, unknown>, state: State) => unknown,
+): NonNullable<TranscriptUsageFormat<State>["workingDirectory"]> {
+  const fromProjected = (projected: unknown, state: State): string | null => {
+    if (typeof projected !== "object" || projected === null) return null;
+    const value = read(projected as Record<string, unknown>, state);
+    return typeof value === "string" && value.length > 0 ? value : null;
+  };
+  return {
+    markers,
+    fromLine: (line, state) => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        return null;
+      }
+      return fromProjected(parsed, state);
+    },
+    fromProjected,
+  };
 }
 
 export interface ProviderUsageInstance<Config> {
