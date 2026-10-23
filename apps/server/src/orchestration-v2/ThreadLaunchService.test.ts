@@ -1019,9 +1019,9 @@ it.effect("runs a Scratch scheduled task saved with a worktree in its own folder
   }).pipe(Effect.provide(harness.layer));
 });
 
-it.effect(
-  "bulk launches preserve occupied branches and paths while creating independent worktrees",
-  () =>
+it.effect.each([false, true])(
+  "bulk launches preserve occupied work while creating independent worktrees (startFromOrigin: %s)",
+  (startFromOrigin) =>
     Effect.gen(function* () {
       const driver = yield* GitVcsDriver.GitVcsDriver;
       const fs = yield* FileSystem.FileSystem;
@@ -1041,6 +1041,28 @@ it.effect(
         "-m",
         "initial",
       ]);
+      const localHead = (yield* git(["rev-parse", "HEAD"])).stdout.trim();
+      let remoteHead = localHead;
+      if (startFromOrigin) {
+        const remote = yield* fs.makeTempDirectoryScoped({ prefix: "launch-bulk-remote-" });
+        yield* git(["init", "--bare", remote]);
+        yield* git(["remote", "add", "origin", remote]);
+        yield* git(["push", "-u", "origin", "main"]);
+        yield* git([
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@example.com",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "remote advance",
+        ]);
+        remoteHead = (yield* git(["rev-parse", "HEAD"])).stdout.trim();
+        yield* git(["push", "origin", "main"]);
+        yield* git(["reset", "--hard", localHead]);
+        yield* git(["update-ref", "-d", "refs/remotes/origin/main"]);
+      }
       yield* git(["config", "branch.autoSetupMerge", "always"]);
       const existingPath = path.join(worktreesDirectory, "existing");
       yield* driver.createWorktree({
@@ -1054,6 +1076,10 @@ it.effect(
       yield* fs.makeDirectory(occupiedPath, { recursive: true });
       yield* fs.writeFileString(path.join(occupiedPath, "keep.txt"), "unrelated directory");
       const harness = makeHarness({
+        git: {
+          resolveWorktreeBaseRemote: (input) => driver.resolveWorktreeBaseRemote({ ...input, cwd }),
+        },
+        fetchWorktreeBaseCommit: (input) => driver.fetchWorktreeBaseCommit({ ...input, cwd }),
         createWorktree: (input, options) =>
           driver.createWorktree({ ...input, cwd }, { ...options, worktreesDirectory }),
       });
@@ -1069,7 +1095,12 @@ it.effect(
                   command,
                   thread: `thread:launch:bulk-${index}`,
                   message: "Independent work",
-                  workspace: { type: "worktree", baseRef: "main", branch: "feature/shared" },
+                  workspace: {
+                    type: "worktree",
+                    baseRef: "main",
+                    branch: "feature/shared",
+                    startFromOrigin,
+                  },
                 }),
               )
               .pipe(
@@ -1100,12 +1131,26 @@ it.effect(
           assert.isTrue(yield* fs.exists(projection.thread.worktreePath!));
           const base = yield* git(["config", `branch.${projection.thread.branch}.gh-merge-base`]);
           assert.equal(base.stdout.trim(), "main");
-          const upstream = yield* git([
-            "rev-parse",
-            "--abbrev-ref",
-            `${projection.thread.branch}@{upstream}`,
-          ]);
-          assert.equal(upstream.stdout.trim(), "main");
+          const head = yield* driver.execute({
+            operation: "ThreadLaunchService.test",
+            cwd: projection.thread.worktreePath!,
+            args: ["rev-parse", "HEAD"],
+          });
+          assert.equal(head.stdout.trim(), remoteHead);
+          if (startFromOrigin) {
+            const comparison = yield* git([
+              "config",
+              `branch.${projection.thread.branch}.t3-merge-base-ref`,
+            ]);
+            assert.equal(comparison.stdout.trim(), "refs/remotes/origin/main");
+          } else {
+            const upstream = yield* git([
+              "rev-parse",
+              "--abbrev-ref",
+              `${projection.thread.branch}@{upstream}`,
+            ]);
+            assert.equal(upstream.stdout.trim(), "main");
+          }
         }
         assert.deepEqual(
           launched.map((projection) => projection.thread.branch).toSorted(),
@@ -1120,6 +1165,7 @@ it.effect(
           "unrelated directory",
         );
         assert.equal(harness.removeWorktree.mock.calls.length, 0);
+        assert.equal((yield* git(["rev-parse", "main"])).stdout.trim(), localHead);
       }).pipe(Effect.provide(harness.layer));
     }).pipe(
       Effect.provide(

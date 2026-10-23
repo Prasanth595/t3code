@@ -3985,45 +3985,73 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("remote operations", () => {
-    it.effect("shares one running fetch of a ref between concurrent callers", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const started = yield* Deferred.make<void>();
-        const release = yield* Deferred.make<void>();
-        let fetches = 0;
-        const spawner = ChildProcessSpawner.make((command) =>
-          Effect.gen(function* () {
-            if (!ChildProcess.isStandardCommand(command))
-              return yield* Effect.die("unexpected command");
-            if (command.args[0] !== "fetch") return yield* delegate.spawn(command);
-            fetches += 1;
-            yield* Deferred.succeed(started, undefined);
-            return ChildProcessSpawner.makeHandle({
-              ...makeSuccessfulHandle(""),
-              exitCode: Deferred.await(release).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
-            });
-          }),
-        );
-        const driver = yield* makeGitVcsDriverCore().pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.provide(layerServerConfig),
-        );
-        const fetch = driver.fetchRemote({ cwd, remoteName: "origin", refName: "main" });
-        const first = yield* fetch.pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Deferred.await(started);
-        const joined = yield* Effect.forEach(Array.from({ length: 5 }), () =>
-          fetch.pipe(Effect.forkChild({ startImmediately: true })),
-        );
-        yield* Deferred.succeed(release, undefined);
-        yield* Fiber.join(first);
-        yield* Effect.forEach(joined, Fiber.join);
-        assert.equal(fetches, 1);
+    it.effect.each(["public", "launch-base"] as const)(
+      "shares one running fetch between concurrent %s callers",
+      (caller) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const started = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          let fetches = 0;
+          const spawner = ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              if (!ChildProcess.isStandardCommand(command))
+                return yield* Effect.die("unexpected command");
+              if (command.args[0] === "remote") return makeSuccessfulHandle("upstream\n");
+              if (command.args[0] === "for-each-ref")
+                return makeSuccessfulHandle("refs/heads/stable\tupstream\trefs/heads/release\n");
+              if (command.args[0] === "rev-parse") return makeSuccessfulHandle("remote-head\n");
+              if (command.args[0] !== "fetch") return yield* delegate.spawn(command);
+              assert.deepEqual(command.args, [
+                "fetch",
+                "--quiet",
+                "--",
+                "upstream",
+                "+refs/heads/release:refs/remotes/upstream/release",
+              ]);
+              fetches += 1;
+              yield* Deferred.succeed(started, undefined);
+              return ChildProcessSpawner.makeHandle({
+                ...makeSuccessfulHandle(""),
+                exitCode: Deferred.await(release).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              });
+            }),
+          );
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provide(layerServerConfig),
+          );
+          const fetch =
+            caller === "public"
+              ? driver
+                  .fetchRemote({ cwd, remoteName: "upstream", refName: "upstream/release" })
+                  .pipe(Effect.as(null))
+              : driver.fetchWorktreeBaseCommit({ cwd, refName: "stable" });
+          const first = yield* fetch.pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(started);
+          const joined = yield* Effect.forEach(Array.from({ length: 5 }), () =>
+            fetch.pipe(Effect.forkChild({ startImmediately: true })),
+          );
+          yield* Deferred.succeed(release, undefined);
+          const result = yield* Fiber.join(first);
+          assert.deepEqual(
+            result,
+            caller === "public"
+              ? null
+              : { commitSha: "remote-head", remoteRefName: "upstream/release" },
+          );
+          const results = yield* Effect.forEach(joined, Fiber.join);
+          assert.deepEqual(
+            results,
+            Array.from({ length: 5 }, () => result),
+          );
+          assert.equal(fetches, 1);
 
-        // A finished fetch is not reused.
-        yield* fetch;
-        assert.equal(fetches, 2);
-      }),
+          // A finished fetch is not reused.
+          yield* fetch;
+          assert.equal(fetches, 2);
+        }),
     );
 
     it.effect("creates a worktree from the latest fetched remote commit", () =>
