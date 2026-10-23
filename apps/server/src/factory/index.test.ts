@@ -8,6 +8,7 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -16,13 +17,20 @@ import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import { describe } from "vite-plus/test";
 
 import { Attention, type NewItem } from "./attention.ts";
-import { timeLimitOnlyProjectConfig, type MachineConfig } from "./config.ts";
+import {
+  timeLimitOnlyProjectConfig,
+  type MachineConfig,
+  type RepoConfigReading,
+  type WatchedListing,
+  type WatchedProject,
+} from "./config.ts";
 import type { State } from "./domain/lifecycle.ts";
 import {
   factoryRuntime,
@@ -30,26 +38,31 @@ import {
   FactoryRuntime,
   gateDecided,
   gateItem,
+  regateWords,
   liveWorld,
   ownedThreads,
+  serverStartedMs,
   wakeOn,
+  type RuntimeOptions,
 } from "./index.ts";
+import { isLedgerError } from "./ledger/errors.ts";
 import { makeCause } from "./ledger/events.ts";
 import { Ledger } from "./ledger/ledger.ts";
-import { scanMachineLog } from "./ledger/machineLog.ts";
+import { MachineLog, scanMachineLog } from "./ledger/machineLog.ts";
 import { readRun } from "./ledger/read.ts";
-import { newRunId, runIdToString, type RunId } from "./ledger/runId.ts";
+import { newRunId, runIdToString, runPath, type RunId } from "./ledger/runId.ts";
 import { useTempDirs } from "./ledger/testSupport.ts";
-import type { Repo } from "./pass.ts";
+import type { PassWorld, Repo } from "./pass.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
 import { stopRequestPath } from "./runner/stop.ts";
 import { utcSecond } from "./runner/start.ts";
-import { MARKER } from "./tracker/github.ts";
+import { ClaimMemo, MARKER } from "./tracker/github.ts";
 import { FactoryProcess, RunSpawnError, type RunInput, type RunResult } from "./process.ts";
 import { FactoryGate } from "./gate.ts";
 import { EventsError, FactoryEvents } from "./t3/events.ts";
 import * as Paths from "./t3/paths.ts";
 import * as Sessions from "./t3/sessions.ts";
+import { FactoryWatchedRepos, WatchedReposError } from "./t3/watchedRepos.ts";
 
 /** A process runner on a machine with no `gh`: every call fails to start. */
 const noGh = Layer.succeed(
@@ -68,8 +81,29 @@ const stubSessions = Sessions.FactorySessions.of({
   send: () => Effect.die("not sent"),
   archive: () => Effect.die("not archived"),
   removeWorktree: () => Effect.die("not removed"),
+  brokenWorktrees: Effect.succeed([]),
+  runningThreads: Effect.succeed(0),
+  worktreesDirectory: (defaultDir) => Effect.succeed(defaultDir),
 });
 const noSessions = Layer.succeed(Sessions.FactorySessions, stubSessions);
+
+const A_B: WatchedProject = { repo: "a/b", path: "/b", title: "B" };
+const C_D: WatchedProject = { repo: "c/d", path: "/d", title: "D" };
+
+/** The T3 projects the factory reads its watched repos from: a fixed list, or an effect that answers it afresh each pass. */
+const watching = (
+  list:
+    | ReadonlyArray<WatchedProject>
+    | Effect.Effect<ReadonlyArray<WatchedProject>, WatchedReposError>,
+) => {
+  const listing = (Effect.isEffect(list) ? list : Effect.succeed(list)).pipe(
+    Effect.map((repos): WatchedListing => ({ repos, departed: [], unresolved: [] })),
+  );
+  return Layer.succeed(
+    FactoryWatchedRepos,
+    FactoryWatchedRepos.of({ list: listing, listAndRemember: listing }),
+  );
+};
 
 /** A gate that never runs: the runtime is built without one. */
 const noGate = Layer.succeed(
@@ -78,7 +112,8 @@ const noGate = Layer.succeed(
 );
 
 /** Attention that keeps nothing: a world whose items are not under test. */
-const noAttention: Pick<Attention["Service"], "raise" | "clear"> = {
+const noAttention: Pick<Attention["Service"], "list" | "raise" | "clear"> = {
+  list: () => Effect.succeed([]),
   raise: () => Effect.void,
   clear: () => Effect.void,
 };
@@ -94,13 +129,46 @@ const messageText = (message: unknown): string => {
   return typeof first === "string" ? first : String(first);
 };
 
+/** A building run whose session reported its pull request: the gate reads the issue, then the thread. */
+const seedReportedRun = (dataDir: string, repo: string): RunId => {
+  const run = newRunId(repo, "10", 1);
+  const ledger = Ledger.create(dataDir, run, { clock: () => 1_000 });
+  ledger.append(
+    {
+      event: "session_launched",
+      data: {
+        thread_id: "thread-1",
+        worktree: null,
+        branch: null,
+        model_instance: null,
+        model: null,
+        model_options: null,
+        resumed_from: null,
+      },
+    },
+    makeCause("start", "seed"),
+  );
+  ledger.append(
+    { event: "state_changed", data: { from: "triage", to: "building" } },
+    makeCause("start", "seed"),
+  );
+  ledger.append(
+    { event: "pr_opened", data: { pr: 12, url: `https://github.com/${repo}/pull/12` } },
+    makeCause("advance", "seed"),
+  );
+  ledger.close();
+  return run;
+};
+
+// The free-space check is off, so a pass does not depend on the disk of the machine running it.
 const VALID = `gh_config_dir: /gh
 max_concurrent_runs: 1
-model: claude-sonnet-5-5
-repos:
-  - repo: a/b
-    path: /b
+min_free_gib: 0
 `;
+
+/** `VALID` with the one required key a file cannot do without taken out. */
+const INVALID = VALID.replace("max_concurrent_runs: 1\n", "");
+const MISSING = "max_concurrent_runs: is missing";
 
 /** Builds FactoryRuntime over a temp base dir whose factory dir holds `config` (or no file) and returns the log lines. */
 const logsFor = (
@@ -109,6 +177,7 @@ const logsFor = (
     factoryDir: string,
   ) => Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem> = () => Effect.void,
   gh: Layer.Layer<FactoryProcess> = noGh,
+  watched: ReadonlyArray<WatchedProject> = [A_B],
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -139,6 +208,7 @@ const logsFor = (
             ),
             Layer.provide(gh),
             Layer.provide(noSessions),
+            Layer.provide(watching(watched)),
             Layer.provide(quietEvents),
             Layer.provide(noGate),
           ),
@@ -183,8 +253,55 @@ it.effect("logs factory started once for a valid machine file, then runs the fir
       logs.join("\n"),
     );
     assert.strictEqual(logs.at(-1), "pass done: 0 runs, 0 claimed, 1 errors, 0 need attention");
-    assert.deepStrictEqual(status, { state: "running" });
-    assert.deepStrictEqual(events, ["pass_started", "repo_skipped", "pass_finished"]);
+    assert.deepStrictEqual(status, {
+      state: "running",
+      settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
+    });
+    // The start is recorded before the first pass, and the stop as the scope closes, for
+    // `interrupted` to weigh a run the restart cut off against.
+    assert.deepStrictEqual(events, [
+      "server_started",
+      "pass_started",
+      "repo_skipped",
+      "pass_finished",
+      "server_stopping",
+    ]);
+  }),
+);
+
+// A file from before #93 still names the model: the factory starts on it and says, once per key,
+// that the key does nothing now.
+it.effect("logs one warning per retired model key and still starts", () =>
+  Effect.gen(function* () {
+    const { logs, machineConfigPath, status } = yield* logsFor(
+      `${VALID}model_instance: claudeAgent\nmodel: claude-sonnet-5-5\n`,
+    );
+    const retired =
+      "is no longer used: the model comes from the T3 project's default model, then the T3 settings default";
+    assert.deepStrictEqual(logs.slice(0, 3), [
+      `${machineConfigPath}: model_instance: ${retired}`,
+      `${machineConfigPath}: model: ${retired}`,
+      "factory started",
+    ]);
+    assert.strictEqual(status.state, "running");
+  }),
+);
+
+// #106 retired the key: a file that still has it starts the factory, which watches T3's projects.
+it.effect("logs one warning for a repos key left in the file and still starts", () =>
+  Effect.gen(function* () {
+    const { logs, machineConfigPath, status } = yield* logsFor(
+      `${VALID}repos:\n  - repo: x/y\n    path: /y\n`,
+    );
+    assert.deepStrictEqual(logs.slice(0, 2), [
+      `${machineConfigPath}: repos: is no longer used: the factory watches the T3 projects of this environment whose checkout has a .dw/config.yml with a factory block`,
+      "factory started",
+    ]);
+    // It watches what T3 lists, not what the file names.
+    assert.deepStrictEqual(status, {
+      state: "running",
+      settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
+    });
   }),
 );
 
@@ -192,22 +309,20 @@ it.effect("logs each config error and does not start for an invalid machine file
   Effect.gen(function* () {
     // The notification for the config item goes to a runner that accepts it, so it logs nothing.
     const { logs, machineConfigPath } = yield* logsFor(
-      VALID.replace("model: claude-sonnet-5-5\n", ""),
+      INVALID,
       () => Effect.void,
       Layer.succeed(FactoryProcess, recordingProcess().process),
     );
-    assert.deepStrictEqual(logs, [`${machineConfigPath}: model: is missing`]);
+    assert.deepStrictEqual(logs, [`${machineConfigPath}: ${MISSING}`]);
   }),
 );
 
 it.effect("reports itself idle, without the config errors, when the machine file is invalid", () =>
   Effect.gen(function* () {
-    const { status } = yield* logsFor(VALID.replace("model: claude-sonnet-5-5\n", ""));
+    const { status } = yield* logsFor(INVALID);
     assert.deepStrictEqual(status, { state: "idle", reason: "factory config failed to load" });
   }),
 );
-
-// ---- attention ----
 
 /** A process runner that records each call: osascript succeeds and every other command fails to start. */
 const recordingProcess = () => {
@@ -255,13 +370,12 @@ describe("attention", () => {
           Layer.provide(Layer.succeed(Paths.FactoryPaths, dirs)),
           Layer.provide(Layer.succeed(FactoryProcess, process)),
           Layer.provide(noSessions),
+          Layer.provide(watching([A_B])),
           Layer.provide(quietEvents),
           Layer.provide(noGate),
         ),
       ).pipe(Effect.flatMap((context) => Context.get(context, Attention).list())),
     );
-
-  const INVALID = VALID.replace("model: claude-sonnet-5-5\n", "");
 
   it.effect("a machine config that does not load raises one config item and one notification", () =>
     Effect.scoped(
@@ -273,7 +387,7 @@ describe("attention", () => {
           items.map((item) => [item.id, item.kind, item.repo]),
           [["config", "config", null]],
         );
-        assert.include(items[0]!.message, "model: is missing");
+        assert.include(items[0]!.message, MISSING);
         assert.strictEqual(calls.length, 1);
         assert.strictEqual(calls[0]!.command, "osascript");
         assert.strictEqual(calls[0]!.args![0], "-e");
@@ -337,6 +451,7 @@ describe("attention", () => {
             Layer.provide(Layer.succeed(Paths.FactoryPaths, dirs)),
             Layer.provide(Layer.succeed(FactoryProcess, process)),
             Layer.provide(noSessions),
+            Layer.provide(watching([A_B])),
             Layer.provide(quietEvents),
             Layer.provide(noGate),
           ),
@@ -411,13 +526,7 @@ it.effect("logs each pass line as it is decided, so a pass that dies has said wh
         },
       }),
     );
-    const { logs } = yield* logsFor(
-      `${VALID}  - repo: c/d
-    path: /d
-`,
-      () => Effect.void,
-      dying,
-    );
+    const { logs } = yield* logsFor(VALID, () => Effect.void, dying, [A_B, C_D]);
     assert.ok(
       logs.some((line) => line.startsWith("error: a/b: project config not loaded")),
       logs.join("\n"),
@@ -425,8 +534,6 @@ it.effect("logs each pass line as it is decided, so a pass that dies has said wh
     assert.ok(logs.includes("factory pass failed"), logs.join("\n"));
   }),
 );
-
-// ---- the wake ----
 
 describe("waking the pass when a factory thread's run changes status", () => {
   /** Writes an unfinished run of issue `issue` whose session is `threadId`. */
@@ -446,6 +553,7 @@ describe("waking the pass when a factory thread's run changes status", () => {
             branch: "t3code/abc",
             model_instance: "claudeAgent",
             model: "claude-sonnet-5-5",
+            model_options: null,
             resumed_from: null,
           },
         },
@@ -503,6 +611,7 @@ describe("waking the pass when a factory thread's run changes status", () => {
         Layer.provide(Layer.succeed(Paths.FactoryPaths, dirs)),
         Layer.provide(noGh),
         Layer.provide(noSessions),
+        Layer.provide(watching([A_B])),
         Layer.provide(Layer.succeed(FactoryEvents, FactoryEvents.of({ runStatusChanges: events }))),
         Layer.provide(noGate),
       ),
@@ -573,6 +682,7 @@ describe("waking the pass when a factory thread's run changes status", () => {
             ),
             Layer.provide(noGh),
             Layer.provide(noSessions),
+            Layer.provide(watching([A_B])),
             Layer.provide(events),
             Layer.provide(noGate),
           ),
@@ -594,12 +704,11 @@ describe("waking the pass when a factory thread's run changes status", () => {
   );
 });
 
-// ---- the live world over gh ----
-
 describe("liveWorld", () => {
   const REPO = "rawphp/softfac";
   const NOW = Date.UTC(2026, 9, 8, 2, 0, 0);
   const MINUTE = 60 * 1000;
+  const tempDir = useTempDirs();
 
   /** A process that answers gh by its arguments and records every call. */
   const ghWith = (answer: (args: ReadonlyArray<string>) => string | null) => {
@@ -626,10 +735,9 @@ describe("liveWorld", () => {
     pollSeconds: 60,
     maxConcurrentRuns: 1,
     maxConcurrentGates: 1,
-    modelInstance: "claudeAgent",
-    model: "claude-sonnet-5-5",
+    feedbackSeconds: 600,
     notify: true,
-    repos: [{ repo: REPO, path: "/p" }],
+    minFreeGib: 0,
   };
 
   const worldOf = (process: FactoryProcess["Service"]) =>
@@ -637,6 +745,7 @@ describe("liveWorld", () => {
       machine,
       "/factory-test/data",
       process,
+      NodeServices.layer,
       stubSessions,
       () => NOW,
       "mac-mini",
@@ -649,7 +758,7 @@ describe("liveWorld", () => {
     );
 
   const repo: Repo = {
-    watched: machine.repos[0]!,
+    watched: { repo: REPO, path: "/p" },
     project: timeLimitOnlyProjectConfig(),
     trackerUser: "rawphp",
   };
@@ -658,6 +767,173 @@ describe("liveWorld", () => {
     args[0] === "issue" && args[1] === "list" && args.includes(label);
 
   const ago = (ms: number) => utcSecond(NOW - ms);
+
+  const SHA = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
+  const pullView = (state: string, head: string) =>
+    JSON.stringify({
+      number: 12,
+      isDraft: false,
+      state,
+      headRefName: "t3code/abc",
+      isCrossRepository: false,
+      baseRefName: "main",
+      headRefOid: head,
+    });
+
+  it.effect("the base tip is read from the run's base branch, in lower case", () =>
+    Effect.gen(function* () {
+      const { process, calls } = ghWith(() =>
+        JSON.stringify({ object: { type: "commit", sha: SHA } }),
+      );
+      const tip = yield* worldOf(process).baseTip(repo, "feature/x");
+      assert.strictEqual(tip, SHA);
+      assert.deepStrictEqual(calls[0]?.slice(0, 2), [
+        "api",
+        "repos/rawphp/softfac/git/ref/heads/feature/x",
+      ]);
+    }),
+  );
+
+  it.effect("a base tip that cannot be read is a tracker error", () =>
+    Effect.gen(function* () {
+      const { process } = ghWith(() => null);
+      const failed = yield* Effect.flip(worldOf(process).baseTip(repo, "main"));
+      assert.strictEqual(failed.kind, "tracker");
+    }),
+  );
+
+  it.effect(
+    "a step is built for the base the pass hands it: advance binds the PR to that base",
+    () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        const run = newRunId(REPO, "10", 1);
+        const ledger = Ledger.create(dataDir, run, { clock: () => 1_000 });
+        ledger.append(
+          { event: "state_changed", data: { from: "triage", to: "building" } },
+          makeCause("start", "seed"),
+        );
+        ledger.append(
+          {
+            event: "session_launched",
+            data: {
+              thread_id: "thread-1",
+              worktree: "/t3/wt",
+              branch: "t3code/abc",
+              model_instance: null,
+              model: null,
+              model_options: null,
+              resumed_from: null,
+              base: "feature/x",
+            },
+          },
+          makeCause("start", "seed"),
+        );
+        ledger.close();
+        // The session is done and reported a pull request against `feature/x`, not `main`.
+        const sessions = Sessions.FactorySessions.of({
+          ...stubSessions,
+          status: () =>
+            Effect.succeed({
+              worktreePath: "/t3/wt",
+              branch: "t3code/abc",
+              archived: false,
+              run: "completed" as const,
+              runOrdinal: 1,
+              runStartedAt: null,
+              runCompletedAt: null,
+              lastAssistantMessage:
+                "Built it.\nFACTORY-DONE: https://github.com/rawphp/softfac/pull/12",
+            }),
+        });
+        const { process, calls } = ghWith((args) => {
+          if (args[0] === "issue" && args[1] === "view") {
+            return JSON.stringify({
+              number: 10,
+              title: "Build step",
+              body: "Build it.\n\n## Base\n\nfeature/x\n",
+              labels: [{ name: "factory:building" }],
+              assignees: [{ login: "rawphp" }],
+              state: "OPEN",
+              author: { login: "rawphp" },
+            });
+          }
+          if (args[0] === "pr" && args[1] === "view") {
+            return JSON.stringify({
+              number: 12,
+              isDraft: true,
+              state: "OPEN",
+              headRefName: "t3code/abc",
+              isCrossRepository: false,
+              baseRefName: "feature/x",
+              headRefOid: SHA,
+            });
+          }
+          return null;
+        });
+        const world = liveWorld(
+          machine,
+          dataDir,
+          process,
+          NodeServices.layer,
+          sessions,
+          () => NOW,
+          "mac-mini",
+          noAttention,
+          {
+            gate: { run: () => Effect.die("no gate") },
+            wake: Effect.void,
+            scope: yield* Scope.make(),
+          },
+        );
+        // Built with the repo's base, the pull request would not bind and the run would go stuck,
+        // which stops the session first: the stub's `archive` would die.
+        assert.deepStrictEqual(yield* world.advance(repo, run, "feature/x"), {
+          kind: "ready-for-gate",
+          pr: 12,
+          prUrl: "https://github.com/rawphp/softfac/pull/12",
+        });
+        assert.deepStrictEqual(
+          calls.map((args) => args.slice(0, 2)),
+          [
+            ["issue", "view"],
+            ["pr", "view"],
+          ],
+        );
+      }),
+  );
+
+  it.effect("the head of an open pull request is read in lower case; one that ended has none", () =>
+    Effect.gen(function* () {
+      const open = ghWith(() => pullView("OPEN", SHA.toUpperCase()));
+      assert.strictEqual(yield* worldOf(open.process).openHead(repo, 12), SHA);
+      for (const state of ["MERGED", "CLOSED"]) {
+        const ended = ghWith(() => pullView(state, SHA));
+        assert.strictEqual(yield* worldOf(ended.process).openHead(repo, 12), null, state);
+      }
+    }),
+  );
+
+  it.effect("a pull request GitHub no longer has has no head, and a failed read is an error", () =>
+    Effect.gen(function* () {
+      const gone: FactoryProcess["Service"] = {
+        run: () =>
+          Effect.succeed({
+            exitCode: 1,
+            timedOut: false,
+            tail: "",
+            stderrTail: "GraphQL: Could not resolve to a PullRequest with the number of 12.",
+            truncated: false,
+          } satisfies RunResult),
+      };
+      assert.strictEqual(yield* worldOf(gone).openHead(repo, 12), null);
+      const broken = ghWith(() => null);
+      assert.strictEqual(
+        (yield* Effect.flip(worldOf(broken.process).openHead(repo, 12))).kind,
+        "tracker",
+      );
+    }),
+  );
 
   it.effect("a ready issue anyone is assigned to is not listed", () =>
     Effect.gen(function* () {
@@ -930,131 +1206,531 @@ describe("liveWorld", () => {
       }),
   );
 
-  /** gh answers for `.dw/config.yml` on a default branch `main` whose config names `base`. */
-  const baseConfigGh = (base: string) => {
+  const configText = (base: string) =>
+    `factory:\n  instructors: [tomkaczocha]\n  base: ${base}\n  provision: []\n  gate: [make]\n  limits: { minutes: 1, gate_retries: 0 }\n  autonomy: pr\n`;
+
+  /**
+   * gh answers for `.dw/config.yml` on a default branch `main`: the file naming `base`, or the
+   * contents call failing with `stderr` (a 404 is GitHub saying the file is not there). `ref`
+   * fails the branch's tip call with a 404 instead.
+   */
+  const baseConfigGh = (
+    file: { readonly base: string } | { readonly stderr: string },
+    ref: "ok" | "missing" = "ok",
+  ) => {
     const sha = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
-    const text = `factory:\n  instructors: [tomkaczocha]\n  base: ${base}\n  provision: []\n  gate: [make]\n  limits: { minutes: 1, gate_retries: 0 }\n  autonomy: pr\n`;
-    const content = Buffer.from(text).toString("base64");
-    return ghWith((args) => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    const answer = (args: ReadonlyArray<string>): string | { readonly stderr: string } => {
       const path = args[1] ?? "";
-      if (args[0] !== "api") return null;
-      if (path === `repos/${REPO}`) return '{"default_branch":"main"}';
-      if (path === `repos/${REPO}/git/ref/heads/main`) {
+      if (args[0] === "api" && path === `repos/${REPO}`) return '{"default_branch":"main"}';
+      if (args[0] === "api" && path === `repos/${REPO}/git/ref/heads/main`) {
+        if (ref === "missing") return { stderr: "gh: Not Found (HTTP 404)" };
         return JSON.stringify({ ref: "refs/heads/main", object: { sha, type: "commit" } });
       }
-      if (path.startsWith(`repos/${REPO}/contents/`)) {
+      if (args[0] === "api" && path.startsWith(`repos/${REPO}/contents/`)) {
+        if ("stderr" in file) return { stderr: file.stderr };
+        const text = configText(file.base);
         return JSON.stringify({
           name: "config.yml",
           path: ".dw/config.yml",
           sha: "abc",
           size: text.length,
           type: "file",
-          content,
+          content: Buffer.from(text).toString("base64"),
           encoding: "base64",
         });
       }
-      return null;
+      return { stderr: "gh: Server Error (HTTP 502)" };
+    };
+    const process = FactoryProcess.of({
+      run: (input: RunInput) => {
+        const args = input.args ?? [];
+        calls.push(args);
+        const reply = answer(args);
+        const failed = typeof reply !== "string";
+        return Effect.succeed({
+          exitCode: failed ? 1 : 0,
+          timedOut: false,
+          tail: failed ? "" : reply,
+          stderrTail: failed ? reply.stderr : "",
+          truncated: false,
+        } satisfies RunResult);
+      },
     });
+    return { process, calls };
+  };
+
+  const NOT_FOUND = { stderr: "gh: Not Found (HTTP 404)" };
+  const projectDirs = useTempDirs();
+
+  /** A checkout whose working tree holds `.dw/config.yml` naming `base`, or none. */
+  const checkout = (base: string | null) => {
+    const root = projectDirs("checkout");
+    if (base !== null) {
+      NodeFS.mkdirSync(NodePath.join(root, ".dw"));
+      NodeFS.writeFileSync(NodePath.join(root, ".dw", "config.yml"), configText(base));
+    }
+    return { root, file: NodePath.join(root, ".dw", "config.yml") };
+  };
+
+  /** The project config of `REPO` at `root`, and what the settings page was told about it. */
+  const readProject = (process: FactoryProcess["Service"], root: string) => {
+    const readings: Array<RepoConfigReading> = [];
+    const world = liveWorld(
+      machine,
+      "/factory-test/data",
+      process,
+      NodeServices.layer,
+      stubSessions,
+      () => NOW,
+      "mac-mini",
+      noAttention,
+      {
+        gate: { run: () => Effect.succeed({ _tag: "running" as const }) },
+        wake: Effect.void,
+        scope: Scope.makeUnsafe(),
+      },
+      undefined,
+      (_repo, reading) => readings.push(reading),
+    );
+    return Effect.result(world.project({ repo: REPO, path: root })).pipe(
+      Effect.map((result) => ({ result, readings })),
+    );
   };
 
   it.effect("a project config committed on its own base branch is loaded", () =>
     Effect.gen(function* () {
-      const { process } = baseConfigGh("main");
-      const project = yield* worldOf(process).project(machine.repos[0]!);
+      const { process } = baseConfigGh({ base: "main" });
+      const project = yield* worldOf(process).project({ repo: REPO, path: "/p" });
       assert.strictEqual(project.base, "main");
     }),
   );
 
   it.effect("a project config that names another base is a config error naming both", () =>
     Effect.gen(function* () {
-      const { process } = baseConfigGh("develop");
-      const error = yield* Effect.flip(worldOf(process).project(machine.repos[0]!));
+      const { process } = baseConfigGh({ base: "develop" });
+      const error = yield* Effect.flip(worldOf(process).project({ repo: REPO, path: "/p" }));
       assert.strictEqual(error.kind, "config");
       assert.include(error.message, "`develop`");
       assert.include(error.message, "`main`");
     }),
   );
+
+  it.effect("the GitHub copy wins over a checkout copy that differs", () =>
+    Effect.gen(function* () {
+      const { process } = baseConfigGh({ base: "main" });
+      // The checkout's copy would be refused: had it been read, the read would fail.
+      const local = checkout("develop");
+      const { result } = yield* readProject(process, local.root);
+      assert.isTrue(Result.isSuccess(result));
+      if (Result.isSuccess(result)) assert.strictEqual(result.success.base, "main");
+    }),
+  );
+
+  it.effect("a config not on GitHub is read from the checkout's working tree", () =>
+    Effect.gen(function* () {
+      const { process } = baseConfigGh(NOT_FOUND);
+      const local = checkout("main");
+      const { result, readings } = yield* readProject(process, local.root);
+      assert.isTrue(Result.isSuccess(result));
+      if (Result.isSuccess(result)) assert.strictEqual(result.success.base, "main");
+      assert.deepStrictEqual(
+        readings.map((r) => r.kind),
+        ["ok"],
+      );
+    }),
+  );
+
+  it.effect("a checkout config that names another base is skipped, naming the local file", () =>
+    Effect.gen(function* () {
+      const { process } = baseConfigGh(NOT_FOUND);
+      const local = checkout("develop");
+      const { result, readings } = yield* readProject(process, local.root);
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.strictEqual(result.failure.kind, "config");
+        assert.include(result.failure.message, local.file);
+        assert.include(result.failure.message, "`develop`");
+        assert.include(result.failure.message, "`main`");
+        assert.include(result.failure.message, "a checkout's config must name the default branch");
+      }
+      const reading = readings[0];
+      assert.strictEqual(reading?.kind, "errors");
+      if (reading?.kind === "errors") {
+        assert.deepStrictEqual(
+          reading.errors.map((e) => [e.file, e.field]),
+          [[local.file, "factory.base"]],
+        );
+      }
+    }),
+  );
+
+  it.effect("no config on GitHub and none in the checkout is one error saying both", () =>
+    Effect.gen(function* () {
+      const { process } = baseConfigGh(NOT_FOUND);
+      const local = checkout(null);
+      const { result, readings } = yield* readProject(process, local.root);
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.strictEqual(result.failure.kind, "config");
+        assert.include(
+          result.failure.message,
+          `.dw/config.yml is not on main on GitHub, and cannot read ${local.file}: `,
+        );
+      }
+      const reading = readings[0];
+      assert.strictEqual(reading?.kind, "errors");
+      if (reading?.kind === "errors") {
+        assert.deepStrictEqual(
+          reading.errors.map((e) => e.file),
+          [local.file],
+        );
+      }
+    }),
+  );
+
+  it.effect("any other GitHub failure is the pass error and the checkout is not read", () =>
+    Effect.gen(function* () {
+      // A good checkout copy: any fallback to it would load.
+      const local = checkout("main");
+      for (const gh of [
+        baseConfigGh({ stderr: "gh: Server Error (HTTP 502)" }),
+        baseConfigGh({ stderr: "API rate limit exceeded" }),
+        baseConfigGh({ base: "main" }, "missing"),
+      ]) {
+        const { result, readings } = yield* readProject(gh.process, local.root);
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) {
+          assert.include(result.failure.message, "cannot read .dw/config.yml from GitHub: ");
+          assert.notInclude(result.failure.message, local.root);
+        }
+        const reading = readings[0];
+        assert.strictEqual(reading?.kind, "errors");
+        if (reading?.kind === "errors") {
+          assert.deepStrictEqual(
+            reading.errors.map((e) => e.file),
+            [".dw/config.yml"],
+          );
+        }
+      }
+    }),
+  );
+
+  it.effect("a checkout config that does not parse names the local file in its errors", () =>
+    Effect.gen(function* () {
+      const { process } = baseConfigGh(NOT_FOUND);
+      const local = checkout(null);
+      NodeFS.mkdirSync(NodePath.join(local.root, ".dw"));
+      NodeFS.writeFileSync(local.file, "factory:\n  instructors: [tomkaczocha]\n  base: main\n");
+      const { result, readings } = yield* readProject(process, local.root);
+      assert.isTrue(Result.isFailure(result));
+      const reading = readings[0];
+      assert.strictEqual(reading?.kind, "errors");
+      if (reading?.kind === "errors") {
+        assert.isAbove(reading.errors.length, 0);
+        for (const error of reading.errors) assert.strictEqual(error.file, local.file);
+      }
+    }),
+  );
+
+  it.effect("a checkout config that cannot be read is one error saying both", () =>
+    Effect.gen(function* () {
+      const { process } = baseConfigGh(NOT_FOUND);
+      const local = checkout(null);
+      // A directory where the file should be.
+      NodeFS.mkdirSync(local.file, { recursive: true });
+      const { result } = yield* readProject(process, local.root);
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.include(
+          result.failure.message,
+          `.dw/config.yml is not on main on GitHub, and cannot read ${local.file}: `,
+        );
+      }
+    }),
+  );
+
+  it.effect("a config read from GitHub names `<branch>:.dw/config.yml` in its errors", () =>
+    Effect.gen(function* () {
+      const { process } = baseConfigGh({ base: "develop" });
+      const { readings } = yield* readProject(process, checkout(null).root);
+      const reading = readings[0];
+      assert.strictEqual(reading?.kind, "errors");
+      if (reading?.kind === "errors") {
+        assert.deepStrictEqual(
+          reading.errors.map((e) => e.file),
+          ["main:.dw/config.yml"],
+        );
+      }
+    }),
+  );
+
+  const tempDirForLogs = useTempDirs();
+
+  it.effect("T3 trouble is the newest t3 error in the machine log within ten minutes", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDirForLogs();
+      const { process } = ghWith(() => null);
+      const world = liveWorld(
+        machine,
+        dataDir,
+        process,
+        NodeServices.layer,
+        stubSessions,
+        () => NOW,
+        "mac-mini",
+        noAttention,
+        {
+          gate: { run: () => Effect.succeed({ _tag: "running" as const }) },
+          wake: Effect.void,
+          scope: Scope.makeUnsafe(),
+        },
+      );
+      // No machine log yet: no trouble.
+      assert.strictEqual(yield* world.t3Trouble(), null);
+      const log = MachineLog.open(dataDir, { clock: () => NOW - 20 * MINUTE });
+      log.append({ event: "error", data: { step: "pass", kind: "t3", message: "too old" } });
+      log.close();
+      assert.strictEqual(yield* world.t3Trouble(), null);
+      const recent = MachineLog.open(dataDir, { clock: () => NOW - 2 * MINUTE });
+      recent.append({ event: "error", data: { step: "pass", kind: "t3", message: "timed out" } });
+      recent.close();
+      assert.strictEqual(yield* world.t3Trouble(), "timed out");
+    }),
+  );
+
+  it.effect("the server starts are the machine log's server_started lines of the last day", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDirForLogs();
+      const { process } = ghWith(() => null);
+      const world = liveWorld(
+        machine,
+        dataDir,
+        process,
+        NodeServices.layer,
+        stubSessions,
+        () => NOW,
+        "mac-mini",
+        noAttention,
+        {
+          gate: { run: () => Effect.succeed({ _tag: "running" as const }) },
+          wake: Effect.void,
+          scope: Scope.makeUnsafe(),
+        },
+      );
+      assert.deepStrictEqual(yield* world.t3Starts(), []);
+      for (const at of [NOW - 25 * 60 * MINUTE, NOW - 2 * MINUTE]) {
+        const log = MachineLog.open(dataDir, { clock: () => at });
+        log.append({ event: "server_started", data: { started_at: at } });
+        log.close();
+      }
+      assert.deepStrictEqual(yield* world.t3Starts(), [NOW - 2 * MINUTE]);
+      // The stop of the newest start is the newest stop before it: none is written yet.
+      assert.deepStrictEqual(yield* world.t3Stops(), []);
+      // A stop older than a day is read for the start of the last day it belongs to.
+      const downDir = tempDirForLogs();
+      for (const [event, at] of [
+        ["server_stopping", NOW - 50 * 60 * MINUTE],
+        ["server_started", NOW - 2 * MINUTE],
+      ] as const) {
+        const log = MachineLog.open(downDir, { clock: () => at });
+        log.append(
+          event === "server_stopping"
+            ? { event, data: { stopping_at: at } }
+            : { event, data: { started_at: at } },
+        );
+        log.close();
+      }
+      const downWorld = liveWorld(
+        machine,
+        downDir,
+        process,
+        NodeServices.layer,
+        stubSessions,
+        () => NOW,
+        "mac-mini",
+        noAttention,
+        {
+          gate: { run: () => Effect.succeed({ _tag: "running" as const }) },
+          wake: Effect.void,
+          scope: Scope.makeUnsafe(),
+        },
+      );
+      assert.deepStrictEqual(yield* downWorld.t3Stops(), [NOW - 50 * 60 * MINUTE]);
+      // A start is not T3 trouble in the log's sense: `interrupted` weighs it against the run.
+      assert.strictEqual(yield* world.t3Trouble(), null);
+    }),
+  );
+
+  it("serverStartedMs is this process's start, before now", () => {
+    const started = serverStartedMs();
+    // The time origin is when this process started, so it is before any now.
+    assert.ok(
+      Number.isInteger(started) && started > 0 && Math.abs(started - performance.timeOrigin) <= 0.5,
+      `${started} vs ${performance.timeOrigin}`,
+    );
+  });
 });
 
 describe("the gate in the background", () => {
   const tempDir = useTempDirs();
   const REPO = "rawphp/softfac";
 
+  /** What `gh pr view` answers for pull request 12 of `REPO`, as `state`, at `head`. */
+  const PR_VIEW = (state: "OPEN" | "MERGED", head: string) =>
+    JSON.stringify({
+      number: 12,
+      isDraft: false,
+      state,
+      headRefName: "t3code/abc",
+      isCrossRepository: false,
+      baseRefName: "main",
+      headRefOid: head,
+    });
+  const HEAD = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
+  const BASE = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d";
+
+  /** A run whose gate passed at `HEAD` against `BASE`, whose worktree is removed and whose issue is `pr-open`. */
+  const prOpenRun = (dataDir: string): RunId => {
+    const run = newRunId(REPO, "10", 1);
+    const ledger = Ledger.create(dataDir, run, { clock: () => 1_000 });
+    const cause = makeCause("gate", "seed", { attempt: 1 });
+    for (const event of [
+      {
+        event: "session_launched",
+        data: {
+          thread_id: "thread-1",
+          worktree: "/t3/wt",
+          branch: null,
+          model_instance: null,
+          model: null,
+          model_options: null,
+          resumed_from: null,
+        },
+      },
+      { event: "pr_opened", data: { pr: 12, url: "https://github.com/rawphp/softfac/pull/12" } },
+      {
+        event: "gate_checkout",
+        data: { attempt: 1, dir: "/gone", sha: HEAD, base_sha: BASE },
+      },
+      {
+        event: "gate_command",
+        data: { attempt: 1, command: "cargo test", exit_code: 0, duration_ms: 5 },
+      },
+      { event: "step_changed", data: { step: `gate-passed ${HEAD} 1` } },
+      { event: "worktree_removed", data: { path: "/t3/wt" } },
+      { event: "state_changed", data: { from: "building", to: "pr-open" } },
+    ] as const) {
+      ledger.append(event, cause);
+    }
+    ledger.close();
+    return run;
+  };
+
+  const background = {
+    ghConfigDir: "/gh/rawphp",
+    pollSeconds: 60,
+    maxConcurrentRuns: 1,
+    maxConcurrentGates: 1,
+    feedbackSeconds: 600,
+    notify: true,
+    minFreeGib: 0,
+  } satisfies MachineConfig;
+  const backgroundRepo: Repo = {
+    watched: { repo: REPO, path: "/p" },
+    project: { ...timeLimitOnlyProjectConfig(), base: "main" },
+    trackerUser: "rawphp",
+  };
+
   it.effect("runs the gate step as a background fiber and wakes the loop once it decided", () =>
     Effect.gen(function* () {
       const dataDir = tempDir();
-      const run = newRunId(REPO, "10", 1);
-      // A run whose gate passed and whose move to pr-open is written: the gate has nothing left
-      // to do and decides at once, with no call to GitHub or T3.
-      const ledger = Ledger.create(dataDir, run, { clock: () => 1_000 });
-      ledger.append(
-        {
-          event: "session_launched",
-          data: {
-            thread_id: "thread-1",
-            worktree: null,
-            branch: null,
-            model_instance: null,
-            model: null,
-            resumed_from: null,
-          },
+      // A pr-open run whose pull request was merged: the re-gate ends the run at once, with no
+      // command run and nothing written on GitHub.
+      const run = prOpenRun(dataDir);
+      const seen: Array<ReadonlyArray<string>> = [];
+      const gh: FactoryProcess["Service"] = {
+        run: (input) => {
+          seen.push(input.args ?? []);
+          return answered(PR_VIEW("MERGED", HEAD));
         },
-        makeCause("start", "seed"),
-      );
-      ledger.append(
-        { event: "pr_opened", data: { pr: 12, url: "https://github.com/rawphp/softfac/pull/12" } },
-        makeCause("advance", "seed"),
-      );
-      ledger.append(
-        { event: "state_changed", data: { from: "building", to: "pr-open" } },
-        makeCause("gate", "seed"),
-      );
-      ledger.close();
-      const machine: MachineConfig = {
-        ghConfigDir: "/gh/rawphp",
-        pollSeconds: 60,
-        maxConcurrentRuns: 1,
-        maxConcurrentGates: 1,
-        modelInstance: "claudeAgent",
-        model: "claude-sonnet-5-5",
-        notify: true,
-        repos: [{ repo: REPO, path: "/p" }],
-      };
-      const repo = {
-        watched: machine.repos[0]!,
-        project: timeLimitOnlyProjectConfig(),
-        trackerUser: "rawphp",
-      };
-      const deadProcess: FactoryProcess["Service"] = {
-        run: () =>
-          Effect.fail(new RunSpawnError({ shell: false, cause: new Error("gh not found") })),
       };
       const woken = yield* Deferred.make<void>();
+      const archived: Array<string> = [];
       const world = liveWorld(
-        machine,
+        background,
         dataDir,
-        deadProcess,
-        stubSessions,
+        gh,
+        NodeServices.layer,
+        Sessions.FactorySessions.of({
+          ...stubSessions,
+          archive: (threadId) => Effect.sync(() => void archived.push(threadId)),
+        }),
         () => 1_000,
         "mac-mini",
         noAttention,
         {
-          gate: { run: () => Effect.die("no gate runs for a recorded pass") },
+          gate: { run: () => Effect.die("no gate runs for a merged pull request") },
           wake: Deferred.succeed(woken, undefined).pipe(Effect.asVoid),
           scope: yield* Scope.make(),
         },
       );
-      assert.deepStrictEqual(yield* world.gate(repo, run), { kind: "started" });
+      assert.deepStrictEqual(yield* world.gate(backgroundRepo, run), { kind: "started" });
       assert.strictEqual(world.gateRunning(run), true);
       // A second start while the first runs is queued at max_concurrent_gates 1.
-      assert.deepStrictEqual(yield* world.gate(repo, newRunId(REPO, "11", 1)), {
+      assert.deepStrictEqual(yield* world.gate(backgroundRepo, newRunId(REPO, "11", 1)), {
         kind: "queued",
         running: 1,
         max: 1,
       });
       yield* Deferred.await(woken);
       assert.strictEqual(world.gateRunning(run), false);
+      assert.deepStrictEqual(archived, ["thread-1"]);
+      assert.strictEqual(readRun(dataDir, run).entries.at(-1)?.event, "finished");
+      // It read the pull request, for a re-gate; a gate of a pr-open run would have read nothing.
+      assert.ok(
+        seen.some((args) => args.includes("view")),
+        JSON.stringify(seen),
+      );
     }),
+  );
+
+  it.effect(
+    "a pr-open run that nothing moved for is re-gated quietly: no decision, no wake, no write",
+    () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        const run = prOpenRun(dataDir);
+        const before = NodeFS.readFileSync(runPath(dataDir, run), "utf8");
+        const woken = yield* Ref.make(0);
+        const gh: FactoryProcess["Service"] = {
+          run: (input) =>
+            answered(
+              input.args?.includes("view") === true
+                ? PR_VIEW("OPEN", HEAD)
+                : JSON.stringify({ object: { type: "commit", sha: BASE } }),
+            ),
+        };
+        const world = liveWorld(
+          background,
+          dataDir,
+          gh,
+          NodeServices.layer,
+          stubSessions,
+          () => 1_000,
+          "mac-mini",
+          noAttention,
+          {
+            gate: { run: () => Effect.die("nothing moved, so nothing is gated") },
+            wake: Ref.update(woken, (n) => n + 1),
+            scope: yield* Scope.make(),
+          },
+        );
+        assert.deepStrictEqual(yield* world.gate(backgroundRepo, run), { kind: "started" });
+        while (world.gateRunning(run)) yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(woken), 0);
+        assert.strictEqual(NodeFS.readFileSync(runPath(dataDir, run), "utf8"), before);
+      }),
   );
 
   /** What `gh issue view` answers for the open `factory:building` issue the gate reads before anything else. */
@@ -1079,47 +1755,19 @@ describe("the gate in the background", () => {
     } satisfies RunResult);
 
   /** A building run whose session reported its pull request: the gate reads the issue, then the thread. */
-  const reportedRun = (dataDir: string): RunId => {
-    const run = newRunId(REPO, "10", 1);
-    const ledger = Ledger.create(dataDir, run, { clock: () => 1_000 });
-    ledger.append(
-      {
-        event: "session_launched",
-        data: {
-          thread_id: "thread-1",
-          worktree: null,
-          branch: null,
-          model_instance: null,
-          model: null,
-          resumed_from: null,
-        },
-      },
-      makeCause("start", "seed"),
-    );
-    ledger.append(
-      { event: "state_changed", data: { from: "triage", to: "building" } },
-      makeCause("start", "seed"),
-    );
-    ledger.append(
-      { event: "pr_opened", data: { pr: 12, url: "https://github.com/rawphp/softfac/pull/12" } },
-      makeCause("advance", "seed"),
-    );
-    ledger.close();
-    return run;
-  };
+  const reportedRun = (dataDir: string): RunId => seedReportedRun(dataDir, REPO);
 
   const gateMachine: MachineConfig = {
     ghConfigDir: "/gh/rawphp",
     pollSeconds: 60,
     maxConcurrentRuns: 1,
     maxConcurrentGates: 1,
-    modelInstance: "claudeAgent",
-    model: "claude-sonnet-5-5",
+    feedbackSeconds: 600,
     notify: true,
-    repos: [{ repo: REPO, path: "/p" }],
+    minFreeGib: 0,
   };
   const gateRepo: Repo = {
-    watched: gateMachine.repos[0]!,
+    watched: { repo: REPO, path: "/p" },
     project: timeLimitOnlyProjectConfig(),
     trackerUser: "rawphp",
   };
@@ -1150,6 +1798,7 @@ describe("the gate in the background", () => {
           gateMachine,
           dataDir,
           deadGh,
+          NodeServices.layer,
           sessions,
           () => 1_000,
           "mac-mini",
@@ -1171,6 +1820,79 @@ describe("the gate in the background", () => {
         // The run is free for the next pass's gate.
         assert.deepStrictEqual(yield* world.gate(gateRepo, run), { kind: "started" });
       }),
+  );
+
+  it.effect("a world built on the same shared state sees the gates another world started", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const run = reportedRun(dataDir);
+      const other = newRunId(REPO, "11", 1);
+      const held = yield* Deferred.make<void>();
+      const entered = yield* Deferred.make<void>();
+      const sessions = Sessions.FactorySessions.of({
+        ...stubSessions,
+        status: () =>
+          Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(held)),
+            Effect.andThen(Effect.die("released")),
+          ),
+      });
+      const live = {
+        gate: { run: () => Effect.die("never reached") },
+        wake: Effect.void,
+        scope: yield* Scope.make(),
+      };
+      const shared = {
+        gating: new Set<string>(),
+        claimMemo: new ClaimMemo(),
+        stuckReads: new Map<string, number>(),
+        brokenThreads: { notFactory: new Set<string>(), unsettled: new Map<string, number>() },
+      };
+      const build = () =>
+        liveWorld(
+          gateMachine,
+          dataDir,
+          deadGh,
+          NodeServices.layer,
+          sessions,
+          () => 1_000,
+          "mac-mini",
+          noAttention,
+          live,
+          undefined,
+          undefined,
+          shared,
+        );
+      const before = build();
+      assert.deepStrictEqual(yield* before.gate(gateRepo, run), { kind: "started" });
+      yield* Deferred.await(entered);
+      // What a reload does: a new world, on the state the old one shares.
+      const after = build();
+      assert.strictEqual(after.gateRunning(run), true);
+      // Nor does a reload read every stuck item's issue again at once.
+      assert.strictEqual(after.stuckReads, before.stuckReads);
+      assert.deepStrictEqual(yield* after.gate(gateRepo, other), {
+        kind: "queued",
+        running: 1,
+        max: 1,
+      });
+      // Without shared state a world starts from nothing: that is the defect this guards.
+      assert.strictEqual(
+        liveWorld(
+          gateMachine,
+          dataDir,
+          deadGh,
+          NodeServices.layer,
+          sessions,
+          () => 1_000,
+          "mac-mini",
+          noAttention,
+          live,
+        ).gateRunning(run),
+        false,
+      );
+      yield* Deferred.succeed(held, undefined);
+    }),
   );
 
   it.effect("a gate that ends in stuck raises the run's stuck item, as a pass would", () =>
@@ -1203,10 +1925,12 @@ describe("the gate in the background", () => {
         gateMachine,
         dataDir,
         quietGh,
+        NodeServices.layer,
         sessions,
         () => 1_000,
         "mac-mini",
         {
+          list: () => Effect.succeed([]),
           raise: (item) => Effect.sync(() => void raised.push(item)),
           clear: () => Effect.void,
         },
@@ -1252,6 +1976,7 @@ describe("the gate in the background", () => {
         gateMachine,
         dataDir,
         deadGh,
+        NodeServices.layer,
         sessions,
         () => 1_000,
         "mac-mini",
@@ -1282,9 +2007,52 @@ describe("the gate in the background", () => {
     // Nothing changed: the normal poll carries the next try, so a session still at work or a
     // rate limit does not spin the loop.
     assert.strictEqual(gateDecided({ kind: "not-ready" }), false);
+    assert.strictEqual(gateDecided({ kind: "unchanged" }), false);
     assert.strictEqual(gateDecided({ kind: "running" }), false);
+    assert.strictEqual(gateDecided({ kind: "checks-pending" }), false);
     assert.strictEqual(gateDecided({ kind: "queued", running: 2, max: 2 }), false);
     assert.strictEqual(gateDecided(null), false);
+  });
+
+  it("says what a re-gate did in the words of softfac's run line, and nothing for an unchanged one", () => {
+    const words = (
+      step: Parameters<typeof regateWords>[2],
+      moved: Parameters<typeof regateWords>[3],
+    ) => regateWords("run-1", REPO, step, moved);
+    assert.strictEqual(words({ kind: "unchanged" }, null), null);
+    assert.strictEqual(
+      words({ kind: "passed", pr: 12 }, "base"),
+      "the base branch moved, the gate passed again, PR https://github.com/rawphp/softfac/pull/12 stays ready for review",
+    );
+    assert.strictEqual(
+      words({ kind: "passed", pr: 12 }, "head"),
+      "the pull request's head moved, the gate passed again, PR https://github.com/rawphp/softfac/pull/12 stays ready for review",
+    );
+    assert.strictEqual(
+      words({ kind: "sent-back", attempt: 2 }, "both"),
+      "the pull request's head and the base branch moved, the gate failed on attempt 2, the PR is a draft again and the session was told",
+    );
+    assert.strictEqual(
+      words({ kind: "sent-back", attempt: 3 }, "unknown"),
+      "the base of the last pass was not recorded, the gate failed on attempt 3, the PR is a draft again and the session was told",
+    );
+    assert.strictEqual(
+      words({ kind: "passed", pr: 12 }, null),
+      "no pass was on record, the gate passed again, PR https://github.com/rawphp/softfac/pull/12 stays ready for review",
+    );
+    assert.strictEqual(
+      words({ kind: "stuck", reason: "r" }, "base"),
+      `stuck, the reason is in the ledger of run run-1`,
+    );
+    assert.strictEqual(
+      words({ kind: "ended" }, null),
+      "the pull request was merged or closed, the run is finished",
+    );
+    assert.strictEqual(
+      words({ kind: "abandoned" }, null),
+      "the issue is closed, the run is closed",
+    );
+    assert.strictEqual(words({ kind: "not-ready" }, null), "the gate waits for the session");
   });
 
   it("raises a stuck item for a gate that ended stuck, as the pass does, and nothing else", () => {
@@ -1299,6 +2067,7 @@ describe("the gate in the background", () => {
     assert.strictEqual(gateItem(REPO, 10, "run-1", { kind: "passed", pr: 12 }), null);
     assert.strictEqual(gateItem(REPO, 10, "run-1", { kind: "sent-back", attempt: 1 }), null);
     assert.strictEqual(gateItem(REPO, 10, "run-1", { kind: "ended" }), null);
+    assert.strictEqual(gateItem(REPO, 10, "run-1", { kind: "checks-pending" }), null);
     assert.strictEqual(gateItem(REPO, 10, "run-1", null), null);
   });
 
@@ -1328,15 +2097,15 @@ describe("the gate in the background", () => {
         pollSeconds: 60,
         maxConcurrentRuns: 1,
         maxConcurrentGates: 1,
-        modelInstance: "claudeAgent",
-        model: "claude-sonnet-5-5",
+        feedbackSeconds: 600,
         notify: true,
-        repos: [{ repo: REPO, path: "/p" }],
+        minFreeGib: 0,
       };
       const world = liveWorld(
         machine,
         dataDir,
         { run: () => Effect.die("no gh") },
+        NodeServices.layer,
         stubSessions,
         () => 2_000,
         "mac-mini",
@@ -1356,4 +2125,583 @@ describe("the gate in the background", () => {
       assert.strictEqual(yield* world.takeStopRequest(run), "none");
     }),
   );
+
+  it.effect(
+    "says a gate send is pending from the run's ledger until the send-back is recorded",
+    () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        const run = newRunId(REPO, "10", 1);
+        const other = newRunId(REPO, "11", 1);
+        const seed = (id: RunId, steps: ReadonlyArray<string>) => {
+          const ledger = Ledger.create(dataDir, id, { clock: () => 1_000 });
+          ledger.append(
+            { event: "state_changed", data: { from: "triage", to: "building" } },
+            makeCause("start", "seed"),
+          );
+          for (const step of steps) {
+            ledger.append({ event: "step_changed", data: { step } }, makeCause("gate", "seed"));
+          }
+          ledger.close();
+        };
+        seed(run, ["gate-sending 1 1"]);
+        // Another run with nothing pending: the answer is the asked run's.
+        seed(other, []);
+        const world = liveWorld(
+          {
+            ghConfigDir: "/gh/rawphp",
+            pollSeconds: 60,
+            maxConcurrentRuns: 1,
+            maxConcurrentGates: 1,
+            feedbackSeconds: 600,
+            notify: true,
+            minFreeGib: 0,
+          },
+          dataDir,
+          { run: () => Effect.die("no gh") },
+          NodeServices.layer,
+          stubSessions,
+          () => 2_000,
+          "mac-mini",
+          noAttention,
+          {
+            gate: { run: () => Effect.die("no gate") },
+            wake: Effect.void,
+            scope: yield* Scope.make(),
+          },
+        );
+        assert.strictEqual(yield* world.hasPendingGateSend(run), true);
+        assert.strictEqual(yield* world.hasPendingGateSend(other), false);
+
+        const ledger = Ledger.open(dataDir, run, { clock: () => 1_500 });
+        ledger.append(
+          { event: "gate_sent_back", data: { attempt: 1, run_ordinal: 1 } },
+          makeCause("gate", "seed"),
+        );
+        ledger.close();
+        assert.strictEqual(yield* world.hasPendingGateSend(run), false);
+
+        const missing = yield* Effect.flip(world.hasPendingGateSend(newRunId(REPO, "12", 1)));
+        assert.ok(isLedgerError(missing), missing.message);
+      }),
+  );
+});
+
+describe("reloading the machine config", () => {
+  /** A fake `gh` that records the argv of every call and holds the first call naming each of `repos` until released. */
+  const holdingProcess = (repos: ReadonlyArray<string> = ["a/b"]) => {
+    const calls: Array<string> = [];
+    /** The `GH_CONFIG_DIR` of each call, in the order of `calls`. */
+    const ghDirs: Array<string | undefined> = [];
+    const holds = new Map(
+      repos.map((repo) => [
+        repo,
+        { held: false, entered: Deferred.makeUnsafe<void>(), release: Deferred.makeUnsafe<void>() },
+      ]),
+    );
+    const process = FactoryProcess.of({
+      run: (input) =>
+        Effect.gen(function* () {
+          const call = [input.command, ...(input.args ?? [])].join(" ");
+          calls.push(call);
+          ghDirs.push(input.env?.["GH_CONFIG_DIR"]);
+          const hold = [...holds].find(([repo]) => call.includes(repo))?.[1];
+          if (hold !== undefined && !hold.held) {
+            hold.held = true;
+            yield* Deferred.succeed(hold.entered, undefined);
+            yield* Deferred.await(hold.release);
+          }
+          return yield* Effect.fail(
+            new RunSpawnError({ shell: false, cause: new Error("gh not found") }),
+          );
+        }),
+    });
+    const first = holds.get(repos[0]!)!;
+    return { calls, ghDirs, process, holds, entered: first.entered, release: first.release };
+  };
+
+  /** The runtime over a temp base dir holding `config` (or no file); `write` replaces the file. */
+  const started = (
+    config: string | undefined,
+    process: FactoryProcess["Service"],
+    events: Layer.Layer<FactoryEvents> = quietEvents,
+    options: RuntimeOptions = {},
+    watched: Layer.Layer<FactoryWatchedRepos> = watching([A_B]),
+    sessions: Layer.Layer<Sessions.FactorySessions> = noSessions,
+  ) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "factory-reload-" });
+      const factoryDir = join(baseDir, "factory");
+      yield* fs.makeDirectory(factoryDir);
+      const machineConfigPath = join(factoryDir, "config.yml");
+      if (config !== undefined) yield* fs.writeFileString(machineConfigPath, config);
+      const context = yield* Layer.build(
+        factoryRuntime(options).pipe(
+          Layer.provide(
+            Layer.succeed(Paths.FactoryPaths, {
+              baseDir,
+              worktreesDir: join(baseDir, "worktrees"),
+              factoryDir,
+              machineConfigPath,
+            }),
+          ),
+          Layer.provide(Layer.succeed(FactoryProcess, process)),
+          Layer.provide(sessions),
+          Layer.provide(watched),
+          Layer.provide(events),
+          Layer.provide(noGate),
+        ),
+      );
+      return {
+        loop: Context.get(context, FactoryLoop),
+        factoryDir,
+        file: machineConfigPath,
+        write: (text: string) => fs.writeFileString(machineConfigPath, text),
+      };
+    });
+
+  const OTHER = VALID.replace("gh_config_dir: /gh", "gh_config_dir: /gh2");
+
+  it.effect("goes from idle to running when a valid file appears and is reloaded", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { calls, process, entered, release } = holdingProcess();
+        const { loop, write } = yield* started(undefined, process);
+        assert.deepStrictEqual(loop.status, { state: "idle", reason: "no factory config" });
+        yield* write(VALID);
+        yield* loop.reload;
+        yield* Deferred.await(entered);
+        const pass = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+        yield* Deferred.succeed(release, undefined);
+        assert.strictEqual((yield* Fiber.join(pass))?.errors, 1);
+        assert.deepStrictEqual(loop.status, {
+          state: "running",
+          settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
+        });
+        assert.ok(
+          calls.some((call) => call.startsWith("gh ") && call.includes("a/b")),
+          calls.join("\n"),
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("goes idle when the file turns invalid or is removed, and passes do nothing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { calls, process, entered, release } = holdingProcess();
+        const { loop, write } = yield* started(VALID, process);
+        yield* Deferred.await(entered);
+        yield* Deferred.succeed(release, undefined);
+        yield* write(INVALID);
+        yield* loop.reload;
+        assert.deepStrictEqual(loop.status, {
+          state: "idle",
+          reason: "factory config failed to load",
+        });
+        const seen = calls.length;
+        const pass = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+        yield* loop.wake;
+        assert.deepStrictEqual(yield* Fiber.join(pass), {
+          runs: 0,
+          claimed: 0,
+          errors: 0,
+          attention: 0,
+        });
+        assert.strictEqual(calls.length, seen);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "a pass under way finishes on the config it started with, the next uses the new one",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { calls, ghDirs, process, holds, entered, release } = holdingProcess([
+            "a/b",
+            "c/d",
+          ]);
+          // T3's projects change between the passes: the next one is the first to see c/d.
+          const projects = yield* Ref.make<ReadonlyArray<WatchedProject>>([A_B]);
+          const { loop, write } = yield* started(
+            VALID,
+            process,
+            quietEvents,
+            {},
+            watching(Ref.get(projects)),
+          );
+          yield* Deferred.await(entered);
+          const first = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+          yield* Ref.set(projects, [C_D]);
+          yield* write(OTHER);
+          yield* loop.reload;
+          // The pass under way listed a/b, and what was listed last is what the status reports.
+          assert.deepStrictEqual(loop.status, {
+            state: "running",
+            settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
+          });
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(first);
+          // The next pass follows at once, on the new config: it is held at its first call.
+          const second = holds.get("c/d")!;
+          yield* Deferred.await(second.entered);
+          const next = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+          yield* Deferred.succeed(second.release, undefined);
+          yield* Fiber.join(next);
+          assert.deepStrictEqual(loop.status, {
+            state: "running",
+            settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["c/d"] },
+          });
+          const lastOld = calls.findLastIndex((call) => call.includes("a/b"));
+          const firstNew = calls.findIndex((call) => call.includes("c/d"));
+          assert.ok(lastOld >= 0 && firstNew > lastOld, calls.join("\n"));
+          // The world follows the config too: the pass under way keeps its login, the next one has the new.
+          calls.forEach((call, at) => {
+            if (call.includes("a/b")) assert.strictEqual(ghDirs[at], "/gh", call);
+            if (call.includes("c/d")) assert.strictEqual(ghDirs[at], "/gh2", call);
+          });
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  // The sessions write where T3 makes worktrees now, which Settings → Storage can move off the
+  // default folder; the gate writes under the factory dir.
+  it.effect("free space is read where the sessions' worktrees and the gate's checkouts go", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const elsewhere = yield* fs.makeTempDirectoryScoped({ prefix: "factory-worktrees-" });
+        for (const [setting, expected] of [
+          [elsewhere, (factoryDir: string) => [elsewhere, factoryDir]],
+          [null, (factoryDir: string) => [factoryDir]],
+        ] as const) {
+          const worlds: Array<PassWorld> = [];
+          const read: Array<string> = [];
+          const sessions = Layer.succeed(Sessions.FactorySessions, {
+            ...stubSessions,
+            worktreesDirectory: () => Effect.succeed(setting),
+          });
+          const { factoryDir } = yield* started(
+            VALID,
+            holdingProcess().process,
+            quietEvents,
+            {
+              onWorld: (world) => worlds.push(world),
+              readFreeSpace: (path) => {
+                read.push(path);
+                return { path, freeBytes: path === elsewhere ? 3 : 7 };
+              },
+            },
+            watching([A_B]),
+            sessions,
+          );
+          const space = yield* worlds[0]!.freeSpace();
+          assert.deepStrictEqual(read, expected(factoryDir));
+          assert.deepStrictEqual(
+            space,
+            setting === null
+              ? { path: factoryDir, freeBytes: 7 }
+              : { path: elsewhere, freeBytes: 3 },
+          );
+        }
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("a reload's world sees the gates the world before it started", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const hold = yield* Deferred.make<void>();
+        const process = FactoryProcess.of({
+          run: () =>
+            Deferred.await(hold).pipe(
+              Effect.andThen(
+                Effect.fail(new RunSpawnError({ shell: false, cause: new Error("gh not found") })),
+              ),
+            ),
+        });
+        const worlds: Array<PassWorld> = [];
+        const oneGate = `${VALID}max_concurrent_gates: 1\n`;
+        const { loop, factoryDir, write } = yield* started(oneGate, process, quietEvents, {
+          onWorld: (world) => worlds.push(world),
+        });
+        const repo: Repo = {
+          watched: { repo: "a/b", path: "/b" },
+          project: timeLimitOnlyProjectConfig(),
+          trackerUser: "rawphp",
+        };
+        const run = seedReportedRun(factoryDir, "a/b");
+        const other = newRunId("a/b", "11", 1);
+        const worldA = worlds[0]!;
+        // The gate holds on its first gh call, so it is running when the file changes.
+        assert.deepStrictEqual(yield* worldA.gate(repo, run), { kind: "started" });
+        yield* write(oneGate.replace("gh_config_dir", "poll_seconds: 30\ngh_config_dir"));
+        yield* loop.reload;
+        const worldB = worlds[1]!;
+        assert.notStrictEqual(worldB, worldA);
+        assert.strictEqual(worldB.gateRunning(run), true);
+        assert.deepStrictEqual(yield* worldB.gate(repo, other), {
+          kind: "queued",
+          running: 1,
+          max: 1,
+        });
+        yield* Deferred.succeed(hold, undefined);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("repoConfigs holds the errors of a repo whose project config could not be read", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { process, entered, release } = holdingProcess();
+        const { loop } = yield* started(VALID, process);
+        yield* Deferred.await(entered);
+        assert.strictEqual((yield* loop.repoConfigs).size, 0);
+        const pass = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(pass);
+        const reading = (yield* loop.repoConfigs).get("a/b");
+        assert.strictEqual(reading?.kind, "errors");
+        const errors = reading?.kind === "errors" ? reading.errors : [];
+        assert.strictEqual(errors.length, 1);
+        assert.ok(
+          errors[0]!.message.startsWith("cannot read .dw/config.yml from GitHub"),
+          errors[0]!.message,
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "watchedRepos lists the T3 projects as they are now, and fails as the reader does",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { process } = holdingProcess();
+          const projects = yield* Ref.make<ReadonlyArray<WatchedProject>>([A_B]);
+          const listing = yield* started(
+            VALID,
+            process,
+            quietEvents,
+            {},
+            watching(Ref.get(projects)),
+          );
+          assert.deepStrictEqual(yield* listing.loop.watchedRepos, {
+            repos: [A_B],
+            departed: [],
+            unresolved: [],
+          });
+          yield* Ref.set(projects, [A_B, C_D]);
+          assert.deepStrictEqual(yield* listing.loop.watchedRepos, {
+            repos: [A_B, C_D],
+            departed: [],
+            unresolved: [],
+          });
+          const failing = yield* started(
+            VALID,
+            process,
+            quietEvents,
+            {},
+            watching(Effect.fail(new WatchedReposError({ cause: new Error("store down") }))),
+          );
+          const error = yield* Effect.flip(failing.loop.watchedRepos);
+          assert.strictEqual(error.message, "cannot list the T3 projects: store down");
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("a pass reads the T3 projects with listAndRemember, the settings page with list", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { process, entered, release } = holdingProcess();
+        const calls = { list: 0, listAndRemember: 0 };
+        const counted = (name: keyof typeof calls) =>
+          Effect.sync((): WatchedListing => {
+            calls[name] += 1;
+            return { repos: [A_B], departed: [], unresolved: [] };
+          });
+        const { loop } = yield* started(
+          VALID,
+          process,
+          quietEvents,
+          {},
+          Layer.succeed(
+            FactoryWatchedRepos,
+            FactoryWatchedRepos.of({
+              list: counted("list"),
+              listAndRemember: counted("listAndRemember"),
+            }),
+          ),
+        );
+        // The first pass has listed and is held at its first call.
+        yield* Deferred.await(entered);
+        assert.deepStrictEqual(calls, { list: 0, listAndRemember: 1 });
+        yield* loop.watchedRepos;
+        assert.deepStrictEqual(calls, { list: 1, listAndRemember: 1 });
+        yield* Deferred.succeed(release, undefined);
+        // A save's report reads as the settings page does; whatever passes the reload starts remember.
+        const remembered = calls.listAndRemember;
+        const saved = yield* loop.save({ poll_seconds: 60 });
+        assert.strictEqual(saved.kind, "ok");
+        assert.strictEqual(calls.list, 2);
+        assert.ok(calls.listAndRemember >= remembered);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reading watchedRepos for the settings page leaves the status as the pass set it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { process, entered, release } = holdingProcess();
+        const projects = yield* Ref.make<ReadonlyArray<WatchedProject>>([A_B]);
+        const { loop } = yield* started(
+          VALID,
+          process,
+          quietEvents,
+          {},
+          watching(Ref.get(projects)),
+        );
+        // The pass under way listed a/b; it is held at its first call.
+        yield* Deferred.await(entered);
+        yield* Ref.set(projects, [A_B, C_D]);
+        assert.deepStrictEqual(yield* loop.watchedRepos, {
+          repos: [A_B, C_D],
+          departed: [],
+          unresolved: [],
+        });
+        assert.deepStrictEqual(loop.status, {
+          state: "running",
+          settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
+        });
+        yield* Deferred.succeed(release, undefined);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "a listing that fails after a pass keeps the last repos in the status and logs the error",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { process, entered, release } = holdingProcess();
+          let fail = false;
+          const logs: Array<string> = [];
+          const capture = Logger.make(({ message }) => {
+            logs.push(messageText(message));
+          });
+          const { loop } = yield* started(
+            VALID,
+            process,
+            quietEvents,
+            {},
+            watching(
+              Effect.suspend(() =>
+                fail
+                  ? Effect.fail(new WatchedReposError({ cause: new Error("store down") }))
+                  : Effect.succeed([A_B]),
+              ),
+            ),
+          ).pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: false })));
+          yield* Deferred.await(entered);
+          const first = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+          fail = true;
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(first);
+          const next = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+          yield* loop.wake;
+          yield* Fiber.join(next);
+          // What the last listing named stands; the pass that could not list said so and worked nothing.
+          assert.deepStrictEqual(loop.status, {
+            state: "running",
+            settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
+          });
+          assert.ok(
+            logs.some((line) => line.includes("cannot list the T3 projects: store down")),
+            logs.join("\n"),
+          );
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("two reloads at once from idle make one loop and one wake stream", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const logs: Array<string> = [];
+        const capture = Logger.make(({ message }) => {
+          logs.push(messageText(message));
+        });
+        const subscribed = yield* Deferred.make<void>();
+        let subscriptions = 0;
+        const events = Layer.succeed(
+          FactoryEvents,
+          FactoryEvents.of({
+            runStatusChanges: Stream.suspend(() => {
+              subscriptions += 1;
+              Deferred.doneUnsafe(subscribed, Exit.void);
+              return Stream.never;
+            }),
+          }),
+        );
+        const { process } = holdingProcess();
+        const { loop, write } = yield* started(undefined, process, events);
+        yield* write(VALID);
+        yield* Effect.all([loop.reload, loop.reload], { concurrency: 2 }).pipe(
+          Effect.provide(Logger.layer([capture], { mergeWithExisting: false })),
+        );
+        yield* Deferred.await(subscribed);
+        for (let i = 0; i < 20; i++) yield* Effect.yieldNow;
+        assert.strictEqual(logs.filter((line) => line === "factory started").length, 1);
+        assert.strictEqual(subscriptions, 1);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  describe("save", () => {
+    it.effect(
+      "creates a missing file from a valid body, reloads and leaves the factory running",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const { process } = holdingProcess();
+            const { loop, file } = yield* started(undefined, process);
+            assert.strictEqual(loop.status.state, "idle");
+            const result = yield* loop.save({
+              gh_config_dir: "/gh",
+              max_concurrent_runs: 1,
+              model: "claude-sonnet-5-5",
+            });
+            assert.strictEqual(result.kind, "ok");
+            if (result.kind === "ok") {
+              assert.strictEqual(result.report.exists, true);
+              assert.strictEqual(result.report.config?.gh_config_dir, "/gh");
+            }
+            assert.strictEqual(loop.status.state, "running");
+            assert.ok(
+              (yield* (yield* FileSystem.FileSystem).readFileString(file)).includes(
+                "gh_config_dir",
+              ),
+            );
+          }),
+        ).pipe(Effect.provide(NodeServices.layer)),
+    );
+
+    it.effect("answers an invalid body with the errors and a non-object body as invalid-body", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { process } = holdingProcess();
+          const { loop, file } = yield* started(undefined, process);
+          const invalid = yield* loop.save({ poll_seconds: 5 });
+          assert.strictEqual(invalid.kind, "invalid");
+          assert.strictEqual(yield* (yield* FileSystem.FileSystem).exists(file), false);
+          for (const body of [null, [1], "x"]) {
+            assert.deepStrictEqual(yield* loop.save(body), { kind: "invalid-body" });
+          }
+          assert.strictEqual(loop.status.state, "idle");
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+    );
+  });
 });

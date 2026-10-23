@@ -5,6 +5,8 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { parse } from "yaml";
 
+import { asciiLower } from "./ledger/runId.ts";
+
 export const ConfigErrorSchema = Schema.Struct({
   file: Schema.String,
   field: Schema.optionalKey(Schema.String),
@@ -52,9 +54,22 @@ const DEFAULT_MINUTES = 180;
 const DEFAULT_CHECKS_MINUTES = 30;
 const DEFAULT_REGATES = 5;
 const DEFAULT_INTERRUPTION_RESUMES = 2;
-const DEFAULT_POLL_SECONDS = 60;
-const DEFAULT_MAX_CONCURRENT_GATES = 2;
-const DEFAULT_MODEL_INSTANCE = "claudeAgent";
+export const DEFAULT_POLL_SECONDS = 60;
+export const DEFAULT_MAX_CONCURRENT_GATES = 2;
+/**
+ * How often the feedback of one `pr-open` run is read at most, in seconds. Each read costs about
+ * 3 GraphQL points (the pull request's reviews and comments, and the issue's activity) and the
+ * pass runs every `poll_seconds`, so at 40 `pr-open` runs a 60 second poll would spend 7,200
+ * points an hour of the 5,000 a login has on feedback alone. At one read in 10 minutes it is
+ * about 720.
+ */
+export const DEFAULT_FEEDBACK_SECONDS = 600;
+/**
+ * Installed versions autodeploy.sh keeps besides `current`. The script reads the key itself and
+ * has its own copy of this default in `prune_versions`; change both together.
+ */
+const DEFAULT_KEEP_VERSIONS = 3;
+export const DEFAULT_MIN_FREE_GIB = 10;
 
 /** What a repo's runs are timed by when none of its project configs has loaded. */
 export const timeLimitOnlyProjectConfig = (): ProjectConfig => ({
@@ -75,21 +90,78 @@ export const timeLimitOnlyProjectConfig = (): ProjectConfig => ({
 
 export const PROJECT_CONFIG_PATH = ".dw/config.yml";
 
+/** What the last pass found when it read a repo's project config. */
+export type RepoConfigReading =
+  | { readonly kind: "ok"; readonly project: ProjectConfig }
+  | { readonly kind: "errors"; readonly errors: ReadonlyArray<ConfigError> };
+
 export interface WatchedRepo {
   readonly repo: string;
   readonly path: string;
 }
 
+/** A watched repo with the title of the T3 project it comes from, for the settings page. */
+export interface WatchedProject extends WatchedRepo {
+  readonly title: string;
+}
+
+/**
+ * The repos that two or more watched projects name, by the repo folded with `asciiLower`, each
+ * with the paths of its projects in order. A repo like that is watched from none of them: the
+ * factory cannot tell which checkout is its own. The pass and the settings report both ask here.
+ */
+export const ambiguousRepos = (
+  watched: ReadonlyArray<WatchedRepo>,
+): ReadonlyMap<string, ReadonlyArray<string>> => {
+  const byRepo = new Map<string, Array<string>>();
+  for (const { repo, path } of watched) {
+    const key = asciiLower(repo);
+    const paths = byRepo.get(key);
+    if (paths === undefined) byRepo.set(key, [path]);
+    else paths.push(path);
+  }
+  return new Map([...byRepo].filter(([, paths]) => paths.length > 1));
+};
+
+/** The one sentence the pass and the settings report say about a repo in `ambiguousRepos`. */
+export const ambiguousMessage = (paths: ReadonlyArray<string>): string =>
+  `${paths.length} T3 projects have this repo as their origin (${paths.join(", ")}); the factory watches none of them`;
+
+/** What the reader found: the watched projects, the repos that departed, and the checkouts it could not settle this time. */
+export interface WatchedListing {
+  /** The projects that opted in and resolved to a GitHub `owner/name`, in T3's order. A repo two projects name appears once per project. */
+  readonly repos: ReadonlyArray<WatchedProject>;
+  /**
+   * Repos, folded with `asciiLower`, that the factory watched before and watches no more, every
+   * T3 project they were watched from having been deleted since. Only these have left: a repo
+   * whose project stays (a branch without the opt-in, an unreadable checkout) is not here.
+   */
+  readonly departed: ReadonlyArray<string>;
+  /** Workspace roots of projects the reader could not settle: a `.dw/config.yml` that could not be read for a reason other than its absence, or that does not parse, an opted-in checkout T3 could not name (a null identity, or a GitHub one with no owner or name), or a git that could not run. They are skipped; the list may be short. */
+  readonly unresolved: ReadonlyArray<string>;
+}
+
 export interface MachineConfig {
   readonly ghConfigDir: string;
   readonly pollSeconds: number;
+  /**
+   * Runs that may hold a slot at once, counted over every repo: a run holds one from its claim
+   * until its session reports its pull request or the run ends; the gate and the wait for the
+   * required checks take no run slot. A session launched again for a `pr-open` run (a failed
+   * re-gate) is not held back by it: the run holds a slot again from that launch and the next
+   * claim counts it, so such relaunches can take the machine past the limit.
+   */
   readonly maxConcurrentRuns: number;
   readonly maxConcurrentGates: number;
-  readonly modelInstance: string;
-  readonly model: string;
+  /** Seconds between reads of a `pr-open` run's feedback; 0 reads on every pass. */
+  readonly feedbackSeconds: number;
   /** Whether a new attention item posts a macOS notification. The list is kept either way. */
   readonly notify: boolean;
-  readonly repos: ReadonlyArray<WatchedRepo>;
+  /**
+   * The free GiB the volumes of the worktrees and of the factory's data must have for a pass to
+   * claim an issue or start a gate. 0 turns the check off.
+   */
+  readonly minFreeGib: number;
 }
 
 type Mapping = Record<string, unknown>;
@@ -100,14 +172,28 @@ const isMapping = (value: unknown): value is Mapping =>
 const join = (path: string, key: string) => (path === "" ? key : `${path}.${key}`);
 
 /**
+ * A machine config as it loaded: the config, and one warning per key the file still has that
+ * the factory no longer reads. A warning never stops the load.
+ */
+export interface LoadedMachineConfig {
+  readonly config: MachineConfig;
+  readonly warnings: ReadonlyArray<ConfigError>;
+}
+
+/**
  * Collects every problem of one file. A value of `undefined` stands for "no value": YAML never
  * produces it, so it marks an absent key or a parent that was already reported.
  */
 const makeChecker = (file: string) => {
   const errors: Array<ConfigError> = [];
+  const warnings: Array<ConfigError> = [];
 
   const err = (field: string, message: string) => {
     errors.push(field === "" ? { file, message } : { file, field, message });
+  };
+
+  const warn = (field: string, message: string) => {
+    warnings.push({ file, field, message });
   };
 
   const child = (parent: Mapping | undefined, path: string, key: string): unknown => {
@@ -252,6 +338,8 @@ const makeChecker = (file: string) => {
 
   return {
     err,
+    warn,
+    warnings,
     child,
     mapping,
     nonEmptyString,
@@ -288,10 +376,6 @@ const projectFrom = (c: Checker, root: Mapping): ProjectConfig | undefined => {
   if (factory !== undefined) {
     if (Object.hasOwn(factory, "required_checks")) {
       requiredChecks = c.stringList(factory["required_checks"], "factory.required_checks", true);
-      if (requiredChecks !== undefined && requiredChecks.length > 0) {
-        c.err("factory.required_checks", "required_checks is not supported yet");
-        requiredChecks = undefined;
-      }
     } else {
       requiredChecks = [];
     }
@@ -352,46 +436,37 @@ const MACHINE_KEYS = [
   "poll_seconds",
   "max_concurrent_runs",
   "max_concurrent_gates",
-  "model_instance",
-  "model",
+  "feedback_seconds",
   "notify",
-  "repos",
+  "keep_versions",
+  "min_free_gib",
 ] as const;
 
-const REPO_KEYS = ["repo", "path"] as const;
+/**
+ * Keys the factory read before and reads no more. #93 retired the model keys: the model comes
+ * from the T3 project's default, then the T3 settings default. #106 retired `repos`: the factory
+ * watches the T3 projects of its environment. A file written before the change still loads, with
+ * a warning per key, so the factory that builds the upgrade keeps running, and a save from the
+ * settings page keeps them (`settings.ts`) so a rollback to a version that requires them still
+ * loads. Remove them from the file by hand once no rollback is possible.
+ */
+export const RETIRED_MACHINE_KEYS = ["model_instance", "model", "repos"] as const;
 
-const reposFrom = (c: Checker, root: Mapping): ReadonlyArray<WatchedRepo> | undefined => {
-  const value = c.child(root, "", "repos");
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) {
-    c.err("repos", "must be a list");
-    return undefined;
-  }
-  if (value.length === 0) {
-    c.err("repos", "must not be empty");
-    return undefined;
-  }
-  const out: Array<WatchedRepo> = [];
-  let ok = true;
-  value.forEach((item, i) => {
-    const at = `repos[${i}]`;
-    const entry = c.mapping(item, at);
-    const repo = c.nonEmptyString(c.child(entry, at, "repo"), `${at}.repo`);
-    const path = c.nonEmptyString(c.child(entry, at, "path"), `${at}.path`);
-    if (repo === undefined || path === undefined) ok = false;
-    else out.push({ repo, path });
-  });
-  return ok ? out : undefined;
+const RETIRED_KEY_MESSAGES: Record<(typeof RETIRED_MACHINE_KEYS)[number], string> = {
+  model_instance:
+    "is no longer used: the model comes from the T3 project's default model, then the T3 settings default",
+  model:
+    "is no longer used: the model comes from the T3 project's default model, then the T3 settings default",
+  repos:
+    "is no longer used: the factory watches the T3 projects of this environment whose checkout has a .dw/config.yml with a factory block",
 };
 
-/** Unknown keys at any depth, after the known-field errors. Wrong-typed values are skipped. */
+/** Unknown keys at the top level, after the known-field errors; a retired key is a warning. */
 const checkUnknownKeys = (c: Checker, root: Mapping) => {
-  c.unknownKeys(root, MACHINE_KEYS, "");
-  const repos = root["repos"];
-  if (!Array.isArray(repos)) return;
-  repos.forEach((item, i) => {
-    if (isMapping(item)) c.unknownKeys(item, REPO_KEYS, `repos[${i}].`);
-  });
+  for (const key of RETIRED_MACHINE_KEYS) {
+    if (Object.hasOwn(root, key)) c.warn(key, RETIRED_KEY_MESSAGES[key]);
+  }
+  c.unknownKeys(root, [...MACHINE_KEYS, ...RETIRED_MACHINE_KEYS], "");
 };
 
 const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
@@ -409,15 +484,12 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     DEFAULT_MAX_CONCURRENT_GATES,
     1,
   );
-  const modelInstance = c.optionalNonEmptyString(
-    root,
-    "",
-    "model_instance",
-    DEFAULT_MODEL_INSTANCE,
-  );
-  const model = c.nonEmptyString(c.child(root, "", "model"), "model");
+  const feedbackSeconds = c.optionalUint(root, "", "feedback_seconds", DEFAULT_FEEDBACK_SECONDS, 0);
   const notify = c.optionalBoolean(root, "", "notify", true);
-  const repos = reposFrom(c, root);
+  // Only checked here, so a bad value fails the load where a person sees it: autodeploy.sh reads
+  // keep_versions from the file and the server has no use for it.
+  const keepVersions = c.optionalUint(root, "", "keep_versions", DEFAULT_KEEP_VERSIONS, 0);
+  const minFreeGib = c.optionalUint(root, "", "min_free_gib", DEFAULT_MIN_FREE_GIB, 0);
   checkUnknownKeys(c, root);
 
   if (
@@ -425,10 +497,10 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     pollSeconds === undefined ||
     maxConcurrentRuns === undefined ||
     maxConcurrentGates === undefined ||
-    modelInstance === undefined ||
-    model === undefined ||
+    feedbackSeconds === undefined ||
     notify === undefined ||
-    repos === undefined
+    keepVersions === undefined ||
+    minFreeGib === undefined
   ) {
     return undefined;
   }
@@ -437,10 +509,9 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     pollSeconds,
     maxConcurrentRuns,
     maxConcurrentGates,
-    modelInstance,
-    model,
+    feedbackSeconds,
     notify,
-    repos,
+    minFreeGib,
   };
 };
 
@@ -454,14 +525,32 @@ export const parseProjectConfig = (
   return c.finish(projectFrom(c, parsed.success));
 };
 
+/**
+ * Whether a checkout's `.dw/config.yml` opts the repo into the factory: `"yes"` when the root is a
+ * mapping and its `factory` is a mapping, `"no"` when it parses but is not, and `"unparsed"` when
+ * the text is not YAML at all (a merge conflict, a half-saved file), which is a read that did not
+ * finish rather than an answer. It does not validate the block: `world.project` reads and
+ * validates the GitHub copy, and a block that does not load shows up as that repo's config errors.
+ */
+export const factoryOptIn = (text: string): "yes" | "no" | "unparsed" => {
+  let value: unknown;
+  try {
+    value = parse(text, { intAsBigInt: true });
+  } catch {
+    return "unparsed";
+  }
+  return isMapping(value) && isMapping(value["factory"]) ? "yes" : "no";
+};
+
 export const parseMachineConfig = (
   text: string,
   file: string,
-): Result.Result<MachineConfig, ReadonlyArray<ConfigError>> => {
+): Result.Result<LoadedMachineConfig, ReadonlyArray<ConfigError>> => {
   const c = makeChecker(file);
   const parsed = c.root(text);
   if (Result.isFailure(parsed)) return Result.fail(parsed.failure);
-  return c.finish(machineFrom(c, parsed.success));
+  const config = machineFrom(c, parsed.success);
+  return c.finish(config === undefined ? undefined : { config, warnings: c.warnings });
 };
 
 const cannotRead = (file: string, cause: { readonly message: string }) =>
@@ -476,31 +565,29 @@ const toConfigErrors = <A>(
     : Effect.fail(new ConfigErrors({ file, errors: parsed.failure }));
 
 /** Reads the file on every call. Nothing is cached. */
-export const loadProjectConfig = (
+export const loadProjectConfig = Effect.fn("FactoryConfig.loadProjectConfig")(function* (
   file: string,
-): Effect.Effect<ProjectConfig, ConfigErrors, FileSystem.FileSystem> =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const text = yield* fs
-      .readFileString(file)
-      .pipe(Effect.mapError((cause) => cannotRead(file, cause)));
-    return yield* toConfigErrors(file, parseProjectConfig(text, file));
-  });
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const text = yield* fs
+    .readFileString(file)
+    .pipe(Effect.mapError((cause) => cannotRead(file, cause)));
+  return yield* toConfigErrors(file, parseProjectConfig(text, file));
+});
 
 /** Reads the file on every call. A file that does not exist is `Option.none()`. */
-export const loadMachineConfig = (
+export const loadMachineConfig = Effect.fn("FactoryConfig.loadMachineConfig")(function* (
   file: string,
-): Effect.Effect<Option.Option<MachineConfig>, ConfigErrors, FileSystem.FileSystem> =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const text = yield* fs.readFileString(file).pipe(
-      Effect.asSome,
-      Effect.catch((cause) =>
-        cause.reason._tag === "NotFound"
-          ? Effect.succeed(Option.none<string>())
-          : Effect.fail(cannotRead(file, cause)),
-      ),
-    );
-    if (Option.isNone(text)) return Option.none<MachineConfig>();
-    return Option.some(yield* toConfigErrors(file, parseMachineConfig(text.value, file)));
-  });
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const text = yield* fs.readFileString(file).pipe(
+    Effect.asSome,
+    Effect.catch((cause) =>
+      cause.reason._tag === "NotFound"
+        ? Effect.succeed(Option.none<string>())
+        : Effect.fail(cannotRead(file, cause)),
+    ),
+  );
+  if (Option.isNone(text)) return Option.none<LoadedMachineConfig>();
+  return Option.some(yield* toConfigErrors(file, parseMachineConfig(text.value, file)));
+});

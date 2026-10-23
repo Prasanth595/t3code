@@ -21,6 +21,9 @@ import {
 } from "../../orchestration-v2/testkit/fixtures/shared.ts";
 import {
   MULTI_TURN_TRANSCRIPT,
+  SETTINGS_MODEL,
+  SIMPLE_PROMPT,
+  SIMPLE_TRANSCRIPT,
   createProject,
   git,
   initRepoWithCommit,
@@ -49,7 +52,11 @@ it.live(
           yield* createProject(repo);
 
           const sessions = yield* Sessions.FactorySessions;
-          assert.strictEqual(yield* sessions.findProject(repo), projectId);
+          // The kit's project has no default model, so the settings default is the one.
+          assert.deepStrictEqual(yield* sessions.findProject(repo), {
+            id: projectId,
+            model: SETTINGS_MODEL,
+          });
           assert.strictEqual(yield* sessions.findProject(`${repo}/`), null);
 
           const request: Sessions.LaunchRequest = {
@@ -141,4 +148,48 @@ it.live(
         );
       }),
     ).pipe(Effect.provide(Layer.merge(layerGit, NodeServices.layer))),
+);
+
+it.live("finds a thread whose worktree lost its checkout, and not once it is archived", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const base = yield* fs.makeTempDirectoryScoped({ prefix: "t3-factory-sessions-" });
+      const repo = path.join(base, "repo");
+      const worktreesDir = path.join(base, "worktrees");
+      yield* fs.makeDirectory(repo);
+      yield* fs.makeDirectory(worktreesDir);
+      const baseRef = yield* initRepoWithCommit(repo);
+
+      yield* Effect.gen(function* () {
+        yield* createProject(repo);
+        const sessions = yield* Sessions.FactorySessions;
+        const launched = yield* sessions.launch({
+          commandId: "softfac:factory-sessions-contract:broken-worktree",
+          projectId,
+          title: "Factory contract",
+          baseRef,
+          startFromOrigin: false,
+          message: SIMPLE_PROMPT,
+          model: { instanceId: "claudeAgent", model: "claude-sonnet-4-6" },
+        });
+        const threadId = ThreadId.make(launched.threadId);
+        assert.strictEqual((yield* runStatusesUntilTerminal(threadId)).at(-1), "completed");
+        const worktreePath = (yield* sessions.thread(launched.threadId)).worktreePath!;
+        assert.deepStrictEqual(yield* sessions.brokenWorktrees, []);
+
+        // What a removal stopped partway leaves: the folder, without its checkout.
+        yield* fs.remove(path.join(worktreePath, ".git"));
+        assert.deepStrictEqual(yield* sessions.brokenWorktrees, [
+          { threadId: launched.threadId, worktreePath, threadsOnPath: [launched.threadId] },
+        ]);
+
+        // An archived thread keeps its path, so a later find still names it beside a live one.
+        yield* sessions.archive(launched.threadId);
+        assert.strictEqual((yield* sessions.thread(launched.threadId)).worktreePath, worktreePath);
+        assert.deepStrictEqual(yield* sessions.brokenWorktrees, []);
+      }).pipe(Effect.provide(layerRuntime({ repo, worktreesDir, transcript: SIMPLE_TRANSCRIPT })));
+    }),
+  ).pipe(Effect.provide(Layer.merge(layerGit, NodeServices.layer))),
 );

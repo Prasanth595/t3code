@@ -12,6 +12,7 @@ import {
   type ConfigError,
   ConfigErrors,
   formatConfigError,
+  factoryOptIn,
   loadMachineConfig,
   loadProjectConfig,
   parseMachineConfig,
@@ -36,10 +37,6 @@ factory:
 const MACHINE = `
 gh_config_dir: /Users/me/.config/softfac/gh
 max_concurrent_runs: 1
-model: claude-sonnet-5-5
-repos:
-  - repo: rawphp/softfac
-    path: /Users/me/EA/projects/softfac
 `;
 
 const PFILE = "/r/.dw/config.yml";
@@ -90,12 +87,14 @@ const project = (text: string) => {
   return result.success;
 };
 
-const machine = (text: string) => {
+const machineLoaded = (text: string) => {
   const result = parseMachineConfig(text, MFILE);
   if (Result.isFailure(result))
     throw new Error(`unexpected errors: ${JSON.stringify(result.failure)}`);
   return result.success;
 };
+
+const machine = (text: string) => machineLoaded(text).config;
 
 /** Assert exactly one error whose field and file are exactly as given. */
 const assertOne = (errs: ReadonlyArray<ConfigError>, field: string, file: string) => {
@@ -127,7 +126,7 @@ const machineMissing = (path: string, errorPath = path) => {
   assertOne(machineErr(edit(MACHINE, (t) => remove(t, path))), errorPath, MFILE);
 };
 
-/** Set `editPath` (tree address, e.g. `repos.0.path`), expect the error at `errorPath` (`repos[0].path`). */
+/** Set `editPath` (tree address, e.g. `a.0.b`), expect the error at `errorPath` (`a[0].b`). */
 const machineBadAt = (editPath: string, errorPath: string, yaml: string) => {
   assertOne(machineErr(edit(MACHINE, (t) => set(t, editPath, yaml))), errorPath, MFILE);
 };
@@ -201,10 +200,9 @@ describe("project config", () => {
     const CHECKS = "factory.required_checks";
     const CHECKS_MINUTES = "factory.limits.checks_minutes";
 
-    it("project required checks are not supported yet: a non-empty list is one error", () => {
-      const errs = projectErr(edit(PROJECT, (t) => set(t, CHECKS, '[gate, "build (linux)"]')));
-      assertOne(errs, CHECKS, PFILE);
-      expect(errs[0]!.message).toBe("required_checks is not supported yet");
+    it("project required checks are kept as given", () => {
+      const c = project(edit(PROJECT, (t) => set(t, CHECKS, '[gate, "build (linux)"]')));
+      expect(c.requiredChecks).toEqual(["gate", "build (linux)"]);
     });
 
     it("project required checks may be an empty list", () => {
@@ -217,10 +215,6 @@ describe("project config", () => {
         const errs = projectErr(edit(PROJECT, (t) => set(t, CHECKS, bad)));
         expect(errs.length, bad).toBeGreaterThan(0);
         for (const e of errs) expect(e.field?.startsWith(CHECKS), `${bad}: ${e.field}`).toBe(true);
-        expect(
-          errs.some((e) => e.message === "required_checks is not supported yet"),
-          bad,
-        ).toBe(false);
       }
       const errs = projectErr(edit(PROJECT, (t) => set(t, CHECKS, '[gate, ""]')));
       assertOne(errs, "factory.required_checks[1]", PFILE);
@@ -418,6 +412,34 @@ describe("formatConfigError", () => {
   });
 });
 
+describe("factoryOptIn", () => {
+  it('is "yes" when the root has a factory mapping', () => {
+    expect(factoryOptIn(PROJECT)).toBe("yes");
+    expect(factoryOptIn("factory: {}\n")).toBe("yes");
+  });
+  it('is "yes" for a block that would not validate: it only decides the opt-in', () => {
+    expect(factoryOptIn("factory:\n  base: 5\n")).toBe("yes");
+  });
+  it('is "no" when there is no factory key', () => {
+    expect(factoryOptIn("tracker:\n  backend: do-work-io\n")).toBe("no");
+  });
+  it('is "no" when factory is not a mapping', () => {
+    expect(factoryOptIn("factory: 1\n")).toBe("no");
+    expect(factoryOptIn("factory: [a]\n")).toBe("no");
+    expect(factoryOptIn("factory:\n")).toBe("no");
+  });
+  it('is "unparsed" for invalid YAML, which is a read that did not finish', () => {
+    expect(factoryOptIn("factory: [unclosed\n")).toBe("unparsed");
+    expect(factoryOptIn("<<<<<<< HEAD\nfactory: {}\n=======\nfactory: {}\n>>>>>>> main\n")).toBe(
+      "unparsed",
+    );
+  });
+  it('is "no" when the document is not a mapping', () => {
+    expect(factoryOptIn("- factory\n")).toBe("no");
+    expect(factoryOptIn("")).toBe("no");
+  });
+});
+
 describe("machine config", () => {
   it("machine valid resolves every field and the defaults", () => {
     expect(machine(MACHINE)).toEqual({
@@ -425,11 +447,110 @@ describe("machine config", () => {
       pollSeconds: 60,
       maxConcurrentRuns: 1,
       maxConcurrentGates: 2,
-      modelInstance: "claudeAgent",
-      model: "claude-sonnet-5-5",
+      feedbackSeconds: 600,
       notify: true,
-      repos: [{ repo: "rawphp/softfac", path: "/Users/me/EA/projects/softfac" }],
+      minFreeGib: 10,
     });
+    expect(machineLoaded(MACHINE).warnings).toEqual([]);
+  });
+
+  // #106 retired the key: the factory watches the T3 projects of its environment instead.
+  it("machine repos is no longer read, and is one warning naming repos", () => {
+    const t = edit(MACHINE, (tree) => {
+      tree.repos = [{ repo: "rawphp/softfac", path: "/Users/me/EA/projects/softfac" }];
+    });
+    const loaded = machineLoaded(t);
+    expect(loaded.config).not.toHaveProperty("repos");
+    expect(loaded.warnings).toEqual([
+      {
+        file: MFILE,
+        field: "repos",
+        message:
+          "is no longer used: the factory watches the T3 projects of this environment whose checkout has a .dw/config.yml with a factory block",
+      },
+    ]);
+  });
+
+  it("machine repos of any type is a warning, never an error", () => {
+    for (const yaml of ["nope", "[]", "5", "{a: 1}", "[{repo: a/b, pathh: x}]"]) {
+      const loaded = machineLoaded(edit(MACHINE, (tree) => set(tree, "repos", yaml)));
+      expect(loaded.warnings.map((w) => w.field)).toEqual(["repos"]);
+    }
+  });
+
+  it("machine the three retired keys are three warnings, in the order of the retired list", () => {
+    const loaded = machineLoaded(
+      edit(MACHINE, (tree) => {
+        set(tree, "repos", "[]");
+        set(tree, "model", "x");
+        set(tree, "model_instance", "y");
+      }),
+    );
+    expect(loaded.warnings.map((w) => w.field)).toEqual(["model_instance", "model", "repos"]);
+  });
+
+  // The keys were retired by #93: the model now comes from the T3 project, then the T3 settings.
+  // A file written before that must keep loading, so the factory that builds the upgrade stays up.
+  it("machine model_instance and model are no longer read, and each is one warning", () => {
+    const t = edit(MACHINE, (tree) => {
+      set(tree, "model_instance", "claudeAgent");
+      set(tree, "model", "claude-sonnet-5-5");
+    });
+    const loaded = machineLoaded(t);
+    expect(loaded.config).not.toHaveProperty("model");
+    expect(loaded.config).not.toHaveProperty("modelInstance");
+    expect(loaded.warnings).toEqual([
+      {
+        file: MFILE,
+        field: "model_instance",
+        message:
+          "is no longer used: the model comes from the T3 project's default model, then the T3 settings default",
+      },
+      {
+        file: MFILE,
+        field: "model",
+        message:
+          "is no longer used: the model comes from the T3 project's default model, then the T3 settings default",
+      },
+    ]);
+  });
+
+  it("machine a retired key of any type is a warning, never an error", () => {
+    const loaded = machineLoaded(edit(MACHINE, (tree) => set(tree, "model", "[x]")));
+    expect(loaded.warnings.map((w) => w.field)).toEqual(["model"]);
+  });
+
+  it("machine min_free_gib defaults to 10 and can be zero or more", () => {
+    expect(machine(MACHINE).minFreeGib).toBe(10);
+    for (const given of [0, 1, 25]) {
+      expect(machine(edit(MACHINE, (t) => set(t, "min_free_gib", String(given)))).minFreeGib).toBe(
+        given,
+      );
+    }
+  });
+
+  it("machine min_free_gib must be an integer of at least zero", () => {
+    for (const bad of ['"ten"', "-1", "1.5"]) {
+      const errs = machineErr(edit(MACHINE, (t) => set(t, "min_free_gib", bad)));
+      assertOne(errs, "min_free_gib", MFILE);
+    }
+  });
+
+  it("machine feedback_seconds defaults to 600 and can be zero or more", () => {
+    expect(machine(MACHINE).feedbackSeconds).toBe(600);
+    for (const given of [0, 120]) {
+      expect(
+        machine(edit(MACHINE, (t) => set(t, "feedback_seconds", String(given)))).feedbackSeconds,
+      ).toBe(given);
+    }
+  });
+
+  it("machine feedback_seconds must be an integer of at least zero", () => {
+    for (const bad of ["-1", "1.5"]) {
+      const errs = machineErr(edit(MACHINE, (t) => set(t, "feedback_seconds", bad)));
+      assertOne(errs, "feedback_seconds", MFILE);
+      expect(errs[0]!.message).toBe("must be an integer of at least 0");
+    }
   });
 
   it("machine notify can be turned off", () => {
@@ -442,31 +563,36 @@ describe("machine config", () => {
     expect(errs[0]!.message).toBe("must be true or false");
   });
 
+  // autodeploy.sh reads keep_versions; the server only checks it, so a typo fails the load.
+  it("machine keep_versions may be zero or more and nothing else", () => {
+    for (const value of ["0", "3", "10"]) {
+      expect(machineLoaded(edit(MACHINE, (t) => set(t, "keep_versions", value))).warnings).toEqual(
+        [],
+      );
+    }
+    expect(machineErr(edit(MACHINE, (t) => set(t, "keep_versions", "-1")))[0]!.message).toBe(
+      "must be an integer of at least 0",
+    );
+    const errs = machineErr(edit(MACHINE, (t) => set(t, "keep_versions", '"3"')));
+    assertOne(errs, "keep_versions", MFILE);
+    expect(errs[0]!.message).toBe("must be an integer");
+  });
+
   it("machine every key can be set", () => {
     const t = edit(MACHINE, (tree) => {
       set(tree, "poll_seconds", "10");
       set(tree, "max_concurrent_runs", "3");
       set(tree, "max_concurrent_gates", "4");
-      set(tree, "model_instance", "codex");
     });
     const c = machine(t);
     expect(c.pollSeconds).toBe(10);
     expect(c.maxConcurrentRuns).toBe(3);
     expect(c.maxConcurrentGates).toBe(4);
-    expect(c.modelInstance).toBe("codex");
   });
 
   describe("required keys", () => {
     it("machine missing gh config dir", () => machineMissing("gh_config_dir"));
     it("machine missing max concurrent runs", () => machineMissing("max_concurrent_runs"));
-    it("machine missing model", () => machineMissing("model"));
-    it("machine missing repos", () => machineMissing("repos"));
-    it("machine repo missing repo", () => machineMissing("repos.0.repo", "repos[0].repo"));
-    it("machine repo missing path", () => {
-      const t = edit(MACHINE, (tree) => remove(tree, "repos.0.path"));
-      assertOne(machineErr(t), "repos[0].path", MFILE);
-      expect(machineErr(t)[0]!.message).toBe("is missing");
-    });
   });
 
   describe("integers", () => {
@@ -497,7 +623,7 @@ describe("machine config", () => {
   });
 
   describe("strings", () => {
-    const KEYS = ["model", "model_instance", "gh_config_dir"];
+    const KEYS = ["gh_config_dir"];
     it.each(KEYS)("machine %s empty", (key) => {
       machineBad(key, '""');
       expect(machineErr(edit(MACHINE, (t) => set(t, key, '""')))[0]!.message).toBe(
@@ -512,73 +638,34 @@ describe("machine config", () => {
     });
   });
 
-  describe("repos", () => {
-    it("machine repos as a string is not a list", () => {
-      machineBad("repos", "nope");
-      expect(machineErr(edit(MACHINE, (t) => set(t, "repos", "nope")))[0]!.message).toBe(
-        "must be a list",
-      );
-    });
-    it("machine repos empty", () => {
-      machineBad("repos", "[]");
-      expect(machineErr(edit(MACHINE, (t) => set(t, "repos", "[]")))[0]!.message).toBe(
-        "must not be empty",
-      );
-    });
-    it("machine repo item not a mapping", () => {
-      machineBadAt("repos.0", "repos[0]", "5");
-      expect(machineErr(edit(MACHINE, (t) => set(t, "repos.0", "5")))[0]!.message).toBe(
-        "must be a mapping",
-      );
-    });
-    it("machine repo and path must be non-empty strings", () => {
-      machineBadAt("repos.0.repo", "repos[0].repo", '""');
-      machineBadAt("repos.0.path", "repos[0].path", "[x]");
-    });
-    it("machine reads several repos in order", () => {
-      const t = edit(MACHINE, (tree) => {
-        tree.repos.push({ repo: "a/b", path: "/b" });
-      });
-      expect(machine(t).repos.map((r) => r.repo)).toEqual(["rawphp/softfac", "a/b"]);
-    });
-  });
-
   describe("unknown keys", () => {
     it("machine unknown top-level key is one file-level error", () => {
       const errs = machineErr(edit(MACHINE, (t) => set(t, "self_updte", "1")));
       assertFileLevel(errs, MFILE, "unknown key self_updte");
       expect(formatConfigError(errs[0]!)).toBe(`${MFILE}: unknown key self_updte`);
     });
-    it("machine unknown key inside a repo is named by its path", () => {
-      const errs = machineErr(edit(MACHINE, (t) => set(t, "repos.0.pathh", "x")));
-      assertFileLevel(errs, MFILE, "unknown key repos[0].pathh");
-    });
     it("machine two unknown keys are two errors, after the field errors", () => {
       const t = edit(MACHINE, (tree) => {
         set(tree, "zzz", "1");
-        remove(tree, "model");
-        set(tree, "repos.0.pathh", "x");
+        remove(tree, "gh_config_dir");
+        set(tree, "yyy", "2");
       });
       const errs = machineErr(t);
       expect(errs.map(formatConfigError)).toEqual([
-        `${MFILE}: model: is missing`,
+        `${MFILE}: gh_config_dir: is missing`,
         `${MFILE}: unknown key zzz`,
-        `${MFILE}: unknown key repos[0].pathh`,
+        `${MFILE}: unknown key yyy`,
       ]);
-    });
-    it("machine does not look for unknown keys inside a value of the wrong type", () => {
-      const errs = machineErr(edit(MACHINE, (t) => set(t, "repos", "{a: 1}")));
-      assertOne(errs, "repos", MFILE);
     });
   });
 
   it("machine reports all errors together", () => {
     const t = edit(MACHINE, (tree) => {
-      remove(tree, "model");
+      remove(tree, "gh_config_dir");
       set(tree, "poll_seconds", "1");
       set(tree, "max_concurrent_runs", "0");
     });
-    expect(fields(machineErr(t))).toEqual(["poll_seconds", "max_concurrent_runs", "model"]);
+    expect(fields(machineErr(t))).toEqual(["gh_config_dir", "poll_seconds", "max_concurrent_runs"]);
   });
 
   it("machine invalid yaml names the file", () => {
@@ -623,11 +710,14 @@ describe("loaders", () => {
         const file = path.join(dir, "config.yml");
         yield* fs.writeFileString(file, MACHINE);
         const first = yield* loadMachineConfig(file);
-        expect(Option.map(first, (c) => c.model)).toEqual(Option.some("claude-sonnet-5-5"));
+        expect(Option.map(first, (c) => c.config.maxConcurrentRuns)).toEqual(Option.some(1));
 
-        yield* fs.writeFileString(file, MACHINE.replace("claude-sonnet-5-5", "claude-opus-4-8"));
+        yield* fs.writeFileString(
+          file,
+          MACHINE.replace("max_concurrent_runs: 1", "max_concurrent_runs: 3"),
+        );
         const second = yield* loadMachineConfig(file);
-        expect(Option.map(second, (c) => c.model)).toEqual(Option.some("claude-opus-4-8"));
+        expect(Option.map(second, (c) => c.config.maxConcurrentRuns)).toEqual(Option.some(3));
       }),
     ),
   );
@@ -636,9 +726,11 @@ describe("loaders", () => {
     withTempDir((dir, fs, path) =>
       Effect.gen(function* () {
         const file = path.join(dir, "config.yml");
-        yield* fs.writeFileString(file, MACHINE.replace("model: claude-sonnet-5-5\n", ""));
+        yield* fs.writeFileString(file, MACHINE.replace("max_concurrent_runs: 1\n", ""));
         const failure = yield* Effect.flip(loadMachineConfig(file));
-        expect(failure.errors.map(formatConfigError)).toEqual([`${file}: model: is missing`]);
+        expect(failure.errors.map(formatConfigError)).toEqual([
+          `${file}: max_concurrent_runs: is missing`,
+        ]);
       }),
     ),
   );
@@ -666,7 +758,7 @@ describe("loaders", () => {
 
   // factory/config.example.yml is what the handover runbook tells a person to copy to
   // ~/.config/t3fac/factory/config.yml, so it must load as it stands.
-  effectIt.effect("the example machine config loads and watches the fork from its own clone", () =>
+  effectIt.effect("the example machine config loads as it stands, with no warning", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const file = yield* path.fromFileUrl(
@@ -674,19 +766,16 @@ describe("loaders", () => {
       );
       expect(yield* loadMachineConfig(file)).toEqual(
         Option.some({
-          ghConfigDir: "/Users/tomkaczocha/.config/t3fac/gh",
-          pollSeconds: 60,
-          maxConcurrentRuns: 1,
-          maxConcurrentGates: 1,
-          modelInstance: "claudeAgent",
-          model: "claude-fable-5-1",
-          notify: true,
-          repos: [
-            {
-              repo: "original-solutions/t3code-factory",
-              path: "/Users/tomkaczocha/EA/projects/t3code-factory-fac",
-            },
-          ],
+          warnings: [],
+          config: {
+            ghConfigDir: "/Users/tomkaczocha/.config/t3fac/gh",
+            pollSeconds: 60,
+            maxConcurrentRuns: 1,
+            maxConcurrentGates: 1,
+            feedbackSeconds: 600,
+            notify: true,
+            minFreeGib: 10,
+          },
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer)),

@@ -1,0 +1,36 @@
+:root {
+  --vp-c-brand-1: #0f766e;
+  --vp-c-brand-2: #0d9488;
+  --vp-c-brand-3: #14b8a6;
+  --vp-c-brand-soft: rgba(20, 184, 166, 0.14);
+}
+
+.dark {
+  --vp-c-brand-1: #2dd4bf;
+  --vp-c-brand-2: #14b8a6;
+  --vp-c-brand-3: #0d9488;
+  --vp-c-brand-soft: rgba(45, 212, 191, 0.16);
+}
+
+.VPNavBarTitle .title {
+  font-family: var(--vp-font-family-mono);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Each screenshot comes in a light and a dark version; show the one for the current theme. */
+.dark .light-only,
+html:not(.dark) .dark-only {
+  display: none;
+}
+
+.vp-doc img.screenshot {
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+}
+
+/* The click-to-zoom overlay sits above the nav bar. */
+.medium-zoom-overlay,
+.medium-zoom-image--opened {
+  z-index: 100;
+}

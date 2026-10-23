@@ -87,17 +87,26 @@ export type ApprovalIssue = (typeof ApprovalAnswer.Type)["data"]["repository"]["
 const asciiLower = (text: string): string => text.replace(/[A-Z]/g, (char) => char.toLowerCase());
 
 /**
+ * Whether the account's login is an instructor's, in any case. A deleted account (none) never is.
+ * For text that only needs to be an instructor's, such as a comment's; the approval asks for
+ * {@link isHumanInstructor}.
+ */
+export const isInstructor = (
+  actor: { readonly login: string } | null | undefined,
+  instructors: ReadonlyArray<string>,
+): boolean =>
+  actor !== null &&
+  actor !== undefined &&
+  instructors.some((name) => asciiLower(name) === asciiLower(actor.login));
+
+/**
  * An instructor who is a person: GitHub says the actor is a `User`. A GitHub App's GraphQL login
  * can lack the `[bot]` suffix, so a login that matches an instructor is not enough.
  */
 export const isHumanInstructor = (
   actor: Actor | null | undefined,
   instructors: ReadonlyArray<string>,
-): boolean =>
-  actor !== null &&
-  actor !== undefined &&
-  actor.__typename === "User" &&
-  instructors.some((name) => asciiLower(name) === asciiLower(actor.login));
+): boolean => actor?.__typename === "User" && isInstructor(actor, instructors);
 
 /** Whether a page may leave out older entries: it is full, or GitHub counts more than it holds. */
 const isCutOff = (page: { readonly totalCount: number; readonly nodes: ReadonlyArray<unknown> }) =>

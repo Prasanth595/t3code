@@ -1,4 +1,4 @@
-// @effect-diagnostics globalDate:off - the fake GitHub stamps comments and label events with the wall clock, as GitHub does.
+// @effect-diagnostics globalDate:off - the fake GitHub formats its stamps as GitHub does.
 /**
  * One issue through the whole loop, with nothing faked but GitHub and the provider: the real
  * factory runtime (pass, claim, start, building, gate, ledger), the real orchestration layers
@@ -13,6 +13,7 @@
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -32,7 +33,14 @@ import * as Contract from "./t3/contract.testkit.ts";
 import * as Paths from "./t3/paths.ts";
 import * as Sessions from "./t3/sessions.ts";
 import { APPROVAL_QUERY } from "./tracker/approvalHistory.ts";
-import { CLOSED_BY_QUERY, MARKER, READY_BY_QUERY, STATUS_MARKER } from "./tracker/github.ts";
+import {
+  ACTIVITY_QUERY,
+  CLOSED_BY_QUERY,
+  PR_FEEDBACK_QUERY,
+  MARKER,
+  READY_BY_QUERY,
+  STATUS_MARKER,
+} from "./tracker/github.ts";
 
 const OWNER = "acme";
 const NAME = "widgets";
@@ -45,9 +53,6 @@ const LOGIN = "rawphp";
 const INSTRUCTOR = "tomkaczocha";
 const READY_AT = "2026-10-16T00:00:00Z";
 
-// ---- the fake GitHub -----------------------------------------------------------------------
-
-const utcNow = () => `${new Date().toISOString().slice(0, 19)}Z`;
 const json = (value: unknown) => JSON.stringify(value);
 
 const ok = (stdout: string): RunResult => ({
@@ -88,7 +93,17 @@ interface LabelEvent {
 }
 
 /** One issue (labels, assignee, comments, label timeline) and its one draft pull request. */
-const makeGitHub = (input: { readonly baseSha: string; readonly projectConfig: string }) => {
+const makeGitHub = (input: {
+  readonly baseSha: string;
+  readonly projectConfig: string;
+  /**
+   * The factory compares these stamps with its own clock (comments after a run's start, claims
+   * past their grace), and that clock is the live one, so GitHub reads the same clock.
+   */
+  readonly clock: Clock.Clock;
+}) => {
+  const utcNow = () =>
+    `${new Date(input.clock.currentTimeMillisUnsafe()).toISOString().slice(0, 19)}Z`;
   const labels = new Set<string>(["factory:ready"]);
   const assignees: Array<string> = [];
   const comments: Array<Comment> = [];
@@ -184,6 +199,38 @@ const makeGitHub = (input: { readonly baseSha: string; readonly projectConfig: s
         }),
       );
     }
+    if (query === ACTIVITY_QUERY) {
+      // The instructors never comment or edit the body in these runs.
+      return ok(
+        json({
+          data: {
+            repository: {
+              issue: {
+                body: "Build it.",
+                lastEditedAt: null,
+                editor: null,
+                userContentEdits: { totalCount: 0, nodes: [] },
+              },
+            },
+          },
+        }),
+      );
+    }
+    if (query === PR_FEEDBACK_QUERY) {
+      // The instructors never review or comment on the pull request in these runs.
+      return ok(
+        json({
+          data: {
+            repository: {
+              pullRequest: {
+                reviews: { totalCount: 0, pageInfo: { startCursor: null }, nodes: [] },
+                comments: { nodes: [] },
+              },
+            },
+          },
+        }),
+      );
+    }
     if (query === CLOSED_BY_QUERY) {
       return ok(json({ data: { repository: { issue: { timelineItems: { nodes: [] } } } } }));
     }
@@ -221,7 +268,11 @@ const makeGitHub = (input: { readonly baseSha: string; readonly projectConfig: s
           }),
         );
       }
-      if (first === `${repoPath}/issues/${ISSUE}/comments`) {
+      // The listing `forward` reads, from the start of the run on: all the comments there are.
+      if (
+        first === `${repoPath}/issues/${ISSUE}/comments` ||
+        first.startsWith(`${repoPath}/issues/${ISSUE}/comments?since=`)
+      ) {
         return ok(
           json(
             comments.map((c) => ({
@@ -313,8 +364,6 @@ const makeGitHub = (input: { readonly baseSha: string; readonly projectConfig: s
   };
 };
 
-// ---- the provider's transcript -------------------------------------------------------------
-
 /**
  * A recorded replay transcript with the prompts the factory will send and the replies the model
  * will give written in. The replay matches every outbound frame strictly, so a prompt that
@@ -355,8 +404,6 @@ const replayNdjson = (
 
 const reply = (text: string) => `${text}\nFACTORY-DONE: ${PR_URL}`;
 
-// ---- one issue through the loop ------------------------------------------------------------
-
 interface Spec {
   readonly fixture: URL;
   /** The one gate command, given a marker path outside the checkout. */
@@ -393,6 +440,14 @@ const scenario = (spec: Spec) =>
         path.join(remotes, OWNER, `${NAME}.git`),
       ]);
 
+      // The clone is the T3 project the factory watches: it opts in with a factory block in its
+      // `.dw/config.yml`, and T3 reads `owner/name` from its `origin` (never fetched; the gate
+      // fetches `gateRemoteBase`). The file stays untracked, so the checkout the gate fetches is
+      // the clone's commits as they were.
+      yield* Contract.git(repo, ["remote", "add", "origin", `https://github.com/${REPO}.git`]);
+      yield* fs.makeDirectory(path.join(repo, ".dw"));
+      yield* fs.writeFileString(path.join(repo, ".dw", "config.yml"), "factory:\n  base: main\n");
+
       const gateCommand = spec.gateCommand(path.join(base, "gated"));
       const projectConfig = json({
         factory: {
@@ -411,12 +466,9 @@ const scenario = (spec: Spec) =>
           `gh_config_dir: ${ghDir}`,
           "poll_seconds: 10",
           "max_concurrent_runs: 1",
-          "model_instance: claudeAgent",
-          "model: claude-sonnet-4-6",
           "notify: false",
-          "repos:",
-          `  - repo: ${REPO}`,
-          `    path: ${repo}`,
+          // Off, so the claim does not depend on the disk of the machine running the test.
+          "min_free_gib: 0",
           "",
         ].join("\n"),
       );
@@ -426,7 +478,7 @@ const scenario = (spec: Spec) =>
         spec.prompts(gateCommand, launchMessage(REPO, ISSUE, LOGIN, ghDir)),
         spec.replies,
       );
-      const github = makeGitHub({ baseSha, projectConfig });
+      const github = makeGitHub({ baseSha, projectConfig, clock: yield* Clock.Clock });
       const logs: Array<string> = [];
       const capture = Logger.make(({ message }) => {
         logs.push(Array.isArray(message) ? message.map(String).join(" ") : String(message));
@@ -453,20 +505,22 @@ const scenario = (spec: Spec) =>
           });
         }),
       ).pipe(Layer.provide(Process.layer));
+      const paths = Layer.succeed(Paths.FactoryPaths, {
+        baseDir: base,
+        worktreesDir,
+        factoryDir,
+        machineConfigPath,
+      });
       const factory = factoryRuntime({
         restartDelay: "100 millis",
         gateRemoteBase: `file://${remotes}`,
       }).pipe(
         Layer.provide(
           Layer.mergeAll(
-            Layer.succeed(Paths.FactoryPaths, {
-              baseDir: base,
-              worktreesDir,
-              factoryDir,
-              machineConfigPath,
-            }),
+            paths,
             fakeProcess,
             Gate.layer.pipe(Layer.provide(fakeProcess)),
+            Contract.layerWatchedRepos.pipe(Layer.provide(paths)),
           ),
         ),
       );
@@ -503,7 +557,12 @@ const scenario = (spec: Spec) =>
             Effect.provide(Logger.layer([capture], { mergeWithExisting: false })),
           );
           const loop = Context.get(built, FactoryLoop);
-          assert.deepStrictEqual(loop.status, { state: "running" });
+          // The first pass has not listed T3's projects yet, or has only just.
+          assert.strictEqual(loop.status.state, "running");
+          if (loop.status.state === "running") {
+            assert.strictEqual(loop.status.settings.pollSeconds, 10);
+            assert.strictEqual(loop.status.settings.maxConcurrentRuns, 1);
+          }
 
           // No wake of our own: the thread's run settling and a finished gate wake the loop, as
           // they do in the server, so the loop is never faster than that. Waiting only on the
@@ -528,6 +587,12 @@ const scenario = (spec: Spec) =>
                 : JSON.stringify(yield* Effect.result(sessionsEarly.status(early)));
             assert.fail(`the loop did not finish\nthread: ${threadNow}\n${diagnosis(entries)}`);
           }
+
+          // What the passes listed is the clone, read from T3's projects.
+          assert.deepStrictEqual(loop.status, {
+            state: "running",
+            settings: { pollSeconds: 10, maxConcurrentRuns: 1, repos: [REPO] },
+          });
 
           const sessions = yield* Sessions.FactorySessions;
           const launched = entries.find((entry) => entry.event === "session_launched");
@@ -572,8 +637,6 @@ const describe = (entry: Entry): string => {
       return entry.event;
   }
 };
-
-// ---- what softfac writes, in its order -----------------------------------------------------
 
 /** lifecycle.md "From ready to building", then the session's pull request (runner/start.test.ts STARTED). */
 const STARTED_AND_PR_OPENED = [

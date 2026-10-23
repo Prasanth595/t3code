@@ -14,10 +14,10 @@ import {
   type AppendIo,
   type SyncDir,
 } from "./appendFile.ts";
-import { LedgerUnknownEventError, LedgerIoError, errnoCode } from "./errors.ts";
+import { LedgerUnknownEventError, LedgerIoError, errnoCode, isLedgerError } from "./errors.ts";
 import { MACHINE_EVENT_FIELDS, buildData, issueKeyJson, type MachineEvent } from "./events.ts";
 import { NEWLINE } from "./limits.ts";
-import { decodeLine, isBlankLine, lineHead } from "./read.ts";
+import { decodeLine, field, isBlankLine, lineHead, scanLinesBack } from "./read.ts";
 import { formatTs } from "./time.ts";
 
 /** The file in the data dir that takes the events that belong to no run. */
@@ -145,14 +145,12 @@ export type MachineEntry = {
 };
 
 /**
- * Every line of the machine log, oldest first. A line that is not valid (such as the last one,
- * when a crash cut it off) is skipped, and a last line with no newline is still read if it
- * parses. A missing file is an empty log. A symlink or anything else that is not a regular file
- * is refused, as the log refuses to append to one: the file is opened without following a
- * symlink and without blocking, and checked on the open handle, so a swap after the check is
- * not followed.
+ * Opens the log for reading and runs `use` on the handle, closing it after. A missing file is
+ * `empty`. A symlink or anything else that is not a regular file is refused: the file is opened
+ * without following a symlink and without blocking, and checked on the open handle, so a swap
+ * after the check is not followed.
  */
-export const scanMachineLog = (dataDir: string): Array<MachineEntry> => {
+const withLogFd = <A>(dataDir: string, empty: A, use: (fd: number, path: string) => A): A => {
   const path = NodePath.join(dataDir, MACHINE_LOG);
   let fd: number;
   try {
@@ -161,30 +159,186 @@ export const scanMachineLog = (dataDir: string): Array<MachineEntry> => {
       NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW | NodeFS.constants.O_NONBLOCK,
     );
   } catch (error) {
-    if (errnoCode(error) === "ENOENT") return [];
+    if (errnoCode(error) === "ENOENT") return empty;
     throw new LedgerIoError({ path, cause: error });
   }
-  let bytes: Buffer;
   try {
     if (!NodeFS.fstatSync(fd).isFile()) throw new Error(NOT_REGULAR);
-    bytes = NodeFS.readFileSync(fd);
+    return use(fd, path);
   } catch (error) {
-    throw new LedgerIoError({ path, cause: error });
+    throw isLedgerError(error) ? error : new LedgerIoError({ path, cause: error });
   } finally {
     NodeFS.closeSync(fd);
   }
+};
 
+/** The entry on one line (without its newline), or `null` for a blank or invalid line. */
+const entryOfLine = (line: Uint8Array): MachineEntry | null => {
+  if (isBlankLine(line)) return null;
+  const object = decodeLine(line);
+  return object === null ? null : lineHead(object);
+};
+
+/**
+ * Every line of the machine log, oldest first. A line that is not valid (such as the last one,
+ * when a crash cut it off) is skipped, and a last line with no newline is still read if it
+ * parses. A missing file is an empty log. A symlink or anything else that is not a regular file
+ * is refused, as the log refuses to append to one.
+ */
+export const scanMachineLog = (dataDir: string): Array<MachineEntry> => {
+  const bytes = withLogFd(dataDir, Buffer.alloc(0), (fd) => NodeFS.readFileSync(fd));
   const entries: Array<MachineEntry> = [];
   let start = 0;
   while (start < bytes.length) {
     const newline = bytes.indexOf(NEWLINE, start);
     const end = newline === -1 ? bytes.length : newline;
-    const line = bytes.subarray(start, end);
+    const entry = entryOfLine(bytes.subarray(start, end));
     start = end + 1;
-    if (isBlankLine(line)) continue;
-    const object = decodeLine(line);
-    const head = object === null ? null : lineHead(object);
-    if (head !== null) entries.push(head);
+    if (entry !== null) entries.push(entry);
   }
   return entries;
 };
+
+/**
+ * Calls `visit` with the lines of the machine log, newest first, until it answers `"stop"` or the
+ * start of the file is reached, and returns how many bytes it read. The log is never rotated, so a
+ * reader that needs only its end reads only its end: the file is read backwards in chunks
+ * (`scanLinesBack`; the first is `firstChunk` bytes). The file is opened and a line skipped
+ * exactly as {@link scanMachineLog} does it, so the same entries come in the opposite order.
+ */
+export const scanMachineLogBack = (
+  dataDir: string,
+  visit: (entry: MachineEntry) => "continue" | "stop",
+  firstChunk?: number,
+): number =>
+  withLogFd(dataDir, 0, (fd) =>
+    scanLinesBack(
+      fd,
+      (line) => {
+        const entry = entryOfLine(line);
+        return entry === null ? "continue" : visit(entry);
+      },
+      firstChunk,
+    ),
+  );
+
+/**
+ * The entries of the machine log at or after `sinceMs`, oldest first: `scanMachineLogBack` read
+ * until the first entry older than `sinceMs`, so the months before it are never decoded. A missing
+ * log is an empty one. `firstChunk` is passed on, for a test of the chunking.
+ */
+export const machineLogSince = (
+  dataDir: string,
+  sinceMs: number,
+  firstChunk?: number,
+): Array<MachineEntry> => {
+  const newestFirst: Array<MachineEntry> = [];
+  scanMachineLogBack(
+    dataDir,
+    (entry) => {
+      if (entry.ms < sinceMs) return "stop";
+      newestFirst.push(entry);
+      return "continue";
+    },
+    firstChunk,
+  );
+  return newestFirst.reverse();
+};
+
+/** How long T3 trouble in the machine log counts as the cause of a session ending badly: ten minutes, fixed. */
+const T3_TROUBLE_WINDOW_MS = 10 * 60 * 1000;
+
+/**
+ * The newest sign of T3 trouble in the machine log at or after `nowMs` minus ten minutes: a
+ * `preflight_failed` whose check is `t3` (its `why`), or an `error` whose kind is `t3` (its
+ * `message`). Only the machine log is read, never a run's ledger, and only its tail
+ * (`machineLogSince`). Null for none, and for a log that does not exist yet. A restart of the
+ * server is not trouble here: its `server_started` line is read by `serverStartsSince`, and
+ * `interrupted` weighs it against the run's own times (`Evidence`).
+ */
+export const t3TroubleSince = (dataDir: string, nowMs: number): string | null => {
+  let newest: { readonly ms: number; readonly text: string } | null = null;
+  for (const entry of machineLogSince(dataDir, nowMs - T3_TROUBLE_WINDOW_MS)) {
+    const text =
+      entry.event === "preflight_failed" && field(entry.data, "check") === "t3"
+        ? field(entry.data, "why")
+        : entry.event === "error" && field(entry.data, "kind") === "t3"
+          ? field(entry.data, "message")
+          : undefined;
+    if (typeof text === "string" && (newest === null || entry.ms >= newest.ms)) {
+      newest = { ms: entry.ms, text };
+    }
+  }
+  return newest === null ? null : newest.text;
+};
+
+/**
+ * The `started_at` of every `server_started` line at or after `sinceMs`, oldest first: when this
+ * server, and the ones before it, started. A line whose `started_at` is not a number is skipped.
+ * Only the log's tail is read (`machineLogSince`); a missing log has none.
+ */
+export const serverStartsSince = (dataDir: string, sinceMs: number): Array<number> => {
+  const times: Array<number> = [];
+  for (const entry of machineLogSince(dataDir, sinceMs)) {
+    if (entry.event !== "server_started") continue;
+    const at = field(entry.data, "started_at");
+    if (typeof at === "number") times.push(at);
+  }
+  return times;
+};
+
+/**
+ * How far before the newest line ahead of a start that start's stop may lie: the old server
+ * writes `server_stopping` as it shuts down, so only lines racing the shutdown come after it.
+ */
+const STOP_SEARCH_MS = 10 * 60 * 1000;
+
+/**
+ * The `stopping_at` that belongs to each `server_started` line at or after `sinceMs`: the newest
+ * `server_stopping` before that start, back to the start before it, whatever its age. Oldest first.
+ * A start whose stop is not reached before a line ten minutes older than the newest line before
+ * it followed a crash, and has none. Read backwards (`scanMachineLogBack`) and stopped once the oldest start in the window has
+ * its stop or none, so a months-old log is not decoded in full. `bytes` is how much was read, for
+ * a test.
+ */
+export const readServerStopsForStarts = (
+  dataDir: string,
+  sinceMs: number,
+  firstChunk?: number,
+): { readonly stops: Array<number>; readonly bytes: number } => {
+  const newestFirst: Array<number> = [];
+  let needStop = false;
+  // The newest line before the start that needs a stop, once read.
+  let lastBeforeStart: number | null = null;
+  const bytes = scanMachineLogBack(
+    dataDir,
+    (entry) => {
+      if (entry.event === "server_started") {
+        if (typeof field(entry.data, "started_at") !== "number") return "continue";
+        if (entry.ms < sinceMs) return "stop";
+        needStop = true;
+        lastBeforeStart = null;
+        return "continue";
+      }
+      if (entry.event === "server_stopping") {
+        const at = field(entry.data, "stopping_at");
+        if (needStop && typeof at === "number") {
+          newestFirst.push(at);
+          needStop = false;
+        }
+        return "continue";
+      }
+      if (needStop) {
+        if (lastBeforeStart === null) lastBeforeStart = entry.ms;
+        else if (entry.ms < lastBeforeStart - STOP_SEARCH_MS) needStop = false;
+      }
+      return entry.ms < sinceMs && !needStop ? "stop" : "continue";
+    },
+    firstChunk,
+  );
+  return { stops: newestFirst.reverse(), bytes };
+};
+
+/** The stops `readServerStopsForStarts` finds, without the byte count. */
+export const serverStopsForStartsSince = (dataDir: string, sinceMs: number): Array<number> =>
+  readServerStopsForStarts(dataDir, sinceMs).stops;

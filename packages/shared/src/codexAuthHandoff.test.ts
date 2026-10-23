@@ -43,6 +43,19 @@ describe("Codex desktop handoff", () => {
       returnUrl: input.returnUrl,
     });
   });
+  it("hands off on the fork's schemes and rejects upstream's", () => {
+    expect(codexAuthHandoffUrl(input)).toMatch(/^t3code-factory:\/\/auth\/codex\?/u);
+    expect(codexAuthHandoffUrl(input, true)).toMatch(/^t3code-factory-dev:\/\/auth\/codex\?/u);
+    expect(readCodexAuthHandoff(codexAuthHandoffUrl(input, true), true)).toEqual(input);
+    const upstream = codexAuthHandoffUrl(input).replace("t3code-factory:", "t3code:");
+    expect(readCodexAuthHandoff(upstream, false)).toBeUndefined();
+    expect(
+      readCodexAuthHandoff(
+        codexAuthHandoffUrl(input, true).replace("t3code-factory-dev:", "t3code-dev:"),
+        true,
+      ),
+    ).toBeUndefined();
+  });
   it("rejects other handlers, schemes, arbitrary return sites, and non-OpenAI authorization", () => {
     const link = codexAuthHandoffUrl(input);
     expect(readCodexAuthHandoff(link, true)).toBeUndefined();

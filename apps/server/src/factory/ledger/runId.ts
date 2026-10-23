@@ -184,6 +184,15 @@ export const runPath = (dataDir: string, id: RunId): string => {
 };
 
 /**
+ * `<data dir>/feedback/<run id>.read`: two lines of epoch milliseconds as decimal text. The first
+ * is when the run's feedback was last read (tried, even if it failed). The second, which may be
+ * missing, is when the last read that succeeded and found nothing new started. The ledger
+ * removes the file when the run's `finished` line is written.
+ */
+export const feedbackReadFile = (dataDir: string, id: RunId): string =>
+  NodePath.join(dataDir, "feedback", `${runIdToString(id)}.read`);
+
+/**
  * The attempt number for a new run of this issue: one past the highest existing attempt, or 1.
  * The repo is matched case-insensitively. A runs directory that cannot be read counts as
  * empty; `Ledger.create` refuses to overwrite.

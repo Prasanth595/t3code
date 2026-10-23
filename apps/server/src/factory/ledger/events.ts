@@ -70,7 +70,20 @@ export type RunEvent =
         branch: string | null;
         model_instance: string | null;
         model: string | null;
+        /**
+         * The provider options the launch sent with the model (a reasoning effort, say), in T3's
+         * `ModelSelection.options` shape; null when it sent none.
+         */
+        model_options: ReadonlyArray<{
+          readonly id: string;
+          readonly value: string | boolean;
+        }> | null;
         resumed_from: ResumedFrom | null;
+        /**
+         * The branch the run lands on: the issue's `## Base`, else `factory.base`. Absent on a
+         * line written before the run's base was recorded, which reads as `factory.base`.
+         */
+        base?: string;
       };
     }
   | { readonly event: "comment_forwarded"; readonly data: { comment_id: string } }
@@ -170,7 +183,16 @@ export const RUN_EVENT_FIELDS = {
   triage_result: ["passed", "reasons"],
   questions_posted: ["questions"],
   answer_received: ["comment_id", "body_edited"],
-  session_launched: ["thread_id", "worktree", "branch", "model_instance", "model", "resumed_from"],
+  session_launched: [
+    "thread_id",
+    "worktree",
+    "branch",
+    "model_instance",
+    "model",
+    "model_options",
+    "resumed_from",
+    "base",
+  ],
   comment_forwarded: ["comment_id"],
   session_interrupted: [
     "resumes",
@@ -441,6 +463,10 @@ export type MachineEvent =
       readonly data: { n: number; thread_id: string; result: RetroResult; duration_ms: number };
     }
   | { readonly event: "worktrees_swept"; readonly data: { paths: ReadonlyArray<string> } }
+  /** This server started, at `started_at` (epoch ms, its process start). Written once at boot; `interrupted` weighs a session that ended badly against the starts in the last day. */
+  | { readonly event: "server_started"; readonly data: { started_at: number } }
+  /** This server is shutting down, at `stopping_at` (epoch ms): its shutdown marks every running turn `cancelled` about then. */
+  | { readonly event: "server_stopping"; readonly data: { stopping_at: number } }
   | {
       readonly event: "error";
       readonly data: { run?: string; step: CauseStep; kind: ErrorKind; message: string };
@@ -461,7 +487,7 @@ type MachineDataKeys<N extends MachineEventName> = KeysOfEach<
 >;
 
 /**
- * The 17 event types the machine log can hold, each with the names of its `data` fields in the
+ * The 19 event types the machine log can hold, each with the names of its `data` fields in the
  * order they are written. A type with more than one shape lists the fields of all of them: the
  * ones that are absent are left out, and the shapes share no field that is ordered differently.
  */
@@ -492,6 +518,8 @@ export const MACHINE_EVENT_FIELDS = {
   retro_started: ["n", "thread_id", "runs", "since_ms", "model_instance", "model"],
   retro_finished: ["n", "thread_id", "result", "duration_ms"],
   worktrees_swept: ["paths"],
+  server_started: ["started_at"],
+  server_stopping: ["stopping_at"],
   error: ["run", "step", "kind", "message"],
 } as const satisfies { readonly [N in MachineEventName]: ReadonlyArray<MachineDataKeys<N>> };
 

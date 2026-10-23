@@ -1,16 +1,25 @@
+import * as NodeChildProcess from "node:child_process";
+import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeVM from "node:vm";
 
-import { assert, describe, it } from "vite-plus/test";
+import { assert, describe, it, vi } from "vite-plus/test";
 
 import {
+  FORK_DESKTOP_APP_ID,
+  FORK_DESKTOP_DEV_APP_ID,
+  FORK_DESKTOP_DEV_SCHEME,
+  FORK_DESKTOP_SCHEME,
+} from "@t3tools/shared/forkIdentity";
+
+import {
+  APP_BUNDLE_ID,
+  APP_PROTOCOL_SCHEMES,
   makeDevelopmentEnvironmentScript,
   makeDevelopmentLauncherScript,
   resolveElectronBinaryPath,
-  resolveMacBundleInfoPlistStrings,
-  resolveMacCodeSignArguments,
-  resolveMacLauncherIconPaths,
   resolveMacLauncherPaths,
   writeDevelopmentLauncherScript,
 } from "./electron-launcher.mjs";
@@ -103,30 +112,49 @@ describe("electron development launcher", () => {
     assert.notInclude(script, "node_modules/electron");
   });
 
-  it("declares why the macOS app needs protected access", () => {
-    const values = resolveMacBundleInfoPlistStrings("T3 Code (Dev) Launcher");
+  it("registers the fork's bundle id and URL scheme, never upstream's", () => {
+    const forkSchemes = [FORK_DESKTOP_SCHEME, FORK_DESKTOP_DEV_SCHEME];
 
-    assert.equal(
-      values.NSScreenCaptureUsageDescription,
-      "T3 Code captures the active window when you use the snapshot shortcut.",
+    assert.match(
+      APP_BUNDLE_ID,
+      new RegExp(`^${FORK_DESKTOP_APP_ID.replaceAll(".", "\\.")}(\\.dev\\.[a-z0-9]+)?$`),
     );
-    assert.equal(
-      values.NSDocumentsFolderUsageDescription,
-      "T3 Code reads project files you open in the desktop app.",
+    assert.equal(APP_PROTOCOL_SCHEMES.length, 1);
+    assert.include(forkSchemes, APP_PROTOCOL_SCHEMES[0]);
+    assert.notInclude(APP_PROTOCOL_SCHEMES, "t3code");
+    assert.notInclude(APP_PROTOCOL_SCHEMES, "t3code-dev");
+    assert.match(
+      resolveMacLauncherPaths("/runtime/x.app").launcherExecutableName,
+      /^T3 Code Factory \((Dev|Beta)\) Launcher$/,
     );
   });
 
-  it("ad-hoc signs the complete development app bundle", () => {
-    assert.deepEqual(resolveMacCodeSignArguments("/runtime/T3 Code (Dev).app"), [
-      "--force",
-      "--deep",
-      "--sign",
-      "-",
-      "--timestamp=none",
-      "/runtime/T3 Code (Dev).app",
-    ]);
-  });
+  it("registers the fork's development bundle id and scheme under a dev server", async () => {
+    vi.stubEnv("VITE_DEV_SERVER_URL", "http://127.0.0.1:8526");
+    vi.resetModules();
+    try {
+      const launcher = await import("./electron-launcher.mjs");
+      const repoRoot = NodePath.resolve(import.meta.dirname, "..", "..", "..");
+      const suffix = NodePath.basename(repoRoot)
+        .toLowerCase()
+        .replaceAll(/[^a-z0-9]+/g, "");
+      const devBundleId = `${FORK_DESKTOP_DEV_APP_ID}.${suffix || "local"}`;
 
+      assert.equal(launcher.APP_BUNDLE_ID, devBundleId);
+      assert.deepEqual(launcher.APP_PROTOCOL_SCHEMES, [FORK_DESKTOP_DEV_SCHEME]);
+      assert.equal(
+        launcher.resolveMacLauncherPaths("/runtime/x.app").launcherExecutableName,
+        "T3 Code Factory (Dev) Launcher",
+      );
+      assert.include(
+        launcher.makeDevelopmentEnvironmentScript({ VITE_DEV_SERVER_URL: "http://127.0.0.1:8526" }),
+        `export T3CODE_DESKTOP_APP_USER_MODEL_ID='${devBundleId}'`,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
   it("restores execute permissions on an unchanged launcher", () => {
     const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-launcher-"));
     const launcherPath = NodePath.join(directory, "launcher");
@@ -140,15 +168,94 @@ describe("electron development launcher", () => {
       NodeFS.rmSync(directory, { recursive: true, force: true });
     }
   });
+});
 
-  it("derives launcher icons from canonical development and production assets", () => {
-    const development = resolveMacLauncherIconPaths("/runtime", true);
-    const production = resolveMacLauncherIconPaths("/runtime", false);
+async function startupCleanupPattern(desktopDir) {
+  const source = NodeFS.readFileSync(new URL("./dev-electron.mjs", import.meta.url), "utf8");
+  let pattern;
+  // Supply inert imports so the real startup runs without launching Electron or signalling processes.
+  await NodeVM.runInNewContext(
+    `(async () => { ${source.replace(/^import\s[\s\S]*?;\n/gm, "")} })()`,
+    {
+      NodeChildProcess: {
+        execFileSync: () => undefined,
+        spawnSync: (command, args) => {
+          if (command === "pkill" && args.includes("-f")) pattern = args.at(-1);
+        },
+        spawn: () => new NodeEvents.EventEmitter(),
+      },
+      NodeFS: { watch: () => ({ close: () => undefined }) },
+      NodeOS: { platform: () => "linux" },
+      NodePath,
+      desktopDir,
+      resolveDevProtocolClient: () => null,
+      resolveElectronLaunchCommand: (args) => ({ electronPath: "electron", args }),
+      waitForResources: async () => undefined,
+      URL,
+      process: {
+        env: { VITE_DEV_SERVER_URL: "http://localhost:1234" },
+        execPath: "node",
+        once: () => undefined,
+      },
+    },
+  );
+  assert.isString(pattern);
+  return pattern;
+}
 
-    // The source icons are real repo paths, joined for the host.
-    assert.match(development.sourceIconPath, /assets[\\/]dev[\\/]blueprint-macos-1024\.png$/);
-    assert.equal(development.generatedIconPath, "/runtime/icon-dev.icns");
-    assert.match(production.sourceIconPath, /assets[\\/]prod[\\/]black-macos-1024\.png$/);
-    assert.equal(production.generatedIconPath, "/runtime/icon-prod.icns");
-  });
+it
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Native pgrep is unavailable on Windows.
+  .skipIf(NodeOS.platform() === "win32")
+  .each([
+    "/tmp/t3-feature.one/apps/desktop",
+    "/tmp/t3-feature.one [two](three)+?^${four}|back\\slash*/apps/desktop",
+  ])("dev cleanup matches only the literal root argument: %s", async (desktopDir) => {
+  const pattern = await startupCleanupPattern(desktopDir);
+  const flag = `--t3code-dev-root=${desktopDir}`;
+  const argvCases = [
+    [flag],
+    [flag, "main.cjs"],
+    [flag.replace(".one", "Xone")],
+    [`${flag}-two`],
+    [`prefix${flag}`],
+    [`--t3code-dev-root=/other${desktopDir}`],
+  ];
+  const children = [];
+  try {
+    for (const args of argvCases) {
+      const child = NodeChildProcess.spawn(
+        process.execPath,
+        ["-e", "process.send('ready'); setInterval(() => {}, 1000)", "--", ...args],
+        { stdio: ["ignore", "ignore", "inherit", "ipc"] },
+      );
+      children.push(child);
+      await Promise.race([
+        NodeEvents.once(child, "message"),
+        NodeEvents.once(child, "exit").then(() => {
+          throw new Error("Fixture exited before readiness");
+        }),
+      ]);
+    }
+    // Use the native ERE engine, but never execute the launcher's signal-producing command.
+    const result = NodeChildProcess.spawnSync(
+      "pgrep",
+      ["-P", String(process.pid), "-f", "--", pattern],
+      { encoding: "utf8" },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    const matches = result.stdout.trim().split(/\s+/).map(Number);
+    assert.sameMembers(
+      matches,
+      children.slice(0, 2).map((child) => child.pid),
+    );
+  } finally {
+    await Promise.all(
+      children.map(async (child) => {
+        if (child.exitCode !== null || child.signalCode !== null) return;
+        const exited = NodeEvents.once(child, "exit");
+        child.kill("SIGTERM");
+        await exited;
+      }),
+    );
+  }
 });

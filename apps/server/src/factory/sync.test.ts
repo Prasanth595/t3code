@@ -18,8 +18,11 @@ const ROUTE_TREE = "apps/web/src/routeTree.gen.ts";
 // to $SYNC_TEST_LOG.repo. `gh` answers the calls sync.sh reads from:
 // `pr create` prints a URL, `pr list` prints $SYNC_TEST_PR_URL (the open pull
 // request its --jq asks for), and `issue list` prints every issue in
-// $SYNC_TEST_ISSUES as the `number<TAB>title` rows the script's --jq asks for,
-// so the script's own title match is what the test exercises. `vp` fails with
+// $SYNC_TEST_ISSUES as the `number<TAB>title<TAB>labels` rows the script's --jq
+// asks for (labels comma-joined), so the script's own title match is what the
+// test exercises. `workflow run` appends origin's main as it sees it to
+// $SYNC_TEST_LOG.main, and fails for the workflow file in $SYNC_TEST_DISPATCH_FAIL.
+// `vp` fails with
 // $SYNC_TEST_VP_FAIL as its output, the generator with $SYNC_TEST_REGENERATE_FAIL,
 // and `check.sh` with the file $SYNC_TEST_CHECK_OUTPUT, when each is set.
 // `check.sh` also pushes $SYNC_TEST_MOVE_MAIN's HEAD to origin's main when set,
@@ -38,9 +41,13 @@ case "$1 $2" in
   "issue list")
     node -e '
       for (const issue of JSON.parse(process.env.SYNC_TEST_ISSUES || "[]")) {
-        console.log(issue.number + "\\t" + issue.title);
+        console.log(issue.number + "\\t" + issue.title + "\\t" + (issue.labels || []).join(","));
       }
     '
+    ;;
+  "workflow run")
+    git ls-remote origin refs/heads/main | cut -f 1 >> "$SYNC_TEST_LOG.main"
+    [[ $3 != "\${SYNC_TEST_DISPATCH_FAIL:-}" ]] || exit 1
     ;;
 esac
 exit 0
@@ -134,13 +141,15 @@ const makeFork = (upstreamLine: string, forkChanges: Record<string, string> = {}
   write(fork, "factory/scripts/regenerate-routes.sh", regenerateStub, 0o755);
   for (const [file, content] of Object.entries(forkChanges)) write(fork, file, content);
   commit(fork, "factory files");
-  git(dir, "init", "-q", "--bare", origin);
+  git(dir, "init", "-q", "--bare", "-b", "main", origin);
   git(fork, "remote", "set-url", "origin", ORIGIN_URL);
   git(fork, "config", `url.${origin}.insteadOf`, ORIGIN_URL);
   git(fork, "push", "-q", "-u", "origin", "main");
 };
 
 // The environment both phases share; prepare gets no token, as in the workflow.
+// GITHUB_ACTIONS is empty unless a test sets it, since the suite itself runs
+// under Factory CI, where it is set.
 const phaseEnv = (log: string, env: Record<string, string>, token: boolean) => {
   const { GH_TOKEN: _ghToken, GITHUB_TOKEN: _githubToken, ...rest } = process.env;
   return {
@@ -148,6 +157,7 @@ const phaseEnv = (log: string, env: Record<string, string>, token: boolean) => {
     PATH: `${NodePath.join(dir, "bin")}:${process.env.PATH}`,
     SYNC_UPSTREAM: upstream,
     SYNC_TEST_LOG: log,
+    GITHUB_ACTIONS: "",
     ...(token ? { GH_TOKEN: "secret" } : {}),
     ...env,
   };
@@ -190,6 +200,7 @@ const results = (log: string, prepared: number) => {
     publishCalls: calls.slice(prepared),
     tokens: readLines(`${log}.env`),
     repos: readLines(`${log}.repo`),
+    dispatchedOn: readLines(`${log}.main`),
     body: NodeFS.existsSync(`${log}.body`) ? NodeFS.readFileSync(`${log}.body`, "utf8") : "",
   };
 };
@@ -291,7 +302,9 @@ describe("sync.sh", () => {
     // Upstream's code runs only in prepare, and gh only in publish.
     expect(prepareCalls).toEqual(["vp i", "check.sh"]);
     expect(publishCalls.every((call) => call.startsWith("gh "))).toBe(true);
-    expect(stdout).toContain(`sync: ${NEWEST} merged into main through https://example.test/pr/1`);
+    expect(stdout.trim().split("\n").at(-1)).toBe(
+      `sync: ${NEWEST} merged into main through https://example.test/pr/1`,
+    );
     expect(calls.slice(0, 2)).toEqual(["vp i", "check.sh"]);
     expect(tokens).toEqual(["vp unset", "check.sh unset", "gh secret"]);
     expect(repos).toEqual(["acme/fork"]);
@@ -311,6 +324,71 @@ describe("sync.sh", () => {
     expect(originFile(branch, "factory/scripts/check.sh")).toBe(checkStub.trim());
     expect(git(origin, "rev-list", "--count", `${branch}^1..${branch}`)).toBe("3");
     expect(git(origin, "log", "-1", "--format=%P", branch).split(" ")).toHaveLength(2);
+  });
+
+  it("dispatches Factory CI and desktop on the landed commit inside the workflow", () => {
+    makeFork(`${OLD} ${oldSha}`);
+    const { status, stdout, calls, dispatchedOn } = run({ GITHUB_ACTIONS: "true" });
+    expect(status).toBe(0);
+    expect(stdout.trim().split("\n").at(-1)).toBe(
+      `sync: ${NEWEST} merged into main through https://example.test/pr/1; dispatched factory-ci.yml, factory-desktop.yml`,
+    );
+    // Each dispatch sees main already landed on the sync merge.
+    const landed = git(origin, "rev-parse", `sync/${NEWEST}`);
+    expect(dispatchedOn).toEqual([landed, landed]);
+    expect(calls.slice(2)).toEqual([
+      expect.stringMatching(/^gh pr create /),
+      "gh workflow run factory-ci.yml --ref main",
+      "gh workflow run factory-desktop.yml --ref main",
+    ]);
+    expect(git(origin, "rev-parse", "main")).toBe(git(origin, "rev-parse", `sync/${NEWEST}`));
+  });
+
+  it.each(["apps/mobile/App.tsx", "packages/shared/index.ts"])(
+    "also dispatches Factory mobile when the merge touches %s",
+    (file) => {
+      const tag = "v0.0.11-nightly.20261016.1";
+      git(upstream, "checkout", "-q", "--detach", newestSha);
+      write(upstream, file, "changed\n");
+      git(upstream, "tag", tag, commit(upstream, `touches ${file}`));
+      git(upstream, "checkout", "-q", "main");
+      try {
+        makeFork(`${OLD} ${oldSha}`);
+        const { status, stdout, calls } = run({ GITHUB_ACTIONS: "true" });
+        expect(status).toBe(0);
+        expect(stdout.trim().split("\n").at(-1)).toBe(
+          `sync: ${tag} merged into main through https://example.test/pr/1; dispatched factory-ci.yml, factory-desktop.yml, factory-mobile.yml`,
+        );
+        expect(calls.filter((call) => call.startsWith("gh workflow "))).toEqual([
+          "gh workflow run factory-ci.yml --ref main",
+          "gh workflow run factory-desktop.yml --ref main",
+          "gh workflow run factory-mobile.yml --ref main",
+        ]);
+      } finally {
+        git(upstream, "tag", "-d", tag);
+      }
+    },
+  );
+
+  it("leaves the landing in place and files nothing when a dispatch fails", () => {
+    makeFork(`${OLD} ${oldSha}`);
+    const { status, stdout, stderr, calls } = run({
+      GITHUB_ACTIONS: "true",
+      SYNC_TEST_DISPATCH_FAIL: "factory-ci.yml",
+    });
+    expect(status).toBe(1);
+    expect(stderr).toContain(
+      `sync: ${NEWEST} merged into main through https://example.test/pr/1; dispatch of factory-ci.yml failed`,
+    );
+    expect(stderr).not.toContain("dispatch of factory-desktop.yml failed");
+    expect(stdout).not.toContain("merged into main");
+    // A failed dispatch does not keep the others from being tried.
+    expect(calls.filter((call) => call.startsWith("gh workflow "))).toEqual([
+      "gh workflow run factory-ci.yml --ref main",
+      "gh workflow run factory-desktop.yml --ref main",
+    ]);
+    expect(calls.some((call) => call.startsWith("gh issue "))).toBe(false);
+    expect(git(origin, "rev-parse", "main")).toBe(git(origin, "rev-parse", `sync/${NEWEST}`));
   });
 
   it("runs both phases from one checkout when given no arguments", () => {
@@ -373,7 +451,7 @@ describe("sync.sh", () => {
     expect(git(fork, "status", "--porcelain")).toBe("");
     expect(NodeFS.existsSync(NodePath.join(fork, ".git/MERGE_HEAD"))).toBe(false);
     expect(calls.filter((call) => call.startsWith("gh issue list"))).toEqual([
-      'gh issue list --state open --search "conflicts" in:title --json number,title --jq .[] | "\\(.number)\\t\\(.title)"',
+      'gh issue list --state open --search "conflicts" in:title --json number,title,labels --jq .[] | "\\(.number)\\t\\(.title)\\t\\([.labels[].name] | join(","))"',
     ]);
     expect(calls.at(-1)).toMatch(
       new RegExp(`^gh issue create --title Sync to ${NEWEST} conflicts --body-file `),
@@ -424,6 +502,44 @@ describe("sync.sh", () => {
       expect.stringMatching(/^gh issue comment 3 --body-file /),
     ]);
     expect(calls).not.toContainEqual(expect.stringMatching(/^gh issue create/));
+  });
+
+  it("only comments on a conflicts issue the factory is building", () => {
+    makeFork(`${OLD} ${oldSha}`, { "README.md": "fork edit\n" });
+    const { status, calls } = run({
+      SYNC_TEST_ISSUES: JSON.stringify([
+        { number: 4, title: `Sync to ${MIDDLE} conflicts`, labels: ["factory:building"] },
+      ]),
+    });
+    expect(status).toBe(1);
+    expect(calls.at(-1)).toMatch(/^gh issue comment 4 --body-file /);
+    expect(calls).not.toContainEqual(expect.stringMatching(/^gh issue (edit|create)/));
+  });
+
+  it("only comments on a conflicts issue the factory is about to claim", () => {
+    makeFork(`${OLD} ${oldSha}`, { "README.md": "fork edit\n" });
+    const { status, calls } = run({
+      SYNC_TEST_ISSUES: JSON.stringify([
+        { number: 4, title: `Sync to ${MIDDLE} conflicts`, labels: ["bug", "factory:ready"] },
+      ]),
+    });
+    expect(status).toBe(1);
+    expect(calls.at(-1)).toMatch(/^gh issue comment 4 --body-file /);
+    expect(calls).not.toContainEqual(expect.stringMatching(/^gh issue (edit|create)/));
+  });
+
+  it("still retitles a conflicts issue the factory has not taken", () => {
+    makeFork(`${OLD} ${oldSha}`, { "README.md": "fork edit\n" });
+    const { status, calls } = run({
+      SYNC_TEST_ISSUES: JSON.stringify([
+        { number: 4, title: `Sync to ${MIDDLE} conflicts`, labels: ["factory:stuck"] },
+      ]),
+    });
+    expect(status).toBe(1);
+    expect(calls.slice(-2)).toEqual([
+      `gh issue edit 4 --title Sync to ${NEWEST} conflicts`,
+      expect.stringMatching(/^gh issue comment 4 --body-file /),
+    ]);
   });
 
   it("failing checks open a draft pull request and a factory:proposed issue with the failing step", () => {
@@ -532,7 +648,7 @@ describe("sync.sh", () => {
     git(other, "config", "commit.gpgsign", "false");
     write(other, "OTHER.md", "another pull request\n");
     const moved = commit(other, "another pull request");
-    const first = run({ SYNC_TEST_MOVE_MAIN: other });
+    const first = run({ SYNC_TEST_MOVE_MAIN: other, GITHUB_ACTIONS: "true" });
     expect(first.status).toBe(1);
     expect(first.stderr).toContain(
       `sync: main could not be fast-forwarded to sync/${NEWEST}; https://example.test/pr/1 waits for a person`,
@@ -540,6 +656,7 @@ describe("sync.sh", () => {
     expect(git(origin, "rev-parse", "main")).toBe(moved);
     expect(originBranches()).toEqual(["main", `sync/${NEWEST}`]);
     expect(first.calls).not.toContainEqual(expect.stringMatching(/^gh pr merge/));
+    expect(first.calls).not.toContainEqual(expect.stringMatching(/^gh workflow /));
     expect(first.calls.at(-1)).toMatch(
       new RegExp(`^gh issue create --title Sync to ${NEWEST} cannot land --body-file `),
     );

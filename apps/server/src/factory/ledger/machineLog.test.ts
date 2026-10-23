@@ -4,12 +4,23 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import { LedgerUnknownEventError, LedgerIoError } from "./errors.ts";
 import type { AppendIo } from "./appendFile.ts";
 import { MACHINE_EVENT_FIELDS, type MachineEvent } from "./events.ts";
-import { MachineLog, scanMachineLog, type MachineLogOptions } from "./machineLog.ts";
+import {
+  MachineLog,
+  scanMachineLog,
+  machineLogSince,
+  scanMachineLogBack,
+  serverStartsSince,
+  readServerStopsForStarts,
+  serverStopsForStartsSince,
+  t3TroubleSince,
+  type MachineEntry,
+  type MachineLogOptions,
+} from "./machineLog.ts";
 import { catchLedgerError, scripted, T0, ticking, useTempDirs } from "./testSupport.ts";
 
 const tempDir = useTempDirs();
@@ -42,6 +53,14 @@ const passStarted: MachineEvent = { event: "pass_started", data: {} };
 /** Every machine event, with the exact line it is written as at `T0`. */
 const samples: ReadonlyArray<{ readonly event: MachineEvent; readonly line: string }> = [
   { event: passStarted, line: lineAtT0("pass_started", `{}`) },
+  {
+    event: { event: "server_started", data: { started_at: 1791108790000 } },
+    line: lineAtT0("server_started", `{"started_at":1791108790000}`),
+  },
+  {
+    event: { event: "server_stopping", data: { stopping_at: 1791108796000 } },
+    line: lineAtT0("server_stopping", `{"stopping_at":1791108796000}`),
+  },
   {
     event: { event: "pass_finished", data: { runs: 3, claimed: 1, errors: 2, attention: 0 } },
     line: lineAtT0("pass_finished", `{"runs":3,"claimed":1,"errors":2,"attention":0}`),
@@ -420,9 +439,9 @@ describe("append", () => {
       seen.add(event.event);
       expect(readText(logFile(dataDir)), event.event).toBe(expected);
     }
-    // Every one of the 17 event types has at least one exact line.
+    // Every one of the 19 event types has at least one exact line.
     expect([...seen].sort()).toEqual(Object.keys(MACHINE_EVENT_FIELDS).sort());
-    expect(seen.size).toBe(17);
+    expect(seen.size).toBe(19);
   });
 
   it("the claims paused line has a reason and nothing else", () => {
@@ -553,14 +572,18 @@ describe("append", () => {
 
   it("open without a clock stamps events with the system clock", () => {
     const dataDir = tempDir();
-    const before = Date.now();
+    // Not T0, so a stamp from any clock but the system's would not match.
+    const systemNow = 1_800_000_123_456;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    vi.setSystemTime(systemNow);
     const log = MachineLog.open(dataDir);
     handles.push(log);
     log.append(passStarted);
-    const after = Date.now();
     const line = JSON.parse(readText(logFile(dataDir))) as { ms: number };
-    expect(line.ms).toBeGreaterThanOrEqual(before);
-    expect(line.ms).toBeLessThanOrEqual(after);
+    expect(line.ms).toBe(systemNow);
   });
 });
 
@@ -660,5 +683,402 @@ describe("scan machine log", () => {
     const dataDir = tempDir();
     expect(NodeChildProcess.spawnSync("mkfifo", [logFile(dataDir)]).status).toBe(0);
     expect(catchLedgerError(() => scanMachineLog(dataDir))._tag).toBe("LedgerIoError");
+  });
+});
+
+describe("T3 trouble in the machine log", () => {
+  // softfac's `tick/tests/interruption.rs` ("what counts as T3 trouble in the machine log").
+  const NOW = 1_800_000_000_000;
+  const MINUTE = 60_000;
+
+  /** A log with `event` written as if it happened at `ms`. */
+  const logWith = (dataDir: string, ...entries: ReadonlyArray<[number, MachineEvent]>) => {
+    for (const [ms, event] of entries) {
+      const log = MachineLog.open(dataDir, { clock: () => ms });
+      try {
+        log.append(event);
+      } finally {
+        log.close();
+      }
+    }
+  };
+  const t3Error = (message: string): MachineEvent => ({
+    event: "error",
+    data: { step: "pass", kind: "t3", message },
+  });
+  const preflight = (check: string, why: string): MachineEvent => ({
+    event: "preflight_failed",
+    data: { check, why },
+  });
+
+  it("is an error of kind t3 in the last ten minutes", () => {
+    const dataDir = tempDir();
+    logWith(dataDir, [NOW - 3 * MINUTE, t3Error("sweep: T3 timed out")]);
+    expect(t3TroubleSince(dataDir, NOW)).toBe("sweep: T3 timed out");
+  });
+
+  it("is not an error of kind t3 older than ten minutes", () => {
+    const dataDir = tempDir();
+    logWith(dataDir, [NOW - 10 * MINUTE - 1, t3Error("sweep: T3 timed out")]);
+    expect(t3TroubleSince(dataDir, NOW)).toBeNull();
+  });
+
+  it("is an error exactly ten minutes old", () => {
+    const dataDir = tempDir();
+    logWith(dataDir, [NOW - 10 * MINUTE, t3Error("edge")]);
+    expect(t3TroubleSince(dataDir, NOW)).toBe("edge");
+  });
+
+  it("is a failed t3 preflight in the window, and says why", () => {
+    const dataDir = tempDir();
+    logWith(dataDir, [
+      NOW - MINUTE,
+      preflight("t3", "T3 Code is not reachable: connection refused"),
+    ]);
+    expect(t3TroubleSince(dataDir, NOW)).toBe("T3 Code is not reachable: connection refused");
+  });
+
+  it("is not another preflight check or another kind of error", () => {
+    const dataDir = tempDir();
+    logWith(
+      dataDir,
+      [NOW - MINUTE, preflight("github-login", "not logged in")],
+      [
+        NOW - MINUTE,
+        { event: "error", data: { step: "pass", kind: "github", message: "gh failed" } },
+      ],
+      [NOW - MINUTE, passStarted],
+    );
+    expect(t3TroubleSince(dataDir, NOW)).toBeNull();
+  });
+
+  it("names the newest trouble in the window", () => {
+    const dataDir = tempDir();
+    logWith(
+      dataDir,
+      [NOW - 9 * MINUTE, preflight("t3", "first")],
+      [NOW - 5 * MINUTE, t3Error("second")],
+      [NOW - 2 * MINUTE, passStarted],
+    );
+    expect(t3TroubleSince(dataDir, NOW)).toBe("second");
+  });
+
+  it("is none for a missing machine log", () => {
+    expect(t3TroubleSince(tempDir(), NOW)).toBeNull();
+  });
+
+  it("is not a server start: that is read apart, by serverStartsSince", () => {
+    const dataDir = tempDir();
+    logWith(dataDir, [
+      NOW - MINUTE,
+      { event: "server_started", data: { started_at: NOW - MINUTE } },
+    ]);
+    expect(t3TroubleSince(dataDir, NOW)).toBeNull();
+  });
+  it("stops at the first entry older than the window, so older trouble is not read", () => {
+    const dataDir = tempDir();
+    const entries: Array<[number, MachineEvent]> = [];
+    for (let i = 0; i < 40; i += 1) {
+      entries.push([NOW - 60 * MINUTE + i * MINUTE, t3Error(`old ${i} ${"x".repeat(200)}`)]);
+    }
+    entries.push([NOW - 11 * MINUTE, t3Error("just outside")]);
+    entries.push([NOW - 9 * MINUTE, passStarted]);
+    entries.push([NOW - MINUTE, passStarted]);
+    logWith(dataDir, ...entries);
+    expect(t3TroubleSince(dataDir, NOW)).toBeNull();
+    // Only the window's entries come back, oldest first, whatever the chunk size.
+    const since = NOW - 10 * MINUTE;
+    const expected = scanMachineLog(dataDir).filter((entry) => entry.ms >= since);
+    expect(expected).toHaveLength(2);
+    for (const chunk of [1, 7, 64, 1024, 1 << 16]) {
+      expect(machineLogSince(dataDir, since, chunk), `chunk ${chunk}`).toEqual(expected);
+    }
+  });
+
+  it("reads a line cut by a chunk boundary whole, and the first line of the file", () => {
+    const dataDir = tempDir();
+    const long = (n: number) => t3Error(`${n} ${"message ".repeat(30)}`);
+    logWith(
+      dataDir,
+      [NOW - 8 * MINUTE, long(1)],
+      [NOW - 6 * MINUTE, passStarted],
+      [NOW - 4 * MINUTE, long(2)],
+      [NOW - 2 * MINUTE, long(3)],
+    );
+    const all = scanMachineLog(dataDir);
+    expect(all).toHaveLength(4);
+    // Chunks smaller than a line, equal to one, and odd sizes that land inside and on newlines.
+    for (const chunk of [1, 2, 3, 16, 100, 255, 256, 257, 4096]) {
+      expect(machineLogSince(dataDir, 0, chunk), `chunk ${chunk}`).toEqual(all);
+    }
+    expect(t3TroubleSince(dataDir, NOW)).toBe(`3 ${"message ".repeat(30)}`);
+  });
+
+  it("is none and reads nothing for a missing log, and is an error for a log that is not a file", () => {
+    expect(machineLogSince(tempDir(), 0, 8)).toEqual([]);
+    const dataDir = tempDir();
+    NodeFS.mkdirSync(NodePath.join(dataDir, "events.jsonl"));
+    expect(() => machineLogSince(dataDir, 0)).toThrow(LedgerIoError);
+  });
+});
+
+describe("serverStartsSince", () => {
+  const NOW = 1_800_000_000_000;
+  const MINUTE = 60_000;
+  const HOUR = 60 * MINUTE;
+  const started = (at: number): MachineEvent => ({
+    event: "server_started",
+    data: { started_at: at },
+  });
+  const stopping = (at: number): MachineEvent => ({
+    event: "server_stopping",
+    data: { stopping_at: at },
+  });
+  const logWith = (dataDir: string, ...entries: ReadonlyArray<[number, MachineEvent]>) => {
+    for (const [ms, event] of entries) {
+      const log = MachineLog.open(dataDir, { clock: () => ms });
+      try {
+        log.append(event);
+      } finally {
+        log.close();
+      }
+    }
+  };
+
+  it("is every server start recorded in the window, oldest first, by its own started_at", () => {
+    const dataDir = tempDir();
+    logWith(
+      dataDir,
+      [NOW - 30 * HOUR, started(NOW - 30 * HOUR)],
+      [NOW - 3 * HOUR + 5_000, started(NOW - 3 * HOUR)],
+      [NOW - 2 * MINUTE, { event: "pass_started", data: {} }],
+      [NOW - MINUTE + 2_000, started(NOW - MINUTE)],
+    );
+    expect(serverStartsSince(dataDir, NOW - 24 * HOUR)).toEqual([NOW - 3 * HOUR, NOW - MINUTE]);
+  });
+
+  it("serverStopsForStartsSince is the newest stop before each start in the window, whatever its age", () => {
+    const dataDir = tempDir();
+    logWith(
+      dataDir,
+      [NOW - 60 * HOUR, stopping(NOW - 60 * HOUR)],
+      [NOW - 30 * HOUR, stopping(NOW - 30 * HOUR)],
+      // A start whose started_at is not a number is skipped, as serverStartsSince skips it, so it
+      // neither ends the scan nor claims the stop.
+      [
+        NOW - 28 * HOUR,
+        { event: "server_started", data: { started_at: "soon" } } as unknown as MachineEvent,
+      ],
+      [NOW - 2 * HOUR + 5_000, started(NOW - 2 * HOUR)],
+    );
+    expect(serverStopsForStartsSince(dataDir, NOW - 24 * HOUR)).toEqual([NOW - 30 * HOUR]);
+  });
+
+  it("pairs each start of the window with the stop before it, oldest first", () => {
+    const dataDir = tempDir();
+    logWith(
+      dataDir,
+      [NOW - 40 * HOUR, stopping(NOW - 40 * HOUR)],
+      [NOW - 20 * HOUR, started(NOW - 20 * HOUR)],
+      [NOW - 10 * HOUR, stopping(NOW - 11 * HOUR)],
+      [NOW - 9 * HOUR, stopping(NOW - 9 * HOUR)],
+      [NOW - 8 * HOUR, started(NOW - 8 * HOUR)],
+      [NOW - 2 * HOUR, stopping(NOW - 2 * HOUR)],
+    );
+    // The stop after the newest start belongs to no start in the window; the older start has none.
+    expect(serverStopsForStartsSince(dataDir, NOW - 24 * HOUR)).toEqual([
+      NOW - 40 * HOUR,
+      NOW - 9 * HOUR,
+    ]);
+  });
+
+  it("does not pair a stop that lies before an older start with a start in the window", () => {
+    const dataDir = tempDir();
+    logWith(
+      dataDir,
+      [NOW - 50 * HOUR, stopping(NOW - 50 * HOUR)],
+      [NOW - 49 * HOUR, started(NOW - 49 * HOUR)],
+      [NOW - 2 * HOUR, started(NOW - 2 * HOUR)],
+    );
+    expect(serverStopsForStartsSince(dataDir, NOW - 24 * HOUR)).toEqual([]);
+  });
+
+  it("skips a stop whose stopping_at is not a number, is empty for a missing log, and ignores a stop after the newest start", () => {
+    expect(serverStopsForStartsSince(tempDir(), NOW - HOUR)).toEqual([]);
+    const dataDir = tempDir();
+    logWith(
+      dataDir,
+      [NOW - 5 * HOUR, stopping(NOW - 5 * HOUR)],
+      [
+        NOW - 4 * HOUR,
+        { event: "server_stopping", data: { stopping_at: "now" } } as unknown as MachineEvent,
+      ],
+      [NOW - 3 * HOUR, started(NOW - 3 * HOUR)],
+      [NOW - HOUR, stopping(NOW - HOUR)],
+    );
+    expect(serverStopsForStartsSince(dataDir, NOW - 24 * HOUR)).toEqual([NOW - 5 * HOUR]);
+  });
+
+  it("stops reading at the stop the oldest start needs, so a months-old log is not decoded", () => {
+    const dataDir = tempDir();
+    const line = (ms: number, event: string, data: string) =>
+      `{"ts":"2026-10-04T10:13:16.123Z","ms":${ms},"event":"${event}","data":${data}}\n`;
+    const lines = Array.from({ length: 2000 }, (_, i) =>
+      line(NOW - 90 * 24 * HOUR + i, "pass_started", `{"note":"n${i}"}`),
+    );
+    lines.push(line(NOW - 30 * HOUR, "server_stopping", `{"stopping_at":${NOW - 30 * HOUR}}`));
+    // A line older than the window between the stop and its start does not end the scan early.
+    lines.push(line(NOW - 29 * HOUR, "pass_started", `{"note":"late"}`));
+    lines.push(line(NOW - 2 * HOUR, "server_started", `{"started_at":${NOW - 2 * HOUR}}`));
+    NodeFS.writeFileSync(NodePath.join(dataDir, "events.jsonl"), lines.join(""));
+    const read = readServerStopsForStarts(dataDir, NOW - 24 * HOUR);
+    expect(read.stops).toEqual([NOW - 30 * HOUR]);
+    expect(read.bytes).toBeLessThan(
+      NodeFS.statSync(NodePath.join(dataDir, "events.jsonl")).size / 2,
+    );
+  });
+
+  it("gives up on the stop of a start that followed a crash, so a months-old log is not decoded", () => {
+    const dataDir = tempDir();
+    const line = (ms: number, event: string, data: string) =>
+      `{"ts":"2026-10-04T10:13:16.123Z","ms":${ms},"event":"${event}","data":${data}}\n`;
+    const lines = [
+      line(NOW - 91 * 24 * HOUR, "server_stopping", `{"stopping_at":${NOW - 91 * 24 * HOUR}}`),
+      line(NOW - 90 * 24 * HOUR, "server_started", `{"started_at":${NOW - 90 * 24 * HOUR}}`),
+    ];
+    // Three months of passes, one a minute, then a power cut: no stop line.
+    for (let i = 0; i < 2000; i++) {
+      lines.push(line(NOW - 30 * HOUR - (2000 - i) * MINUTE, "pass_started", `{"note":"n${i}"}`));
+    }
+    lines.push(line(NOW - HOUR, "server_started", `{"started_at":${NOW - HOUR}}`));
+    NodeFS.writeFileSync(NodePath.join(dataDir, "events.jsonl"), lines.join(""));
+    const read = readServerStopsForStarts(dataDir, NOW - 24 * HOUR);
+    expect(read.stops).toEqual([]);
+    expect(read.bytes).toBeLessThan(
+      NodeFS.statSync(NodePath.join(dataDir, "events.jsonl")).size / 2,
+    );
+  });
+
+  it("is empty for a missing log, and skips a line whose started_at is not a number", () => {
+    expect(serverStartsSince(tempDir(), NOW - HOUR)).toEqual([]);
+    const dataDir = tempDir();
+    logWith(dataDir, [
+      NOW - MINUTE,
+      { event: "server_started", data: { started_at: "soon" } } as unknown as MachineEvent,
+    ]);
+    expect(serverStartsSince(dataDir, NOW - HOUR)).toEqual([]);
+  });
+});
+
+describe("scan machine log back", () => {
+  const machineLine = (ms: number, event: string, note: string) =>
+    `{"ts":"2026-10-04T10:13:16.123Z","ms":${ms},"event":"${event}","data":{"note":"${note}"}}\n`;
+
+  /** Every line `scanMachineLogBack` visits, newest first, and the bytes it reports reading. */
+  const back = (dataDir: string, firstChunk?: number) => {
+    const seen: Array<MachineEntry> = [];
+    const bytes = scanMachineLogBack(
+      dataDir,
+      (entry) => {
+        seen.push(entry);
+        return "continue";
+      },
+      firstChunk,
+    );
+    return { seen, bytes };
+  };
+
+  it("gives the lines newest first, the opposite order of scanMachineLog", () => {
+    const dataDir = tempDir();
+    NodeFS.writeFileSync(
+      logFile(dataDir),
+      [10, 20, 30].map((ms) => machineLine(ms, "pass_started", `n${ms}`)).join(""),
+    );
+    const { seen, bytes } = back(dataDir);
+    expect(seen).toEqual(scanMachineLog(dataDir).toReversed());
+    expect(bytes).toBe(NodeFS.statSync(logFile(dataDir)).size);
+  });
+
+  it("completes a line cut at a chunk edge from the next chunk, whatever the first chunk size", () => {
+    const dataDir = tempDir();
+    const lines = Array.from({ length: 40 }, (_, i) => machineLine(i, "pass_started", `n${i}`));
+    NodeFS.writeFileSync(logFile(dataDir), lines.join(""));
+    const forward = scanMachineLog(dataDir).toReversed();
+    for (const chunk of [1, 7, 64, 101, 5000]) {
+      expect(back(dataDir, chunk).seen).toEqual(forward);
+    }
+  });
+
+  it("stops when the visitor says stop, and reads only the end of the file", () => {
+    const dataDir = tempDir();
+    const lines = Array.from({ length: 2000 }, (_, i) => machineLine(i, "pass_started", `n${i}`));
+    NodeFS.writeFileSync(logFile(dataDir), lines.join(""));
+    const seen: Array<number> = [];
+    const bytes = scanMachineLogBack(dataDir, (entry) => {
+      seen.push(entry.ms);
+      return seen.length === 3 ? "stop" : "continue";
+    });
+    expect(seen).toEqual([1999, 1998, 1997]);
+    expect(bytes).toBeLessThan(NodeFS.statSync(logFile(dataDir)).size / 2);
+  });
+
+  it("skips blank, unparsable and cut-off lines, and keeps a last line with no newline that parses", () => {
+    const dataDir = tempDir();
+    NodeFS.writeFileSync(
+      logFile(dataDir),
+      [
+        "\n\r\n",
+        machineLine(10, "pass_started", "a"),
+        "this is not json\n",
+        `{"ts":"x"}\n`,
+        machineLine(20, "pass_finished", "b"),
+        "\n\n",
+        machineLine(30, "error", "c").trimEnd(),
+      ].join(""),
+    );
+    expect(back(dataDir).seen.map((entry) => entry.ms)).toEqual([30, 20, 10]);
+
+    NodeFS.writeFileSync(
+      logFile(dataDir),
+      `${machineLine(10, "pass_started", "a")}${machineLine(40, "attention", "d").slice(0, 30)}`,
+    );
+    expect(back(dataDir).seen.map((entry) => entry.ms)).toEqual([10]);
+  });
+
+  it("skips a line that is not UTF-8", () => {
+    const dataDir = tempDir();
+    NodeFS.writeFileSync(
+      logFile(dataDir),
+      Buffer.concat([
+        Buffer.from(machineLine(10, "pass_started", "a")),
+        Buffer.from([0xff, 0xfe, 0x0a]),
+        Buffer.from(machineLine(20, "pass_started", "b")),
+      ]),
+    );
+    expect(back(dataDir).seen.map((entry) => entry.ms)).toEqual([20, 10]);
+  });
+
+  it("visits nothing for a missing or empty log", () => {
+    const dataDir = tempDir();
+    expect(back(dataDir)).toEqual({ seen: [], bytes: 0 });
+    expect(back(NodePath.join(dataDir, "no", "such", "dir"))).toEqual({ seen: [], bytes: 0 });
+    NodeFS.writeFileSync(logFile(dataDir), "");
+    expect(back(dataDir)).toEqual({ seen: [], bytes: 0 });
+  });
+
+  it("refuses a symlink, a directory and a pipe, as scanMachineLog does", () => {
+    const linked = tempDir();
+    NodeFS.writeFileSync(NodePath.join(linked, "real"), machineLine(1, "pass_started", "a"));
+    NodeFS.symlinkSync(NodePath.join(linked, "real"), logFile(linked));
+    const error = catchLedgerError(() => back(linked), LedgerIoError);
+    expect(error.path).toBe(logFile(linked));
+
+    const directory = tempDir();
+    NodeFS.mkdirSync(logFile(directory));
+    expect(catchLedgerError(() => back(directory))._tag).toBe("LedgerIoError");
+
+    const piped = tempDir();
+    expect(NodeChildProcess.spawnSync("mkfifo", [logFile(piped)]).status).toBe(0);
+    expect(catchLedgerError(() => back(piped))._tag).toBe("LedgerIoError");
   });
 });

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Stands in for xcrun on the desktop build's PATH, so electron-builder's stapling
+# of the .app gets the same retry as the fork's own dmg scripts. Apple's ticket
+# service drops connections from GitHub's macOS runners and stapler then exits 68
+# although notarization succeeded (actions/runner-images#14924). Retries stapler
+# on that exit with backoff; every other tool and exit runs once, as before.
+set -uo pipefail
+
+if [[ ${1:-} != stapler ]]; then
+  exec /usr/bin/xcrun "$@"
+fi
+
+for delay in 15 30 45 60; do
+  /usr/bin/xcrun "$@"
+  status=$?
+  if [[ $status -ne 68 ]]; then
+    exit "$status"
+  fi
+  echo "xcrun-retry: stapler exited 68, retrying in ${delay}s" >&2
+  sleep "$delay"
+done
+exec /usr/bin/xcrun "$@"

@@ -58,8 +58,7 @@ it.live(
               message: SIMPLE_PROMPT,
               model: { instanceId: "claudeAgent", model: "claude-sonnet-4-6" },
             });
-          // Every id the stream emits, with when it arrived. The consumer
-          // starts before anything is launched, so this half is live.
+          // Every id the stream emits, with when it arrived.
           const arrivals = yield* Queue.unbounded<{ readonly id: string; readonly at: number }>();
           yield* events.runStatusChanges.pipe(
             Stream.mapEffect((id) =>
@@ -68,6 +67,17 @@ it.live(
             Stream.runForEach((arrival) => Queue.offer(arrivals, arrival)),
             Effect.forkScoped,
           );
+          // The forked consumer reads its start position on its first pull,
+          // which can land after a launch's first status. A probe run that
+          // fails fast (a ref the repo does not have) marks the stream live:
+          // once its id arrives, every later launch is seen from its first
+          // status. The probe's later status may still interleave with A's.
+          const probe = yield* launch("probe", "factory-events-contract-no-such-ref");
+          yield* Queue.take(arrivals).pipe(
+            Effect.repeat({ until: (arrival) => arrival.id === probe.threadId }),
+            Effect.timeout("60 seconds"),
+          );
+          yield* runStatusesUntilTerminal(ThreadId.make(probe.threadId));
 
           const launchedA = yield* launch("a");
           const statusesA = yield* runStatusesUntilTerminal(ThreadId.make(launchedA.threadId));
@@ -77,19 +87,22 @@ it.live(
           // One id per status change A's run went through, the last of them
           // (the completion) within 10 s of the terminal event. A missing
           // emission leaves this waiting; the bound only guards a hang.
-          const arrivedA = yield* Queue.takeN(arrivals, statusesA.length).pipe(
+          const arrivedA: Array<{ readonly id: string; readonly at: number }> = [];
+          yield* Queue.take(arrivals).pipe(
+            Effect.map((arrival) => {
+              assert.include([probe.threadId, launchedA.threadId], arrival.id);
+              if (arrival.id === launchedA.threadId) arrivedA.push(arrival);
+            }),
+            Effect.repeat({ until: () => arrivedA.length === statusesA.length }),
             Effect.timeout("60 seconds"),
-          );
-          assert.deepStrictEqual(
-            arrivedA.map((arrival) => arrival.id),
-            statusesA.map(() => launchedA.threadId),
           );
           assert.isBelow(arrivedA.at(-1)!.at - terminalAt, 10_000);
           assert.strictEqual((yield* sessions.status(launchedA.threadId)).run, "completed");
 
           // The run is history now. Replay precedes live, so a stream that
           // replayed history would emit A's id (lower sequence) before B's.
-          // Start the consumer before anything else is launched.
+          // The consumer is forked before B launches but subscribes on its
+          // first pull; B's terminal status is a second chance to see it.
           yield* EffectWorker.OrchestrationEffectWorkerV2.use((worker) => worker.drain());
           const next = yield* events.runStatusChanges.pipe(
             Stream.take(1),
@@ -113,5 +126,4 @@ it.live(
         }).pipe(Effect.provide(layerRuntime({ repo, worktreesDir })));
       }),
     ).pipe(Effect.provide(Layer.merge(layerGit, NodeServices.layer))),
-  120_000,
 );

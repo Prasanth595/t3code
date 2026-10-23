@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Tests make real git repositories, lock files and fake `git` scripts in temp dirs, and probe process groups with kill(pid, 0).
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -24,6 +24,7 @@ import {
   gateRoot,
   layer as gateLayer,
   makeWorkspace,
+  regateResultsComment,
   type CommandResult,
   type GateError,
   type GateInput,
@@ -47,8 +48,6 @@ const SHORT = "0123456";
 const BASE_SHORT = "89abcde";
 
 const isRoot = globalThis.process.getuid?.() === 0;
-
-// ---- helpers -----------------------------------------------------------------------------
 
 const spawnGit = (cwd: string, args: ReadonlyArray<string>) =>
   NodeChildProcess.spawnSync(
@@ -204,8 +203,6 @@ const withEnv = <A, E, R>(
 const headField = (dir: string, format: string) =>
   git(dir, "log", "-1", `--format=${format}`).trim();
 
-// ---- a fake git on PATH -------------------------------------------------------------------
-
 /**
  * A directory with a script that stands in for `git`. The script first writes its pid to
  * `self.pid`, which is the id of its process group too; `kill` signals that group, so a test
@@ -279,8 +276,6 @@ const recordedCalls = (fake: FakeGit): Array<string> => fake.file("log").split("
 /** `checkout` on a script that stands in for `git`, in a directory of its own. */
 const checkoutWithFake = (fake: FakeGit, options: GateOptions) =>
   checkout(options, REPO, SOME_SHA, BASE, NodePath.join(fake.dir, "wt"));
-
-// ---- LocalWorkspace -----------------------------------------------------------------------
 
 it("a workspace error says what failed", () => {
   assert.strictEqual(
@@ -365,8 +360,6 @@ it.live("a gate command that cannot start is an error and not a failed command",
     );
   }).pipe(provided),
 );
-
-// ---- LocalWorkspace: a standalone repository holding one commit ---------------------------
 
 it.live("a checkout is a standalone repository at the fetched commit", () =>
   Effect.gen(function* () {
@@ -1196,18 +1189,16 @@ it.live("a checkout that runs past its limit is killed with everything it starte
       assert.include(failed.stderr, "did not finish within 300ms");
       // The script's own process group, not a search by name: another run of this suite on the
       // same machine has a `sleep 3032` of its own.
-      let gone = false;
-      for (let i = 0; i < 100 && !gone; i++) {
-        gone = !fake.groupAlive();
-        if (!gone) yield* Effect.sleep("30 millis");
-      }
-      assert.isTrue(gone, "a sleeper outlived the call");
+      yield* Effect.promise(() =>
+        vi.waitFor(() => assert.isFalse(fake.groupAlive(), "a sleeper outlived the call"), {
+          timeout: 3_000,
+          interval: 30,
+        }),
+      );
       assert.isFalse(NodeFS.existsSync(NodePath.join(fake.dir, "wt")));
     }),
   ),
 );
-
-// ---- gate: a fresh checkout of the pull request's head ------------------------------------
 
 /** The input of a gate with the defaults the tests share; each test overrides what it needs. */
 function baseInput(
@@ -1243,6 +1234,19 @@ it("the results comment says the commands ran in a fresh checkout of the pr head
   assert.strictEqual(
     gateResultsComment([result("cargo test", 0, 1_000)], 2, SOME_SHA, BASE),
     `**Factory gate: passed** (attempt 2, run by the factory in a fresh checkout of the pull request's head \`${SHORT}\` merged with the base branch tip \`${BASE_SHORT}\`)\n\n| Command | Exit | Time |\n|---|---|---|\n| \`cargo test\` | 0 | 1.0 s |`,
+  );
+});
+
+it("the comment for a pass on a pull request that was ready already says it passed again", () => {
+  assert.strictEqual(
+    regateResultsComment([result("cargo test", 0, 1_000)], 2, SOME_SHA, BASE),
+    `**Factory gate: passed again** (attempt 2, run by the factory in a fresh checkout of the pull request's head \`${SHORT}\` merged with the base branch tip \`${BASE_SHORT}\`)\n\n| Command | Exit | Time |\n|---|---|---|\n| \`cargo test\` | 0 | 1.0 s |`,
+  );
+  // The same table as the first pass's comment: only the verdict differs.
+  const first = gateResultsComment([result("a | b", 1, 12_345)], 1, SOME_SHA, "");
+  assert.strictEqual(
+    regateResultsComment([result("a | b", 1, 12_345)], 1, SOME_SHA, ""),
+    first.replace("passed**", "passed again**"),
   );
 });
 
@@ -1582,8 +1586,13 @@ it.live("a second run for the same run while one is running returns running", ()
     };
     const first = yield* Effect.forkChild(gate.run(input));
     yield* Effect.gen(function* () {
-      for (let i = 0; i < 400 && !NodeFS.existsSync(started); i++) yield* Effect.sleep("25 millis");
-      assert.isTrue(NodeFS.existsSync(started), "the first gate never started its command");
+      yield* Effect.promise(() =>
+        vi.waitFor(
+          () =>
+            assert.isTrue(NodeFS.existsSync(started), "the first gate never started its command"),
+          { timeout: 10_000, interval: 25 },
+        ),
+      );
       const before = entries(dataDir, run).length;
       const second = yield* gate.run(input);
       assert.deepStrictEqual(second, { _tag: "running" });
@@ -1651,8 +1660,6 @@ it("the gate's paths are built from the validated run id", () => {
   assert.throws(() => gateRoot("/data", { repo: "../x/y", issue: "1", attempt: 1 }));
   assert.throws(() => gateLockFile("/data", { repo: "a/b", issue: "1", attempt: -1 }));
 });
-
-// ---- gate: the head merged with the current base ------------------------------------------
 
 /**
  * The ledger's write and sync on the real file, except that the `write`th write fails having
@@ -1814,8 +1821,6 @@ it.live("a head behind the base is gated on the merged tree", () =>
   }).pipe(provided),
 );
 
-// ---- gate: leftovers and cleanup ----------------------------------------------------------
-
 /** Makes `dir/sub/f` and takes the write permission off `dir/sub`, so `dir` cannot be removed. */
 const lockDown = (dir: string) => {
   NodeFS.mkdirSync(NodePath.join(dir, "sub"), { recursive: true });
@@ -1928,8 +1933,6 @@ it.live("a leftover that cannot be removed is noted once and the attempt is an e
     }).pipe(Effect.ensuring(Effect.sync(() => unlock(dir))));
   }).pipe(provided),
 );
-
-// ---- gate: what the ledger and git output may and may not hold -----------------------------
 
 /** The real process layer, except that the `nth` shell command (1-based) cannot start. */
 const failingShellLayer = (nth: number) =>

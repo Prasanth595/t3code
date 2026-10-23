@@ -5,7 +5,13 @@
  * standing in for the provider.
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EventId, ProjectId, type Project, type ThreadId } from "@t3tools/contracts";
+import {
+  EventId,
+  ProjectId,
+  ProviderInstanceId,
+  type Project,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   decodeProviderReplayNdjson,
@@ -34,6 +40,7 @@ import * as ManagedProjectFolders from "../../project/ManagedProjectFolders.ts";
 import * as ProjectCloneTracker from "../../project/ProjectCloneTracker.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../../project/ProjectSetupScriptRunner.ts";
+import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import * as WorktreeSetupTracker from "../../project/WorktreeSetupTracker.ts";
 import * as ProviderRegistryMock from "../../provider/testUtils/providerRegistryMock.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -43,6 +50,7 @@ import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import * as Events from "./events.ts";
 import * as Sessions from "./sessions.ts";
+import * as WatchedRepos from "./watchedRepos.ts";
 
 export const SIMPLE_TRANSCRIPT = new URL(
   "../../orchestration-v2/testkit/fixtures/simple/claude_transcript.ndjson",
@@ -53,6 +61,11 @@ export const SIMPLE_PROMPT = "Respond with the following text: fixture simple ok
 
 export const projectId = ProjectId.make("project:factory-contract");
 export const createdAt = "2026-10-15T00:00:00.000Z";
+/** The T3 settings default model of the kit's server: what a factory session runs on, as the kit's project names none. */
+export const SETTINGS_MODEL = {
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  model: "claude-sonnet-4-6",
+};
 
 export const TERMINAL_RUN_STATUSES: ReadonlySet<Sessions.RunStatus> = new Set([
   "completed",
@@ -155,7 +168,9 @@ export const layerRuntime = (input: {
         ClaudeOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(transcript),
         { databaseLayer: layerDatabase },
       );
-      const layerServerSettings = ServerSettings.layerTest();
+      const layerServerSettings = ServerSettings.layerTest({
+        defaultModelSelection: SETTINGS_MODEL,
+      });
       const layerReceipts = CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase));
       const layerThreadManagement = ThreadManagement.layer.pipe(
         Layer.provide(layerOrchestrator),
@@ -198,7 +213,9 @@ export const layerRuntime = (input: {
         ProviderRegistryMock.layer(),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           namedProjectsRoot: path.join(input.worktreesDir, "..", "projects"),
+          scratchRoot: Effect.succeedNone,
           folderForThread: () => Effect.succeedNone,
+          isScratchProject: () => Effect.succeed(false),
         }),
       );
       const layerLaunch = ThreadLaunch.layer.pipe(
@@ -216,7 +233,9 @@ export const layerRuntime = (input: {
       );
       return Layer.mergeAll(
         Sessions.layer.pipe(
-          Layer.provide(Layer.mergeAll(layerLaunch, layerStores, layerThreadManagement)),
+          Layer.provide(
+            Layer.mergeAll(layerLaunch, layerStores, layerThreadManagement, layerServerSettings),
+          ),
         ),
         // Reads the same event sink the orchestrator writes to.
         Events.layer.pipe(Layer.provide(layerOrchestrator)),
@@ -257,4 +276,19 @@ export const layerGit = GitVcsDriver.layer.pipe(
   Layer.provide(VcsProcess.layer),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-factory-contract-config-" })),
   Layer.provide(NodeServices.layer),
+);
+
+/**
+ * The reader of the watched repos over the kit's project store and the real repository identity
+ * resolver (it runs git on the project's checkout). Needs `ProjectStoreV2`, from `layerRuntime`,
+ * and NodeServices from the caller; the kit has no scratch project.
+ */
+export const layerWatchedRepos = WatchedRepos.layer.pipe(
+  Layer.provide(RepositoryIdentityResolver.layer),
+  Layer.provide(
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      namedProjectsRoot: "/unused",
+      scratchRoot: Effect.succeedNone,
+    }),
+  ),
 );

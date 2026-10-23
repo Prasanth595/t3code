@@ -1,4 +1,4 @@
-# The fork's machine config for this Mac: what the factory watches and how it runs.
+# The fork's machine config for this Mac: how the factory runs.
 # Copy this file to ~/.config/t3fac/factory/config.yml once the repo has left the Rust
 # factory's config, then restart the t3fac server (see factory/docs/handover.md). The
 # server reads it at start. No path here is expanded, so there is no `~`: write each
@@ -16,22 +16,43 @@ gh_config_dir: /Users/tomkaczocha/.config/t3fac/gh
 # gate start the next pass at once, so this is only the longest wait for news from GitHub.
 poll_seconds: 60
 
-# Runs that may hold an issue at once, and gates that may run at once.
+# Runs that may hold an issue at once, and gates that may run at once. A run holds a slot from
+# its claim until its session reports its pull request or the run ends; the gate and the wait
+# for required checks take no run slot. A session launched again for a pr-open run (a failed
+# re-gate) takes a slot again without waiting for a free one, so relaunches can take the machine
+# past max_concurrent_runs until the next claim counts them.
 max_concurrent_runs: 1
 max_concurrent_gates: 1
 
-# The provider instance and model each issue's agent session runs on.
-model_instance: claudeAgent
-model: claude-fable-5-1
+# There is no model key. Each issue's session runs on the T3 project's default model (the
+# project's settings in T3), falling back to the default model in T3's own Settings. With
+# neither set, nothing launches and the issue goes stuck with that reason. A version from
+# before #93 needs `model_instance` and `model` here. The current version warns about them
+# and keeps them through a save from /settings/factory, but never adds them: a file copied
+# from this example has neither, so add both before rolling back to such a version. Delete
+# them once no rollback to one is possible.
+
+# The free GiB the disk holding the worktrees and this data must keep. Below it a pass
+# claims no issue and starts no gate, and the Factory page shows a low-disk item until space
+# is back; a gate that waits for it does not use up an attempt. 0 turns the check off. Defaults to 10.
+min_free_gib: 10
 
 # A macOS notification when something needs a person. false keeps the list on the
 # Factory page and turns the notification off.
 notify: true
 
-# The repos to watch. `path` is a clone of its own, never the one the Rust factory uses,
-# and it must also be added as a project on this server with exactly this path: the factory
-# finds a repo's T3 project by its workspace root. Take a repo out of the Rust factory's
-# repos list before adding it here: one factory per repo.
-repos:
-  - repo: original-solutions/t3code-factory
-    path: /Users/tomkaczocha/EA/projects/t3code-factory-fac
+# Installed versions in ~/.local/share/t3fac/versions that autodeploy keeps besides the current
+# one, at least 0 (default 3). It deletes the rest after each deploy that passes its health check.
+# A version from before this key rejects it, so delete it before rolling back that far.
+# keep_versions: 3
+
+# There is no `repos` key (retired by #106). The factory watches the T3 projects of this
+# server whose checkout has a .dw/config.yml with a `factory` block. To add a repo, add its
+# clone as a project on this server once (the sidebar, or `t3 project add <path>`). The clone
+# is one of its own, never the one the Rust factory uses. A clone with an `upstream` remote is
+# not watched, since T3 names it by that remote. Take a repo out of the Rust factory's
+# repos list before adding it here: one factory per repo. A `repos` key left in this file
+# loads with a warning and a save from /settings/factory keeps it, but a file copied from this
+# example has none, and a version from before #106 requires a non-empty one: add a `repos`
+# list (`repo: owner/name` and `path: <clone>` per watched repo) before rolling back to such
+# a version, and delete it once no such rollback is possible.

@@ -1,5 +1,3 @@
-// This file mostly exists because we want dev mode to say "T3 Code (Dev)" instead of "electron"
-
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
@@ -7,6 +5,13 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { ensureElectronRuntime } from "./ensure-electron-runtime.mjs";
+import {
+  FORK_DESKTOP_APP_ID,
+  FORK_DESKTOP_DEV_APP_ID,
+  FORK_DESKTOP_DEV_SCHEME,
+  FORK_DESKTOP_SCHEME,
+  FORK_PRODUCT_NAME,
+} from "../../../packages/shared/src/forkIdentity.ts";
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -15,12 +20,16 @@ const repoRoot = NodePath.resolve(desktopDir, "..", "..");
 const devBundleIdSuffix = NodePath.basename(repoRoot)
   .toLowerCase()
   .replaceAll(/[^a-z0-9]+/g, "");
-const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
-const APP_BUNDLE_ID = isDevelopment
-  ? `com.t3tools.t3code.dev.${devBundleIdSuffix || "local"}`
-  : "com.t3tools.t3code";
-const APP_PROTOCOL_SCHEMES = isDevelopment ? ["t3code-dev"] : ["t3code"];
-const LAUNCHER_VERSION = 20;
+const APP_DISPLAY_NAME = isDevelopment
+  ? `${FORK_PRODUCT_NAME} (Dev)`
+  : `${FORK_PRODUCT_NAME} (Beta)`;
+export const APP_BUNDLE_ID = isDevelopment
+  ? `${FORK_DESKTOP_DEV_APP_ID}.${devBundleIdSuffix || "local"}`
+  : FORK_DESKTOP_APP_ID;
+export const APP_PROTOCOL_SCHEMES = isDevelopment
+  ? [FORK_DESKTOP_DEV_SCHEME]
+  : [FORK_DESKTOP_SCHEME];
+const LAUNCHER_VERSION = 21;
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
   "assets",
@@ -96,7 +105,7 @@ function runChecked(command, args) {
   throw new Error(`Failed to run ${command} ${args.join(" ")}: ${details}`.trim());
 }
 
-export function resolveMacCodeSignArguments(appBundlePath) {
+function resolveMacCodeSignArguments(appBundlePath) {
   return ["--force", "--deep", "--sign", "-", "--timestamp=none", appBundlePath];
 }
 
@@ -203,7 +212,7 @@ function registerMacLauncherBundle(appBundlePath) {
 }
 
 // Bundle-internal paths are macOS paths whatever host builds them.
-export function resolveMacLauncherIconPaths(runtimeDir, development = isDevelopment) {
+function resolveMacLauncherIconPaths(runtimeDir, development = isDevelopment) {
   return {
     sourceIconPath: development ? developmentMacIconPngPath : productionMacIconPngPath,
     generatedIconPath: NodePath.posix.join(
@@ -262,7 +271,7 @@ function ensureMacIconIcns(runtimeDir) {
   }
 }
 
-export function resolveMacBundleInfoPlistStrings(executableName) {
+function resolveMacBundleInfoPlistStrings(executableName) {
   return {
     CFBundleDisplayName: APP_DISPLAY_NAME,
     CFBundleName: APP_DISPLAY_NAME,
@@ -402,11 +411,10 @@ function buildMacLauncher(electronBinaryPath) {
   );
   patchHelperBundleInfoPlists(targetAppBundlePath);
   if (isDevelopment) {
-    // Keep Electron's native executable inside the branded bundle. Launching the
-    // node_modules copy makes macOS associate the process (and Dock label) with
-    // Electron.app even though this bundle's Info.plist has the T3 Code name.
-    // Its conventional executable name also keeps Electron's default-app runtime
-    // in development mode instead of making app.isPackaged report true.
+    // Launching the node_modules copy makes macOS associate the process (and Dock label) with
+    // Electron.app even though this bundle's Info.plist has the T3 Code name. Its conventional
+    // executable name also keeps Electron's default-app runtime in development mode instead of
+    // making app.isPackaged report true.
     writeDevelopmentEnvironmentScript();
     writeDevelopmentLauncherScript(launcherBinaryPath, runtimeElectronBinaryPath);
   }

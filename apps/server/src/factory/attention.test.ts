@@ -9,6 +9,7 @@ import * as Path from "effect/Path";
 import {
   Attention,
   ATTENTION_FILE,
+  CONFIG_ITEM_ID,
   layer,
   PASS_ERRORS_ITEM_ID,
   type NewItem,
@@ -372,4 +373,114 @@ it.effect(
         assert.strictEqual((yield* attention.list()).length, 0);
       }).pipe(Effect.provide(serviceOver(dir, process)));
     }),
+);
+
+it.effect("dismiss hides the open items it names and answers the ids it dismissed", () =>
+  withDir((dir) => {
+    const { process } = recorder();
+    return Effect.gen(function* () {
+      const attention = yield* Attention;
+      yield* attention.raise(item({ id: "a" }));
+      yield* attention.raise(item({ id: "b" }));
+      const dismissed = yield* attention.dismiss(["a", "a", "nope"]);
+      assert.deepStrictEqual(dismissed, ["a"]);
+      assert.deepStrictEqual(
+        (yield* attention.list()).map((i) => i.id),
+        ["b"],
+      );
+      assert.deepStrictEqual(yield* attention.dismiss(["a"]), []);
+      const file = yield* fileOf(dir);
+      assert.deepStrictEqual(
+        file.items.map((i) => [i["id"], i["dismissed"]]),
+        [
+          ["a", true],
+          ["b", undefined],
+        ],
+      );
+    }).pipe(Effect.provide(serviceOver(dir, process)));
+  }),
+);
+
+it.effect("a dismissed item raised again is neither listed nor notified, after a restart too", () =>
+  withDir((dir) => {
+    const first = recorder();
+    const second = recorder();
+    return Effect.gen(function* () {
+      yield* Effect.gen(function* () {
+        const attention = yield* Attention;
+        yield* attention.raise(item({ id: CONFIG_ITEM_ID, kind: "config" }));
+        yield* attention.dismiss([CONFIG_ITEM_ID]);
+        yield* attention.raise(item({ id: CONFIG_ITEM_ID, kind: "config" }));
+        assert.deepStrictEqual(yield* attention.list(), []);
+      }).pipe(Effect.provide(serviceOver(dir, first.process)));
+      assert.strictEqual(first.calls.length, 1);
+
+      yield* Effect.gen(function* () {
+        const attention = yield* Attention;
+        assert.deepStrictEqual(yield* attention.list(), []);
+        yield* attention.raise(item({ id: CONFIG_ITEM_ID, kind: "config" }));
+        assert.deepStrictEqual(yield* attention.list(), []);
+      }).pipe(Effect.provide(serviceOver(dir, second.process)));
+      assert.strictEqual(second.calls.length, 0);
+    });
+  }),
+);
+
+it.effect("clear forgets a dismissal, so the same id raised again is listed and notified", () =>
+  withDir((dir) => {
+    const { calls, process } = recorder();
+    return Effect.gen(function* () {
+      const attention = yield* Attention;
+      yield* attention.raise(item({ id: CONFIG_ITEM_ID, kind: "config" }));
+      yield* attention.dismiss([CONFIG_ITEM_ID]);
+      yield* attention.clear((i) => i.id === CONFIG_ITEM_ID);
+      assert.deepStrictEqual((yield* fileOf(dir)).items, []);
+      yield* attention.raise(item({ id: CONFIG_ITEM_ID, kind: "config" }));
+      assert.deepStrictEqual(
+        (yield* attention.list()).map((i) => i.id),
+        [CONFIG_ITEM_ID],
+      );
+      assert.strictEqual(calls.length, 2);
+    }).pipe(Effect.provide(serviceOver(dir, process)));
+  }),
+);
+
+it.effect(
+  "a file from before dismissals loads every item open, and bad dismissal data is dropped with a warning",
+  () =>
+    withDir((dir, warnings) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(dir, { recursive: true });
+        const entry = (id: string, extra: Record<string, unknown> = {}) => ({
+          id,
+          kind: "stuck",
+          repo: "a/b",
+          issue: 1,
+          run: null,
+          message: "m",
+          first_seen: "2026-10-07T13:33:20.000Z",
+          ...extra,
+        });
+        yield* fs.writeFileString(
+          `${dir}/${ATTENTION_FILE}`,
+          JSON.stringify({
+            items: [
+              entry("old"),
+              entry("bad", { dismissed: "yes" }),
+              entry("off", { dismissed: false }),
+            ],
+          }),
+        );
+        const { process } = recorder();
+        yield* Effect.gen(function* () {
+          assert.deepStrictEqual(
+            (yield* (yield* Attention).list()).map((i) => i.id),
+            ["old", "bad", "off"],
+          );
+        }).pipe(Effect.provide(serviceOver(dir, process)));
+        assert.strictEqual(warnings.length, 1);
+        assert.include(warnings[0]!, "bad");
+      }),
+    ),
 );

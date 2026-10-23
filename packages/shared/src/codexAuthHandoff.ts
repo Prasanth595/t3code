@@ -1,5 +1,6 @@
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { FORK_DESKTOP_DEV_SCHEME, FORK_DESKTOP_SCHEME } from "./forkIdentity.ts";
 import { providerAuthReturnUrl } from "./providerAuthReturnUrl.ts";
 
 export const CodexAuthHandoff = Schema.Struct({
@@ -23,7 +24,6 @@ const decodeHandoff = Schema.decodeUnknownSync(Schema.fromJsonString(CodexAuthHa
 const encodeDelivery = Schema.encodeSync(Schema.fromJsonString(Delivery));
 const decodeDelivery = Schema.decodeUnknownSync(Schema.fromJsonString(Delivery));
 
-/** The helper only opens OpenAI's authorize endpoint and receives a loopback callback. */
 export function codexAuthorizationRequest(value: string) {
   const url = new URL(value);
   if (
@@ -56,7 +56,6 @@ export function codexAuthorizationRequest(value: string) {
   return { authorizationUrl: url.toString(), redirectUri, state };
 }
 
-/** Validation is shared by the desktop listener and the environment receiving the code. */
 export function codexCallbackUrl(value: string, redirectUri: string, state: string) {
   const callback = new URL(value);
   const expected = new URL(redirectUri);
@@ -85,7 +84,9 @@ export function codexCallbackUrl(value: string, redirectUri: string, state: stri
 }
 
 export function codexAuthHandoffUrl(input: CodexAuthHandoff, development = false) {
-  const url = new URL(`${development ? "t3code-dev" : "t3code"}://auth/codex`);
+  const url = new URL(
+    `${development ? FORK_DESKTOP_DEV_SCHEME : FORK_DESKTOP_SCHEME}://auth/codex`,
+  );
   url.searchParams.set("request", encodeHandoff(input));
   return url.toString();
 }
@@ -95,7 +96,7 @@ export function readCodexAuthHandoff(value: string, development: boolean) {
     const url = new URL(value);
     if (
       value.length > 32_768 ||
-      url.protocol !== (development ? "t3code-dev:" : "t3code:") ||
+      url.protocol !== `${development ? FORK_DESKTOP_DEV_SCHEME : FORK_DESKTOP_SCHEME}:` ||
       url.host !== "auth" ||
       url.pathname !== "/codex" ||
       url.username ||
