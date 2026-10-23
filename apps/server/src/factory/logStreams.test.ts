@@ -1,9 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off - the guard patches real Node streams, which a Node Console writes to, and a child process proves it.
 import * as NodeChildProcess from "node:child_process";
-import { Console } from "node:console";
+import * as NodeConsole from "node:console";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import { Writable } from "node:stream";
+import * as NodeStream from "node:stream";
 import * as NodeURL from "node:url";
 
 import { assert } from "@effect/vitest";
@@ -20,13 +20,10 @@ const tempDir = useTempDirs();
 const enospc = () =>
   Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" });
 
-/** Lets a stream emit the error it queued on the next tick. */
-const nextMacrotask = () => new Promise<void>((resolve) => setImmediate(resolve));
-
 /** A stream that records what reaches it and fails every write while `full` says so. */
 const fakeLog = () => {
   const state = { full: false, streamed: [] as Array<string>, fd: [] as Array<string> };
-  const stream = new Writable({
+  const stream = new NodeStream.Writable({
     write(chunk, _encoding, callback) {
       if (state.full) return callback(enospc());
       state.streamed.push(String(chunk));
@@ -37,7 +34,7 @@ const fakeLog = () => {
     if (state.full) throw enospc();
     state.fd.push(String(data));
   });
-  return { state, stream, log: new Console(stream) };
+  return { state, stream, log: new NodeConsole.Console(stream) };
 };
 
 /**
@@ -82,13 +79,14 @@ describe("guardLogStream", () => {
     assert.notExists(await new Promise((resolve) => stream.write("6f6b320a", "hex", resolve)));
     assert.deepEqual(state.streamed, ["zero\n", "ok\n", "ok2\n"]);
 
+    // The failed write destroys the stream: "close" is its last event, after the queued error.
+    const closed = new Promise<void>((resolve) => stream.once("close", () => resolve()));
     state.full = true;
     const failed = new Promise<unknown>((resolve) => stream.write("one\n", resolve));
     log.log("two");
     assert.propertyVal(await failed, "code", "ENOSPC");
-    await nextMacrotask();
+    await closed;
     log.log("three");
-    await nextMacrotask();
     // A writer that waits on its callback is not left hanging by a dropped line.
     const written = await new Promise((resolve) => stream.write("four\n", resolve));
     assert.isUndefined(written);
@@ -112,11 +110,12 @@ describe("guardLogStream", () => {
 
   // The guard is in place as soon as server.ts imports the factory, before any layer builds, so a
   // full disk during startup cannot end the server either.
-  for (const stdout of ["read-only file", "closed pipe"] as const) {
-    it(`keeps a process that imported the factory alive when its stdout is a ${stdout}`, async () => {
+  it.each(["read-only file", "closed pipe"] as const)(
+    "keeps a process that imported the factory alive when its stdout is a %s",
+    async (stdout) => {
       const child = await runChild(stdout);
       assert.deepStrictEqual([child.status, child.signal], [0, null], child.stderr);
       assert.strictEqual(child.stderr, "alive\n");
-    });
-  }
+    },
+  );
 });

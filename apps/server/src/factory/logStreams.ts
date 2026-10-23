@@ -8,11 +8,11 @@
  * the first write that succeeds again is preceded by one `N log lines dropped (<code>)` line.
  */
 import * as NodeFS from "node:fs";
-import type { Writable } from "node:stream";
+import type * as NodeStream from "node:stream";
 
 type WriteFd = (fd: number, data: string | Uint8Array) => void;
 
-const guarded = new WeakSet<Writable>();
+const guarded = new WeakSet<NodeStream.Writable>();
 
 const errorCode = (error: unknown): string =>
   typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
@@ -21,7 +21,7 @@ const errorCode = (error: unknown): string =>
 
 /** Guards `stream`, whose file descriptor is `fd`. A stream already guarded is left as it is. */
 export const guardLogStream = (
-  stream: Writable,
+  stream: NodeStream.Writable,
   fd: number,
   writeFd: WriteFd = (fd, data) =>
     void (typeof data === "string" ? NodeFS.writeSync(fd, data) : NodeFS.writeSync(fd, data)),
@@ -70,7 +70,7 @@ export const guardLogStream = (
     }
     if (done !== undefined) process.nextTick(done);
     return true;
-  }) as Writable["write"];
+  }) as NodeStream.Writable["write"];
 };
 
 /** Guards the process's stdout and stderr. `index.ts` calls it when server.ts imports it. */
