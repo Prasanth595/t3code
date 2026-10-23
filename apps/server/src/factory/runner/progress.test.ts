@@ -759,6 +759,9 @@ describe("readProgress: gating again", () => {
     moved(7, "building", "pr-open"),
   ];
   const regated = (ms: number, sha: string, base: string, previous: string) =>
+    line(ms, "gate_regate", { sha, base_sha: base, previous_base_sha: previous, conflict: true });
+  /** A line an older factory wrote: no `conflict` field, whatever started it. */
+  const regatedBefore = (ms: number, sha: string, base: string, previous: string) =>
     line(ms, "gate_regate", { sha, base_sha: base, previous_base_sha: previous });
   const relaunching = (ms: number) =>
     line(ms, "regate_relaunching", { attempt: 2, branch: "t3code/abc", message: "boom" });
@@ -790,6 +793,27 @@ describe("readProgress: gating again", () => {
       "conflict",
     );
     assert.strictEqual(readProgress([launched(1), regated(2, HEAD, BASE, BASE)]).regateMoved, null);
+  });
+
+  it("says an earlier factory began it for an older line with the head unchanged", () => {
+    // A base move or a conflict under the older rule: the line does not say which.
+    assert.strictEqual(
+      readProgress([...PASS, regatedBefore(8, HEAD, MOVED, BASE)]).regateMoved,
+      "earlier",
+    );
+    assert.strictEqual(
+      readProgress([...PASS, regatedBefore(8, HEAD, BASE, BASE)]).regateMoved,
+      "earlier",
+    );
+    // A moved head is read from the shas, marker or not.
+    assert.strictEqual(
+      readProgress([...PASS, regatedBefore(8, PUSHED, MOVED, BASE)]).regateMoved,
+      "both",
+    );
+    assert.strictEqual(
+      readProgress([launched(1), regatedBefore(2, HEAD, BASE, BASE)]).regateMoved,
+      null,
+    );
   });
 
   it("keeps the newest line's answer when another line follows", () => {

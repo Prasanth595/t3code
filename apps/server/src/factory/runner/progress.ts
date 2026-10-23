@@ -50,9 +50,10 @@ export interface Interruption {
 /**
  * What started a re-gate, for the run's line. A moved head (with or without the base) is `head` or
  * `both`; a head that did not move leaves only `conflict`: GitHub says the pull request conflicts
- * with the base branch, whatever the base did. A moved base alone starts no gate.
+ * with the base branch, whatever the base did. A moved base alone starts no gate. `earlier` is a
+ * re-gate an older factory began with the head unchanged, whose line does not say why.
  */
-export type Moved = "head" | "both" | "conflict";
+export type Moved = "head" | "both" | "conflict" | "earlier";
 
 /**
  * Whether the head moved since the pass (`passedHead` on `passedAgainst`): `head`, or `both` when
@@ -719,16 +720,21 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         const baseSha = dataField(entry.data, "base_sha");
         const previous = dataField(entry.data, "previous_base_sha");
         // The pass this re-gate replaces is still the one on record here. With the head where the
-        // pass left it, the only trigger left is a conflict GitHub reported. A line written before
-        // a moved base stopped starting a gate and resumed after an upgrade reads `conflict` too:
-        // a transitional label.
+        // pass left it, a conflict GitHub reported is the trigger the line names; a line without
+        // one was written before a moved base stopped starting a gate, and its trigger is unknown.
+        const headMoved = movedSince(
+          pass?.sha ?? "",
+          typeof previous === "string" ? previous : "",
+          typeof sha === "string" ? sha : "",
+          typeof baseSha === "string" ? baseSha : "",
+        );
         regateMoved =
-          movedSince(
-            pass?.sha ?? "",
-            typeof previous === "string" ? previous : "",
-            typeof sha === "string" ? sha : "",
-            typeof baseSha === "string" ? baseSha : "",
-          ) ?? (pass === null ? null : "conflict");
+          headMoved ??
+          (pass === null
+            ? null
+            : dataField(entry.data, "conflict") === true
+              ? "conflict"
+              : "earlier");
         regating = true;
         regatePassed = false;
         regateSentBack = false;

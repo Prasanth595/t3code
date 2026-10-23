@@ -92,7 +92,6 @@ import {
 } from "./run.ts";
 
 export { mergeConflictMessage } from "./messages.ts";
-export { movedSince, type Moved } from "./progress.ts";
 
 /**
  * What the gate asks of the factory besides what a building run asks: the base tip, who marked a
@@ -1413,7 +1412,12 @@ export const regate = (ctx: GateContext, run: RunId): Effect.Effect<Regated, Gat
           out,
           {
             event: "gate_regate",
-            data: { sha: head, base_sha: tip, previous_base_sha: passedAgainst },
+            data: {
+              sha: head,
+              base_sha: tip,
+              previous_base_sha: passedAgainst,
+              ...(pull.mergeable === "conflicting" && { conflict: true as const }),
+            },
           },
           "gate",
           "gate-regated",

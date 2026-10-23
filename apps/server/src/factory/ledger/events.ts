@@ -123,7 +123,16 @@ export type RunEvent =
     }
   | {
       readonly event: "gate_regate";
-      readonly data: { sha: string; base_sha: string; previous_base_sha: string };
+      readonly data: {
+        sha: string;
+        base_sha: string;
+        previous_base_sha: string;
+        /**
+         * GitHub said the pull request conflicts with the base branch. Absent on a line written
+         * before a moved base stopped starting a gate, whose trigger is then not known.
+         */
+        conflict?: true;
+      };
     }
   | {
       readonly event: "regate_relaunching";
@@ -213,7 +222,7 @@ export const RUN_EVENT_FIELDS = {
   gate_command: ["attempt", "command", "exit_code", "duration_ms"],
   gate_sent_back: ["attempt", "run_ordinal"],
   gate_checkout: ["attempt", "dir", "sha", "base_sha"],
-  gate_regate: ["sha", "base_sha", "previous_base_sha"],
+  gate_regate: ["sha", "base_sha", "previous_base_sha", "conflict"],
   regate_relaunching: ["attempt", "branch", "message"],
   feedback_relaunching: ["n", "branch", "items", "message"],
   feedback_forwarding: ["n", "run_ordinal", "items", "message"],

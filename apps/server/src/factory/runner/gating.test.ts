@@ -2526,7 +2526,6 @@ describe("gate: every call can fail, and the gate is called again", () => {
 });
 
 const MOVED = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
-const MOVED_SHORT = "9f8e7d6";
 
 /** The tips a base branch that keeps moving goes through, in order. */
 const TIPS = [
@@ -4152,7 +4151,11 @@ describe("regate: the base branch moved", () => {
       const rig = yield* prOpenRun();
       baseMoved(rig, 0);
       appendLines(rig, [regateLine(BASE, MOVED)] as ReadonlyArray<RunEvent>);
-      assert.deepStrictEqual(yield* regateStep(rig), { kind: "passed", pr: 12 });
+      // Its line names no trigger, and GitHub reported no conflict: it is not called one.
+      assert.deepStrictEqual(yield* regateIn(rig), {
+        step: { kind: "passed", pr: 12 },
+        moved: "earlier",
+      });
       assert.strictEqual(eventsOf(rig, "gate_regate").length, 1);
       assert.deepStrictEqual(rig.ws.calls, workspaceCalls(rig, 2, MOVED));
       assert.deepStrictEqual(rig.gh.world.prComments, [resultsComment(1), againComment(2, MOVED)]);
@@ -4463,6 +4466,27 @@ describe("regate: what the run's line says started it", () => {
         moved: "conflict",
       });
       assert.strictEqual(movedOf(rig), "conflict");
+      // The line says so: an older line with the same shas and no marker reads `earlier`.
+      assert.deepStrictEqual(eventsOf(rig, "gate_regate"), [
+        {
+          event: "gate_regate",
+          data: { sha: HEAD, base_sha: MOVED, previous_base_sha: BASE, conflict: true },
+        },
+      ]);
+    }),
+  );
+
+  it.effect("a pass whose base was not recorded is unchanged while the head is", () =>
+    Effect.gen(function* () {
+      // Before this change such a pass was always gated again, as nothing showed the base it
+      // ran on. Only the head counts now, and the pull request is mergeable.
+      const rig = yield* prOpenRun();
+      dropLines(rig, '"gate_checkout"');
+      const bytes = bytesOf(rig);
+      assert.deepStrictEqual(yield* regateIn(rig), { step: { kind: "unchanged" }, moved: null });
+      assert.deepStrictEqual(rig.gh.calls, [PR_READ]);
+      assert.deepStrictEqual(rig.ws.calls, []);
+      assert.strictEqual(bytesOf(rig), bytes);
     }),
   );
 
@@ -4670,7 +4694,12 @@ describe("regate: gated again and the answer", () => {
         });
         assert.strictEqual(rig.ws.runs, 0, "the gate was not asked, so no lock was taken");
         assert.deepStrictEqual(rig.ws.calls, []);
-        assert.ok(hasLine(rig, regateLine(BASE, BASE)));
+        assert.ok(
+          hasLine(rig, {
+            event: "gate_regate",
+            data: { sha: HEAD, base_sha: BASE, previous_base_sha: BASE, conflict: true },
+          }),
+        );
         assert.ok(hasLine(rig, conflictCmd(2)));
         assert.strictEqual(rig.t3.launches.length, 1);
         assert.ok(

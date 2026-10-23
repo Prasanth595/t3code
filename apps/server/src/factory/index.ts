@@ -295,13 +295,15 @@ const MOVED_WORDS: Record<Moved, string> = {
   head: "the pull request's head moved",
   both: "the pull request's head and the base branch moved",
   conflict: "GitHub says the pull request conflicts with the base branch",
+  earlier: "an earlier version of the factory began this re-gate",
 };
 
 /**
  * The run's line when the re-gate of its `pr-open` pull request, started in the background, has
  * ended; null for a quiet one, which says nothing. A pass or a failure starts with what started the
  * re-gate: the pull request's head moved, the head and the base branch, a conflict GitHub reported,
- * or (when no pass was on record to compare with) that there was none.
+ * a re-gate an earlier version began, or (when no pass was on record to compare with) that there
+ * was none.
  */
 export const regateWords = (
   run: string,

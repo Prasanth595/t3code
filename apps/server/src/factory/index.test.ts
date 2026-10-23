@@ -2249,6 +2249,10 @@ describe("the gate in the background", () => {
       words({ kind: "sent-back", attempt: 2 }, "conflict"),
       "GitHub says the pull request conflicts with the base branch, the gate failed on attempt 2, the PR is a draft again and the session was told",
     );
+    assert.strictEqual(
+      words({ kind: "passed", pr: 12 }, "earlier"),
+      "an earlier version of the factory began this re-gate, the gate passed again, PR https://github.com/rawphp/softfac/pull/12 stays ready for review",
+    );
     assert.strictEqual(words({ kind: "not-ready" }, null), "the gate waits for the session");
   });
 

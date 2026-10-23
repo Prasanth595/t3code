@@ -64,9 +64,8 @@ const OTHER = "rawphp/other";
 /** What the fake's clock reads until a test moves it. */
 const T0 = 1_791_380_000_000;
 const BUILDING: State = "building";
-/** The head a pr-open run's pass ran on, the base tip it ran against, and where each moves to. */
+/** The head a pr-open run's pass ran on, and where it moves to. */
 const HEAD = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
-const BASE = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d";
 const PUSHED = "7e6d5c4b3a291807f6e5d4c3b2a190817263a4b5";
 const MOVED = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
 
