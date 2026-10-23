@@ -162,6 +162,14 @@ describe("evaluatePullRequestWatch", () => {
     const botDone = detail({ checks: [...done.checks, check("bot", "success")] });
     assert.deepEqual(evaluatePullRequestWatch(churn.next, botDone, noRemarks).changes, []);
 
+    // A pending check that turns required on the next read still finishes with one wake.
+    const promoted = detail({
+      checks: [required("test", "success"), required("e2e", "success")],
+    });
+    const gated = evaluatePullRequestWatch(first.next, promoted, noRemarks);
+    assert.deepEqual(gated.changes, [{ kind: "checks-passed", count: 2, required: true }]);
+    assert.deepEqual(evaluatePullRequestWatch(gated.next, promoted, noRemarks).changes, []);
+
     // Nothing else was pending when the required ones passed, so nothing more is owed.
     const green = evaluatePullRequestWatch(watch(), done, noRemarks);
     assert.deepEqual(green.changes, [{ kind: "checks-passed", count: 1, required: true }]);
