@@ -63,6 +63,49 @@ const resolveInstance = (
     ),
   );
 
+/**
+ * Runs `attempt` with `primary`, then once with `fallback` when it fails.
+ * Callers use this directly instead of `fallbackModelSelection` when the input
+ * or the result depends on which model ran.
+ */
+export const withModelFallback = <A, R>(
+  operation: TextGenerationOp,
+  primary: ModelSelection,
+  fallback: ModelSelection | null | undefined,
+  attempt: (modelSelection: ModelSelection) => Effect.Effect<A, TextGenerationError, R>,
+): Effect.Effect<A, TextGenerationError, R> => {
+  if (
+    !fallback ||
+    (fallback.instanceId === primary.instanceId && fallback.model === primary.model)
+  ) {
+    return attempt(primary);
+  }
+  return attempt(primary).pipe(
+    Effect.catch((primaryError) =>
+      Effect.logWarning("Text generation failed, trying the fallback model", {
+        operation,
+        instanceId: primary.instanceId,
+        model: primary.model,
+        fallbackInstanceId: fallback.instanceId,
+        fallbackModel: fallback.model,
+        detail: primaryError.detail,
+      }).pipe(
+        Effect.andThen(attempt(fallback)),
+        Effect.tapError((fallbackError) =>
+          Effect.logWarning("Text generation fallback model failed", {
+            operation,
+            fallbackInstanceId: fallback.instanceId,
+            fallbackModel: fallback.model,
+            detail: fallbackError.detail,
+          }),
+        ),
+        // The configured model's error is the one the user can act on.
+        Effect.mapError(() => primaryError),
+      ),
+    ),
+  );
+};
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
@@ -76,42 +119,12 @@ export const make = Effect.gen(function* () {
       textGeneration: ProviderInstance["textGeneration"],
       modelSelection: ModelSelection,
     ) => Effect.Effect<A, TextGenerationError>,
-  ): Effect.Effect<A, TextGenerationError> => {
-    const attempt = (modelSelection: ModelSelection) =>
+  ): Effect.Effect<A, TextGenerationError> =>
+    withModelFallback(operation, primary, fallback, (modelSelection) =>
       resolveInstance(registry, operation, modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => run(textGeneration, modelSelection)),
-      );
-    if (
-      !fallback ||
-      (fallback.instanceId === primary.instanceId && fallback.model === primary.model)
-    ) {
-      return attempt(primary);
-    }
-    return attempt(primary).pipe(
-      Effect.catch((primaryError) =>
-        Effect.logWarning("Text generation failed, trying the fallback model", {
-          operation,
-          instanceId: primary.instanceId,
-          model: primary.model,
-          fallbackInstanceId: fallback.instanceId,
-          fallbackModel: fallback.model,
-          detail: primaryError.detail,
-        }).pipe(
-          Effect.andThen(attempt(fallback)),
-          Effect.tapError((fallbackError) =>
-            Effect.logWarning("Text generation fallback model failed", {
-              operation,
-              fallbackInstanceId: fallback.instanceId,
-              fallbackModel: fallback.model,
-              detail: fallbackError.detail,
-            }),
-          ),
-          // The configured model's error is the one the user can act on.
-          Effect.mapError(() => primaryError),
-        ),
       ),
     );
-  };
 
   return TextGeneration.of({
     generateCommitMessage: ({ fallbackModelSelection, ...input }) =>

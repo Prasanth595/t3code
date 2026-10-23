@@ -393,17 +393,31 @@ const make = Effect.gen(function* () {
       Effect.flatMap((checkout) =>
         Effect.all(
           {
-            generated: textGeneration.generateReviewGuide({
-              ...reviewGuideInputFromPullRequest(detail, activity, checkout.baseCommit),
-              cwd: checkout.path,
+            // The guide records the model that wrote it, which is the fallback
+            // when the review guide model failed.
+            generated: TextGeneration.withModelFallback(
+              "generateReviewGuide",
               modelSelection,
-              fallbackModelSelection: ServerSettings.resolveTextGenerationFallbackModelSelection(
+              ServerSettings.resolveTextGenerationFallbackModelSelection(
                 projectSettings,
                 input.projectId,
               ),
-              instructions: projectSettings.reviewGuideInstructions,
-              stack: checkout.stack,
-            }),
+              (attemptedModelSelection) =>
+                textGeneration
+                  .generateReviewGuide({
+                    ...reviewGuideInputFromPullRequest(detail, activity, checkout.baseCommit),
+                    cwd: checkout.path,
+                    modelSelection: attemptedModelSelection,
+                    instructions: projectSettings.reviewGuideInstructions,
+                    stack: checkout.stack,
+                  })
+                  .pipe(
+                    Effect.map((result) => ({
+                      result,
+                      modelSelection: attemptedModelSelection,
+                    })),
+                  ),
+            ),
             change: readChange(checkout.path, checkout.baseCommit),
           },
           { concurrency: "unbounded" },
@@ -414,8 +428,8 @@ const make = Effect.gen(function* () {
     const guide: PullRequestReviewGuide = {
       headSha,
       generatedAt: yield* nowIso,
-      modelSelection,
-      ...normalizeReviewGuide(generated, change),
+      modelSelection: generated.modelSelection,
+      ...normalizeReviewGuide(generated.result, change),
     };
     yield* ownership.withPermits(1)(
       Effect.gen(function* () {
