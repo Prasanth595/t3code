@@ -1,8 +1,7 @@
+import { act, render as renderScreen } from "../../test/render";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
-import { act, Suspense } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-
+import { Suspense } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 const loaded = vi.hoisted(() => ({
   diff: 0,
   preview: 0,
@@ -10,13 +9,24 @@ const loaded = vi.hoisted(() => ({
   device: 0,
   previewRenders: [] as unknown[],
 }));
+const imports = vi.hoisted(() => {
+  const deferred = () => {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  };
+  return { preview: deferred(), terminal: deferred() };
+});
 vi.mock("./diff/DiffSidePanel", () => {
   loaded.diff += 1;
   return { default: () => null };
 });
 vi.mock("./terminal/TerminalSidePanel", () => {
   loaded.terminal += 1;
-  return { default: () => null };
+  imports.terminal.resolve();
+  return { default: () => <span>Terminal body</span> };
 });
 vi.mock("./device/DeviceSidePanel", () => {
   loaded.device += 1;
@@ -24,6 +34,7 @@ vi.mock("./device/DeviceSidePanel", () => {
 });
 vi.mock("./preview/PreviewSidePanel", () => {
   loaded.preview += 1;
+  imports.preview.resolve();
   return {
     default: function PreviewSidePanel(props: unknown) {
       loaded.previewRenders.push({ props, host: usePanelHost() });
@@ -31,12 +42,9 @@ vi.mock("./preview/PreviewSidePanel", () => {
     },
   };
 });
-
 import type { RightPanelSurface } from "~/rightPanelStore";
-
 import { RegisteredSidePanel } from "./bundledPanels";
 import { PanelHostContext, usePanelHost, type PanelHost } from "./panelHost";
-
 const threadRef: ScopedThreadRef = {
   environmentId: EnvironmentId.make("environment-a"),
   threadId: ThreadId.make("thread-a"),
@@ -48,26 +56,12 @@ const host: PanelHost = {
   workspaceMutationId: null,
   sendAnnotation: () => undefined,
 };
-
-let root: Root;
-let container: HTMLDivElement;
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
-
-describe("bundled side panels", () => {
+describe("bundled side panels", async () => {
   it("loads only the selected panel body and lends it the host", async () => {
+    await using screen = await renderScreen(null, { router: false });
     expect(loaded).toMatchObject({ diff: 0, preview: 0, terminal: 0, device: 0 });
     await act(async () => {
-      root.render(
+      await screen.rerender(
         <PanelHostContext value={host}>
           <Suspense fallback={null}>
             <RegisteredSidePanel id="preview" tabId="tab-1" />
@@ -75,13 +69,22 @@ describe("bundled side panels", () => {
         </PanelHostContext>,
       );
     });
-    await expect.poll(() => loaded.previewRenders.length).toBe(1);
+    await act(async () => {
+      await imports.preview.promise;
+    });
+    expect(loaded.previewRenders).toHaveLength(1);
     expect(loaded).toMatchObject({ diff: 0, preview: 1, terminal: 0, device: 0 });
     expect(loaded.previewRenders).toEqual([{ props: { tabId: "tab-1" }, host }]);
   });
-
   it("loads only the terminal body when the terminal is selected", async () => {
-    const surface: Extract<RightPanelSurface, { kind: "terminal" }> = {
+    const previewBefore = loaded.preview;
+    await using screen = await renderScreen(null, { router: false });
+    const surface: Extract<
+      RightPanelSurface,
+      {
+        kind: "terminal";
+      }
+    > = {
       id: "terminal:term-1",
       kind: "terminal",
       resourceId: "term-1",
@@ -89,7 +92,7 @@ describe("bundled side panels", () => {
       activeTerminalId: "term-1",
     };
     await act(async () => {
-      root.render(
+      await screen.rerender(
         <PanelHostContext value={host}>
           <Suspense fallback={null}>
             <RegisteredSidePanel
@@ -108,16 +111,29 @@ describe("bundled side panels", () => {
         </PanelHostContext>,
       );
     });
-    expect(loaded).toMatchObject({ diff: 0, terminal: 1 });
+    await act(async () => {
+      await imports.terminal.promise;
+    });
+    expect(screen.container.textContent).toContain("Terminal body");
+    expect(loaded).toMatchObject({ diff: 0, terminal: 1, preview: previewBefore, device: 0 });
   });
 });
-
 // Never called. The project typecheck compiles these pairings, and each
 // expect-error directive fails it if a wrong pairing starts to compile.
 export function typeFixtures(
   widenedId: "diff" | "preview",
-  terminalSurface: Extract<RightPanelSurface, { kind: "terminal" }>,
-  deviceSurface: Extract<RightPanelSurface, { kind: "device" }>,
+  terminalSurface: Extract<
+    RightPanelSurface,
+    {
+      kind: "terminal";
+    }
+  >,
+  deviceSurface: Extract<
+    RightPanelSurface,
+    {
+      kind: "device";
+    }
+  >,
   dismiss: () => void,
 ) {
   const terminalProps = {
