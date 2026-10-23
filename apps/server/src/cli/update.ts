@@ -26,7 +26,9 @@ import {
   pinnedRuntimeCommand,
   PinnedRuntimeInstallError,
   pinnedRuntimePaths,
+  pinnedRuntimeVersionsDir,
   prunePinnedRuntimes,
+  recordPinnedRuntimeLauncher,
   windowsShimTarget,
 } from "../cloud/pinnedRuntime.ts";
 import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/serviceProtocol.ts";
@@ -96,15 +98,22 @@ export const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(funct
  */
 export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function* (input: {
   readonly launchedAs: string | undefined;
-  readonly versionsDir: string;
+  readonly baseDir: string;
   readonly targetEntryPath: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   if (input.launchedAs === undefined) return Option.none<string>();
-  const ownsTarget = (candidate: string) =>
-    launcherOwnsVersionsDir(path, input.versionsDir, candidate);
+  const versionsDir = pinnedRuntimeVersionsDir(path, input.baseDir);
+  const ownsTarget = (candidate: string) => launcherOwnsVersionsDir(path, versionsDir, candidate);
+  const remember = (launcher: string) =>
+    recordPinnedRuntimeLauncher({ baseDir: input.baseDir, launcher }).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not record the t3 launcher.", { launcher, cause }),
+      ),
+      Effect.as(Option.some(launcher)),
+    );
 
   if (platform === "win32") {
     const shimPath = yield* findWindowsShim(input.launchedAs);
@@ -119,7 +128,7 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
           () => new CliUpdateError({ reason: `Could not rewrite the t3 launcher at ${shimPath}.` }),
         ),
       );
-    return Option.some(shimPath);
+    return yield* remember(shimPath);
   }
 
   const linkTarget = yield* fs.readLink(input.launchedAs).pipe(Effect.option);
@@ -134,7 +143,7 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
         new CliUpdateError({ reason: `Could not repoint the t3 launcher at ${input.launchedAs}.` }),
     ),
   );
-  return Option.some(input.launchedAs);
+  return yield* remember(input.launchedAs);
 });
 
 /**
@@ -482,7 +491,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   const launchedAs = (yield* HostProcess.IsExecutable) ? yield* resolveLauncherPath : undefined;
   const repointed = yield* repointLauncher({
     launchedAs,
-    versionsDir: path.dirname(runtime.versionDir),
+    baseDir: input.baseDir,
     targetEntryPath: runtime.entryPath,
   });
 

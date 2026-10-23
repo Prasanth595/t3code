@@ -1,14 +1,34 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { afterEach, vi } from "vite-plus/test";
 
+import { prunePinnedRuntimes } from "../cloud/pinnedRuntime.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import { repointLauncher, resolveLauncherPath, resolveNewestVersion } from "./update.ts";
+
+// lsof listing one process, so prune sees a process list in which no runtime is running.
+const unrelatedLsof = ProcessRunner.ProcessRunner.of({
+  run: () =>
+    Effect.succeed({
+      stdout: "p1\nftxt\nn/usr/bin/true\n",
+      stderr: "",
+      code: ChildProcessSpawner.ExitCode(0),
+      timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      stdoutInvalidUtf8: false,
+      stderrInvalidUtf8: false,
+    }),
+});
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -53,12 +73,47 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
 
       const repointed = yield* repointLauncher({
         launchedAs: launcher,
-        versionsDir: path.join(root, "runtime/versions"),
+        baseDir: root,
         targetEntryPath: newExe,
       });
 
       assert.deepStrictEqual(Option.getOrUndefined(repointed), launcher);
       assert.equal(yield* fs.readLink(launcher), newExe);
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+  );
+
+  it.effect("keeps the runtime a repointed launcher off PATH points at", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+      yield* TestClock.setTime(Duration.toMillis(Duration.days(1)));
+      for (const version of ["1.0.0", "2.0.0"]) {
+        const directory = path.join(root, "runtime/versions", version);
+        yield* fs.makeDirectory(directory, { recursive: true });
+        yield* fs.writeFileString(path.join(directory, "t3"), "");
+        yield* fs.writeFileString(path.join(directory, ".install-complete"), `${version}\n`);
+        yield* fs.utimes(path.join(directory, ".install-complete"), 0, 0);
+      }
+      // A launcher in the T3 home itself, which neither PATH nor the default bin dir reaches.
+      const launcher = path.join(root, "t3");
+      yield* fs.symlink(path.join(root, "runtime/versions/1.0.0/t3"), launcher);
+
+      yield* repointLauncher({
+        launchedAs: launcher,
+        baseDir: root,
+        targetEntryPath: path.join(root, "runtime/versions/2.0.0/t3"),
+      });
+      // A later server start prunes with no idea how this machine launches t3.
+      const removed = yield* prunePinnedRuntimes({ baseDir: root, keep: [] }).pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, unrelatedLsof),
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(HostProcess.Environment, { PATH: "" }),
+        Effect.provideService(HostProcess.HomeDirectory, root),
+      );
+
+      assert.deepStrictEqual(removed, ["1.0.0"]);
+      assert.equal(yield* fs.realPath(launcher), path.join(root, "runtime/versions/2.0.0/t3"));
     }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 
@@ -85,7 +140,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       for (const launchedAs of [copy, foreign, otherLauncher, undefined]) {
         const repointed = yield* repointLauncher({
           launchedAs,
-          versionsDir: path.join(root, "runtime/versions"),
+          baseDir: root,
           targetEntryPath: newExe,
         });
         assert.equal(repointed._tag, "None", launchedAs ?? "undefined");
