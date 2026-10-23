@@ -15,6 +15,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -628,13 +629,40 @@ export const make = Effect.gen(function* () {
               now,
             )
           : undefined;
+      let processLossCount = 1;
+      // Planned shutdown records zero before closing providers. Reusing that
+      // intent resets the budget; an unfinished crash recovery carries it on.
+      if (
+        continuationRun?.restartContinuationOfRunId !== undefined &&
+        continuationRun.status !== "completed" &&
+        continuationRun.status !== "waiting"
+      ) {
+        const previous = yield* outbox
+          .get(`effect:restart-continuation:${continuationRun.restartContinuationOfRunId}`)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderRuntimeRecoveryError({
+                  operation: "reconcile",
+                  threadId: projection.thread.id,
+                  cause,
+                }),
+            ),
+          );
+        if (Option.isSome(previous) && previous.value.request.type === "provider-runtime.continue")
+          processLossCount += previous.value.request.processLossCount ?? 0;
+      }
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
             {
               id: `effect:restart-continuation:${continuationRun.id}`,
               commandId,
               threadId: projection.thread.id,
-              request: { type: "provider-runtime.continue", sourceRunId: continuationRun.id },
+              request: {
+                type: "provider-runtime.continue",
+                sourceRunId: continuationRun.id,
+                processLossCount,
+              },
             },
           ]
         : [];
@@ -775,7 +803,11 @@ export const make = Effect.gen(function* () {
               id: `effect:restart-continuation:${run.id}`,
               commandId,
               threadId,
-              request: { type: "provider-runtime.continue", sourceRunId: run.id },
+              request: {
+                type: "provider-runtime.continue",
+                sourceRunId: run.id,
+                processLossCount: 0,
+              },
             },
           ],
         });
