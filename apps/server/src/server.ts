@@ -8,6 +8,7 @@ import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchRea
 import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQuestionReactor.ts";
 import { FactoryLayer } from "./factory/index.ts";
 import { FactoryRoutes } from "./factory/t3/http.ts";
+import { withStallAttribution } from "./factory/t3/stallAttribution.ts";
 // Effect wraps this raw Node HTTP server after its startup and write-error guards attach.
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
@@ -183,7 +184,7 @@ import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestS
 import * as RunFinalizationService from "./orchestration-v2/RunFinalizationService.ts";
 import * as EventStoreV2 from "./orchestration-v2/EventStore.ts";
 import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
-import * as ProjectionStoreV2 from "./orchestration-v2/ProjectionStore.ts";
+import * as ProjectionStoreV2 from "./factory/t3/projectionStoreReadRouting.ts";
 import { makePersistedServerRuntimeState } from "./serverRuntimeState.ts";
 import { loopbackUrlHostForAddress } from "./startupAccess.ts";
 import * as OrchestrationHttp from "./orchestration-v2/http.ts";
@@ -207,6 +208,7 @@ const layerResourceAttribution = ResourceAttribution.layer;
 const layerApplicationObservability = EventLoopMonitor.layer.pipe(
   Layer.provideMerge(Observability.layer),
   Layer.provideMerge(layerResourceAttribution),
+  withStallAttribution,
 );
 
 // One rotating store behind both logger views, so driver instances never race
