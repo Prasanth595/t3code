@@ -1,15 +1,13 @@
-import { act, type ReactElement } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { act, render as renderScreen, stubGlobal, type Screen } from "../../../test/render";
+import { type ReactElement } from "react";
 import { EnvironmentId, type PluginInstallation, PluginInstallationId } from "@t3tools/contracts";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-
+import { describe, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentPresentation } from "../../state/environments";
-
 const add = vi.hoisted(() => vi.fn());
 const consent = vi.hoisted(() => vi.fn());
 const enable = vi.hoisted(() => vi.fn());
-
 vi.mock("../../state/plugins", () => ({
+  pluginNpmEnvironment: {},
   pluginEnvironment: {
     add: "add",
     consent: "consent",
@@ -20,53 +18,33 @@ vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: string) =>
     command === "consent" ? consent : command === "enable" ? enable : add,
 }));
-vi.mock("../../state/session", () => ({
-  environmentSession: { sessionStateAtom: () => null },
-  useEnvironmentSessionState: () => ({ data: null, hasError: false, isPending: true }),
-}));
+vi.mock("../../state/session", async () => {
+  const Option = await import("effect/Option");
+  const { Atom } = await import("effect/reactivity");
+  const sessionStates = Atom.make([]);
+  return {
+    usePreparedConnection: (): ReturnType<
+      typeof import("../../state/session").usePreparedConnection
+    > => Option.none(),
+    environmentSession: { sessionStateAtom: () => null },
+    environmentSessionStatesAtom: () => sessionStates,
+    useEnvironmentScope: () => true,
+    useEnvironmentsWithScope: () => new Set(),
+    readEnvironmentScope: () => true,
+    useEnvironmentSessionState: () => ({ data: null, hasError: false, isPending: true }),
+  };
+});
 vi.mock("../../environments/primary", () => ({
   usePrimarySessionState: () => ({ data: null, error: null, isPending: true, refresh: vi.fn() }),
 }));
-
 import { AddPluginDialog, PluginReviewDialog } from "./PluginsSettings";
-
 const environment = {
   environmentId: EnvironmentId.make("remote"),
   label: "Build box",
   entry: { target: { _tag: "RemoteConnectionTarget" } },
 } as unknown as EnvironmentPresentation;
-
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  );
-  vi.stubGlobal("matchMedia", () => ({
-    matches: false,
-    addEventListener() {},
-    removeEventListener() {},
-  }));
-  Element.prototype.getAnimations ??= () => [];
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
-
-async function render(element: ReactElement) {
-  await act(async () => root.render(element));
+async function render(screen: Screen, element: ReactElement) {
+  await act(async () => await screen.rerender(element));
 }
 function button(text: string) {
   const found = [...document.querySelectorAll("button")].find(
@@ -75,8 +53,9 @@ function button(text: string) {
   if (!found) throw new Error(`No button ${text}`);
   return found;
 }
-async function renderDialog(canManage: boolean) {
+async function renderDialog(screen: Screen, canManage: boolean) {
   await render(
+    screen,
     <AddPluginDialog
       environment={environment}
       canManage={canManage}
@@ -87,10 +66,13 @@ async function renderDialog(canManage: boolean) {
     />,
   );
 }
-
 /** Enters a directory through the input and submits through the live DOM. */
-async function typeAndSubmit(canManageAtSubmit: boolean, via: "keyboard" | "button") {
-  await renderDialog(true);
+async function typeAndSubmit(
+  screen: Screen,
+  canManageAtSubmit: boolean,
+  via: "keyboard" | "button",
+) {
+  await renderDialog(screen, true);
   const input = document.querySelector("input")!;
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
@@ -99,7 +81,7 @@ async function typeAndSubmit(canManageAtSubmit: boolean, via: "keyboard" | "butt
     );
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  await renderDialog(canManageAtSubmit);
+  await renderDialog(screen, canManageAtSubmit);
   await act(async () => {
     if (via === "keyboard")
       document
@@ -108,16 +90,13 @@ async function typeAndSubmit(canManageAtSubmit: boolean, via: "keyboard" | "butt
     else button("Add and review").click();
   });
 }
-
 describe("AddPluginDialog", () => {
-  beforeEach(() => {
-    add.mockReset().mockReturnValue(new Promise(() => undefined));
-  });
-
   it.each(["keyboard", "button"] as const)(
     "adds the typed directory by %s while management is allowed",
     async (via) => {
-      await typeAndSubmit(true, via);
+      using _setup = await setup();
+      await using screen = await renderScreen(null, { router: false });
+      await typeAndSubmit(screen, true, via);
       expect(add).toHaveBeenCalledTimes(1);
       expect(add).toHaveBeenCalledWith({
         environmentId: environment.environmentId,
@@ -125,16 +104,16 @@ describe("AddPluginDialog", () => {
       });
     },
   );
-
   it.each(["keyboard", "button"] as const)(
     "sends nothing by %s once the open dialog loses management authority",
     async (via) => {
-      await typeAndSubmit(false, via);
+      using _setup = await setup();
+      await using screen = await renderScreen(null, { router: false });
+      await typeAndSubmit(screen, false, via);
       expect(add).not.toHaveBeenCalled();
     },
   );
 });
-
 describe("PluginReviewDialog", () => {
   const DIGEST_A = `sha256:${"a".repeat(64)}`;
   const DIGEST_B = `sha256:${"b".repeat(64)}`;
@@ -149,8 +128,9 @@ describe("PluginReviewDialog", () => {
       enabled: false,
     }) as unknown as PluginInstallation;
   const CHECKING = "Checking access…";
-  const renderReview = (installation: PluginInstallation, canManage = true) =>
+  const renderReview = (screen: Screen, installation: PluginInstallation, canManage = true) =>
     render(
+      screen,
       <PluginReviewDialog
         environment={environment}
         detail={{ _tag: "found", installation }}
@@ -163,27 +143,24 @@ describe("PluginReviewDialog", () => {
       />,
     );
   const success = { _tag: "Success", value: { installation: reviewed(DIGEST_A) } };
-
-  beforeEach(() => {
-    enable.mockReset().mockResolvedValue(success);
-  });
-
   /** Acknowledges the files on screen, approves, and holds the consent reply. */
-  async function approveHoldingConsent() {
+  async function approveHoldingConsent(screen: Screen) {
     let release: (value: unknown) => void = () => undefined;
     consent.mockReset().mockReturnValue(
       new Promise((resolve) => {
         release = resolve;
       }),
     );
-    await renderReview(reviewed(DIGEST_A));
+    await renderReview(screen, reviewed(DIGEST_A));
     await act(async () => (document.querySelector("[role=checkbox]") as HTMLElement).click());
     await act(async () => button("Approve and enable").click());
     return (value: unknown) => release(value);
   }
   it("enables the reviewed files once consent succeeds", async () => {
-    const release = await approveHoldingConsent();
-    await renderReview(reviewed(DIGEST_A));
+    using _setup = await setup(success);
+    await using screen = await renderScreen(null, { router: false });
+    const release = await approveHoldingConsent(screen);
+    await renderReview(screen, reviewed(DIGEST_A));
     await act(async () => release(success));
     expect(consent).toHaveBeenCalledWith({
       environmentId: environment.environmentId,
@@ -191,13 +168,39 @@ describe("PluginReviewDialog", () => {
     });
     expect(enable).toHaveBeenCalledTimes(1);
   });
-
   it("never enables when the files change while consent is in flight", async () => {
-    const release = await approveHoldingConsent();
+    using _setup = await setup(success);
+    await using screen = await renderScreen(null, { router: false });
+    const release = await approveHoldingConsent(screen);
     // A snapshot reports new bytes for the same installation; access stays granted.
-    await renderReview(reviewed(DIGEST_B));
+    await renderReview(screen, reviewed(DIGEST_B));
     await act(async () => release(success));
     expect(consent).toHaveBeenCalledTimes(1);
     expect(enable).not.toHaveBeenCalled();
   });
 });
+
+async function setup(success?: unknown) {
+  const global0 = stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  const global1 = stubGlobal("matchMedia", () => ({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  Element.prototype.getAnimations ??= () => [];
+  add.mockReset().mockReturnValue(new Promise(() => undefined));
+  enable.mockReset().mockResolvedValue(success);
+  return {
+    [Symbol.dispose]() {
+      global1[Symbol.dispose]();
+      global0[Symbol.dispose]();
+    },
+  };
+}
