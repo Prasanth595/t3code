@@ -226,6 +226,53 @@ describe("claudeUsageResponseToLimits", () => {
 });
 
 describe("claudeRateLimitEventToUpdate", () => {
+  it("reads the unified windows emitted by setup-token sessions without top-level utilization", () => {
+    const event = {
+      status: "allowed" as const,
+      rateLimitType: "five_hour" as const,
+      unifiedWindows: {
+        five_hour: { utilization: 0.2, resetsAt: 1_792_759_800 },
+        seven_day: { utilization: 0.59, resetsAt: 1_792_760_400 },
+      },
+    };
+    expect(claudeRateLimitEventToUpdate(event, noNames)).toEqual({
+      available: true,
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session",
+          label: "Session",
+          windowDurationMins: 300,
+          usedPercent: 20,
+          resetsAt: "2026-10-23T12:50:00.000Z",
+        },
+        {
+          id: "seven_day",
+          kind: "weekly",
+          label: "Weekly",
+          windowDurationMins: 10080,
+          usedPercent: 59,
+          resetsAt: "2026-10-23T13:00:00.000Z",
+        },
+      ],
+    });
+  });
+
+  it("does not make malformed or unknown unified windows available", () => {
+    for (const unifiedWindows of [
+      null,
+      [],
+      {},
+      { five_hour: { utilization: NaN } },
+      { five_hour: { utilization: -1 } },
+      { five_hour: { utilization: "0.2" } },
+      { unknown: { utilization: 0.2 } },
+    ]) {
+      const event = { status: "allowed" as const, unifiedWindows };
+      expect(claudeRateLimitEventToUpdate(event, noNames)).toBeUndefined();
+    }
+  });
+
   it("scales the 0–1 utilization and epoch-second reset onto the probe's window id", () => {
     expect(
       claudeRateLimitEventToUpdate(
