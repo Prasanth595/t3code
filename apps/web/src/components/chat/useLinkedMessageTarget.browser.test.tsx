@@ -1,7 +1,6 @@
 import type { LegendListRef } from "@legendapp/list/react";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { act, render, stubGlobal } from "../../../test/render";
+import { expect, it, vi } from "vite-plus/test";
 import { MessageId } from "@t3tools/contracts";
 
 import { useLinkedMessageTarget } from "./useLinkedMessageTarget";
@@ -10,9 +9,6 @@ import type { MessagesTimelineHistoryControls } from "./MessagesTimeline";
 const { warn } = vi.hoisted(() => ({ warn: vi.fn() }));
 vi.mock("../ui/toast", () => ({ toastManager: { add: warn } }));
 
-let root: Root;
-let container: HTMLDivElement;
-let viewport: HTMLDivElement;
 const onHandled = vi.fn();
 const onManualNavigation = () => {};
 const onRevealEntry = () => false;
@@ -22,10 +18,12 @@ const listRef = { current: null };
 const request = { key: "activation", messageId: MessageId.make("older-message") };
 
 function Harness({
+  viewport,
   controls,
   synced = true,
   overrides = {},
 }: {
+  viewport: HTMLDivElement;
   controls: MessagesTimelineHistoryControls;
   synced?: boolean;
   overrides?: Partial<Parameters<typeof useLinkedMessageTarget>[0]>;
@@ -48,22 +46,24 @@ function Harness({
   return <output>{result.positioning ? "pending" : "finished"}</output>;
 }
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  viewport = document.createElement("div");
-  document.body.append(container, viewport);
-  root = createRoot(container);
+function viewportFixture() {
+  const viewport = document.createElement("div");
+  document.body.append(viewport);
   warn.mockClear();
   onHandled.mockClear();
-});
-afterEach(async () => {
-  await act(() => root.unmount());
-  document.body.replaceChildren();
-  vi.unstubAllGlobals();
-});
+  return {
+    viewport,
+    [Symbol.dispose]() {
+      viewport.remove();
+    },
+  };
+}
 
 it("continues through cursor advances that leave rendered entries unchanged, then reports a missing message", async () => {
+  using fixture = viewportFixture();
+  const { viewport } = fixture;
+  await using screen = await render(null, { router: false });
+  const container = screen.container;
   const onLoadEarlier = vi.fn();
   const controls = {
     historyCursor: "page-1",
@@ -72,11 +72,20 @@ it("continues through cursor advances that leave rendered entries unchanged, the
     error: null,
     onLoadEarlier,
   };
-  await act(() => root.render(<Harness controls={controls} />));
-  await act(() => root.render(<Harness controls={{ ...controls, historyCursor: "page-2" }} />));
+  await act(() => screen.rerender(<Harness viewport={viewport} controls={controls} />));
+  await act(() =>
+    screen.rerender(
+      <Harness viewport={viewport} controls={{ ...controls, historyCursor: "page-2" }} />,
+    ),
+  );
   expect(onLoadEarlier.mock.calls).toEqual([["older-message"], ["older-message"]]);
   await act(() =>
-    root.render(<Harness controls={{ ...controls, historyCursor: null, hasMoreHistory: false }} />),
+    screen.rerender(
+      <Harness
+        viewport={viewport}
+        controls={{ ...controls, historyCursor: null, hasMoreHistory: false }}
+      />,
+    ),
   );
   expect(container.textContent).toBe("finished");
   expect(onHandled.mock.calls).toEqual([[request.key]]);
@@ -86,6 +95,10 @@ it("continues through cursor advances that leave rendered entries unchanged, the
 });
 
 it("keeps navigating while scroll keys edit text and lets a viewport scroll key take over", async () => {
+  using fixture = viewportFixture();
+  const { viewport } = fixture;
+  await using screen = await render(null, { router: false });
+  const container = screen.container;
   const controls = {
     historyCursor: "page-1",
     hasMoreHistory: true,
@@ -93,7 +106,7 @@ it("keeps navigating while scroll keys edit text and lets a viewport scroll key 
     error: null,
     onLoadEarlier: vi.fn(),
   };
-  await act(() => root.render(<Harness controls={controls} />));
+  await act(() => screen.rerender(<Harness viewport={viewport} controls={controls} />));
   for (const tag of ["input", "textarea", "div"]) {
     const editor = document.createElement(tag);
     if (tag === "div") editor.setAttribute("contenteditable", "true");
@@ -114,6 +127,10 @@ it("keeps navigating while scroll keys edit text and lets a viewport scroll key 
 });
 
 it("waits for live synchronization before failing a cached missing target", async () => {
+  using fixture = viewportFixture();
+  const { viewport } = fixture;
+  await using screen = await render(null, { router: false });
+  const container = screen.container;
   const controls = {
     historyCursor: null,
     hasMoreHistory: false,
@@ -121,19 +138,27 @@ it("waits for live synchronization before failing a cached missing target", asyn
     error: null,
     onLoadEarlier: vi.fn(),
   };
-  await act(() => root.render(<Harness controls={controls} synced={false} />));
+  await act(() =>
+    screen.rerender(<Harness viewport={viewport} controls={controls} synced={false} />),
+  );
   expect(container.textContent).toBe("pending");
   expect(warn).not.toHaveBeenCalled();
   expect(onHandled).not.toHaveBeenCalled();
-  await act(() => root.render(<Harness controls={controls} synced />));
+  await act(() => screen.rerender(<Harness viewport={viewport} controls={controls} synced />));
   expect(container.textContent).toBe("finished");
   expect(warn).toHaveBeenCalledTimes(1);
   expect(onHandled.mock.calls).toEqual([[request.key]]);
-  await act(() => root.render(<Harness controls={{ ...controls }} synced />));
+  await act(() =>
+    screen.rerender(<Harness viewport={viewport} controls={{ ...controls }} synced />),
+  );
   expect(onHandled).toHaveBeenCalledTimes(1);
 });
 
 it("preserves the user's later scroll when the list defers cancellation", async () => {
+  using fixture = viewportFixture();
+  const { viewport } = fixture;
+  await using screen = await render(null, { router: false });
+  const container = screen.container;
   const pendingScrolls: (() => void)[] = [];
   const list = {
     getScrollableNode: () => viewport,
@@ -159,8 +184,9 @@ it("preserves the user's later scroll when the list defers cancellation", async 
   viewport.scrollTop = 40;
   expect(viewport.scrollTop).toBe(40);
   await act(() =>
-    root.render(
+    screen.rerender(
       <Harness
+        viewport={viewport}
         controls={controls}
         overrides={{ listRef: { current: list as unknown as LegendListRef } }}
       />,
@@ -177,9 +203,15 @@ it("preserves the user's later scroll when the list defers cancellation", async 
 });
 
 it("finishes a measured target once after live sync and reports its handled activation", async () => {
+  using fixture = viewportFixture();
+  const { viewport } = fixture;
+  await using screen = await render(null, { router: false });
+  const container = screen.container;
   const frames: FrameRequestCallback[] = [];
-  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
-  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  using _requestFrame = stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+    frames.push(callback),
+  );
+  using _cancelFrame = stubGlobal("cancelAnimationFrame", vi.fn());
   const element = document.createElement("div");
   const list = {
     getScrollableNode: () => viewport,
@@ -220,10 +252,16 @@ it("finishes a measured target once after live sync and reports its handled acti
     onLoadEarlier: vi.fn(),
   };
   await act(() =>
-    root.render(<Harness controls={controls} synced={false} overrides={overrides} />),
+    screen.rerender(
+      <Harness viewport={viewport} controls={controls} synced={false} overrides={overrides} />,
+    ),
   );
   expect(list.scrollToIndex).not.toHaveBeenCalled();
-  await act(() => root.render(<Harness controls={controls} synced overrides={overrides} />));
+  await act(() =>
+    screen.rerender(
+      <Harness viewport={viewport} controls={controls} synced overrides={overrides} />,
+    ),
+  );
   expect(list.scrollToIndex).toHaveBeenCalledTimes(1);
   await act(() => frames.shift()?.(0));
   await act(() => frames.shift()?.(16));

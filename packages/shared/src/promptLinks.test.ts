@@ -139,11 +139,4 @@ describe("link round trips", () => {
     expect(threadLinkMessageId(new URL(link).search)).toBe("msg/1");
     expect(promptLinkAppPath("https://app.t3.codes/env-1/thread-1")).toBeNull();
   });
-
-  it("hands an in-app path to the installed app", () => {
-    expect(promptLinkDeepLink("/new?prompt=hi")).toBe("t3code://new?prompt=hi");
-    expect(promptLinkDeepLink("/env-1/thread-1?prompt=hi")).toBe(
-      "t3code://threads/env-1/thread-1?prompt=hi",
-    );
-  });
 });

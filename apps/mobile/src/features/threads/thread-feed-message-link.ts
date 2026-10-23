@@ -1,3 +1,4 @@
+import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { ThreadFeedMessage } from "../../lib/threadActivity";
 
@@ -18,7 +19,8 @@ export function resolveLinkedMessageStep(input: {
   /** The collapsed turn that hides the message, when one does. */
   readonly foldedRunId: string | null;
   /** The thread has caught up with the server, so a message it lacks is older history. */
-  readonly synced: boolean;
+  readonly synced?: boolean;
+  readonly syncStatus?: EnvironmentThreadStatus;
   readonly historyLoading: boolean;
   /** Why the last history load failed, when it did. */
   readonly historyError: string | null;
@@ -27,7 +29,11 @@ export function resolveLinkedMessageStep(input: {
   readonly lastLoadChangedNothing: boolean;
 }): "scroll" | "expand" | "wait" | "load" | "missing" | "failed" {
   // A sync snapshot or history page can replace a cached row before scrolling.
-  if (input.historyLoading || !input.synced) return "wait";
+  if (input.syncStatus === "deleted") return "missing";
+  if (input.historyLoading || input.syncStatus === "synchronizing") return "wait";
+  if (input.syncStatus === "empty" || input.syncStatus === "cached") return "failed";
+  // An omitted status retains the standalone feed's previous ready default.
+  if (input.synced === false) return "wait";
   if (input.presented) return "scroll";
   if (input.foldedRunId !== null) return "expand";
   // Loaded but hidden by something other than a fold: more history cannot reveal it.

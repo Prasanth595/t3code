@@ -55,3 +55,21 @@ describe("resolveLinkedMessageStep", () => {
     expect(resolveLinkedMessageStep({ ...absent, lastLoadChangedNothing: true })).toBe("failed");
   });
 });
+
+it("retains unknown sync readiness and waits only for active synchronization", () => {
+  const { synced: _synced, ...unknown } = absent;
+  expect(resolveLinkedMessageStep(unknown)).toBe("load");
+  expect(resolveLinkedMessageStep({ ...unknown, presented: true })).toBe("scroll");
+  expect(resolveLinkedMessageStep({ ...unknown, syncStatus: "synchronizing" })).toBe("wait");
+  expect(resolveLinkedMessageStep({ ...unknown, syncStatus: "live" })).toBe("load");
+});
+it.each(["empty", "cached"] as const)(
+  "reports unavailable %s messages instead of waiting forever",
+  (syncStatus) => {
+    expect(resolveLinkedMessageStep({ ...absent, syncStatus })).toBe("failed");
+    expect(resolveLinkedMessageStep({ ...absent, syncStatus, historyLoading: true })).toBe("wait");
+  },
+);
+it("reports a deleted thread's target missing", () => {
+  expect(resolveLinkedMessageStep({ ...absent, syncStatus: "deleted" })).toBe("missing");
+});
