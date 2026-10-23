@@ -89,4 +89,49 @@ describe("withStallAttribution", () => {
         );
       }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.live(
+    "names the child span that blocked, not the long-lived spans that were already open",
+    () =>
+      Effect.gen(function* () {
+        const logsDir = tempDir();
+        const base = yield* Effect.service(Tracer.Tracer);
+        const decorated = makeWithStallAttribution({
+          intervalMs: 10,
+          thresholdMs: 100,
+          profile: false,
+        })(Layer.succeed(Tracer.Tracer, base));
+        const warned = yield* Deferred.make<string>();
+        const capture = Logger.make<unknown, void>(({ message }) => {
+          const text = String(Array.isArray(message) ? message[0] : message);
+          if (text.startsWith("factory event loop stalled"))
+            Deferred.doneUnsafe(warned, Effect.succeed(text));
+        });
+        const warning = yield* Effect.gen(function* () {
+          // Connection and worker spans that never end, as in a server that has been up a while.
+          for (let i = 0; i < 6; i += 1) yield* Effect.makeSpan(`http.server GET /ws ${i}`);
+          yield* Effect.sleep("60 millis");
+          yield* Effect.sync(() => blockThread(250)).pipe(
+            Effect.withSpan("PullRequestSyncReactor.sweep"),
+            Effect.withSpan("PullRequestSyncReactor.run"),
+          );
+          return yield* Deferred.await(warned);
+        }).pipe(
+          Effect.provide(
+            decorated.pipe(
+              Layer.provide(Layer.merge(Logger.layer([capture]), serverConfig(logsDir))),
+            ),
+          ),
+          Effect.scoped,
+        );
+        assert.include(warning, "in flight: PullRequestSyncReactor.sweep (");
+
+        const record = JSON.parse(
+          NodeFS.readFileSync(NodePath.join(logsDir, "factory-event-loop-stalls.ndjson"), "utf8")
+            .trim()
+            .split("\n")[0]!,
+        );
+        assert.strictEqual(record.spans[0].name, "PullRequestSyncReactor.sweep");
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
