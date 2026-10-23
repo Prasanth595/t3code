@@ -150,6 +150,18 @@ const panelFor = (threadRef: ScopedThreadRef) => {
 // One root across hosts, so a host change reaches the already mounted list.
 async function renderFor(screen: Screen, threadRef: ScopedThreadRef) {
   await screen.rerender(panelFor(threadRef));
+  const expected =
+    threadRef.environmentId === "environment-new"
+      ? "owner/alpha"
+      : "Linked pull requests unavailable";
+  if (threadRef.environmentId === "environment-new") {
+    const first = linksByThread.get(scopedThreadKey(threadRef))?.[0];
+    await expect
+      .element(screen.getByText(first?.repository ?? expected, { exact: false }).first())
+      .toBeVisible();
+  } else {
+    await expect.element(screen.getByText(expected, { exact: true })).toBeVisible();
+  }
 }
 
 const hasText = (screen: Screen, text: string) =>
