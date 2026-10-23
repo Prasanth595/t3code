@@ -1712,12 +1712,14 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   },
 );
 
-it.effect.each(["manual", "stop"] as const)(
+it.effect.each(["manual", "mcp", "stop"] as const)(
   "holds a recovered child's parent wake until %s without losing the result",
   (action) => {
     return Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const sink = yield* EventSink.EventSinkV2;
+      const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+      using offered = vi.spyOn(requests, "offer");
       const now = yield* DateTime.now;
       const threadId = ThreadId.make(`thread:recovery-wake:${action}`);
       const projectId = ProjectId.make(`project:recovery-wake:${action}`);
@@ -1786,8 +1788,13 @@ it.effect.each(["manual", "stop"] as const)(
         },
       };
       yield* orchestrator.dispatch(wakeCommand);
+      yield* orchestrator.dispatch({
+        ...wakeCommand,
+        commandId: CommandId.make(`command:recovery-wake:repeated:${action}`),
+      });
       assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
-      if (action === "manual") {
+      assert.equal(offered.mock.calls.length, 0);
+      if (action !== "stop") {
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           threadId,
@@ -1796,9 +1803,12 @@ it.effect.each(["manual", "stop"] as const)(
           text: "Continue",
           attachments: [],
           dispatchMode: { type: "start_immediately" },
-          createdBy: "user",
-          creationSource: "web",
+          createdBy: action === "mcp" ? "agent" : "user",
+          creationSource: action === "mcp" ? "mcp" : "web",
         });
+        assert.equal(offered.mock.calls.length, 1);
+        const request = yield* requests.take;
+        assert.equal(request.delegatedCompletion?.messageId, delivery.messageId);
         yield* orchestrator.dispatch({
           ...wakeCommand,
           commandId: CommandId.make("command:recovery-wake:retry"),
@@ -1818,7 +1828,7 @@ it.effect.each(["manual", "stop"] as const)(
         yield* orchestrator.recoverDelegatedTasks;
         assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
       }
-    }).pipe(Effect.provide(layerTest));
+    }).pipe(Effect.provide(Layer.merge(layerTest, ProviderContinuationRequests.layer)));
   },
 );
 

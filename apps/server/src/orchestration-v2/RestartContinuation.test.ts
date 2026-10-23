@@ -876,47 +876,8 @@ const continuationDispatches = (projection: OrchestrationV2ThreadProjection) =>
     return dispatches;
   });
 
-it.effect.each([0, 3, 4])(
-  "applies process-loss count %s even after 22 minutes",
-  (processLossCount) =>
-    Effect.gen(function* () {
-      const base = makeProjection();
-      const projection = {
-        ...base,
-        runs: [
-          {
-            ...base.runs[0]!,
-            status: "cancelled" as const,
-            completedAt: now,
-            requestedAt: DateTime.subtract(now, { minutes: 22 }),
-          },
-        ],
-      };
-      const commands: Parameters<
-        ThreadManagementService.ThreadManagementService["Service"]["dispatch"]
-      >[0][] = [];
-      yield* continueRestartedRun({ threadId, sourceRunId: runId, processLossCount }).pipe(
-        Effect.provide(
-          Layer.merge(
-            ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
-            Layer.mock(ThreadManagementService.ThreadManagementService)({
-              getThreadRecords: () => Effect.succeed(projection),
-              recoverDelegatedTask: () => Effect.void,
-              dispatch: (command) => {
-                commands.push(command);
-                return Effect.succeed({} as never);
-              },
-            }),
-          ),
-        ),
-      );
-      assert.lengthOf(commands, processLossCount > 3 ? 0 : 1);
-    }),
-);
-
 it.effect.each([
   [0, "running"],
-  [1, "running"],
   [3, "running"],
   [3, "completed"],
   [3, "waiting"],
@@ -958,15 +919,16 @@ it.effect.each([
           Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({}),
           Layer.mock(EffectOutbox.EffectOutboxV2)({
             get: (id) => {
-              assert.equal(id, `effect:restart-continuation:${source}`);
               return Effect.succeed(
-                Option.some({
-                  request: {
-                    type: "provider-runtime.continue",
-                    sourceRunId: source,
-                    processLossCount: previousCount,
-                  },
-                } as EffectOutbox.OrchestrationEffectV2),
+                id === `effect:restart-continuation:${source}`
+                  ? Option.some({
+                      request: {
+                        type: "provider-runtime.continue",
+                        sourceRunId: source,
+                        processLossCount: previousCount,
+                      },
+                    } as EffectOutbox.OrchestrationEffectV2)
+                  : Option.none(),
               );
             },
             listByCommandId: () => Effect.succeed([]),

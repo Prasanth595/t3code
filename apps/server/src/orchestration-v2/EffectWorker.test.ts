@@ -478,54 +478,60 @@ it.effect("terminalizes a process-bound claim when success settlement fails", ()
   }),
 );
 
-it.effect("declines exhausted process-loss recovery through the executor", () =>
-  Effect.gen(function* () {
-    const now = yield* DateTime.now;
-    const instanceId = ProviderInstanceId.make("codex");
-    const events = yield* Ref.make<ReadonlyArray<string>>([]);
-    const layer = layerExecutorFor({
-      events,
-      continueAfterRestart: true,
-      threads: {
-        getThreadRecords: () =>
-          Effect.succeed({
-            thread: {
-              id: threadId,
-              projectId: ProjectId.make("project:executor-recovery"),
-              providerInstanceId: instanceId,
-              archivedAt: null,
-              deletedAt: null,
-            },
-            runs: [
-              {
-                id: runId,
+it.effect.each([0, 3, 4])(
+  "enforces process-loss count %s after 22 minutes through the executor",
+  (processLossCount) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const instanceId = ProviderInstanceId.make("codex");
+      const events = yield* Ref.make<ReadonlyArray<string>>([]);
+      const layer = layerExecutorFor({
+        events,
+        continueAfterRestart: true,
+        threads: {
+          getThreadRecords: () =>
+            Effect.succeed({
+              thread: {
+                id: threadId,
+                projectId: ProjectId.make("project:executor-recovery"),
                 providerInstanceId: instanceId,
-                status: "cancelled",
-                requestedAt: now,
-                completedAt: now,
-                ordinal: 1,
+                archivedAt: null,
+                deletedAt: null,
               },
-            ],
-            messages: [],
-            providerTurns: [],
-            runtimeRequests: [],
-            turnItems: [],
-            attempts: [],
-          } as unknown as OrchestrationV2ThreadProjection),
-        dispatch: () =>
-          Ref.update(events, (entries) => [...entries, "dispatch"]).pipe(Effect.as({} as never)),
-        recoverDelegatedTask: () => Ref.update(events, (entries) => [...entries, "recover-child"]),
-      },
-    });
-    yield* Effect.gen(function* () {
-      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
-      yield* executor.execute({
-        ...restartEffect(now, { type: "detach" }),
-        request: { type: "provider-runtime.continue", sourceRunId: runId, processLossCount: 4 },
+              runs: [
+                {
+                  id: runId,
+                  providerInstanceId: instanceId,
+                  status: "cancelled",
+                  requestedAt: DateTime.subtract(now, { minutes: 22 }),
+                  completedAt: now,
+                  ordinal: 1,
+                },
+              ],
+              messages: [],
+              providerTurns: [],
+              runtimeRequests: [],
+              turnItems: [],
+              attempts: [],
+            } as unknown as OrchestrationV2ThreadProjection),
+          dispatch: () =>
+            Ref.update(events, (entries) => [...entries, "dispatch"]).pipe(Effect.as({} as never)),
+          recoverDelegatedTask: () =>
+            Ref.update(events, (entries) => [...entries, "recover-child"]),
+        },
       });
-    }).pipe(Effect.provide(layer));
-    assert.deepEqual(yield* Ref.get(events), ["recover-child"]);
-  }),
+      yield* Effect.gen(function* () {
+        const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+        yield* executor.execute({
+          ...restartEffect(now, { type: "detach" }),
+          request: { type: "provider-runtime.continue", sourceRunId: runId, processLossCount },
+        });
+      }).pipe(Effect.provide(layer));
+      assert.deepEqual(
+        yield* Ref.get(events),
+        processLossCount > 3 ? ["recover-child"] : ["dispatch", "recover-child"],
+      );
+    }),
 );
 
 it.effect("settles a delegated child once its restart continuation fails for good", () =>

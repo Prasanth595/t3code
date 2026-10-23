@@ -84,12 +84,10 @@ readiness or the launcher's commit boundary. Graceful shutdown captures intent b
 closing providers, then reconciles after ingestion has stopped so a late completion
 cannot be overwritten by a stale cancellation.
 
-The outbox admits one restart continuation at a time across the environment. A claim
-reserves admission until its resulting run settles; bounding only the dispatch call
-would still launch every provider at once. Pending child continuation intents take
-precedence over their parent, and waiting recovery does not block explicit starts or
-control effects. The same predicate filters worker deadlines so blocked intents do
-not create a busy polling loop.
+The outbox reserves one recovery slot through the resulting run: limiting only dispatch
+would still recreate the launch burst. Pending child recoveries precede their parent
+so a parent cannot occupy the slot while waiting for a child. Explicit starts and
+control effects bypass waiting recovery.
 
 The [continuation handler](../../apps/server/src/orchestration-v2/RestartContinuation.ts)
 rechecks the preference, provider selection, newer user work, a stop the user requested,
@@ -97,11 +95,11 @@ and maintenance turns such as `/compact` before dispatching. Intent and delivery
 refuse a thread that is archived, settled, or still snoozed, a cut turn whose provider
 turn already ended, and a run waiting on the user: an approval, question, or secret that was pending,
 or that recovery closed on the cut turn. Message-capable questions stay answerable, so
-they do not block. New intents carry a durable count of consecutive process-loss
-recoveries. Delivery stops before the fourth; elapsed time does not reset it. Planned
-shutdown intent records zero, and completed turns reset the count. A live continuation
-retains its preceding intent past normal outbox retention so a long turn cannot lose
-its budget. Legacy intents without a count keep their five-minute chain guard. Stable
+they do not block. Delivery stops before the fourth consecutive process-loss recovery;
+elapsed time does not reset the count. Planned shutdowns and completed turns reset it
+so normal upgrades cannot exhaust an unfinished turn's allowance. A live continuation
+retains its preceding intent past outbox retention to preserve that budget. Legacy
+intents keep their five-minute chain guard. Stable
 command and message IDs prevent duplicate submissions after an outbox retry. Codex
 resumes without adding provider prompt text unless the turn lost background work;
 other adapters receive the continuation message through their normal turn path.

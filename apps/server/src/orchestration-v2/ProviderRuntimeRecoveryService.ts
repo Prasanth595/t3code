@@ -630,8 +630,7 @@ export const make = Effect.gen(function* () {
             )
           : undefined;
       let processLossCount = 1;
-      // Planned shutdown records zero before closing providers. Reusing that
-      // intent resets the budget; an unfinished crash recovery carries it on.
+      // Normal upgrades must not exhaust an unfinished turn's crash allowance.
       if (
         continuationRun?.restartContinuationOfRunId !== undefined &&
         continuationRun.status !== "completed" &&

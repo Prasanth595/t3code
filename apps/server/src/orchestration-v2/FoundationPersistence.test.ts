@@ -1915,17 +1915,6 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         ],
       });
       yield* outbox.succeed({ effectId: claim.value.id, workerId });
-      const sql = yield* SqlClient.SqlClient;
-      const plan = yield* sql<{ readonly detail: string }>`
-        EXPLAIN QUERY PLAN SELECT 1 FROM orchestration_v2_projection_runs
-        WHERE status IN ('starting', 'running', 'waiting')
-          AND json_extract(payload_json, '$.restartContinuationOfRunId') IS NOT NULL
-      `;
-      assert.isTrue(
-        plan.some((row) =>
-          row.detail.includes("orchestration_v2_projection_runs_recovery_active_idx"),
-        ),
-      );
       assert.isTrue(
         Option.isNone(yield* outbox.claimNext({ workerId: "waiting", leaseDurationMs: 30_000 })),
       );

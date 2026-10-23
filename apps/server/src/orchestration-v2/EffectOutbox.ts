@@ -322,9 +322,8 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
       ).pipe(Effect.asVoid);
     // An earlier effect waiting out a retry backoff still blocks later ones, so
     // a turn cannot start while a failed rollback is about to restore files.
-    // Recovery reserves one environment-wide slot through both the dispatch
-    // claim and the resulting run. Children go first so a waiting parent cannot
-    // keep their recovery out. Pending recovery never blocks explicit work.
+    // Dispatch finishes before the turn does. Keep admission through that run,
+    // and recover children first so a waiting parent cannot keep them out.
     const claimableCandidatePredicate = (
       availableBefore?: string,
       excludeRestartContinuations = false,

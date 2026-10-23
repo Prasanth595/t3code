@@ -5145,7 +5145,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         taskIds: delivery.taskIds,
       };
       // A queued wake can predate recovery; enforce the hold at execution too.
-      if (restartCancelledRunNeedsResume(projection, parentRun!)) return;
+      if (restartCancelledRunNeedsResume(projection, parentRun!)) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          occurredAt: yield* DateTime.now,
+          payload: projection.thread,
+        });
+        return;
+      }
     }
     // Route durable mailbox deliveries under the thread lock, using the live
     // session's capabilities. Never interrupt/restart a turn for a notification.
@@ -11892,7 +11903,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       command.type === "notification.delivery.accept" ||
       (command.type === "message.dispatch" &&
-        (command.createdBy === "user" || command.restartContinuationOfRunId !== undefined))
+        (command.createdBy === "user" ||
+          command.creationSource === "mcp" ||
+          command.restartContinuationOfRunId !== undefined))
     ) {
       yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.threadId));
     }
