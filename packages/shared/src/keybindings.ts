@@ -113,6 +113,8 @@ export function resolveEventKeys(
     keys.add(letterCode.toLowerCase());
   }
   keys.add(shortcutKey);
+  // Layout letters supplement, rather than replace, physical punctuation shortcuts.
+  keys.add(shortcutKeyFromEvent(event));
   return keys;
 }
 

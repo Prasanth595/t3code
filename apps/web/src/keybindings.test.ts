@@ -699,6 +699,22 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it("preserves physical punctuation alongside an Option-modified mapped letter", () => {
+    for (const key of [";", "m"]) {
+      const keybindings = compile([
+        { shortcut: modShortcut(key, { altKey: true }), command: "diff.toggle" },
+      ]);
+      assert.strictEqual(
+        resolveShortcutCommand(
+          event({ key: "µ", code: "Semicolon", metaKey: true, altKey: true }),
+          keybindings,
+          { platform: "MacIntel", keyboardLayoutMap: new Map([["Semicolon", "m"]]) },
+        ),
+        "diff.toggle",
+      );
+    }
+  });
+
   it("keeps Latin event keys and unsupported layout fallbacks", () => {
     const keybindings = compile([
       { shortcut: modShortcut("a", { altKey: true }), command: "appearance.cycle" },
