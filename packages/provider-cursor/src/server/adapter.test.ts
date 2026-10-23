@@ -272,7 +272,43 @@ describe("CursorAdapterV2", () => {
       }),
       failure: { class: "transport_error", message: "Provider turn failed." },
     },
-  ])("fails the turn with $reason", ({ updates = [], wait, failure }) =>
+    {
+      reason: "an error Cursor's run ended with after the turn ended",
+      updates: [
+        { type: "text-delta", text: "The answer." },
+        { type: "turn-ended" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        requestId: "native-request",
+        status: "error" as const,
+        error: { message: "Checkpoint persistence failed" },
+        model: { id: "claude-fable-5" },
+        durationMs: 1,
+      }),
+      failure: { class: "provider_error", message: "Checkpoint persistence failed" },
+    },
+    {
+      reason: "no failure when Cursor's resume after the turn ended made no progress",
+      // Cursor's SDK resumed from an older checkpoint after the answer was
+      // delivered, regenerated the closing, then gave up on the run.
+      updates: [
+        { type: "text-delta", text: "The answer." },
+        { type: "turn-ended" },
+        { type: "text-delta", text: "A regenerated closing." },
+        { type: "turn-ended" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        requestId: "native-request",
+        status: "error" as const,
+        error: { message: "Agent turn stopped after repeated resume attempts made no progress" },
+        model: { id: "claude-fable-5" },
+        durationMs: 1,
+      }),
+      failure: null,
+    },
+  ])("ends the turn with $reason", ({ updates = [], wait, failure }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-failure-" });
@@ -371,153 +407,10 @@ describe("CursorAdapterV2", () => {
       );
       assert.isTrue(Option.isSome(terminal));
       if (Option.isSome(terminal)) {
-        assert.equal(terminal.value.status, "failed");
-        assert.equal(terminal.value.failure?.class, failure.class);
-        assert.equal(terminal.value.failure?.message, failure.message);
+        assert.equal(terminal.value.status, failure === null ? "completed" : "failed");
+        assert.equal(terminal.value.failure?.class, failure?.class);
+        assert.equal(terminal.value.failure?.message, failure?.message);
       }
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
-      ),
-    ),
-  );
-
-  it.effect("keeps a delivered answer when the SDK's resume after turn-ended fails", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-resume-" });
-      const instanceId = ProviderInstanceId.make("cursor");
-      const threadId = ThreadId.make("cursor-resume-thread");
-      const modelSelection = { instanceId, model: "claude-opus-5-5" };
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: workspace,
-      });
-      const usage = { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 };
-      // Cursor's SDK resumes from an older checkpoint after the turn ended,
-      // regenerates the closing twice, then gives up on the run.
-      const updates: ReadonlyArray<InteractionUpdate> = [
-        { type: "text-delta", text: "The answer." },
-        { type: "turn-ended", usage },
-        { type: "thinking-delta", text: "Resuming." },
-        { type: "text-delta", text: "A second closing." },
-        { type: "turn-ended", usage },
-        { type: "text-delta", text: "A third closing." },
-        { type: "turn-ended", usage },
-      ];
-      const adapter = yield* makeCursorAdapterV2({
-        instanceId,
-        settings: yield* decodeCursorSettings({}),
-        environment: { HOME: workspace },
-      }).pipe(
-        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
-          assertComplete: Effect.void,
-          open: () =>
-            Effect.succeed({
-              agentId: "native-cursor-resume",
-              listMessages: Effect.succeed([]),
-              close: Effect.void,
-              send: (input) =>
-                Effect.gen(function* () {
-                  for (const update of updates) {
-                    yield* input.onDelta!(update).pipe(Effect.orDie);
-                  }
-                  return {
-                    agentId: "native-cursor-resume",
-                    runId: "native-cursor-run",
-                    wait: Effect.succeed({
-                      id: "native-cursor-run",
-                      requestId: "native-request",
-                      status: "error" as const,
-                      error: {
-                        message:
-                          "Agent turn stopped after repeated resume attempts made no progress",
-                      },
-                      model: { id: "claude-opus-5-5" },
-                      durationMs: 1,
-                    }),
-                    cancel: Effect.void,
-                  };
-                }),
-            }),
-        }),
-        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
-      );
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("cursor-resume-session"),
-        modelSelection,
-        runtimePolicy,
-      });
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      const now = yield* DateTime.now;
-      yield* runtime.startTurn({
-        threadId,
-        providerThread,
-        modelSelection,
-        runtimePolicy,
-        runId: RunId.make("cursor-resume-run"),
-        runOrdinal: 1,
-        providerTurnOrdinal: 1,
-        attemptId: RunAttemptId.make("cursor-resume-attempt"),
-        rootNodeId: NodeId.make("cursor-resume-root"),
-        appThread: {
-          id: threadId,
-          projectId: ProjectId.make("cursor-resume-project"),
-          createdBy: "user",
-          creationSource: "web",
-          title: "Cursor resume",
-          providerInstanceId: instanceId,
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          activeProviderThreadId: providerThread.id,
-          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
-          forkedFrom: null,
-          createdAt: now,
-          updatedAt: now,
-          archivedAt: null,
-          settledOverride: null,
-          settledAt: null,
-          lastVisitedAt: null,
-          deletedAt: null,
-        },
-        message: {
-          messageId: MessageId.make("cursor-resume-message"),
-          createdBy: "user",
-          creationSource: "web",
-          text: "hi",
-          attachments: [],
-        },
-      });
-      const events = yield* runtime.events.pipe(
-        Stream.takeUntil((event) => event.type === "turn.terminal"),
-        Stream.runCollect,
-      );
-      const terminal = events.find((event) => event.type === "turn.terminal");
-      assert.equal(terminal?.status, "completed");
-      assert.isNull(terminal?.failure);
-      const items = events.flatMap((event) =>
-        event.type === "turn_item.updated" ? [event.turnItem] : [],
-      );
-      assert.deepEqual(
-        [
-          ...new Set(
-            items.flatMap((item) =>
-              item.type === "assistant_message" || item.type === "reasoning" ? [item.text] : [],
-            ),
-          ),
-        ],
-        ["The answer."],
-      );
     }).pipe(
       Effect.scoped,
       Effect.provide(

@@ -824,6 +824,11 @@ interface CursorProjectionTarget {
 // Fallback final output when Cursor's result carries none. The persisted row only
 // ever shows a bounded tail, so keep a little more than that.
 const MAX_CURSOR_STREAMED_OUTPUT_CHARS = 256 * 1024;
+// After a turn ends, a retryable stream error can make Cursor's SDK resume from
+// an older checkpoint inside the same run. When those resumes save nothing, it
+// ends the run with this error even though the answer was already delivered.
+const CURSOR_RESUME_NO_PROGRESS_MESSAGE =
+  "Agent turn stopped after repeated resume attempts made no progress";
 
 interface ActiveCursorToolCall {
   readonly callId: string;
@@ -1912,10 +1917,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           context: ActiveCursorTurn,
           update: InteractionUpdate,
         ) {
-          // After turn-ended the answer is complete. A retryable stream error
-          // can still make Cursor's SDK resume from an older checkpoint inside
-          // the same run and regenerate the closing; that is not new work.
-          if (context.finalized || context.turnEnded) {
+          if (context.finalized) {
             return;
           }
           switch (update.type) {
@@ -2104,6 +2106,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           yield* Deferred.succeed(input.context.completed, undefined);
         });
 
+        const isResumeFailureAfterTurnEnded = (context: ActiveCursorTurn, result: RunResult) =>
+          context.turnEnded &&
+          result.status === "error" &&
+          result.error?.message === CURSOR_RESUME_NO_PROGRESS_MESSAGE;
+
         const terminalStatus = (
           context: ActiveCursorTurn,
           result: RunResult,
@@ -2120,8 +2127,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             case "cancelled":
               return "cancelled";
             case "error":
-              // The SDK's failed resume after turn-ended does not undo the answer.
-              return context.turnEnded ? "completed" : "failed";
+              return isResumeFailureAfterTurnEnded(context, result) ? "completed" : "failed";
           }
         };
 
@@ -2368,14 +2374,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                       text: result.result,
                     });
                   }
-                  if (context !== null && context.turnEnded && result.status === "error") {
+                  if (context !== null && isResumeFailureAfterTurnEnded(context, result)) {
                     yield* Effect.logWarning(
-                      "orchestration-v2.cursor-run-failed-after-turn-ended",
+                      "orchestration-v2.cursor-resume-failed-after-turn-ended",
                       {
                         providerSessionId: input.providerSessionId,
                         providerThreadId: turnInput.providerThread.id,
                         providerTurnId,
-                        error: result.error?.message,
                       },
                     );
                   }
