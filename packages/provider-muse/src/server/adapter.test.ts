@@ -410,7 +410,47 @@ describe("MuseAdapterV2", () => {
             },
           },
         });
+        assert.strictEqual(fake.closeCount(), 0);
       }
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("resumes on a fresh host when Muse replays queued work instead of starting MCP", () =>
+    Effect.gen(function* () {
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("test-environment"),
+        threadId: THREAD_ID,
+        providerSessionId: "test-session",
+        providerInstanceId: INSTANCE_ID,
+        endpoint: "http://127.0.0.1:43210/mcp",
+        authorizationHeader: "Bearer thread-scoped-test-token",
+        browserToolsAvailable: true,
+      });
+      const fake = yield* makeFakeMuse("first");
+      const recovery = yield* makeFakeMuse("second");
+      for (const muse of [fake, recovery])
+        muse.host.initializeResult.grantedCapabilities.push("sessionMcp");
+      const ack = pendingPromise<Record<string, unknown>>();
+      fake.queueResponse("session/resume", ack.promise);
+      const opening = yield* makeHarness(fake, INSTANCE_ID, "saved-session", recovery).pipe(
+        Effect.forkScoped,
+      );
+      const first = yield* fake.takeCall("session/resume");
+      // Muse announces the replayed turn before it acknowledges the resume.
+      yield* fake.emit("turn/started", { turnId: "replayed-turn" });
+      yield* Effect.yieldNow;
+      ack.resolve({
+        session: { sessionId: "saved-session", modelId: MODEL, activeTurnId: "replayed-turn" },
+        history: { items: [] },
+      });
+      const harness = yield* Fiber.join(opening);
+      assert.strictEqual(fake.closeCount(), 1);
+      const again = yield* recovery.takeCall("session/resume");
+      assert.strictEqual(again.params.sessionId, "saved-session");
+      assert.deepStrictEqual(again.params.config, first.params.config);
+      assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+      const { nativeId } = yield* startConversation(harness, recovery);
+      assert.match(nativeId, /^second-/);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
