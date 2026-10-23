@@ -2579,7 +2579,8 @@ describe("gate: the base branch moves", () => {
           ...passingOn(BASE, 1),
           regateLine(BASE, MOVED),
         ] as ReadonlyArray<RunEvent>);
-        baseMoved(rig, 0);
+        // The base moves again while the resumed attempt runs: the new rule records the pass.
+        baseMoved(rig, 2);
         assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
         assert.strictEqual(rig.ws.gateCalls, 1);
         assert.strictEqual(eventsOf(rig, "gate_regate").length, 1);
