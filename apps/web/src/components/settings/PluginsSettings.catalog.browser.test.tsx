@@ -1,3 +1,4 @@
+import { act, render as renderScreen, type Screen } from "../../../test/render";
 import { RegistryContext } from "@effect/atom-react";
 import {
   EnvironmentId,
@@ -10,13 +11,9 @@ import {
   type PluginManageAccess,
 } from "@t3tools/client-runtime/state/pluginPresentation";
 import { type Atom, AtomRegistry } from "effect/reactivity";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-
+import { describe, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentPresentation } from "../../state/environments";
 import type { HeldCall, makeFakePluginEnvironment } from "../../test/fakePluginEnvironment";
-
 const server = vi.hoisted(() => ({
   current: null as ReturnType<typeof makeFakePluginEnvironment> | null,
 }));
@@ -32,17 +29,25 @@ vi.mock("../../connection/runtime", async () => {
 });
 // Imported by the settings page's other sections, which these tests do not render.
 vi.mock("../../environments/primary", () => ({ usePrimarySessionState: () => null }));
-vi.mock("../../state/session", () => ({
-  environmentSession: { sessionStateAtom: () => null },
-  useEnvironmentSessionState: () => null,
-  // Settings rows read settings:write; plugin management reads its own session state above.
-  useEnvironmentScope: () => true,
-  useEnvironmentsWithScope: () => new Set(),
-}));
-
+vi.mock("../../state/session", async () => {
+  const Option = await import("effect/Option");
+  const { Atom } = await import("effect/reactivity");
+  const sessionStates = Atom.make([]);
+  return {
+    usePreparedConnection: (): ReturnType<
+      typeof import("../../state/session").usePreparedConnection
+    > => Option.none(),
+    environmentSession: { sessionStateAtom: () => null },
+    environmentSessionStatesAtom: () => sessionStates,
+    readEnvironmentScope: () => true,
+    useEnvironmentSessionState: () => null,
+    // Settings rows read settings:write; plugin management reads its own session state above.
+    useEnvironmentScope: () => true,
+    useEnvironmentsWithScope: () => new Set(),
+  };
+});
 import { pluginEnvironment } from "../../state/plugins";
 import { PluginEnvironmentCatalog } from "./PluginsSettings";
-
 const environmentId = EnvironmentId.make("remote");
 const environment = {
   environmentId,
@@ -56,7 +61,6 @@ const environment = {
     },
   },
 } as unknown as EnvironmentPresentation;
-
 const DIRECTORY = "/srv/plugins/notifier";
 const added = {
   installationId: PluginInstallationId.make("installation-1"),
@@ -69,13 +73,9 @@ const added = {
   consent: null,
   enabled: false,
 } as unknown as PluginInstallation;
-
 let registry: AtomRegistry.AtomRegistry;
-let container: HTMLDivElement;
-let root: Root;
 const fake = () => server.current!;
 const catalogAtom = pluginEnvironment.catalog({ environmentId, input: {} });
-
 /** Resolves once `atom` holds a value `matches` accepts; the registry's own notification is the receipt. */
 function until<A>(atom: Atom.Atom<A>, matches: (value: A) => boolean) {
   return act(
@@ -109,7 +109,6 @@ const delivered = (installations: ReadonlyArray<PluginInstallation>) =>
       result.value._tag === "available" &&
       result.value.installations === installations,
   );
-
 const elements = (selector: string, text: string) =>
   [...document.querySelectorAll<HTMLElement>(selector)].filter(
     (element) => element.textContent?.trim() === text,
@@ -132,20 +131,26 @@ const type = (input: HTMLInputElement, value: string) =>
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
-
-const render = (access: PluginManageAccess) =>
-  act(async () =>
-    root.render(
-      <RegistryContext.Provider value={registry}>
-        <PluginEnvironmentCatalog environment={environment} access={access} onRetryAccess={null} />
-      </RegistryContext.Provider>,
-    ),
+const render = (screen: Screen, access: PluginManageAccess) =>
+  act(
+    async () =>
+      await screen.rerender(
+        <RegistryContext.Provider value={registry}>
+          <PluginEnvironmentCatalog
+            environment={environment}
+            access={access}
+            onRetryAccess={null}
+          />
+        </RegistryContext.Provider>,
+      ),
   );
-
 /** Mounts the list showing `installations`, adds the plugin directory, and holds the add request. */
-async function addHeld(installations: ReadonlyArray<PluginInstallation>): Promise<HeldCall> {
+async function addHeld(
+  screen: Screen,
+  installations: ReadonlyArray<PluginInstallation>,
+): Promise<HeldCall> {
   fake().publish(installations);
-  await render("granted");
+  await render(screen, "granted");
   await delivered(installations);
   await click(button("Add plugin"));
   await type(field("Plugin directory"), ` ${DIRECTORY} `);
@@ -154,26 +159,11 @@ async function addHeld(installations: ReadonlyArray<PluginInstallation>): Promis
   expect(call.input).toEqual({ directory: DIRECTORY });
   return call;
 }
-
-beforeAll(() => {
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-});
-beforeEach(() => {
-  fake().reset();
-  registry = AtomRegistry.make();
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  registry.dispose();
-});
-
 describe("adding a plugin directory", () => {
   it("opens the review of the added plugin", async () => {
-    const call = await addHeld([]);
+    using _setup = await setup();
+    await using screen = await renderScreen(null, { router: false });
+    const call = await addHeld(screen, []);
     const listed = [added];
     fake().publish(listed);
     await act(async () => call.reply({ installation: added }));
@@ -182,10 +172,11 @@ describe("adding a plugin directory", () => {
     expect(dialogText()).toContain(DIRECTORY);
     expect(button("Approve and enable")).toBeTruthy();
   });
-
   it("ends as removed when the restarted snapshot equals the old one", async () => {
+    using _setup = await setup();
+    await using screen = await renderScreen(null, { router: false });
     // Added and removed elsewhere before the old subscription reported either.
-    const call = await addHeld([]);
+    const call = await addHeld(screen, []);
     const revision = latestRevision();
     await act(async () => call.reply({ installation: added }));
     // Only the restart the reply starts can deliver this unchanged snapshot again.
@@ -201,24 +192,33 @@ describe("adding a plugin directory", () => {
     expect(dialogText()).not.toContain(DIRECTORY);
   });
 });
-
 describe("management access", () => {
   it("keeps the view-only explanation through a re-check of a denied session", async () => {
+    using _setup = await setup();
+    await using screen = await renderScreen(null, { router: false });
     const listed = [added];
     fake().publish(listed);
-    await render("denied");
+    await render(screen, "denied");
     await delivered(listed);
     expect(document.body.textContent).toContain(PLUGIN_MANAGE_ACCESS_REQUIRED);
     expect(button("Add plugin").disabled).toBe(true);
-
-    await render("pending");
+    await render(screen, "pending");
     expect(document.body.textContent).toContain(PLUGIN_MANAGE_ACCESS_REQUIRED);
     expect(statusText()).toBe("Checking access…");
     expect(button("Add plugin").disabled).toBe(true);
-
-    await render("granted");
+    await render(screen, "granted");
     expect(document.body.textContent).not.toContain(PLUGIN_MANAGE_ACCESS_REQUIRED);
     expect(statusText()).toBe("");
     expect(button("Add plugin").disabled).toBe(false);
   });
 });
+
+async function setup() {
+  fake().reset();
+  registry = AtomRegistry.make();
+  return {
+    [Symbol.dispose]() {
+      registry.dispose();
+    },
+  };
+}
