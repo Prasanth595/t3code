@@ -101,13 +101,15 @@ it.each(["Updated message", ""])(
       .not.toBeInTheDocument();
     if (text) {
       await screen.getByRole("button", { name: "Save edit" }).click();
-      expect(commands.save).toHaveBeenCalledWith(
-        expect.objectContaining({
-          input: expect.objectContaining({
-            text,
-            edit: expect.objectContaining({ attachments: [] }),
+      await vi.waitFor(() =>
+        expect(commands.save).toHaveBeenCalledWith(
+          expect.objectContaining({
+            input: expect.objectContaining({
+              text,
+              edit: expect.objectContaining({ attachments: [] }),
+            }),
           }),
-        }),
+        ),
       );
     } else {
       await screen.getByRole("button", { name: "Cancel edit" }).click();
