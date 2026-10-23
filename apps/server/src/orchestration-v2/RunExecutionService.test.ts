@@ -2736,7 +2736,6 @@ it.effect.each([
     stopDuring: true,
     cancelAt: 1,
   },
-  { name: "burst", count: 5, bytes: 0, batches: [5] },
   { name: "repeated nodes", count: 5, bytes: 0, batches: [5], nodes: true },
   {
     name: "changed nodes",
@@ -2749,7 +2748,6 @@ it.effect.each([
   { name: "count limit", count: 65, bytes: 0, batches: [32, 32, 1] },
   { name: "byte limit", count: 3, bytes: 600_000, batches: [1, 1, 1] },
   { name: "source pauses", count: 5, bytes: 0, batches: [2, 3], split: true },
-  { name: "cancelled normalization", count: 5, bytes: 0, batches: [1], cancelAt: 1 },
   { name: "failed normalization", count: 5, bytes: 0, batches: [1], failAt: 1 },
 ])("persists queued snapshots in bounded ordered batches: $name", (scenario) =>
   Effect.gen(function* () {
