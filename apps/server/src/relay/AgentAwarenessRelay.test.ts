@@ -439,6 +439,36 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
+  it.effect(
+    "keeps a subagent request that started while publishing was off after an empty startup",
+    () =>
+      Effect.gen(function* () {
+        const shells = yield* Ref.make(
+          new Map<ThreadId, OrchestrationV2ThreadShell>([
+            [THREAD_ID, shell()],
+            [CHILD_THREAD_ID, waitingChild({ pendingRuntimeRequest: null })],
+          ]),
+        );
+        const { relay, secrets, publications, catchUp } = yield* makeTestRelay({
+          readShell: (threadId) =>
+            Ref.get(shells).pipe(Effect.map((current) => current.get(threadId) ?? null)),
+        });
+        yield* relay.start();
+        yield* TestClock.adjust("1 second");
+        assert.equal(catchUp.shellSnapshotReads, 1);
+        assert.equal(publications.length, 0);
+
+        yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("false"));
+        yield* Ref.update(shells, (current) =>
+          new Map(current).set(CHILD_THREAD_ID, waitingChild()),
+        );
+        yield* relay.publishThread(CHILD_THREAD_ID);
+        yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true"));
+        yield* relay.publishThread(THREAD_ID);
+        assert.equal(publications[0]?.state?.phase, "waiting_for_approval");
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("drops a subagent request that cleared while publishing was off", () =>
     Effect.gen(function* () {
       const shells = yield* Ref.make(

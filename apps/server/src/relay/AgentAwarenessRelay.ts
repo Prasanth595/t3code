@@ -388,6 +388,7 @@ export const make = Effect.gen(function* () {
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
   const subagentRequests = new Map<ThreadId, SubagentRequest>();
   // Environments that never publish skip the extra shell read while paused.
+  // Set by the first publish or by a startup snapshot, even an empty one.
   let hasPublished = false;
 
   const readSecretString = (name: string) =>
@@ -831,6 +832,7 @@ export const make = Effect.gen(function* () {
         Effect.orElseSucceed(() => "failed" as const),
       );
       if (result === "published") {
+        hasPublished = true;
         yield* Ref.set(activeSnapshotPublishedRef, true);
         if (logEnabledWhenReady) {
           const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
