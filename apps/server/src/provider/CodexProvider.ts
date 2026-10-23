@@ -136,9 +136,9 @@ export function codexPlanLabel(planType: string | null | undefined): string | un
       return "ChatGPT Pro 100 Subscription";
     case "promax":
       return "ChatGPT Pro 500 Subscription";
-    case "team":
-      return "ChatGPT Team Subscription";
     case "self_serve_business_prolite":
+      return "ChatGPT Business Premium Subscription";
+    case "team":
     case "self_serve_business_usage_based":
     case "business":
       return "ChatGPT Business Subscription";
