@@ -4,6 +4,7 @@ import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
   type ChatWidth,
+  type RightPanelLayout,
   type EnvironmentIdentificationMode,
   MAX_APPEARANCE_CONTRAST,
   MAX_GLASS_OPACITY,
@@ -42,6 +43,11 @@ const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
   comfortable: "Comfortable",
   wide: "Wide",
   full: "Full",
+};
+
+const RIGHT_PANEL_LAYOUT_LABELS: Record<RightPanelLayout, string> = {
+  tabs: "Tabs",
+  columns: "Scrolling columns",
 };
 
 export function AppearanceSettingsPanel() {
@@ -346,6 +352,39 @@ export function AppearanceSettingsPanel() {
                   <SelectItem value="comfortable">Comfortable (default)</SelectItem>
                   <SelectItem value="wide">Wide</SelectItem>
                   <SelectItem value="full">Full</SelectItem>
+                </SelectPopup>
+              </Select>
+            </div>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("right-panel-layout")}
+          description="Show panels beside the chat as tabs, or lay the chat and every panel out side by side as columns you scroll through."
+          resetAction={
+            settings.rightPanelLayout !== DEFAULT_UNIFIED_SETTINGS.rightPanelLayout ? (
+              <SettingResetButton
+                label="right panel layout"
+                onClick={() =>
+                  updateSettings({ rightPanelLayout: DEFAULT_UNIFIED_SETTINGS.rightPanelLayout })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="w-full sm:w-40">
+              <Select
+                value={settings.rightPanelLayout}
+                onValueChange={(value) => {
+                  if (value === "tabs" || value === "columns")
+                    updateSettings({ rightPanelLayout: value });
+                }}
+              >
+                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Right panel layout">
+                  <SelectValue>{RIGHT_PANEL_LAYOUT_LABELS[settings.rightPanelLayout]}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="tabs">Tabs (default)</SelectItem>
+                  <SelectItem value="columns">Scrolling columns</SelectItem>
                 </SelectPopup>
               </Select>
             </div>

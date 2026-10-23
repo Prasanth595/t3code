@@ -81,6 +81,7 @@ interface PersistentThreadTerminalDrawerProps {
   threadRef: { environmentId: EnvironmentId; threadId: ThreadId };
   threadId: ThreadId;
   active: boolean;
+  offscreen?: boolean;
   composerHeight: number;
   launchContext: PersistentTerminalLaunchContext | null;
   focusRequestId: number;
@@ -96,6 +97,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   threadRef,
   threadId,
   active,
+  offscreen = false,
   composerHeight,
   launchContext,
   focusRequestId,
@@ -269,6 +271,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
           worktreePath={effectiveWorktreePath}
           runtimeEnv={runtimeEnv}
           visible={visible}
+          offscreen={offscreen}
           height={terminalUiState.terminalHeight}
           composerHeight={composerHeight}
           // Known-session order is MRU and changes on focus; persisted store order keeps sidebar labels stable.
@@ -299,6 +302,8 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
 
 export interface PersistentThreadTerminalPanelProps {
   visible: boolean;
+  autoFocus?: boolean;
+  offscreen?: boolean;
   threadRef: ScopedThreadRef;
   surface: Extract<RightPanelSurface, { kind: "terminal" }>;
   launchContext: PersistentTerminalLaunchContext | null;
@@ -318,6 +323,8 @@ export interface PersistentThreadTerminalPanelProps {
 
 export const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPanel({
   visible,
+  autoFocus = true,
+  offscreen = false,
   threadRef,
   surface,
   launchContext,
@@ -397,6 +404,8 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
     <ThreadTerminalDrawer
       mode="panel"
       visible={visible}
+      autoFocus={autoFocus}
+      offscreen={offscreen}
       threadRef={threadRef}
       threadId={threadRef.threadId}
       cwd={cwd}

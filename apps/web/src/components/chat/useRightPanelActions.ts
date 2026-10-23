@@ -32,6 +32,7 @@ import { previewEnvironment } from "../../state/preview";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ChatShortcutCommands } from "./useChatShortcuts";
 interface RightPanelActionsInput {
+  readonly onRevealSurface: () => void;
   readonly activeThreadRef: ScopedThreadRef | null;
   readonly activeProject: EnvironmentProject | null;
   readonly activeRightPanelSurface: RightPanelSurface | null;
@@ -65,6 +66,7 @@ interface RightPanelActionsInput {
 export function useRightPanelActions(input: RightPanelActionsInput) {
   const {
     closeRightPanelSurface,
+    onRevealSurface,
     activeThreadRef,
     activeProject,
     activeRightPanelSurface,
@@ -192,6 +194,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const togglePreviewPanelStable = useStableCallback(togglePreviewPanel);
   const activateRightPanelSurface = (surface: RightPanelSurface) => {
     if (!activeThreadRef) return;
+    onRevealSurface();
     explicitDiffOpenRef.current = resolveExplicitDiffOpenOnActivate({
       surfaceKind: surface.kind,
       diffOpen,

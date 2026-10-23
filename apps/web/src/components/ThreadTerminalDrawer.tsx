@@ -428,6 +428,8 @@ interface TerminalViewportProps {
   focusRequestId: number;
   autoFocus: boolean;
   visible: boolean;
+  /** Scrolled out of view: stops painting without counting as hidden for focus. */
+  offscreen?: boolean;
   resizeEpoch: number;
   drawerHeight: number;
   keybindings: ResolvedKeybindingsConfig;
@@ -468,13 +470,16 @@ function TerminalSessionViewport({
   focusRequestId,
   autoFocus,
   visible,
+  offscreen = false,
   resizeEpoch,
   drawerHeight,
   keybindings,
 }: TerminalViewportProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<GhosttyTerminalSurface | null>(null);
-  const visibleRef = useRef(visible);
+  const painting = visible && !offscreen;
+  const visibleRef = useRef(painting);
+  const pendingFocusRef = useRef(false);
   const environmentId = threadRef.environmentId;
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const hasTerminalWriteAccess = useEffectEvent(() =>
@@ -616,9 +621,14 @@ function TerminalSessionViewport({
   }, [resizeSessionGeneration]);
 
   useLayoutEffect(() => {
-    visibleRef.current = visible;
-    terminalRef.current?.setVisible(visible);
-  }, [visible]);
+    visibleRef.current = painting;
+    terminalRef.current?.setVisible(painting);
+    if (!canOperateTerminal) pendingFocusRef.current = false;
+    if (painting && pendingFocusRef.current) {
+      pendingFocusRef.current = false;
+      terminalRef.current?.focus();
+    }
+  }, [canOperateTerminal, painting]);
 
   useEffect(() => {
     const current = terminalFontRef.current;
@@ -1109,11 +1119,26 @@ function TerminalSessionViewport({
     previousSessionRef.current = current;
   }, [terminalOutput, terminalError, terminalStatus, terminalVersion]);
 
-  // Each new request focuses again, even when nothing else changed.
   const focusRequest = autoFocus && canOperateTerminal && visible ? focusRequestId : null;
   useEffect(() => {
+    pendingFocusRef.current = false;
     if (focusRequest === null) return;
-    (terminalRef.current ?? containerRef.current)?.focus();
+    // Claim focus when requested, then hand it to the terminal once ready only
+    // if the user has not focused something else in the meantime. Claiming
+    // must not scroll: the drawer can sit in a scrolled-away chat column, and
+    // revealing it is the caller's decision.
+    const terminal = terminalRef.current;
+    if (terminal) terminal.focus();
+    else containerRef.current?.focus({ preventScroll: true });
+    if (visibleRef.current) return;
+    // Scrolled out of view, the surface refuses focus until it paints again;
+    // keep the request until then unless the user focuses something else.
+    pendingFocusRef.current = true;
+    const cancel = (event: FocusEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) pendingFocusRef.current = false;
+    };
+    document.addEventListener("focusin", cancel);
+    return () => document.removeEventListener("focusin", cancel);
   }, [focusRequest]);
 
   // The surface measures its mount, so each drawer resize or window resize refits it.
@@ -1161,6 +1186,10 @@ interface ThreadTerminalDrawerProps {
   terminalGroups: ThreadTerminalGroup[];
   activeTerminalGroupId: string;
   focusRequestId: number;
+  /** Off for a panel shown beside others, so it only takes focus once selected. */
+  autoFocus?: boolean;
+  /** A panel column scrolled out of view; pauses painting only. */
+  offscreen?: boolean;
   onSplitTerminal: () => void;
   onSplitTerminalVertical: () => void;
   onNewTerminal: () => void;
@@ -1235,6 +1264,8 @@ function TerminalSplitPanes({
   onAddTerminalContext,
   focusRequestId,
   visible,
+  autoFocus,
+  offscreen,
   resizeEpoch,
   drawerHeight,
   keybindings,
@@ -1252,6 +1283,8 @@ function TerminalSplitPanes({
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   focusRequestId: number;
   visible: boolean;
+  autoFocus: boolean;
+  offscreen: boolean;
   resizeEpoch: number;
   drawerHeight: number;
   keybindings: ResolvedKeybindingsConfig;
@@ -1302,7 +1335,8 @@ function TerminalSplitPanes({
                 onSessionExited={() => onCloseTerminal(terminalId)}
                 onAddTerminalContext={onAddTerminalContext}
                 focusRequestId={focusRequestId}
-                autoFocus={terminalId === activeTerminalId}
+                autoFocus={autoFocus && terminalId === activeTerminalId}
+                offscreen={offscreen}
                 visible={visible}
                 resizeEpoch={resizeEpoch}
                 drawerHeight={drawerHeight}
@@ -1428,6 +1462,8 @@ export default function ThreadTerminalDrawer({
   terminalGroups,
   activeTerminalGroupId,
   focusRequestId,
+  autoFocus = true,
+  offscreen = false,
   onSplitTerminal,
   onSplitTerminalVertical,
   onNewTerminal,
@@ -1902,6 +1938,8 @@ export default function ThreadTerminalDrawer({
               onAddTerminalContext={onAddTerminalContext}
               focusRequestId={focusRequestId}
               visible={visible}
+              autoFocus={autoFocus}
+              offscreen={offscreen}
               resizeEpoch={resizeEpoch}
               drawerHeight={drawerHeight}
               keybindings={keybindings}

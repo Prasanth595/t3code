@@ -21,6 +21,7 @@ import {
 } from "../PersistentThreadTerminals";
 
 interface ChatTerminalDrawersProps {
+  readonly offscreen?: boolean;
   readonly activeThreadKey: string | null;
   readonly activeTerminalOpen: boolean;
   readonly composerHeight: number;
@@ -95,6 +96,7 @@ export function ChatTerminalDrawers(props: ChatTerminalDrawersProps) {
       threadRef={mountedThreadRef}
       threadId={mountedThreadRef.threadId}
       active={mountedThreadKey === activeThreadKey}
+      offscreen={props.offscreen ?? false}
       composerHeight={mountedThreadKey === activeThreadKey ? props.composerHeight : 0}
       launchContext={mountedThreadKey === activeThreadKey ? props.launchContext : null}
       focusRequestId={mountedThreadKey === activeThreadKey ? props.focusRequestId : 0}

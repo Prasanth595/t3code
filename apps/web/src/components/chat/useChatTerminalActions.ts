@@ -66,6 +66,7 @@ interface ChatTerminalActionsInput {
   readonly panelTerminalIds: ReadonlySet<string>;
   readonly canReuseTerminal: boolean;
   readonly gitCwd: string | null;
+  readonly requestDrawerTerminalFocus: () => void;
   readonly setTerminalFocusRequestId: Dispatch<SetStateAction<number>>;
   readonly setTerminalUiLaunchContext: Dispatch<SetStateAction<TerminalLaunchContext | null>>;
   readonly setThreadError: ReturnType<typeof makeThreadErrorSetter>;
@@ -92,6 +93,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     canReuseTerminal,
     gitCwd,
     setTerminalFocusRequestId,
+    requestDrawerTerminalFocus,
     setTerminalUiLaunchContext,
     setThreadError,
   } = input;
@@ -168,7 +170,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
           : storeSplitTerminal(activeThreadRef, terminalId),
     });
     if (!launched) return;
-    setTerminalFocusRequestId((value) => value + 1);
+    requestDrawerTerminalFocus();
     void launched.result;
   };
   const splitTerminalStable = useStableCallback(splitTerminal);
@@ -178,7 +180,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       place: (terminalId) => storeNewTerminal(activeThreadRef, terminalId),
     });
     if (!launched) return;
-    setTerminalFocusRequestId((value) => value + 1);
+    requestDrawerTerminalFocus();
     void launched.result;
   };
   const createNewTerminalStable = useStableCallback(createNewTerminal);
@@ -186,7 +188,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     if (!hasTerminalWriteAccess() || !activeThreadRef) return;
     terminalActions.closeTerminalSession(terminalId);
     storeCloseTerminal(activeThreadRef, terminalId);
-    setTerminalFocusRequestId((value) => value + 1);
+    requestDrawerTerminalFocus();
   };
   const runProjectScript = async (
     script: ProjectScript,
@@ -232,7 +234,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     if (!activeThreadRef) {
       return;
     }
-    setTerminalFocusRequestId((value) => value + 1);
+    requestDrawerTerminalFocus();
 
     const launched = terminalActions.launchTerminal({
       // The drawer opens with the target already placed: opening it empty would claim
