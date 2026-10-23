@@ -414,6 +414,31 @@ describe("AgentAwarenessRelay", () => {
       }),
   );
 
+  it.effect("keeps a subagent request that started while publishing was off", () =>
+    Effect.gen(function* () {
+      const shells = yield* Ref.make(
+        new Map<ThreadId, OrchestrationV2ThreadShell>([
+          [THREAD_ID, shell()],
+          [CHILD_THREAD_ID, waitingChild({ pendingRuntimeRequest: null })],
+        ]),
+      );
+      const { relay, secrets, publications } = yield* makeTestRelay({
+        readShell: (threadId) =>
+          Ref.get(shells).pipe(Effect.map((current) => current.get(threadId) ?? null)),
+      });
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications[0]?.state?.phase, "running");
+
+      yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("false"));
+      yield* Ref.update(shells, (current) => new Map(current).set(CHILD_THREAD_ID, waitingChild()));
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true"));
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 2);
+      assert.equal(publications[1]?.state?.phase, "waiting_for_approval");
+    }),
+  );
+
   it.effect("drops a subagent request that cleared while publishing was off", () =>
     Effect.gen(function* () {
       const shells = yield* Ref.make(

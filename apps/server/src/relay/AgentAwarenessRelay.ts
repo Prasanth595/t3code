@@ -387,6 +387,8 @@ export const make = Effect.gen(function* () {
   const catchUpRequests = yield* Queue.dropping<void>(1);
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
   const subagentRequests = new Map<ThreadId, SubagentRequest>();
+  // Environments that never publish skip the extra shell read while paused.
+  let hasPublished = false;
 
   const readSecretString = (name: string) =>
     secrets
@@ -455,6 +457,7 @@ export const make = Effect.gen(function* () {
     if (!publishAgentActivity) {
       yield* cancelPublishRetries;
       yield* resetPublishedConnection;
+      yield* trackSubagentWhilePaused(threadId);
       yield* Effect.logDebug("agent activity publish skipped; publication disabled", {
         threadId,
       });
@@ -464,6 +467,7 @@ export const make = Effect.gen(function* () {
     if (!relayConfig) {
       yield* cancelPublishRetries;
       yield* resetPublishedConnection;
+      yield* trackSubagentWhilePaused(threadId);
       yield* Effect.logDebug("agent activity publish skipped; relay link credentials unavailable", {
         threadId,
       });
@@ -633,6 +637,7 @@ export const make = Effect.gen(function* () {
       state: snapshot.state,
       reason: snapshot.reason,
     }).pipe(withRelayClientTracing);
+    hasPublished = true;
     publishConfirmDeadlines.delete(threadId);
     yield* Ref.update(publishedStateByThreadRef, (publishedStates) => {
       const nextPublishedStates = new Map(publishedStates);
@@ -680,6 +685,13 @@ export const make = Effect.gen(function* () {
     if (topLevelThreadId === null) return;
     subagentRequests.set(threadId, { topLevelThreadId, request });
     yield* enqueueTopLevelPublish(topLevelThreadId);
+  });
+
+  // A child that starts waiting while publishing is paused must still count
+  // when its parent is next published.
+  const trackSubagentWhilePaused = Effect.fnUntraced(function* (threadId: ThreadId) {
+    if (!hasPublished) return;
+    yield* trackSubagentRequest(threadId, yield* threads.getThreadShell(threadId));
   });
 
   // The map can miss a child's update while publishing is off or the relay is
