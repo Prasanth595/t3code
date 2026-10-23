@@ -296,19 +296,6 @@ interface SubagentRequest {
   readonly request: PendingSubagentRequest;
 }
 
-function pendingSubagentRequestFor(
-  requests: ReadonlyMap<ThreadId, SubagentRequest>,
-  topLevelThreadId: ThreadId,
-): PendingSubagentRequest | null {
-  let pending: PendingSubagentRequest | null = null;
-  for (const entry of requests.values()) {
-    if (entry.topLevelThreadId !== topLevelThreadId) continue;
-    if (entry.request === "approval") return "approval";
-    pending = entry.request;
-  }
-  return pending;
-}
-
 function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -565,7 +552,7 @@ export const make = Effect.gen(function* () {
       threadId,
       thread,
       project,
-      pendingSubagentRequest: pendingSubagentRequestFor(subagentRequests, threadId),
+      pendingSubagentRequest: yield* currentSubagentRequestFor(threadId),
     });
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
@@ -692,6 +679,26 @@ export const make = Effect.gen(function* () {
     if (topLevelThreadId === null) return;
     subagentRequests.set(threadId, { topLevelThreadId, request });
     yield* enqueueWorkerPublish(topLevelThreadId);
+  });
+
+  // The map can miss a child's update while publishing is off or the relay is
+  // unlinked, so each waiting child is re-read before its parent is published.
+  const currentSubagentRequestFor = Effect.fnUntraced(function* (topLevelThreadId: ThreadId) {
+    let pending: PendingSubagentRequest | null = null;
+    for (const [childId, entry] of [...subagentRequests]) {
+      if (entry.topLevelThreadId !== topLevelThreadId) continue;
+      const child = yield* threads.getThreadShell(childId);
+      const request =
+        child === null || child.archivedAt !== null ? null : subagentPendingRequest(child);
+      if (request === null) {
+        subagentRequests.delete(childId);
+        continue;
+      }
+      if (request !== entry.request) subagentRequests.set(childId, { ...entry, request });
+      if (request === "approval") return request;
+      pending = request;
+    }
+    return pending;
   });
 
   const processThreadPublish = Effect.fnUntraced(function* (threadId: ThreadId) {
