@@ -20,8 +20,10 @@ function setup() {
   };
   const watch = (onChange: (scheme: LinuxColorScheme) => void) => {
     portal.report = onChange;
-    return () => {
-      portal.stopped = true;
+    return {
+      stop: () => {
+        portal.stopped = true;
+      },
     };
   };
   return { portal, watch };

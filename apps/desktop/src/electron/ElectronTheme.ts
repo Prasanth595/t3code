@@ -31,7 +31,9 @@ export class ElectronTheme extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronTheme") {}
 
-type WatchSystemColorScheme = (onChange: (scheme: LinuxColorScheme) => void) => () => void;
+type WatchSystemColorScheme = (onChange: (scheme: LinuxColorScheme) => void) => {
+  readonly stop: () => void;
+};
 
 export const makeWith = Effect.fn("ElectronTheme.make")(function* (
   watchSystemColorScheme: WatchSystemColorScheme | undefined,
@@ -56,7 +58,7 @@ export const makeWith = Effect.fn("ElectronTheme.make")(function* (
           return undefined;
         }
       }),
-      (stop) => Effect.sync(() => stop?.()),
+      (watcher) => Effect.sync(() => watcher?.stop()),
     );
   }
 

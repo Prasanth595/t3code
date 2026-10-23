@@ -17,11 +17,14 @@ class FakeBus extends NodeEvents.EventEmitter {
     this.settings = settings;
   }
 
+  readonly readOneCalled = Promise.withResolvers<void>();
+
   async call(message: Message) {
     this.calls.push(message);
     if (message.member === "AddMatch")
       return new Message({ type: MessageType.METHOD_RETURN, replySerial: "1" });
-    const value = message.member === "ReadOne" ? this.settings.readOne : this.settings.read;
+    if (message.member === "ReadOne") this.readOneCalled.resolve();
+    const value = await (message.member === "ReadOne" ? this.settings.readOne : this.settings.read);
     if (value === undefined) throw new DBusError("org.freedesktop.DBus.Error.UnknownMethod", "");
     return new Message({
       type: MessageType.METHOD_RETURN,
@@ -45,23 +48,19 @@ class FakeBus extends NodeEvents.EventEmitter {
   }
 }
 
-async function watch(bus: FakeBus) {
+function watch(bus: FakeBus) {
   const schemes: LinuxColorScheme[] = [];
-  const read = Promise.withResolvers<void>();
-  const stop = watchLinuxColorScheme(
-    (scheme) => {
-      schemes.push(scheme);
-      read.resolve();
-    },
+  const { ready, stop } = watchLinuxColorScheme(
+    (scheme) => schemes.push(scheme),
     bus as unknown as MessageBus,
   );
-  await read.promise;
-  return { schemes, stop };
+  return { schemes, ready, stop };
 }
 
 it("reads the current color scheme and follows portal changes", async () => {
   const bus = new FakeBus({ readOne: new Variant("u", 1) });
-  const { schemes, stop } = await watch(bus);
+  const { schemes, ready, stop } = watch(bus);
+  await ready;
 
   bus.changed("org.freedesktop.appearance", "color-scheme", 2);
   bus.changed("org.freedesktop.appearance", "accent-color", 1);
@@ -79,8 +78,22 @@ it("reads the current color scheme and follows portal changes", async () => {
 
 it("falls back to the nested Read reply on portals without ReadOne", async () => {
   const bus = new FakeBus({ read: new Variant("v", new Variant("u", 2)) });
-  const { schemes } = await watch(bus);
+  const { schemes, ready } = watch(bus);
+  await ready;
 
   expect(schemes).toEqual(["light"]);
   expect(bus.calls.map((call) => call.member)).toEqual(["AddMatch", "ReadOne", "Read"]);
+});
+
+it("keeps a change that arrives while the initial read is pending", async () => {
+  const reply = Promise.withResolvers<Variant>();
+  const bus = new FakeBus({ readOne: reply.promise });
+  const { schemes, ready } = watch(bus);
+
+  await bus.readOneCalled.promise;
+  bus.changed("org.freedesktop.appearance", "color-scheme", 1);
+  reply.resolve(new Variant("u", 0));
+  await ready;
+
+  expect(schemes).toEqual(["dark"]);
 });

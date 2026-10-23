@@ -36,8 +36,9 @@ const settingsCall = (member: "ReadOne" | "Read") =>
 export function watchLinuxColorScheme(
   onChange: (scheme: LinuxColorScheme) => void,
   bus: MessageBus = sessionBus(),
-): () => void {
+) {
   let closed = false;
+  let changed = false;
   const report = (value: unknown) => {
     if (!closed) onChange(decodeColorScheme(value));
   };
@@ -50,13 +51,15 @@ export function watchLinuxColorScheme(
     )
       return;
     const [namespace, key, value] = message.body;
-    if (namespace === NAMESPACE && key === KEY) report(value);
+    if (namespace !== NAMESPACE || key !== KEY) return;
+    changed = true;
+    report(value);
   };
   const ignore = () => undefined;
 
   bus.on("error", ignore);
   bus.on("message", onMessage);
-  void (async () => {
+  const ready = (async () => {
     await bus.call(
       new Message({
         destination: DBUS,
@@ -73,12 +76,17 @@ export function watchLinuxColorScheme(
     const reply = await bus
       .call(settingsCall("ReadOne"))
       .catch(() => bus.call(settingsCall("Read")));
-    if (reply) report(reply.body[0]);
+    // The portal answers reads through its backend asynchronously, so a change signal can
+    // overtake this reply; the reply then carries the older value.
+    if (reply && !changed) report(reply.body[0]);
   })().catch(ignore);
 
-  return () => {
-    closed = true;
-    bus.removeListener("message", onMessage);
-    bus.disconnect();
+  return {
+    ready,
+    stop: () => {
+      closed = true;
+      bus.removeListener("message", onMessage);
+      bus.disconnect();
+    },
   };
 }
