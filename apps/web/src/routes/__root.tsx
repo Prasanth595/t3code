@@ -34,6 +34,8 @@ import { DesktopUpdateLaunchNotice } from "../components/sidebar/updateEverythin
 import { LegacyThreadMigrationToast } from "../components/LegacyThreadMigrationToast";
 import { ThreadNotificationCoordinator } from "../components/ThreadNotificationCoordinator";
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
+import { PluginActionSubscriptions } from "../components/PluginActionSubscriptions";
+import { PluginNotificationCoordinator } from "../components/PluginNotificationCoordinator";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
 import { PullRequestGuideRunCoordinator } from "../components/pullRequest/guide/PullRequestGuideRunCoordinator";
 import { HostFreezeToastCoordinator } from "../components/HostFreezeToastCoordinator";
@@ -240,6 +242,8 @@ function RootRouteView() {
           <SnapShotCoordinator />
           <ThreadNotificationCoordinator />
           <ReopenClosedViewShortcut />
+          <PluginActionSubscriptions />
+          <PluginNotificationCoordinator />
           <ConfirmDialogHost />
           <CustomSnoozeDialogHost />
           <SlowRpcRequestToastCoordinator />
