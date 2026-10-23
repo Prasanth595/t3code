@@ -5,16 +5,30 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type ServerSettings as ServerSettingsValue,
+  type ServerSettingsError,
+} from "@t3tools/contracts";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
+import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as ServerConfig from "../config.ts";
 import { makeCodexAppServerSpawnCommand } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { classifyScope, make, ownedAgentSlice, type ScopeState } from "./agentScope.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import {
+  agentSliceMemoryLimits,
+  classifyScope,
+  make,
+  ownedAgentSlice,
+  type ScopeState,
+} from "./agentScope.ts";
 
 const running: ScopeState = {
   loadState: "loaded",
@@ -23,6 +37,20 @@ const running: ScopeState = {
   oomKills: 0,
   populated: true,
 };
+
+const GiB = 1024 ** 3;
+
+describe("agentSliceMemoryLimits", () => {
+  it("leaves headroom on auto, sets no cap when off, and throttles below a fixed cap", () => {
+    expect(agentSliceMemoryLimits(16 * GiB, "auto")).toEqual({ high: 10 * GiB, max: 12 * GiB });
+    expect(agentSliceMemoryLimits(16 * GiB, "off")).toEqual({
+      high: "infinity",
+      max: "infinity",
+    });
+    expect(agentSliceMemoryLimits(16 * GiB, 64)).toEqual({ high: 62 * GiB, max: 64 * GiB });
+    expect(agentSliceMemoryLimits(16 * GiB, 4)).toEqual({ high: 3 * GiB, max: 4 * GiB });
+  });
+});
 
 describe("classifyScope", () => {
   it("reports an OOM kill only once systemd records it", () => {
@@ -42,7 +70,15 @@ const withFakeSystemd = <A, E>(
     readonly calls: ReadonlyArray<ReadonlyArray<string>>;
     readonly stateDir: string;
   }) => Effect.Effect<A, E>,
-  { oomPolicy = true }: { readonly oomPolicy?: boolean } = {},
+  {
+    oomPolicy = true,
+    failedSetProperties = 0,
+    settings = ServerSettings.layerTest(),
+  }: {
+    readonly oomPolicy?: boolean;
+    readonly failedSetProperties?: number;
+    readonly settings?: Layer.Layer<ServerSettings.ServerSettingsService, ServerSettingsError>;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-agent-scope-"));
@@ -68,6 +104,10 @@ const withFakeSystemd = <A, E>(
           if (!oomPolicy && args.some((arg) => arg.startsWith("--property=OOMPolicy="))) {
             return output("", 1);
           }
+          if (args[1] === "set-property" && failedSetProperties > 0) {
+            failedSetProperties -= 1;
+            return output("", 1);
+          }
           const [, verb, unit = ""] = args;
           if (verb === "reset-failed") units.delete(unit);
           if (verb !== "show") return output("");
@@ -91,9 +131,10 @@ const withFakeSystemd = <A, E>(
   }).pipe(
     Effect.scoped,
     Effect.provide(
-      ServerConfig.layerTest(process.cwd(), { prefix: "t3-agent-scope-" }).pipe(
-        Layer.provideMerge(NodeServices.layer),
-      ),
+      Layer.mergeAll(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-agent-scope-" }),
+        settings,
+      ).pipe(Layer.provideMerge(NodeServices.layer)),
     ),
   );
 
@@ -112,6 +153,48 @@ const launchCodex = (scope: Effect.Success<typeof make>, threadId: string) =>
       return command;
     }),
   );
+
+/**
+ * The first read returns "auto" after the setting has already changed to
+ * "off" and the change was published, as when a client saves the setting
+ * while the first agent is setting up scopes.
+ */
+const settingsChangedDuringFirstRead = Layer.effect(
+  ServerSettings.ServerSettingsService,
+  Effect.gen(function* () {
+    const base = yield* ServerSettings.ServerSettingsService;
+    const changes = yield* PubSub.unbounded<ServerSettingsValue>();
+    const off = { ...(yield* base.getSettings), agentMemoryLimit: "off" as const };
+    let reads = 0;
+    return ServerSettings.ServerSettingsService.of({
+      ...base,
+      getSettings: Effect.gen(function* () {
+        reads += 1;
+        if (reads > 1) return off;
+        yield* PubSub.publish(changes, off);
+        for (let i = 0; i < 20; i++) yield* Effect.yieldNow;
+        return { ...off, agentMemoryLimit: "auto" as const };
+      }),
+      subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
+    });
+  }),
+).pipe(Layer.provide(ServerSettings.layerTest()));
+
+/** Test settings whose change stream is `changes`. */
+const settingsWithChanges = (
+  changes: PubSub.PubSub<ServerSettingsValue>,
+  overrides: Parameters<typeof ServerSettings.layerTest>[0],
+) =>
+  Layer.effect(
+    ServerSettings.ServerSettingsService,
+    Effect.gen(function* () {
+      const base = yield* ServerSettings.ServerSettingsService;
+      return ServerSettings.ServerSettingsService.of({
+        ...base,
+        subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
+      });
+    }),
+  ).pipe(Layer.provide(ServerSettings.layerTest(overrides)));
 
 describe("AgentScope service", () => {
   it.effect("labels a thread from its newest scope until its next session clears it", () =>
@@ -193,5 +276,64 @@ describe("AgentScope service", () => {
         expect(calls.filter(([, verb]) => verb === "stop")).toHaveLength(1);
       }),
     ),
+  );
+
+  it.effect("caps the agents slice from the memory limit setting", () =>
+    withFakeSystemd(
+      ({ scope, calls }) =>
+        Effect.gen(function* () {
+          yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+          expect(calls.filter(([, verb]) => verb === "set-property")).toEqual([
+            [
+              "--user",
+              "set-property",
+              "--runtime",
+              "app-t3code-agents.slice",
+              "MemoryHigh=infinity",
+              "MemoryMax=infinity",
+            ],
+          ]);
+        }),
+      { settings: ServerSettings.layerTest({ agentMemoryLimit: "off" }) },
+    ),
+  );
+
+  it.effect("applies a setting changed while the first agent sets up scopes", () =>
+    withFakeSystemd(
+      ({ scope, calls }) =>
+        Effect.gen(function* () {
+          yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+          for (let i = 0; i < 20; i++) yield* Effect.yieldNow;
+          const limits = calls.filter(([, verb]) => verb === "set-property");
+          expect(limits.at(-1)?.slice(4)).toEqual(["MemoryHigh=infinity", "MemoryMax=infinity"]);
+        }),
+      { settings: settingsChangedDuringFirstRead },
+    ),
+  );
+
+  it.effect("retries memory limits that systemd did not accept", () =>
+    Effect.gen(function* () {
+      const changes = yield* PubSub.unbounded<ServerSettingsValue>();
+      yield* withFakeSystemd(
+        ({ scope, calls }) =>
+          Effect.gen(function* () {
+            yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+            yield* PubSub.publish(changes, {
+              ...DEFAULT_SERVER_SETTINGS,
+              agentMemoryLimit: "off",
+            });
+            for (let i = 0; i < 20; i++) yield* Effect.yieldNow;
+            const limits = calls.filter(([, verb]) => verb === "set-property");
+            expect(limits.map((args) => args.slice(4))).toEqual([
+              ["MemoryHigh=infinity", "MemoryMax=infinity"],
+              ["MemoryHigh=infinity", "MemoryMax=infinity"],
+            ]);
+          }),
+        {
+          settings: settingsWithChanges(changes, { agentMemoryLimit: "off" }),
+          failedSetProperties: 1,
+        },
+      );
+    }),
   );
 });
