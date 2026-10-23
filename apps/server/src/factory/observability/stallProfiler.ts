@@ -51,14 +51,15 @@ export interface StallProfilerOptions {
 
 /**
  * Returns the function to call with each stall's length. A noticeable stall starts a CPU
- * profile of what runs next, at most one per `minIntervalMs`. It never throws.
+ * profile of what runs next, at most one per `minIntervalMs`; the call returns whether it
+ * started one. It never throws.
  */
 export const makeStallProfiler = (options: StallProfilerOptions) => {
   const limiter = makeProfileLimiter(options.minIntervalMs ?? 10 * 60_000, options.now);
   const durationMs = options.durationMs ?? 30_000;
   const thresholdMs = options.thresholdMs ?? 5000;
-  return (stallMs: number): void => {
-    if (stallMs < thresholdMs || !limiter.tryAcquire()) return;
+  return (stallMs: number): boolean => {
+    if (stallMs < thresholdMs || !limiter.tryAcquire()) return false;
     const file = NodePath.join(
       options.dir,
       `${DateTime.formatIso(DateTime.nowUnsafe()).replaceAll(":", "-")}.cpuprofile`,
@@ -67,5 +68,6 @@ export const makeStallProfiler = (options: StallProfilerOptions) => {
       () => options.onWritten?.(file),
       (error) => options.onError(error),
     );
+    return true;
   };
 };
