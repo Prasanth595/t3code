@@ -123,6 +123,9 @@ describe("ChatMarkdown ordered list layout", () => {
       { container },
     );
     const probe = document.createElement("span");
+    const listStyle = getComputedStyle(screen.container.querySelector("ol")!);
+    probe.style.fontFamily = listStyle.fontFamily;
+    probe.style.fontSize = listStyle.fontSize;
     probe.style.whiteSpace = "pre";
     probe.textContent = "2. ";
     container.append(probe);
