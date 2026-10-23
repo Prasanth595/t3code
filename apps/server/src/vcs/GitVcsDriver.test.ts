@@ -1155,3 +1155,89 @@ it.effect("checkpoint capture meters every git process it starts, including stre
     Effect.provideService(Metric.MetricRegistry, new Map()),
   ),
 );
+
+it.effect("git metrics finalize cancellation without exposing arbitrary operation labels", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const process = yield* VcsProcess.make.pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: () => Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+      }),
+    );
+    const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, process),
+    );
+    const operation = "arbitrary operation /private/path";
+    const fiber = yield* driver
+      .execute({ operation, cwd: "/repo", args: ["rev-parse", "HEAD"] })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(started);
+    yield* TestClock.adjust("250 millis");
+    yield* Fiber.interrupt(fiber);
+
+    assert.strictEqual(yield* gitCommandCount("other", "interrupt"), 1);
+    assert.strictEqual(yield* gitCommandCount(operation, "interrupt"), 0);
+    const timing = yield* gitCommandTiming("other");
+    assert.strictEqual(timing.count, 1);
+    assert.strictEqual(timing.sum, 250);
+  }).pipe(
+    Effect.provide(NodeServices.layer),
+    Effect.provideService(Metric.MetricRegistry, new Map()),
+  ),
+);
+
+it.effect("git metrics count fsync fallback and transient retry subprocesses separately", () =>
+  Effect.gen(function* () {
+    const retryReady = yield* Deferred.make<void>();
+    const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
+    let attempts = 0;
+    const process = yield* VcsProcess.make.pipe(
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: (input) =>
+          Effect.gen(function* () {
+            attempts++;
+            yield* TestClock.adjust("250 millis");
+            if (attempts === 2) {
+              assert.include(input.args, "core.fsyncMethod=writeout-only");
+              yield* Deferred.succeed(retryReady, undefined);
+            }
+            return {
+              code: ChildProcessSpawner.ExitCode(attempts < 3 ? 128 : 0),
+              stdout: "",
+              stderr:
+                attempts === 1
+                  ? "fatal: fsync error on '.git/objects/test': Operation not supported"
+                  : attempts === 2
+                    ? "fatal: Unable to create '/repo/.git/index.lock': File exists."
+                    : "",
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            };
+          }),
+      }),
+    );
+    const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, process),
+    );
+    const fiber = yield* driver
+      .execute({ operation, cwd: "/repo", args: ["-c", "core.fsyncMethod=batch", "add"] })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(retryReady);
+    yield* TestClock.adjust("75 millis");
+    yield* Fiber.join(fiber);
+
+    assert.strictEqual(attempts, 3);
+    assert.strictEqual(yield* gitCommandCount(operation, "failure"), 2);
+    assert.strictEqual(yield* gitCommandCount(operation, "success"), 1);
+    const timing = yield* gitCommandTiming(operation);
+    assert.strictEqual(timing.count, 3);
+    assert.strictEqual(timing.sum, 750);
+  }).pipe(
+    Effect.provide(NodeServices.layer),
+    Effect.provideService(Metric.MetricRegistry, new Map()),
+  ),
+);

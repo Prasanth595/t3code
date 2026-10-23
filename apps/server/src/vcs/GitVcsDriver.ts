@@ -35,7 +35,6 @@ import {
 } from "@t3tools/contracts";
 import { isMissingExecutable } from "@t3tools/source-control-core/server/discovery";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import {
   makeGitVcsDriverCore,
   PATCH_RENDER_PREFIX_ARGS,
@@ -504,51 +503,41 @@ function parseGitRemoteVerboseOutput(
   return remotes;
 }
 
-const runGitProcess = (
-  process: VcsProcess.VcsProcess["Service"],
-  input: VcsProcess.VcsProcessInput,
-) =>
-  process.run(input).pipe(
-    withMetrics({
-      counter: gitCommandsTotal,
-      timer: gitCommandDuration,
-      attributes: { operation: input.operation },
+const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
+  (
+    process: VcsProcess.VcsProcess["Service"],
+    operation: string,
+    cwd: string,
+    args: ReadonlyArray<string>,
+    options?: {
+      readonly stdin?: string;
+      readonly env?: NodeJS.ProcessEnv;
+      readonly allowNonZeroExit?: boolean;
+      readonly timeoutMs?: number;
+      readonly maxOutputBytes?: number;
+      readonly outputMode?: VcsProcess.VcsProcessInput["outputMode"];
+      readonly appendTruncationMarker?: boolean;
+    },
+  ) =>
+    process.run({
+      operation,
+      command: "git",
+      args: ["-C", cwd, ...args],
+      cwd,
+      spawnCwd: globalThis.process.cwd(),
+      ...(options?.stdin !== undefined ? { stdin: options.stdin } : {}),
+      ...(options?.env !== undefined ? { env: options.env } : {}),
+      ...(options?.allowNonZeroExit !== undefined
+        ? { allowNonZeroExit: options.allowNonZeroExit }
+        : {}),
+      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options?.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
+      ...(options?.outputMode !== undefined ? { outputMode: options.outputMode } : {}),
+      ...(options?.appendTruncationMarker !== undefined
+        ? { appendTruncationMarker: options.appendTruncationMarker }
+        : {}),
     }),
-  );
-
-const gitCommand = (
-  process: VcsProcess.VcsProcess["Service"],
-  operation: string,
-  cwd: string,
-  args: ReadonlyArray<string>,
-  options?: {
-    readonly stdin?: string;
-    readonly env?: NodeJS.ProcessEnv;
-    readonly allowNonZeroExit?: boolean;
-    readonly timeoutMs?: number;
-    readonly maxOutputBytes?: number;
-    readonly outputMode?: VcsProcess.VcsProcessInput["outputMode"];
-    readonly appendTruncationMarker?: boolean;
-  },
-) =>
-  runGitProcess(process, {
-    operation,
-    command: "git",
-    args: ["-C", cwd, ...args],
-    cwd,
-    spawnCwd: globalThis.process.cwd(),
-    ...(options?.stdin !== undefined ? { stdin: options.stdin } : {}),
-    ...(options?.env !== undefined ? { env: options.env } : {}),
-    ...(options?.allowNonZeroExit !== undefined
-      ? { allowNonZeroExit: options.allowNonZeroExit }
-      : {}),
-    ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-    ...(options?.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
-    ...(options?.outputMode !== undefined ? { outputMode: options.outputMode } : {}),
-    ...(options?.appendTruncationMarker !== undefined
-      ? { appendTruncationMarker: options.appendTruncationMarker }
-      : {}),
-  });
+);
 
 export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -916,7 +905,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             let skipped = false;
             let skippedRecord: number[] = [];
             const skippedPaths: string[] = [];
-            yield* runGitProcess(vcsProcess, {
+            yield* vcsProcess.run({
               operation,
               command: "git",
               cwd: input.cwd,
