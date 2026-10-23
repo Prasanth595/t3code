@@ -2676,7 +2676,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
 
       // A fork workflow fetches from the upstream but pushes to the configured
-      // push remote, and keeps the upstream for pulls, as bare `git push` does.
+      // push remote, and keeps the upstream for pulls, as plain `git push` does.
       const configuredPushRemoteName = yield* resolveConfiguredPushRemoteName(cwd, branch).pipe(
         Effect.orElseSucceed(() => null),
       );
