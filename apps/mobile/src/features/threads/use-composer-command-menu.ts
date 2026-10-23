@@ -1,11 +1,13 @@
 import * as Dialog from "../../components/ui/Dialog";
-import type {
-  EnvironmentId,
-  ProjectId,
-  ProviderInteractionMode,
-  ServerProvider,
-  ThreadId,
-  ThreadPullRequestLink,
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type PluginAction,
+  type ProjectId,
+  type ProviderInteractionMode,
+  type ServerProvider,
+  type ThreadId,
+  type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
@@ -45,10 +47,20 @@ import {
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { serverEnvironment } from "../../state/server";
+import { useEnvironmentScope } from "../../state/session";
+import {
+  canRunPluginActionsNow,
+  runPluginAction,
+  usePluginActions,
+} from "../../state/plugin-actions";
+import {
+  type PluginActionContext,
+  pluginActionsAt,
+} from "@t3tools/client-runtime/state/pluginActions";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useComposerPathSearch, useComposerPullRequestSearch } from "../../state/queries";
 import type { ComposerCommandItem } from "./ComposerCommandPopover";
@@ -167,12 +179,39 @@ export function resolveComposerCommandSelection(input: {
   };
 }
 
+/**
+ * Slash entries for the plugin actions matching `query` (lowercase) by name or title.
+ * They run when picked, so they are offered anywhere in the message.
+ */
+export function buildPluginActionSlashItems(
+  actions: ReadonlyArray<PluginAction>,
+  query: string,
+  context: PluginActionContext,
+): ComposerCommandItem[] {
+  return pluginActionsAt(actions, "composer-slash", context)
+    .filter(
+      // Names are lowercase today, but the wire accepts any string from a newer server.
+      ({ action }) =>
+        action.name.toLowerCase().includes(query) || action.title.toLowerCase().includes(query),
+    )
+    .map(({ action, target }) => ({
+      id: `plugin-action:${action.id}`,
+      type: "plugin-action" as const,
+      action,
+      target,
+      label: `/${action.name}`,
+      description: `${action.title} · ${action.pluginName}`,
+    }));
+}
+
+/** Shared autocomplete for thread composers and unsent new-task drafts. */
 export function useComposerCommandMenu({
   draftMessage,
   ownerKey,
   environmentId,
   threadShells = EMPTY_THREAD_SHELLS,
   currentThreadId = null,
+  projectId,
   projectCwd,
   pullRequestProjectId = null,
   pullRequestRepository = null,
@@ -191,6 +230,8 @@ export function useComposerCommandMenu({
   readonly environmentId: EnvironmentId | null;
   readonly threadShells?: ReadonlyArray<EnvironmentThreadShell>;
   readonly currentThreadId?: ThreadId | null;
+  /** The project plugin actions with a project target run on; required so no composer drops them. */
+  readonly projectId: ProjectId | null;
   readonly projectCwd: string | null;
   readonly pullRequestProjectId?: ProjectId | null;
   readonly pullRequestRepository?: string | null;
@@ -206,6 +247,7 @@ export function useComposerCommandMenu({
 }) {
   const [selection, setSelection] = useState(() => composerSelectionAtEnd(draftMessage));
   const previousOwnerKeyRef = useRef(ownerKey);
+  const pluginActionRunningRef = useRef(false);
   const onSelectionChange = (nextSelection: ComposerEditorSelection) => {
     setSelection(nextSelection);
   };
@@ -351,6 +393,9 @@ export function useComposerCommandMenu({
     query: trigger?.kind === "pull-request" ? trigger.query : null,
   });
 
+  const pluginActions = usePluginActions(environmentId);
+  // Running a plugin action needs `orchestration:operate`.
+  const canRunPluginActions = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const items = ((): ComposerCommandItem[] => {
     if (!trigger) return [];
 
@@ -407,7 +452,16 @@ export function useComposerCommandMenu({
           description: skill.shortDescription ?? skill.description ?? "",
         }));
 
-      return [...commandItems, ...skillItems];
+      return [
+        ...commandItems,
+        ...skillItems,
+        ...(canRunPluginActions
+          ? buildPluginActionSlashItems(pluginActions, q, {
+              threadId: currentThreadId,
+              projectId,
+            })
+          : []),
+      ];
     }
 
     if (trigger.kind === "skill") {
@@ -521,6 +575,21 @@ export function useComposerCommandMenu({
     return [];
   })();
 
+  const liveSelection = {
+    draftMessage,
+    trigger,
+    items,
+    canRunPluginActions,
+    environmentId,
+    ownerKey,
+    currentThreadId,
+    projectId,
+  };
+  const liveSelectionRef = useRef(liveSelection);
+  useLayoutEffect(() => {
+    liveSelectionRef.current = liveSelection;
+  });
+
   const onSelect = (item: ComposerCommandItem) => {
     if (!trigger) return;
     if (item.type === "thread") {
@@ -586,6 +655,48 @@ export function useComposerCommandMenu({
       return;
     }
 
+    if (item.type === "plugin-action") {
+      const current = liveSelectionRef.current;
+      const liveTrigger = current.trigger;
+      const offered = current.items.find(
+        (candidate) => candidate.id === item.id && candidate.type === "plugin-action",
+      );
+      // An old menu may outlive its draft, target, permission, or plugin generation.
+      if (
+        current.environmentId === null ||
+        current.environmentId !== environmentId ||
+        current.ownerKey !== ownerKey ||
+        current.currentThreadId !== currentThreadId ||
+        current.projectId !== projectId ||
+        !current.canRunPluginActions ||
+        !canRunPluginActionsNow(current.environmentId) ||
+        trigger.kind !== "slash-command" ||
+        liveTrigger?.kind !== "slash-command" ||
+        liveTrigger.rangeStart !== trigger.rangeStart ||
+        liveTrigger.rangeEnd !== trigger.rangeEnd ||
+        liveTrigger.query !== trigger.query ||
+        offered?.type !== "plugin-action"
+      )
+        return;
+      if (pluginActionRunningRef.current) return;
+      pluginActionRunningRef.current = true;
+      const cleared = replaceTextRange(
+        current.draftMessage,
+        liveTrigger.rangeStart,
+        liveTrigger.rangeEnd,
+        "",
+      );
+      setSelection({ start: cleared.cursor, end: cleared.cursor });
+      onChangeDraftMessage(cleared.text);
+      void runPluginAction({
+        environmentId: current.environmentId,
+        action: offered.action,
+        target: offered.target,
+      }).finally(() => {
+        pluginActionRunningRef.current = false;
+      });
+      return;
+    }
     if (
       item.type === "provider-slash-command" &&
       item.command.name === USAGE_LIMITS_COMMAND.name &&

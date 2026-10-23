@@ -194,6 +194,8 @@ import {
   ComposerCommandMenu,
   composerSuggestionOptionId,
 } from "./ComposerCommandMenu";
+import { canRunPluginActionsNow, runPluginAction } from "../../pluginActions";
+import { usePluginActions } from "../../state/pluginActions";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import {
   ComposerAttachButton,
@@ -1191,6 +1193,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerTerminalContexts.length === 0 &&
     composerPreviewAnnotations.length === 0 &&
     composerReviewComments.length === 0;
+  const pluginActions = usePluginActions(environmentId);
+  const pluginActionThreadId = routeKind === "server" ? activeThreadId : null;
+  const pluginActionProjectId = activeThread?.projectId ?? pullRequestProjectId;
   const {
     items: composerMenuItems,
     isLoading: isComposerMenuLoading,
@@ -1209,6 +1214,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderSkills,
     selectedProviderSlashCommands,
     showSkillsInSlashMenu: settings.showSkillsInSlashMenu,
+    pluginActions,
+    canOperateThread,
+    pluginActionThreadId,
+    pluginActionProjectId,
   });
 
   const composerMenuOpen = Boolean(composerTrigger);
@@ -1961,6 +1970,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       if (applied) {
         setComposerHighlightedItemId(null);
+      }
+      return;
+    }
+    if (item.type === "plugin-action") {
+      // Keep the typed command when this connection may no longer run actions.
+      // The live grant is read because the menu may predate a permission change.
+      if (!canOperateThread || !canRunPluginActionsNow(environmentId)) return;
+      // Runs now, like the built-ins; nothing reaches the agent as prompt text.
+      const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+        expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+      });
+      if (applied) {
+        setComposerHighlightedItemId(null);
+        void runPluginAction({ environmentId, action: item.action, target: item.target });
       }
       return;
     }

@@ -1,6 +1,17 @@
-import { describe, expect, it } from "vite-plus/test";
+import {
+  EnvironmentId,
+  PluginActionId,
+  ProjectId,
+  ThreadId,
+  type PluginAction,
+} from "@t3tools/contracts";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { filterCommandPaletteItems, type CommandPaletteItem } from "./commandPaletteItems";
+import {
+  buildPluginActionPaletteItems,
+  filterCommandPaletteItems,
+  type CommandPaletteItem,
+} from "./commandPaletteItems";
 
 function item(
   key: string,
@@ -36,5 +47,80 @@ describe("filterCommandPaletteItems", () => {
       filterCommandPaletteItems(items, "message content", matches).map((item) => item.key),
     ).toEqual(["siva:one"]);
     expect(filterCommandPaletteItems(items, "> message content", matches)).toEqual([]);
+  });
+});
+describe("buildPluginActionPaletteItems", () => {
+  const environmentId = EnvironmentId.make("environment-1");
+  const thread = {
+    environmentId,
+    threadId: ThreadId.make("thread-1"),
+    projectId: ProjectId.make("project-1"),
+  };
+  const deploy: PluginAction = {
+    id: PluginActionId.make("installation-1:1:deploy"),
+    pluginId: "acme.deploy",
+    pluginName: "Deploy",
+    name: "deploy",
+    title: "Deploy this branch",
+    target: "thread",
+    placements: ["command-palette"],
+  };
+  const refresh: PluginAction = {
+    ...deploy,
+    id: PluginActionId.make("installation-1:1:refresh"),
+    name: "refresh",
+    title: "Refresh caches",
+    target: "environment",
+  };
+
+  it("runs an offered action in the open thread's environment", () => {
+    const runAction = vi.fn();
+    const offered = buildPluginActionPaletteItems({
+      actions: [deploy],
+      canOperate: true,
+      ...thread,
+      runAction,
+    });
+    expect(offered.map((item) => item.title)).toEqual(["Deploy this branch"]);
+
+    offered[0]?.run();
+
+    expect(runAction).toHaveBeenCalledWith({
+      environmentId: thread.environmentId,
+      action: deploy,
+      target: { _tag: "thread", threadId: thread.threadId },
+    });
+  });
+
+  it("offers environment actions when no thread is open", () => {
+    const runAction = vi.fn();
+    const offered = buildPluginActionPaletteItems({
+      actions: [deploy, refresh],
+      canOperate: true,
+      environmentId,
+      threadId: null,
+      projectId: null,
+      runAction,
+    });
+    expect(offered.map((item) => item.title)).toEqual(["Refresh caches"]);
+
+    offered[0]?.run();
+
+    expect(runAction).toHaveBeenCalledWith({
+      environmentId,
+      action: refresh,
+      target: { _tag: "environment" },
+    });
+  });
+
+  it("offers nothing to a connection that cannot operate the environment", () => {
+    expect(
+      buildPluginActionPaletteItems({
+        actions: [deploy],
+        canOperate: false,
+        ...thread,
+        runAction: vi.fn(),
+      }),
+    ).toEqual([]);
   });
 });

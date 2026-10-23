@@ -104,6 +104,10 @@ import {
   SettingsScheduledTaskEditRouteScreen,
 } from "./features/settings/SettingsScheduledTasksRouteScreen";
 import {
+  SettingsPluginRouteScreen,
+  SettingsPluginsRouteScreen,
+} from "./features/settings/SettingsPluginsRouteScreen";
+import {
   ScheduledTaskModelPickerRouteScreen,
   ScheduledTaskBranchPickerRouteScreen,
 } from "./features/settings/ScheduledTaskPickerScreens";
@@ -346,6 +350,15 @@ const SettingsContentStack = createV5SheetStackNavigator({
         title: "Scheduled Tasks",
         headerTitleStyle: { fontSize: 16, fontWeight: "800" },
       },
+    }),
+    SettingsPlugins: createNativeStackScreen({
+      screen: SettingsPluginsRouteScreen,
+      linking: "plugins",
+      options: { title: "Plugins" },
+    }),
+    SettingsPlugin: createNativeStackScreen({
+      screen: SettingsPluginRouteScreen,
+      options: { title: "Plugin" },
     }),
     SettingsScheduledTaskNew: createNativeStackScreen({
       screen: SettingsScheduledTaskNewRouteScreen,
