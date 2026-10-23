@@ -1992,7 +1992,17 @@ export const layerWithOptions = (
                   // (project trust, login, or session-switch hooks). Persist
                   // their runless request artifacts directly so the normal T3
                   // request UI can answer them and unblock session setup.
-                  const threadId = sessionScopedRuntimeRequestThreadId(event);
+                  // A provider thread can also change while idle (Claude adopts
+                  // a new session after `/clear`). With no run subscribed, that
+                  // update would be dropped and a later resume would reopen the
+                  // old native session.
+                  const threadId =
+                    sessionScopedRuntimeRequestThreadId(event) ??
+                    (event.type === "provider_thread.updated" &&
+                    event.providerThread.appThreadId !== null &&
+                    (yield* Ref.get(entry.eventSubscribers)).size === 0
+                      ? event.providerThread.appThreadId
+                      : undefined);
                   if (threadId !== undefined) {
                     yield* Effect.gen(function* () {
                       const current = (yield* Ref.get(sessions)).get(
