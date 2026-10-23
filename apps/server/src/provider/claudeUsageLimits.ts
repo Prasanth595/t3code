@@ -197,6 +197,8 @@ export function claudeRateLimitEventToUpdate(
       if (mapped) windows.set(mapped.id, mapped);
     }
   }
+  // The CLI drops a window from this snapshot once its reset passes, so a
+  // complete snapshot can lack the weekly window right after the week resets.
   const complete = windows.size > 0;
   // The CLI can skip refreshing its per-window snapshot for a response, so the
   // event's own window is the newer reading.
