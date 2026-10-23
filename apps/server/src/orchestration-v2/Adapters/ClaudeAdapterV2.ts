@@ -3401,8 +3401,8 @@ function formatClaudeUsageLimitWait(waitMs: number): string {
 
 interface ActiveClaudeTurnContext {
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
-  readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
-  readonly nativeThreadId: string;
+  input: ProviderAdapter.ProviderAdapterV2TurnInput;
+  nativeThreadId: string;
   readonly nativeTurnId: string;
   nativeMessageCursor: string | null;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
@@ -3499,7 +3499,7 @@ interface ActiveClaudeSubagent {
 
 interface ClaudeLiveQueryContext {
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
-  readonly nativeThreadId: string;
+  nativeThreadId: string;
   readonly query: ClaudeAgentSdkQuerySession;
   readonly queryPolicyKey: string;
   selection: CompiledClaudeModelSelection;
@@ -4425,6 +4425,99 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               new Map(current).set(nativeThreadId, providerThread),
             );
           });
+
+        const adoptNativeSessionId = Effect.fnUntraced(function* (
+          query: ClaudeLiveQueryContext,
+          nativeThreadId: string,
+        ) {
+          if ((yield* Ref.get(queryContext)) !== query || query.stopping) return;
+          const previousId = query.nativeThreadId;
+          if (nativeThreadId.length === 0 || nativeThreadId === previousId) return;
+          const previous = (yield* Ref.get(lastProviderThreadByNativeThread)).get(previousId);
+          if (previous === undefined) return;
+          const providerThread: OrchestrationV2ProviderThread = {
+            ...previous,
+            nativeThreadRef: {
+              driver: CLAUDE_PROVIDER,
+              nativeId: nativeThreadId,
+              strength: "strong",
+            },
+            nativeConversationHeadRef: null,
+            updatedAt: yield* DateTime.now,
+          };
+          const rekey = <A>(entries: ReadonlyMap<string, A>): Map<string, A> => {
+            const next = new Map(entries);
+            if (next.has(previousId)) {
+              const value = next.get(previousId)!;
+              next.delete(previousId);
+              next.set(nativeThreadId, value);
+            }
+            return next;
+          };
+          // /clear replaces the transcript, not the live process and its background routing.
+          yield* Ref.update(lastTurnRouteByNativeThread, rekey);
+          yield* Ref.update(pendingBackgroundTasksByNativeThread, rekey);
+          yield* Ref.update(wakeEligibleBackgroundTasksByNativeThread, rekey);
+          yield* Ref.update(opaqueBackgroundTaskReplayTombstonesByNativeThread, rekey);
+          yield* Ref.update(taskListsByNativeThread, rekey);
+          yield* Ref.update(wakeBuffers, rekey);
+          yield* Ref.update(wakeReportsByNativeThread, (state) => ({
+            userTurns: rekey(state.userTurns),
+            reports: rekey(state.reports),
+          }));
+          yield* Ref.update(lastProviderThreadByNativeThread, (entries) =>
+            rekey(entries).set(nativeThreadId, providerThread),
+          );
+          yield* Ref.update(openedNativeThreads, (entries) => {
+            const next = new Set(entries);
+            next.delete(previousId);
+            next.add(nativeThreadId);
+            return next;
+          });
+          yield* Ref.update(requestedContinuations, (entries) => {
+            if (!entries.has(previousId)) return entries;
+            const next = new Set(entries);
+            next.delete(previousId);
+            next.add(nativeThreadId);
+            return next;
+          });
+          yield* Ref.update(claudeMonitors, (state) => ({
+            ...state,
+            tasks: new Map(
+              [...state.tasks].map(([id, task]) => [
+                id,
+                task.nativeThreadId === previousId ? { ...task, nativeThreadId } : task,
+              ]),
+            ),
+          }));
+          if (goalsByNativeThread.has(previousId)) {
+            goalsByNativeThread.set(nativeThreadId, goalsByNativeThread.get(previousId) ?? null);
+            goalsByNativeThread.delete(previousId);
+          }
+          const settled = settledTurnByNativeThread.get(previousId);
+          if (settled !== undefined) {
+            settledTurnByNativeThread.delete(previousId);
+            settledTurnByNativeThread.set(nativeThreadId, settled);
+          }
+          for (const turn of new Set([yield* Ref.get(activeTurn), query.lastTurn, settled])) {
+            if (turn?.nativeThreadId !== previousId) continue;
+            turn.nativeThreadId = nativeThreadId;
+            turn.input = {
+              ...turn.input,
+              providerThread: {
+                ...turn.input.providerThread,
+                nativeThreadRef: providerThread.nativeThreadRef,
+                nativeConversationHeadRef: null,
+              },
+            };
+          }
+          query.nativeThreadId = nativeThreadId;
+          yield* emitProviderEvent({
+            type: "provider_thread.updated",
+            driver: CLAUDE_PROVIDER,
+            providerThread,
+          });
+        });
 
         const rosterForNativeThread = (
           all: ReadonlyMap<string, Map<string, OrchestrationV2PendingBackgroundTask>>,
@@ -9386,7 +9479,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* querySession.messages.pipe(
             Stream.runForEach((message) =>
               sdkMessageLock.withPermits(1)(
-                Effect.suspend(() => {
+                Effect.gen(function* () {
+                  if (
+                    message.type === "system" &&
+                    message.subtype === "init" &&
+                    Reflect.get(message, "parent_tool_use_id") == null
+                  ) {
+                    yield* adoptNativeSessionId(context, message.session_id);
+                  }
                   if (
                     message.type === "system" &&
                     message.subtype === "init" &&
@@ -9403,7 +9503,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ) {
                     context.permissionMode = message.permissionMode;
                   }
-                  return handleSdkMessage({ query: querySession, message });
+                  yield* handleSdkMessage({ query: querySession, message });
                 }),
               ),
             ),
@@ -9442,7 +9542,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const startTurn = Effect.fn("ClaudeAdapterV2.startTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
             const startedAt = yield* DateTime.now;
-            const nativeThreadId = yield* getNativeThreadId(turnInput.providerThread);
+            let nativeThreadId = yield* getNativeThreadId(turnInput.providerThread);
             const nativeTurnId = `turn:${turnInput.attemptId}`;
             // Fresh for every offer: Claude acks a prompt whose uuid its
             // transcript already holds without running a turn, and a session
@@ -9548,6 +9648,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               heldRootFrames: [],
             };
             const attachTurn = Effect.gen(function* () {
+              if (querySession.nativeThreadId !== context.nativeThreadId) {
+                context.nativeThreadId = querySession.nativeThreadId;
+                const providerThread = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
+                  querySession.nativeThreadId,
+                );
+                if (providerThread !== undefined) context.input = { ...turnInput, providerThread };
+              }
+              nativeThreadId = context.nativeThreadId;
               querySession.lastTurn = context;
               yield* Ref.set(activeTurn, context);
               if (
@@ -9606,8 +9714,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               });
             });
             if (userMessage !== null) {
-              yield* attachTurn;
-              yield* startUserTurnForWakeReports(nativeThreadId);
+              yield* sdkMessageLock.withPermits(1)(
+                attachTurn.pipe(
+                  Effect.andThen(() => startUserTurnForWakeReports(context.nativeThreadId)),
+                ),
+              );
               yield* querySession.query.offer(userMessage);
               return;
             }
