@@ -32,7 +32,6 @@ import { FactoryRoutes, STATUS_PATH } from "./http.ts";
 import { FactoryPaths } from "./paths.ts";
 import { type SeededThread, seedProjection } from "./projectionFixture.testkit.ts";
 import { best, report, reportWall, timed } from "./mainThreadBlocks.testkit.ts";
-import * as Routed from "./projectionStoreReadRouting.ts";
 import * as Sessions from "./sessions.ts";
 
 /**
@@ -40,9 +39,6 @@ import * as Sessions from "./sessions.ts";
  * runs, 50,000 turn items), against the budgets in issue #188: a read the loop or the status page
  * makes blocks the main thread under 50 ms, and the status route answers under 250 ms. The
  * payloads are the size of the Mac's (see projectionFixture.testkit.ts).
- *
- * Routed here: `getThreadsWithPullRequests` for both PR reactors, and `getShellSnapshot`, including
- * ThreadLaunchService's unfiltered one. Upstream's layer is measured beside it for comparison.
  *
  * A block is the longest gap a 1 ms timer saw while the call ran. Each call is repeated and the
  * best repetition counts: a host loaded by other work preempts the process in any single run, and
@@ -118,7 +114,7 @@ const layerBench = () =>
         ),
       ),
     ),
-    Routed.layer,
+    ProjectionStore.layer,
   ).pipe(
     Layer.provideMerge(
       SqlitePersistence.layerFromPath(NodePath.join(tempDir("bench"), "state.sqlite")).pipe(
@@ -204,7 +200,7 @@ describe("the projection reads on a database the size of the personal Mac's", ()
     "keep the main thread free and the status route fast",
     () =>
       Effect.gen(function* () {
-        const store = yield* Routed.ProjectionStoreV2;
+        const store = yield* ProjectionStore.ProjectionStoreV2;
         const sessions = yield* Sessions.FactorySessions;
 
         reportWall("seeding the fixture", yield* timed(seedProjection(fixture())));
@@ -216,37 +212,14 @@ describe("the projection reads on a database the size of the personal Mac's", ()
         report("runningThreads", running);
 
         const pullRequests = yield* best(store.getThreadsWithPullRequests());
-        report("routed getThreadsWithPullRequests (both PR reactors)", pullRequests);
+        report("getThreadsWithPullRequests (both PR reactors)", pullRequests);
 
         const status = yield* statusCall(sessions, yield* EnvironmentAuth.EnvironmentAuth);
         const route = yield* best(status.call).pipe(Effect.ensuring(status.dispose));
         report("GET /api/factory/status", route);
 
-        // The unfiltered snapshot (ThreadLaunchService's prepare loop calls it) twice. Not asserted.
-        // Upstream's layer runs it on the writer, SQL and decode both on the main thread; the routed
-        // one runs the SQL on the reader, and only the decode stays on the main thread.
-        const upstream = yield* Effect.provide(
-          Effect.service(ProjectionStore.ProjectionStoreV2),
-          ProjectionStore.layer,
-        );
-        report(
-          "unfiltered getShellSnapshot(), upstream layer on the writer (ThreadLaunchService before)",
-          yield* best(upstream.getShellSnapshot(), 3),
-        );
-        report(
-          "unfiltered getShellSnapshot(), routed to the reader (ThreadLaunchService now)",
-          yield* best(store.getShellSnapshot(), 3),
-        );
-
-        // The pull request reads as upstream runs them, on the writer.
-        report(
-          "upstream getThreadsWithPullRequests, on the writer",
-          yield* best(upstream.getThreadsWithPullRequests(), 2),
-        );
-        report(
-          "upstream active getShellSnapshot (the old running count), on the writer",
-          yield* best(upstream.getShellSnapshot({ location: "active" }), 2),
-        );
+        // The unfiltered snapshot ThreadLaunchService's prepare loop calls. Not asserted.
+        report("unfiltered getShellSnapshot()", yield* best(store.getShellSnapshot(), 3));
 
         assert.isBelow(running.blockMs, BLOCK_BUDGET_MS, "runningThreads blocks the main thread");
         assert.isBelow(
