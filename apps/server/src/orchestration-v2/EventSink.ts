@@ -63,15 +63,6 @@ export class EventSinkStreamError extends Schema.TaggedError<EventSinkStreamErro
   }
 }
 
-class ForkSourceUnavailableError extends Schema.TaggedError<ForkSourceUnavailableError>()(
-  "ForkSourceUnavailableError",
-  { threadId: ThreadId },
-) {
-  override get message(): string {
-    return "Cannot fork a missing or deleted thread.";
-  }
-}
-
 export const EventSinkV2Error = Schema.Union([EventSinkWriteError, EventSinkStreamError]);
 export type EventSinkV2Error = typeof EventSinkV2Error.Type;
 
@@ -676,8 +667,24 @@ const layerBase: Layer.Layer<
                 SELECT 1 FROM orchestration_v2_projection_threads
                 WHERE thread_id = ${sourceId} AND deleted_at IS NULL
               `;
-              if (source.length === 0)
-                return yield* new ForkSourceUnavailableError({ threadId: sourceId });
+              if (source.length === 0) {
+                const receipt: CommandReceiptStore.CommandReceiptV2 = {
+                  commandId: input.commandId,
+                  threadId: input.threadId,
+                  commandType: input.commandType,
+                  acceptedAt: input.acceptedAt,
+                  resultSequence: yield* eventStore.latestSequence({ threadId: input.threadId }),
+                  status: "rejected",
+                  error: "Cannot fork a missing or deleted thread.",
+                };
+                yield* commandReceipts.upsert(receipt);
+                return {
+                  receipt,
+                  storedEvents: [],
+                  committed: false as const,
+                  cancelledEffectIds: [],
+                };
+              }
             }
           }
 

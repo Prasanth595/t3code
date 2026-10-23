@@ -101,8 +101,15 @@ it.effect.each([false, true])(
       });
       if (deleteFirst) {
         yield* deleteSource;
-        const error = yield* sink.commitCommand(plannedFork).pipe(Effect.flip);
-        assert.instanceOf(error, EventSink.EventSinkWriteError);
+        const rejected = yield* sink.commitCommand(plannedFork);
+        assert.equal(rejected.receipt.status, "rejected");
+        assert.equal(rejected.receipt.error, "Cannot fork a missing or deleted thread.");
+        assert.isFalse(rejected.committed);
+        assert.deepEqual(rejected.storedEvents, []);
+        const replayed = yield* sink.commitCommand(plannedFork);
+        assert.deepEqual(replayed.receipt, rejected.receipt);
+        assert.isFalse(replayed.committed);
+        assert.deepEqual(replayed.storedEvents, []);
         const missing = yield* projections.getThread(targetId).pipe(Effect.flip);
         assert.instanceOf(missing, ProjectionStore.ProjectionStoreThreadNotFoundError);
       } else {
