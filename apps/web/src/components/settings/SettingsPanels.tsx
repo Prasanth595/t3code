@@ -874,22 +874,25 @@ export function GeneralSettingsPanel() {
   // saved model, so substituting one here would show a model that never runs.
   const textGenerationFallbackSelection =
     settings.textGenerationFallbackModelSelection ?? textGenerationModelSelection;
-  // Turning the fallback on starts from another provider when one is ready,
-  // since a model on the primary's provider goes down with it.
-  const textGenerationFallbackSeeds = [
-    ...textGenerationProviders
-      .filter((provider) =>
-        textGenerationModelInstanceEntries.some(
-          (entry) =>
-            entry.instanceId === provider.instanceId &&
-            entry.instanceId !== textGenInstanceId &&
-            entry.enabled &&
-            entry.isAvailable,
-        ),
-      )
-      .map((provider) => resolveAppModelSelectionState(settings, [provider])),
-    textGenerationModelSelection,
-  ];
+  // Turning the fallback on starts from another provider, since a model on the
+  // primary's provider goes down with it.
+  const textGenerationFallbackSeeds = textGenerationProviders
+    .filter((provider) =>
+      textGenerationModelInstanceEntries.some(
+        (entry) =>
+          entry.instanceId === provider.instanceId &&
+          entry.instanceId !== textGenInstanceId &&
+          entry.enabled &&
+          entry.isAvailable,
+      ),
+    )
+    .map((provider) => resolveAppModelSelectionState(settings, [provider]));
+  // Generation never retries the model that just failed, so the primary model
+  // would be a fallback that never runs.
+  const textGenerationFallbackDisabledReason = (instanceId: ProviderInstanceId, model: string) =>
+    instanceId === textGenInstanceId && model === textGenModel
+      ? "This is already the text generation model."
+      : textGenerationModelDisabledReason(instanceId, model);
   const textGenerationFallbackInstanceEntry = textGenerationModelInstanceEntries.find(
     (entry) => entry.instanceId === textGenerationFallbackSelection.instanceId,
   );
@@ -1976,7 +1979,7 @@ export function GeneralSettingsPanel() {
                     triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                     triggerAriaLabel="Text generation fallback model"
                     {...(mixedTextGenerationFallbackModel ? { triggerLabel: "Mixed" } : {})}
-                    getModelDisabledReason={textGenerationModelDisabledReason}
+                    getModelDisabledReason={textGenerationFallbackDisabledReason}
                     {...(environmentId
                       ? {
                           onOpenProviderSetup: (instanceId: ProviderInstanceId) => {
@@ -1988,7 +1991,7 @@ export function GeneralSettingsPanel() {
                         }
                       : {})}
                     onInstanceModelChange={(instanceId, model) => {
-                      const reason = textGenerationModelDisabledReason(instanceId, model);
+                      const reason = textGenerationFallbackDisabledReason(instanceId, model);
                       if (reason) {
                         toastManager.add({
                           type: "error",
@@ -2032,7 +2035,8 @@ export function GeneralSettingsPanel() {
                     }
                   />
                 ) : null}
-                <Switch
+                <ScopedSwitch
+                  settingKeys={["textGenerationFallbackModelSelection"]}
                   checked={usesTextGenerationFallback}
                   disabled={!usesTextGenerationFallback && !hasTextGenerationProvider}
                   onCheckedChange={(checked) => {
@@ -2047,13 +2051,13 @@ export function GeneralSettingsPanel() {
                         null,
                     );
                     if (!seed) {
+                      const [firstSeed] = textGenerationFallbackSeeds;
                       toastManager.add({
                         type: "error",
                         title: "Text generation fallback model not saved",
-                        description: textGenerationModelDisabledReason(
-                          textGenInstanceId,
-                          textGenModel,
-                        ),
+                        description: firstSeed
+                          ? textGenerationModelDisabledReason(firstSeed.instanceId, firstSeed.model)
+                          : "No other text generation provider is ready to use as a fallback.",
                       });
                       return;
                     }
