@@ -10,13 +10,11 @@ export function AutoSettleDaysInput({
   onCommit,
 }: {
   value: number;
-  onCommit: (days: number) => void;
+  onCommit: (days: number) => Promise<boolean>;
 }) {
-  const [draft, setDraft] = useState(String(value));
-  const [draftSource, setDraftSource] = useState(value);
-  if (draftSource !== value) {
-    setDraftSource(value);
-    setDraft(String(value));
+  const [draft, setDraft] = useState({ source: value, text: String(value) });
+  if (draft.source !== value) {
+    setDraft({ source: value, text: String(value) });
   }
 
   return (
@@ -26,19 +24,25 @@ export function AutoSettleDaysInput({
         type="number"
         min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
         max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={(event) => {
+        value={draft.text}
+        onChange={(event) => setDraft({ source: value, text: event.target.value })}
+        onBlur={async (event) => {
           const parsed = Number(event.target.value);
           if (
             Number.isInteger(parsed) &&
             parsed >= MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS &&
             parsed <= MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS
           ) {
-            setDraft(String(parsed));
-            if (parsed !== value) onCommit(parsed);
+            const submitted = { source: value, text: String(parsed) };
+            setDraft(submitted);
+            if (parsed !== value && !(await onCommit(parsed))) {
+              // A late failure must not overwrite another edit or an external settings update.
+              setDraft((current) =>
+                current === submitted ? { source: value, text: String(value) } : current,
+              );
+            }
           } else {
-            setDraft(String(value));
+            setDraft({ source: value, text: String(value) });
           }
         }}
         onKeyDown={(event) => {
@@ -49,7 +53,7 @@ export function AutoSettleDaysInput({
           } else if (event.key === "Escape") {
             event.preventDefault();
             event.stopPropagation();
-            setDraft(String(value));
+            setDraft({ source: value, text: String(value) });
           }
         }}
         aria-label="Days of inactivity before auto-settle"
