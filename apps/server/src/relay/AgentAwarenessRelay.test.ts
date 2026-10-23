@@ -389,6 +389,43 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
+  it.effect("announces a second subagent that starts waiting while the first still waits", () =>
+    Effect.gen(function* () {
+      const secondChildId = ThreadId.make("relay-second-child-thread");
+      const shells = yield* Ref.make(
+        new Map<ThreadId, OrchestrationV2ThreadShell>([
+          [THREAD_ID, shell()],
+          [CHILD_THREAD_ID, waitingChild()],
+          [secondChildId, waitingChild({ id: secondChildId, pendingRuntimeRequest: null })],
+        ]),
+      );
+      const { relay, publications } = yield* makeTestRelay({
+        readShell: (threadId) =>
+          Ref.get(shells).pipe(Effect.map((current) => current.get(threadId) ?? null)),
+      });
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      assert.equal(publications[0]?.state?.phase, "waiting_for_approval");
+
+      yield* Ref.update(shells, (current) =>
+        new Map(current).set(
+          secondChildId,
+          waitingChild({
+            id: secondChildId,
+            updatedAt: DateTime.makeUnsafe("2026-09-04T12:05:00.000Z"),
+            pendingRuntimeRequest: {
+              id: RuntimeRequestId.make("second-child-request"),
+              kind: "command",
+              createdAt: DateTime.makeUnsafe("2026-09-04T12:05:00.000Z"),
+            },
+          }),
+        ),
+      );
+      yield* relay.publishThread(secondChildId);
+      assert.equal(publications.length, 2);
+      assert.equal(publications[1]?.state?.updatedAt, "2026-09-04T12:05:00.000Z");
+    }),
+  );
+
   it.effect(
     "does not republish a parent waiting on its own request when a child's comes and goes",
     () =>

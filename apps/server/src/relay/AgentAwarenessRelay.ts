@@ -733,8 +733,16 @@ export const make = Effect.gen(function* () {
         subagentRequests.set(childId, { ...entry, request, requestId: pendingRequest.id });
       }
       const current = { kind: request, requestId: pendingRequest.id, updatedAt: child.updatedAt };
-      if (request === "approval") return current;
-      pending = current;
+      // Approval outranks input; within a kind the newest wait is the one to
+      // announce, so a second child asking still reaches the phone.
+      if (
+        pending === null ||
+        (current.kind === "approval" && pending.kind !== "approval") ||
+        (current.kind === pending.kind &&
+          DateTime.isGreaterThan(current.updatedAt, pending.updatedAt))
+      ) {
+        pending = current;
+      }
     }
     return pending;
   });
