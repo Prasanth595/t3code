@@ -664,22 +664,26 @@ elif [ -n "$DEFAULT_REMOTE_PORT" ] && PREVIOUS_STATE_DIR="$(launcher_state_dir_f
   # Adopting it as external would keep it on its old version through every
   # update. It runs the runner its previous state wrote, so that runner decides
   # whether this launch is an update.
-  if cmp -s "$PREVIOUS_STATE_DIR/run-t3.sh" "$RUNNER_FILE"; then
-    RUNNER_CHANGED=0
-  else
-    RUNNER_CHANGED=1
-  fi
-  if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
-    kill "$REMOTE_PID" 2>/dev/null || true
-    wait_for_pid_exit "$REMOTE_PID"
-  fi
-  REMOTE_PID="$DEFAULT_RUNTIME_PID"
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
-  REMOTE_MANAGED="managed"
-  printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
-  printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
-  printf 'managed\\n' >"$MANAGED_FILE"
-  rm -f "$PREVIOUS_STATE_DIR/pid" "$PREVIOUS_STATE_DIR/managed"
+  if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+    if cmp -s "$PREVIOUS_STATE_DIR/run-t3.sh" "$RUNNER_FILE"; then
+      RUNNER_CHANGED=0
+    else
+      RUNNER_CHANGED=1
+    fi
+    if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+      kill "$REMOTE_PID" 2>/dev/null || true
+      wait_for_pid_exit "$REMOTE_PID"
+    fi
+    REMOTE_PID="$DEFAULT_RUNTIME_PID"
+    REMOTE_MANAGED="managed"
+    printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
+    printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+    printf 'managed\\n' >"$MANAGED_FILE"
+    rm -f "$PREVIOUS_STATE_DIR/pid" "$PREVIOUS_STATE_DIR/managed"
+  else
+    REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
+  fi
 elif [ -n "$DEFAULT_REMOTE_PORT" ]; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
