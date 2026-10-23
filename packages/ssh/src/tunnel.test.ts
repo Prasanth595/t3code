@@ -1,10 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
@@ -368,3 +370,107 @@ describe("ssh tunnel scripts", () => {
 // desktop app with network access on) listens on *:<port>. Linux refuses that
 // bind unless both sockets set SO_REUSEPORT, so on Linux the preload adds it to
 // the picker's probe and the holder sets it too.
+
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("launch script", () => {
+  // Stands in for `t3 serve`: answers HTTP and writes the default home's runtime file.
+  const FAKE_SERVER = `const fs = require("node:fs");
+const http = require("node:http");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const flag = (name) => args[args.indexOf(name) + 1];
+const server = http.createServer((_request, response) => response.end("ok"));
+server.listen(Number(flag("--port")), "127.0.0.1", () => {
+  const port = server.address().port;
+  const userdata = path.join(flag("--base-dir"), "userdata");
+  fs.mkdirSync(userdata, { recursive: true });
+  fs.writeFileSync(
+    path.join(userdata, "server-runtime.json"),
+    JSON.stringify({ version: 1, pid: process.pid, port, origin: "http://127.0.0.1:" + port }),
+  );
+});
+`;
+
+  const isAlive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const prepareLaunch = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-launch-script-" });
+    const home = `${root}/home`;
+    const fakeServer = `${root}/fake-t3.cjs`;
+    const launchScript = `${root}/launch.sh`;
+    yield* fs.makeDirectory(home);
+    yield* fs.writeFileString(fakeServer, FAKE_SERVER);
+    yield* fs.writeFileString(
+      launchScript,
+      SshTunnel.buildRemoteLaunchScript({ nodeScriptPath: fakeServer }),
+    );
+    const stateDir = (stateKey: string) => `${home}/.t3/ssh-launch/${stateKey}`;
+    const readManagedPid = (stateKey: string) =>
+      fs.readFileString(`${stateDir(stateKey)}/pid`).pipe(Effect.map((pid) => Number(pid.trim())));
+    // Launched servers outlive the script.
+    const launchedPids = new Set<number>();
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        for (const pid of launchedPids) {
+          if (isAlive(pid)) process.kill(pid, "SIGKILL");
+        }
+      }),
+    );
+    const launch = (stateKey: string) =>
+      Effect.gen(function* () {
+        const child = yield* spawner.spawn(
+          ChildProcess.make("sh", [launchScript, stateKey], {
+            env: { PATH: process.env.PATH ?? "", HOME: home },
+            extendEnv: false,
+          }),
+        );
+        const [stdout, stderr, exitCode] = yield* Effect.all(
+          [
+            child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+            child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+            child.exitCode,
+          ],
+          { concurrency: "unbounded" },
+        );
+        assert.equal(exitCode, 0, stderr);
+        const pid = yield* readManagedPid(stateKey).pipe(Effect.orElseSucceed(() => null));
+        if (pid !== null) launchedPids.add(pid);
+        return JSON.parse(stdout.trim().split("\n").at(-1) ?? "") as {
+          remotePort: number;
+          serverKind: string;
+        };
+      });
+    return { fs, stateDir, readManagedPid, launch };
+  });
+
+  it.live("keeps managing its server after the connection's state key changes", () =>
+    Effect.gen(function* () {
+      const { fs, stateDir, readManagedPid, launch } = yield* prepareLaunch;
+      const launched = yield* launch("old-alias");
+      assert.equal(launched.serverKind, "managed");
+      const pid = yield* readManagedPid("old-alias");
+
+      assert.deepEqual(yield* launch("new-alias"), launched);
+      assert.equal(yield* readManagedPid("new-alias"), pid);
+      assert.isFalse(yield* fs.exists(`${stateDir("old-alias")}/managed`));
+      assert.isTrue(isAlive(pid));
+
+      // The server came from new-alias's runner, so a different runner under
+      // the next key is an update and replaces it.
+      yield* fs.writeFileString(`${stateDir("new-alias")}/run-t3.sh`, "# previous runner\n");
+      assert.equal((yield* launch("newer-alias")).serverKind, "managed");
+      const replacementPid = yield* readManagedPid("newer-alias");
+      assert.notEqual(replacementPid, pid);
+      assert.isFalse(isAlive(pid));
+      assert.isTrue(isAlive(replacementPid));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
