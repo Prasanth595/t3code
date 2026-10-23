@@ -118,4 +118,33 @@ describe("guardLogStream", () => {
       assert.strictEqual(child.stderr, "alive\n");
     },
   );
+
+  it("writes stdout to fd 1 and stderr to fd 2 once each stream has failed a write", () => {
+    const dir = tempDir("log");
+    const files = [NodePath.join(dir, "out.log"), NodePath.join(dir, "err.log")];
+    const fds = files.map((file) => NodeFS.openSync(file, "w"));
+    // Each stream fails one write the way a full disk fails it; fd 1 and 2 still have room.
+    const script = [
+      `await import(${JSON.stringify(factoryModule)});`,
+      `const full = (_chunk, _encoding, callback) =>`,
+      `  callback(Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" }));`,
+      `process.stdout._write = full;`,
+      `process.stderr._write = full;`,
+      `console.log("lost");`,
+      `console.error("lost");`,
+      `await new Promise((resolve) => setImmediate(resolve));`,
+      `console.log("out");`,
+      `console.error("err");`,
+    ].join("\n");
+    const child = NodeChildProcess.spawnSync(
+      process.execPath,
+      ["--input-type=module", "--no-warnings", "-e", script],
+      { cwd: NodePath.resolve(factoryDir, "../.."), stdio: ["ignore", ...fds], timeout: 30_000 },
+    );
+    for (const fd of fds) NodeFS.closeSync(fd);
+    const [out, err] = files.map((file) => NodeFS.readFileSync(file, "utf8"));
+    assert.strictEqual(child.status, 0, err);
+    assert.strictEqual(out, "1 log lines dropped (ENOSPC)\nout\n");
+    assert.strictEqual(err, "1 log lines dropped (ENOSPC)\nerr\n");
+  });
 });

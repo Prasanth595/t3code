@@ -10,7 +10,13 @@
 import * as NodeFS from "node:fs";
 import type * as NodeStream from "node:stream";
 
-type WriteFd = (fd: number, data: string | Uint8Array) => void;
+type WriteFd = (fd: number, data: Uint8Array) => void;
+
+/** A nearly full disk can take part of a line without an error, so the rest is written again. */
+const writeAll: WriteFd = (fd, data) => {
+  let offset = 0;
+  while (offset < data.length) offset += NodeFS.writeSync(fd, data, offset);
+};
 
 const guarded = new WeakSet<NodeStream.Writable>();
 
@@ -23,8 +29,7 @@ const errorCode = (error: unknown): string =>
 export const guardLogStream = (
   stream: NodeStream.Writable,
   fd: number,
-  writeFd: WriteFd = (fd, data) =>
-    void (typeof data === "string" ? NodeFS.writeSync(fd, data) : NodeFS.writeSync(fd, data)),
+  writeFd: WriteFd = writeAll,
 ): void => {
   if (guarded.has(stream)) return;
   guarded.add(stream);
@@ -61,7 +66,7 @@ export const guardLogStream = (
     broken = true;
     try {
       if (dropped > 0) {
-        writeFd(fd, `${dropped} log lines dropped (${code})\n`);
+        writeFd(fd, Buffer.from(`${dropped} log lines dropped (${code})\n`));
         dropped = 0;
       }
       writeFd(fd, typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk);

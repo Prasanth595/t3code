@@ -93,7 +93,7 @@ const killed = (child: NodeChildProcess.ChildProcess) =>
       }),
   );
 
-it.effect("a server killed with SIGKILL leaves no ownership behind to clear by hand", () =>
+it.live("a server killed with SIGKILL leaves no ownership behind to clear by hand", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "factory-owner-" });
