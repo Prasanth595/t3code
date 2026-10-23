@@ -15,10 +15,26 @@ const decodeCdpReply = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Struct({ id: Schema.Number })),
 );
 const key = { threadId: "thread-1", tabId: "tab-1" };
+// The relay sends after a few microtasks; one macrotask lets them all land.
+// oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- a zero-delay macrotask boundary, not a wait for time
+const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+const command = (
+  host: DesktopBrowserHost.DesktopBrowserHost["Service"],
+  id: number,
+  method: string,
+) =>
+  host.handleCommandLine(
+    encodeJson({
+      type: "cdp",
+      ...key,
+      message: encodeJson({ id, method, sessionId: "t3-preview-page" }),
+    }),
+  );
 
 const makeDebuggee = () => {
   const emitter = new NodeEvents.EventEmitter();
   const pending: Array<() => void> = [];
+  const sent: Array<string> = [];
   const debuggee = Object.assign(emitter, {
     sendCommand: (method: string) =>
       new Promise((resolve) => {
@@ -26,20 +42,23 @@ const makeDebuggee = () => {
           resolve({ targetInfo: { targetId: "GUEST" } });
           return;
         }
+        sent.push(method);
         pending.push(() => resolve({ method }));
       }),
   });
-  const webContents = {
+  const webContents = Object.assign(new NodeEvents.EventEmitter(), {
     getURL: () => "http://localhost/",
     getTitle: () => "Page",
     getUserAgent: () => "Electron",
-  };
+  });
   return {
     tab: {
       webContents: webContents as unknown as Electron.WebContents,
       debugger: debuggee as unknown as Electron.Debugger,
     },
     emit: (method: string, params: unknown) => emitter.emit("message", {}, method, params, ""),
+    navigate: () => webContents.emit("did-navigate"),
+    sent,
     release: () => pending.splice(0).forEach((resolve) => resolve()),
   };
 };
@@ -87,6 +106,43 @@ describe("DesktopBrowserHost", () => {
       expect(reply).toMatchObject({ type: "cdp" });
       expect(decodeCdpReply((reply as { message: string }).message).id).toBe(2);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect("sends a page one screenshot at a time", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+      const screenshots = () =>
+        debuggee.sent.filter((method) => method === "Page.captureScreenshot").length;
+
+      yield* command(host, 1, "Page.captureScreenshot");
+      yield* command(host, 2, "Page.captureScreenshot");
+      yield* command(host, 3, "DOM.enable");
+      yield* Effect.promise(settle);
+      expect(screenshots()).toBe(1);
+      expect(debuggee.sent).toContain("DOM.enable");
+
+      debuggee.release();
+      yield* Effect.promise(settle);
+      expect(screenshots()).toBe(2);
+    }),
+  );
+
+  it.effect("stops waiting on a screenshot the page navigated away from", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+
+      yield* command(host, 1, "Page.captureScreenshot");
+      yield* command(host, 2, "Page.captureScreenshot");
+      yield* command(host, 3, "Page.captureScreenshot");
+      yield* Effect.promise(settle);
+      debuggee.navigate();
+      yield* Effect.promise(settle);
+      expect(debuggee.sent).toEqual(["Page.captureScreenshot", "Page.captureScreenshot"]);
+    }),
   );
 
   it.effect("saves a server tab's download under its CDP guid where the server asked", () =>
