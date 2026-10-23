@@ -1,3 +1,4 @@
+import { act, render as renderScreen, type Screen } from "../../../test/render";
 import {
   BUILT_IN_BROWSER_PROFILES,
   DEFAULT_BROWSER_PROFILE_ID,
@@ -9,9 +10,8 @@ import {
   type PreviewAnnotationPayload,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { act, useEffect, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { useEffect, type ReactNode } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 // Drives the registered Preview through the real RegisteredSidePanel ->
 // PreviewSidePanel -> PreviewView path. Only the desktop bridge, stores and
@@ -61,15 +61,24 @@ vi.mock("~/components/preview/PreviewPanelShell", () => ({
 }));
 vi.mock("~/components/preview/PreviewEmptyState", () => ({ PreviewEmptyState: () => null }));
 vi.mock("~/components/preview/PreviewMoreMenu", () => ({ PreviewMoreMenu: () => null }));
-vi.mock("~/components/preview/PreviewUnreachable", () => ({ PreviewUnreachable: () => null }));
+vi.mock("~/components/preview/PreviewUnreachable", () => ({
+  PreviewUnreachable: () => null,
+  PreviewFileNotShown: () => null,
+}));
 vi.mock("~/components/preview/ZoomIndicator", () => ({ ZoomIndicator: () => null }));
-vi.mock("~/components/preview/AgentBrowserCursor", () => ({ AgentBrowserCursor: () => null }));
+vi.mock("~/components/preview/AgentBrowserCursor", () => ({
+  AgentBrowserCursor: () => null,
+  AgentCursorMark: () => null,
+}));
 vi.mock("~/browser/BrowserSurfaceSlot", () => ({ BrowserSurfaceSlot: () => null }));
 vi.mock("~/browser/browserSurfaceStore", () => ({
   useBrowserSurfaceStore: (select: (state: { byTabId: object }) => unknown) =>
     select({ byTabId: {} }),
 }));
 vi.mock("~/browser/browserDefaults", () => ({
+  browserDefaultOpenProfileId: () => DEFAULT_BROWSER_PROFILE_ID,
+  browserDefaultOpenViewport: () => FILL_PREVIEW_VIEWPORT,
+  resolveBrowserDefaults: () => Promise.resolve(BROWSER_DEFAULTS),
   useBrowserDefaults: () => BROWSER_DEFAULTS,
   getBrowserDefaults: () => BROWSER_DEFAULTS,
   browserResponsiveViewportForToggle: () => FILL_PREVIEW_VIEWPORT,
@@ -88,12 +97,23 @@ vi.mock("~/browserHistoryStore", () => ({
   setTitleForThreadUrl: vi.fn(),
   useThreadRecentHistory: () => [],
 }));
-vi.mock("~/composerDraftStore", () => ({
-  useComposerDraftStore: (select: (store: object) => unknown) =>
-    select({ addPreviewAnnotation: mocks.addPreviewAnnotation, addImage: vi.fn() }),
-}));
+vi.mock("~/composerDraftStore", async () => {
+  const Schema = await import("effect/Schema");
+  return {
+    DraftId: Schema.String.pipe(Schema.brand("DraftId")),
+    clearComposerDraftsEnvironment: vi.fn(),
+    useComposerDraftStore: (select: (store: object) => unknown) =>
+      select({ addPreviewAnnotation: mocks.addPreviewAnnotation, addImage: vi.fn() }),
+  };
+});
 vi.mock("~/localApi", () => ({ ensureLocalApi: vi.fn() }));
 vi.mock("~/previewStateStore", () => ({
+  beginPreviewSessionClose: vi.fn(),
+  cancelPreviewSessionClose: vi.fn(),
+  applyPreviewServerSnapshot: vi.fn(),
+  readThreadPreviewState: () => ({ sessions: {}, activeTabId: null }),
+  setActivePreviewTab: vi.fn(),
+  whenPreviewTabKnown: vi.fn(),
   isPreviewSupportedInRuntime: () => true,
   rememberPreviewUrl: vi.fn(),
   updatePreviewServerSnapshot: vi.fn(),
@@ -123,9 +143,12 @@ vi.mock("~/previewMiniPlayerStore", () => ({
   ),
 }));
 vi.mock("~/rightPanelStore", () => ({
+  selectSelectedRightPanelSurface: () => null,
   useRightPanelStore: { getState: () => ({ close: vi.fn() }) },
 }));
 vi.mock("~/state/environments", () => ({
+  useEnvironments: () => ({ environments: [] }),
+  usePrimaryEnvironment: () => null,
   useEnvironment: () => ({ label: "Local" }),
   useEnvironmentHttpBaseUrl: () => "http://localhost:3773",
   usePrimaryEnvironmentId: () => null,
@@ -133,10 +156,23 @@ vi.mock("~/state/environments", () => ({
 vi.mock("~/state/preview", () => ({ previewEnvironment: { open: {}, resize: {} } }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 // This client holds every scope, so preview and annotation sends stay enabled.
-vi.mock("~/state/session", () => ({
-  useEnvironmentScope: () => true,
-  readEnvironmentScope: () => true,
-}));
+vi.mock("~/state/session", async () => {
+  const { Atom, AsyncResult } = await import("effect/reactivity");
+  const Option = await import("effect/Option");
+  return {
+    environmentSession: {
+      initialConfigValueAtom: Atom.family(() => Atom.make(null)),
+      preparedConnectionValueAtom: Atom.family(() => Atom.make(Option.none())),
+      sessionStateAtom: Atom.family(() => Atom.make(AsyncResult.initial())),
+    },
+    environmentSessionStatesAtom: () => Atom.make([]),
+    readPreparedConnection: () => null,
+    usePreparedConnection: () => null,
+
+    useEnvironmentScope: () => true,
+    readEnvironmentScope: () => true,
+  };
+});
 vi.mock("~/components/ui/toast", () => ({
   stackedThreadToast: vi.fn(),
   toastManager: { add: vi.fn() },
@@ -192,36 +228,8 @@ const annotation: PreviewAnnotationPayload = {
 };
 
 describe("registered Preview side panel", () => {
-  let root: Root;
-  let container: HTMLDivElement;
-
-  // The registry loads the body lazily; warm the module so a render settles in one act.
-  beforeAll(() => import("./PreviewSidePanel"));
-
-  beforeEach(() => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    container = document.createElement("div");
-    document.body.append(container);
-    root = createRoot(container);
-    mocks.pickElement.mockReset();
-    mocks.cancelPickElement.mockClear();
-    mocks.addPreviewAnnotation.mockClear();
-    mocks.togglePick = null;
-    mocks.pickActive = false;
-    mocks.mounts = 0;
-    mocks.disposals = 0;
-  });
-
-  afterEach(async () => {
-    await act(() => root.unmount());
-    container.remove();
-    vi.unstubAllGlobals();
-  });
-
-  async function render(host: PanelHost) {
-    await act(async () => {
-      root.render(panel(host));
-    });
+  async function render(screen: Screen, host: PanelHost) {
+    await screen.rerender(panel(host));
   }
 
   async function startPick() {
@@ -232,14 +240,17 @@ describe("registered Preview side panel", () => {
   }
 
   it("keeps an in-flight pick across a same-thread host re-render", async () => {
+    resetFixture();
+    await import("./PreviewSidePanel");
+    await using screen = await renderScreen(null, { router: false });
     const threadA = thread("thread-a");
     const first = hostFor(threadA);
-    await render(first);
+    await render(screen, first);
     const pick = await startPick();
     expect(mocks.pickActive).toBe(true);
 
     const second = hostFor({ ...threadA });
-    await render(second);
+    await render(screen, second);
     expect(mocks).toMatchObject({ mounts: 1, disposals: 0, pickActive: true });
     expect(mocks.cancelPickElement).not.toHaveBeenCalled();
 
@@ -252,15 +263,18 @@ describe("registered Preview side panel", () => {
   });
 
   it("stays mounted across a thread switch and drops a pick that settles after it", async () => {
+    resetFixture();
+    await import("./PreviewSidePanel");
+    await using screen = await renderScreen(null, { router: false });
     const threadA = thread("thread-a");
     const threadB = thread("thread-b");
     const hostA = hostFor(threadA);
-    await render(hostA);
+    await render(screen, hostA);
     const pick = await startPick();
     expect(mocks.pickElement).toHaveBeenCalledWith(previewRuntimeTabId(threadA, null, "tab-1"));
 
     const hostB = hostFor(threadB);
-    await render(hostB);
+    await render(screen, hostB);
     expect(mocks).toMatchObject({ mounts: 1, disposals: 0, pickActive: false });
     // The old thread's picker is told to stop; the panel itself is not torn down.
     expect(mocks.cancelPickElement).toHaveBeenCalledWith(
@@ -275,3 +289,13 @@ describe("registered Preview side panel", () => {
     expect(mocks.disposals).toBe(0);
   });
 });
+
+function resetFixture() {
+  mocks.pickElement.mockReset();
+  mocks.cancelPickElement.mockClear();
+  mocks.addPreviewAnnotation.mockClear();
+  mocks.togglePick = null;
+  mocks.pickActive = false;
+  mocks.mounts = 0;
+  mocks.disposals = 0;
+}
