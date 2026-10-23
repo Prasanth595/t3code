@@ -1,12 +1,14 @@
 import type { ServerProvider } from "@t3tools/contracts";
 
-const MODEL_FAMILIES: ReadonlyArray<{ readonly prefix: string; readonly nativeDriver: string }> = [
-  { prefix: "Claude ", nativeDriver: "claudeAgent" },
-  { prefix: "GPT-", nativeDriver: "codex" },
-  { prefix: "Gemini ", nativeDriver: "antigravity" },
-  { prefix: "Muse ", nativeDriver: "muse" },
-  { prefix: "Grok ", nativeDriver: "grok" },
-  { prefix: "Cursor ", nativeDriver: "cursor" },
+const MODEL_FAMILIES: ReadonlyArray<{
+  readonly prefix: string;
+  readonly nativeDrivers: ReadonlyArray<string>;
+}> = [
+  { prefix: "Claude ", nativeDrivers: ["claudeAgent"] },
+  { prefix: "GPT-", nativeDrivers: ["codex"] },
+  { prefix: "Gemini ", nativeDrivers: ["antigravity"] },
+  { prefix: "Muse ", nativeDrivers: ["muse"] },
+  { prefix: "Grok ", nativeDrivers: ["grok", "cursor"] },
 ];
 
 // Words that describe a variant within a family rather than name a model. Off the
@@ -61,7 +63,7 @@ function withoutFamily(name: string, driver: string): string | undefined {
   const named = words.filter((word) => !VERSION.test(word));
   if (named.length === 0) return undefined;
   if (
-    driver !== family.nativeDriver &&
+    !family.nativeDrivers.includes(driver) &&
     named.every((word) => VARIANT_WORDS.has(word.toLowerCase()))
   ) {
     return undefined;
