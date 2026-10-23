@@ -22,7 +22,7 @@
  * (`PluginCatalog.replace`) that stops the installation, swaps the
  * directories, and persists the swap outcome with consent to the staged digest.
  * A failure before that commit point puts the old directory back. Another
- * catalogue step (`PluginCatalog.settleReplace`) uses the persisted outcome to
+ * catalogue step (`PluginCatalog.settleReplace`) uses the persisted outcome for that exact attempt to
  * finish or roll back the swap after the plugin has stopped. If cleanup fails,
  * the journal and `.previous` stay so settling can retry before every npm step,
  * after every catalogue change, and at startup.
@@ -130,7 +130,13 @@ const decodePackageJsonOption = Schema.decodeUnknownOption(Schema.fromJsonString
 /** `npm.json`: the installed version and, while an update is applied, the one replacing it. */
 const NpmRecord = Schema.Struct({
   source: PluginNpmSource,
-  swap: Schema.optionalKey(Schema.Struct({ source: PluginNpmSource, digest: PluginSourceDigest })),
+  swap: Schema.optionalKey(
+    Schema.Struct({
+      source: PluginNpmSource,
+      digest: PluginSourceDigest,
+      attemptId: Schema.optionalKey(Schema.String),
+    }),
+  ),
 });
 type NpmRecord = typeof NpmRecord.Type;
 const decodeRecord = Schema.decodeUnknownEffect(Schema.fromJsonString(NpmRecord));
@@ -160,6 +166,7 @@ interface Installed {
         readonly previous: PluginNpmSource;
         readonly next: PluginNpmSource;
         readonly digest: string;
+        readonly attemptId?: string;
       }
     | undefined;
 }
@@ -657,7 +664,14 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
       files?: Parameters<PluginCatalog.PluginCatalog["Service"]["settleReplace"]>[1],
     ) =>
       catalog
-        .settleReplace({ installationId: entry.installationId, digest: swap.digest }, files)
+        .settleReplace(
+          {
+            installationId: entry.installationId,
+            digest: swap.digest,
+            ...(swap.attemptId === undefined ? {} : { attemptId: swap.attemptId }),
+          },
+          files,
+        )
         .pipe(
           // Removed meanwhile: `collect` deletes the files.
           Effect.catchIf(
@@ -865,17 +879,18 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
         message: "Could not delete the files an earlier update left behind.",
         installationId: input.installationId,
       });
+    const attemptId = NodeCrypto.randomUUID();
     yield* writeRecord(entry.home, {
       source: entry.source,
-      swap: { source: next, digest: input.digest },
+      swap: { source: next, digest: input.digest, attemptId },
     });
-    entry.swap = { previous: entry.source, next, digest: input.digest };
+    entry.swap = { previous: entry.source, next, digest: input.digest, attemptId };
 
     let movedOld = false;
     let movedNew = false;
     const replaced = yield* catalog
       .replace(
-        { installationId: input.installationId, digest: input.digest },
+        { installationId: input.installationId, digest: input.digest, attemptId },
         {
           paths: [entry.home],
           swap: fs.rename(entry.directory, previous).pipe(
@@ -976,7 +991,12 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
         swap:
           swap === undefined
             ? undefined
-            : { previous: source, next: swap.source, digest: swap.digest },
+            : {
+                previous: source,
+                next: swap.source,
+                digest: swap.digest,
+                ...(swap.attemptId === undefined ? {} : { attemptId: swap.attemptId }),
+              },
       });
     }
     yield* tidy;
