@@ -48,10 +48,9 @@ const assertCurrent = Effect.gen(function* () {
     (yield* sql<{
       readonly migration_id: number;
       readonly name: string;
-    }>`SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id`).map((row) => [
-      row.migration_id,
-      row.name,
-    ] as const),
+    }>`SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id`).map(
+      (row) => [row.migration_id, row.name] as const,
+    ),
     migrationManifest,
   );
   assert.strictEqual(
