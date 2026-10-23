@@ -3,7 +3,7 @@ import {
   buildTraitsTriggerDisplay,
   getPromptControlledTraits,
 } from "@t3tools/client-runtime/model-traits";
-import { modelOptionDisplayLabel, type ModelOption } from "../lib/modelOptions";
+import type { ModelOption } from "../lib/modelOptions";
 import { resolveProviderOptionDescriptors } from "../lib/providerOptions";
 import { AppText as Text } from "./ui/AppText";
 import { ComposerInlineControl } from "./ComposerToolbar";
@@ -38,7 +38,6 @@ export function ComposerModelControl(props: {
     : "";
   const badge = props.modelOption?.providerBadge;
   const label = props.modelOption?.label ?? props.selection?.model ?? "Choose model";
-  const visibleLabel = props.modelOption ? modelOptionDisplayLabel(props.modelOption) : label;
   return (
     <ComposerInlineControl
       accessibilityLabel={[
@@ -71,7 +70,7 @@ export function ComposerModelControl(props: {
           />
         )
       }
-      label={visibleLabel}
+      label={label}
       iconOnly={props.iconOnly}
       suffix={
         summary ? (

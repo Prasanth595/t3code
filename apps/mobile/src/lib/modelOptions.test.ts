@@ -15,7 +15,6 @@ import {
   describeUnavailableModelSelection,
   groupByProvider,
   isModelSelectionUnavailable,
-  modelOptionDisplayLabel,
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
   resolveSelectableModelSelection,
@@ -70,41 +69,6 @@ describe("mobile model options", () => {
     expect(groupByProvider(options)).toEqual([
       { providerKey: "opencode_work", providerLabel: "OpenCode Work", models: options },
     ]);
-  });
-
-  it("drops the vendor name only where the provider icon already shows it", () => {
-    const config = {
-      providers: [
-        { instanceId: "claudeAgent", driver: "claudeAgent" },
-        { instanceId: "opencode", driver: "opencode" },
-        { instanceId: "codex", driver: "codex" },
-      ].map((provider) => ({
-        ...provider,
-        enabled: true,
-        installed: true,
-        auth: { status: "authenticated" },
-        models: [
-          { slug: "opus", name: "Claude Opus 5.5", capabilities: null },
-          { slug: "sol", name: "GPT-6.1 Sol", capabilities: null },
-        ],
-      })),
-    } as unknown as ServerConfig;
-
-    expect(buildModelOptions(config, null, undefined, null).map(modelOptionDisplayLabel)).toEqual([
-      "Opus 5.5",
-      "GPT-6.1 Sol",
-      "Claude Opus 5.5",
-      "GPT-6.1 Sol",
-      "Claude Opus 5.5",
-      "GPT-6.1 Sol",
-    ]);
-
-    const accounts = {
-      providers: [config.providers[0], { ...config.providers[0], instanceId: "claude_work" }],
-    } as unknown as ServerConfig;
-    expect(buildModelOptions(accounts, null, undefined, null).map(modelOptionDisplayLabel)[0]).toBe(
-      "Claude Opus 5.5",
-    );
   });
 
   it("does not materialize catalog defaults for missing stored options", () => {
