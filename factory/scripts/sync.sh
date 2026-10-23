@@ -37,6 +37,10 @@
 # origin waits on its open pull request, or files `is stuck` when it has none.
 # gh targets origin's GitHub repository, never the fork's parent.
 #
+# publish's git pushes use whatever git is configured with; SYNC_PUSH_WITH names
+# that token (GITHUB_TOKEN, SYNC_TOKEN, SYNC_APP_ID) so a refused push says
+# which secret to add. gh calls use GH_TOKEN.
+#
 # Pull requests opened with GITHUB_TOKEN trigger no workflows, which is why the
 # checks run here and the landing happens only when they pass.
 set -euo pipefail
@@ -320,8 +324,19 @@ publish() {
     echo "sync: push of $branch failed; $tag is not synced" >&2
     {
       echo "\`$branch\` merges \`$tag\` ($sha), but pushing it failed, so nothing reached \`$base\`."
-      echo "\`GITHUB_TOKEN\` cannot push changes under \`.github/workflows/\`; when the tag changes"
-      echo "upstream's workflows, the push needs a token with the workflows permission."
+      if [[ ${SYNC_PUSH_WITH:-} == GITHUB_TOKEN ]]; then
+        echo "This run pushed with \`GITHUB_TOKEN\`, which cannot push changes under"
+        echo "\`.github/workflows/\`. Add the \`SYNC_APP_ID\` and \`SYNC_APP_PRIVATE_KEY\` repository"
+        echo "secrets (a GitHub App installed on this repository with Contents and Workflows"
+        echo "read/write), or a \`SYNC_TOKEN\` secret (a fine-grained token for this repository"
+        echo "with Contents and Workflows write), then run the sync again."
+      elif [[ -n ${SYNC_PUSH_WITH:-} ]]; then
+        echo "This run pushed with \`$SYNC_PUSH_WITH\`; check that it can still write contents"
+        echo "and workflows on this repository."
+      else
+        echo "When the tag changes \`.github/workflows/\`, the push needs a token with the"
+        echo "workflows permission."
+      fi
       echo
       echo '```'
       tail -n 50 "$scratch/push.log"

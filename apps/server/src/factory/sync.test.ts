@@ -606,7 +606,7 @@ describe("sync.sh", () => {
   it("stops and files an issue when the branch cannot be pushed", () => {
     makeFork(`${OLD} ${oldSha}`);
     write(origin, "hooks/pre-receive", "#!/usr/bin/env bash\necho 'refusing' >&2\nexit 1\n", 0o755);
-    const { status, stderr, calls, body } = run();
+    const { status, stderr, calls, body } = run({ SYNC_PUSH_WITH: "GITHUB_TOKEN" });
     expect(status).toBe(1);
     expect(stderr).toContain(`sync: push of sync/${NEWEST} failed`);
     expect(calls.slice(0, 2)).toEqual(["vp i", "check.sh"]);
@@ -616,6 +616,9 @@ describe("sync.sh", () => {
     );
     expect(body).toContain("refusing");
     expect(body).toContain(".github/workflows/");
+    // Pushed with GITHUB_TOKEN, the issue names the secrets that fix it.
+    expect(body).toContain("`SYNC_APP_ID` and `SYNC_APP_PRIVATE_KEY`");
+    expect(body).toContain("`SYNC_TOKEN`");
     expect(originBranches()).toEqual(["main"]);
 
     // Nothing reached origin, so the next run tries again and comments on the
@@ -631,6 +634,16 @@ describe("sync.sh", () => {
       expect.stringMatching(/^gh issue comment 8 --body-file /),
     ]);
     expect(originBranches()).toEqual(["main"]);
+  });
+
+  it("names the push token, not missing secrets, when a sync token is refused", () => {
+    makeFork(`${OLD} ${oldSha}`);
+    write(origin, "hooks/pre-receive", "#!/usr/bin/env bash\necho 'refusing' >&2\nexit 1\n", 0o755);
+    const { status, body } = run({ SYNC_PUSH_WITH: "SYNC_TOKEN" });
+    expect(status).toBe(1);
+    expect(body).toContain("refusing");
+    expect(body).toContain("pushed with `SYNC_TOKEN`");
+    expect(body).not.toContain("SYNC_APP_PRIVATE_KEY");
   });
 
   it("publishes nothing when the prepared branch is not the merge it claims", () => {

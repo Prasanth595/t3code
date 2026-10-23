@@ -59,13 +59,28 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
+    env:
+      SYNC_APP_ID: ${{ secrets.SYNC_APP_ID }}
     steps:
+      # GITHUB_TOKEN cannot push a tag that changes .github/workflows/, so pushes
+      # use a GitHub App's token (SYNC_APP_ID, SYNC_APP_PRIVATE_KEY), else a
+      # fine-grained token (SYNC_TOKEN), else GITHUB_TOKEN. Either secret needs
+      # Contents and Workflows write on this repository. gh keeps GITHUB_TOKEN.
+      - name: Mint the push token
+        id: app-token
+        if: env.SYNC_APP_ID != ''
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.SYNC_APP_ID }}
+          private-key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
+
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          # git push uses gh's credential helper instead.
-          persist-credentials: false
+          # Every git push in this job uses this token.
+          token: ${{ steps.app-token.outputs.token || secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+          persist-credentials: true
 
       - name: Download the prepared sync
         uses: actions/download-artifact@v8
@@ -76,6 +91,5 @@ jobs:
       - name: Publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh auth setup-git
-          factory/scripts/sync.sh publish "$RUNNER_TEMP/sync"
+          SYNC_PUSH_WITH: ${{ steps.app-token.outputs.token && 'SYNC_APP_ID' || secrets.SYNC_TOKEN && 'SYNC_TOKEN' || 'GITHUB_TOKEN' }}
+        run: factory/scripts/sync.sh publish "$RUNNER_TEMP/sync"

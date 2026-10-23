@@ -80,7 +80,7 @@ It checks that the run has a ledger, is not finished and is `building`, then lea
 `factory/scripts/sync.sh` merges upstream's newest `v*-nightly.*` tag into `main` through a pull request. `.github/workflows/factory-sync.yml` runs it daily at 03:17 UTC and on `workflow_dispatch`, as two jobs:
 
 1. `sync.sh prepare <dir>` has no write token. It merges, runs `vp i`, the route generator and `check.sh`, which all run upstream's code, and leaves the outcome and a git bundle of the branch in `<dir>`.
-2. `sync.sh publish <dir>` holds `GITHUB_TOKEN` and runs only `git` and `gh`. It refuses a bundled branch that is not the merge of `main` and the tag, apart from `factory/UPSTREAM` and a regenerated route tree. Then it pushes, lands or files.
+2. `sync.sh publish <dir>` holds the write tokens and runs only `git` and `gh`. It refuses a bundled branch that is not the merge of `main` and the tag, apart from `factory/UPSTREAM` and a regenerated route tree. Then it pushes, lands or files.
 
 Run with no arguments, it does both from one checkout, with `git`, `gh` and `vp` on the path and `SYNC_UPSTREAM` pointing at another repo when needed. Its pull requests and issues go to the GitHub repository `origin` names, never the fork's parent.
 
@@ -90,7 +90,9 @@ These stop the run, push nothing, and file an issue:
 
 - A conflict in any file other than the route tree files `Sync to <tag> conflicts` with the paths. That includes the upstream files the fork edits ([SEAMS](SEAMS)); they are merged by hand.
 - A failing `vp i` or route generator files `Sync to <tag> fails checks` with its output.
-- A push `GITHUB_TOKEN` refuses files `Sync to <tag> cannot be pushed`. `GITHUB_TOKEN` cannot push changes under `.github/workflows/`, so every tag that changes upstream's workflows stops here until the workflow pushes with a token that has the workflows permission.
+- A refused push files `Sync to <tag> cannot be pushed`.
+
+`GITHUB_TOKEN` cannot push changes under `.github/workflows/`, so `publish` pushes with a token that can. It uses a GitHub App installed on this repository with Contents and Workflows read/write, from the `SYNC_APP_ID` and `SYNC_APP_PRIVATE_KEY` repository secrets. Without them it uses a `SYNC_TOKEN` secret, a fine-grained token for this repository with Contents and Workflows write. Without either it pushes with `GITHUB_TOKEN`, and a tag that changes upstream's workflows files `cannot be pushed` naming the secrets to add. `gh` always uses `GITHUB_TOKEN`. A push with either secret starts the workflows that run on pushes to `main`, as a merge by a person does.
 
 When an issue of the same kind is already open, the run comments on it and puts the new tag in its title, so a problem that lasts across tags keeps one issue.
 
