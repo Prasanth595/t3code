@@ -1399,7 +1399,11 @@ describe("PiAdapterV2", () => {
         statusKey: "t3:background",
         statusText: "Build running",
       });
-      yield* takeEvent((event) => event.type === "provider_thread.updated");
+      yield* takeEvent(
+        (event) =>
+          event.type === "provider_thread.updated" &&
+          event.providerThread.pendingBackgroundTasks?.length === 1,
+      );
       yield* runtime.interruptTurn({
         providerThread,
         providerTurnId: ProviderTurnId.make("settled-turn"),
