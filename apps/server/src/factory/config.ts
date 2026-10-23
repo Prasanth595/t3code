@@ -33,7 +33,6 @@ export class ConfigErrors extends Schema.TaggedError<ConfigErrors>()("FactoryCon
 export interface Limits {
   readonly minutes: number;
   readonly gateRetries: number;
-  readonly regates: number;
   readonly checksMinutes: number;
   readonly interruptionResumes: number;
 }
@@ -81,7 +80,6 @@ export const timeLimitOnlyProjectConfig = (): ProjectConfig => ({
   limits: {
     minutes: DEFAULT_MINUTES,
     gateRetries: 0,
-    regates: DEFAULT_REGATES,
     checksMinutes: DEFAULT_CHECKS_MINUTES,
     interruptionResumes: DEFAULT_INTERRUPTION_RESUMES,
   },
@@ -388,6 +386,8 @@ const projectFrom = (c: Checker, root: Mapping): ProjectConfig | undefined => {
     "factory.limits.gate_retries",
     0,
   );
+  // `regates` limited how often a moved base branch re-ran the gate. Nothing reads it now, but an
+  // unknown key fails the block, so a block that still sets it keeps loading, checked as before.
   const regates = c.optionalUint(limits, "factory.limits", "regates", DEFAULT_REGATES, 1);
   const checksMinutes = c.optionalUint(
     limits,
@@ -426,7 +426,7 @@ const projectFrom = (c: Checker, root: Mapping): ProjectConfig | undefined => {
     provision,
     gate,
     requiredChecks,
-    limits: { minutes, gateRetries, regates, checksMinutes, interruptionResumes },
+    limits: { minutes, gateRetries, checksMinutes, interruptionResumes },
     autonomy,
   };
 };

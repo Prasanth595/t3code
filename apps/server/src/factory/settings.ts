@@ -42,7 +42,6 @@ export interface ProjectBlock {
   readonly limits: {
     readonly minutes: number;
     readonly gate_retries: number;
-    readonly regates: number;
     readonly checks_minutes: number;
     readonly interruption_resumes: number;
   };
@@ -143,7 +142,6 @@ const projectBlock = (project: ProjectConfig): ProjectBlock => ({
   limits: {
     minutes: project.limits.minutes,
     gate_retries: project.limits.gateRetries,
-    regates: project.limits.regates,
     checks_minutes: project.limits.checksMinutes,
     interruption_resumes: project.limits.interruptionResumes,
   },

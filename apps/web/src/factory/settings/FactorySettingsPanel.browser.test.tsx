@@ -126,7 +126,6 @@ const populated = report({
         limits: {
           minutes: 90,
           gate_retries: 1,
-          regates: 5,
           checks_minutes: 30,
           interruption_resumes: 2,
         },

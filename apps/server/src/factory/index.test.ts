@@ -781,28 +781,6 @@ describe("liveWorld", () => {
       mergeable,
     });
 
-  it.effect("the base tip is read from the run's base branch, in lower case", () =>
-    Effect.gen(function* () {
-      const { process, calls } = ghWith(() =>
-        JSON.stringify({ object: { type: "commit", sha: SHA } }),
-      );
-      const tip = yield* worldOf(process).baseTip(repo, "feature/x");
-      assert.strictEqual(tip, SHA);
-      assert.deepStrictEqual(calls[0]?.slice(0, 2), [
-        "api",
-        "repos/rawphp/softfac/git/ref/heads/feature/x",
-      ]);
-    }),
-  );
-
-  it.effect("a base tip that cannot be read is a tracker error", () =>
-    Effect.gen(function* () {
-      const { process } = ghWith(() => null);
-      const failed = yield* Effect.flip(worldOf(process).baseTip(repo, "main"));
-      assert.strictEqual(failed.kind, "tracker");
-    }),
-  );
-
   it.effect(
     "a step is built for the base the pass hands it: advance binds the PR to that base",
     () =>

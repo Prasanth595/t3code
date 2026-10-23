@@ -15,7 +15,7 @@ function ProjectConfigRows({ factory }: { readonly factory: NonNullable<RepoBloc
       <SettingsRow title="Required checks" description={list(factory.required_checks)} />
       <SettingsRow
         title="Limits"
-        description={`${limits.minutes} minutes, ${limits.gate_retries} gate retries, ${limits.regates} regates, ${limits.checks_minutes} check minutes, ${limits.interruption_resumes} interruption resumes`}
+        description={`${limits.minutes} minutes, ${limits.gate_retries} gate retries, ${limits.checks_minutes} check minutes, ${limits.interruption_resumes} interruption resumes`}
       />
       <SettingsRow title="Autonomy" description={factory.autonomy} />
     </>

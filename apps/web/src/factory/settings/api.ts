@@ -29,7 +29,6 @@ export interface RepoBlock {
     readonly limits: {
       readonly minutes: number;
       readonly gate_retries: number;
-      readonly regates: number;
       readonly checks_minutes: number;
       readonly interruption_resumes: number;
     };

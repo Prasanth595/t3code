@@ -1168,7 +1168,7 @@ repos:
     provision: [],
     gate: ["g"],
     requiredChecks: ["ci"],
-    limits: { minutes: 5, gateRetries: 1, regates: 2, checksMinutes: 3, interruptionResumes: 4 },
+    limits: { minutes: 5, gateRetries: 1, checksMinutes: 3, interruptionResumes: 4 },
     autonomy: "pr",
   } as const;
 
@@ -1202,7 +1202,6 @@ repos:
               limits: {
                 minutes: 5,
                 gate_retries: 1,
-                regates: 2,
                 checks_minutes: 3,
                 interruption_resumes: 4,
               },

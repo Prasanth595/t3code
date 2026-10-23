@@ -647,13 +647,6 @@ export const liveWorld = (
     hasPendingGateSend: (run) =>
       ledger(() => gateSendPending(readProgress(readRun(dataDir, run).entries))),
     lastPass: (run) => lastPass(dataDir, run),
-    baseTip: (repo, base) =>
-      trackerFor(repo.watched)
-        .branchTip(base)
-        .pipe(
-          Effect.map((tip) => tip.toLowerCase()),
-          Effect.mapError(asPassError("tracker")),
-        ),
     issueClosed: (repo, issue) =>
       withProcess(githubFor(repo.watched).issue(issue)).pipe(
         Effect.map((detail) => detail.closed),

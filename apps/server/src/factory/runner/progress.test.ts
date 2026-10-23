@@ -770,14 +770,12 @@ describe("readProgress: gating again", () => {
     assert.strictEqual(seen.regatePassed, false);
     assert.strictEqual(seen.regateSentBack, false);
     assert.strictEqual(seen.relaunch, null);
-    assert.strictEqual(seen.regates, 0);
   });
 
   it("is under way from a gate_regate line, and says what moved since the recorded pass", () => {
     const seen = readProgress([...PASS, regated(8, HEAD, MOVED, BASE)]);
     assert.strictEqual(seen.regating, true);
     assert.strictEqual(seen.regateMoved, "base");
-    assert.strictEqual(seen.regates, 1);
     assert.strictEqual(readProgress([...PASS, regated(8, PUSHED, BASE, BASE)]).regateMoved, "head");
     assert.strictEqual(
       readProgress([...PASS, regated(8, PUSHED, MOVED, BASE)]).regateMoved,
@@ -799,7 +797,6 @@ describe("readProgress: gating again", () => {
       regated(8, HEAD, MOVED, BASE),
       regated(9, HEAD, BASE, MOVED),
     ]);
-    assert.strictEqual(seen.regates, 2);
     assert.strictEqual(seen.regateMoved, "base");
   });
 
@@ -983,7 +980,6 @@ describe("readProgress: gating again", () => {
         moved(10, "pr-open", "building"),
       ]);
       assert.deepStrictEqual(seen.sending, before.sending);
-      assert.strictEqual(seen.regates, before.regates);
       assert.deepStrictEqual(seen.sentBackAttempts, before.sentBackAttempts);
       assert.deepStrictEqual(seen.commandAttempts, before.commandAttempts);
       assert.strictEqual(nextGateAttempt(seen), nextGateAttempt(before));

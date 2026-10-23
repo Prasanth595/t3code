@@ -208,8 +208,6 @@ export interface Seen {
   readonly resultsPosted: boolean;
   /** The directories a `gate_cleanup_failed` line already names. */
   readonly cleanupFailed: ReadonlySet<string>;
-  /** How many `gate_regate` lines the run has since its last recorded pass. */
-  readonly regates: number;
   /** A `pr_ready_outside` line: someone else marked the pull request ready while a gate ran, and it is noted. */
   readonly readyOutside: boolean;
   /**
@@ -423,7 +421,6 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let sending: Seen["sending"] = null;
   let resultsPosted = false;
   const cleanupFailed = new Set<string>();
-  let regates = 0;
   let readyOutside = false;
   let checksPassed: string | null = null;
   let checksFailed: Seen["checksFailed"] = null;
@@ -543,7 +540,6 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         if (gatePassed !== null) {
           // The results of this pass are not posted yet, whatever an earlier one's were.
           resultsPosted = false;
-          regates = 0;
           // A read of the checks is about the pass before it: this one's are read afresh.
           checksPassed = null;
           checksFailed = null;
@@ -733,7 +729,6 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
             typeof sha === "string" ? sha : "",
             typeof baseSha === "string" ? baseSha : "",
           ) ?? (pass === null ? null : "conflict");
-        regates += 1;
         regating = true;
         regatePassed = false;
         regateSentBack = false;
@@ -844,7 +839,6 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     sending,
     resultsPosted,
     cleanupFailed,
-    regates,
     readyOutside,
     checksPassed,
     checksFailed,
