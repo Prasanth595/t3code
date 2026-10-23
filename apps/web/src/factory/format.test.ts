@@ -168,7 +168,7 @@ describe("formatAge", () => {
   });
 
   it("is a dash for a moment that is not a time", () => {
-    expect(formatAge(Number.NaN, now)).toBe("—");
+    expect(formatAge(Number.NaN, now)).toBe("-");
   });
 });
 

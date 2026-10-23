@@ -225,7 +225,7 @@ export function FactoryRunPage({
       <>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
           <Badge variant={stateBadgeVariant(state)}>{labelForState(state)}</Badge>
-          <span className="min-w-0 break-words text-muted-foreground">Step: {step ?? "—"}</span>
+          <span className="min-w-0 break-words text-muted-foreground">Step: {step ?? "-"}</span>
           {threadId ? (
             <TouchLink
               render={<Link params={{ environmentId, threadId }} to="/$environmentId/$threadId" />}

@@ -131,7 +131,7 @@ export function lastGateOutput(entries: ReadonlyArray<FactoryEntry>): GateOutput
 
 /** The time since `sinceMs` (Unix epoch ms) as `5m`; a dash when it is not a time. */
 export function formatAge(sinceMs: number, nowMs: number): string {
-  if (!Number.isFinite(sinceMs)) return "—";
+  if (!Number.isFinite(sinceMs)) return "-";
   return formatElapsedDurationLabel(new Date(sinceMs).toISOString(), nowMs);
 }
 
