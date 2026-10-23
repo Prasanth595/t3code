@@ -103,8 +103,21 @@ const RawThreadPageSchema = Schema.Struct({
 });
 
 const RawViewerSchema = Schema.Struct({
-  user: Schema.optional(
-    Schema.NullOr(Schema.Struct({ name: Schema.optional(Schema.NullOr(Schema.String)) })),
+  authenticatedUser: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        id: Schema.optional(Schema.NullOr(Schema.String)),
+        descriptor: Schema.optional(Schema.NullOr(Schema.String)),
+        isActive: Schema.optional(Schema.Boolean),
+        properties: Schema.optional(
+          Schema.Struct({
+            Account: Schema.optional(
+              Schema.Struct({ $value: Schema.optional(Schema.NullOr(Schema.String)) }),
+            ),
+          }),
+        ),
+      }),
+    ),
   ),
 });
 
@@ -294,9 +307,18 @@ export function decodePullRequestJson(
 
 export function decodeViewerJson(raw: string): Result.Result<string | null, DecodeFailure> {
   const decoded = decodeViewer(raw);
-  return Result.isSuccess(decoded)
-    ? Result.succeed(trimmed(decoded.success.user?.name))
-    : Result.fail(decoded.failure);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const user = decoded.success.authenticatedUser;
+  if (user?.isActive === false) return Result.succeed(null);
+  const id = trimmed(user?.id);
+  // Public organizations return an active identity even for a request with no credentials.
+  if (
+    id === "00000000-0000-0000-0000-000000000000" ||
+    id?.toLowerCase() === "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" ||
+    /^System:PublicAccess(?:;|$)/i.test(user?.descriptor ?? "")
+  )
+    return Result.succeed(null);
+  return Result.succeed(trimmed(user?.properties?.Account?.$value));
 }
 
 export function decodeThreadsJson(

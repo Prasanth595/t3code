@@ -1,5 +1,7 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
+import { decodeViewerJson } from "./azureDevOpsPullRequestJson.ts";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
@@ -14,17 +16,18 @@ import {
 } from "@t3tools/source-control-core/server/discovery";
 
 function parseAzureAuth(input: SourceControlAuthProbeInput) {
-  const account = input.stdout.trim().split(/\r?\n/)[0]?.trim();
+  const output = combinedAuthOutput(input);
+  const decoded = decodeViewerJson(input.stdout);
+  const account = Result.isSuccess(decoded) ? decoded.success : null;
 
   if (input.exitCode !== 0) {
     return providerAuth({
-      status: "unauthenticated",
-      detail:
-        firstSafeAuthLine(combinedAuthOutput(input)) ?? "Run `az login` to authenticate Azure CLI.",
+      status: /--organization must be specified/i.test(output) ? "unknown" : "unauthenticated",
+      detail: firstSafeAuthLine(output) ?? "Run `az devops login` to authenticate Azure DevOps.",
     });
   }
 
-  if (account !== undefined && account.length > 0) {
+  if (account !== null) {
     return providerAuth({
       status: "authenticated",
       account,
@@ -35,7 +38,7 @@ function parseAzureAuth(input: SourceControlAuthProbeInput) {
   return providerAuth({
     status: "unknown",
     host: "dev.azure.com",
-    detail: "Azure CLI account status could not be parsed.",
+    detail: "Azure DevOps did not return an authenticated identity.",
   });
 }
 
@@ -45,7 +48,7 @@ export const discovery = {
   label: "Azure DevOps",
   executable: "az",
   versionArgs: ["--version"],
-  authArgs: ["account", "show", "--query", "user.name", "-o", "tsv"],
+  authArgs: AzureDevOpsCli.connectionDataArgs,
   // `az` boots a fresh Python interpreter on every invocation, so even `az --version` takes ~6s
   // on Windows and overruns the default budget, leaving the provider reported as missing on
   // machines where it is installed.
