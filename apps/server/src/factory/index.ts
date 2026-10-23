@@ -61,6 +61,7 @@ import {
   runPass,
   stuckItem,
   stuckLine,
+  type BrokenThreadMemo,
   type PassError,
   type PassWorld,
   type Repo,
@@ -352,13 +353,14 @@ export const gateDecided = (step: GateStep | null): boolean =>
 /**
  * What a world keeps for as long as the factory runs, however often a reload builds a new one:
  * the claim judgements, the runs whose gate this process is running now (a gate holds the
- * run's lock file only while an attempt runs; this covers the whole call), and when each stuck
- * item's issue was last read.
+ * run's lock file only while an attempt runs; this covers the whole call), when each stuck
+ * item's issue was last read, and which threads on a broken worktree are ruled out or waiting.
  */
 export interface LiveShared {
   readonly gating: Set<string>;
   readonly claimMemo: ClaimMemo;
   readonly stuckReads: Map<string, number>;
+  readonly brokenThreads: BrokenThreadMemo;
 }
 
 /**
@@ -373,9 +375,6 @@ export const serverStartedMs = (): number => Math.round(performance.timeOrigin);
  * are read by the start they belong to, whatever their age.
  */
 const SERVER_STARTS_WINDOW_MS = 24 * 60 * 60 * 1000;
-
-/** How often a pass reads the whole ledger again for threads on a broken worktree it could not settle. */
-const UNSETTLED_REREAD_MS = 5 * 60 * 1000;
 
 /**
  * The pass over this machine: GitHub through `gh`, the ledger under `dataDir`, the wall clock.
@@ -396,19 +395,15 @@ export const liveWorld = (
   gateRemoteBase?: string,
   onProject?: (repo: string, reading: RepoConfigReading) => void,
   // Built once per process by the factory, so a reload's new world goes on from the old one's.
-  { gating, claimMemo, stuckReads }: LiveShared = {
+  { gating, claimMemo, stuckReads, brokenThreads }: LiveShared = {
     gating: new Set(),
     claimMemo: new ClaimMemo(),
     stuckReads: new Map(),
+    brokenThreads: { notFactory: new Set(), unsettled: new Map() },
   },
 ): Omit<PassWorld, "watchedRepos" | "freeSpace"> => {
   const withProcess = <A, E>(effect: Effect.Effect<A, E, FactoryProcess>) =>
     Effect.provideService(effect, FactoryProcess, process);
-  // Threads on a broken worktree that no run's session was on: a person's, never archived.
-  const notFactory = new Set<string>();
-  // The threads the last ledger read could not settle (a run still going, or a run file that
-  // could not be read), and when it read: they alone read the ledger again only every five minutes.
-  let unsettled = { threadIds: new Set<string>(), atMs: 0 };
   const githubFor = (watched: WatchedRepo) =>
     makeGitHub({ repo: watched.repo, ghConfigDir: machine.ghConfigDir });
   const trackerFor = (watched: WatchedRepo) => bindProcess(githubFor(watched), process);
@@ -656,41 +651,11 @@ export const liveWorld = (
     feedback: (repo, run, base) => feedback(gateContext(repo, runProject(repo.project, base)), run),
     recordError,
     handPause: () => loadHandPause(dataDir),
-    // Only threads on the worktree of a run's session are the factory's to archive, and only once
-    // that session is stopped: until then the run's own stop archives what is on its worktree.
-    // The ledger is read only while T3 has such a thread it has not ruled out before, and for a
-    // thread it could not settle, at most every five minutes.
-    brokenWorktrees: () =>
-      sessions.brokenWorktrees.pipe(
-        Effect.mapError(asPassError("t3")),
-        Effect.flatMap((found) => {
-          const broken = found.filter((thread) => !notFactory.has(thread.threadId));
-          if (broken.length === 0) return Effect.succeed([]);
-          const now = clock();
-          const recent = now - unsettled.atMs < UNSETTLED_REREAD_MS;
-          if (recent && broken.every((thread) => unsettled.threadIds.has(thread.threadId))) {
-            return Effect.succeed([]);
-          }
-          return ledger(() => runsByThread(dataDir)).pipe(
-            Effect.mapError(asPassError("ledger")),
-            Effect.map(({ runs, complete }) => {
-              const byPath = new Map<string, { run: RunId; threadIds: Array<string> }>();
-              const threadIds = new Set<string>();
-              for (const { threadId, worktreePath, threadsOnPath } of broken) {
-                const owner = threadsOnPath.map((id) => runs.get(id)).find((r) => r !== undefined);
-                if (owner === undefined && complete) notFactory.add(threadId);
-                else if (owner?.stopped !== true) threadIds.add(threadId);
-                if (owner?.stopped !== true) continue;
-                const entry = byPath.get(worktreePath) ?? { run: owner.run, threadIds: [] };
-                entry.threadIds.push(threadId);
-                byPath.set(worktreePath, entry);
-              }
-              unsettled = { threadIds, atMs: now };
-              return [...byPath].map(([worktreePath, entry]) => ({ worktreePath, ...entry }));
-            }),
-          );
-        }),
-      ),
+    threadsOnBrokenWorktrees: () =>
+      sessions.brokenWorktrees.pipe(Effect.mapError(asPassError("t3"))),
+    sessionRuns: () =>
+      ledger(() => runsByThread(dataDir)).pipe(Effect.mapError(asPassError("ledger"))),
+    brokenThreads,
     archiveThread: (threadId) =>
       sessions.archive(threadId).pipe(Effect.mapError(asPassError("t3"))),
     nowMs: clock,
@@ -858,6 +823,7 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
     gating: new Set(),
     claimMemo: new ClaimMemo(),
     stuckReads: new Map(),
+    brokenThreads: { notFactory: new Set(), unsettled: new Map() },
   };
   // The threads of the unfinished runs, read at start and after every pass: a pass is what
   // launches and finishes sessions, so between passes the set does not change.

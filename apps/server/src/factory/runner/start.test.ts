@@ -222,13 +222,14 @@ const fakeSessions = (
     launches?: Array<Launched | SessionsError>;
     archive?: Array<undefined | SessionsError>;
     thread?: Thread | ThreadNotFoundError;
-    removeWorktree?: SessionsError;
+    removeWorktree?: Array<undefined | SessionsError>;
   },
 ) => {
   const calls: Array<string> = [];
   const launchRequests: Array<LaunchRequest> = [];
   const launches = [...(script.launches ?? [])];
   const archives = [...(script.archive ?? [])];
+  const removals = [...(script.removeWorktree ?? [])];
   const popped = <A>(queue: Array<A>): A | undefined =>
     queue.length > 1 ? queue.shift() : queue[0];
   const result = <A>(answer: A | SessionsError | undefined, fallback: A) =>
@@ -271,7 +272,8 @@ const fakeSessions = (
     },
     removeWorktree: (path) => {
       calls.push(`removeWorktree ${path}`);
-      return script.removeWorktree === undefined ? Effect.void : Effect.fail(script.removeWorktree);
+      const answer = popped(removals);
+      return isSessionsError(answer) ? Effect.fail(answer) : Effect.void;
     },
     send: () => Effect.die("not the claim's"),
   };
@@ -1313,10 +1315,9 @@ describe("start: stopping a session that goes stuck", () => {
       const dataDir = tempDir();
       const { tracker, calls } = fakeTracker({ textChecks: ["changed"] });
       const t3 = fakeSessions(dataDir, {
-        removeWorktree: new SessionsError({
-          operation: "remove-worktree",
-          cause: new Error("disk busy"),
-        }),
+        removeWorktree: [
+          new SessionsError({ operation: "remove-worktree", cause: new Error("disk busy") }),
+        ],
       });
       const outcome = yield* startIn(dataDir, tracker, t3.sessions);
       assert.deepStrictEqual(outcome, { kind: "stuck", run: run7, reason: TEXT_CHANGED });
@@ -1331,6 +1332,30 @@ describe("start: stopping a session that goes stuck", () => {
         ...stuckTail(TEXT_CHANGED, "text-changed-before-start"),
       ]);
     }),
+  );
+
+  it.effect(
+    "a removal that cannot archive the threads on the worktree is an error with nothing written, and the next start removes it",
+    () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        const { tracker } = fakeTracker({
+          issues: [detail("ready"), detail("triage", [USER])],
+          textChecks: ["changed", "changed"],
+        });
+        const t3 = fakeSessions(dataDir, {
+          removeWorktree: [sessionsError("archive", "the projection is locked"), undefined],
+        });
+        const error = yield* Effect.flip(startIn(dataDir, tracker, t3.sessions));
+        assert.strictEqual(error._tag, "FactorySessionsError");
+        assert.deepStrictEqual(entriesOf(dataDir), startedEvents().slice(0, 5));
+        const outcome = yield* startIn(dataDir, tracker, t3.sessions);
+        assert.deepStrictEqual(outcome, { kind: "stuck", run: run7, reason: TEXT_CHANGED });
+        assert.strictEqual(t3.calls.filter((c) => c.startsWith("removeWorktree ")).length, 2);
+        assert.deepStrictEqual(entriesOf(dataDir).slice(5, 6), [
+          { event: "worktree_removed", data: { path: WORKTREE }, cause: cause("worktree-removed") },
+        ]);
+      }),
   );
 
   it.effect("a thread T3 no longer knows is stopped at the worktree the ledger records", () =>

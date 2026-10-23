@@ -1846,6 +1846,7 @@ describe("the gate in the background", () => {
         gating: new Set<string>(),
         claimMemo: new ClaimMemo(),
         stuckReads: new Map<string, number>(),
+        brokenThreads: { notFactory: new Set<string>(), unsettled: new Map<string, number>() },
       };
       const build = () =>
         liveWorld(

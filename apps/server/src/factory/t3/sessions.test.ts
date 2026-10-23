@@ -1721,7 +1721,28 @@ describe("FactorySessions.removeWorktree", () => {
           ),
         ),
       );
-      assert.strictEqual(error.operation, "remove-worktree");
+      assert.strictEqual(error.operation, "archive");
+      assert.strictEqual(calls.length, 0);
+    }),
+  );
+
+  it.effect("leaves the worktree whole when the threads on it cannot be read", () =>
+    Effect.gen(function* () {
+      const calls: Array<GitCall> = [];
+      const error = yield* Effect.flip(removeWorktree("/tmp/wt/t3-abc")).pipe(
+        Effect.provide(
+          layerSessions(
+            {
+              getThreadWorktreePaths: () =>
+                Effect.fail(new ProjectionStore.ProjectionStoreSetupError({ cause: "locked" })),
+            },
+            {},
+            {},
+            recordingGit(calls, () => Effect.succeed(gitResult(0))),
+          ),
+        ),
+      );
+      assert.strictEqual(error.operation, "archive");
       assert.strictEqual(calls.length, 0);
     }),
   );

@@ -346,8 +346,10 @@ export class FactorySessions extends Context.Service<
     /**
      * Removes a thread's worktree from disk with git and keeps its branch.
      * Every live thread still on it, such as a subagent sharing the session's
-     * checkout, is archived first; one that cannot be archived fails the call
-     * before git runs, so no live thread is left on a half-removed folder. A
+     * checkout, is archived first; when they cannot be read or archived, the
+     * call fails as an `archive` before git runs, so no live thread is left on
+     * a half-removed folder and the caller can try again. Any later failure is
+     * a `remove-worktree`. A
      * worktree already gone counts as removed. `path` must be absolute. When
      * git takes the worktree off the clone's list but cannot empty its
      * directory, the call deletes the rest itself over about 10 s. It deletes
@@ -592,11 +594,9 @@ export const make = Effect.gen(function* () {
     }
     const bound = yield* projections
       .getThreadWorktreePaths()
-      .pipe(Effect.mapError(removeWorktreeFailed));
+      .pipe(Effect.mapError((cause) => new SessionsError({ operation: "archive", cause })));
     const onWorktree = bound.filter((thread) => thread.worktreePath === worktreePath);
-    yield* Effect.forEach(onWorktree, (thread) => archive(thread.threadId), {
-      discard: true,
-    }).pipe(Effect.mapError(removeWorktreeFailed));
+    yield* Effect.forEach(onWorktree, (thread) => archive(thread.threadId), { discard: true });
     if (onWorktree.length > 0) {
       yield* Effect.logInfo("factory archived the threads still on a worktree it removes", {
         worktreePath,
