@@ -3,7 +3,7 @@ import {
   buildTraitsTriggerDisplay,
   getPromptControlledTraits,
 } from "@t3tools/client-runtime/model-traits";
-import type { ModelOption } from "../lib/modelOptions";
+import { modelOptionDisplayLabel, type ModelOption } from "../lib/modelOptions";
 import { resolveProviderOptionDescriptors } from "../lib/providerOptions";
 import { AppText as Text } from "./ui/AppText";
 import { ComposerInlineControl } from "./ComposerToolbar";
@@ -38,11 +38,7 @@ export function ComposerModelControl(props: {
     : "";
   const badge = props.modelOption?.providerBadge;
   const label = props.modelOption?.label ?? props.selection?.model ?? "Choose model";
-  const providerPrefix = `${props.modelOption?.providerLabel} `;
-  const visibleLabel =
-    !badge?.showBadge && label.startsWith(providerPrefix)
-      ? label.slice(providerPrefix.length)
-      : label;
+  const visibleLabel = props.modelOption ? modelOptionDisplayLabel(props.modelOption) : label;
   return (
     <ComposerInlineControl
       accessibilityLabel={[

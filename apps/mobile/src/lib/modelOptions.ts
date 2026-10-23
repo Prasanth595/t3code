@@ -408,6 +408,17 @@ export function buildModelOptions(
   return [...options.values()];
 }
 
+const MODEL_VENDOR_PREFIX_BY_DRIVER: Partial<Record<string, string>> = {
+  claudeAgent: "Claude ",
+};
+
+export function modelOptionDisplayLabel(option: ModelOption): string {
+  const prefix = MODEL_VENDOR_PREFIX_BY_DRIVER[option.providerDriver];
+  return prefix && !option.providerBadge?.showBadge && option.label.startsWith(prefix)
+    ? option.label.slice(prefix.length)
+    : option.label;
+}
+
 export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyArray<ProviderGroup> {
   const groups = new Map<
     string,
