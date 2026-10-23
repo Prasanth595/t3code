@@ -32,7 +32,9 @@ const tempDir = useTempDirs();
 
 const layerPlatform = Layer.merge(
   NodeServices.layer,
-  Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({}),
+  Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+    resolveLink: () => Effect.die("the snapshot read resolves no links"),
+  }),
 );
 const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-factory-thread-launch-routing-",
