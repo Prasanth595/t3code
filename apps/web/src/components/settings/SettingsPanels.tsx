@@ -1529,7 +1529,12 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("start-new-threads-in-background")}
-          description={`Sending from a new thread starts it in the background and keeps the new-thread composer open. Press ${modifierLabel} + Enter to open the thread instead.`}
+          description={
+            "Sending from a new thread starts it in the background and keeps the new-thread composer open. " +
+            (settings.sendShortcut === "mod-enter-multiline"
+              ? `Press ${modifierLabel} + Enter for single-line prompts or ${modifierLabel} + Alt + Enter for multiline prompts to open the thread instead.`
+              : `Press ${modifierLabel}${settings.sendShortcut === "mod-enter" ? " + Alt" : ""} + Enter to open the thread instead.`)
+          }
           resetAction={
             settings.startNewThreadsInBackground !==
             DEFAULT_UNIFIED_SETTINGS.startNewThreadsInBackground ? (

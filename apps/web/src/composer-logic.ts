@@ -80,13 +80,14 @@ export function composerSubmissionIntentForKey(input: {
   if (event.isComposing || event.keyCode === 229 || event.repeat) return null;
   if (input.isSoftwareKeyboardOpen && event.key === "Enter" && !event.metaKey && !event.ctrlKey)
     return null;
+  const requiresModifier = composerRequiresModifier(input.sendShortcut, input.prompt ?? "");
   const command = resolveShortcutCommand(event, input.keybindings, {
     ...(input.platform === undefined ? {} : { platform: input.platform }),
     context: {
       composerFocus: true,
       draftThreadRoute: input.isDraftThread,
       turnRunning: input.isRunning === true,
-      composerRequiresModifier: composerRequiresModifier(input.sendShortcut, input.prompt ?? ""),
+      composerRequiresModifier: requiresModifier,
     },
   });
   const defaultIntent = composerDefaultSendIntent({
@@ -94,16 +95,19 @@ export function composerSubmissionIntentForKey(input: {
     startNewThreadsInBackground: input.startNewThreadsInBackground === true,
   });
   if (command === "composer.sendAlternate" && input.isRunning) return "alternate";
-  if (command === "composer.sendBackground" && input.isDraftThread)
-    return defaultIntent === "background" ? "foreground" : "background";
+  if (command === "composer.sendBackground" && input.isDraftThread) {
+    // A modifier send shortcut makes the send chord (Mod+Enter) hit this binding, and the send
+    // chord must still start in the background when the setting is on.
+    const isSendChord =
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !event.altKey &&
+      requiresModifier === (event.metaKey || event.ctrlKey);
+    return isSendChord || defaultIntent === "foreground" ? "background" : "foreground";
+  }
   if (command === "composer.sendAndNewThread" && !input.isDraftThread) return "background";
   if (command !== null || event.key !== "Enter" || event.shiftKey || event.altKey) return null;
-  if (
-    composerRequiresModifier(input.sendShortcut, input.prompt ?? "") &&
-    !event.metaKey &&
-    !event.ctrlKey
-  )
-    return null;
+  if (requiresModifier && !event.metaKey && !event.ctrlKey) return null;
   return defaultIntent;
 }
 
