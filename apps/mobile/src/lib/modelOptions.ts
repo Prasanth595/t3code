@@ -20,6 +20,7 @@ import {
 export type ModelOption = {
   readonly key: string;
   readonly label: string;
+  readonly shortName?: string;
   readonly subtitle: string;
   readonly providerKey: string;
   readonly providerLabel: string;
@@ -322,6 +323,7 @@ export function buildModelOptions(
       options.set(key, {
         key,
         label: model.name,
+        ...(model.shortName ? { shortName: model.shortName } : {}),
         subtitle: model.subProvider ?? "",
         providerKey: provider.instanceId,
         providerLabel,
@@ -387,6 +389,7 @@ export function buildModelOptions(
       options.set(key, {
         key,
         label: model?.name ?? fallbackModelSelection.model,
+        ...(model?.shortName ? { shortName: model.shortName } : {}),
         subtitle: model?.subProvider ?? "",
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,

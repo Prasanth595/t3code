@@ -13,11 +13,7 @@ import { cn } from "~/lib/utils";
 import { ModelPickerContent, resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import { ChatGptSharingControl } from "./ChatGptSharingControl";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
-import {
-  ModelEsque,
-  getTriggerDisplayModelLabel,
-  getTriggerDisplayModelName,
-} from "./providerIconUtils";
+import { ModelEsque, getDisplayModelName, getTriggerDisplayModelName } from "./providerIconUtils";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
 import {
   ComposerControl,
@@ -79,7 +75,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       ? "Choose model"
       : props.model || "Choose model";
   const triggerLabel = selectedModel
-    ? `${getTriggerDisplayModelLabel(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
+    ? `${getDisplayModelName(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
     : triggerTitle;
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);

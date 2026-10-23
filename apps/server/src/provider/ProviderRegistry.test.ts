@@ -920,7 +920,8 @@ it.layer(
                 subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
               },
             );
-            const retainedModels = [defaultModel, customModel, currentModel];
+            const presentedCurrentModel = { ...currentModel, shortName: "6.1-Sol" };
+            const retainedModels = [defaultModel, customModel, presentedCurrentModel];
 
             for (const restarted of [false, true]) {
               yield* Effect.gen(function* () {
@@ -929,13 +930,13 @@ it.layer(
                   (yield* registry.getProviders)[0]?.models,
                   restarted
                     ? retainedModels
-                    : [defaultModel, customModel, currentModel, removedModel],
+                    : [defaultModel, customModel, presentedCurrentModel, removedModel],
                 );
 
                 yield* registry.refreshInstance(instance.instanceId);
                 assert.deepStrictEqual(
                   (yield* readProviderStatusCache(filePath))?.models,
-                  restarted ? retainedModels : refreshedProvider.models,
+                  restarted ? retainedModels : [defaultModel, presentedCurrentModel, customModel],
                 );
 
                 yield* Ref.set(nextProvider, failedProvider);

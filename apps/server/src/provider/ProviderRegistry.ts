@@ -25,6 +25,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
+import { withModelShortNames } from "./modelShortName.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import {
@@ -399,17 +400,14 @@ export const layer = Layer.effect(
       ),
     );
     const initialManifest = yield* manifestService.current;
-    const classifyCompatibility = (
-      provider: ServerProvider,
-      manifest: ModelManifest.ModelManifestData,
-    ) =>
+    const presentProvider = (provider: ServerProvider, manifest: ModelManifest.ModelManifestData) =>
       applyProviderCompatibility(
-        provider,
+        withModelShortNames(provider),
         manifest.compatibility,
         ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
       );
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
-      cachedProviders.map((provider) => classifyCompatibility(provider, initialManifest)),
+      cachedProviders.map((provider) => presentProvider(provider, initialManifest)),
     );
     const workspaceRefreshesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstance, ReadonlyMap<string, Deferred.Deferred<void>>>
@@ -495,9 +493,7 @@ export const layer = Layer.effect(
           }
 
           const providers = orderProviderSnapshots(
-            [...mergedProviders.values()].map((provider) =>
-              classifyCompatibility(provider, manifest),
-            ),
+            [...mergedProviders.values()].map((provider) => presentProvider(provider, manifest)),
           );
           const providersToPersist = providers.filter((provider) =>
             updatedKeys.has(snapshotInstanceKey(provider)),
