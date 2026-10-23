@@ -1840,30 +1840,54 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             : undefined;
           const startModel = yield* resolveModel(args.modelSelection);
           const permissionProfile = musePermissionProfile(args.runtimePolicy.runtimeMode);
-          const result = yield* request(
-            requestedId ? "session/resume" : "session/start",
-            requestedId
-              ? { excludeItems: true, ...(config ? { config } : {}), permissionProfile }
-              : {
-                  workspaceRoot: cwd,
-                  ...(config ? { config } : {}),
-                  ...(startModel ? { modelId: startModel } : {}),
-                  providerId: "meta",
-                  approvalMode: museApprovalMode(args.runtimePolicy.runtimeMode),
-                  permissionProfile,
-                },
-          ).pipe(
-            Effect.catch((error) => {
-              missingNativeSession =
-                requestedId !== undefined &&
-                error.payload instanceof MspError &&
-                (error.payload.kind === "sessionNotFound" || error.payload.kind === "notFound");
-              return Effect.fail(error);
-            }),
-            Effect.flatMap((value) => decode(MuseSessionResult, value)),
-          );
-          if (result.session.sessionId !== nativeSessionId)
-            return yield* protocolError("Muse returned a different session identity");
+          const open = Effect.gen(function* () {
+            const result = yield* request(
+              requestedId ? "session/resume" : "session/start",
+              requestedId
+                ? { excludeItems: true, ...(config ? { config } : {}), permissionProfile }
+                : {
+                    workspaceRoot: cwd,
+                    ...(config ? { config } : {}),
+                    ...(startModel ? { modelId: startModel } : {}),
+                    providerId: "meta",
+                    approvalMode: museApprovalMode(args.runtimePolicy.runtimeMode),
+                    permissionProfile,
+                  },
+            ).pipe(
+              Effect.catch((error) => {
+                missingNativeSession =
+                  requestedId !== undefined &&
+                  error.payload instanceof MspError &&
+                  (error.payload.kind === "sessionNotFound" || error.payload.kind === "notFound");
+                return Effect.fail(error);
+              }),
+              Effect.flatMap((value) => decode(MuseSessionResult, value)),
+            );
+            if (result.session.sessionId !== nativeSessionId)
+              return yield* protocolError("Muse returned a different session identity");
+            return result;
+          });
+          let result = yield* open;
+          // Muse Code 1.4.12 never starts session MCP servers on a host whose resume replays
+          // queued work, and MSP cannot reload them. Closing the host cancels one replayed
+          // item, so resume on fresh hosts until one comes back idle.
+          for (let relaunch = 0; config && result.session.activeTurnId; relaunch++) {
+            if (relaunch === 5) {
+              yield* Effect.logWarning("Muse kept replaying queued work; T3 tools are unavailable");
+              break;
+            }
+            yield* Effect.logWarning("Muse replayed queued work without T3 tools; relaunching");
+            const replaying = host;
+            yield* eventPermit.withPermits(1)(
+              Effect.sync(() => {
+                hostEpoch++;
+                wake = undefined;
+              }),
+            );
+            yield* Effect.tryPromise(() => replaying.close()).pipe(Effect.ignore);
+            yield* launchHost();
+            result = yield* open;
+          }
           if (requestedId)
             yield* request("session/setApprovalMode", {
               mode: museApprovalMode(args.runtimePolicy.runtimeMode),
