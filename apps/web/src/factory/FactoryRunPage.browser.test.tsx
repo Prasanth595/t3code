@@ -290,6 +290,23 @@ describe("FactoryRunPage", () => {
     expect(why?.textContent).toContain("Which page should the link go on?");
   });
 
+  it("shows how a finished run's pull request ended, and its step as finished", async () => {
+    using _state = setup();
+    state.run = resource({
+      data: detail([
+        ...BUILDING,
+        entry("pr_opened", { pr: 31, url: "https://github.com/o/r/pull/31" }),
+        entry("state_changed", { from: "building", to: "pr-open" }),
+        entry("step_changed", { step: "pr-watching" }),
+        entry("finished", { outcome: "pr-open", pr_end: "closed" }),
+      ]),
+    });
+    await using page = await mount();
+    expect(page.all('[data-slot="badge"]')[0]?.textContent).toBe("closed");
+    expect(page.text()).toContain("Step: finished");
+    expect(page.text()).not.toContain("Step: pr-watching");
+  });
+
   it("disables Stop for a run that is not building or is finished", async () => {
     using _state = setup();
     state.run = resource({

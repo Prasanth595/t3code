@@ -34,7 +34,7 @@ import {
   threadIdOf,
   whyStopped,
 } from "./format";
-import { Ref } from "./RunsTable";
+import { Ref } from "./Ref";
 import { TouchLink } from "./TouchLink";
 import { useFactoryEnvironmentLabel, useFactoryRun } from "./useFactoryData";
 

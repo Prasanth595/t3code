@@ -27,13 +27,23 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
   Link: ({
     to,
     params,
+    search,
     children,
   }: {
     to: string;
     params?: Record<string, string>;
+    search?: Record<string, string>;
     children?: ReactNode;
   }) =>
-    createElement("a", { "data-to": to, "data-params": JSON.stringify(params ?? {}) }, children),
+    createElement(
+      "a",
+      {
+        "data-to": to,
+        "data-params": JSON.stringify(params ?? {}),
+        "data-search": JSON.stringify(search ?? {}),
+      },
+      children,
+    ),
   useSearch: () =>
     useSyncExternalStore(
       (listener) => {
@@ -303,6 +313,30 @@ describe("FactoryPage", () => {
     expect(text).toContain("claimed");
   });
 
+  it("shows merged or closed for a run that ended on its pull request, else its last state", async () => {
+    using _state = setup();
+    const ended = { state: "pr-open", finished: true, status: "finished", step: null };
+    state.runs = resource({
+      data: {
+        runs: [
+          runRow({ ...ended, id: "acme__merged__1__1", pr_end: "merged" }),
+          runRow({ ...ended, id: "acme__closed__2__1", pr_end: "closed" }),
+          // A server from before pr_end sends no such field.
+          runRow({ ...ended, id: "acme__older__3__1" }),
+        ],
+      },
+    });
+    await using page = await render(createElement(FactoryPage));
+    const badgeOf = (repo: string) =>
+      page
+        .all("tr")
+        .find((row) => row.textContent?.includes(repo))
+        ?.querySelector('[data-slot="badge"]')?.textContent;
+    expect(badgeOf("acme/merged")).toBe("merged");
+    expect(badgeOf("acme/closed")).toBe("closed");
+    expect(badgeOf("acme/older")).toBe("pr-open");
+  });
+
   it("marks an unreadable run", async () => {
     using _state = setup();
     state.runs = resource({
@@ -356,6 +390,8 @@ describe("FactoryPage", () => {
     expect(text).toContain("Idle: no factory config");
     const settings = page.all("a").find((a) => a.textContent === "Factory settings");
     expect(settings?.getAttribute("data-to")).toBe("/settings/factory");
+    // Settings opens on the idle environment, not the primary one.
+    expect(JSON.parse(settings!.getAttribute("data-search")!)).toEqual({ machine: "env-2" });
   });
 
   it("pauses claims, shows the answer and refreshes", async () => {
@@ -882,6 +918,7 @@ describe("FactoryPage dismissing attention items", () => {
     });
     const [settings] = linksIn(CONFIG.message);
     expect(settings!.getAttribute("data-to")).toBe("/settings/factory");
+    expect(JSON.parse(settings!.getAttribute("data-search")!)).toEqual({ machine: "env-2" });
     expect(linksIn(PASS.message)).toHaveLength(0);
     // Dismiss is its own control, never inside the link.
     for (const link of [run!, settings!]) {

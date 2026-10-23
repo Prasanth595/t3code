@@ -7,7 +7,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 
 import type { FactoryAttentionItem } from "./api";
 import { formatAge, issueRef } from "./format";
-import { Ref } from "./RunsTable";
+import { Ref } from "./Ref";
 import { TouchLink } from "./TouchLink";
 
 /** An open attention item and the environment whose factory raised it. */
@@ -37,7 +37,11 @@ function ItemLink({
     );
   }
   if (item.kind === "config") {
-    return <TouchLink render={<Link to="/settings/factory" />}>Factory settings</TouchLink>;
+    return (
+      <TouchLink render={<Link search={{ machine: environmentId }} to="/settings/factory" />}>
+        Factory settings
+      </TouchLink>
+    );
   }
   return null;
 }

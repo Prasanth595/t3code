@@ -10,7 +10,7 @@ import { TouchLink } from "./TouchLink";
 import type { FactoryEnvironment } from "./useFactoryData";
 
 function Row({
-  environment: { label, status },
+  environment: { environmentId, label, status },
   busy,
   nowMs,
   onTogglePause,
@@ -50,7 +50,9 @@ function Row({
           </span>
           {/* The factory idles only for want of a machine config that loads. */}
           {report.state === "idle" ? (
-            <TouchLink render={<Link to="/settings/factory" />}>Factory settings</TouchLink>
+            <TouchLink render={<Link search={{ machine: environmentId }} to="/settings/factory" />}>
+              Factory settings
+            </TouchLink>
           ) : null}
           {paused ? (
             <span className="text-muted-foreground">

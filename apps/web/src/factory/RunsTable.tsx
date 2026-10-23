@@ -2,7 +2,7 @@ import { Link } from "@tanstack/react-router";
 
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { Badge } from "~/components/ui/badge";
-import { Button, InlineButton } from "~/components/ui/button";
+import { Button } from "~/components/ui/button";
 import { Empty, EmptyHeader, EmptyTitle } from "~/components/ui/empty";
 import {
   Table,
@@ -25,7 +25,7 @@ import {
   shownState,
   stateBadgeVariant,
 } from "./format";
-import { TouchLink } from "./TouchLink";
+import { Ref } from "./Ref";
 
 const startedMs = (run: FactoryRunRow) =>
   run.started_ts ? Date.parse(run.started_ts) : Number.NaN;
@@ -50,25 +50,6 @@ const stateBadge = (run: FactoryRunRow) => {
   const state = shownState(run.state, run.pr_end);
   return <Badge variant={stateBadgeVariant(state)}>{labelForState(state)}</Badge>;
 };
-
-/** A reference that is a link when it has a target, else plain text; `touch` on the phone cards. */
-export function Ref({
-  text,
-  href,
-  touch = false,
-}: {
-  text: string;
-  href: string | null;
-  touch?: boolean;
-}) {
-  if (href === null) return <span className="min-w-0 break-all">{text}</span>;
-  const anchor = <a href={href} rel="noreferrer" target="_blank" />;
-  return touch ? (
-    <TouchLink render={anchor}>{text}</TouchLink>
-  ) : (
-    <InlineButton render={anchor}>{text}</InlineButton>
-  );
-}
 
 /**
  * One run for a phone: a link to the run that is the card's main tap target, and below it, outside
