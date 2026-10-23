@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Random from "effect/Random";
 import * as TestClock from "effect/testing/TestClock";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -6267,20 +6268,28 @@ describe("retrying a call GitHub never received", () => {
     }),
   );
 
-  it.effect("the retries wait 2 s then 5 s, each plus up to 1 s", () =>
+  it.effect("the retries wait 2 s then 5 s, each plus the jitter drawn for it", () =>
     Effect.gen(function* () {
+      // The wrapper draws one jitter per retry; the same seed here gives the same two draws.
+      const seed = "retry-jitter";
+      const [first, second] = yield* Effect.all([
+        Random.nextIntBetween(0, 1000),
+        Random.nextIntBetween(0, 1000),
+      ]).pipe(Random.withSeed(seed));
+      assert.ok(first! > 0 && second! > 0, `draws ${first} and ${second}: pick another seed`);
       const t = setup(fail(1, TLS), fail(1, TLS), reply(LIST_ONE));
-      const fiber = yield* Effect.forkChild(t.ok(t.github.listIssues("ready")), {
-        startImmediately: true,
-      });
+      const fiber = yield* Effect.forkChild(
+        t.ok(t.github.listIssues("ready")).pipe(Random.withSeed(seed)),
+        { startImmediately: true },
+      );
       assert.strictEqual(t.inputs.length, 1);
-      yield* TestClock.adjust("1999 millis");
+      yield* TestClock.adjust(2_000 + first! - 1);
       assert.strictEqual(t.inputs.length, 1);
-      yield* TestClock.adjust("1001 millis");
+      yield* TestClock.adjust(1);
       assert.strictEqual(t.inputs.length, 2);
-      yield* TestClock.adjust("3999 millis");
+      yield* TestClock.adjust(5_000 + second! - 1);
       assert.strictEqual(t.inputs.length, 2);
-      yield* TestClock.adjust("2001 millis");
+      yield* TestClock.adjust(1);
       assert.strictEqual(t.inputs.length, 3);
       yield* Fiber.join(fiber);
       for (const input of t.inputs) assert.strictEqual(input.timeoutMs, 60_000);
