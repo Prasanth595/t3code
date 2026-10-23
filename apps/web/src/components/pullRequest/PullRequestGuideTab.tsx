@@ -1,6 +1,6 @@
 import type { EnvironmentId, PullRequestRef, PullRequestReviewGuideStop } from "@t3tools/contracts";
 import { SparklesIcon, TriangleAlertIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
@@ -46,23 +46,17 @@ export function PullRequestGuideTab({
   onOpenFile: (path: string) => void;
   onTourShown?: (() => void) | undefined;
 }) {
-  const panelRef = useRef<HTMLDivElement>(null);
-  // Opening the guide precedes this lazy mount, so it starts engaged. Tracking lives here, not
-  // in the tour, so a click into the chat while the guide loads still counts once it appears.
+  // Opening the guide precedes this lazy mount, so it starts engaged. Only the chat competes for
+  // J/K, so clicks anywhere else (the panel's tab bar, header, a standalone page) keep the guide
+  // engaged. Tracking lives here, not in the tour, so a chat click while the guide loads counts.
   const [engaged, setEngaged] = useState(true);
   useEffect(() => {
-    const panel =
-      panelRef.current?.closest("[data-right-panel-surface-content]") ?? panelRef.current;
     const record = (event: Event) => {
-      // The hosting sheet takes focus when its non-focusable content is clicked.
-      if (
-        event.type === "focusin" &&
-        event.target instanceof Node &&
-        event.target.contains(panel)
-      ) {
-        return;
-      }
-      setEngaged(panel !== null && event.composedPath().includes(panel));
+      setEngaged(
+        !event
+          .composedPath()
+          .some((node) => node instanceof Element && node.matches("[data-chat-column]")),
+      );
     };
     window.addEventListener("pointerdown", record, true);
     window.addEventListener("focusin", record, true);
@@ -127,21 +121,15 @@ export function PullRequestGuideTab({
       </Button>
     ) : null;
 
-  const wrap = (content: ReactNode) => (
-    <div ref={panelRef} className="h-full">
-      {content}
-    </div>
-  );
-
   if (guide === null) {
     if (query.isPending && data === null) {
-      return wrap(
+      return (
         <div className="flex min-h-48 items-center justify-center">
           <Spinner />
-        </div>,
+        </div>
       );
     }
-    return wrap(
+    return (
       <div className="flex min-h-48 flex-col items-center justify-center gap-2 px-4 py-10 text-center">
         <p className="text-sm font-medium text-foreground">
           {running ? "Writing a review guide" : "No review guide yet"}
@@ -154,7 +142,7 @@ export function PullRequestGuideTab({
               : "A guide is a tour of the change: stops through the code in reading order, with the calls only a maintainer can make.")}
         </p>
         {writeButton(failure === null ? "Write guide" : "Try again", "sm")}
-      </div>,
+      </div>
     );
   }
 
@@ -171,7 +159,7 @@ export function PullRequestGuideTab({
       </Alert>
     ) : null;
 
-  return wrap(
+  return (
     <GuideProseContext value={{ environmentId, cwd: workspaceRoot }}>
       <GuideTour
         environmentId={environmentId}
@@ -192,6 +180,6 @@ export function PullRequestGuideTab({
         onFinish={onFinishReview}
         onOpenFile={onOpenFile}
       />
-    </GuideProseContext>,
+    </GuideProseContext>
   );
 }

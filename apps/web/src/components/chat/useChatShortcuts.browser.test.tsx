@@ -162,13 +162,18 @@ it("steps the review guide with J after clicking its prose instead of typing int
   await expect.element(page.getByRole("heading", { name: "Second change" })).toBeVisible();
 });
 
-it("leaves J to the composer when the chat was clicked while the guide was loading", async () => {
+it("hands J between the chat and the guide by where the user last clicked", async () => {
   const composerKeys: string[] = [];
   // A PR of its own, so the tour does not resume where the previous test left it.
   const besideChat = () => (
     <>
       <Chat composerKeys={composerKeys} />
-      <div data-testid="chat-transcript">Transcript</div>
+      <div data-chat-column data-testid="chat-transcript">
+        Transcript
+      </div>
+      <div data-right-panel-tabbar>
+        <button type="button">#2</button>
+      </div>
       <div data-right-panel-surface-content>
         <PullRequestGuideTab
           environmentId={EnvironmentId.make("env-1")}
@@ -204,4 +209,12 @@ it("leaves J to the composer when the chat was clicked while the guide was loadi
 
   expect(composerKeys).toEqual(["j"]);
   await expect.element(page.getByRole("heading", { name: "Second change" })).toBeVisible();
+
+  // The panel's own chrome, such as its already-active tab, re-engages the guide after the chat.
+  await page.getByTestId("chat-transcript").click();
+  await page.getByRole("button", { name: "#2" }).click();
+  await userEvent.keyboard("j");
+
+  expect(composerKeys).toEqual(["j"]);
+  await expect.element(page.getByRole("heading", { name: "Third change" })).toBeVisible();
 });
