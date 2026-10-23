@@ -445,7 +445,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
             binaryPath: resolved,
             resolvedCommandPath: resolved,
             realCommandPath: real,
-            env: { PATH: fixture.alias ? NodePath.dirname(port) : "" },
+            env: { PATH: "" },
             platform: "darwin",
           }).pipe(
             Effect.provideService(HostProcess.Platform, "darwin"),

@@ -662,6 +662,10 @@ const macPortsBlocksProviderUpdate = Effect.fn("macPortsBlocksProviderUpdate")(f
     }
     const npmPrefix = npmGlobalPrefixFromCommandPath(commandPath, packageName);
     if (npmPrefix) candidates.add(path.join(npmPrefix, "bin", "port"));
+    const shareDirectory = path.dirname(path.dirname(commandPath));
+    if (path.basename(shareDirectory) === "share") {
+      candidates.add(path.join(path.dirname(shareDirectory), "bin", "port"));
+    }
   }
   const pathPort = yield* resolveCommandPath("port", { env: context.env });
   if (pathPort) candidates.add(pathPort);
