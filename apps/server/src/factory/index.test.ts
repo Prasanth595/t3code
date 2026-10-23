@@ -58,7 +58,7 @@ import { stopRequestPath } from "./runner/stop.ts";
 import { utcSecond } from "./runner/start.ts";
 import { ClaimMemo, MARKER } from "./tracker/github.ts";
 import { FactoryProcess, RunSpawnError, type RunInput, type RunResult } from "./process.ts";
-import { FactoryGate } from "./gate.ts";
+import { FactoryGate, MERGE_COMMAND } from "./gate.ts";
 import { EventsError, FactoryEvents } from "./t3/events.ts";
 import * as Paths from "./t3/paths.ts";
 import * as Sessions from "./t3/sessions.ts";
@@ -1589,7 +1589,7 @@ describe("the gate in the background", () => {
   const REPO = "rawphp/softfac";
 
   /** What `gh pr view` answers for pull request 12 of `REPO`, as `state`, at `head`. */
-  const PR_VIEW = (state: "OPEN" | "MERGED", head: string) =>
+  const PR_VIEW = (state: "OPEN" | "MERGED", head: string, mergeable = "MERGEABLE") =>
     JSON.stringify({
       number: 12,
       isDraft: false,
@@ -1598,7 +1598,7 @@ describe("the gate in the background", () => {
       isCrossRepository: false,
       baseRefName: "main",
       headRefOid: head,
-      mergeable: "MERGEABLE",
+      mergeable,
     });
   const HEAD = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
   const BASE = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d";
@@ -1743,6 +1743,84 @@ describe("the gate in the background", () => {
         while (world.gateRunning(run)) yield* Effect.yieldNow;
         assert.strictEqual(yield* Ref.get(woken), 0);
         assert.strictEqual(NodeFS.readFileSync(runPath(dataDir, run), "utf8"), before);
+      }),
+  );
+
+  it.effect(
+    "with every slot taken, a run GitHub says conflicts is gated at once and any other is queued",
+    () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        const run = prOpenRun(dataDir);
+        let mergeable = "MERGEABLE";
+        const prReads: Array<string> = [];
+        const gh: FactoryProcess["Service"] = {
+          run: (input) => {
+            const args = input.args ?? [];
+            if (args.includes("pr") && args.includes("view")) {
+              prReads.push(mergeable);
+              return answered(PR_VIEW("OPEN", HEAD, mergeable));
+            }
+            if (readsIssue(input)) return answered(OPEN_ISSUE);
+            return answered(JSON.stringify({ object: { type: "commit", sha: BASE } }));
+          },
+        };
+        let gateRuns = 0;
+        const world = liveWorld(
+          background,
+          dataDir,
+          gh,
+          NodeServices.layer,
+          stubSessions,
+          () => 1_000,
+          "mac-mini",
+          noAttention,
+          {
+            gate: {
+              run: () =>
+                Effect.sync(() => {
+                  gateRuns += 1;
+                  return { _tag: "queued", running: 1, max: 1 } as const;
+                }),
+            },
+            wake: Effect.void,
+            scope: yield* Scope.make(),
+          },
+          undefined,
+          undefined,
+          {
+            // Another run's gate holds the only slot.
+            gating: new Set([runIdToString(newRunId(REPO, "99", 1))]),
+            claimMemo: new ClaimMemo(),
+            stuckReads: new Map<string, number>(),
+            brokenThreads: { notFactory: new Set<string>(), unsettled: new Map<string, number>() },
+          },
+        );
+        const before = NodeFS.readFileSync(runPath(dataDir, run), "utf8");
+        // Mergeable: it waits for the slot, after one read of its pull request, and nothing is written.
+        assert.deepStrictEqual(yield* world.gate(backgroundRepo, run), {
+          kind: "queued",
+          running: 1,
+          max: 1,
+        });
+        assert.deepStrictEqual(prReads, ["MERGEABLE"]);
+        assert.isFalse(world.gateRunning(run));
+        assert.strictEqual(NodeFS.readFileSync(runPath(dataDir, run), "utf8"), before);
+        // Conflicting: the gate starts though the slot is taken, and records the conflict with no
+        // gate run, so no lock.
+        mergeable = "CONFLICTING";
+        assert.deepStrictEqual(yield* world.gate(backgroundRepo, run), { kind: "started" });
+        while (world.gateRunning(run)) yield* Effect.yieldNow;
+        assert.strictEqual(gateRuns, 0);
+        const conflictLines = readRun(dataDir, run).entries.filter(
+          (e) =>
+            e.event === "gate_command" &&
+            (e.data as { command?: string }).command === MERGE_COMMAND,
+        );
+        assert.deepStrictEqual(
+          conflictLines.map((e) => e.data),
+          [{ attempt: 2, command: MERGE_COMMAND, exit_code: 1, duration_ms: 0 }],
+        );
       }),
   );
 
