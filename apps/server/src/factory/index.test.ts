@@ -35,7 +35,6 @@ import type { State } from "./domain/lifecycle.ts";
 import {
   factoryRuntime,
   FactoryLoop,
-  FactoryRuntime,
   gateDecided,
   gateItem,
   regateWords,
@@ -170,7 +169,10 @@ min_free_gib: 0
 const INVALID = VALID.replace("max_concurrent_runs: 1\n", "");
 const MISSING = "max_concurrent_runs: is missing";
 
-/** Builds FactoryRuntime over a temp base dir whose factory dir holds `config` (or no file) and returns the log lines. */
+// The host's own load would hold claims on a busy machine, such as the gate's.
+const idleLoad = () => ({ oneMinute: 0, cores: 1 });
+
+/** Builds the factory runtime over a temp base dir whose factory dir holds `config` (or no file) and returns the log lines. */
 const logsFor = (
   config: string | undefined,
   setup: (
@@ -197,7 +199,7 @@ const logsFor = (
 
       const built = yield* Effect.scoped(
         Layer.build(
-          FactoryRuntime.pipe(
+          factoryRuntime({ readLoad: idleLoad }).pipe(
             Layer.provide(
               Layer.succeed(Paths.FactoryPaths, {
                 baseDir,
@@ -366,7 +368,7 @@ describe("attention", () => {
   ) =>
     Effect.scoped(
       Layer.build(
-        FactoryRuntime.pipe(
+        factoryRuntime({ readLoad: idleLoad }).pipe(
           Layer.provide(Layer.succeed(Paths.FactoryPaths, dirs)),
           Layer.provide(Layer.succeed(FactoryProcess, process)),
           Layer.provide(noSessions),
@@ -447,7 +449,7 @@ describe("attention", () => {
         const dirs = yield* dirWith(config);
         const { calls, process } = recordingProcess();
         const context = yield* Layer.build(
-          FactoryRuntime.pipe(
+          factoryRuntime({ readLoad: idleLoad }).pipe(
             Layer.provide(Layer.succeed(Paths.FactoryPaths, dirs)),
             Layer.provide(Layer.succeed(FactoryProcess, process)),
             Layer.provide(noSessions),
@@ -607,7 +609,7 @@ describe("waking the pass when a factory thread's run changes status", () => {
     events: Stream.Stream<string, EventsError>,
   ) =>
     Layer.build(
-      factoryRuntime({ restartDelay: 0 }).pipe(
+      factoryRuntime({ restartDelay: 0, readLoad: idleLoad }).pipe(
         Layer.provide(Layer.succeed(Paths.FactoryPaths, dirs)),
         Layer.provide(noGh),
         Layer.provide(noSessions),
@@ -671,7 +673,7 @@ describe("waking the pass when a factory thread's run changes status", () => {
           }),
         );
         const loop = yield* Layer.build(
-          factoryRuntime({ restartDelay: 0 }).pipe(
+          factoryRuntime({ restartDelay: 0, readLoad: idleLoad }).pipe(
             Layer.provide(
               Layer.succeed(Paths.FactoryPaths, {
                 baseDir,
@@ -738,6 +740,7 @@ describe("liveWorld", () => {
     feedbackSeconds: 600,
     notify: true,
     minFreeGib: 0,
+    maxLoadPerCore: 0,
   };
 
   const worldOf = (process: FactoryProcess["Service"]) =>
@@ -1582,8 +1585,8 @@ describe("the gate in the background", () => {
   const BASE = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d";
 
   /** A run whose gate passed at `HEAD` against `BASE`, whose worktree is removed and whose issue is `pr-open`. */
-  const prOpenRun = (dataDir: string): RunId => {
-    const run = newRunId(REPO, "10", 1);
+  const prOpenRun = (dataDir: string, issue = "10"): RunId => {
+    const run = newRunId(REPO, issue, 1);
     const ledger = Ledger.create(dataDir, run, { clock: () => 1_000 });
     const cause = makeCause("gate", "seed", { attempt: 1 });
     for (const event of [
@@ -1626,6 +1629,7 @@ describe("the gate in the background", () => {
     feedbackSeconds: 600,
     notify: true,
     minFreeGib: 0,
+    maxLoadPerCore: 0,
   } satisfies MachineConfig;
   const backgroundRepo: Repo = {
     watched: { repo: REPO, path: "/p" },
@@ -1685,6 +1689,106 @@ describe("the gate in the background", () => {
       );
     }),
   );
+
+  describe("under high load", () => {
+    const loaded = { ...background, maxConcurrentGates: 2, maxLoadPerCore: 1 };
+    const overloaded = () => ({ oneMinute: 55.2, cores: 12 });
+    const merged: FactoryProcess["Service"] = { run: () => answered(PR_VIEW("MERGED", HEAD)) };
+    // The re-gate of a merged pull request archives the run's thread and finishes the run.
+    const sessions = Sessions.FactorySessions.of({ ...stubSessions, archive: () => Effect.void });
+    const liveGate = (woken: Deferred.Deferred<void>, scope: Scope.Scope) => ({
+      gate: { run: () => Effect.die("no gate runs for a merged pull request") },
+      wake: Deferred.succeed(woken, undefined).pipe(Effect.asVoid),
+      scope,
+      readLoad: overloaded,
+    });
+
+    it.effect("a second gate answers queued and its run records no gate attempt", () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        const run = prOpenRun(dataDir);
+        const other = prOpenRun(dataDir, "11");
+        const before = NodeFS.readFileSync(runPath(dataDir, other), "utf8");
+        const woken = yield* Deferred.make<void>();
+        const world = liveWorld(
+          loaded,
+          dataDir,
+          merged,
+          NodeServices.layer,
+          sessions,
+          () => 1_000,
+          "mac-mini",
+          noAttention,
+          liveGate(woken, yield* Scope.make()),
+        );
+        assert.deepStrictEqual(yield* world.gate(backgroundRepo, run), { kind: "started" });
+        assert.deepStrictEqual(yield* world.gate(backgroundRepo, other), {
+          kind: "high-load",
+          oneMinute: 55.2,
+          limit: 12,
+        });
+        assert.strictEqual(world.gateRunning(other), false);
+        yield* Deferred.await(woken);
+        assert.strictEqual(NodeFS.readFileSync(runPath(dataDir, other), "utf8"), before);
+      }),
+    );
+
+    // Off the load, max_concurrent_gates is the only limit.
+    it.effect.each([
+      {
+        name: "under the limit",
+        machine: loaded,
+        readLoad: () => ({ oneMinute: 2, cores: 12 }),
+      },
+      {
+        name: "at max_load_per_core 0, which reads no load",
+        machine: { ...loaded, maxLoadPerCore: 0 },
+        readLoad: () => assert.fail("the load is not read at max_load_per_core 0"),
+      },
+    ])("$name a second gate starts", ({ machine, readLoad }) =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        const run = prOpenRun(dataDir);
+        const other = prOpenRun(dataDir, "11");
+        const woken = yield* Deferred.make<void>();
+        const world = liveWorld(
+          machine,
+          dataDir,
+          merged,
+          NodeServices.layer,
+          sessions,
+          () => 1_000,
+          "mac-mini",
+          noAttention,
+          { ...liveGate(woken, yield* Scope.make()), readLoad },
+        );
+        assert.deepStrictEqual(yield* world.gate(backgroundRepo, run), { kind: "started" });
+        assert.deepStrictEqual(yield* world.gate(backgroundRepo, other), { kind: "started" });
+        while (world.gateRunning(run) || world.gateRunning(other)) yield* Effect.yieldNow;
+      }),
+    );
+
+    it.effect("with no gate running the gate starts whatever the load", () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        const run = prOpenRun(dataDir);
+        const woken = yield* Deferred.make<void>();
+        const world = liveWorld(
+          loaded,
+          dataDir,
+          merged,
+          NodeServices.layer,
+          sessions,
+          () => 1_000,
+          "mac-mini",
+          noAttention,
+          liveGate(woken, yield* Scope.make()),
+        );
+        assert.deepStrictEqual(yield* world.gate(backgroundRepo, run), { kind: "started" });
+        yield* Deferred.await(woken);
+      }),
+    );
+  });
 
   it.effect(
     "a pr-open run that nothing moved for is re-gated quietly: no decision, no wake, no write",
@@ -1857,6 +1961,7 @@ describe("the gate in the background", () => {
     feedbackSeconds: 600,
     notify: true,
     minFreeGib: 0,
+    maxLoadPerCore: 0,
   };
   const gateRepo: Repo = {
     watched: { repo: REPO, path: "/p" },
@@ -2192,6 +2297,7 @@ describe("the gate in the background", () => {
         feedbackSeconds: 600,
         notify: true,
         minFreeGib: 0,
+        maxLoadPerCore: 0,
       };
       const world = liveWorld(
         machine,
@@ -2248,6 +2354,7 @@ describe("the gate in the background", () => {
             feedbackSeconds: 600,
             notify: true,
             minFreeGib: 0,
+            maxLoadPerCore: 0,
           },
           dataDir,
           { run: () => Effect.die("no gh") },
@@ -2330,7 +2437,7 @@ describe("reloading the machine config", () => {
       const machineConfigPath = join(factoryDir, "config.yml");
       if (config !== undefined) yield* fs.writeFileString(machineConfigPath, config);
       const context = yield* Layer.build(
-        factoryRuntime(options).pipe(
+        factoryRuntime({ readLoad: idleLoad, ...options }).pipe(
           Layer.provide(
             Layer.succeed(Paths.FactoryPaths, {
               baseDir,

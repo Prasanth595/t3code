@@ -14,7 +14,6 @@ import {
   type ModelSelection,
   type OrchestrationV2AppThread,
   type OrchestrationV2ThreadProjection,
-  type OrchestrationV2ThreadShellSnapshot,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
@@ -332,6 +331,7 @@ const layerSessions = (
       Layer.provide(
         Layer.mergeAll(
           layerProjects,
+          SqlitePersistence.layerMemory,
           settings,
           Layer.mock(ProjectionStore.ProjectionStoreV2)(projections),
           Layer.mock(ThreadLaunch.ThreadLaunchService)(launches),
@@ -609,6 +609,7 @@ describe("FactorySessions.findProject", () => {
                     }),
                   ),
               }),
+              SqlitePersistence.layerMemory,
               Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
               Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
               Layer.mock(ThreadManagement.ThreadManagementService)({}),
@@ -1898,62 +1899,6 @@ describe("FactorySessions.brokenWorktrees", () => {
         ),
       );
       assert.strictEqual(error.operation, "broken-worktrees");
-    }),
-  );
-});
-
-describe("FactorySessions.runningThreads", () => {
-  // Only the field the count reads: the shell carries far more.
-  const shell = (statuses: ReadonlyArray<string | null>) =>
-    ({
-      schemaVersion: 1,
-      snapshotSequence: 1,
-      threads: statuses.map((activityRunStatus) => ({ activityRunStatus })),
-      archivedThreads: [],
-    }) as unknown as OrchestrationV2ThreadShellSnapshot;
-
-  it.effect("counts unarchived threads whose run is preparing, starting or running", () =>
-    Effect.gen(function* () {
-      const asked: Array<unknown> = [];
-      const count = yield* Effect.gen(function* () {
-        return yield* (yield* Sessions.FactorySessions).runningThreads;
-      }).pipe(
-        Effect.provide(
-          layerSessions({
-            getShellSnapshot: (options) => {
-              asked.push(options);
-              return Effect.succeed(
-                shell(["preparing", "starting", "running", "waiting", null, "running"]),
-              );
-            },
-          }),
-        ),
-      );
-      assert.strictEqual(count, 4);
-      assert.deepStrictEqual(asked, [{ location: "active" }]);
-    }),
-  );
-
-  it.effect("fails as a sessions error when the projection cannot be read", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        Effect.gen(function* () {
-          return yield* (yield* Sessions.FactorySessions).runningThreads;
-        }),
-      ).pipe(
-        Effect.provide(
-          layerSessions({
-            getShellSnapshot: () =>
-              Effect.fail(
-                new ProjectionStore.ProjectionStoreReadError({
-                  threadId: ThreadId.make("t"),
-                  cause: new Error("locked"),
-                }),
-              ),
-          }),
-        ),
-      );
-      assert.strictEqual(error.operation, "running-threads");
     }),
   );
 });

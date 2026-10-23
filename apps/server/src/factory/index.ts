@@ -36,6 +36,7 @@ import {
   type WatchedRepo,
 } from "./config.ts";
 import { readLowestFreeSpace, type FreeSpace } from "./disk.ts";
+import { overload, readLoad, type Load } from "./load.ts";
 import * as Gate from "./gate.ts";
 import { guardLogStreams } from "./logStreams.ts";
 import { FactoryGate, clearGateLocks, gateLockFile } from "./gate.ts";
@@ -259,6 +260,8 @@ export interface LiveGate {
   readonly wake: Effect.Effect<void>;
   /** The factory's scope: a gate still running when it closes is interrupted, and its cleanup runs. */
   readonly scope: Scope.Scope;
+  /** How the machine's load is read. Default `os.loadavg`; a test passes the load it needs. */
+  readonly readLoad?: () => Load;
 }
 
 /** The run's line when its gate, started in the background, has ended. */
@@ -406,6 +409,7 @@ export const liveWorld = (
     brokenThreads: { notFactory: new Set(), unsettled: new Map() },
   },
 ): Omit<PassWorld, "watchedRepos" | "freeSpace"> => {
+  const load = live.readLoad ?? readLoad;
   const withProcess = <A, E>(effect: Effect.Effect<A, E, FactoryProcess>) =>
     Effect.provideService(effect, FactoryProcess, process);
   const githubFor = (watched: WatchedRepo) =>
@@ -496,6 +500,14 @@ export const liveWorld = (
     const id = runIdToString(run);
     if (gating.size >= machine.maxConcurrentGates && !(yield* conflicting(repo, run))) {
       return { kind: "queued", running: gating.size, max: machine.maxConcurrentGates } as const;
+    }
+    // Under load one gate runs at a time; the only gate always starts, so no run waits on a
+    // machine busy with work that is not the factory's. Like a queued gate, nothing is written.
+    if (gating.size > 0) {
+      const over = overload(machine.maxLoadPerCore, load);
+      if (over !== null) {
+        return { kind: "high-load", oneMinute: over.oneMinute, limit: over.limit } as const;
+      }
     }
     gating.add(id);
     const label = plain(`${repo.watched.repo}#${run.issue}`);
@@ -663,6 +675,7 @@ export const liveWorld = (
           Effect.mapError(asPassError("tracker")),
         ),
     gate: startGate,
+    load,
     feedback: (repo, run, base) => feedback(gateContext(repo, runProject(repo.project, base)), run),
     recordError,
     handPause: () => loadHandPause(dataDir),
@@ -783,6 +796,8 @@ export interface RuntimeOptions {
   readonly onWorld?: (world: PassWorld) => void;
   /** How a directory's free space is read. Default `statfs`; a test passes the sizes it needs. */
   readonly readFreeSpace?: (path: string) => FreeSpace;
+  /** How the machine's load is read. Default `os.loadavg`; a test passes the load it needs. */
+  readonly readLoad?: () => Load;
 }
 
 /** A pass of a factory with no config to run on. */
@@ -873,7 +888,12 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
         () => Date.now(),
         hostName(),
         attention,
-        { gate, wake: Effect.suspend(() => state.loop?.wake ?? Effect.void), scope },
+        {
+          gate,
+          wake: Effect.suspend(() => state.loop?.wake ?? Effect.void),
+          scope,
+          ...(options.readLoad !== undefined && { readLoad: options.readLoad }),
+        },
         options.gateRemoteBase,
         (repo, reading) => {
           readings.set(repo, reading);

@@ -56,7 +56,7 @@ One process, one binary, one log. One LaunchAgent runs the server; a second, `io
 
 ```
 apps/server/src/factory/
-  index.ts          FactoryLayer: the only symbol server.ts imports
+  index.ts          FactoryLayer: the factory's layer, wired from server.ts
   process.ts        node:child_process with env allowlist, process group kill and a bounded output tail
   t3/               the adapter: the only factory code that imports T3 internals
     sessions.ts     launch, send, archive, status over ThreadLaunchService, OrchestratorV2, ProjectionStoreV2
@@ -85,7 +85,7 @@ A seam is acceptable when it is a hook, not a feature: the smallest edit that ca
 ### Boundary rules, checked by a test
 
 - Only `apps/server/src/factory/t3/**` may import T3 code: files outside `apps/server/src/factory/`, or the workspace packages (`@t3tools/*` and the rest) the server depends on.
-- No file outside `factory/` may import from it, except the two lines in `server.ts`.
+- No file outside `factory/` may import from it, except `server.ts` (its factory hooks) and the routed projection store import in `orchestration-v2/runtimeLayer.ts`.
 - The checks run as a vitest test in `apps/server/src/factory/boundary.test.ts`, so they run with the factory suite.
 
 When upstream changes an internal API, the break lands as a type error in `factory/t3/`. Everything above the adapter uses softfac-shaped types (`Launched`, `ThreadStatus`, `Thread`) that we own.

@@ -75,6 +75,7 @@ describe("editMachineConfig", () => {
       feedbackSeconds: 600,
       notify: false,
       minFreeGib: 10,
+      maxLoadPerCore: 1,
     });
   });
 
@@ -96,6 +97,7 @@ describe("editMachineConfig", () => {
       feedbackSeconds: 30,
       notify: false,
       minFreeGib: 10,
+      maxLoadPerCore: 1,
     });
   });
 
@@ -165,6 +167,11 @@ describe("editMachineConfig", () => {
     it("keeps a hand-written min_free_gib through an edit", () => {
       const text = edited(COMMENTED + "min_free_gib: 25\n", { poll_seconds: 90 });
       assert.include(text, "min_free_gib: 25");
+    });
+
+    it("keeps a hand-written max_load_per_core through an edit", () => {
+      const text = edited(COMMENTED + "max_load_per_core: 2\n", { poll_seconds: 90 });
+      assert.include(text, "max_load_per_core: 2");
     });
 
     it("drops an unknown top-level key, keeps notify and the comments", () => {

@@ -10,7 +10,7 @@ The only upstream files this fork edits are the ones listed in [SEAMS](SEAMS). [
 
 ## Boundary rule
 
-Only `apps/server/src/factory/t3/` may import T3 internals. Other files under `apps/server/src/factory/` import relative paths only from inside that folder, and no package that `apps/server/package.json` takes from the workspace (`@t3tools/*`, `effect-acp`, ...). Nothing outside `apps/server/src/factory/` imports the factory, except `apps/server/src/server.ts`. `apps/server/src/factory/boundary.test.ts` enforces both.
+Only `apps/server/src/factory/t3/` may import T3 internals. Other files under `apps/server/src/factory/` import relative paths only from inside that folder, and no package that `apps/server/package.json` takes from the workspace (`@t3tools/*`, `effect-acp`, ...). Nothing outside `apps/server/src/factory/` imports the factory, except `apps/server/src/server.ts`, and `apps/server/src/orchestration-v2/runtimeLayer.ts` for the routed projection store. `apps/server/src/factory/boundary.test.ts` enforces both.
 
 ## Checks
 
