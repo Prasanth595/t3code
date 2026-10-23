@@ -50,8 +50,8 @@ const STDERR_TAIL_MAX_CHARS = 8_192;
 const STDERR_EXCERPT_MAX_CHARS = 512;
 // eslint-disable-next-line no-control-regex -- ANSI escape sequences start with ESC.
 const TERMINAL_CONTROL_PATTERN = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
-// `Error: …`, `TypeError: …`, `Error [ERR_MODULE_NOT_FOUND]: …`, `error: …`
-const ERROR_LINE_PATTERN = /^(?:[A-Za-z]*Error|error|fatal)(?: ?\[[^\]]+\])?:\s*\S/;
+// `Error: …`, `TypeError: …`, `Error [ERR_MODULE_NOT_FOUND]: …`, `error: …`, `ERROR: …`, `fatal: …`
+const ERROR_LINE_PATTERN = /^(?:[a-z]*error|fatal)(?: ?\[[^\]]+\])?:\s*\S/i;
 
 export const appendStderrTail = (current: string, chunk: string): string => {
   const next = `${current}${chunk}`;

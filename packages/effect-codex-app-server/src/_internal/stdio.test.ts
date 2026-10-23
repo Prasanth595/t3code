@@ -102,6 +102,11 @@ describe("Codex App Server stderr excerpt", () => {
       excerpt: "error: unexpected argument 'app-server' found",
     },
     {
+      name: "uppercase error label",
+      stderr: "ERROR: Missing dependency\nUsage: codex [OPTIONS]\n",
+      excerpt: "ERROR: Missing dependency",
+    },
+    {
       name: "unlabelled message",
       stderr: "WARNING: proceeding without PATH aliases\nMissing OpenAI API key.\n",
       excerpt: "Missing OpenAI API key.",
