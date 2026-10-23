@@ -63,6 +63,11 @@ function ConfiguredConnectOnboardingDialog() {
     primaryEnvironmentId === null ? environmentsReady : primarySessionState._tag !== "Initial";
 
   const controller = useCloudLinkController();
+  const hostLabel = controller.linkState.target?.label ?? "this host";
+  const stepLabels: Record<OnboardingStep, string> = {
+    publish: `Share ${hostLabel}`,
+    devices: "Connect devices",
+  };
   const showPublishStep = canManageRelay && controller.linkState.target !== null;
   const steps: ReadonlyArray<OnboardingStep> = showPublishStep
     ? ["publish", "devices"]
@@ -196,7 +201,7 @@ function ConfiguredConnectOnboardingDialog() {
         >
           {steps.length > 1 ? (
             <WizardSteps
-              steps={steps.map((id) => STEP_LABELS[id])}
+              steps={steps.map((id) => stepLabels[id])}
               currentStep={steps.indexOf(step)}
               isStepDisabled={() => isApplying}
               onStepChange={(index) => {
@@ -216,6 +221,7 @@ function ConfiguredConnectOnboardingDialog() {
         <WizardPanel>
           {step === "publish" ? (
             <PublishStep
+              hostLabel={hostLabel}
               exposeEnvironment={exposeEnvironment}
               publishAgentActivity={publishAgentActivity}
               disabled={isApplying || !canManageRelay || linkStateData === null}
@@ -275,12 +281,8 @@ function ConfiguredConnectOnboardingDialog() {
   );
 }
 
-const STEP_LABELS: Record<OnboardingStep, string> = {
-  publish: "Access and activity",
-  devices: "Connect devices",
-};
-
 function PublishStep({
+  hostLabel,
   exposeEnvironment,
   publishAgentActivity,
   disabled,
@@ -288,6 +290,7 @@ function PublishStep({
   onExposeEnvironmentChange,
   onPublishAgentActivityChange,
 }: {
+  readonly hostLabel: string;
   readonly exposeEnvironment: boolean;
   readonly publishAgentActivity: boolean;
   readonly disabled: boolean;
@@ -300,7 +303,7 @@ function PublishStep({
       <div className="rounded-lg border">
         <OnboardingToggleRow
           title="Allow access to this environment through T3 Connect"
-          description="Connect to this host from other devices signed in to your account."
+          description={`Connect to ${hostLabel} from other devices signed in to your account.`}
           checked={exposeEnvironment}
           disabled={disabled}
           onCheckedChange={onExposeEnvironmentChange}

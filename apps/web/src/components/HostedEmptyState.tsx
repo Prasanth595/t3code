@@ -42,7 +42,7 @@ export function HostedEmptyState() {
               {localEnvironmentOff
                 ? "Enable it in Connections, or connect another host."
                 : cloudEnabled
-                  ? "Your agents run on your host."
+                  ? "Your agents run on your computer."
                   : "Your agents run on your host. Start T3 Code there first."}
             </EmptyDescription>
           </EmptyHeader>
