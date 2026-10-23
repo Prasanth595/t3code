@@ -17,6 +17,7 @@ import {
   readServiceEnvironment,
   type BackupSpaceProbe,
   readServiceState,
+  stateDirOwned,
   writeServiceState,
 } from "./serviceLauncher.ts";
 import {
@@ -29,12 +30,16 @@ import {
 } from "./cloud/serviceProtocol.ts";
 
 const spawnedChildren = vi.hoisted((): Array<NodeChildProcess.ChildProcess> => []);
+const spawnHook = vi.hoisted(() => ({
+  current: undefined as ((child: NodeChildProcess.ChildProcess) => void) | undefined,
+}));
 
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeChildProcess>();
   const spawn = (...args: Parameters<typeof actual.spawn>) => {
     const child = actual.spawn(...args);
     spawnedChildren.push(child);
+    spawnHook.current?.(child);
     return child;
   };
   return { ...actual, spawn: spawn as typeof actual.spawn };
@@ -270,6 +275,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
           `const db = new (require("node:sqlite").DatabaseSync)(${JSON.stringify(ownerPath)});`,
           `try { db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;"); }`,
           `catch { process.exit(${SERVER_EXIT_CODE_STATE_DIR_OWNED}); }`,
+          'process.send("owner");',
           "setInterval(() => {}, 1_000);",
         ].join("\n"),
       );
@@ -282,16 +288,24 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       const otherOwner = new NodeSqlite.DatabaseSync(ownerPath);
       otherOwner.exec("BEGIN EXCLUSIVE;");
       const refused = Promise.withResolvers<void>();
-      const reclaimed = Promise.withResolvers<void>();
+      const owned = Promise.withResolvers<void>();
       yield* Effect.acquireRelease(
         Effect.sync(() =>
           vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
             if (String(chunk).includes("owns this T3 home")) refused.resolve();
-            if (String(chunk).includes("T3 home is free again")) reclaimed.resolve();
             return true;
           }),
         ),
         (spy) => Effect.sync(() => spy.mockRestore()),
+      );
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          spawnHook.current = (child) => child.once("message", () => owned.resolve());
+        }),
+        () =>
+          Effect.sync(() => {
+            spawnHook.current = undefined;
+          }),
       );
       const spawnsBefore = spawnedChildren.length;
       const launcher = new Launcher(
@@ -304,10 +318,35 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       const running = launcher.run();
       yield* Effect.promise(() => refused.promise);
       otherOwner.close();
-      yield* Effect.promise(() => reclaimed.promise);
+      yield* Effect.promise(() => owned.promise);
       yield* Effect.promise(() => launcher.stop("SIGTERM"));
       yield* Effect.promise(() => running);
       assert.strictEqual(spawnedChildren.length - spawnsBefore, 2);
+    }),
+  );
+
+  it.effect("treats the T3 home as owned while the lock or a pre-lock server holds it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-owned-" });
+      const stateDir = path.join(root, "userdata");
+      const recordPath = path.join(stateDir, "server-runtime.json");
+      yield* fs.makeDirectory(stateDir, { recursive: true });
+      assert.isFalse(stateDirOwned(root));
+
+      const owner = new NodeSqlite.DatabaseSync(path.join(stateDir, "server-owner.sqlite"));
+      owner.exec("BEGIN EXCLUSIVE;");
+      assert.isTrue(stateDirOwned(root));
+      owner.close();
+
+      const record = { version: 1, pid: process.pid, port: 1, origin: "", startedAt: "" };
+      yield* fs.writeFileString(recordPath, JSON.stringify(record));
+      assert.isTrue(stateDirOwned(root));
+      yield* fs.writeFileString(recordPath, JSON.stringify({ ...record, ownerId: "lock-aware" }));
+      assert.isFalse(stateDirOwned(root));
+      yield* fs.writeFileString(recordPath, JSON.stringify({ ...record, pid: 2 ** 22 + 1 }));
+      assert.isFalse(stateDirOwned(root));
     }),
   );
 

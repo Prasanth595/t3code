@@ -460,25 +460,45 @@ async function terminateChild(
   }
 }
 
+const isSqliteBusy = (cause: unknown) =>
+  cause instanceof Error &&
+  (("errcode" in cause && cause.errcode === 5) ||
+    ("code" in cause && cause.code === "SQLITE_BUSY"));
+
 /**
- * Takes and drops the same exclusive transaction the server holds for its
- * lifetime (see `acquireServerOwnership`). Only SQLITE_BUSY counts as owned:
- * any other failure is left for the server's own startup to report.
+ * Mirrors the refusals in `acquireServerOwnership`: the lock, then a live
+ * pre-lock server's `server-runtime.json`. That record's PID-reuse check is
+ * skipped, so a reused PID keeps the launcher waiting rather than restarting
+ * a server that would be refused. Any other failure is left for the server's
+ * own startup to report.
  */
-function stateDirOwned(baseDir: string): boolean {
+export function stateDirOwned(baseDir: string): boolean {
+  const stateDir = NodePath.join(baseDir, "userdata");
   let db: NodeSqlite.DatabaseSync | undefined;
   try {
-    db = new NodeSqlite.DatabaseSync(NodePath.join(baseDir, "userdata", "server-owner.sqlite"));
+    db = new NodeSqlite.DatabaseSync(NodePath.join(stateDir, "server-owner.sqlite"));
     db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE; ROLLBACK;");
-    return false;
   } catch (cause) {
-    return (
-      cause instanceof Error &&
-      (("errcode" in cause && cause.errcode === 5) ||
-        ("code" in cause && cause.code === "SQLITE_BUSY"))
-    );
+    return isSqliteBusy(cause);
   } finally {
     db?.close();
+  }
+  let record: unknown;
+  try {
+    record = JSON.parse(
+      NodeFS.readFileSync(NodePath.join(stateDir, "server-runtime.json"), "utf8"),
+    );
+  } catch {
+    return false;
+  }
+  if (typeof record !== "object" || record === null || "ownerId" in record) return false;
+  const pid = "pid" in record ? record.pid : undefined;
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "EPERM";
   }
 }
 
