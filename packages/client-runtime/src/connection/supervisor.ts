@@ -397,7 +397,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     ).pipe(Effect.flatMap((replaced) => Deferred.succeed(ack, replaced)));
   };
 
-  const takeSignal = Queue.take(signals).pipe(Effect.tap((next) => acknowledge(next, true)));
+  // Waiting stays interruptible; once taken, a control must be answered before a race can discard it.
+  const takeSignal = Effect.uninterruptibleMask((restore) =>
+    restore(Queue.take(signals)).pipe(Effect.tap((next) => acknowledge(next, true))),
+  );
 
   const logManagedRelayAccountChange = Effect.logInfo(
     "Managed relay account changed; restarting the environment connection.",
@@ -624,8 +627,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     // A probe answers an explicit retry here, so the retry must not also reset
     // the backoff of a later, unrelated failure.
     // Only a disconnect ends the lease; a retry or connect keeps it current.
-    const takeLeaseSignal = Queue.take(signals).pipe(
-      Effect.tap((next) => acknowledge(next, next._tag === "DisconnectRequested")),
+    const takeLeaseSignal = Effect.uninterruptibleMask((restore) =>
+      restore(Queue.take(signals)).pipe(
+        Effect.tap((next) => acknowledge(next, next._tag === "DisconnectRequested")),
+      ),
+    ).pipe(
       Effect.tap((next) =>
         next._tag === "RetryRequested" ? Ref.set(resetRetryState, false) : Effect.void,
       ),

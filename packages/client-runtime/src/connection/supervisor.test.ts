@@ -1,6 +1,9 @@
 import { AuthStandardClientScopes, EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as Scope from "effect/Scope";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -1018,6 +1021,71 @@ describe("EnvironmentSupervisor", () => {
         generation: 1,
       });
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each(["connecting", "connected"] as const)(
+    "acknowledges a dequeued %s control before a racing interruption and shutdown",
+    (phase) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          ready: () => (phase === "connecting" ? Effect.never : Effect.void),
+        });
+        const supervisorScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(supervisorScope, Exit.void));
+        const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(
+          Effect.provide(harness.dependencies),
+          Effect.provideService(Scope.Scope, supervisorScope),
+        );
+        const before = yield* awaitState(
+          supervisor.state,
+          (state) =>
+            state.phase === phase && (phase === "connected" || state.stage === "synchronizing"),
+        );
+        const dequeued = yield* Deferred.make<void>();
+        let value = before;
+        let armed = true;
+        Object.defineProperty(supervisor.state, "value", {
+          configurable: true,
+          get() {
+            if (armed) {
+              armed = false;
+              // The next state read is in acknowledgement, after the request was dequeued.
+              Deferred.doneUnsafe(dequeued, Exit.void);
+              const fiber = Fiber.getCurrent();
+              if (!fiber) throw new Error("Expected the acknowledgement fiber");
+              fiber.interruptUnsafe(fiber.id);
+            }
+            return value;
+          },
+          set(next: SupervisorConnectionState) {
+            value = next;
+          },
+        });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() =>
+            Object.defineProperty(supervisor.state, "value", {
+              configurable: true,
+              writable: true,
+              value,
+            }),
+          ),
+        );
+        const waiting = yield* supervisor
+          .control("disconnect")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(dequeued);
+        yield* Scope.close(supervisorScope, Exit.void);
+        const completed = waiting.pollUnsafe();
+        expect(completed).toBeDefined();
+        if (completed) {
+          expect(Exit.isSuccess(completed)).toBe(true);
+          if (Exit.isSuccess(completed)) expect(completed.value).toEqual(Option.some(before));
+        }
+        expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+        expect(Option.isNone(yield* SubscriptionRef.get(supervisor.session))).toBe(true);
+      }),
   );
 
   it.effect("does not lose an explicit disconnect among concurrent wakeup signals", () =>
