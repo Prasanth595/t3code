@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { contextChipAccent, contextChipPresentation } from "./composerChipPresentation";
-import { getMobileThemeVariables, MOBILE_THEME_IDS } from "./mobileTheme";
+import {
+  flattenThemeColor,
+  getMobileThemeVariables,
+  MOBILE_THEME_IDS,
+  type MobileThemeVariables,
+} from "./mobileTheme";
 
 const CHIP_ACCENTS = [
   ...new Set(
@@ -43,23 +48,52 @@ function contrastRatio(first: string, second: string): number {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-// Chips render on the user bubble and on the thread canvas. Material You is dynamic, so its
-// saturated bubble is covered by a representative sample below.
-function chipSurfaces(appearance: "light" | "dark") {
-  return MOBILE_THEME_IDS.filter((id) => id !== "material-you").flatMap((id) => {
-    const theme = getMobileThemeVariables(id, appearance);
-    return [
-      { surface: theme["--color-user-bubble"], text: theme["--color-user-bubble-foreground"] },
-      { surface: theme["--color-thread-canvas"], text: theme["--color-md-body"] },
-    ];
-  });
+function chipSurfaces(theme: MobileThemeVariables) {
+  const screen = theme["--color-screen"];
+  return (
+    [
+      ["--color-user-bubble", "--color-user-bubble-foreground"],
+      ["--color-thread-canvas", "--color-md-body"],
+      ["--color-composer-surface", "--color-foreground"],
+    ] as const
+  ).map(([surface, text]) => ({
+    surface: flattenThemeColor(theme[surface], screen).slice(0, 7),
+    text: theme[text],
+  }));
 }
 
+const BUILT_IN_THEMES = MOBILE_THEME_IDS.filter((id) => id !== "material-you").flatMap((id) =>
+  (["light", "dark"] as const).map((appearance) => ({
+    name: `${id} ${appearance}`,
+    theme: getMobileThemeVariables(id, appearance),
+  })),
+);
+
 describe("contextChipAccent", () => {
-  it("reads at 4.5:1 on every built-in light theme's user bubble and thread canvas", () => {
-    for (const { surface, text } of chipSurfaces("light")) {
+  it("draws one color per theme that reads at 4.5:1 in messages, replies and the composer", () => {
+    for (const { name, theme } of BUILT_IN_THEMES) {
       for (const accent of CHIP_ACCENTS) {
-        const shown = contextChipAccent(accent, text)!;
+        const shown = contextChipAccent(accent, theme, theme["--color-md-body"])!;
+        for (const { surface, text } of chipSurfaces(theme)) {
+          expect(contextChipAccent(accent, theme, text)).toBe(shown);
+          expect(
+            contrastRatio(shown, surface),
+            `${name}: ${accent} → ${shown} on ${surface}`,
+          ).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    }
+  });
+
+  it("reads on both a saturated Material You bubble and the light canvas beside it", () => {
+    const theme = {
+      ...getMobileThemeVariables("t3-code", "light"),
+      "--color-user-bubble": "#6750a4",
+      "--color-user-bubble-foreground": "#ffffff",
+    };
+    for (const { surface, text } of chipSurfaces(theme)) {
+      for (const accent of CHIP_ACCENTS) {
+        const shown = contextChipAccent(accent, theme, text)!;
         expect(
           contrastRatio(shown, surface),
           `${accent} → ${shown} on ${surface}`,
@@ -68,12 +102,8 @@ describe("contextChipAccent", () => {
     }
   });
 
-  it("keeps the shared accents on dark surfaces and saturated Material You bubbles", () => {
-    const surfaces = [...chipSurfaces("dark"), { surface: "#6750A4FF", text: "#FFFFFFFF" }];
-    for (const { text } of surfaces) {
-      for (const accent of CHIP_ACCENTS) {
-        expect(contextChipAccent(accent, text)).toBe(accent);
-      }
-    }
+  it("keeps an accent that already reads everywhere", () => {
+    const theme = getMobileThemeVariables("t3-code", "dark");
+    expect(contextChipAccent("#009f6e", theme, theme["--color-md-body"])).toBe("#009f6e");
   });
 });

@@ -507,6 +507,7 @@ export default defineConfig({
           "apps/mobile/src/native/T3ComposerEditor.ios.tsx",
           "apps/mobile/src/native/T3ComposerEditor.native.tsx",
           "apps/mobile/src/native/SelectableMarkdownText.tsx",
+          "apps/mobile/src/native/useEnrichedLinkVariants.ts",
         ],
         rules: {
           "t3code/no-mobile-uniwind-theme-escape-hatches": ["error", { allowUniwindTheme: true }],

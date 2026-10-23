@@ -12,6 +12,7 @@ import { FONT_FAMILIES } from "../lib/fontFamilies";
 import { contextChipIconSource } from "../lib/contextChipIconSource";
 import { markdownFileIconSource } from "../lib/markdownFileIcons";
 import { markdownLinkIconSource } from "../lib/markdownLinkIcons";
+import { useUniwindTheme } from "../lib/useUniwindTheme";
 import { resolveMarkdownLinkIcon, resolveMarkdownLinkPresentation } from "../lib/markdownLinks";
 import type {
   MarkdownLinkCustomization,
@@ -97,6 +98,7 @@ export function useEnrichedLinkVariants(
   props: SelectableMarkdownTextProps,
 ) {
   const { linkCustomization, skills, textStyle } = props;
+  const theme = useUniwindTheme();
   const links = useMemo(() => {
     const byUrl = new Map<string, MarkdownLinkCustomization>();
     for (const asset of assets) {
@@ -112,11 +114,11 @@ export function useEnrichedLinkVariants(
         [...links].map(([url, link]) => [
           url,
           link.chip
-            ? (contextChipAccent(link.chip.accent, textStyle.color) ?? textStyle.color)
+            ? (contextChipAccent(link.chip.accent, theme, textStyle.color) ?? textStyle.color)
             : undefined,
         ]),
       ),
-    [links, textStyle],
+    [links, textStyle, theme],
   );
   const linkVariants = useMemo<MarkdownStyle["linkVariants"]>(
     () =>
