@@ -7,7 +7,14 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import type { State } from "../domain/lifecycle.ts";
 import { makeCause } from "./events.ts";
 import { Ledger } from "./ledger.ts";
-import { holdsSlot, listRuns, listUnfinishedRuns, readRuns, runInfoOf } from "./listRuns.ts";
+import {
+  holdsSlot,
+  listRuns,
+  listUnfinishedRuns,
+  readRuns,
+  runInfoOf,
+  runsByThread,
+} from "./listRuns.ts";
 import { lastLineIsFinished } from "./read.ts";
 import { RUNS_DIR, runIdFileName, type RunId } from "./runId.ts";
 import { T0, ticking, useTempDirs } from "./testSupport.ts";
@@ -904,5 +911,47 @@ describe("readRuns: skipFinishedBefore", () => {
     ]);
     expect(fullReads()).not.toContain(oldFinished);
     expect(listRuns(dataDir).map((run) => run.id.issue)).toEqual(["1", "2", "3"]);
+  });
+});
+
+describe("runsByThread", () => {
+  const launched = (threadId: string, ms = T0) =>
+    line("session_launched", { thread_id: threadId, worktree: null, branch: null }, ms);
+
+  it("maps each session thread to its run and whether that session is stopped", () => {
+    const dataDir = tempDir();
+    writeRun(dataDir, rid(1), launched("finished", T0) + finishedLine);
+    // A relaunch: the earlier session was stopped before the later one started.
+    writeRun(dataDir, rid(2), launched("earlier", T0 + 1000) + launched("current", T0 + 2000));
+    // A pr-open run whose session was stopped and its worktree removal tried.
+    writeRun(
+      dataDir,
+      rid(3),
+      launched("pr-open", T0 + 3000) +
+        line("worktree_remove_failed", { path: "/wt/t3-x", error: "not empty" }, T0 + 4000),
+    );
+    const { runs, complete } = runsByThread(dataDir);
+    expect(complete).toBe(true);
+    expect(Object.fromEntries(runs)).toEqual({
+      finished: { run: rid(1), stopped: true },
+      earlier: { run: rid(2), stopped: true },
+      current: { run: rid(2), stopped: false },
+      "pr-open": { run: rid(3), stopped: true },
+    });
+  });
+
+  it("is empty and complete without a runs directory", () => {
+    const { runs, complete } = runsByThread(tempDir());
+    expect(runs.size).toBe(0);
+    expect(complete).toBe(true);
+  });
+
+  it("is not complete when a run file cannot be read", () => {
+    const dataDir = tempDir();
+    writeRun(dataDir, rid(1), launched("readable", T0));
+    unreadableRun(dataDir, rid(2));
+    const { runs, complete } = runsByThread(dataDir);
+    expect([...runs.keys()]).toEqual(["readable"]);
+    expect(complete).toBe(false);
   });
 });

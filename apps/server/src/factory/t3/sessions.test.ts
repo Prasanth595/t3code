@@ -1323,6 +1323,9 @@ const recordingGit = (
   },
 });
 
+/** A projection with no live thread on any worktree. */
+const noThreadsOnWorktrees = { getThreadWorktreePaths: () => Effect.succeed([]) };
+
 const removeWorktree = (path: string) =>
   Effect.gen(function* () {
     const sessions = yield* Sessions.FactorySessions;
@@ -1336,7 +1339,7 @@ describe("FactorySessions.removeWorktree", () => {
       const error = yield* Effect.flip(removeWorktree("t3code-abc")).pipe(
         Effect.provide(
           layerSessions(
-            {},
+            noThreadsOnWorktrees,
             {},
             {},
             recordingGit(calls, () => Effect.succeed(gitResult(0))),
@@ -1357,7 +1360,7 @@ describe("FactorySessions.removeWorktree", () => {
       yield* removeWorktree("/tmp/wt/t3-abc").pipe(
         Effect.provide(
           layerSessions(
-            {},
+            noThreadsOnWorktrees,
             {},
             {},
             recordingGit(calls, () => Effect.succeed(gitResult(0))),
@@ -1383,7 +1386,7 @@ describe("FactorySessions.removeWorktree", () => {
       yield* removeWorktree("/tmp/factory-sessions-test-no-such-dir/wt").pipe(
         Effect.provide(
           layerSessions(
-            {},
+            noThreadsOnWorktrees,
             {},
             {},
             recordingGit(calls, () =>
@@ -1406,7 +1409,7 @@ describe("FactorySessions.removeWorktree", () => {
       yield* removeWorktree("/tmp/factory-sessions-test-no-such-dir/wt").pipe(
         Effect.provide(
           layerSessions(
-            {},
+            noThreadsOnWorktrees,
             {},
             {},
             recordingGit([], () =>
@@ -1449,7 +1452,7 @@ describe("FactorySessions.removeWorktree", () => {
       const sessions = yield* Sessions.FactorySessions.pipe(
         Effect.provide(
           layerSessions(
-            {},
+            noThreadsOnWorktrees,
             {},
             {},
             recordingGit(calls, () =>
@@ -1504,7 +1507,7 @@ describe("FactorySessions.removeWorktree", () => {
       const sessions = yield* Sessions.FactorySessions.pipe(
         Effect.provide(
           layerSessions(
-            {},
+            noThreadsOnWorktrees,
             {},
             {},
             recordingGit([], () =>
@@ -1568,7 +1571,7 @@ describe("FactorySessions.removeWorktree", () => {
           const error = yield* Effect.flip(removeWorktree(dir)).pipe(
             Effect.provide(
               layerSessions(
-                {},
+                noThreadsOnWorktrees,
                 {},
                 {},
                 recordingGit([], () =>
@@ -1602,7 +1605,7 @@ describe("FactorySessions.removeWorktree", () => {
           const error = yield* Effect.flip(removeWorktree(dir)).pipe(
             Effect.provide(
               layerSessions(
-                {},
+                noThreadsOnWorktrees,
                 {},
                 {},
                 recordingGit([], () =>
@@ -1636,7 +1639,7 @@ describe("FactorySessions.removeWorktree", () => {
         const error = yield* Effect.flip(removeWorktree(dir)).pipe(
           Effect.provide(
             layerSessions(
-              {},
+              noThreadsOnWorktrees,
               {},
               {},
               recordingGit(calls, () => Effect.succeed(gitResult(128, "fatal: cannot lock ref\n"))),
@@ -1651,6 +1654,251 @@ describe("FactorySessions.removeWorktree", () => {
         assert.isTrue(yield* fs.exists(dir));
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("archives every live thread on the worktree before git removes it", () =>
+    Effect.gen(function* () {
+      const order: Array<string> = [];
+      const child = ThreadId.make("thread:project:factory-sessions-test:child");
+      const other = ThreadId.make("thread:project:factory-sessions-test:other");
+      yield* removeWorktree("/tmp/wt/t3-abc").pipe(
+        Effect.provide(
+          layerSessions(
+            {
+              getThreadWorktreePaths: () =>
+                Effect.succeed([
+                  { threadId: child, worktreePath: "/tmp/wt/t3-abc" },
+                  { threadId: other, worktreePath: "/tmp/wt/t3-other" },
+                ]),
+              getThread: () =>
+                Effect.succeed({
+                  ...thread("t3/abc", "/tmp/wt/t3-abc"),
+                  archivedAt: null,
+                } as never),
+            },
+            {},
+            {
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  order.push(`${command.type} ${"threadId" in command ? command.threadId : ""}`);
+                }) as never,
+            },
+            {
+              execute: () =>
+                Effect.sync(() => {
+                  order.push("git worktree remove");
+                  return gitResult(0);
+                }),
+            },
+          ),
+        ),
+      );
+      assert.deepStrictEqual(order, [`thread.archive ${child}`, "git worktree remove"]);
+    }),
+  );
+
+  it.effect("leaves the worktree whole when a thread on it cannot be archived", () =>
+    Effect.gen(function* () {
+      const calls: Array<GitCall> = [];
+      const error = yield* Effect.flip(removeWorktree("/tmp/wt/t3-abc")).pipe(
+        Effect.provide(
+          layerSessions(
+            {
+              getThreadWorktreePaths: () =>
+                Effect.succeed([{ threadId, worktreePath: "/tmp/wt/t3-abc" }]),
+              getThread: () =>
+                Effect.succeed({
+                  ...thread("t3/abc", "/tmp/wt/t3-abc"),
+                  archivedAt: null,
+                } as never),
+            },
+            {},
+            {
+              dispatch: () =>
+                Effect.fail(new DispatchRejected({ message: "dispatch failed" }) as never),
+            },
+            recordingGit(calls, () => Effect.succeed(gitResult(0))),
+          ),
+        ),
+      );
+      assert.strictEqual(error.operation, "archive");
+      assert.strictEqual(calls.length, 0);
+    }),
+  );
+
+  it.effect("leaves the worktree whole when the threads on it cannot be read", () =>
+    Effect.gen(function* () {
+      const calls: Array<GitCall> = [];
+      const error = yield* Effect.flip(removeWorktree("/tmp/wt/t3-abc")).pipe(
+        Effect.provide(
+          layerSessions(
+            {
+              getThreadWorktreePaths: () =>
+                Effect.fail(new ProjectionStore.ProjectionStoreSetupError({ cause: "locked" })),
+            },
+            {},
+            {},
+            recordingGit(calls, () => Effect.succeed(gitResult(0))),
+          ),
+        ),
+      );
+      assert.strictEqual(error.operation, "archive");
+      assert.strictEqual(calls.length, 0);
+    }),
+  );
+});
+
+describe("FactorySessions.brokenWorktrees", () => {
+  const listBroken = Effect.gen(function* () {
+    return yield* (yield* Sessions.FactorySessions).brokenWorktrees;
+  });
+
+  it.effect(
+    "names the live threads whose worktree is gone or is not a git checkout, with every thread on that path",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "factory-sessions-broken-" });
+          // A checkout, a half-removed one with only an ignored folder left, and one deleted.
+          yield* fs.makeDirectory(`${dir}/whole`);
+          yield* fs.writeFileString(`${dir}/whole/.git`, "gitdir: /repo/.git/worktrees/whole\n");
+          yield* fs.makeDirectory(`${dir}/remnant/source`, { recursive: true });
+          const live = [
+            { threadId: ThreadId.make("whole"), worktreePath: `${dir}/whole` },
+            { threadId: ThreadId.make("child"), worktreePath: `${dir}/remnant` },
+            { threadId: ThreadId.make("deleted"), worktreePath: `${dir}/deleted` },
+          ];
+          // The archived session keeps its path, so the ledger's thread id is on it.
+          const all = [
+            ...live,
+            { threadId: ThreadId.make("session"), worktreePath: `${dir}/remnant` },
+          ];
+          const broken = yield* listBroken.pipe(
+            Effect.provide(
+              layerSessions({
+                getThreadWorktreePaths: (options) =>
+                  Effect.succeed(options?.includeArchived === true ? all : live),
+              }),
+            ),
+          );
+          assert.deepStrictEqual(broken, [
+            {
+              threadId: "child",
+              worktreePath: `${dir}/remnant`,
+              threadsOnPath: ["child", "session"],
+            },
+            { threadId: "deleted", worktreePath: `${dir}/deleted`, threadsOnPath: ["deleted"] },
+          ]);
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not call a worktree broken when its .git cannot be checked", () =>
+    Effect.gen(function* () {
+      const bound = [{ threadId: ThreadId.make("t"), worktreePath: "/wt/t3-locked" }];
+      const broken = yield* listBroken.pipe(
+        Effect.provide(
+          layerSessions(
+            { getThreadWorktreePaths: () => Effect.succeed(bound) },
+            {},
+            {},
+            {},
+            FileSystem.layerNoop({
+              exists: (path) =>
+                Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "exists",
+                    pathOrDescriptor: path,
+                  }),
+                ),
+            }),
+          ),
+        ),
+      );
+      assert.deepStrictEqual(broken, []);
+    }),
+  );
+
+  it.effect(
+    "leaves out a thread this server archived, so a person's unarchive sticks, but not one whose archive failed",
+    () =>
+      Effect.gen(function* () {
+        const archived = ThreadId.make("archived-then-unarchived");
+        const failed = ThreadId.make("archive-failed");
+        // Both are live and on a deleted folder whatever the archive did, as after an unarchive.
+        const bound = [
+          { threadId: archived, worktreePath: "/tmp/factory-sessions-test-no-such-dir/a" },
+          { threadId: failed, worktreePath: "/tmp/factory-sessions-test-no-such-dir/b" },
+        ];
+        const found = yield* Effect.gen(function* () {
+          const sessions = yield* Sessions.FactorySessions;
+          yield* sessions.archive(archived);
+          yield* Effect.flip(sessions.archive(failed));
+          return yield* sessions.brokenWorktrees;
+        }).pipe(
+          Effect.provide(
+            layerSessions(
+              {
+                getThreadWorktreePaths: () => Effect.succeed(bound),
+                getThread: () =>
+                  Effect.succeed({ ...thread("t3/abc", "/x"), archivedAt: null } as never),
+              },
+              {},
+              {
+                dispatch: (command) =>
+                  "threadId" in command && command.threadId === failed
+                    ? Effect.fail(new DispatchRejected({ message: "dispatch failed" }) as never)
+                    : (Effect.succeed({}) as never),
+              },
+            ),
+          ),
+        );
+        assert.deepStrictEqual(
+          found.map((thread) => thread.threadId),
+          [failed],
+        );
+      }),
+  );
+
+  it.effect("leaves out a thread that was already archived when the factory archived it", () =>
+    Effect.gen(function* () {
+      const bound = [{ threadId, worktreePath: "/tmp/factory-sessions-test-no-such-dir/a" }];
+      const found = yield* Effect.gen(function* () {
+        const sessions = yield* Sessions.FactorySessions;
+        yield* sessions.archive(threadId);
+        return yield* sessions.brokenWorktrees;
+      }).pipe(
+        Effect.provide(
+          layerSessions({
+            // Archived when the factory asks, live again (a person unarchived it) when it looks.
+            getThread: () =>
+              Effect.succeed({
+                ...thread("t3/abc", "/x"),
+                archivedAt: DateTime.makeUnsafe("2026-10-05T00:00:00Z"),
+              } as never),
+            getThreadWorktreePaths: () => Effect.succeed(bound),
+          }),
+        ),
+      );
+      assert.deepStrictEqual(found, []);
+    }),
+  );
+
+  it.effect("fails as a sessions error when the projection cannot be read", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(listBroken).pipe(
+        Effect.provide(
+          layerSessions({
+            getThreadWorktreePaths: () =>
+              Effect.fail(new ProjectionStore.ProjectionStoreSetupError({ cause: "locked" })),
+          }),
+        ),
+      );
+      assert.strictEqual(error.operation, "broken-worktrees");
+    }),
   );
 });
 

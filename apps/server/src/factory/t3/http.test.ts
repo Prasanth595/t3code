@@ -25,8 +25,10 @@ import { describe } from "vite-plus/test";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import * as SessionStore from "../../auth/SessionStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
+import * as ServerHttp from "../../http.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 import { Attention, type AttentionItem } from "../attention.ts";
@@ -71,6 +73,15 @@ const layerRoutes = Layer.mergeAll(FactoryRoutes, testOnlyRoute).pipe(
       Layer.provideMerge(NodeServices.layer),
       Layer.provideMerge(Etag.layerWeak),
     ),
+  ),
+);
+
+/** The routes behind the server's own browser CORS layer, as `server.ts` serves them. */
+const layerRoutesWithCors = Layer.merge(
+  layerRoutes,
+  ServerHttp.layerBrowserApiCors.pipe(
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-factory-cors-test-" })),
+    Layer.provide(NodeServices.layer),
   ),
 );
 
@@ -177,6 +188,8 @@ interface World {
   readonly watchFails?: string;
   /** The clock the routes read; the live one when unset. */
   readonly clock?: Clock.Clock;
+  /** Serve the routes behind the server's browser CORS layer. */
+  readonly cors?: boolean;
 }
 
 /** What the loop was asked to do: `count` wakes, `reloads` config reloads. */
@@ -275,11 +288,16 @@ const serving = <A>(
       readonly dir: string;
       readonly wakes: Calls;
       readonly exits: Exits;
+      /** The name of the browser session cookie. */
+      readonly cookieName: string;
+      /** Sends a request as it is, for what `call` cannot shape. */
+      readonly send: (request: Request) => Promise<Response>;
     },
   ) => Promise<A>,
 ) =>
   Effect.gen(function* () {
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const { cookieName } = yield* SessionStore.SessionStore;
     const dir = world.dir ?? tempDir("factory");
     const wakes = { count: 0, reloads: 0 };
     const exits = makeExits();
@@ -297,7 +315,11 @@ const serving = <A>(
       settingsWrite: yield* issue(AuthSettingsWriteScope),
     };
     return yield* Effect.acquireUseRelease(
-      Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
+      Effect.sync(() =>
+        HttpRouter.toWebHandler(world.cors ? layerRoutesWithCors : layerRoutes, {
+          disableLogger: true,
+        }),
+      ),
       ({ handler }) =>
         Effect.tryPromise(() =>
           use(
@@ -312,7 +334,14 @@ const serving = <A>(
                 }),
                 context,
               ),
-            { tokens, dir, wakes, exits },
+            {
+              tokens,
+              dir,
+              wakes,
+              exits,
+              cookieName,
+              send: (request) => handler(request, context),
+            },
           ),
         ),
       ({ dispose }) => Effect.promise(dispose),
@@ -336,7 +365,7 @@ const FACTORY_ROUTES = [
   ["POST", "/api/factory/claims/resume"],
   ["POST", "/api/factory/attention/dismiss"],
   ["GET", "/api/factory/config"],
-  ["PUT", "/api/factory/config"],
+  ["POST", "/api/factory/config"],
   ["POST", "/api/factory/restart"],
 ] as const;
 
@@ -1194,25 +1223,27 @@ repos:
     ),
   );
 
-  it.effect("PUT needs settings:write: read and operate sessions are refused, file untouched", () =>
-    serving({}, async (call, { tokens, dir, wakes }) => {
-      NodeFS.writeFileSync(configFile(dir), COMMENTED);
-      for (const token of [tokens.read, tokens.operate]) {
-        const response = await call("PUT", CONFIG_PATH, token, VALID_BODY);
-        assert.strictEqual(response.status, 403);
-        assert.strictEqual((await json(response)).code, "insufficient_scope");
-      }
-      assert.strictEqual(fileText(dir), COMMENTED);
-      assert.strictEqual(wakes.reloads, 0);
-    }),
-  );
-
   it.effect(
-    "PUT with an invalid body answers 422 with a field on each error and writes nothing",
+    "POST needs settings:write: read and operate sessions are refused, file untouched",
     () =>
       serving({}, async (call, { tokens, dir, wakes }) => {
         NodeFS.writeFileSync(configFile(dir), COMMENTED);
-        const response = await call("PUT", CONFIG_PATH, tokens.settingsWrite, {
+        for (const token of [tokens.read, tokens.operate]) {
+          const response = await call("POST", CONFIG_PATH, token, VALID_BODY);
+          assert.strictEqual(response.status, 403);
+          assert.strictEqual((await json(response)).code, "insufficient_scope");
+        }
+        assert.strictEqual(fileText(dir), COMMENTED);
+        assert.strictEqual(wakes.reloads, 0);
+      }),
+  );
+
+  it.effect(
+    "POST with an invalid body answers 422 with a field on each error and writes nothing",
+    () =>
+      serving({}, async (call, { tokens, dir, wakes }) => {
+        NodeFS.writeFileSync(configFile(dir), COMMENTED);
+        const response = await call("POST", CONFIG_PATH, tokens.settingsWrite, {
           poll_seconds: 5,
           gh_config_dir: "",
         });
@@ -1230,10 +1261,10 @@ repos:
       }),
   );
 
-  it.effect("PUT with a body that is not a JSON object answers 400", () =>
+  it.effect("POST with a body that is not a JSON object answers 400", () =>
     serving({}, async (call, { tokens, dir, wakes }) => {
       for (const body of ["not json", "[1]", "null", '"x"']) {
-        const response = await call("PUT", CONFIG_PATH, tokens.settingsWrite, body);
+        const response = await call("POST", CONFIG_PATH, tokens.settingsWrite, body);
         assert.strictEqual(response.status, 400, body);
         assert.strictEqual((await json(response)).code, "invalid_body");
       }
@@ -1242,9 +1273,9 @@ repos:
     }),
   );
 
-  it.effect("PUT on a missing file creates it, reloads the loop and answers the new report", () =>
+  it.effect("POST on a missing file creates it, reloads the loop and answers the new report", () =>
     serving({}, async (call, { tokens, dir, wakes }) => {
-      const response = await call("PUT", CONFIG_PATH, tokens.settingsWrite, VALID_BODY);
+      const response = await call("POST", CONFIG_PATH, tokens.settingsWrite, VALID_BODY);
       assert.strictEqual(response.status, 200);
       const body = await json(response);
       assert.strictEqual(body.exists, true);
@@ -1255,10 +1286,10 @@ repos:
     }),
   );
 
-  it.effect("PUT keeps the comments and the keys the form does not edit", () =>
+  it.effect("POST keeps the comments and the keys the form does not edit", () =>
     serving({}, async (call, { tokens, dir }) => {
       NodeFS.writeFileSync(configFile(dir), COMMENTED);
-      const response = await call("PUT", CONFIG_PATH, tokens.settingsWrite, { poll_seconds: 90 });
+      const response = await call("POST", CONFIG_PATH, tokens.settingsWrite, { poll_seconds: 90 });
       assert.strictEqual(response.status, 200);
       const text = fileText(dir);
       assert.include(text, "# the factory on this machine");
@@ -1270,5 +1301,76 @@ repos:
       );
       assert.include(text, "poll_seconds: 90");
     }),
+  );
+  it.effect(
+    "PUT is not served: the save is POST, the one method CORS lets a remote client send",
+    () =>
+      serving({}, async (call, { tokens, dir, wakes }) => {
+        const response = await call("PUT", CONFIG_PATH, tokens.settingsWrite, VALID_BODY);
+        assert.strictEqual(response.status, 404);
+        assert.isFalse(NodeFS.existsSync(configFile(dir)));
+        assert.strictEqual(wakes.reloads, 0);
+      }),
+  );
+
+  it.effect("a remote client's preflight for the save is allowed, and the save then answers", () =>
+    serving({ cors: true }, async (_call, { tokens, send }) => {
+      const preflight = await send(
+        new Request(`https://backend.example${CONFIG_PATH}`, {
+          method: "OPTIONS",
+          headers: {
+            origin: "https://app.t3.codes",
+            "access-control-request-method": "POST",
+            "access-control-request-headers": "authorization, content-type",
+          },
+        }),
+      );
+      assert.strictEqual(preflight.status, 204);
+      const allowed = (preflight.headers.get("access-control-allow-methods") ?? "")
+        .split(",")
+        .map((method) => method.trim());
+      assert.include(allowed, "POST");
+      const response = await send(
+        new Request(`https://backend.example${CONFIG_PATH}`, {
+          method: "POST",
+          headers: {
+            origin: "https://app.t3.codes",
+            authorization: `Bearer ${tokens.settingsWrite}`,
+          },
+          body: JSON.stringify(VALID_BODY),
+        }),
+      );
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.headers.get("access-control-allow-origin"), "*");
+    }),
+  );
+
+  // A POST that is a plain form submit needs no preflight, so the browser sends it, cookie and all,
+  // from any page on the same site. Only the session's origin check stops it.
+  it.effect(
+    "a browser session's save from another origin is refused, from its own it answers",
+    () =>
+      serving({ cors: true }, async (_call, { tokens, dir, wakes, cookieName, send }) => {
+        const formPost = (origin: string) =>
+          send(
+            new Request(`http://127.0.0.1:3773${CONFIG_PATH}`, {
+              method: "POST",
+              headers: {
+                host: "127.0.0.1:3773",
+                origin,
+                cookie: `${cookieName}=${tokens.settingsWrite}`,
+                "content-type": "text/plain",
+              },
+              body: JSON.stringify(VALID_BODY),
+            }),
+          );
+        const foreign = await formPost("http://127.0.0.1:3000");
+        assert.strictEqual(foreign.status, 401);
+        assert.isFalse(NodeFS.existsSync(configFile(dir)));
+        assert.strictEqual(wakes.reloads, 0);
+        const own = await formPost("http://127.0.0.1:3773");
+        assert.strictEqual(own.status, 200);
+        assert.strictEqual(wakes.reloads, 1);
+      }),
   );
 });

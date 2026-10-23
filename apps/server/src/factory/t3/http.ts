@@ -16,7 +16,7 @@
  *   reader could not settle, and why the projects could not be listed when they could not.
  *
  * Settings need `settings:write`:
- * - `PUT /api/factory/config`: applies the keys of the JSON body to the machine config file,
+ * - `POST /api/factory/config`: applies the keys of the JSON body to the machine config file,
  *   keeping its comments and the keys the page does not edit, and writes it only when
  *   `parseMachineConfig` accepts the result (else 422 `invalid_config` with the errors, file
  *   untouched; a body that is not a JSON object is 400 `invalid_body`). It then reloads the loop
@@ -114,7 +114,7 @@ const failure = (error: LedgerError | FactoryFileError) => {
 
 /** A route of the factory: `route`, with every ledger or file failure answered by `failure`. */
 const factoryRoute = <R>(
-  method: "GET" | "POST" | "PUT",
+  method: "GET" | "POST",
   path: `/${string}`,
   scope: Parameters<typeof route>[2],
   handler: Effect.Effect<HttpServerResponse.HttpServerResponse, LedgerError | FactoryFileError, R>,
@@ -307,8 +307,10 @@ const configRoute = factoryRoute(
   }),
 );
 
+// POST, not PUT: the browser CORS layer allows only GET and POST, so a remote client's PUT is
+// blocked at the preflight.
 const saveConfigRoute = factoryRoute(
-  "PUT",
+  "POST",
   CONFIG_PATH,
   AuthSettingsWriteScope,
   Effect.gen(function* () {

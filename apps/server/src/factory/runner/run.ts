@@ -311,8 +311,9 @@ export const applyActions = Effect.fn("RunnerRun.applyActions")(function* (
 /**
  * Stops the session before the run goes stuck: archives the thread, then removes its worktree
  * unless the ledger says that is done. An archive or a read of the thread that fails fails the
- * start with nothing written, and the next pass archives again. A worktree that cannot be
- * removed is written down and does not stop the run.
+ * start with nothing written, and the next pass archives again; so does a removal that could not
+ * archive the other threads on the worktree, which fails before git runs. A worktree git cannot
+ * remove is written down and does not stop the run.
  */
 export const stopSession = Effect.fn("RunnerRun.stopSession")(function* (
   ctx: RunContext,
@@ -329,6 +330,9 @@ export const stopSession = Effect.fn("RunnerRun.stopSession")(function* (
   const path = reported ?? at.worktree;
   if (path !== null) {
     const removed = yield* Effect.result(ctx.sessions.removeWorktree(path));
+    if (removed._tag === "Failure" && removed.failure.operation !== "remove-worktree") {
+      return yield* removed.failure;
+    }
     if (removed._tag === "Success") {
       yield* ledger(() =>
         out.append(

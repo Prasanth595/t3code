@@ -16,6 +16,7 @@ import {
   type ProjectConfig,
   type WatchedProject,
 } from "./config.ts";
+import { readFreeSpace } from "./disk.ts";
 import type { State } from "./domain/lifecycle.ts";
 import { LedgerIoError } from "./ledger/errors.ts";
 import type { CauseStep, ErrorKind, MachineEvent } from "./ledger/events.ts";
@@ -31,7 +32,9 @@ import { useTempDirs } from "./ledger/testSupport.ts";
 import { formatTs } from "./ledger/time.ts";
 import {
   STUCK_READ_EVERY_MS,
+  UNSETTLED_READ_EVERY_MS,
   runPass,
+  type BrokenThreadMemo,
   type Loaded,
   type PassError,
   type GateStart,
@@ -53,7 +56,7 @@ import type { FeedbackStep } from "./runner/feedback.ts";
 import type { LastPass } from "./runner/gating.ts";
 import { GateRunningError, type StartError, type StartOutcome } from "./runner/start.ts";
 import type { StopRequestOutcome } from "./runner/stop.ts";
-import { MessageRejectedError, SessionsError } from "./t3/sessions.ts";
+import { MessageRejectedError, SessionsError, type ThreadOnBrokenWorktree } from "./t3/sessions.ts";
 import { GitHubFailed, type Blocker } from "./tracker/github.ts";
 
 const REPO = "rawphp/softfac";
@@ -507,6 +510,43 @@ class Fake implements PassWorld {
 
   handPause() {
     return this.pause;
+  }
+
+  /** The live threads on a broken worktree; an archived thread leaves the list. */
+  onBroken: Array<ThreadOnBrokenWorktree> = [];
+  brokenFails = false;
+  /** The ledger's sessions, by thread id. */
+  sessions = new Map<string, { run: RunId; stopped: boolean }>();
+  /** False when a run file cannot be read; `"error"` is a ledger that cannot be read at all. */
+  sessionsRead: boolean | "error" = true;
+  /** How often `sessionRuns` read the ledger. */
+  sessionReads = 0;
+  brokenThreads: BrokenThreadMemo = { notFactory: new Set(), unsettled: new Map() };
+  /** Threads T3 refuses to archive. */
+  archiveRefused: Array<string> = [];
+  /** Each thread `archiveThread` archived, in order. */
+  archived: Array<string> = [];
+
+  threadsOnBrokenWorktrees() {
+    return this.brokenFails
+      ? Effect.fail<PassError>({ kind: "t3", message: "the projection is locked" })
+      : Effect.succeed([...this.onBroken]);
+  }
+
+  sessionRuns() {
+    this.sessionReads += 1;
+    return this.sessionsRead === "error"
+      ? Effect.fail<PassError>({ kind: "ledger", message: "runs is not a folder" })
+      : Effect.succeed({ runs: new Map(this.sessions), complete: this.sessionsRead });
+  }
+
+  archiveThread(threadId: string) {
+    if (this.archiveRefused.includes(threadId)) {
+      return Effect.fail<PassError>({ kind: "t3", message: "T3 refused the archive" });
+    }
+    this.archived.push(threadId);
+    this.onBroken = this.onBroken.filter((thread) => thread.threadId !== threadId);
+    return Effect.void;
   }
 
   freeSpace() {
@@ -2176,6 +2216,270 @@ describe("low disk space", () => {
       fake.free = "error";
       yield* pass(fake, [REPO], 5);
       assert.deepEqual(lowItems(fake), []);
+    }),
+  );
+
+  it.effect("a floor above the real free space of a directory holds back claims and gates", () =>
+    Effect.gen(function* () {
+      const dir = passTempDir("free");
+      const fake = new Fake();
+      fake.freeSpace = () => Effect.sync(() => readFreeSpace(dir));
+      fake.minFreeGib = Math.ceil(readFreeSpace(dir).freeBytes / GIB) + 1;
+      fake.ready[REPO] = [1];
+      fake.runIn(40, BUILDING, REPO, true);
+      readyForGate(fake, 40);
+      const { report, lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), []);
+      assert.deepEqual(gates(fake), []);
+      const [low, ...more] = lowLines(lines);
+      assert.deepEqual(more, []);
+      assert.match(
+        low ?? "",
+        new RegExp(
+          `^low disk: [\\d.]+ GiB free on .+, below min_free_gib ${fake.minFreeGib}; no issue is claimed`,
+        ),
+      );
+      assert.equal(lowItems(fake).length, 1);
+      assert.equal(report.attention, 1);
+    }),
+  );
+});
+
+describe("threads on a broken worktree", () => {
+  const WHAT =
+    "rawphp/softfac#42: worktree /wt/t3-abc of run rawphp__softfac__42__1 is gone or no longer a git checkout";
+  const ITEM = `${WHAT}; the factory archived the threads still on it`;
+  const lineFor = (n: number) =>
+    `${WHAT}; archived ${n} thread(s) still on it, so T3 stops looking up their branch there`;
+  /** `threadIds` live on run 42's worktree, beside its archived session. */
+  const onStopped = (fake: Fake, threadIds: Array<string>) => {
+    fake.sessions.set("session-42", { run: rid(42), stopped: true });
+    const threadsOnPath = [...threadIds, "session-42"];
+    fake.onBroken.push(
+      ...threadIds.map((threadId) => ({ threadId, worktreePath: "/wt/t3-abc", threadsOnPath })),
+    );
+  };
+  const worktreeLines = (lines: ReadonlyArray<string>) =>
+    lines.filter((l) => l.includes("no longer a git checkout"));
+  const worktreeItems = (fake: Fake) =>
+    fake.items.filter((item) => item.id.startsWith("worktree:"));
+
+  it.effect(
+    "are archived once, with one line and one item per worktree naming the run and its issue",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        onStopped(fake, ["child-1", "child-2"]);
+        const { report, lines } = yield* pass(fake, [REPO], 5);
+        assert.deepEqual(fake.archived, ["child-1", "child-2"]);
+        assert.deepEqual(worktreeLines(lines), [lineFor(2)]);
+        assert.deepEqual(
+          worktreeItems(fake).map(({ id, kind, repo, issue, run, message }) => ({
+            id,
+            kind,
+            repo,
+            issue,
+            run,
+            message,
+          })),
+          [
+            {
+              id: "worktree:/wt/t3-abc",
+              kind: "attention",
+              repo: REPO,
+              issue: 42,
+              run: null,
+              message: ITEM,
+            },
+          ],
+        );
+        assert.equal(report.attention, 1);
+        assert.equal(report.errors, 0);
+
+        fake.now += 60_000;
+        const again = yield* pass(fake, [REPO], 5);
+        assert.deepEqual(fake.archived, ["child-1", "child-2"]);
+        assert.deepEqual(worktreeLines(again.lines), []);
+        assert.equal(worktreeItems(fake).length, 1);
+      }),
+  );
+
+  it.effect("the item clears when its issue is claimed again", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      onStopped(fake, ["child-1"]);
+      yield* pass(fake, [REPO], 5);
+      assert.equal(worktreeItems(fake).length, 1);
+      fake.now += 60_000;
+      fake.ready[REPO] = [42];
+      fake.pushStart(`${REPO}#42`, started(42));
+      yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), [`start ${REPO}#42`]);
+      assert.deepEqual(worktreeItems(fake), []);
+    }),
+  );
+
+  it.effect("only threads on a stopped session's worktree are archived, once it stops", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      onStopped(fake, ["child-1"]);
+      // The session of a run still going: its own stop archives what is on its worktree.
+      fake.sessions.set("session-43", { run: rid(43), stopped: false });
+      fake.onBroken.push({
+        threadId: "session-43",
+        worktreePath: "/wt/t3-b",
+        threadsOnPath: ["session-43"],
+      });
+      // A person's thread.
+      fake.onBroken.push({ threadId: "someone", worktreePath: "/wt/t3-c", threadsOnPath: [] });
+      yield* pass(fake, [REPO], 5);
+      assert.deepEqual(fake.archived, ["child-1"]);
+
+      fake.sessions.set("session-43", { run: rid(43), stopped: true });
+      fake.now += UNSETTLED_READ_EVERY_MS;
+      yield* pass(fake, [REPO], 5);
+      assert.deepEqual(fake.archived, ["child-1", "session-43"]);
+      assert.deepEqual(
+        worktreeItems(fake).map((item) => item.id),
+        ["worktree:/wt/t3-abc", "worktree:/wt/t3-b"],
+      );
+    }),
+  );
+
+  it.effect("reads the ledger once for a thread that is not the factory's", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.onBroken.push({ threadId: "someone", worktreePath: "/wt/t3-c", threadsOnPath: [] });
+      yield* pass(fake, [REPO], 5);
+      fake.now += UNSETTLED_READ_EVERY_MS;
+      yield* pass(fake, [REPO], 5);
+      assert.equal(fake.sessionReads, 1);
+      assert.deepEqual(fake.archived, []);
+    }),
+  );
+
+  it.effect("rules no thread out while a run file cannot be read", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.onBroken.push({
+        threadId: "child-1",
+        worktreePath: "/wt/t3-abc",
+        threadsOnPath: ["child-1", "session-42"],
+      });
+      fake.sessionsRead = false;
+      yield* pass(fake, [REPO], 5);
+      assert.deepEqual(fake.archived, []);
+
+      fake.sessionsRead = true;
+      fake.sessions.set("session-42", { run: rid(42), stopped: true });
+      fake.now += UNSETTLED_READ_EVERY_MS;
+      yield* pass(fake, [REPO], 5);
+      assert.deepEqual(fake.archived, ["child-1"]);
+    }),
+  );
+
+  it.effect("reads the ledger again for an unsettled thread only every five minutes", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.sessions.set("session-43", { run: rid(43), stopped: false });
+      fake.onBroken.push({
+        threadId: "session-43",
+        worktreePath: "/wt/t3-b",
+        threadsOnPath: ["session-43"],
+      });
+      const start = fake.now;
+      yield* pass(fake, [REPO], 5);
+      fake.now = start + UNSETTLED_READ_EVERY_MS - 1;
+      yield* pass(fake, [REPO], 5);
+      assert.equal(fake.sessionReads, 1);
+      fake.now = start + UNSETTLED_READ_EVERY_MS;
+      yield* pass(fake, [REPO], 5);
+      assert.equal(fake.sessionReads, 2);
+    }),
+  );
+
+  it.effect("reads the ledger at once when a new thread turns up beside an unsettled one", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.sessions.set("session-43", { run: rid(43), stopped: false });
+      fake.onBroken.push({
+        threadId: "session-43",
+        worktreePath: "/wt/t3-b",
+        threadsOnPath: ["session-43"],
+      });
+      yield* pass(fake, [REPO], 5);
+      onStopped(fake, ["child-1"]);
+      fake.now += 60_000;
+      yield* pass(fake, [REPO], 5);
+      assert.equal(fake.sessionReads, 2);
+      assert.deepEqual(fake.archived, ["child-1"]);
+    }),
+  );
+
+  it.effect("reads no ledger while no thread is on a broken worktree", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      yield* pass(fake, [REPO], 5);
+      assert.equal(fake.sessionReads, 0);
+    }),
+  );
+
+  it.effect("a thread T3 refuses to archive is an error line and is tried again", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      onStopped(fake, ["child-1", "child-2"]);
+      fake.archiveRefused = ["child-2"];
+      const { report, lines } = yield* pass(fake, [REPO], 5);
+      assert.equal(report.errors, 1);
+      assert.ok(lines.some((l) => l.startsWith("error: cannot archive thread child-2")));
+      assert.deepEqual(worktreeLines(lines), [lineFor(1)]);
+      assert.equal(worktreeItems(fake).length, 1);
+
+      fake.archiveRefused = [];
+      fake.now += 60_000;
+      const again = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(fake.archived, ["child-1", "child-2"]);
+      assert.deepEqual(worktreeLines(again.lines), [lineFor(1)]);
+      assert.equal(worktreeItems(fake).length, 1);
+    }),
+  );
+
+  it.effect("a worktree whose every archive fails raises nothing", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      onStopped(fake, ["child-1"]);
+      fake.archiveRefused = ["child-1"];
+      const { report, lines } = yield* pass(fake, [REPO], 5);
+      assert.equal(report.errors, 1);
+      assert.deepEqual(worktreeLines(lines), []);
+      assert.deepEqual(worktreeItems(fake), []);
+    }),
+  );
+
+  it.effect("a check that cannot read the threads is an error line, and the pass claims on", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.brokenFails = true;
+      fake.ready[REPO] = [1];
+      const { report, lines } = yield* pass(fake, [REPO], 5);
+      assert.equal(report.errors, 1);
+      assert.ok(lines.some((l) => l.startsWith("error: cannot check the sessions' worktrees: ")));
+      assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
+    }),
+  );
+
+  it.effect("a ledger that cannot be read is an error line, and the next pass reads it again", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      onStopped(fake, ["child-1"]);
+      fake.sessionsRead = "error";
+      const { report, lines } = yield* pass(fake, [REPO], 5);
+      assert.equal(report.errors, 1);
+      assert.ok(lines.some((l) => l.startsWith("error: cannot check the sessions' worktrees: ")));
+      fake.sessionsRead = true;
+      fake.now += 60_000;
+      yield* pass(fake, [REPO], 5);
+      assert.deepEqual(fake.archived, ["child-1"]);
     }),
   );
 });
