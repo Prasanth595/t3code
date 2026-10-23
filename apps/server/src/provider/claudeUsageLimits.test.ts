@@ -226,6 +226,27 @@ describe("claudeUsageResponseToLimits", () => {
 });
 
 describe("claudeRateLimitEventToUpdate", () => {
+  it.each([undefined, 1_792_760_400])(
+    "retains a unified reset unless the current event supplies one: %s",
+    (resetsAt) => {
+      const event = {
+        status: "allowed" as const,
+        rateLimitType: "five_hour" as const,
+        utilization: 0.7,
+        ...(resetsAt === undefined ? {} : { resetsAt }),
+        unifiedWindows: { five_hour: { utilization: 0.2, resetsAt: 1_792_759_800 } },
+      };
+      expect(claudeRateLimitEventToUpdate(event, noNames)?.windows).toEqual([
+        expect.objectContaining({
+          id: "five_hour",
+          usedPercent: 70,
+          resetsAt:
+            resetsAt === undefined ? "2026-10-23T12:50:00.000Z" : "2026-10-23T13:00:00.000Z",
+        }),
+      ]);
+    },
+  );
+
   it("reads the unified windows emitted by setup-token sessions without top-level utilization", () => {
     const event = {
       status: "allowed" as const,

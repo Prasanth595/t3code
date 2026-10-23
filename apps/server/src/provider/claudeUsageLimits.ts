@@ -194,8 +194,9 @@ export function claudeRateLimitEventToUpdate(
     if (type in WINDOWS) {
       // The top-level window describes this event; unifiedWindows can be an older snapshot.
       const index = windows.findIndex((window) => window.id === type);
+      const unifiedReset = index === -1 ? undefined : windows[index]?.resetsAt;
       if (index !== -1) windows.splice(index, 1);
-      windows.push(makeWindow(type, usedPercent, resetsAt));
+      windows.push(makeWindow(type, usedPercent, resetsAt ?? unifiedReset));
     } else if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
       windows.push(scopedWindow(names.overageIncluded, usedPercent, resetsAt));
     }
