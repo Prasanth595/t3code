@@ -411,14 +411,17 @@ export const layer = Layer.effect(
       ),
     );
     const initialManifest = yield* manifestService.current;
-    const presentProvider = (provider: ServerProvider, manifest: ModelManifest.ModelManifestData) =>
+    const classifyCompatibility = (
+      provider: ServerProvider,
+      manifest: ModelManifest.ModelManifestData,
+    ) =>
       applyProviderCompatibility(
-        withModelShortNames(provider),
+        provider,
         manifest.compatibility,
         ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
       );
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
-      cachedProviders.map((provider) => presentProvider(provider, initialManifest)),
+      cachedProviders.map((provider) => classifyCompatibility(provider, initialManifest)),
     );
     const workspaceRefreshesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstance, ReadonlyMap<string, symbol>>
@@ -504,7 +507,9 @@ export const layer = Layer.effect(
           }
 
           const providers = orderProviderSnapshots(
-            [...mergedProviders.values()].map((provider) => presentProvider(provider, manifest)),
+            [...mergedProviders.values()].map((provider) =>
+              classifyCompatibility(provider, manifest),
+            ),
           );
           const providersToPersist = providers.filter((provider) =>
             updatedKeys.has(snapshotInstanceKey(provider)),
@@ -1004,19 +1009,35 @@ export const layer = Layer.effect(
       );
     });
 
+    // Derived short names stay out of the registry state so cached and retained
+    // models never carry a value computed by an older rule.
+    const presentProviders = (providers: ReadonlyArray<ServerProvider>) =>
+      providers.map(withModelShortNames);
+
     return {
-      getProviders: Ref.get(providersRef),
+      getProviders: Ref.get(providersRef).pipe(Effect.map(presentProviders)),
       refresh: (provider?: ProviderDriverKind) =>
-        refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
+        refresh(provider).pipe(
+          Effect.catchCause(recoverRefreshFailure),
+          Effect.map(presentProviders),
+        ),
       refreshInstance: (instanceId: ProviderInstanceId) =>
-        refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+        refreshInstance(instanceId).pipe(
+          Effect.catchCause(recoverRefreshFailure),
+          Effect.map(presentProviders),
+        ),
       refreshWorkspaceSnapshot: (input) =>
-        refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
-      refreshAfterUpdate,
+        refreshWorkspaceSnapshot(input).pipe(
+          Effect.catchCause(recoverRefreshFailure),
+          Effect.map(presentProviders),
+        ),
+      refreshAfterUpdate: (provider, selectedInstanceId) =>
+        refreshAfterUpdate(provider, selectedInstanceId).pipe(Effect.map(presentProviders)),
       getProviderMaintenanceCapabilitiesForInstance,
-      setProviderMaintenanceActionState,
+      setProviderMaintenanceActionState: (input) =>
+        setProviderMaintenanceActionState(input).pipe(Effect.map(presentProviders)),
       get streamChanges() {
-        return Stream.fromPubSub(changesPubSub);
+        return Stream.fromPubSub(changesPubSub).pipe(Stream.map(presentProviders));
       },
     } satisfies ProviderRegistry["Service"];
   }),

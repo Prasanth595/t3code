@@ -153,12 +153,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       model: selection.model,
       options: props.modelOptionsByInstance.get(selection.instanceId) ?? [],
     });
+    const unavailable = model?.isUnavailable ? " (Unavailable)" : "";
     return {
       ...selection,
       entry,
-      label: model
-        ? `${getTriggerDisplayModelName(model)}${model.isUnavailable ? " (Unavailable)" : ""}`
-        : selection.model,
+      label: model ? `${getTriggerDisplayModelName(model)}${unavailable}` : selection.model,
+      fullLabel: model ? `${getDisplayModelName(model)}${unavailable}` : selection.model,
     };
   });
   const multipleLabel = selectedEntries
@@ -170,7 +170,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           .join(", ")}${selectedEntries.length > 2 ? `, ${selectedEntries.length - 2} more` : ""}`
     : undefined;
   const allModelNames = selectedEntries
-    ? selectedEntries.map((selection) => selection.label).join(", ") || "Choose models"
+    ? selectedEntries.map((selection) => selection.fullLabel).join(", ") || "Choose models"
     : undefined;
   const triggerTooltipContent = shortcutLabel
     ? `${props.triggerLabel ?? allModelNames ?? triggerLabel} · ${shortcutLabel}`
