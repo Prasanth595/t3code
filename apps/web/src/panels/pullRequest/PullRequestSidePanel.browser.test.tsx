@@ -82,6 +82,7 @@ vi.mock("~/state/pullRequests", () => ({
   pullRequestListEntryToSummary: () => null,
   pullRequestEnvironment: {
     detail: () => "detail",
+    changeBreakdown: () => "change-breakdown",
     activity: () => "activity",
     reviewGuide: () => "review-guide",
     generateReviewGuide: { permissionAtom: () => "generate-review-guide" },
