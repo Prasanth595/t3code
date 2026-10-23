@@ -1,4 +1,8 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import {
+  repositoryGroupingKeyOf,
+  SourceControlProviderKind,
+  type RepositoryIdentity,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -1228,6 +1232,46 @@ it.effect("records the API host in repository identities while keeping the SSH l
     assert.strictEqual(refined.canonicalKey, "github.com/acme/web");
     assert.strictEqual(refined.origin?.canonicalKey, "github.com/fake-user/web");
     assert.deepStrictEqual(refined.locator, identity.locator);
+  }).pipe(Effect.provide(layer));
+});
+
+/** An identity as the resolver builds it before refinement: keyed by the raw SSH alias. */
+const aliasedIdentity = (alias: string, rootPath: string): RepositoryIdentity => ({
+  canonicalKey: `${alias}/acme/web`,
+  provider: SourceControlProviderKind.make("unknown"),
+  rootPath,
+  displayName: "acme/web",
+  locator: {
+    source: "git-remote",
+    remoteName: "origin",
+    remoteUrl: `git@${alias}:acme/web.git`,
+  },
+});
+
+it.effect("groups checkouts that reach github.com through different SSH aliases together", () => {
+  const { layer } = harness({ remotes: "", api: {}, sshHostname: "github.com" });
+  return Effect.gen(function* () {
+    const provider = yield* GitHubSourceControlProvider.make;
+    const refine = (identity: RepositoryIdentity) =>
+      provider.refineRepositoryIdentity!({ identity, resolveContext: () => Effect.die("unused") });
+    const work = yield* refine(aliasedIdentity("github-work", "/work/web"));
+    const personal = yield* refine(aliasedIdentity("gh-personal", "/personal/web"));
+    assert.strictEqual(repositoryGroupingKeyOf(work), "github.com/acme/web");
+    assert.strictEqual(repositoryGroupingKeyOf(personal), repositoryGroupingKeyOf(work));
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("leaves SSH aliases for non-GitHub hosts keyed by the alias", () => {
+  const { layer } = harness({ remotes: "", api: {}, sshHostname: "gitlab.example.com" });
+  return Effect.gen(function* () {
+    const provider = yield* GitHubSourceControlProvider.make;
+    const identity = aliasedIdentity("gitlab-work", "/work/web");
+    const refined = yield* provider.refineRepositoryIdentity!({
+      identity,
+      resolveContext: () => Effect.die("unused"),
+    });
+    assert.strictEqual(refined, identity);
+    assert.strictEqual(repositoryGroupingKeyOf(refined), "gitlab-work/acme/web");
   }).pipe(Effect.provide(layer));
 });
 
