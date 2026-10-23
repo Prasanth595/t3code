@@ -230,12 +230,20 @@ it.layer(NodeServices.layer)("PluginCatalog", (it) => {
         const failed = yield* catalog.refresh({ installationId }).pipe(Effect.flip);
         expect(failed.reason).toBe("storage");
         expect(stub.registrations.size).toBe(0);
+        const listed = (yield* catalog.list).installations[0]!;
+        expect(listed.enabled).toBe(false);
+        const published = yield* awaitSnapshot(catalog, ([row]) => row?.enabled === false);
+        expect(published[0]?.enabled).toBe(false);
         const invoked = yield* catalog.invoke(installationId, "ping", null).pipe(Effect.flip);
         expect(invoked._tag).toBe("PluginCatalogError");
         expect(stub.invoked).toEqual([]);
         yield* sql`DROP TRIGGER refuse_plugin_save`;
         yield* catalog.refresh({ installationId });
         expect((yield* catalog.list).installations[0]?.enabled).toBe(false);
+        const saved = yield* sql<{
+          readonly record_json: string;
+        }>`SELECT record_json FROM plugin_installations WHERE installation_id = ${installationId}`;
+        expect(JSON.parse(saved[0]!.record_json).enabled).toBe(false);
       }),
     ),
   );
