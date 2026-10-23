@@ -89,9 +89,18 @@ const inputKey = () => {
 };
 const key = inputKey();
 const cachePath = NodePath.join(root, "node_modules/.cache/check-changed.json");
-const cached = NodeFS.existsSync(cachePath)
-  ? (JSON.parse(NodeFS.readFileSync(cachePath, "utf8")) as { key: string; summary: Array<string> })
-  : undefined;
+// A missing or unreadable cache is a miss, never a failure.
+const readCache = () => {
+  try {
+    return JSON.parse(NodeFS.readFileSync(cachePath, "utf8")) as {
+      key: string;
+      summary: Array<string>;
+    };
+  } catch {
+    return undefined;
+  }
+};
+const cached = readCache();
 if (cached?.key === key) {
   console.log("Nothing changed since the last passing run.\n");
   for (const line of cached.summary) console.log(line);
@@ -220,8 +229,11 @@ if (results.some((result) => !result.ok)) {
   console.log("  pass not cached: files changed during the run");
 } else {
   try {
+    // Write then rename, so a concurrent run never reads half a file.
+    const temp = `${cachePath}.${process.pid}`;
     NodeFS.mkdirSync(NodePath.dirname(cachePath), { recursive: true });
-    NodeFS.writeFileSync(cachePath, JSON.stringify({ key, summary }));
+    NodeFS.writeFileSync(temp, JSON.stringify({ key, summary }));
+    NodeFS.renameSync(temp, cachePath);
   } catch (error) {
     console.warn(`  pass not cached: ${error instanceof Error ? error.message : String(error)}`);
   }
