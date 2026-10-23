@@ -352,6 +352,22 @@ describe("AgentAwarenessRelay", () => {
       yield* relay.publishThread(CHILD_THREAD_ID);
       assert.equal(publications.length, 3);
       assert.equal(publications[2]?.state?.phase, "completed");
+
+      // Phones key alerts by phase and time, so a second wait needs a new time.
+      yield* setShell(
+        waitingChild({
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("child-request-2"),
+            kind: "command",
+            createdAt: DateTime.makeUnsafe("2026-09-04T12:05:00.000Z"),
+          },
+        }),
+      );
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      assert.equal(publications.length, 4);
+      assert.equal(publications[3]?.state?.phase, "waiting_for_approval");
+      assert.equal(publications[3]?.state?.updatedAt, "2026-09-04T12:05:00.000Z");
+      assert.notEqual(publications[3]?.state?.updatedAt, publications[1]?.state?.updatedAt);
     }),
   );
 

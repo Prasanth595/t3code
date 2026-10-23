@@ -20,6 +20,11 @@ export type AgentAwarenessPhase =
 
 export type PendingSubagentRequest = "approval" | "user_input";
 
+export interface SubagentRequestAwareness {
+  readonly kind: PendingSubagentRequest;
+  readonly requestedAt: DateTime.Utc;
+}
+
 // An async question outlives the subagent's run, but once that run ends the
 // parent is no longer waiting on the answer, so it stops counting as input.
 // The activity run stays set when a follow-up is queued behind a blocked run;
@@ -93,7 +98,7 @@ export interface ProjectThreadAwarenessV2Input {
     | "updatedAt"
   >;
   /** The strongest request a live subagent below this thread is waiting on. */
-  readonly pendingSubagentRequest?: PendingSubagentRequest | null;
+  readonly pendingSubagentRequest?: SubagentRequestAwareness | null;
 }
 
 export function projectThreadAwarenessV2(
@@ -101,7 +106,8 @@ export function projectThreadAwarenessV2(
 ): AgentAwarenessState | null {
   const { environmentId, project, thread } = input;
   if (thread.lineage.relationshipToParent === "subagent") return null;
-  const phase = resolveThreadAwarenessPhaseV2(thread, input.pendingSubagentRequest ?? null);
+  const subagentRequest = input.pendingSubagentRequest ?? null;
+  const phase = resolveThreadAwarenessPhaseV2(thread, subagentRequest?.kind ?? null);
   if (phase === null) {
     return null;
   }
@@ -129,7 +135,13 @@ export function projectThreadAwarenessV2(
     headline: headlineForPhase(phase),
     ...(detail === undefined ? {} : { detail }),
     modelTitle: thread.modelSelection.model,
-    updatedAt: DateTime.formatIso(thread.updatedAt),
+    // A child's request leaves the parent's own timestamp alone. Alerts are
+    // keyed by phase and time, so a second wait needs the request's time.
+    updatedAt: DateTime.formatIso(
+      subagentRequest === null
+        ? thread.updatedAt
+        : DateTime.max(thread.updatedAt, subagentRequest.requestedAt),
+    ),
     deepLink: buildAgentAwarenessDeepLink({ environmentId, threadId: thread.id }),
   };
 }

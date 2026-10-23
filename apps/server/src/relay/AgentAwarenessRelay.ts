@@ -13,6 +13,7 @@ import {
 } from "@t3tools/contracts/relay";
 import {
   type PendingSubagentRequest,
+  type SubagentRequestAwareness,
   projectThreadAwarenessV2,
   subagentPendingRequest,
 } from "@t3tools/shared/agentAwareness";
@@ -301,7 +302,7 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly threadId: ThreadId;
   readonly thread: Option.Option<OrchestrationV2ThreadShell>;
   readonly project: Option.Option<Project>;
-  readonly pendingSubagentRequest: PendingSubagentRequest | null;
+  readonly pendingSubagentRequest: SubagentRequestAwareness | null;
 }): {
   readonly projectId: string | null;
   readonly state: RelayAgentActivityState | null;
@@ -684,19 +685,20 @@ export const make = Effect.gen(function* () {
   // The map can miss a child's update while publishing is off or the relay is
   // unlinked, so each waiting child is re-read before its parent is published.
   const currentSubagentRequestFor = Effect.fnUntraced(function* (topLevelThreadId: ThreadId) {
-    let pending: PendingSubagentRequest | null = null;
+    let pending: SubagentRequestAwareness | null = null;
     for (const [childId, entry] of [...subagentRequests]) {
       if (entry.topLevelThreadId !== topLevelThreadId) continue;
       const child = yield* threads.getThreadShell(childId);
       const request =
         child === null || child.archivedAt !== null ? null : subagentPendingRequest(child);
-      if (request === null) {
+      const requestedAt = child?.pendingRuntimeRequest?.createdAt;
+      if (request === null || requestedAt === undefined) {
         subagentRequests.delete(childId);
         continue;
       }
       if (request !== entry.request) subagentRequests.set(childId, { ...entry, request });
-      if (request === "approval") return request;
-      pending = request;
+      if (request === "approval") return { kind: request, requestedAt };
+      pending = { kind: request, requestedAt };
     }
     return pending;
   });
