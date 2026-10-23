@@ -760,9 +760,15 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const stageLauncher = Effect.suspend(() =>
     launcher === undefined
       ? Effect.void
-      : fs
-          .remove(launcher.stagingDir, { recursive: true, force: true })
-          .pipe(Effect.andThen(fs.copy(runtimePaths.versionDir, launcher.stagingDir))),
+      : Effect.gen(function* () {
+          // A process exit between the two publication renames can leave only
+          // the retired copy. Restore it before any fallible staging work.
+          if (!(yield* fs.exists(launcher.dir)) && (yield* fs.exists(launcher.retiredDir))) {
+            yield* fs.rename(launcher.retiredDir, launcher.dir);
+          }
+          yield* fs.remove(launcher.stagingDir, { recursive: true, force: true });
+          yield* fs.copy(runtimePaths.versionDir, launcher.stagingDir);
+        }),
   ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
   // Renames, never overwrites: a launcher that is still running keeps its
   // open executable. The fixed path holds a complete copy except for the
@@ -774,17 +780,22 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ? Effect.void
       : Effect.gen(function* () {
           yield* fs.remove(launcher.retiredDir, { recursive: true, force: true });
-          const retired = yield* fs.exists(launcher.dir);
-          if (retired) yield* fs.rename(launcher.dir, launcher.retiredDir);
-          yield* fs
-            .rename(launcher.stagingDir, launcher.dir)
-            .pipe(
-              Effect.tapError(() =>
-                retired
-                  ? fs.rename(launcher.retiredDir, launcher.dir).pipe(Effect.ignore)
-                  : Effect.void,
-              ),
-            );
+          // Honor cancellation only once the fixed path is populated again.
+          yield* Effect.uninterruptible(
+            Effect.gen(function* () {
+              const retired = yield* fs.exists(launcher.dir);
+              if (retired) yield* fs.rename(launcher.dir, launcher.retiredDir);
+              yield* fs
+                .rename(launcher.stagingDir, launcher.dir)
+                .pipe(
+                  Effect.tapError(() =>
+                    retired
+                      ? fs.rename(launcher.retiredDir, launcher.dir).pipe(Effect.ignore)
+                      : Effect.void,
+                  ),
+                );
+            }),
+          );
           yield* fs
             .remove(launcher.retiredDir, { recursive: true, force: true })
             .pipe(Effect.ignore);
@@ -1052,23 +1063,33 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
   const uninstall: BootService["Service"]["uninstall"] = Effect.gen(function* () {
     const manager = yield* requireManager;
-    if (
-      !(yield* fs
-        .exists(unitPath)
-        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause }))))
-    )
-      return false;
-    yield* runSteps(manager.deactivate);
-    yield* fs
-      .remove(unitPath)
+    const installed = yield* fs
+      .exists(unitPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-    if (launcher !== undefined) {
+    if (installed) {
+      yield* runSteps(manager.deactivate);
       yield* fs
-        .remove(launcher.dir, { recursive: true, force: true })
+        .remove(unitPath)
         .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
     }
-    yield* runSteps(manager.finalize);
-    return true;
+    // A prior uninstall may have removed the plist before copy cleanup failed.
+    let removedLauncher = false;
+    if (launcher !== undefined) {
+      for (const directory of [launcher.dir, launcher.stagingDir, launcher.retiredDir]) {
+        if (
+          yield* fs
+            .exists(directory)
+            .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })))
+        ) {
+          yield* fs
+            .remove(directory, { recursive: true, force: true })
+            .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+          removedLauncher = true;
+        }
+      }
+    }
+    if (installed) yield* runSteps(manager.finalize);
+    return installed || removedLauncher;
   }).pipe(Effect.withSpan("cloud.boot_service.uninstall"));
 
   const status: BootService["Service"]["status"] = Effect.gen(function* () {

@@ -4,6 +4,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -473,7 +475,14 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           protocol: SERVICE_LAUNCHER_PROTOCOL,
           activeVersion: "1.2.4",
         });
-        expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.4/t3");
+        expect(BootService.bootServiceProgramOf(yield* fs.readFileString(plan.unitPath))).toBe(
+          path.join(
+            baseDir,
+            "runtime",
+            ...(platform === "darwin" ? ["launcher"] : ["versions", "1.2.4"]),
+            "t3",
+          ),
+        );
         expect(
           commands.filter(
             (command) =>
@@ -855,6 +864,103 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
+  it.effect("finishes publishing the launcher before honoring interruption", () =>
+    Effect.gen(function* () {
+      const { service, makeService, fs, baseDir } = yield* makeHarness("darwin");
+      const path = yield* Path.Path;
+      const launcherDir = path.join(baseDir, "runtime", "launcher");
+      yield* service.install();
+      const interruptingFs = FileSystem.FileSystem.of({
+        ...fs,
+        rename: (from, to) =>
+          fs
+            .rename(from, to)
+            .pipe(
+              Effect.andThen(
+                to === `${launcherDir}.prev`
+                  ? Effect.withFiber((fiber) => Effect.sync(() => fiber.interruptUnsafe()))
+                  : Effect.void,
+              ),
+            ),
+      });
+      const updated = yield* makeService(undefined, "1.2.4").pipe(
+        Effect.provideService(FileSystem.FileSystem, interruptingFs),
+      );
+      const installing = yield* Effect.forkChild(updated.install({ start: false }));
+      expect(Exit.isFailure(yield* Fiber.await(installing))).toBe(true);
+      expect(yield* fs.readFileString(path.join(launcherDir, ".install-complete"))).toBe("1.2.4\n");
+      expect(yield* fs.exists(path.join(launcherDir, "t3"))).toBe(true);
+      expect(yield* fs.exists(`${launcherDir}.next`)).toBe(false);
+    }),
+  );
+
+  it.effect("recovers the previous launcher before staging after an interrupted swap", () =>
+    Effect.gen(function* () {
+      const { service, makeService, fs, baseDir } = yield* makeHarness("darwin");
+      const path = yield* Path.Path;
+      const launcherDir = path.join(baseDir, "runtime", "launcher");
+      yield* service.install();
+      yield* fs.rename(launcherDir, `${launcherDir}.prev`);
+      const failingFs = FileSystem.FileSystem.of({
+        ...fs,
+        copy: (from, to, options) =>
+          to === `${launcherDir}.next`
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "copy",
+                  pathOrDescriptor: to,
+                }),
+              )
+            : fs.copy(from, to, options),
+      });
+      const updated = yield* makeService(undefined, "1.2.4").pipe(
+        Effect.provideService(FileSystem.FileSystem, failingFs),
+      );
+      expect((yield* updated.install().pipe(Effect.flip))._tag).toBe("BootServiceInstallError");
+      expect(yield* fs.readFileString(path.join(launcherDir, ".install-complete"))).toBe("1.2.3\n");
+      expect((yield* service.status).current).toBe(true);
+      yield* (yield* makeService(undefined, "1.2.4")).install();
+      expect(yield* fs.readFileString(path.join(launcherDir, ".install-complete"))).toBe("1.2.4\n");
+    }),
+  );
+
+  it.effect("retries launcher cleanup after uninstall removed the plist", () =>
+    Effect.gen(function* () {
+      const { service, makeService, fs, baseDir } = yield* makeHarness("darwin");
+      const path = yield* Path.Path;
+      const launcherDir = path.join(baseDir, "runtime", "launcher");
+      yield* service.install();
+      yield* fs.makeDirectory(`${launcherDir}.next`);
+      yield* fs.makeDirectory(`${launcherDir}.prev`);
+      const failingFs = FileSystem.FileSystem.of({
+        ...fs,
+        remove: (target, options) =>
+          target === launcherDir
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "remove",
+                  pathOrDescriptor: target,
+                }),
+              )
+            : fs.remove(target, options),
+      });
+      const failing = yield* makeService().pipe(
+        Effect.provideService(FileSystem.FileSystem, failingFs),
+      );
+      expect((yield* failing.uninstall.pipe(Effect.flip))._tag).toBe("BootServiceInstallError");
+      expect((yield* service.status).installed).toBe(false);
+      expect(yield* service.uninstall).toBe(true);
+      for (const directory of [launcherDir, `${launcherDir}.next`, `${launcherDir}.prev`]) {
+        expect(yield* fs.exists(directory)).toBe(false);
+      }
+      expect(yield* service.uninstall).toBe(false);
+    }),
+  );
+
   it.effect("puts the previous launcher copy back when the swap fails on macOS", () =>
     Effect.gen(function* () {
       const { service, makeService, fs, baseDir } = yield* makeHarness("darwin");
@@ -884,6 +990,42 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(error._tag).toBe("BootServiceInstallError");
       expect(yield* fs.readFileString(path.join(launcherDir, ".install-complete"))).toBe("1.2.3\n");
       expect(yield* fs.exists(path.join(launcherDir, "t3"))).toBe(true);
+      expect(yield* fs.exists(`${launcherDir}.prev`)).toBe(false);
+    }),
+  );
+
+  it.effect("retains recovery when publication and rollback both fail", () =>
+    Effect.gen(function* () {
+      const { service, makeService, fs, baseDir } = yield* makeHarness("darwin");
+      const path = yield* Path.Path;
+      const launcherDir = path.join(baseDir, "runtime", "launcher");
+      yield* service.install();
+      const failingFs = FileSystem.FileSystem.of({
+        ...fs,
+        rename: (from, to) =>
+          to === launcherDir
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "rename",
+                  pathOrDescriptor: from,
+                }),
+              )
+            : fs.rename(from, to),
+      });
+      const updated = yield* makeService(undefined, "1.2.4").pipe(
+        Effect.provideService(FileSystem.FileSystem, failingFs),
+      );
+      expect((yield* updated.install().pipe(Effect.flip))._tag).toBe("BootServiceInstallError");
+      expect(yield* fs.exists(launcherDir)).toBe(false);
+      expect(yield* fs.readFileString(path.join(`${launcherDir}.prev`, ".install-complete"))).toBe(
+        "1.2.3\n",
+      );
+      expect(yield* fs.exists(`${launcherDir}.next`)).toBe(false);
+      const retry = yield* makeService(undefined, "1.2.4");
+      yield* retry.install();
+      expect((yield* retry.status).current).toBe(true);
       expect(yield* fs.exists(`${launcherDir}.prev`)).toBe(false);
     }),
   );
