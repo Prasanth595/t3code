@@ -2803,9 +2803,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (isHydrationOnly || update.suppressNormalTool === false) {
               return;
             }
-          } else {
-            // The child's reply lands before the status that may settle it.
-            yield* flushSubagentText(existing, existing.pendingTextFlushes);
           }
           const now = yield* DateTime.now;
           const nativeTaskId = existing?.task.nativeTaskRef?.nativeId ?? update.nativeTaskId;
@@ -2965,6 +2962,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             );
           }
 
+          // The child's reply, including replayed buffered chunks, lands before
+          // the status that may settle it.
+          yield* flushSubagentText(subagent, subagent.pendingTextFlushes);
           if (
             taskStatus !== "running" &&
             subagent.assistantText.length === 0 &&
