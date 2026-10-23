@@ -38,6 +38,11 @@ export function ComposerModelControl(props: {
     : "";
   const badge = props.modelOption?.providerBadge;
   const label = props.modelOption?.label ?? props.selection?.model ?? "Choose model";
+  const providerPrefix = `${props.modelOption?.providerLabel} `;
+  const visibleLabel =
+    !badge?.showBadge && label.startsWith(providerPrefix)
+      ? label.slice(providerPrefix.length)
+      : label;
   return (
     <ComposerInlineControl
       accessibilityLabel={[
@@ -70,7 +75,7 @@ export function ComposerModelControl(props: {
           />
         )
       }
-      label={label}
+      label={visibleLabel}
       iconOnly={props.iconOnly}
       suffix={
         summary ? (
