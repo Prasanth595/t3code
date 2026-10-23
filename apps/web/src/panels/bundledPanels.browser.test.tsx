@@ -117,6 +117,7 @@ describe("bundled side panels", () => {
 
   it("loads only the terminal body when the terminal is selected", async () => {
     await using screen = await renderScreen(null, { router: false });
+    const previewLoadsBefore = loaded.preview;
     const surface: Extract<RightPanelSurface, { kind: "terminal" }> = {
       id: "terminal:term-1",
       kind: "terminal",
@@ -146,7 +147,7 @@ describe("bundled side panels", () => {
     expect(screen.container.textContent).toBe("Terminal body");
     expect(loaded).toMatchObject({
       diff: 0,
-      preview: 1,
+      preview: previewLoadsBefore,
       terminal: 1,
       device: 0,
       pullRequest: 0,
