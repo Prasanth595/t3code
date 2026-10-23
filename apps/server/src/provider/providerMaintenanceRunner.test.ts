@@ -416,6 +416,30 @@ describe("providerMaintenanceRunner", () => {
     }
   });
 
+  it("defers progress while an ANSI redraw sequence is incomplete", () => {
+    for (const sequence of ["\u001b[1G", "\u001b[0G", "\u001b[G", "\u001b[1G\u001b[0J"]) {
+      for (let boundary = 1; boundary < sequence.length; boundary++) {
+        const split = ProviderMaintenanceRunner.splitOutputLines(
+          "",
+          `Downloading\n◒ Upgrading${sequence.slice(0, boundary)}`,
+        );
+        assert.strictEqual(ProviderMaintenanceRunner.toProgressLine(split.partialLine), null);
+        assert.strictEqual(
+          ProviderMaintenanceRunner.toProgressLine(split.lines[0] ?? ""),
+          "Downloading",
+        );
+        const completed = ProviderMaintenanceRunner.splitOutputLines(
+          split.partialLine,
+          `${sequence.slice(boundary)}◐ Upgrading.`,
+        );
+        assert.strictEqual(
+          ProviderMaintenanceRunner.toProgressLine(completed.partialLine),
+          "◐ Upgrading.",
+        );
+      }
+    }
+  });
+
   it.effect("aborts without running when the installation changed since the advisory", () => {
     const calls: Array<string> = [];
     return Effect.gen(function* () {

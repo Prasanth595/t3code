@@ -215,6 +215,14 @@ export function splitOutputLines(
 }
 
 export function toProgressLine(line: string): string | null {
+  if (
+    line.endsWith("\u001b") ||
+    line.endsWith("\u001b[") ||
+    line.endsWith("\u001b[0") ||
+    line.endsWith("\u001b[1")
+  ) {
+    return null;
+  }
   const text = NodeUtil.stripVTControlCharacters(line).replace(/\s+/g, " ").trim();
   if (text.length === 0) {
     return null;
