@@ -920,8 +920,9 @@ it.layer(
                 subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
               },
             );
+            const retainedModels = [defaultModel, customModel, currentModel];
             const presentedCurrentModel = { ...currentModel, shortName: "6.1-Sol" };
-            const retainedModels = [defaultModel, customModel, presentedCurrentModel];
+            const presentedRetainedModels = [defaultModel, customModel, presentedCurrentModel];
 
             for (const restarted of [false, true]) {
               yield* Effect.gen(function* () {
@@ -929,19 +930,19 @@ it.layer(
                 assert.deepStrictEqual(
                   (yield* registry.getProviders)[0]?.models,
                   restarted
-                    ? retainedModels
+                    ? presentedRetainedModels
                     : [defaultModel, customModel, presentedCurrentModel, removedModel],
                 );
 
                 yield* registry.refreshInstance(instance.instanceId);
                 assert.deepStrictEqual(
                   (yield* readProviderStatusCache(filePath))?.models,
-                  restarted ? retainedModels : [defaultModel, presentedCurrentModel, customModel],
+                  restarted ? retainedModels : refreshedProvider.models,
                 );
 
                 yield* Ref.set(nextProvider, failedProvider);
                 const afterFailure = yield* registry.refreshInstance(instance.instanceId);
-                assert.deepStrictEqual(afterFailure[0]?.models, retainedModels);
+                assert.deepStrictEqual(afterFailure[0]?.models, presentedRetainedModels);
                 assert.deepStrictEqual(
                   (yield* readProviderStatusCache(filePath))?.models,
                   retainedModels,
