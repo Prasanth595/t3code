@@ -356,6 +356,7 @@ describe("AgentAwarenessRelay", () => {
       // Phones key alerts by phase and time, so a second wait needs a new time.
       yield* setShell(
         waitingChild({
+          updatedAt: DateTime.makeUnsafe("2026-09-04T12:05:00.000Z"),
           pendingRuntimeRequest: {
             id: RuntimeRequestId.make("child-request-2"),
             kind: "command",
@@ -369,13 +370,15 @@ describe("AgentAwarenessRelay", () => {
       assert.equal(publications[3]?.state?.updatedAt, "2026-09-04T12:05:00.000Z");
       assert.notEqual(publications[3]?.state?.updatedAt, publications[1]?.state?.updatedAt);
 
-      // With two pending requests, answering one shows the next with no clear between.
+      // With two pending requests, answering one shows the next, possibly an
+      // older one, with no clear between.
       yield* setShell(
         waitingChild({
+          updatedAt: DateTime.makeUnsafe("2026-09-04T12:06:00.000Z"),
           pendingRuntimeRequest: {
             id: RuntimeRequestId.make("child-request-3"),
             kind: "command",
-            createdAt: DateTime.makeUnsafe("2026-09-04T12:06:00.000Z"),
+            createdAt: DateTime.makeUnsafe("2026-09-04T12:04:00.000Z"),
           },
         }),
       );
@@ -384,6 +387,42 @@ describe("AgentAwarenessRelay", () => {
       assert.equal(publications[4]?.state?.phase, "waiting_for_approval");
       assert.equal(publications[4]?.state?.updatedAt, "2026-09-04T12:06:00.000Z");
     }),
+  );
+
+  it.effect(
+    "does not republish a parent waiting on its own request when a child's comes and goes",
+    () =>
+      Effect.gen(function* () {
+        const parentWaiting = shell({
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("parent-request"),
+            kind: "command",
+            createdAt: DateTime.makeUnsafe(NOW),
+          },
+        });
+        const shells = yield* Ref.make(
+          new Map<ThreadId, OrchestrationV2ThreadShell>([
+            [THREAD_ID, parentWaiting],
+            [CHILD_THREAD_ID, waitingChild({ pendingRuntimeRequest: null })],
+          ]),
+        );
+        const { relay, publications } = yield* makeTestRelay({
+          readShell: (threadId) =>
+            Ref.get(shells).pipe(Effect.map((current) => current.get(threadId) ?? null)),
+        });
+        yield* relay.publishThread(THREAD_ID);
+        assert.equal(publications[0]?.state?.phase, "waiting_for_approval");
+
+        yield* Ref.update(shells, (current) =>
+          new Map(current).set(CHILD_THREAD_ID, waitingChild()),
+        );
+        yield* relay.publishThread(CHILD_THREAD_ID);
+        yield* Ref.update(shells, (current) =>
+          new Map(current).set(CHILD_THREAD_ID, waitingChild({ pendingRuntimeRequest: null })),
+        );
+        yield* relay.publishThread(CHILD_THREAD_ID);
+        assert.equal(publications.length, 1);
+      }),
   );
 
   it.effect(

@@ -172,9 +172,7 @@ function agentAwarenessPublishIdentity(
   // A child's next request reads the same as its last one, but it is a new
   // wait and must reach the phone.
   return JSON.stringify(
-    subagentRequest === null
-      ? meaningfulState
-      : [meaningfulState, DateTime.formatIso(subagentRequest.requestedAt)],
+    subagentRequest === null ? meaningfulState : [meaningfulState, subagentRequest.requestId],
   );
 }
 
@@ -317,12 +315,15 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
 }): {
   readonly projectId: string | null;
   readonly state: RelayAgentActivityState | null;
+  /** The child request behind the state's wait, when the parent isn't waiting itself. */
+  readonly subagentWait: SubagentRequestAwareness | null;
   readonly reason: "snapshot" | "thread-not-found" | "project-not-found";
 } {
   if (Option.isNone(input.thread)) {
     return {
       projectId: null,
       state: null,
+      subagentWait: null,
       reason: "thread-not-found",
     };
   }
@@ -330,19 +331,26 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
     return {
       projectId: input.thread.value.projectId,
       state: null,
+      subagentWait: null,
       reason: "project-not-found",
     };
   }
+  const awarenessInput = {
+    environmentId: input.environmentId,
+    project: input.project.value,
+    thread: input.thread.value,
+  };
+  const state = projectThreadAwarenessV2({
+    ...awarenessInput,
+    pendingSubagentRequest: input.pendingSubagentRequest,
+  });
+  const childDrivesWait =
+    input.pendingSubagentRequest !== null &&
+    state?.phase !== projectThreadAwarenessV2(awarenessInput)?.phase;
   return {
     projectId: input.thread.value.projectId,
-    state: sanitizeRelayAgentActivityState(
-      projectThreadAwarenessV2({
-        environmentId: input.environmentId,
-        project: input.project.value,
-        thread: input.thread.value,
-        pendingSubagentRequest: input.pendingSubagentRequest,
-      }),
-    ),
+    state: sanitizeRelayAgentActivityState(state),
+    subagentWait: childDrivesWait ? input.pendingSubagentRequest : null,
     reason: "snapshot",
   };
 }
@@ -564,15 +572,14 @@ export const make = Effect.gen(function* () {
     const project = Option.isSome(thread)
       ? yield* projects.getById(thread.value.projectId)
       : Option.none<Project>();
-    const pendingSubagentRequest = yield* currentSubagentRequestFor(threadId);
     const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
       threadId,
       thread,
       project,
-      pendingSubagentRequest,
+      pendingSubagentRequest: yield* currentSubagentRequestFor(threadId),
     });
-    const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, pendingSubagentRequest);
+    const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
@@ -718,16 +725,16 @@ export const make = Effect.gen(function* () {
       const request =
         child === null || child.archivedAt !== null ? null : subagentPendingRequest(child);
       const pendingRequest = child?.pendingRuntimeRequest;
-      if (request === null || pendingRequest == null) {
+      if (child === null || request === null || pendingRequest == null) {
         subagentRequests.delete(childId);
         continue;
       }
-      const requestedAt = pendingRequest.createdAt;
       if (request !== entry.request || pendingRequest.id !== entry.requestId) {
         subagentRequests.set(childId, { ...entry, request, requestId: pendingRequest.id });
       }
-      if (request === "approval") return { kind: request, requestedAt };
-      pending = { kind: request, requestedAt };
+      const current = { kind: request, requestId: pendingRequest.id, updatedAt: child.updatedAt };
+      if (request === "approval") return current;
+      pending = current;
     }
     return pending;
   });

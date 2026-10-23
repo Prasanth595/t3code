@@ -3,6 +3,7 @@ import {
   isProviderNativeSubagentThread,
   type OrchestrationV2ThreadShell,
   type Project,
+  type RuntimeRequestId,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -22,7 +23,9 @@ export type PendingSubagentRequest = "approval" | "user_input";
 
 export interface SubagentRequestAwareness {
   readonly kind: PendingSubagentRequest;
-  readonly requestedAt: DateTime.Utc;
+  readonly requestId: RuntimeRequestId;
+  /** The child's own update time, which moves whenever its request changes. */
+  readonly updatedAt: DateTime.Utc;
 }
 
 // An async question outlives the subagent's run, but once that run ends the
@@ -136,11 +139,11 @@ export function projectThreadAwarenessV2(
     ...(detail === undefined ? {} : { detail }),
     modelTitle: thread.modelSelection.model,
     // A child's request leaves the parent's own timestamp alone. Alerts are
-    // keyed by phase and time, so a second wait needs the request's time.
+    // keyed by phase and time, so a second wait needs the child's time.
     updatedAt: DateTime.formatIso(
       subagentRequest === null
         ? thread.updatedAt
-        : DateTime.max(thread.updatedAt, subagentRequest.requestedAt),
+        : DateTime.max(thread.updatedAt, subagentRequest.updatedAt),
     ),
     deepLink: buildAgentAwarenessDeepLink({ environmentId, threadId: thread.id }),
   };
