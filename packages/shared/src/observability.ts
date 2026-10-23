@@ -1,5 +1,3 @@
-import * as NodeCrypto from "node:crypto";
-
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -41,7 +39,8 @@ export const processServiceInstanceId = (
 ): string =>
   typeof operatorAttributes["service.instance.id"] === "string"
     ? operatorAttributes["service.instance.id"]
-    : (serviceInstanceId ??= NodeCrypto.randomUUID());
+    : // @effect-diagnostics-next-line cryptoRandomUUID:off -- Resource attributes are built synchronously, before any Crypto service exists.
+      (serviceInstanceId ??= crypto.randomUUID());
 
 export const DEFAULT_SIGNAL_EXPORT: SignalExport = {
   protocol: "http/json",
