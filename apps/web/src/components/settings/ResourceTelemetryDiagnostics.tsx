@@ -822,6 +822,7 @@ export function ResourceTelemetryDiagnostics({
     },
     environmentId,
   );
+  const refreshHistory = history.refresh;
   const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
     reportFailure: false,
   });
@@ -929,6 +930,9 @@ export function ResourceTelemetryDiagnostics({
       return;
     setIsRetrying(true);
     void retryTelemetry()
+      .then(() => {
+        refreshHistory();
+      })
       .catch((error: unknown) => {
         toastManager.add({
           type: "error",
