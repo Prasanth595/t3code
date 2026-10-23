@@ -60,6 +60,7 @@ const state = vi.hoisted(() => ({
 vi.mock("react", () => ({
   useCallback: <A>(callback: A) => callback,
   useEffect: () => {},
+  useLayoutEffect: () => {},
   useRef: <A>(current: A) => ({ current }),
   useMemo: <A>(factory: () => A) => factory(),
   useState: <A>(initial: A | (() => A)) => [
@@ -108,7 +109,10 @@ vi.mock("./use-atom-command", () => ({ useAtomCommand: <A>(command: A) => comman
 vi.mock("./threads", async () => {
   const { Atom } = await import("effect/reactivity");
   return {
-    environmentThreadDetails: { queueWorkflowAtom: () => Atom.make(null) },
+    environmentThreadDetails: {
+      queueWorkflowAtom: () => Atom.make(null),
+      checkpointSummariesAtom: () => Atom.make([]),
+    },
     threadEnvironment: {
       respondToApproval: state.approve,
       respondToUserInput: state.answer,
