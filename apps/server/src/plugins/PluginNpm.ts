@@ -20,14 +20,12 @@
  * An update unpacks next to `package/` and leaves it running. Applying it
  * first journals the swap in `npm.json`, then hands the catalogue one step
  * (`PluginCatalog.replace`) that stops the installation, swaps the
- * directories, and consents to the staged digest; that consent is the commit
- * point, and a failure before it puts the old directory back. The journal is
- * then settled by another catalogue step (`PluginCatalog.settleReplace`),
- * which decides from the consent it holds at that moment: finished when it
- * has consent to the new digest, otherwise rolled back from `.previous` after
- * the plugin has stopped. Until settling works, the journal and `.previous`
- * stay, and it is retried before every npm step, after every catalogue
- * change, and at startup.
+ * directories, and persists the swap outcome with consent to the staged digest.
+ * A failure before that commit point puts the old directory back. Another
+ * catalogue step (`PluginCatalog.settleReplace`) uses the persisted outcome to
+ * finish or roll back the swap after the plugin has stopped. If cleanup fails,
+ * the journal and `.previous` stay so settling can retry before every npm step,
+ * after every catalogue change, and at startup.
  *
  * Every file move or deletion under the root is one catalogue step that
  * claims the paths first (`replace`, `settleReplace`, `changeFiles`): it is
