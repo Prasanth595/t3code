@@ -321,22 +321,65 @@ const isGraphQlClientError = (error: unknown): error is GraphQLClientError.Graph
 
 const { isNotFoundOnly } = GitHubGraphQlClient;
 
+type GraphQlResponseError = Extract<
+  GraphQLClientError.GraphQLClientError["reason"],
+  { readonly _tag: "ResponseError" }
+>["errors"][number];
+
+const isRefusedRequestedReviewer = ({ path, type }: GraphQlResponseError) =>
+  type === "FORBIDDEN" &&
+  path?.length === 6 &&
+  path[0] === "repository" &&
+  path[1] === "pullRequest" &&
+  path[2] === "reviewRequests" &&
+  path[3] === "nodes" &&
+  typeof path[4] === "number" &&
+  Number.isInteger(path[4]) &&
+  path[4] >= 0 &&
+  path[5] === "requestedReviewer";
+
+const isRefusedCheckContext = ({ path, type, message }: GraphQlResponseError) =>
+  type === "FORBIDDEN" &&
+  (message === "Resource not accessible by personal access token" ||
+    message === "Resource not accessible by integration") &&
+  (path?.length === 8 ||
+    (path?.length === 10 &&
+      path[8] === "nodes" &&
+      typeof path[9] === "number" &&
+      Number.isInteger(path[9]) &&
+      path[9] >= 0)) &&
+  path[0] === "repository" &&
+  path[1] === "pullRequest" &&
+  path[2] === "commits" &&
+  path[3] === "nodes" &&
+  typeof path[4] === "number" &&
+  Number.isInteger(path[4]) &&
+  path[4] >= 0 &&
+  path[5] === "commit" &&
+  path[6] === "statusCheckRollup" &&
+  path[7] === "contexts";
+
 const isRefusedRequestedReviewersOnly = (error: unknown): boolean =>
   isGraphQlClientError(error) &&
   error.reason._tag === "ResponseError" &&
   error.reason.status === 200 &&
+  error.reason.errors.every(isRefusedRequestedReviewer);
+
+const isRefusedCheckContextsOnly = (error: unknown): boolean =>
+  isGraphQlClientError(error) &&
+  error.reason._tag === "ResponseError" &&
+  (error.reason.status === 200 || error.reason.status === 403) &&
+  error.reason.errors.length > 0 &&
+  error.reason.errors.every(isRefusedCheckContext);
+
+const isRefusedDetailFieldsOnly = (error: unknown): boolean =>
+  isGraphQlClientError(error) &&
+  error.reason._tag === "ResponseError" &&
+  error.reason.status === 200 &&
+  error.reason.errors.some(isRefusedRequestedReviewer) &&
+  error.reason.errors.some(isRefusedCheckContext) &&
   error.reason.errors.every(
-    ({ path, type }) =>
-      type === "FORBIDDEN" &&
-      path?.length === 6 &&
-      path[0] === "repository" &&
-      path[1] === "pullRequest" &&
-      path[2] === "reviewRequests" &&
-      path[3] === "nodes" &&
-      typeof path[4] === "number" &&
-      Number.isInteger(path[4]) &&
-      path[4] >= 0 &&
-      path[5] === "requestedReviewer",
+    (error) => isRefusedRequestedReviewer(error) || isRefusedCheckContext(error),
   );
 
 /** A large pull request can produce a multi-megabyte patch; past this it is truncated. */
@@ -1385,10 +1428,9 @@ export const make = Effect.gen(function* () {
    */
   const readAllCheckContexts = Effect.fn("GitHubPullRequestApi.readAllCheckContexts")(function* (
     input: Parameters<GitHubPullRequestApi["Service"]["getPullRequestDetail"]>[0],
-    allowReserve: boolean,
   ) {
     const { owner, name } = parseRepositorySelector(input.repository);
-    const target = { ...input, operation: "getPullRequestDetail", allowReserve };
+    const target = { ...input, operation: "getPullRequestDetail" };
     let headSha: string | null = null;
     const { pages, truncated } = yield* readPages(
       GraphQLClient.pages(client.PullRequestCheckContexts, {
@@ -1422,7 +1464,7 @@ export const make = Effect.gen(function* () {
         maxPages: CHECK_CONTEXT_PAGES,
         hasNextPage: (page) => page.nextCursor !== null,
       },
-    ).pipe(graphql(target));
+    );
     return {
       headSha: pages[0]?.headSha ?? null,
       contexts: pages.flatMap((page) => page.contexts),
@@ -1433,44 +1475,65 @@ export const make = Effect.gen(function* () {
   const getPullRequestDetail: GitHubPullRequestApi["Service"]["getPullRequestDetail"] = (input) => {
     const { owner, name } = parseRepositorySelector(input.repository);
     const operation = "getPullRequestDetail";
-    const read = (requestedReviewers: number) =>
-      client.PullRequestCore({
-        owner,
-        name,
-        number: input.number,
-        headRef: `refs/pull/${input.number}/head`,
-        required: asksRequired(input.host),
-        requestedReviewers,
-      });
+    const read = Effect.fn("GitHubPullRequestApi.readDetail")(function* (detailedChecks: boolean) {
+      const core = yield* client
+        .PullRequestCore({
+          owner,
+          name,
+          number: input.number,
+          headRef: `refs/pull/${input.number}/head`,
+          required: asksRequired(input.host),
+          requestedReviewers: 100,
+          detailedChecks,
+        })
+        .pipe(
+          Effect.catchIf(isRefusedRequestedReviewersOnly, () =>
+            client.PullRequestCore({
+              owner,
+              name,
+              number: input.number,
+              headRef: `refs/pull/${input.number}/head`,
+              required: asksRequired(input.host),
+              requestedReviewers: 0,
+              detailedChecks,
+            }),
+          ),
+          Effect.catchIf(isRefusedDetailFieldsOnly, () => {
+            detailedChecks = false;
+            return client.PullRequestCore({
+              owner,
+              name,
+              number: input.number,
+              headRef: `refs/pull/${input.number}/head`,
+              required: asksRequired(input.host),
+              requestedReviewers: 0,
+              detailedChecks,
+            });
+          }),
+          Effect.map((result) => toPullRequestCore(result, detailedChecks)),
+          Effect.flatMap(found({ ...input, operation })),
+        );
+      if (!core.checksTruncated || !detailedChecks) return core;
+      // Walk the whole rollup so checks beyond the first page cannot imply success.
+      const all = yield* readAllCheckContexts(input);
+      if (all.headSha !== core.headSha) {
+        return yield* readError(
+          input.cwd,
+          operation,
+          new Error("Pull request head changed while reading checks."),
+        );
+      }
+      return {
+        ...core,
+        ...pullRequestChecksFromContexts(all.contexts),
+        checksTruncated: all.truncated,
+      };
+    });
     return SourceControlRateLimit.Interactive.pipe(
       Effect.flatMap((allowReserve) =>
-        read(100).pipe(
-          Effect.catchIf(isRefusedRequestedReviewersOnly, () => read(0)),
+        read(true).pipe(
+          Effect.catchIf(isRefusedCheckContextsOnly, () => read(false)),
           graphql({ ...input, operation, allowReserve }),
-          Effect.map(toPullRequestCore),
-          Effect.flatMap(found({ ...input, operation })),
-          // Past a hundred checks the first page would let the rest imply success, so the whole
-          // rollup is walked instead.
-          Effect.filterOrElse(
-            (core) => !core.checksTruncated,
-            (core) =>
-              readAllCheckContexts(input, allowReserve).pipe(
-                Effect.filterOrFail(
-                  (all) => all.headSha === core.headSha,
-                  () =>
-                    readError(
-                      input.cwd,
-                      operation,
-                      new Error("Pull request head changed while reading checks."),
-                    ),
-                ),
-                Effect.map((all) => ({
-                  ...core,
-                  ...pullRequestChecksFromContexts(all.contexts),
-                  checksTruncated: all.truncated,
-                })),
-              ),
-          ),
         ),
       ),
     );
