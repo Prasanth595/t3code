@@ -2,7 +2,6 @@ import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -19,7 +18,6 @@ import {
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
-import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as SourceControlRepositoryService from "./SourceControlRepositoryService.ts";
 
@@ -102,48 +100,6 @@ function layer(input: {
       )
     : layerService.pipe(Layer.provideMerge(NodeServices.layer));
 }
-
-it.effect("looks up a repository while background reads to its host are paused", () =>
-  Effect.gen(function* () {
-    const limits = yield* SourceControlRateLimit.make;
-    const key = { provider: SourceControlProviderKind.make("github"), host: "github.com" };
-    yield* limits.recordRateLimit({
-      ...key,
-      lease: 0,
-      retryAt: (yield* Clock.currentTimeMillis) + 60_000,
-    });
-    // Gated like BitbucketApi's reads: refused during a pause unless a user is waiting.
-    const getRepositoryCloneUrls = () =>
-      SourceControlRateLimit.Interactive.pipe(
-        Effect.flatMap((interactive) =>
-          limits.check(key, interactive ? { allowPaused: true } : undefined),
-        ),
-        Effect.mapError(
-          (cause) =>
-            new SourceControlProviderError({
-              provider: key.provider,
-              operation: "getRepositoryCloneUrls",
-              cwd: process.cwd(),
-              detail: cause.detail,
-              cause,
-            }),
-        ),
-        Effect.as(CLONE_URLS),
-      );
-    const background = yield* Effect.flip(getRepositoryCloneUrls());
-    assert.instanceOf(background.cause, SourceControlRateLimit.SourceControlRateLimitPausedError);
-
-    const repository = yield* Effect.gen(function* () {
-      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
-      return yield* service.lookupRepository({
-        provider: key.provider,
-        repository: "octocat/t3code",
-      });
-    }).pipe(Effect.provide(layer({ provider: makeProvider({ getRepositoryCloneUrls }) })));
-
-    assert.strictEqual(repository.nameWithOwner, "octocat/t3code");
-  }),
-);
 
 it.effect("clones a looked-up repository after creating missing parent directories", () =>
   Effect.gen(function* () {

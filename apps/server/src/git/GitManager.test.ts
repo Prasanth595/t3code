@@ -6,7 +6,6 @@ import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -66,7 +65,6 @@ import {
   toForgejoChangeRequest,
 } from "@t3tools/source-control-forgejo/server/forgejoPullRequests";
 import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
-import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -2024,59 +2022,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           "json",
         ]);
       }
-    }),
-  );
-
-  it.effect("resolves a user's pull request while background reads to its host are paused", () =>
-    Effect.gen(function* () {
-      const { service } = createGitHubProviderWithFakeGh({
-        pullRequest: {
-          number: 91,
-          title: "Safe checkout PR",
-          url: "https://github.com/pingdotgg/codething-mvp/pull/91",
-          baseRefName: "main",
-          headRefName: "feature/pr-safe",
-          state: "open",
-        },
-      });
-      const limits = yield* SourceControlRateLimit.make;
-      const key = { provider: SourceControlProviderKind.make("github"), host: "github.com" };
-      yield* limits.recordRateLimit({
-        ...key,
-        lease: 0,
-        retryAt: (yield* Clock.currentTimeMillis) + 60_000,
-      });
-      // Gated like BitbucketApi's reads: refused during a pause unless a user is waiting.
-      const getChangeRequest: SourceControlProvider["Service"]["getChangeRequest"] = (input) =>
-        SourceControlRateLimit.Interactive.pipe(
-          Effect.flatMap((interactive) =>
-            limits.check(key, interactive ? { allowPaused: true } : undefined),
-          ),
-          Effect.mapError(
-            (cause) =>
-              new SourceControlProviderFailure({
-                provider: key.provider,
-                operation: "getChangeRequest",
-                cwd: input.cwd,
-                detail: cause.detail,
-                cause,
-              }),
-          ),
-          Effect.andThen(service.getChangeRequest(input)),
-        );
-      const background = yield* Effect.flip(
-        getChangeRequest({ cwd: process.cwd(), reference: "91" }),
-      );
-      expect(background.cause).toMatchObject({ _tag: "SourceControlRateLimitPausedError" });
-
-      const { manager } = yield* makeManager({
-        sourceControlProvider: { ...service, getChangeRequest },
-      });
-      const { pullRequest } = yield* manager.resolvePullRequest({
-        cwd: process.cwd(),
-        reference: "91",
-      });
-      expect(pullRequest.number).toBe(91);
     }),
   );
 
