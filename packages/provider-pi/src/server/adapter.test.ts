@@ -1395,6 +1395,43 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("keeps the thread binding when Pi reloads its extensions", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const setStatus = (statusKey: string, statusText: string) =>
+        fake.emit({
+          type: "extension_ui_request",
+          id: `status-${statusKey}`,
+          method: "setStatus",
+          statusKey,
+          statusText,
+        });
+      const takeRoster = (taskCount: number) =>
+        takeEvent(
+          (event) =>
+            event.type === "provider_thread.updated" &&
+            event.providerThread.id === providerThread.id &&
+            event.providerThread.pendingBackgroundTasks?.length === taskCount,
+        );
+      yield* setStatus("t3:background:build", "Build running");
+      yield* takeRoster(1);
+      // The reload ends the old extension instances, so their jobs can never clear.
+      yield* setStatus("t3:session-end", "reload");
+      yield* takeRoster(0);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      // The reloaded extensions run in the same session and thread.
+      yield* setStatus("t3:background:build", "Build restarted");
+      yield* takeRoster(1);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("keeps background work reported while a thread registers", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;

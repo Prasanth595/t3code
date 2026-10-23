@@ -1262,9 +1262,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         if (method === "setStatus") {
           const statusKey = recordString(event, "statusKey");
           if (statusKey === PI_T3_SESSION_END_STATUS_KEY) {
-            // The outgoing jobs can never clear their statuses now.
+            // The outgoing jobs can never clear their statuses now. A reload
+            // restarts extensions in the same session, so its binding stays.
             const outgoingState = backgroundWorkState;
-            backgroundWorkState = null;
+            if (recordString(event, "statusText") !== "reload") backgroundWorkState = null;
             if (backgroundWork.size === 0) return;
             backgroundWork.clear();
             if (outgoingState !== null) yield* syncBackgroundWork(outgoingState);

@@ -18,8 +18,9 @@ export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 
 /**
- * The bridge sets this status as Pi tears down a session. Pi's RPC stream does
- * not mark the boundary otherwise, and the outgoing extension context dies here.
+ * The bridge sets this status, with Pi's shutdown reason as its text, as Pi
+ * tears down a session. Pi's RPC stream does not mark the boundary otherwise,
+ * and the outgoing extension contexts die here.
  */
 export const PI_T3_SESSION_END_STATUS_KEY = "t3:session-end";
 
@@ -348,8 +349,8 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
 
   // T3 drops the outgoing session's background work here, where Pi's own TUI
   // clears extension statuses before invalidating their contexts.
-  pi.on("session_shutdown", (_event, ctx) => {
-    ctx.ui.setStatus(SESSION_END_STATUS_KEY, "ended");
+  pi.on("session_shutdown", (event, ctx) => {
+    ctx.ui.setStatus(SESSION_END_STATUS_KEY, event.reason ?? "ended");
   });
 
   const endpoint = env(URL_ENV);

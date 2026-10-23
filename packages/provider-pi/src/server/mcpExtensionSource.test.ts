@@ -85,8 +85,14 @@ describe("Pi session teardown", () => {
       notify: assert.fail,
       setStatus: (key: string, text: string | undefined) => statuses.push([key, text]),
     };
-    await bridge.handlers.get("session_shutdown")!({ systemPrompt: "" }, { ui });
-    assert.deepStrictEqual(statuses, [[PI_T3_SESSION_END_STATUS_KEY, "ended"]]);
+    const shutdown = bridge.handlers.get("session_shutdown")!;
+    for (const reason of ["reload", "new"]) {
+      await shutdown(Object.assign({ systemPrompt: "" }, { reason }), { ui });
+    }
+    assert.deepStrictEqual(statuses, [
+      [PI_T3_SESSION_END_STATUS_KEY, "reload"],
+      [PI_T3_SESSION_END_STATUS_KEY, "new"],
+    ]);
   });
 });
 
