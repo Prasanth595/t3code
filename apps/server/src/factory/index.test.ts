@@ -1743,37 +1743,39 @@ describe("the gate in the background", () => {
     );
 
     // Off the load, max_concurrent_gates is the only limit.
-    for (const [name, machine, readLoad] of [
-      ["under the limit", loaded, () => ({ oneMinute: 2, cores: 12 })],
-      [
-        "at max_load_per_core 0, which reads no load",
-        { ...loaded, maxLoadPerCore: 0 },
-        () => assert.fail("the load is not read at max_load_per_core 0"),
-      ],
-    ] as const) {
-      it.effect(`${name} a second gate starts`, () =>
-        Effect.gen(function* () {
-          const dataDir = tempDir();
-          const run = prOpenRun(dataDir);
-          const other = prOpenRun(dataDir, "11");
-          const woken = yield* Deferred.make<void>();
-          const world = liveWorld(
-            machine,
-            dataDir,
-            merged,
-            NodeServices.layer,
-            sessions,
-            () => 1_000,
-            "mac-mini",
-            noAttention,
-            { ...liveGate(woken, yield* Scope.make()), readLoad },
-          );
-          assert.deepStrictEqual(yield* world.gate(backgroundRepo, run), { kind: "started" });
-          assert.deepStrictEqual(yield* world.gate(backgroundRepo, other), { kind: "started" });
-          while (world.gateRunning(run) || world.gateRunning(other)) yield* Effect.yieldNow;
-        }),
-      );
-    }
+    it.effect.each([
+      {
+        name: "under the limit",
+        machine: loaded,
+        readLoad: () => ({ oneMinute: 2, cores: 12 }),
+      },
+      {
+        name: "at max_load_per_core 0, which reads no load",
+        machine: { ...loaded, maxLoadPerCore: 0 },
+        readLoad: () => assert.fail("the load is not read at max_load_per_core 0"),
+      },
+    ])("$name a second gate starts", ({ machine, readLoad }) =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        const run = prOpenRun(dataDir);
+        const other = prOpenRun(dataDir, "11");
+        const woken = yield* Deferred.make<void>();
+        const world = liveWorld(
+          machine,
+          dataDir,
+          merged,
+          NodeServices.layer,
+          sessions,
+          () => 1_000,
+          "mac-mini",
+          noAttention,
+          { ...liveGate(woken, yield* Scope.make()), readLoad },
+        );
+        assert.deepStrictEqual(yield* world.gate(backgroundRepo, run), { kind: "started" });
+        assert.deepStrictEqual(yield* world.gate(backgroundRepo, other), { kind: "started" });
+        while (world.gateRunning(run) || world.gateRunning(other)) yield* Effect.yieldNow;
+      }),
+    );
 
     it.effect("with no gate running the gate starts whatever the load", () =>
       Effect.gen(function* () {
