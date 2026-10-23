@@ -786,7 +786,9 @@ function LegacyFeaturesSection() {
 }
 
 export function GeneralSettingsPanel() {
-  const modifierLabel = isMacPlatform(navigator.platform) ? "⌘" : "Ctrl";
+  const isMac = isMacPlatform(navigator.platform);
+  const modifierLabel = isMac ? "⌘" : "Ctrl";
+  const altLabel = isMac ? "Option" : "Alt";
   const sendShortcutOptions = [
     { value: "enter", label: "Enter" },
     { value: "mod-enter-multiline", label: `${modifierLabel} + Enter for multiline prompts` },
@@ -1532,8 +1534,8 @@ export function GeneralSettingsPanel() {
           description={
             "Sending from a new thread starts it in the background and keeps the new-thread composer open. " +
             (settings.sendShortcut === "mod-enter-multiline"
-              ? `Press ${modifierLabel} + Enter for single-line prompts or ${modifierLabel} + Alt + Enter for multiline prompts to open the thread instead.`
-              : `Press ${modifierLabel}${settings.sendShortcut === "mod-enter" ? " + Alt" : ""} + Enter to open the thread instead.`)
+              ? `Press ${modifierLabel} + Enter for single-line prompts or ${modifierLabel} + ${altLabel} + Enter for multiline prompts to open the thread instead.`
+              : `Press ${modifierLabel}${settings.sendShortcut === "mod-enter" ? ` + ${altLabel}` : ""} + Enter to open the thread instead.`)
           }
           resetAction={
             settings.startNewThreadsInBackground !==
