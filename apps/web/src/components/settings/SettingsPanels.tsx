@@ -8,6 +8,7 @@ import {
   type DesktopUpdateChannel,
   IDLE_COMPACTION_MODES,
   globalIdleCompaction,
+  type ModelSelection,
   ProviderDriverKind,
   type ProviderInstanceId,
   type SidebarProjectGroupingMode,
@@ -893,6 +894,19 @@ export function GeneralSettingsPanel() {
     instanceId === textGenInstanceId && model === textGenModel
       ? "This is already the text generation model."
       : textGenerationModelDisabledReason(instanceId, model);
+  // For the same reason, a primary model that lands on the fallback turns the
+  // fallback off rather than leaving a switch on that never retries.
+  const textGenerationModelPatch = (selection: ModelSelection) => {
+    const fallback = settings.textGenerationFallbackModelSelection;
+    return {
+      textGenerationModelSelection: selection,
+      ...(fallback &&
+      fallback.instanceId === selection.instanceId &&
+      fallback.model === selection.model
+        ? { textGenerationFallbackModelSelection: null }
+        : {}),
+    };
+  };
   const textGenerationFallbackInstanceEntry = textGenerationModelInstanceEntries.find(
     (entry) => entry.instanceId === textGenerationFallbackSelection.instanceId,
   );
@@ -1859,10 +1873,9 @@ export function GeneralSettingsPanel() {
               <SettingResetButton
                 label="text generation model"
                 onClick={() =>
-                  updateSettings({
-                    textGenerationModelSelection:
-                      DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
-                  })
+                  updateSettings(
+                    textGenerationModelPatch(DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection),
+                  )
                 }
               />
             ) : null
@@ -1908,15 +1921,17 @@ export function GeneralSettingsPanel() {
                       });
                       return;
                     }
-                    updateSettings({
-                      textGenerationModelSelection: resolveAppModelSelectionState(
-                        {
-                          ...settings,
-                          textGenerationModelSelection: createModelSelection(instanceId, model),
-                        },
-                        textGenerationProviders,
+                    updateSettings(
+                      textGenerationModelPatch(
+                        resolveAppModelSelectionState(
+                          {
+                            ...settings,
+                            textGenerationModelSelection: createModelSelection(instanceId, model),
+                          },
+                          textGenerationProviders,
+                        ),
                       ),
-                    });
+                    );
                   }}
                 />
                 {textGenInstanceEntry ? (
