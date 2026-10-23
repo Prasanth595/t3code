@@ -114,8 +114,8 @@ describe("claudeTaskOutputRoot", () => {
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const user = `claude-${process.getuid?.()}`;
-        const root = (environment: Record<string, string>) =>
-          claudeTaskOutputRoot(environment, path);
+        const root = (environment: Record<string, string>, cwd: string | null = null) =>
+          claudeTaskOutputRoot(environment, path, cwd);
         assert.equal(root({ TMPDIR: "/var/folders/x/T/" }), `/var/folders/x/T/${user}`);
         assert.equal(root({ TMP: "/tmp/user/1000" }), `/tmp/user/1000/${user}`);
         assert.equal(
@@ -123,6 +123,11 @@ describe("claudeTaskOutputRoot", () => {
           `/srv/claude/${user}`,
         );
         assert.equal(root({}), `/tmp/${user}`);
+        assert.equal(root({ TMPDIR: "tmp" }, "/work/project"), `/work/project/tmp/${user}`);
+        assert.equal(
+          root({ CLAUDE_CODE_TMPDIR: "../claude" }, "/work/project"),
+          `/work/claude/${user}`,
+        );
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

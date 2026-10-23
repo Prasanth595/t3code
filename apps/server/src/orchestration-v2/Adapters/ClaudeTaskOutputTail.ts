@@ -26,18 +26,20 @@ const MAX_READ_BYTES = 256 * 1024;
 export function claudeTaskOutputRoot(
   environment: Readonly<Record<string, string | undefined>> | undefined,
   path: Path.Path,
+  cwd: string | null,
 ): string | undefined {
   const uid = process.getuid?.();
   if (uid === undefined) return undefined;
   // Claude Code falls back to `os.tmpdir()`, which reads these from the
-  // environment it was launched with: macOS always sets TMPDIR.
+  // environment it was launched with: macOS always sets TMPDIR. A relative
+  // value is relative to Claude's working directory, not this server's.
   const base =
     environment?.CLAUDE_CODE_TMPDIR?.trim() ||
     environment?.TMPDIR ||
     environment?.TMP ||
     environment?.TEMP ||
     "/tmp";
-  return path.join(base, `claude-${uid}`);
+  return path.resolve(cwd ?? ".", base, `claude-${uid}`);
 }
 
 const locate = Effect.fn("ClaudeTaskOutputTail.locate")(function* (input: {
