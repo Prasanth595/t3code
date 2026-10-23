@@ -258,7 +258,7 @@ const PAIRING_TOKEN_PATTERN = new RegExp(
   "i",
 );
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const config = yield* ServerConfig.ServerConfig;
   const pairingLinks = yield* AuthPairingLinks.AuthPairingLinkRepository;
