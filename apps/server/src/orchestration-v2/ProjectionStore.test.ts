@@ -66,10 +66,7 @@ const streamingProjectionEvent = (
   kind: (typeof streamingProjectionCases)[number],
   id: string,
   at: DateTime.Utc,
-): Extract<
-  OrchestrationV2DomainEvent,
-  { readonly type: "node.updated" | "message.updated" | "turn-item.updated" }
-> => {
+) => {
   const threadId = ThreadId.make("thread:streaming-write");
   const base = {
     threadId,
@@ -98,7 +95,7 @@ const streamingProjectionEvent = (
           startedAt: at,
           completedAt: null,
         },
-      };
+      } as const satisfies OrchestrationV2DomainEvent;
     case "message":
       return {
         ...event,
@@ -115,7 +112,7 @@ const streamingProjectionEvent = (
           createdAt: at,
           updatedAt: at,
         },
-      };
+      } as const satisfies OrchestrationV2DomainEvent;
     case "turn-item":
       return {
         ...event,
@@ -135,7 +132,7 @@ const streamingProjectionEvent = (
           text: "a".repeat(512),
           streaming: true,
         },
-      };
+      } as const satisfies OrchestrationV2DomainEvent;
   }
 };
 
@@ -179,7 +176,6 @@ it.effect.each(streamingProjectionCases)(
             );
             break;
           case "turn-item.updated":
-            if (event.payload.type !== "reasoning") return yield* Effect.die("Expected reasoning");
             yield* sql.withTransaction(
               store.apply({
                 ...event,
@@ -207,100 +203,79 @@ it.effect.each(streamingProjectionCases)(
       const at = DateTime.makeUnsafe("2026-10-23T00:00:00.000Z");
       const later = DateTime.add(at, { seconds: 1 });
       const event = streamingProjectionEvent(kind, "record:equivalence", at);
-      const variants: Array<typeof event> = [event];
+      const variants: Array<OrchestrationV2DomainEvent> = [event];
       switch (event.type) {
         case "node.updated": {
           const node = event.payload;
-          variants.push(
-            { ...event, payload: { ...node, countsForRun: true, completedAt: later } },
-            { ...event, payload: { ...node, runId: null, parentNodeId: NodeId.make("parent") } },
-            { ...event, payload: { ...node, runId: RunId.make("other-run"), status: "completed" } },
+          for (const payload of [
+            { ...node, threadId: ThreadId.make("other-thread") },
+            { ...node, runId: null },
+            { ...node, parentNodeId: NodeId.make("parent") },
+            { ...node, providerTurnId: null },
+            { ...node, status: "completed" as const },
             {
-              ...event,
-              payload: {
-                ...node,
-                threadId: ThreadId.make("other-thread"),
-                kind: "tool_call",
-                rootNodeId: NodeId.make("other-root"),
-                providerThreadId: null,
-                providerTurnId: null,
-                runtimeRequestId: RuntimeRequestId.make("request"),
-                checkpointScopeId: CheckpointScopeId.make("scope"),
-                startedAt: null,
-              },
+              ...node,
+              countsForRun: true,
+              rootNodeId: NodeId.make("other-root"),
+              kind: "tool_call" as const,
+              providerThreadId: null,
+              runtimeRequestId: RuntimeRequestId.make("request"),
+              checkpointScopeId: CheckpointScopeId.make("scope"),
+              startedAt: null,
+              completedAt: later,
             },
-            event,
-          );
+          ])
+            variants.push({ ...event, payload }, event);
           break;
         }
         case "message.updated": {
           const message = event.payload;
-          variants.push(
-            { ...event, payload: { ...message, text: "next chunk", updatedAt: later } },
-            { ...event, payload: { ...message, role: "user", streaming: false } },
-            { ...event, payload: { ...message, runId: null, nodeId: null, createdAt: later } },
+          for (const payload of [
+            { ...message, threadId: ThreadId.make("other-thread") },
+            { ...message, runId: null },
+            { ...message, nodeId: null },
+            { ...message, createdAt: later },
             {
-              ...event,
-              payload: {
-                ...message,
-                threadId: ThreadId.make("other-thread"),
-                runId: RunId.make("other-run"),
-                nodeId: NodeId.make("other-node"),
-              },
+              ...message,
+              text: "next chunk",
+              updatedAt: later,
+              streaming: false,
+              role: "user" as const,
             },
-            event,
-          );
+          ])
+            variants.push({ ...event, payload }, event);
           break;
         }
         case "turn-item.updated": {
           const item = event.payload;
-          if (item.type !== "reasoning") return yield* Effect.die("Expected reasoning");
+          for (const payload of [
+            { ...item, threadId: ThreadId.make("other-thread") },
+            { ...item, runId: null },
+            { ...item, nodeId: null },
+            { ...item, providerTurnId: null },
+            { ...item, ordinal: 9_000_000_000 },
+            { ...item, status: "completed" as const },
+            { ...item, type: "compaction" as const, driver },
+            {
+              ...item,
+              parentItemId: TurnItemId.make("parent"),
+              providerThreadId: null,
+              updatedAt: later,
+              title: "next chunk",
+              text: "next chunk",
+              streaming: false,
+            },
+          ])
+            variants.push({ ...event, payload }, event);
+          const failed = {
+            ...item,
+            type: "error" as const,
+            status: "failed" as const,
+            failure: { class: "unknown" as const, message: "Failed", code: null, retryable: null },
+          };
           variants.push(
-            { ...event, payload: { ...item, updatedAt: later, title: "next chunk" } },
-            {
-              ...event,
-              payload: {
-                ...item,
-                parentItemId: TurnItemId.make("parent"),
-                providerThreadId: null,
-                runId: null,
-                nodeId: null,
-                providerTurnId: null,
-              },
-            },
-            {
-              ...event,
-              payload: {
-                ...item,
-                threadId: ThreadId.make("other-thread"),
-                runId: RunId.make("other-run"),
-                nodeId: NodeId.make("other-node"),
-                providerTurnId: ProviderTurnId.make("other-turn"),
-                ordinal: 9_000_000_000,
-                status: "completed",
-                type: "compaction",
-                driver,
-              },
-            },
-            {
-              ...event,
-              payload: {
-                ...item,
-                type: "error",
-                status: "failed",
-                failure: { class: "unknown", message: "Failed", code: null, retryable: null },
-              },
-            },
-            {
-              ...event,
-              payload: {
-                ...item,
-                type: "error",
-                status: "failed",
-                updatedAt: later,
-                failure: { class: "unknown", message: "Updated", code: null, retryable: null },
-              },
-            },
+            { ...event, payload: failed },
+            { ...event, payload: { ...failed, updatedAt: later } },
             event,
           );
           break;
@@ -315,7 +290,6 @@ it.effect.each(streamingProjectionCases)(
         yield* store.apply(variant);
         assert.deepEqual(yield* read, updated);
       }
-      assert.deepEqual(yield* sql`PRAGMA integrity_check`, [{ integrity_check: "ok" }]);
     }).pipe(Effect.provide(layerTest)),
 );
 

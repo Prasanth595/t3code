@@ -2121,8 +2121,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "node.updated": {
               const payloadJson = yield* encodeNodePayload(event.payload);
               const payload = parseEncodedPayload(payloadJson);
-              // Assigning an unchanged indexed column still rewrites its B-tree entry.
-              // Keep index-stable snapshots on the table row; new or moved keys use the upsert.
+              // SQLite rewrites index entries even when an assigned key is unchanged.
               const updated = yield* sql`
                 UPDATE orchestration_v2_projection_nodes
                 SET root_node_id = ${event.payload.rootNodeId},
