@@ -2561,6 +2561,46 @@ const READS_UNTIL_THE_BASE_MOVED = [
 ];
 
 describe("gate: the base branch moves", () => {
+  it.effect("a base that moved while the commands ran does not rerun the gate", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyForGate();
+      baseMoves(rig, 1);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+      // One checkout and one run, recorded against the base the attempt ran against.
+      assert.strictEqual(rig.ws.gateCalls, 1);
+      assert.deepStrictEqual(rig.ws.calls, workspaceCalls(rig, 1, BASE));
+      assert.deepStrictEqual(eventsOf(rig, "gate_regate"), []);
+      assert.deepStrictEqual(linesOf(rig), [...BASE_EVENTS, ...passingOn(BASE, 1), ...PASS_TAIL]);
+      assert.ok(rig.gh.world.prReady);
+      assert.deepStrictEqual(rig.gh.world.prComments, [resultsComment(1, BASE_SHORT)]);
+      assert.deepStrictEqual(checkoutsOnDisk(rig), []);
+    }),
+  );
+
+  it.effect(
+    "a ledger whose last gate line is a base-move gate_regate resumes the attempt and passes once",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* readyForGate();
+        // What an older build left: the commands passed, the base had moved, and it died before
+        // the second run.
+        appendLines(rig, [
+          ...passingOn(BASE, 1),
+          regateLine(BASE, MOVED),
+        ] as ReadonlyArray<RunEvent>);
+        baseMoved(rig, 0);
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+        assert.strictEqual(rig.ws.gateCalls, 1);
+        assert.strictEqual(eventsOf(rig, "gate_regate").length, 1);
+        assert.strictEqual(
+          linesOf(rig).filter((l) => JSON.stringify(l) === JSON.stringify(PASSED_STEP)).length,
+          1,
+        );
+        assert.deepStrictEqual(rig.gh.world.prComments, [resultsComment(1, "9f8e7d6")]);
+        assert.ok(rig.gh.world.prReady);
+      }),
+  );
+
   it.effect(
     "a base that moved while the commands ran is gated again on the new merge and uses no attempt",
     () =>
@@ -4316,6 +4356,43 @@ describe("regate: a pull request that is ready for review", () => {
       // And again, as every pass does.
       assert.deepStrictEqual((yield* regateIn(rig)).step, { kind: "unchanged" });
       assert.deepStrictEqual(rig.gh.calls, [PR_READ, TIP_READ, PR_READ, TIP_READ]);
+    }),
+  );
+});
+
+describe("regate: the base branch moved", () => {
+  it.effect("a moved base with an unchanged head is unchanged and costs one read", () =>
+    Effect.gen(function* () {
+      const rig = yield* prOpenRun();
+      baseMoved(rig, 0);
+      const bytes = bytesOf(rig);
+      assert.deepStrictEqual(yield* regateIn(rig), { step: { kind: "unchanged" }, moved: null });
+      assert.deepStrictEqual(rig.gh.calls, [PR_READ]);
+      assert.deepStrictEqual(rig.ws.calls, []);
+      assert.strictEqual(bytesOf(rig), bytes);
+    }),
+  );
+
+  it.effect("a base-move re-gate an older build left under way is finished and passes once", () =>
+    Effect.gen(function* () {
+      const rig = yield* prOpenRun();
+      baseMoved(rig, 0);
+      appendLines(rig, [regateLine(BASE, MOVED)] as ReadonlyArray<RunEvent>);
+      assert.deepStrictEqual(yield* regateStep(rig), { kind: "passed", pr: 12 });
+      assert.strictEqual(eventsOf(rig, "gate_regate").length, 1);
+      assert.deepStrictEqual(rig.ws.calls, workspaceCalls(rig, 2, MOVED));
+      assert.deepStrictEqual(rig.gh.world.prComments, [resultsComment(1), againComment(2, MOVED)]);
+    }),
+  );
+
+  it.effect("a base that moves while a re-gate runs does not rerun it", () =>
+    Effect.gen(function* () {
+      const rig = yield* prOpenRun();
+      headMoved(rig);
+      baseMoves(rig, 1);
+      assert.deepStrictEqual(yield* regateStep(rig), { kind: "passed", pr: 12 });
+      assert.strictEqual(eventsOf(rig, "gate_regate").length, 1);
+      assert.strictEqual(rig.ws.gateCalls, 1);
     }),
   );
 });

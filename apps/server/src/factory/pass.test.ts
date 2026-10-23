@@ -4549,6 +4549,29 @@ describe("pr-open runs: gated again only when something moved", () => {
     }),
   );
 
+  it.effect("a base that moved, with the head unchanged and mergeable, is not gated", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41);
+      fake.baseTips[REPO] = MOVED;
+      fake.mergeables[`${REPO}#12`] = "mergeable";
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(gated(fake), []);
+      assert.deepEqual(lineOf(lines, 41), []);
+    }),
+  );
+
+  it.effect("a head that moved starts the gate whatever the base did", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41);
+      fake.openHeads[`${REPO}#12`] = PUSHED;
+      fake.baseTips[REPO] = MOVED;
+      yield* pass(fake, [REPO], 5);
+      assert.deepEqual(gated(fake), [`gate ${REPO}#41`]);
+    }),
+  );
+
   it.effect("a base that moved starts the gate", () =>
     Effect.gen(function* () {
       const fake = new Fake();
