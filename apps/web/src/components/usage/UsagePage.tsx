@@ -255,6 +255,9 @@ export function UsagePage() {
       ),
   );
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const presentationsWithProviders = useAtomValue(
+    environmentPresentations.presentationsWithProvidersAtom,
+  );
   const selectedEnvironmentIdList = selectedEnvironments.map(
     (environment) => environment.environmentId,
   );
@@ -427,10 +430,10 @@ export function UsagePage() {
 
   const showChatGptSharing =
     !hiddenProviders.has("codex") &&
-    [...providersByEnvironment].some(
-      ([id, providers]) =>
+    [...presentationsWithProviders].some(
+      ([id, presentation]) =>
         (selectedEnvironmentIds === null || selectedEnvironmentIds.has(id)) &&
-        providers.some(usesChatGptSharing),
+        (presentation.serverConfig?.providers ?? []).some(usesChatGptSharing),
     );
 
   const topbarContent = (

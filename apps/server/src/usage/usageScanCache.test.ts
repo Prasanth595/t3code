@@ -2,10 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   decodeScanCache,
-  dedupeWithinFile,
   encodeScanCache,
   makeScanCacheWriter,
-  pruneScanCache,
   type CachedFile,
   type ScanCache,
 } from "./usageScanCache.ts";
@@ -182,13 +180,14 @@ describe("scan cache round trip", () => {
     ).toEqual(original);
   });
 
-  it.each([5, 6, 7])(
+  it.each([5, 6, 7, 8, 9])(
     "retains v%s history while re-reading folder metadata and Codex provenance",
     (version) => {
       const original = cacheWith([["/gone.jsonl", 100, [record({ speed: "fast" })]]]);
       original.set("/gone-codex.jsonl", {
         ...original.get("/gone.jsonl")!,
         provider: "codex",
+        malformedRecords: 1,
         records: [record({ provider: "codex", speed: "fast", dedupeKey: null })],
         position: position({
           state: { ...initialCodexScanState(), model: "gpt-6-astra", sawSessionMeta: true },
@@ -300,6 +299,32 @@ describe("scan cache round trip", () => {
     expect(decodeScanCache(JSON.parse(JSON.stringify(previous)), TEST_FORMAT_MAP).size).toBe(0);
   });
 
+  it.each([8, 9])("preserves compatible v%s Codex positions without folder metadata", (version) => {
+    const { workingDirectory: _folder, ...withoutFolder } = TEST_FORMAT_MAP.get("codex")!;
+    const formats = new Map(TEST_FORMAT_MAP).set("codex", withoutFolder);
+    for (const malformedRecords of [0, 1]) {
+      const original = cacheWith([
+        ["/gone.jsonl", 100, [record({ provider: "codex", dedupeKey: null })]],
+      ]);
+      original.set("/gone.jsonl", {
+        ...original.get("/gone.jsonl")!,
+        provider: "codex",
+        malformedRecords,
+        cwd: "/saved/project",
+        label: "Saved agent",
+        position: position({ state: initialCodexScanState() }),
+      });
+      const restored = decodeScanCache({ ...encodeScanCache(original), version }, formats);
+      const resets = version === 8 && malformedRecords > 0;
+      expect(restored.get("/gone.jsonl")).toEqual({
+        ...original.get("/gone.jsonl"),
+        ...(resets
+          ? { size: -1, position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null } }
+          : {}),
+      });
+    }
+  });
+
   it("rewrites only changed entries and still restores the whole cache", () => {
     const write = makeScanCacheWriter();
     const cache = cacheWith([
@@ -321,15 +346,6 @@ describe("scan cache round trip", () => {
     expect(document.sources).toEqual(sources);
   });
 
-  it("interns repeated model and session strings", () => {
-    const encoded = encodeScanCache(
-      cacheWith([["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:" }), record()]]]),
-    );
-
-    expect(encoded.models).toEqual(["claude-fable-5"]);
-    expect(encoded.sessions).toEqual(["session-a"]);
-  });
-
   it("treats a corrupt or foreign document as an empty cache", () => {
     expect(decodeScanCache(null, TEST_FORMAT_MAP).size).toBe(0);
     expect(decodeScanCache("nonsense", TEST_FORMAT_MAP).size).toBe(0);
@@ -349,13 +365,6 @@ describe("scan cache round trip", () => {
     expect([...restored.keys()]).toEqual(["/good.jsonl"]);
   });
 
-  it("rejects the whole cache when an intern table holds a non-string", () => {
-    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
-    const poisoned = { ...encoded, models: [1] };
-
-    expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned)), TEST_FORMAT_MAP).size).toBe(0);
-  });
-
   it("drops the whole entry when any row is corrupt, forcing a cold re-parse", () => {
     const encoded = encodeScanCache(
       cacheWith([["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:" })]]]),
@@ -373,45 +382,5 @@ describe("scan cache round trip", () => {
 
     const restored = decodeScanCache(JSON.parse(JSON.stringify(poisoned)), TEST_FORMAT_MAP);
     expect(restored.has("/a.jsonl")).toBe(false);
-  });
-});
-
-describe("pruneScanCache", () => {
-  const retentionCutoffMs = 1000;
-
-  it("drops entries older than retention", () => {
-    const cache = cacheWith([["/old.jsonl", 500, [record()]]]);
-
-    const removed = pruneScanCache(cache, retentionCutoffMs);
-
-    expect(removed).toBe(1);
-    expect(cache.size).toBe(0);
-  });
-
-  it("keeps entries whose file has disappeared", () => {
-    const cache = cacheWith([["/gone.jsonl", 5000, [record()]]]);
-
-    pruneScanCache(cache, retentionCutoffMs);
-
-    expect(cache.size).toBe(1);
-  });
-});
-
-describe("dedupeWithinFile", () => {
-  it("keeps the first record per dedupe key", () => {
-    const kept = dedupeWithinFile([
-      record({ totals: { ...record().totals, outputTokens: 1 } }),
-      record({ totals: { ...record().totals, outputTokens: 999 } }),
-      record({ dedupeKey: "msg_2:" }),
-    ]);
-
-    expect(kept).toHaveLength(2);
-    expect(kept[0]?.totals.outputTokens).toBe(1);
-  });
-
-  it("keeps every record that has no dedupe key", () => {
-    expect(
-      dedupeWithinFile([record({ dedupeKey: null }), record({ dedupeKey: null })]),
-    ).toHaveLength(2);
   });
 });

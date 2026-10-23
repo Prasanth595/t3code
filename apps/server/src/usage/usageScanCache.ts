@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 import { CLAUDE_SYNTHETIC_MODEL } from "../provider/Drivers/claudeUsage.ts";
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 
-const USAGE_SCAN_CACHE_VERSION = 8 as const;
+const USAGE_SCAN_CACHE_VERSION = 10 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
@@ -18,8 +18,10 @@ const SPEED_COMPATIBLE_SINCE_VERSION = 4;
  * it, dropping saved usage for deleted transcripts. Separate files keep both.
  * When its own file is missing, a server reads the newest legacy file once.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v8.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v10.json";
 export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v9.json",
+  "usage-scan-cache-v8.json",
   "usage-scan-cache-v7.json",
   "usage-scan-cache-v6.json",
   "usage-scan-cache-v5.json",
@@ -320,12 +322,14 @@ export function decodeScanCache(
     ) {
       continue;
     }
-    // v8 combines folder attribution with main's v7 Codex tier provenance. Keep saved
-    // history, but re-parse live folder-aware formats from either v7 cache shape.
-    // Formats without folders retain main's compatible v6 reducer positions.
+    // v10 combines folder metadata with v9's Codex recovery. Retain saved history
+    // for deleted transcripts while re-reading live folder-aware formats from either
+    // earlier writer. Formats without folders keep compatible reducer positions.
     const legacy =
-      (format.state !== undefined && version < 6) ||
-      (format.workingDirectory !== undefined && version < 8);
+      (format.state !== undefined &&
+        (version < 6 ||
+          (entry.p === "codex" && (version < 8 || (version < 9 && malformedRecords > 0))))) ||
+      (format.workingDirectory !== undefined && version < 10);
     // A corrupt state disqualifies the entry: resuming with it would attach
     // appended usage to the wrong model or replay fork-copied history.
     if (!legacy && !isValidState.get(entry.p)?.(entry.cs)) continue;
