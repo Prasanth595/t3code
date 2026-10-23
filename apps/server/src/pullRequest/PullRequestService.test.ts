@@ -259,6 +259,7 @@ function makeService(input: {
   readonly settings?: ServerSettings;
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly providers: ReadonlyArray<PullRequestProviderApi>;
+  readonly sshHostname?: string;
   readonly resolveHandle?: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"]["resolveHandle"];
   readonly resolveRepositoryIdentity?: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"]["resolve"];
 }) {
@@ -289,6 +290,18 @@ function makeService(input: {
         }),
         Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
           resolve: input.resolveRepositoryIdentity ?? (() => Effect.succeed(null)),
+        }),
+        TestSourceControlHost.layer({
+          process: {
+            run: () =>
+              Effect.succeed({
+                stdout: `hostname ${input.sshHostname ?? "unresolved"}\n`,
+                stderr: "",
+                exitCode: ChildProcessSpawner.ExitCode(0),
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              }),
+          },
         }),
         SourceControlRateLimit.layer,
         PullRequestFilesViewed.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
@@ -4543,6 +4556,55 @@ it.effect("reports the first checkout when all duplicate repository accounts fai
     assert.deepStrictEqual(
       result.errors.map((error) => error.projectId),
       ["w"],
+    );
+  }),
+);
+
+it.effect("includes an unknown SSH alias in a GitHub host-filtered inbox", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      sshHostname: "github.com",
+      projects: [
+        project({
+          id: "alias",
+          title: "Alias",
+          workspaceRoot: "/repo",
+          repository: "acme/web",
+          provider: "unknown",
+          host: "github-work",
+          remoteUrl: "git@github-work:acme/web.git",
+        }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: () =>
+            Effect.succeed({
+              items: [changeRequest(42, "2026-07-05T00:00:00Z")],
+              truncated: false,
+              continues: false,
+            }),
+        }),
+      ],
+      resolveHandle: ({ context }) =>
+        Effect.succeed({
+          provider: undefined as never,
+          context: {
+            ...context!,
+            provider:
+              context?.requestedHost === undefined
+                ? {
+                    kind: SourceControlProviderKind.make("github"),
+                    name: "GitHub",
+                    baseUrl: "https://github.com",
+                  }
+                : context.provider,
+          },
+        }),
+    });
+    const result = yield* service.list({ state: "open", host: "github.com" });
+    assert.deepStrictEqual(
+      result.entries.map(({ host, number }) => [host, number]),
+      [["github.com", 42]],
     );
   }),
 );

@@ -1230,3 +1230,41 @@ it.effect("records the API host in repository identities while keeping the SSH l
     assert.deepStrictEqual(refined.locator, identity.locator);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("checks out the matching SSH alias remote instead of an unrelated origin", () => {
+  const { layer, git } = harness({
+    remotes: remotesOutput(
+      ["origin", "git@github.com:other/web.git"],
+      ["upstream", "git@review-alias:acme/web.git"],
+    ),
+    sshHostname: "github.com",
+    localBranches: ["feature"],
+    graphql: () => ({ pullRequest: node(42, "feature") }),
+  });
+  return Effect.gen(function* () {
+    const provider = yield* GitHubSourceControlProvider.make;
+    yield* provider.checkoutChangeRequest({
+      cwd: "/repo",
+      reference: "https://github.com/acme/web/pull/42",
+    });
+    assert.deepStrictEqual(git.find(([name]) => name === "fetchRemoteTrackingBranch")?.[1], {
+      cwd: "/repo",
+      remoteName: "upstream",
+      remoteBranch: "feature",
+    });
+    assert.ok(
+      git.some(
+        ([name, args]) =>
+          name === "execute" &&
+          encodeJson(args) ===
+            encodeJson(["merge", "--ff-only", "--quiet", "refs/remotes/upstream/feature"]),
+      ),
+    );
+    assert.deepStrictEqual(git.find(([name]) => name === "setBranchUpstream")?.[1], {
+      cwd: "/repo",
+      branch: "feature",
+      remoteName: "upstream",
+      remoteBranch: "feature",
+    });
+  }).pipe(Effect.provide(layer));
+});

@@ -5,6 +5,8 @@ import {
 } from "@t3tools/shared/sourceControl";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { parseDiffFilePaths } from "@t3tools/source-control-core/server/diffFileRevisions";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import { resolveSshRemoteUrl } from "@t3tools/source-control-core/server/sshRemote";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -600,6 +602,7 @@ export const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const projects = yield* ProjectService.ProjectService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+  const { process } = yield* SourceControlHost.SourceControlHost;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const rateLimits = yield* SourceControlRateLimit.SourceControlRateLimit;
   const filesViewedStore = yield* PullRequestFilesViewed.PullRequestFilesViewedRepository;
@@ -654,24 +657,31 @@ export const make = Effect.gen(function* () {
       ([baseUrl, candidates]) =>
         Effect.firstSuccessOf(
           candidates.map(({ project, provider, remoteName, remoteUrl }) =>
-            Effect.suspend(() =>
-              sourceControlProviders.resolveHandle({
+            Effect.gen(function* () {
+              const resolvedUrl = yield* resolveSshRemoteUrl({
+                remoteUrl,
+                cwd: project.workspaceRoot,
+                process,
+              });
+              const resolvedProvider =
+                detectSourceControlProviderFromRemoteUrl(resolvedUrl) ?? provider;
+              return yield* sourceControlProviders.resolveHandle({
                 cwd: project.workspaceRoot,
                 context: {
                   provider:
-                    provider.kind === "forgejo"
-                      ? { ...provider, kind: SourceControlProviderKind.make("unknown") }
-                      : provider,
+                    resolvedProvider.kind === "forgejo"
+                      ? { ...resolvedProvider, kind: SourceControlProviderKind.make("unknown") }
+                      : resolvedProvider,
                   remoteName,
                   remoteUrl,
                   ...(filter.host !== undefined &&
-                  provider.kind !== "github" &&
+                  resolvedProvider.kind !== "github" &&
                   isSshRemoteUrl(remoteUrl)
                     ? { requestedHost: filter.host }
                     : {}),
                 },
-              }),
-            ).pipe(
+              });
+            }).pipe(
               Effect.flatMap((handle) => {
                 const refined = handle.context?.provider;
                 return refined === undefined || refined.kind === "unknown"

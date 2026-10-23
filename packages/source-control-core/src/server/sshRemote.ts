@@ -1,3 +1,5 @@
+import * as Schema from "effect/Schema";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import type * as SourceControlHost from "./SourceControlHost.ts";
@@ -10,6 +12,15 @@ const PUBLIC_HOSTS = new Set([
   "codeberg.org",
   "ssh.dev.azure.com",
 ]);
+
+const encodeCacheKey = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+const SSH_CACHE_TTL_MS = 30_000;
+const SSH_CACHE_CAPACITY = 256;
+// Process adapters own their environment; never reuse results across adapters.
+const hostnameCaches = new WeakMap<
+  SourceControlHost.SourceControlHost["Service"]["process"],
+  Map<string, { readonly hostname: string; readonly expiresAt: number }>
+>();
 
 /** Keeps the original repository path when replacing the host. */
 function parseSshRemote(remoteUrl: string) {
@@ -67,6 +78,23 @@ export const resolveSshRemoteUrl = Effect.fn("resolveSshRemoteUrl")(function* (i
   // A public API host can use a different SSH endpoint, such as GitHub's port-443 host.
   if (PUBLIC_HOSTS.has(remote.hostname.toLowerCase())) return input.remoteUrl;
 
+  let cache = hostnameCaches.get(input.process);
+  if (cache === undefined) {
+    cache = new Map();
+    hostnameCaches.set(input.process, cache);
+  }
+  const key = encodeCacheKey([input.cwd, remote.username, remote.port, remote.hostname]);
+  const now = yield* Clock.currentTimeMillis;
+  for (const [entryKey, entry] of cache) {
+    if (entry.expiresAt <= now) cache.delete(entryKey);
+  }
+  const cached = cache.get(key);
+  if (cached !== undefined) {
+    return cached.hostname === "github.com" || cached.hostname === "ssh.github.com"
+      ? `${remote.prefix}github.com${remote.suffix}`
+      : input.remoteUrl;
+  }
+
   const output = yield* input.process
     .run({
       operation: "source-control.resolve-ssh-host",
@@ -85,6 +113,16 @@ export const resolveSshRemoteUrl = Effect.fn("resolveSshRemoteUrl")(function* (i
 
   const resolvedHostname =
     output?.exitCode === 0 ? readSshHostname(output.stdout)?.toLowerCase() : undefined;
+  if (resolvedHostname !== undefined && SSH_HOSTNAME_PATTERN.test(resolvedHostname)) {
+    if (cache.size >= SSH_CACHE_CAPACITY) {
+      const oldest = cache.keys().next().value;
+      if (oldest !== undefined) cache.delete(oldest);
+    }
+    cache.set(key, {
+      hostname: resolvedHostname,
+      expiresAt: (yield* Clock.currentTimeMillis) + SSH_CACHE_TTL_MS,
+    });
+  }
   if (resolvedHostname !== "github.com" && resolvedHostname !== "ssh.github.com")
     return input.remoteUrl;
 

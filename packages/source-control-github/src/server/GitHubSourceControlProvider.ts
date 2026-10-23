@@ -738,8 +738,13 @@ export const make = Effect.gen(function* () {
         Effect.map((result) => (result.exitCode === 0 ? result.stdout : "")),
         Effect.mapError(gitFailure),
       );
+      const resolvedRemotes = yield* Effect.forEach(parseFetchRemotes(remotes), (remote) =>
+        resolveSshRemoteUrl({ remoteUrl: remote.url, cwd: input.cwd, process }).pipe(
+          Effect.map((url) => ({ ...remote, url })),
+        ),
+      );
       const remoteFor = (nameWithOwner: string) =>
-        parseFetchRemotes(remotes).find(
+        resolvedRemotes.find(
           (remote) =>
             (gitHubApiHostForRemote(remote.url) ??
               normalizeGitRemoteUrl(remote.url).split("/")[0]) === base.host &&
