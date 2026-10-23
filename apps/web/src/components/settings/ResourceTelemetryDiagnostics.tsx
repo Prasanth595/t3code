@@ -823,6 +823,10 @@ export function ResourceTelemetryDiagnostics({
     environmentId,
   );
   const refreshHistory = history.refresh;
+  const selectedHistoryRef = useRef({ environmentId, windowMs, refreshHistory });
+  useEffect(() => {
+    selectedHistoryRef.current = { environmentId, windowMs, refreshHistory };
+  }, [environmentId, windowMs, refreshHistory]);
   const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
     reportFailure: false,
   });
@@ -932,6 +936,14 @@ export function ResourceTelemetryDiagnostics({
     void retryTelemetry()
       .then(() => {
         refreshHistory();
+        const selectedHistory = selectedHistoryRef.current;
+        if (
+          environmentIdRef.current === environmentId &&
+          selectedHistory.environmentId === environmentId &&
+          selectedHistory.windowMs !== windowMs
+        ) {
+          selectedHistory.refreshHistory();
+        }
       })
       .catch((error: unknown) => {
         toastManager.add({
