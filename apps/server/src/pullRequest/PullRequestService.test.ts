@@ -25,6 +25,9 @@ import type { ServerSettings } from "@t3tools/contracts";
 import * as ServerSettingsService from "../serverSettings.ts";
 import { PullRequestOperationError } from "@t3tools/contracts";
 
+import { refreshPushedPullRequests } from "../git/refreshPushedPullRequests.ts";
+import * as OrchestratorV2 from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.ts";
@@ -1862,69 +1865,122 @@ it.effect("refuses a review request this viewer may not make, and says what acce
   }),
 );
 
-it.effect.each(["list", "listStats"] as const)(
-  "retries a replacement %s read that joins a canceled lookup",
-  (operation) =>
-    Effect.gen(function* () {
-      const started = yield* Deferred.make<void>();
-      const stopping = yield* Deferred.make<void>();
-      const finishShutdown = yield* Deferred.make<void>();
-      let hostCalls = 0;
-      const lookup = Effect.gen(function* () {
-        if (++hostCalls !== 1) return;
-        yield* Deferred.succeed(started, undefined);
-        return yield* Effect.never.pipe(
-          Effect.onInterrupt(() =>
-            Deferred.succeed(stopping, undefined).pipe(
-              Effect.andThen(Deferred.await(finishShutdown)),
-            ),
+it.effect("retries a replacement listStats read that joins a canceled lookup", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const stopping = yield* Deferred.make<void>();
+    const finishShutdown = yield* Deferred.make<void>();
+    let hostCalls = 0;
+    const lookup = Effect.gen(function* () {
+      if (++hostCalls !== 1) return;
+      yield* Deferred.succeed(started, undefined);
+      return yield* Effect.never.pipe(
+        Effect.onInterrupt(() =>
+          Deferred.succeed(stopping, undefined).pipe(
+            Effect.andThen(Deferred.await(finishShutdown)),
           ),
-        );
-      });
-      const service = yield* makeService({
-        projects: [
-          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
-        ],
-        providers: [
-          fakeProvider(SourceControlProviderKind.make("github"), {
-            listChangeRequests: () =>
-              lookup.pipe(
-                Effect.as({
-                  items: [changeRequest(1, "2026-07-02T00:00:00Z")],
-                  truncated: false,
-                  continues: false,
-                }),
-              ),
-            listChangeRequestStats: () =>
-              lookup.pipe(
-                Effect.as([{ repository: "acme/web", number: 1, additions: 3, deletions: 1 }]),
-              ),
-          }),
-        ],
-      });
-      const read =
-        operation === "list"
-          ? service
-              .list({ state: "open" })
-              .pipe(Effect.map((result) => result.entries.map((entry) => entry.number)))
-          : service
-              .listStats({
-                refs: [{ projectId: "p1" as ProjectId, repository: "acme/web", number: 1 }],
-              })
-              .pipe(Effect.map((result) => result.stats.map((stat) => stat.number)));
-      const original = yield* Effect.forkScoped(read);
-      yield* Deferred.await(started);
-      const cancellation = yield* Effect.forkScoped(Fiber.interrupt(original));
-      yield* Deferred.await(stopping);
-      const replacement = yield* Effect.forkScoped(read, { startImmediately: true });
-      yield* Deferred.succeed(finishShutdown, undefined);
-      yield* Fiber.join(cancellation);
-      const canceled = yield* Fiber.await(original);
-      assert.isTrue(Exit.isFailure(canceled));
-      if (Exit.isFailure(canceled)) assert.isTrue(Cause.hasInterruptsOnly(canceled.cause));
-      assert.deepStrictEqual(yield* Fiber.join(replacement), [1]);
-      assert.strictEqual(hostCalls, 2);
-    }),
+        ),
+      );
+    });
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequestStats: () =>
+            lookup.pipe(
+              Effect.as([{ repository: "acme/web", number: 1, additions: 3, deletions: 1 }]),
+            ),
+        }),
+      ],
+    });
+    const read = service
+      .listStats({
+        refs: [{ projectId: "p1" as ProjectId, repository: "acme/web", number: 1 }],
+      })
+      .pipe(Effect.map((result) => result.stats.map((stat) => stat.number)));
+    const original = yield* Effect.forkScoped(read);
+    yield* Deferred.await(started);
+    const cancellation = yield* Effect.forkScoped(Fiber.interrupt(original));
+    yield* Deferred.await(stopping);
+    // Join the old entry while its lookup is still finishing cancellation.
+    const replacement = yield* Effect.forkScoped(read, { startImmediately: true });
+    yield* Deferred.succeed(finishShutdown, undefined);
+    yield* Fiber.join(cancellation);
+    const canceled = yield* Fiber.await(original);
+    assert.isTrue(Exit.isFailure(canceled));
+    if (Exit.isFailure(canceled)) assert.isTrue(Cause.hasInterruptsOnly(canceled.cause));
+    assert.deepStrictEqual(yield* Fiber.join(replacement), [1]);
+    assert.strictEqual(hostCalls, 2);
+  }),
+);
+
+it.effect("keeps a listing running for the next reader when its reader goes away", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    let hostCalls = 0;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: () =>
+            Effect.gen(function* () {
+              hostCalls += 1;
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(release);
+              return {
+                items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+                truncated: false,
+                continues: false,
+              };
+            }),
+        }),
+      ],
+    });
+    const read = service
+      .list({ state: "open" })
+      .pipe(Effect.map((result) => result.entries.map((entry) => entry.number)));
+
+    const original = yield* Effect.forkChild(read, { startImmediately: true });
+    yield* Deferred.await(started);
+    yield* Fiber.interrupt(original);
+    const replacement = yield* Effect.forkChild(read, { startImmediately: true });
+    yield* Deferred.succeed(release, undefined);
+
+    assert.deepStrictEqual(yield* Fiber.join(replacement), [1]);
+    assert.strictEqual(hostCalls, 1);
+  }),
+);
+
+it.effect("reads a turn's own project listing fresh while other listings wait", () =>
+  Effect.gen(function* () {
+    const asked: string[] = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        project({ id: "p2", title: "docs", workspaceRoot: "/b", repository: "acme/docs" }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: ({ repository }) => {
+            asked.push(repository);
+            return Effect.succeed({ items: [], truncated: false, continues: false });
+          },
+        }),
+      ],
+    });
+    const readBoth = Effect.all([
+      service.list({ state: "open", projectId: "p1" as ProjectId }),
+      service.list({ state: "open", projectId: "p2" as ProjectId }),
+    ]);
+
+    yield* readBoth;
+    yield* service.refreshAfterTurn("p1" as ProjectId);
+    yield* readBoth;
+    yield* service.refreshAfterTurn("p2" as ProjectId);
+    yield* readBoth;
+    assert.deepStrictEqual(asked, ["acme/web", "acme/docs", "acme/web", "acme/docs", "acme/docs"]);
+  }),
 );
 
 it.effect("shares one cold viewer lookup across distinct concurrent lists", () =>
@@ -2080,6 +2136,97 @@ it.effect("does not revive old summaries when project epochs are evicted", () =>
     for (let index = 0; index < 2048; index++)
       yield* service.refreshAfterTurn(`project-${index}` as ProjectId);
     assert.strictEqual((yield* service.summary(ref))?.title, "new");
+  }),
+);
+
+it.effect("coalesces turn refreshes for 30 seconds, then refreshes once the window ends", () =>
+  Effect.gen(function* () {
+    let hostCalls = 0;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: () => {
+            hostCalls += 1;
+            return Effect.succeed({ items: [], truncated: false, continues: false });
+          },
+        }),
+      ],
+    });
+
+    yield* service.refreshAfterTurn("p1" as ProjectId);
+    yield* TestClock.adjust("10 seconds");
+    // Cached until t=40, so only the trailing refresh can make the t=30 read fresh.
+    // `projectIds` is the global page split across environments, so it waits too.
+    const readGlobal = Effect.all([
+      service.list({ state: "open" }),
+      service.list({ state: "open", projectIds: ["p1" as ProjectId] }),
+    ]);
+    yield* readGlobal;
+    yield* service.refreshAfterTurn("p1" as ProjectId);
+    yield* service.refreshAfterTurn("p3" as ProjectId);
+    yield* readGlobal;
+    assert.strictEqual(hostCalls, 2);
+
+    const trailing = yield* service.subscribeRefreshes.pipe(
+      Stream.drop(1),
+      Stream.runHead,
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* TestClock.adjust("20 seconds");
+    yield* Fiber.join(trailing);
+    yield* readGlobal;
+    assert.strictEqual(hostCalls, 4);
+  }),
+);
+
+it.effect("pushes and explicit refreshes read fresh inside a turn window", () =>
+  Effect.gen(function* () {
+    let hostCalls = 0;
+    let pushed = false;
+    const web = project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" });
+    const service = yield* makeService({
+      projects: [web],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: () => {
+            hostCalls += 1;
+            return Effect.succeed({
+              items: pushed ? [changeRequest(42, "2026-07-02T00:00:00Z")] : [],
+              truncated: false,
+              continues: false,
+            });
+          },
+        }),
+      ],
+    });
+
+    yield* service.refreshAfterTurn(web.id);
+    yield* TestClock.adjust("10 seconds");
+    yield* service.list({ state: "open" });
+    yield* service.invalidate({});
+    yield* service.list({ state: "open" });
+    assert.strictEqual(hostCalls, 2);
+
+    pushed = true;
+    yield* refreshPushedPullRequests(
+      { cwd: web.workspaceRoot, projectId: web.id },
+      { push: { status: "pushed" } },
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(PullRequestService.PullRequestService, service),
+          Layer.mock(OrchestratorV2.OrchestratorV2)({}),
+          Layer.mock(ProjectStore.ProjectStoreV2)({}),
+        ),
+      ),
+    );
+    const result = yield* service.list({ state: "open" });
+    assert.strictEqual(hostCalls, 3);
+    assert.deepStrictEqual(
+      result.entries.map(({ number }) => number),
+      [42],
+    );
   }),
 );
 
@@ -2336,6 +2483,87 @@ it.effect("asks on its own for a repository a search answered nothing for", () =
       result.entries.map((entry) => entry.number),
       [1],
     );
+  }),
+);
+
+it.effect("trusts a covered silent repository's search for ten minutes", () =>
+  Effect.gen(function* () {
+    const separately: string[] = [];
+    let coverageAsks = 0;
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        project({ id: "p2", title: "docs", workspaceRoot: "/b", repository: "acme/docs" }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: ({ repository }) => {
+            separately.push(repository);
+            return Effect.succeed({ items: [], truncated: false, continues: false });
+          },
+          listChangeRequestsAcross: () =>
+            Effect.succeed({
+              items: [batchedChangeRequest(1, "acme/web", "2026-07-03T00:00:00Z")],
+              truncated: false,
+            }),
+          searchCoverage: ({ repositories }) => {
+            coverageAsks += 1;
+            return Effect.succeed(
+              repositories.map((repository) => ({ repository, covered: true })),
+            );
+          },
+        }),
+      ],
+    });
+
+    yield* service.list({ state: "open", involvement: "all" });
+    yield* TestClock.adjust("599 seconds");
+    yield* service.list({ state: "open", involvement: "authored" });
+    assert.strictEqual(coverageAsks, 1);
+
+    yield* TestClock.adjust("2 seconds");
+    yield* service.list({ state: "open", involvement: "all" });
+    assert.strictEqual(coverageAsks, 2);
+    assert.deepStrictEqual(separately, []);
+  }),
+);
+it.effect("reads a silent repository on its own unless search coverage is confirmed", () =>
+  Effect.gen(function* () {
+    const separately: string[] = [];
+    let coverageAsks = 0;
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        project({ id: "p2", title: "docs", workspaceRoot: "/b", repository: "acme/docs" }),
+        project({ id: "p3", title: "old", workspaceRoot: "/c", repository: "acme/old" }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: ({ repository }) => {
+            separately.push(repository);
+            return Effect.succeed({ items: [], truncated: false, continues: false });
+          },
+          listChangeRequestsAcross: () =>
+            Effect.succeed({
+              items: [batchedChangeRequest(1, "acme/web", "2026-07-03T00:00:00Z")],
+              truncated: false,
+            }),
+          searchCoverage: () =>
+            ++coverageAsks === 1
+              ? Effect.fail(requestFailed)
+              : Effect.succeed([{ repository: "acme/docs", covered: false }]),
+        }),
+      ],
+    });
+
+    yield* service.list({ state: "open" });
+    assert.deepStrictEqual(separately.splice(0).toSorted(), ["acme/docs", "acme/old"]);
+
+    // A failed probe is not remembered; false and missing answers both stay unconfirmed.
+    yield* service.invalidate({});
+    yield* service.list({ state: "open" });
+    assert.strictEqual(coverageAsks, 2);
+    assert.deepStrictEqual(separately.toSorted(), ["acme/docs", "acme/old"]);
   }),
 );
 it.effect("fills in the line counts for the rows it is given", () =>

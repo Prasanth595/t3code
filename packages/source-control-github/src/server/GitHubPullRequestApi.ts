@@ -47,6 +47,7 @@ import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
 import { PullRequestBatchesGraphQLGroup } from "./pullRequestBatches.graphql.ts";
+import { PullRequestSearchCoverage } from "./pullRequestListings.graphql.ts";
 import { PullRequestMutationsGraphQLGroup } from "./pullRequestMutations.graphql.ts";
 import { PullRequestReadsGraphQLGroup } from "./pullRequestReads.graphql.ts";
 import { PullRequestReviewsGraphQLGroup } from "./pullRequestReviews.graphql.ts";
@@ -467,6 +468,19 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly cursor?: ProviderListCursor | undefined;
       readonly filters?: PullRequestListFilters | undefined;
     }) => Effect.Effect<GitHubPullRequestSearchBatch, GitHubPullRequestApiError>;
+
+    /**
+     * Whether search indexes each repository. An empty repository is uncovered: its first
+     * pull request can lag the search index, so only a search hit proves coverage.
+     */
+    readonly searchCoverage: (input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly repositories: ReadonlyArray<string>;
+    }) => Effect.Effect<
+      ReadonlyArray<{ readonly repository: string; readonly covered: boolean }>,
+      GitHubPullRequestApiError
+    >;
 
     readonly listPullRequestStats: (input: {
       readonly cwd: string;
@@ -899,7 +913,7 @@ const GRAPHQL_MERGE_METHODS = {
 /** Every GraphQL read and write this module makes, through GitHub's auth and rate limits. */
 const PullRequestGraphQLGroup = GraphQLGroup.merge(
   PullRequestBatchesGraphQLGroup,
-  GraphQLGroup.make(LenientPullRequestSearch, LenientPullRequestList),
+  GraphQLGroup.make(LenientPullRequestSearch, LenientPullRequestList, PullRequestSearchCoverage),
   PullRequestReadsGraphQLGroup,
   PullRequestReviewsGraphQLGroup,
   PullRequestMutationsGraphQLGroup,
@@ -1740,6 +1754,9 @@ export const make = Effect.gen(function* () {
   const stackMembershipResolver = GraphQLResolver.aliased(client.PullRequestStackMembership, {
     batchKey: GitHubGraphQlClient.batchKey,
   }).pipe(RequestResolver.batchN(STAT_ALIASES_PER_REQUEST));
+  const searchCoverageResolver = GraphQLResolver.aliased(client.PullRequestSearchCoverage, {
+    batchKey: GitHubGraphQlClient.batchKey,
+  }).pipe(RequestResolver.batchN(STAT_ALIASES_PER_REQUEST));
   // A burst of ticks is one request, each file under its own alias. GitHub has no bulk form of
   // `markFileAsViewed`/`unmarkFileAsViewed`, which each take a single path.
   const setFileViewedResolver = GraphQLResolver.aliased(client.SetFileViewed, {
@@ -1954,6 +1971,45 @@ export const make = Effect.gen(function* () {
           }),
         );
     },
+
+    searchCoverage: Effect.fn("GitHubPullRequestApi.searchCoverage")(
+      function* (input) {
+        return yield* Effect.forEach(
+          input.repositories,
+          (repository) => {
+            const lookup = pullRequestLookup({ repository, number: 1 });
+            if (lookup === null) return Effect.succeed({ repository, covered: false });
+            return GraphQLResolver.request(
+              {
+                q: `is:pr repo:${lookup.owner}/${lookup.name}`,
+                owner: lookup.owner,
+                name: lookup.name,
+              },
+              searchCoverageResolver,
+            ).pipe(
+              Effect.map((result) => {
+                const total = result.repository?.pullRequests.totalCount;
+                return {
+                  repository,
+                  covered: total !== undefined && result.search.issueCount > 0,
+                };
+              }),
+              // An unreadable alias must not discard coverage answers for the other repositories.
+              Effect.catchTags({
+                GraphQLClientError: (error) =>
+                  error.reason._tag === "ResponseError" &&
+                  error.reason.errors.every((error) => error.path?.[0] === "repository")
+                    ? Effect.succeed({ repository, covered: false })
+                    : Effect.fail(error),
+              }),
+            );
+          },
+          { concurrency: "unbounded" },
+        );
+      },
+      (effect, input) =>
+        effect.pipe((effect) => batchedRead({ ...input, operation: "searchCoverage" }, effect)),
+    ),
 
     listPullRequestStats: Effect.fn("GitHubPullRequestApi.listPullRequestStats")(
       function* (input) {

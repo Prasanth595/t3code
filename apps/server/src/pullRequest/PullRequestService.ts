@@ -13,6 +13,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Option from "effect/Option";
@@ -123,6 +124,7 @@ function supersedesReading(current: PullRequestReading | undefined, next: PullRe
 const DEFAULT_REPOSITORY_LIST_LIMIT = 99;
 const REPOSITORY_CONCURRENCY = 12;
 const REPOSITORY_SEARCH_CHUNK = 100;
+const encodeListKey = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 /**
  * Every read leaves the process — a CLI per repository, against hosts whose limits are low
@@ -206,7 +208,10 @@ export class PullRequestService extends Context.Service<
       input: PullRequestReportStateInput,
     ) => Effect.Effect<void, PullRequestError>;
     readonly subscribeRefreshes: Stream.Stream<number>;
-    readonly refreshAfterTurn: (projectId: ProjectId) => Effect.Effect<void>;
+    readonly refreshAfterTurn: (
+      projectId: ProjectId,
+      options?: { readonly immediate: true },
+    ) => Effect.Effect<void>;
     readonly detail: (input: PullRequestRef) => Effect.Effect<PullRequestDetail, PullRequestError>;
     readonly preview: (
       input: PullRequestRef,
@@ -501,6 +506,9 @@ function withRateLimitBackoff(
       : {
           listChangeRequestsAcross: wrap("listChangeRequestsAcross", api.listChangeRequestsAcross),
         }),
+    ...(api.searchCoverage === undefined
+      ? {}
+      : { searchCoverage: wrap("searchCoverage", api.searchCoverage) }),
     ...(api.listChangeRequestStats === undefined
       ? {}
       : {
@@ -1079,11 +1087,9 @@ export const make = Effect.gen(function* () {
     };
   };
 
-  // A repository that has appeared in a host search is known to be indexed there. Empty
-  // authored/reviewing searches for that same repository are therefore real empty answers, not
-  // a reason to issue the two-command per-repository fallback again.
-  const searchVisibleAt = new Map<string, number>();
-  const searchVisibilityKey = (host: string, repository: string) =>
+  // Search hits and coverage probes share the same host/repository fact, across list filters.
+  const searchCoverageCache = new Map<string, { readonly at: number; readonly covered: boolean }>();
+  const searchCoverageKey = (host: string, repository: string) =>
     `${host}\n${repository.trim().toLowerCase()}`;
 
   const listUncached: PullRequestService["Service"]["list"] = Effect.fn(
@@ -1261,11 +1267,12 @@ export const make = Effect.gen(function* () {
       }).pipe(
         observeRead,
         Effect.flatMap(({ value: page, observedAt }) =>
-          Effect.flatMap(Clock.currentTimeMillis, (now) => {
+          Effect.gen(function* () {
+            const now = yield* Clock.currentTimeMillis;
             const rows = new Map<string, Array<ProviderChangeRequest>>();
-            for (const [key, visibleAt] of searchVisibleAt) {
-              if (now - visibleAt > Duration.toMillis(SEARCH_VISIBILITY_TTL)) {
-                searchVisibleAt.delete(key);
+            for (const [key, held] of searchCoverageCache) {
+              if (now - held.at > Duration.toMillis(SEARCH_VISIBILITY_TTL)) {
+                searchCoverageCache.delete(key);
               }
             }
             for (const item of page.items) {
@@ -1273,36 +1280,63 @@ export const make = Effect.gen(function* () {
               const held = rows.get(key);
               if (held === undefined) rows.set(key, [item]);
               else held.push(item);
-              searchVisibleAt.set(searchVisibilityKey(first.host, item.repository), now);
+              searchCoverageCache.set(searchCoverageKey(first.host, item.repository), {
+                at: now,
+                covered: true,
+              });
             }
             const boundary = page.items.reduce<string | null>(
               (oldest, item) =>
                 oldest === null || item.updatedAt < oldest ? item.updatedAt : oldest,
               null,
             );
-            return Effect.forEach(
+            // Silence on the first page can mean an unindexed repository. Later pages already
+            // have a search boundary, so their missing rows are older than that boundary.
+            const silent = chunk.filter(
+              (project) =>
+                !rows.has(project.repository.trim().toLowerCase()) &&
+                cursorOf(project) === undefined,
+            );
+            const unasked = silent.filter(
+              (project) =>
+                !searchCoverageCache.has(searchCoverageKey(project.host, project.repository)),
+            );
+            const searchCoverage = first.api.searchCoverage;
+            if (unasked.length > 0 && searchCoverage !== undefined) {
+              const answers = yield* searchCoverage({
+                cwd: first.project.workspaceRoot,
+                host: first.host,
+                repositories: unasked.map((project) => project.repository),
+              }).pipe(Effect.option);
+              // Failed probes stay uncached so the next read can retry. Successful probes
+              // cache missing answers as uncovered to retain the per-repository fallback.
+              if (Option.isSome(answers)) {
+                for (const project of unasked) {
+                  searchCoverageCache.set(searchCoverageKey(project.host, project.repository), {
+                    at: now,
+                    covered: false,
+                  });
+                }
+                for (const answer of answers.value) {
+                  searchCoverageCache.set(searchCoverageKey(first.host, answer.repository), {
+                    at: now,
+                    covered: answer.covered,
+                  });
+                }
+              }
+            }
+            return yield* Effect.forEach(
               chunk,
               (project): Effect.Effect<RepositoryBatch> => {
-                const fetched = rows.get(project.repository.trim().toLowerCase()) ?? [];
-                // GitHub does not index every repository for search — a renamed one answers for
-                // its old name with silence rather than with an error — so a repository the
-                // search said nothing at all about is read on its own, once, before it is
-                // believed. Only on its first slice: after that it has a boundary to carry on
-                // from, and silence past one means the rows are older rather than absent.
-                const lastVisible = searchVisibleAt.get(
-                  searchVisibilityKey(project.host, project.repository),
-                );
-                const searchIsKnownVisible =
-                  !page.truncated &&
-                  lastVisible !== undefined &&
-                  now - lastVisible <= Duration.toMillis(SEARCH_VISIBILITY_TTL);
                 if (
-                  fetched.length === 0 &&
+                  !rows.has(project.repository.trim().toLowerCase()) &&
                   cursorOf(project) === undefined &&
-                  !searchIsKnownVisible
+                  searchCoverageCache.get(searchCoverageKey(project.host, project.repository))
+                    ?.covered !== true
                 ) {
                   return readRepository(project);
                 }
+                const fetched = rows.get(project.repository.trim().toLowerCase()) ?? [];
                 const cursorHere = cursorOf(project);
                 const items =
                   cursorHere === undefined
@@ -1916,7 +1950,7 @@ export const make = Effect.gen(function* () {
                     Effect.ensuring(
                       input.stackNumber === undefined
                         ? Effect.void
-                        : refreshAfterTurn(project.project.id),
+                        : refreshAfterTurn(project.project.id, { immediate: true }),
                     ),
                     Effect.mapError(toPullRequestError("runAction")),
                     Effect.as(
@@ -2744,37 +2778,41 @@ export const make = Effect.gen(function* () {
       timeToLive: (exit) => (Exit.isSuccess(exit) ? LIST_CACHE_TTL : Duration.zero),
     },
   );
-  const list: PullRequestService["Service"]["list"] = (input) => {
-    const key = JSON.stringify([
-      listingsEpoch,
-      input.state,
-      input.involvement ?? null,
-      input.filters === undefined
-        ? null
-        : [
-            input.filters.draft ?? null,
-            input.filters.review ?? null,
-            input.filters.checks ?? null,
-            input.filters.author ?? null,
-            input.filters.labels ?? null,
-            input.filters.excludedLabels ?? null,
-          ],
-      input.projectId ?? null,
-      input.projectIds === undefined ? null : [...input.projectIds].sort(),
-      input.host ?? null,
-      input.limit ?? null,
-      input.query ?? null,
-      input.cursors === undefined
-        ? null
-        : Object.entries(input.cursors).toSorted(([left], [right]) => left.localeCompare(right)),
-    ]);
-    // A replacement reader can join a lookup still finishing its previous reader's cancellation.
-    return Cache.get(listCache, key).pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause) ? Cache.get(listCache, key) : Effect.failCause(cause),
-      ),
-    );
-  };
+  const list: PullRequestService["Service"]["list"] = (input) =>
+    Effect.suspend(() => {
+      // A project's own list refreshes immediately for its turns. `projectIds` only splits the
+      // global page across environments, so it waits on the global epoch like that page does.
+      const epoch =
+        input.projectId === undefined
+          ? listingsEpoch
+          : Math.max(listingsEpoch, projectEpochs.get(input.projectId) ?? projectEpochFloor);
+      const key = encodeListKey([
+        epoch,
+        input.state,
+        input.involvement ?? null,
+        input.filters === undefined
+          ? null
+          : [
+              input.filters.draft ?? null,
+              input.filters.review ?? null,
+              input.filters.checks ?? null,
+              input.filters.author ?? null,
+              input.filters.labels ?? null,
+              input.filters.excludedLabels ?? null,
+            ],
+        input.projectId ?? null,
+        input.projectIds === undefined ? null : [...input.projectIds].sort(),
+        input.host ?? null,
+        input.limit ?? null,
+        input.query ?? null,
+        input.cursors === undefined
+          ? null
+          : Object.entries(input.cursors).toSorted(([left], [right]) => left.localeCompare(right)),
+      ]);
+      // Keep paid host reads alive when a page refresh cancels its reader. Reattached readers
+      // join the same cache lookup; the service scope still interrupts it on shutdown.
+      return Effect.forkIn(Cache.get(listCache, key), scope).pipe(Effect.flatMap(Fiber.join));
+    });
 
   const checksCache = yield* Cache.makeWith(
     (key: string) => {
@@ -3221,22 +3259,57 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const refreshAfterTurn: PullRequestService["Service"]["refreshAfterTurn"] = (projectId) =>
-    Effect.suspend(() => {
+  // Turns share one global refresh per list TTL, plus a trailing refresh for a busy window.
+  let listingsTurnRefreshAt = Number.NEGATIVE_INFINITY;
+  let listingsTurnRefreshPending = false;
+  const refreshListingsAfterTurn = Effect.gen(function* () {
+    if (listingsTurnRefreshPending) return;
+    const now = yield* Clock.currentTimeMillis;
+    const wait = listingsTurnRefreshAt + Duration.toMillis(LIST_CACHE_TTL) - now;
+    if (wait <= 0) {
+      listingsTurnRefreshAt = now;
       listingsEpoch = ++epochCounter;
-      projectEpochs.delete(projectId);
-      if (projectEpochs.size >= REF_EPOCH_CAPACITY) {
-        const oldest = projectEpochs.keys().next().value;
-        if (oldest !== undefined) {
-          projectEpochFloor = projectEpochs.get(oldest)!;
-          projectEpochs.delete(oldest);
-        }
-      }
-      projectEpochs.set(projectId, listingsEpoch);
-      return readCache
-        .invalidate(`project:${projectId}`)
-        .pipe(Effect.andThen(SubscriptionRef.set(pullRequestRefreshes, listingsEpoch)));
-    });
+      return;
+    }
+    // Scheduling is uninterruptible so cancellation cannot leave a pending flag without a timer.
+    listingsTurnRefreshPending = true;
+    yield* Effect.gen(function* () {
+      yield* Effect.sleep(Duration.millis(wait));
+      listingsTurnRefreshAt = yield* Clock.currentTimeMillis;
+      listingsTurnRefreshPending = false;
+      listingsEpoch = ++epochCounter;
+      yield* SubscriptionRef.set(pullRequestRefreshes, listingsEpoch);
+    }).pipe(Effect.interruptible, Effect.forkIn(scope));
+  }).pipe(Effect.uninterruptible);
+
+  const refreshAfterTurn: PullRequestService["Service"]["refreshAfterTurn"] = (
+    projectId,
+    options,
+  ) =>
+    (options?.immediate
+      ? Effect.sync(() => {
+          listingsEpoch = ++epochCounter;
+        })
+      : refreshListingsAfterTurn
+    ).pipe(
+      Effect.andThen(
+        Effect.suspend(() => {
+          const projectEpoch = ++epochCounter;
+          projectEpochs.delete(projectId);
+          if (projectEpochs.size >= REF_EPOCH_CAPACITY) {
+            const oldest = projectEpochs.keys().next().value;
+            if (oldest !== undefined) {
+              projectEpochFloor = projectEpochs.get(oldest)!;
+              projectEpochs.delete(oldest);
+            }
+          }
+          projectEpochs.set(projectId, projectEpoch);
+          return readCache
+            .invalidate(`project:${projectId}`)
+            .pipe(Effect.andThen(SubscriptionRef.set(pullRequestRefreshes, projectEpoch)));
+        }),
+      ),
+    );
 
   const invalidatedByMutation =
     <I extends PullRequestRef>(

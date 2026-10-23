@@ -331,6 +331,19 @@ export interface PullRequestProviderApi {
     readonly filters?: PullRequestListFilters | undefined;
   }) => Effect.Effect<ProviderBatchedChangeRequestPage, PullRequestProviderError>;
 
+  /**
+   * Whether search covers repositories absent from a search page. False or missing answers
+   * fall back to `listChangeRequests`; hosts without this probe keep that fallback too.
+   */
+  readonly searchCoverage?: (input: {
+    readonly cwd: string;
+    readonly host: string;
+    readonly repositories: ReadonlyArray<string>;
+  }) => Effect.Effect<
+    ReadonlyArray<{ readonly repository: string; readonly covered: boolean }>,
+    PullRequestProviderError
+  >;
+
   readonly listChangeRequestStats?: (input: {
     readonly cwd: string;
     readonly host: string;

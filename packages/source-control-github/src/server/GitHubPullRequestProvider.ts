@@ -318,6 +318,9 @@ export const make = Effect.gen(function* () {
           })),
         ),
 
+    searchCoverage: (input) =>
+      cli.searchCoverage(input).pipe(Effect.mapError(fail("searchCoverage"))),
+
     listChangeRequestStats: (input) =>
       cli
         .listPullRequestStats({
