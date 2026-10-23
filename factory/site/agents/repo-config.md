@@ -21,7 +21,7 @@ factory:
   limits: # required mapping
     gate_retries: 2 # required
     minutes: 180 # optional
-    regates: 5 # optional
+    regates: 5 # optional, accepted and ignored
     checks_minutes: 30 # optional
     interruption_resumes: 2 # optional
   autonomy: pr # required
@@ -38,7 +38,7 @@ factory:
 | `factory.limits`                      | mapping         | yes      |         |                                                                              |
 | `factory.limits.gate_retries`         | integer ≥ 0     | yes      |         |                                                                              |
 | `factory.limits.minutes`              | integer ≥ 1     | no       | `180`   |                                                                              |
-| `factory.limits.regates`              | integer ≥ 1     | no       | `5`     |                                                                              |
+| `factory.limits.regates`              | integer ≥ 1     | no       | `5`     | Accepted and ignored.                                                        |
 | `factory.limits.checks_minutes`       | integer ≥ 1     | no       | `30`    |                                                                              |
 | `factory.limits.interruption_resumes` | integer ≥ 0     | no       | `2`     |                                                                              |
 | `factory.autonomy`                    | string          | yes      |         | Only `pr`.                                                                   |
@@ -47,13 +47,13 @@ Keys the server does not read are ignored.
 
 ## Limits
 
-| Key                    | Counts                                                                                                                       | On running out                                                       |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `minutes`              | Minutes the run spent in `triage` and `building`. `pr-open` is not counted.                                                  | `stuck`: "the run passed its time limit"                             |
-| `gate_retries`         | Gate or required-check failures sent back to the session. `0`: the first failure is final. Reset after a pass.               | `stuck`: "the gate failed after N attempts"                          |
-| `regates`              | Gate reruns because the base branch moved.                                                                                   | `stuck`: "the base branch kept moving and the gate could not settle" |
-| `checks_minutes`       | Wait for `required_checks` after the gate commands pass.                                                                     | `stuck`                                                              |
-| `interruption_resumes` | Resumes or relaunches after a session ended `failed` or `cancelled`, or its thread vanished, when T3 trouble is in evidence. | `stuck`                                                              |
+| Key                    | Counts                                                                                                                       | On running out                              |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `minutes`              | Minutes the run spent in `triage` and `building`. `pr-open` is not counted.                                                  | `stuck`: "the run passed its time limit"    |
+| `gate_retries`         | Gate or required-check failures sent back to the session. `0`: the first failure is final. Reset after a pass.               | `stuck`: "the gate failed after N attempts" |
+| `regates`              | Nothing. The key is accepted and ignored.                                                                                    | None                                        |
+| `checks_minutes`       | Wait for `required_checks` after the gate commands pass.                                                                     | `stuck`                                     |
+| `interruption_resumes` | Resumes or relaunches after a session ended `failed` or `cancelled`, or its thread vanished, when T3 trouble is in evidence. | `stuck`                                     |
 
 ## Gate
 
