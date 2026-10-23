@@ -832,7 +832,8 @@ function PullRequestCodeTab({
       <FileViewedToggle
         fileKey={item.id}
         path={path}
-        revision={item.fileDiff.newObjectId}
+        // One commit's diff names that commit's version, not the head's; its press falls back to the head read.
+        revision={commit === null ? item.fileDiff.newObjectId : undefined}
         stat={
           <PullRequestDiffStat
             additions={additions}

@@ -3465,7 +3465,7 @@ it.effect("clears a file against what the head has now, not what it had a moment
   }),
 );
 
-// The diff names each file's version on its `index` line, which is what a reader's press sends.
+// A diff with `index` lines, as Forgejo and Bitbucket send. The GitLab project only selects environment-kept marks; GitLab's own patches name no version.
 const environmentViewedDiffService = (revisions: Map<string, string>) =>
   makeService({
     projects: [
