@@ -66,6 +66,7 @@ const clientSettings: ClientSettings = {
   boringSidebarMultilineRows: false,
   legacySidebarEnabled: false,
   sidebarWorkingShelfEnabled: false,
+  sidebarInboxSortBySendEnabled: false,
   loadBalancingEnabled: false,
   loadBalancingWeights: { "environment-1": 75, "environment-2": 0 },
   pullRequestMergeMethodOverrides: {},
