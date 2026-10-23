@@ -6,6 +6,7 @@ import { shellSettingLabel, shellSettingToSelectValue } from "../terminal/termin
 import { ShellOption } from "../terminal/NewTerminalShellMenu";
 import { useTerminalShells } from "../terminal/useTerminalShells";
 import { DiffFilePathCopyButton } from "../DiffFilePathCopyButton";
+import { Button } from "../ui/button";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { searchableSetting } from "./settingsSearch";
@@ -26,7 +27,7 @@ export function TerminalShellSettingRow() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed(["terminalShell"]);
-  const { shells, load } = useTerminalShells(target?.environmentId ?? null);
+  const { shells, status, load } = useTerminalShells(target?.environmentId ?? null);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const unavailable = connectedEnvironments.length === 0;
   const effective = target
@@ -41,8 +42,8 @@ export function TerminalShellSettingRow() {
   // The trigger needs the list to show a profile's label; other values fetch when the select opens.
   const needsList = !mixed && typeof effective === "string" && effective !== "auto";
   useEffect(() => {
-    if (needsList) load();
-  }, [needsList, load]);
+    if (needsList && status === "idle") void load();
+  }, [needsList, status, load]);
 
   const save = (value: TerminalShellSetting | null) => updateSettings({ terminalShell: value });
 
@@ -80,7 +81,7 @@ export function TerminalShellSettingRow() {
                   ? unavailable
                     ? "Unavailable"
                     : "Mixed"
-                  : shellSettingLabel(value === "auto" ? null : value, shells ?? [])
+                  : shellSettingLabel(value === "auto" ? null : value, shells)
               }
             </SelectValue>
           </SelectTrigger>
@@ -95,6 +96,14 @@ export function TerminalShellSettingRow() {
         </Select>
       }
     >
+      {status === "error" ? (
+        <div className="flex items-center gap-2 pb-2">
+          <span className="text-xs text-muted-foreground">Could not load shells.</span>
+          <Button variant="ghost" size="sm" onClick={() => void load()}>
+            Retry
+          </Button>
+        </div>
+      ) : null}
       {selectedProfile ? (
         <div className="flex min-w-0 items-center gap-1 pb-2 font-mono text-xs text-muted-foreground @min-[32rem]/settings-row:max-w-xl">
           <MiddleTruncate value={selectedProfile.command} />

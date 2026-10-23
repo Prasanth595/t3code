@@ -9,10 +9,15 @@ describe("terminal shell settings", () => {
     expect(shellSettingToSelectValue("pwsh")).toBe("pwsh");
   });
 
-  it("labels a profile id by its detected label and falls back to the id", () => {
+  it("labels detected profiles and marks missing profiles unavailable", () => {
     const shells = [{ id: "pwsh", label: "PowerShell 7", command: "pwsh.exe", args: [] }];
     expect(shellSettingLabel("pwsh", shells)).toBe("PowerShell 7");
-    expect(shellSettingLabel("gone", shells)).toBe("gone");
+    expect(shellSettingLabel("gone", shells)).toBe("gone (unavailable)");
     expect(shellSettingLabel(null, shells)).toBe("Automatic");
+  });
+
+  it("does not claim a shell is unavailable before discovery succeeds", () => {
+    expect(shellSettingLabel("fish", null)).toBe("fish");
+    expect(shellSettingLabel("fish", [])).toBe("fish (unavailable)");
   });
 });

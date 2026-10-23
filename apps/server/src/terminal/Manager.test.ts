@@ -961,7 +961,7 @@ it.layer(
     }),
   );
 
-  it.effect("treats a profile id this machine lacks as auto", () =>
+  it.effect("reports an unavailable configured profile when falling back to auto", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {
         shellProfiles,
@@ -973,6 +973,17 @@ it.layer(
 
       expect(ptyAdapter.spawnInputs[0]?.shell).toBe("/bin/sh");
       expect(snapshot.history).toBe("");
+      const unsubscribe = yield* manager.subscribeMetadata((event) =>
+        Effect.sync(() => {
+          if (event.type === "snapshot") {
+            expect(event.terminals[0]).toMatchObject({
+              shell: "sh",
+              shellFallbackFrom: "nushell",
+            });
+          }
+        }),
+      );
+      unsubscribe();
     }),
   );
 

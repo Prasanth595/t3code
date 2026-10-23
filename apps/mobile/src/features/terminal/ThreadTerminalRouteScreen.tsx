@@ -100,6 +100,7 @@ function TerminalHeader(props: {
   readonly subtitle: string;
   readonly isEnvironmentReady: boolean;
   readonly canOperateTerminal: boolean;
+  readonly canSelectShell: boolean;
   readonly fontSize: number;
   readonly terminalId: string;
   readonly sessions: ReadonlyArray<TerminalMenuSession>;
@@ -179,10 +180,11 @@ function TerminalHeader(props: {
                           id: "terminal-new-with-shell",
                           title: "New terminal with…",
                           icon: "plus",
-                          disabled: !props.canOperateTerminal,
+                          disabled: !props.canSelectShell,
                           items: props.shells.map((shell) => ({
                             id: `terminal-new-shell:${shell.id}`,
                             title: shell.label,
+                            disabled: !props.canSelectShell,
                             onPress: () => props.onOpenNewTerminal(shell.id),
                           })),
                         },
@@ -1044,7 +1046,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     (shell?: string) => {
       if (
         !selectedThread ||
-        !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)
+        !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope) ||
+        (shell !== undefined && launchLocation === null)
       ) {
         return;
       }
@@ -1198,6 +1201,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       ) : null}
       <TerminalHeader
         canOperateTerminal={canOperateTerminal}
+        canSelectShell={canOperateTerminal && launchLocation !== null}
         subtitle={headerSubtitle}
         isEnvironmentReady={isEnvironmentReady}
         fontSize={fontSize}

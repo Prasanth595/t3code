@@ -15,14 +15,27 @@ export function useTerminalShells(environmentId: EnvironmentId | null) {
   const listShells = useAtomCommand(terminalEnvironment.listShells, { reportFailure: false });
   const [loaded, setLoaded] = useState<{
     readonly environmentId: string;
-    readonly shells: readonly TerminalShellProfile[];
+    readonly shells: readonly TerminalShellProfile[] | null;
+    readonly status: "loading" | "success" | "error";
   } | null>(null);
 
   const cached = environmentId === null ? undefined : shellsByEnvironment.get(environmentId);
-  const shells = cached ?? (loaded?.environmentId === environmentId ? loaded.shells : null);
+  const current = loaded?.environmentId === environmentId ? loaded : null;
+  const shells = cached ?? current?.shells ?? null;
+  const status = cached !== undefined ? "success" : (current?.status ?? "idle");
 
-  const load = () => {
-    if (environmentId === null || shellsByEnvironment.has(environmentId)) return;
+  const load = async () => {
+    if (environmentId === null) return;
+    const cachedShells = shellsByEnvironment.get(environmentId);
+    if (cachedShells !== undefined) {
+      setLoaded((previous) =>
+        previous?.environmentId === environmentId && previous.shells === cachedShells
+          ? previous
+          : { environmentId, shells: cachedShells, status: "success" },
+      );
+      return;
+    }
+    setLoaded({ environmentId, shells: null, status: "loading" });
     let pending = inflightByEnvironment.get(environmentId);
     if (!pending) {
       pending = listShells({ environmentId, input: {} }).then((result) => {
@@ -33,10 +46,9 @@ export function useTerminalShells(environmentId: EnvironmentId | null) {
       });
       inflightByEnvironment.set(environmentId, pending);
     }
-    void pending.then((next) => {
-      if (next) setLoaded({ environmentId, shells: next });
-    });
+    const next = await pending;
+    setLoaded({ environmentId, shells: next, status: next === null ? "error" : "success" });
   };
 
-  return { shells, load };
+  return { shells, status, load };
 }

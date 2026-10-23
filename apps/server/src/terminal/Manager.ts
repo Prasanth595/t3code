@@ -2467,9 +2467,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               session.status = "running";
               session.shellLabel = shellLabel;
               session.shellFallbackFrom =
-                preferred !== null && spawnResult.index > 0
-                  ? shellCandidateLabel(preferred, profiles, platform)
-                  : null;
+                preferred === null
+                  ? setting === "auto"
+                    ? null
+                    : setting
+                  : spawnResult.index > 0
+                    ? shellCandidateLabel(preferred, profiles, platform)
+                    : null;
               // onExit may replay an exit immediately; accept it before subscribing.
               session.unsubscribeData = spawnResult.process.onData((data) => {
                 if (!enqueueProcessEvent(session, processPid, { type: "output", data })) {

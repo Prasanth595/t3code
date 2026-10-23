@@ -8,8 +8,9 @@ export function shellSettingToSelectValue(setting: TerminalShellSetting | null):
 
 export function shellSettingLabel(
   setting: TerminalShellSetting | null,
-  shells: readonly TerminalShellProfile[],
+  shells: readonly TerminalShellProfile[] | null,
 ): string {
   if (setting === null || setting === "auto") return "Automatic";
-  return shells.find((shell) => shell.id === setting)?.label ?? setting;
+  if (shells === null) return setting;
+  return shells.find((shell) => shell.id === setting)?.label ?? `${setting} (unavailable)`;
 }

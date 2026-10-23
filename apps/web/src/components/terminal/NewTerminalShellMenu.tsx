@@ -19,7 +19,7 @@ export function NewTerminalShellMenu({
   disabled: boolean;
   onSelect: (shell: TerminalShellSetting) => void;
 }) {
-  const { shells, load } = useTerminalShells(threadRef.environmentId);
+  const { shells, status, load } = useTerminalShells(threadRef.environmentId);
 
   return (
     <Menu onOpenChange={(open) => open && load()}>
@@ -41,7 +41,11 @@ export function NewTerminalShellMenu({
             <ShellOption label={shell.label} command={shell.command} />
           </MenuItem>
         ))}
-        {shells === null ? (
+        {status === "error" ? (
+          <MenuItem onClick={() => void load()} closeOnClick={false}>
+            Could not load shells. Retry
+          </MenuItem>
+        ) : shells === null ? (
           <span className="px-2 py-1.5 text-xs text-muted-foreground">Loading…</span>
         ) : null}
       </MenuPopup>
