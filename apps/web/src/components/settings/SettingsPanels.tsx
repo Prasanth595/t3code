@@ -870,29 +870,26 @@ export function GeneralSettingsPanel() {
     "textGenerationFallbackModelSelection",
   ]);
   const usesTextGenerationFallback = settings.textGenerationFallbackModelSelection !== null;
-  const textGenerationFallbackSelection = resolveAppModelSelectionState(
-    {
-      ...settings,
-      textGenerationModelSelection:
-        settings.textGenerationFallbackModelSelection ?? textGenerationModelSelection,
-    },
-    textGenerationProviders,
-  );
+  // Shown as saved, not resolved to an available provider: the server tries the
+  // saved model, so substituting one here would show a model that never runs.
+  const textGenerationFallbackSelection =
+    settings.textGenerationFallbackModelSelection ?? textGenerationModelSelection;
   // Turning the fallback on starts from another provider when one is ready,
   // since a model on the primary's provider goes down with it.
-  const textGenerationFallbackSeedProviders = textGenerationProviders.filter((provider) =>
-    textGenerationModelInstanceEntries.some(
-      (entry) =>
-        entry.instanceId === provider.instanceId &&
-        entry.instanceId !== textGenInstanceId &&
-        entry.enabled &&
-        entry.isAvailable,
-    ),
-  );
-  const textGenerationFallbackSeed =
-    textGenerationFallbackSeedProviders.length > 0
-      ? resolveAppModelSelectionState(settings, textGenerationFallbackSeedProviders)
-      : textGenerationModelSelection;
+  const textGenerationFallbackSeeds = [
+    ...textGenerationProviders
+      .filter((provider) =>
+        textGenerationModelInstanceEntries.some(
+          (entry) =>
+            entry.instanceId === provider.instanceId &&
+            entry.instanceId !== textGenInstanceId &&
+            entry.enabled &&
+            entry.isAvailable,
+        ),
+      )
+      .map((provider) => resolveAppModelSelectionState(settings, [provider])),
+    textGenerationModelSelection,
+  ];
   const textGenerationFallbackInstanceEntry = textGenerationModelInstanceEntries.find(
     (entry) => entry.instanceId === textGenerationFallbackSelection.instanceId,
   );
@@ -2038,13 +2035,30 @@ export function GeneralSettingsPanel() {
                 <Switch
                   checked={usesTextGenerationFallback}
                   disabled={!usesTextGenerationFallback && !hasTextGenerationProvider}
-                  onCheckedChange={(checked) =>
-                    updateSettings({
-                      textGenerationFallbackModelSelection: checked
-                        ? textGenerationFallbackSeed
-                        : null,
-                    })
-                  }
+                  onCheckedChange={(checked) => {
+                    if (!checked) {
+                      updateSettings({ textGenerationFallbackModelSelection: null });
+                      return;
+                    }
+                    // The seed is saved to every target in scope, so it must work on all of them.
+                    const seed = textGenerationFallbackSeeds.find(
+                      (selection) =>
+                        textGenerationModelDisabledReason(selection.instanceId, selection.model) ===
+                        null,
+                    );
+                    if (!seed) {
+                      toastManager.add({
+                        type: "error",
+                        title: "Text generation fallback model not saved",
+                        description: textGenerationModelDisabledReason(
+                          textGenInstanceId,
+                          textGenModel,
+                        ),
+                      });
+                      return;
+                    }
+                    updateSettings({ textGenerationFallbackModelSelection: seed });
+                  }}
                   aria-label="Use a text generation fallback model"
                 />
               </div>
