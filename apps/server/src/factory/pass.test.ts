@@ -2936,6 +2936,22 @@ describe("following a building run", () => {
     }),
   );
 
+  it.effect("a building run whose gate is held by the load says so, not the gate limit", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING, REPO, true);
+      fake.advances[`${REPO}#40`] = [
+        { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
+      ];
+      fake.gateStarts[`${REPO}#40`] = { kind: "high-load", oneMinute: 55.2, limit: 12 };
+      const { lines } = yield* pass(fake, [REPO], 3);
+      assert.equal(
+        runLine(lines, `${REPO}#40 `),
+        `${REPO}#40 building: session finished, gate queued: 1-minute load 55.2 is above 12 and a gate is already running`,
+      );
+    }),
+  );
+
   it.effect("a session that reports its pull request has its gate started in the same pass", () =>
     Effect.gen(function* () {
       const fake = new Fake();
@@ -4772,6 +4788,19 @@ describe("pr-open runs: gated again only when something moved", () => {
       const { lines } = yield* pass(fake, [REPO], 5);
       assert.deepEqual(lineOf(lines, 41), [
         `${REPO}#41 pr-open: gate queued: 2 gates running, max_concurrent_gates is 2`,
+      ]);
+    }),
+  );
+
+  it.effect("a re-gate held by the load says so, not the gate limit", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41);
+      fake.baseTips[REPO] = MOVED;
+      fake.gateStarts[`${REPO}#41`] = { kind: "high-load", oneMinute: 55.2, limit: 12 };
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(lineOf(lines, 41), [
+        `${REPO}#41 pr-open: gate queued: 1-minute load 55.2 is above 12 and a gate is already running`,
       ]);
     }),
   );
