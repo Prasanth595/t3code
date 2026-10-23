@@ -63,6 +63,15 @@ export class EventSinkStreamError extends Schema.TaggedError<EventSinkStreamErro
   }
 }
 
+class ForkSourceUnavailableError extends Schema.TaggedError<ForkSourceUnavailableError>()(
+  "ForkSourceUnavailableError",
+  { threadId: ThreadId },
+) {
+  override get message(): string {
+    return "Cannot fork a missing or deleted thread.";
+  }
+}
+
 export const EventSinkV2Error = Schema.Union([EventSinkWriteError, EventSinkStreamError]);
 export type EventSinkV2Error = typeof EventSinkV2Error.Type;
 
@@ -654,6 +663,22 @@ const layerBase: Layer.Layer<
           if (!reserved) {
             const existing = yield* existingCommandResult(input.commandId);
             return { ...existing, committed: false as const, cancelledEffectIds: [] };
+          }
+
+          // Planning does not lock the source. Once deletion commits, maintenance
+          // can remove its checkpoints, so a new fork must not revive that history.
+          if (input.commandType === "thread.fork") {
+            for (const event of input.events) {
+              if (event.type !== "thread.created" || event.payload.forkedFrom?.type !== "run")
+                continue;
+              const sourceId = event.payload.forkedFrom.threadId;
+              const source = yield* sql`
+                SELECT 1 FROM orchestration_v2_projection_threads
+                WHERE thread_id = ${sourceId} AND deleted_at IS NULL
+              `;
+              if (source.length === 0)
+                return yield* new ForkSourceUnavailableError({ threadId: sourceId });
+            }
           }
 
           const normalized = yield* normalizeEvents(input.events);
