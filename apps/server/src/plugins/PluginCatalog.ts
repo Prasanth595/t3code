@@ -64,7 +64,11 @@ const PluginInstallationRecord = PluginInstallation.mapFields(
     ...fields,
     // A successful file swap stays committed when a later consent changes.
     replacement: Schema.optionalKey(
-      Schema.Struct({ digest: PluginSourceDigest, committed: Schema.Boolean }),
+      Schema.Struct({
+        digest: PluginSourceDigest,
+        committed: Schema.Boolean,
+        attemptId: Schema.optionalKey(Schema.String),
+      }),
     ),
   }),
 );
@@ -185,7 +189,7 @@ export class PluginCatalog extends Context.Service<
      * consent: the new ones, or the old ones still.
      */
     readonly replace: (
-      input: PluginConsentInput,
+      input: PluginConsentInput & { readonly attemptId?: string },
       files: {
         readonly paths: ReadonlyArray<string>;
         readonly swap: Effect.Effect<void, PluginCatalogError>;
@@ -202,7 +206,7 @@ export class PluginCatalog extends Context.Service<
      * stays disabled, and consent is never granted.
      */
     readonly settleReplace: (
-      input: PluginConsentInput,
+      input: PluginConsentInput & { readonly attemptId?: string },
       files?: {
         readonly paths: ReadonlyArray<string>;
         readonly restore: Effect.Effect<void, PluginCatalogError>;
@@ -577,7 +581,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     yield* commit(installation, {
       ...installation.record,
       ...(installation.record.replacement?.digest === input.digest
-        ? { replacement: { digest: input.digest, committed: true } }
+        ? { replacement: { ...installation.record.replacement, committed: true } }
         : {}),
       consent: {
         digest: inspection.source.digest,
@@ -672,7 +676,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
   });
 
   const replace = Effect.fn("PluginCatalog.replace")(function* (
-    input: PluginConsentInput,
+    input: PluginConsentInput & { readonly attemptId?: string },
     files: Parameters<PluginCatalog["Service"]["replace"]>[1],
   ) {
     const installation = yield* find(input.installationId);
@@ -680,7 +684,11 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     yield* claimFiles([installation.record.directory, ...files.paths], installation);
     yield* commit(installation, {
       ...installation.record,
-      replacement: { digest: input.digest, committed: false },
+      replacement: {
+        digest: input.digest,
+        committed: false,
+        ...(input.attemptId === undefined ? {} : { attemptId: input.attemptId }),
+      },
     });
     const enableAgain = (inspection: Inspection) =>
       wasEnabled && inspection._tag === "ok" && isReady(installation.record)
@@ -702,7 +710,11 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
         Effect.gen(function* () {
           yield* commit(installation, {
             ...installation.record,
-            replacement: { digest: inspection.source.digest, committed: true },
+            replacement: {
+              digest: inspection.source.digest,
+              committed: true,
+              ...(input.attemptId === undefined ? {} : { attemptId: input.attemptId }),
+            },
             consent: {
               digest: inspection.source.digest,
               capabilities: inspection.registration.manifest.capabilities,
@@ -729,16 +741,20 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
   }, Effect.uninterruptible);
 
   const settleReplace = Effect.fn("PluginCatalog.settleReplace")(function* (
-    input: PluginConsentInput,
+    input: PluginConsentInput & { readonly attemptId?: string },
     files: Parameters<PluginCatalog["Service"]["settleReplace"]>[1],
   ) {
     const installation = yield* find(input.installationId);
-    // Older records have no swap marker; preserve their consent-based recovery.
+    // New journals must match this attempt; only legacy journals use digest/consent recovery.
     const replacement = installation.record.replacement;
     const committed =
-      replacement?.digest === input.digest
-        ? replacement.committed
-        : installation.record.consent?.digest === input.digest;
+      input.attemptId !== undefined
+        ? replacement?.attemptId === input.attemptId &&
+          replacement.digest === input.digest &&
+          replacement.committed
+        : replacement?.digest === input.digest
+          ? replacement.committed
+          : installation.record.consent?.digest === input.digest;
     if (committed) return "committed" as const;
     if (files !== undefined) {
       yield* claimFiles([installation.record.directory, ...files.paths], installation);
