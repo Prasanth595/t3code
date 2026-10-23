@@ -46,7 +46,8 @@
 # triggers none either, so inside the workflow (GITHUB_ACTIONS set) publish
 # dispatches Factory CI, Factory desktop and, when the merge touched apps/mobile
 # or packages, Factory mobile on the landed main. A failed dispatch leaves the
-# landing in place and exits 1. Run locally, the person's own push starts them.
+# landing in place and exits 1. A push with a sync secret (SYNC_PUSH_WITH other
+# than GITHUB_TOKEN), or run locally the person's own push, starts them instead.
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -406,7 +407,9 @@ publish() {
     local before
     before=$(git rev-parse "origin/$base")
     if git push --quiet origin "$candidate:refs/heads/$base" 2> "$scratch/land.log"; then
-      if [[ -n ${GITHUB_ACTIONS:-} ]]; then
+      # A push with a sync secret starts those workflows itself; only
+      # GITHUB_TOKEN's needs the dispatch.
+      if [[ -n ${GITHUB_ACTIONS:-} && ${SYNC_PUSH_WITH:-GITHUB_TOKEN} == GITHUB_TOKEN ]]; then
         dispatch "$before"
         echo "sync: $tag merged into $base through $pr_url; dispatched $dispatched"
       else

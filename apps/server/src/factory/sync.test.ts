@@ -344,6 +344,17 @@ describe("sync.sh", () => {
     expect(git(origin, "rev-parse", "main")).toBe(git(origin, "rev-parse", `sync/${NEWEST}`));
   });
 
+  it("dispatches nothing when a sync secret pushed the landing, which starts them itself", () => {
+    makeFork(`${OLD} ${oldSha}`);
+    const { status, stdout, calls } = run({ GITHUB_ACTIONS: "true", SYNC_PUSH_WITH: "SYNC_TOKEN" });
+    expect(status).toBe(0);
+    expect(stdout.trim().split("\n").at(-1)).toBe(
+      `sync: ${NEWEST} merged into main through https://example.test/pr/1`,
+    );
+    expect(calls).not.toContainEqual(expect.stringMatching(/^gh workflow run/));
+    expect(git(origin, "rev-parse", "main")).toBe(git(origin, "rev-parse", `sync/${NEWEST}`));
+  });
+
   it.each(["apps/mobile/App.tsx", "packages/shared/index.ts"])(
     "also dispatches Factory mobile when the merge touches %s",
     (file) => {
