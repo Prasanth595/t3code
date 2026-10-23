@@ -1097,6 +1097,8 @@ export function deriveEffectiveComposerModelState(input: {
   providers: ReadonlyArray<ServerProvider>;
   selectedProvider: ProviderDriverKind;
   selectedInstanceId?: ProviderInstanceId | null | undefined;
+  /** The instance the draft, thread or project asked for; differs from the selection on fallback. */
+  requestedInstanceId?: ProviderInstanceId | null | undefined;
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
   settings: UnifiedSettings;
@@ -1164,8 +1166,53 @@ export function deriveEffectiveComposerModelState(input: {
 
   return {
     selectedModel,
-    modelOptions,
+    modelOptions: withFallbackInstanceOptions({ ...input, modelOptions, selectedModel }),
   };
+}
+
+/**
+ * When the requested instance is disabled or unavailable, the composer shows another instance of
+ * the same driver with the same model. That instance has no options of its own, so it takes the
+ * requested instance's options instead of the model's defaults.
+ */
+function withFallbackInstanceOptions(input: {
+  readonly modelOptions: ProviderOptionSelectionsByProvider | null;
+  readonly selectedModel: string;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly selectedProvider: ProviderDriverKind;
+  readonly selectedInstanceId?: ProviderInstanceId | null | undefined;
+  readonly requestedInstanceId?: ProviderInstanceId | null | undefined;
+  readonly draft: Pick<ComposerThreadDraftState, "modelSelectionByProvider"> | null | undefined;
+  readonly threadModelSelection: ModelSelection | null | undefined;
+  readonly projectModelSelection: ModelSelection | null | undefined;
+}): ProviderOptionSelectionsByProvider | null {
+  const { modelOptions, selectedInstanceId, requestedInstanceId } = input;
+  if (
+    !modelOptions ||
+    !selectedInstanceId ||
+    !requestedInstanceId ||
+    selectedInstanceId === requestedInstanceId ||
+    modelOptions[selectedInstanceId] !== undefined
+  ) {
+    return modelOptions;
+  }
+  const requestedOptions = modelOptions[requestedInstanceId];
+  const requestedDriver = input.providers.find(
+    (provider) => provider.instanceId === requestedInstanceId,
+  )?.driver;
+  const requestedModel =
+    input.draft?.modelSelectionByProvider?.[requestedInstanceId]?.model ??
+    [input.threadModelSelection, input.projectModelSelection].find(
+      (selection) => selection?.instanceId === requestedInstanceId,
+    )?.model;
+  if (
+    !requestedOptions ||
+    requestedDriver !== input.selectedProvider ||
+    requestedModel !== input.selectedModel
+  ) {
+    return modelOptions;
+  }
+  return { ...modelOptions, [selectedInstanceId]: requestedOptions };
 }
 
 function revokeObjectPreviewUrl(previewUrl: string): void {
