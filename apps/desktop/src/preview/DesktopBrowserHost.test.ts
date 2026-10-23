@@ -60,6 +60,7 @@ const makeDebuggee = () => {
     navigate: () => webContents.emit("did-navigate"),
     sent,
     release: () => pending.splice(0).forEach((resolve) => resolve()),
+    releaseFirst: () => pending.shift()?.(),
   };
 };
 
@@ -140,6 +141,34 @@ describe("DesktopBrowserHost", () => {
       yield* command(host, 3, "Page.captureScreenshot");
       yield* Effect.promise(settle);
       debuggee.navigate();
+      yield* Effect.promise(settle);
+      expect(debuggee.sent).toEqual(["Page.captureScreenshot", "Page.captureScreenshot"]);
+
+      // The superseded screenshot answering late must not start a third beside the second.
+      debuggee.releaseFirst();
+      yield* Effect.promise(settle);
+      expect(debuggee.sent).toHaveLength(2);
+      debuggee.release();
+      yield* Effect.promise(settle);
+      expect(debuggee.sent).toHaveLength(3);
+    }),
+  );
+
+  it.effect("drops screenshots a released relay left waiting", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      host.attach(key, debuggee.tab);
+
+      yield* command(host, 1, "Page.captureScreenshot");
+      yield* command(host, 2, "Page.captureScreenshot");
+      yield* host.handleCommandLine(encodeJson({ type: "release", ...key }));
+      yield* command(host, 3, "Page.captureScreenshot");
+      yield* Effect.promise(settle);
+      debuggee.release();
+      yield* Effect.promise(settle);
+      expect(debuggee.sent).toEqual(["Page.captureScreenshot", "Page.captureScreenshot"]);
+      debuggee.release();
       yield* Effect.promise(settle);
       expect(debuggee.sent).toEqual(["Page.captureScreenshot", "Page.captureScreenshot"]);
     }),

@@ -96,11 +96,20 @@ export const make = Effect.gen(function* () {
    * Chromium below 157 crashes the whole app when a guest's renderer exits with a
    * screenshot copy in flight (crbug.com/567321049). Overlapping screenshots make that
    * far likelier, and one the server gave up on stays pending in Chromium, so each guest
-   * gets one at a time.
+   * gets one at a time. One queued by a relay released since then is dropped unsent.
    */
-  const takeScreenshot = (tab: AttachedTab, capture: () => Promise<unknown>) =>
+  const takeScreenshot = (
+    tab: AttachedTab,
+    relay: CdpRelayConnection,
+    capture: () => Promise<unknown>,
+  ) =>
     new Promise<unknown>((resolve, reject) => {
       const start = () => {
+        if (tab.relay !== relay) {
+          reject(new Error("The preview connection that asked for this screenshot closed."));
+          nextScreenshot(tab);
+          return;
+        }
         const turn = {};
         tab.screenshotTurn = turn;
         capture()
@@ -124,7 +133,7 @@ export const make = Effect.gen(function* () {
       {
         send: (method, params, sessionId) =>
           method === "Page.captureScreenshot"
-            ? takeScreenshot(tab, () => send(method, params, sessionId))
+            ? takeScreenshot(tab, relay, () => send(method, params, sessionId))
             : send(method, params, sessionId),
         targetId: () =>
           debuggee
@@ -166,6 +175,7 @@ export const make = Effect.gen(function* () {
     const tab = tabs.get(id);
     if (!tab) return;
     tabs.delete(id);
+    tab.relay = null;
     tab.debuggee.debugger.off("message", tab.onMessage);
     tab.debuggee.webContents.off("did-navigate", tab.onNewDocument);
     emit({ type: "detached", ...key });
@@ -191,8 +201,8 @@ export const make = Effect.gen(function* () {
         }
         tab.relay?.event(method, params, sessionId);
       },
-      // A screenshot pending when the page loads a new document, a reload included, never
-      // answers. A crashed page lands here once it reloads, well after its renderer died.
+      // A screenshot pending when the page loads a new document, a reload included, can
+      // stay unanswered. A crashed page lands here once it reloads, well after its renderer died.
       onNewDocument: () => {
         if (tab.screenshotTurn !== null) nextScreenshot(tab);
       },
