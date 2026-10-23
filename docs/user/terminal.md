@@ -3,9 +3,8 @@
 Terminals open with your system's default shell. To choose another, set **Default
 shell** in **Settings → General**. T3 Code lists the shells it finds on that
 machine: PowerShell 7, Windows PowerShell, Command Prompt, and Git Bash on
-Windows, and the shells in `/etc/shells` elsewhere. Choose **Custom…** to enter
-the path of any executable. The same row in a project's settings overrides the
-choice for that project.
+Windows, and the shells in `/etc/shells` elsewhere. The same row in a project's
+settings overrides the choice for that project.
 
 To use a different shell for one terminal, open the menu next to **New terminal**
 in the terminal drawer and pick a shell. On mobile, use **New terminal with…** in
@@ -13,7 +12,7 @@ the terminal menu.
 
 A repository can suggest a shell with `terminalShell` in `t3.json`, using a shell
 name such as `"pwsh"`, `"powershell"`, `"cmd"`, or `"bash"`. `"bash"` means Git
-Bash on Windows. Custom paths aren't allowed there.
+Bash on Windows.
 
 A setting in T3 Code always wins over `t3.json`: a project override, then the
 environment setting, then `t3.json`, then automatic detection. If the chosen

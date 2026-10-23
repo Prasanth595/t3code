@@ -585,19 +585,11 @@ function resolveShellCandidates(
 function preferredShellCandidate(
   setting: TerminalShellSetting,
   profiles: ReadonlyArray<TerminalShellProfile>,
-  platform: NodeJS.Platform,
 ): ShellCandidate | null {
   if (setting === "auto") return null;
-  if (typeof setting === "string") {
-    // An id this machine does not have (say a t3.json written on another OS) means auto.
-    const profile = profiles.find((candidate) => candidate.id === setting);
-    return profile === undefined ? null : candidateFromProfile(profile);
-  }
-  return {
-    shell: setting.command,
-    args: [...(setting.args ?? [])],
-    label: basenameForPlatform(setting.command, platform),
-  };
+  // An id this machine does not have (say a t3.json written on another OS) means auto.
+  const profile = profiles.find((candidate) => candidate.id === setting);
+  return profile === undefined ? null : candidateFromProfile(profile);
 }
 
 const WINDOWS_SHELL_LABELS: Readonly<Record<string, string>> = {
@@ -2410,7 +2402,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                     threadId: session.threadId,
                     cwd: session.worktreePath ?? session.cwd,
                   }));
-            const preferred = preferredShellCandidate(setting, profiles, platform);
+            const preferred = preferredShellCandidate(setting, profiles);
             const shellCandidates = resolveShellCandidates(
               preferred,
               shellResolver,

@@ -35,18 +35,8 @@ export const TerminalListShellsResult = Schema.Struct({
 });
 export type TerminalListShellsResult = typeof TerminalListShellsResult.Type;
 
-/**
- * "auto" is reserved and listed first so it never decodes as a profile id.
- * A bare string names a detected profile; the object form is an explicit executable.
- */
-export const TerminalShellSetting = Schema.Union([
-  Schema.Literal("auto"),
-  TerminalShellProfileIdSchema,
-  Schema.Struct({
-    command: TrimmedNonEmptyStringSchema,
-    args: Schema.optional(Schema.Array(Schema.String)),
-  }),
-]);
+/** "auto" picks the platform default; any other value names a detected shell profile id. */
+export const TerminalShellSetting = TerminalShellProfileIdSchema;
 export type TerminalShellSetting = typeof TerminalShellSetting.Type;
 
 export const TerminalThreadInput = Schema.Struct({

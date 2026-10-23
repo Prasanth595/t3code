@@ -257,14 +257,14 @@ describe("ServerSettings worktree defaults", () => {
 });
 
 describe("ServerSettings.terminalShell", () => {
-  it("inherits by default and decodes profile ids, auto, and custom executables", () => {
+  it("inherits by default and decodes profile ids and auto, not custom executables", () => {
     expect(decodeServerSettings({}).terminalShell).toBeNull();
     expect(decodeServerSettings({ terminalShell: "auto" }).terminalShell).toBe("auto");
     expect(decodeServerSettings({ terminalShell: "pwsh" }).terminalShell).toBe("pwsh");
     expect(
       decodeServerSettings({ terminalShell: { command: "/opt/tools/sh", args: ["-l"] } })
         .terminalShell,
-    ).toEqual({ command: "/opt/tools/sh", args: ["-l"] });
+    ).toBeNull();
     expect(decodeServerSettings({ terminalShell: "" }).terminalShell).toBeNull();
     expect(decodeServerSettingsPatch({ terminalShell: null }).terminalShell).toBeNull();
   });

@@ -1,14 +1,9 @@
 import type { ScopedThreadRef, TerminalShellSetting } from "@t3tools/contracts";
-import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { ChevronDownIcon } from "lucide-react";
 
-import { useComposerDraftStore } from "../../composerDraftStore";
-import { useEnvironmentSettings } from "../../hooks/useSettings";
-import { useQuietThreadShell } from "../../state/entities";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { MiddleTruncate } from "../ui/middle-truncate";
-import { isCustomShell } from "./terminalShell.logic";
 import { useTerminalShells } from "./useTerminalShells";
 
 /**
@@ -25,12 +20,6 @@ export function NewTerminalShellMenu({
   onSelect: (shell: TerminalShellSetting) => void;
 }) {
   const { shells, load } = useTerminalShells(threadRef.environmentId);
-  const settings = useEnvironmentSettings(threadRef.environmentId);
-  const serverThread = useQuietThreadShell(threadRef);
-  const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
-  const projectId = serverThread?.projectId ?? draftThread?.projectId ?? null;
-  const configured = resolveProjectSettings(settings, projectId, null).settings.terminalShell;
-  const customShell = isCustomShell(configured) ? configured : null;
 
   return (
     <Menu onOpenChange={(open) => open && load()}>
@@ -52,11 +41,6 @@ export function NewTerminalShellMenu({
             <ShellOption label={shell.label} command={shell.command} />
           </MenuItem>
         ))}
-        {customShell ? (
-          <MenuItem onClick={() => onSelect(customShell)}>
-            <ShellOption label="Custom" command={customShell.command} />
-          </MenuItem>
-        ) : null}
         {shells === null ? (
           <span className="px-2 py-1.5 text-xs text-muted-foreground">Loading…</span>
         ) : null}

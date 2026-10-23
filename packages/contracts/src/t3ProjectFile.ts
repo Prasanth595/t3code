@@ -94,7 +94,7 @@ export const T3ProjectFile = Schema.Struct({
   terminalShell: Schema.optionalKey(
     trimmedNonEmpty({
       description:
-        'Shell new terminals open with for this repository, by profile id such as "pwsh", "powershell", "cmd", "zsh", or "bash" (Git Bash on Windows, so one value works across platforms). A per-project setting in T3 Code overrides this; an id that is not installed falls back to the default shell. Custom executables cannot be set here.',
+        'Shell new terminals open with for this repository, by profile id such as "pwsh", "powershell", "cmd", "zsh", or "bash" (Git Bash on Windows, so one value works across platforms). A per-project setting in T3 Code overrides this; an id that is not installed falls back to the default shell.',
     }),
   ),
   worktreeSubmodules: Schema.optionalKey(

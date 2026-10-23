@@ -976,13 +976,13 @@ it.layer(
     }),
   );
 
-  it.effect("reports the fallback in metadata when a custom shell cannot start", () =>
+  it.effect("reports the fallback in metadata when a detected shell cannot start", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {
         shellProfiles,
         shellResolver: () => "/bin/sh",
       }).pipe(Effect.provide(layerWithHostPlatform("linux")));
-      ptyAdapter.spawnFailures.push(new Error("spawn /opt/missing ENOENT"));
+      ptyAdapter.spawnFailures.push(new Error("spawn /bin/fish ENOENT"));
       const summaries = Effect.gen(function* () {
         let terminals: ReadonlyArray<TerminalSummary> = [];
         const unsubscribe = yield* manager.subscribeMetadata((event) =>
@@ -994,19 +994,17 @@ it.layer(
         return terminals;
       });
 
-      const snapshot = yield* manager.open(
-        openInput({ shell: { command: "/opt/missing", args: ["-l"] } }),
-      );
+      const snapshot = yield* manager.open(openInput({ shell: "fish" }));
 
-      expect(ptyAdapter.spawnInputs[0]).toMatchObject({ shell: "/opt/missing", args: ["-l"] });
+      expect(ptyAdapter.spawnInputs[0]?.shell).toBe("/bin/fish");
       expect(snapshot.status).toBe("running");
       expect(snapshot.history).toBe("");
       const [fellBack] = yield* summaries;
-      expect(fellBack).toMatchObject({ shell: "sh", shellFallbackFrom: "missing" });
+      expect(fellBack).toMatchObject({ shell: "sh", shellFallbackFrom: "fish" });
 
       yield* manager.restart(restartInput());
       const [recovered] = yield* summaries;
-      expect(recovered?.shell).toBe("missing");
+      expect(recovered?.shell).toBe("fish");
       expect(recovered?.shellFallbackFrom).toBeUndefined();
     }),
   );
