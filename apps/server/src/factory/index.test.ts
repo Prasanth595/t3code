@@ -1796,9 +1796,13 @@ describe("the gate in the background", () => {
             brokenThreads: { notFactory: new Set<string>(), unsettled: new Map<string, number>() },
           },
         );
+        const repo: Repo = {
+          ...backgroundRepo,
+          project: { ...backgroundRepo.project, gate: ["cargo test"] },
+        };
         const before = NodeFS.readFileSync(runPath(dataDir, run), "utf8");
         // Mergeable: it waits for the slot, after one read of its pull request, and nothing is written.
-        assert.deepStrictEqual(yield* world.gate(backgroundRepo, run), {
+        assert.deepStrictEqual(yield* world.gate(repo, run), {
           kind: "queued",
           running: 1,
           max: 1,
@@ -1809,7 +1813,7 @@ describe("the gate in the background", () => {
         // Conflicting: the gate starts though the slot is taken, and records the conflict with no
         // gate run, so no lock.
         mergeable = "CONFLICTING";
-        assert.deepStrictEqual(yield* world.gate(backgroundRepo, run), { kind: "started" });
+        assert.deepStrictEqual(yield* world.gate(repo, run), { kind: "started" });
         while (world.gateRunning(run)) yield* Effect.yieldNow;
         assert.strictEqual(gateRuns, 0);
         const conflictLines = readRun(dataDir, run).entries.filter(
