@@ -80,6 +80,7 @@ const machine = (max: number): MachineConfig => ({
   feedbackSeconds: 600,
   notify: true,
   minFreeGib: 10,
+  maxLoadPerCore: 1,
 });
 
 const GIB = 1024 ** 3;
@@ -151,6 +152,10 @@ class Fake implements PassWorld {
   free: number | "error" = 100 * GIB;
   /** The machine's `min_free_gib` for the passes `pass` runs. */
   minFreeGib = 10;
+  /** The 1-minute load and the cores `load` reports. */
+  loadAvg = { oneMinute: 2, cores: 12 };
+  /** The machine's `max_load_per_core` for the passes `pass` runs. */
+  maxLoadPerCore = 1;
   machineLogFails = false;
   /** When set, `record` appends to the real machine log in this dir and `t3Trouble` reads it, as the live world does. */
   machineLogDir: string | null = null;
@@ -558,6 +563,11 @@ class Fake implements PassWorld {
       : Effect.succeed({ path: "/data/worktrees", freeBytes: this.free });
   }
 
+  load() {
+    this.calls.push("load");
+    return this.loadAvg;
+  }
+
   nowMs() {
     return this.now;
   }
@@ -658,8 +668,10 @@ const pass = (
   fake.watched = watchedOf(repos);
   return Effect.gen(function* () {
     const lines: Array<string> = [];
-    const report = yield* runPass(fake, { ...machine(max), minFreeGib: fake.minFreeGib }, (line) =>
-      lines.push(line),
+    const report = yield* runPass(
+      fake,
+      { ...machine(max), minFreeGib: fake.minFreeGib, maxLoadPerCore: fake.maxLoadPerCore },
+      (line) => lines.push(line),
     );
     return { report, lines };
   });
@@ -2250,6 +2262,76 @@ describe("low disk space", () => {
   );
 });
 
+describe("high load", () => {
+  const HIGH_LINE =
+    "high load: 1-minute load 55.2 is above 12 (12 cores x max_load_per_core 1); no issue is claimed and a second gate waits until it drops";
+  const highLines = (lines: ReadonlyArray<string>) =>
+    lines.filter((l) => l.startsWith("high load:"));
+  const gates = (fake: Fake) => fake.calls.filter((c) => c.startsWith("gate "));
+
+  it.effect(
+    "above the limit no ready issue is claimed, one line says so, and no item is raised",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.ready[REPO] = [1, 2];
+        fake.ready[OTHER] = [4];
+        fake.loadAvg = { oneMinute: 55.2, cores: 12 };
+        const { report, lines } = yield* pass(fake, [REPO, OTHER], 5);
+        assert.deepEqual(starts(fake), []);
+        assert.deepEqual(highLines(lines), [HIGH_LINE]);
+        assert.deepEqual(
+          fake.events.filter((e) => e.event === "claim_skipped"),
+          [{ event: "claim_skipped", data: { reason: "high-load" } }],
+        );
+        assert.deepEqual(fake.items, []);
+        assert.equal(report.attention, 0);
+        assert.equal(report.errors, 0);
+      }),
+  );
+
+  // The world's gate holds a second gate under load; the pass still asks for it.
+  it.effect("above the limit a run's gate is still asked for", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING, REPO, true);
+      fake.advances[`${REPO}#40`] = [
+        { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
+      ];
+      fake.loadAvg = { oneMinute: 55.2, cores: 12 };
+      yield* pass(fake, [REPO], 5);
+      assert.deepEqual(gates(fake), [`gate ${REPO}#40`]);
+    }),
+  );
+
+  it.effect("at the limit or under it the pass claims as before", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [1];
+      fake.pushStart(`${REPO}#1`, started(1));
+      fake.loadAvg = { oneMinute: 12, cores: 12 };
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
+      assert.deepEqual(highLines(lines), []);
+      assert.ok(fake.calls.includes("load"));
+    }),
+  );
+
+  it.effect("max_load_per_core 0 reads no load and holds nothing back", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [1];
+      fake.pushStart(`${REPO}#1`, started(1));
+      fake.loadAvg = { oneMinute: 55.2, cores: 12 };
+      fake.maxLoadPerCore = 0;
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.ok(!fake.calls.includes("load"));
+      assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
+      assert.deepEqual(highLines(lines), []);
+    }),
+  );
+});
+
 describe("threads on a broken worktree", () => {
   const WHAT =
     "rawphp/softfac#42: worktree /wt/t3-abc of run rawphp__softfac__42__1 is gone or no longer a git checkout";
@@ -2855,6 +2937,22 @@ describe("following a building run", () => {
       assert.equal(
         runLine(lines, `${REPO}#40 `),
         `${REPO}#40 building: session finished, gate queued: 2 gates running, max_concurrent_gates is 2`,
+      );
+    }),
+  );
+
+  it.effect("a building run whose gate is held by the load says so, not the gate limit", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING, REPO, true);
+      fake.advances[`${REPO}#40`] = [
+        { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
+      ];
+      fake.gateStarts[`${REPO}#40`] = { kind: "high-load", oneMinute: 55.2, limit: 12 };
+      const { lines } = yield* pass(fake, [REPO], 3);
+      assert.equal(
+        runLine(lines, `${REPO}#40 `),
+        `${REPO}#40 building: session finished, gate queued: 1-minute load 55.2 is above 12 and a gate is already running`,
       );
     }),
   );
@@ -4720,6 +4818,19 @@ describe("pr-open runs: gated again only when something moved", () => {
       const { lines } = yield* pass(fake, [REPO], 5);
       assert.deepEqual(lineOf(lines, 41), [
         `${REPO}#41 pr-open: gate queued: 2 gates running, max_concurrent_gates is 2`,
+      ]);
+    }),
+  );
+
+  it.effect("a re-gate held by the load says so, not the gate limit", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41);
+      fake.baseTips[REPO] = MOVED;
+      fake.gateStarts[`${REPO}#41`] = { kind: "high-load", oneMinute: 55.2, limit: 12 };
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(lineOf(lines, 41), [
+        `${REPO}#41 pr-open: gate queued: 1-minute load 55.2 is above 12 and a gate is already running`,
       ]);
     }),
   );

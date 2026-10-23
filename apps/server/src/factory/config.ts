@@ -70,6 +70,7 @@ export const DEFAULT_FEEDBACK_SECONDS = 600;
  */
 const DEFAULT_KEEP_VERSIONS = 3;
 export const DEFAULT_MIN_FREE_GIB = 10;
+export const DEFAULT_MAX_LOAD_PER_CORE = 1;
 
 /** What a repo's runs are timed by when none of its project configs has loaded. */
 export const timeLimitOnlyProjectConfig = (): ProjectConfig => ({
@@ -162,6 +163,11 @@ export interface MachineConfig {
    * claim an issue or start a gate. 0 turns the check off.
    */
   readonly minFreeGib: number;
+  /**
+   * The 1-minute load per core above which a pass claims no issue and a second gate does not
+   * start. 0 turns the check off.
+   */
+  readonly maxLoadPerCore: number;
 }
 
 type Mapping = Record<string, unknown>;
@@ -440,6 +446,7 @@ const MACHINE_KEYS = [
   "notify",
   "keep_versions",
   "min_free_gib",
+  "max_load_per_core",
 ] as const;
 
 /**
@@ -490,6 +497,13 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
   // keep_versions from the file and the server has no use for it.
   const keepVersions = c.optionalUint(root, "", "keep_versions", DEFAULT_KEEP_VERSIONS, 0);
   const minFreeGib = c.optionalUint(root, "", "min_free_gib", DEFAULT_MIN_FREE_GIB, 0);
+  const maxLoadPerCore = c.optionalUint(
+    root,
+    "",
+    "max_load_per_core",
+    DEFAULT_MAX_LOAD_PER_CORE,
+    0,
+  );
   checkUnknownKeys(c, root);
 
   if (
@@ -500,7 +514,8 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     feedbackSeconds === undefined ||
     notify === undefined ||
     keepVersions === undefined ||
-    minFreeGib === undefined
+    minFreeGib === undefined ||
+    maxLoadPerCore === undefined
   ) {
     return undefined;
   }
@@ -512,6 +527,7 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     feedbackSeconds,
     notify,
     minFreeGib,
+    maxLoadPerCore,
   };
 };
 
