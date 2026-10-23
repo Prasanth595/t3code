@@ -13,6 +13,7 @@ import {
   type PreviewAutomationSelectInput,
   type PreviewAutomationSelectResult,
   type PreviewAutomationSnapshot,
+  type PreviewAutomationSnapshotStage,
   type PreviewAutomationTypeInput,
   type PreviewAutomationUploadInput,
   type PreviewAutomationWaitForInput,
@@ -228,10 +229,13 @@ const pageChanged = () =>
     "The page changed while capturing its snapshot. Take another snapshot.",
   );
 
-const tooBusy = () =>
+const snapshotTimedOut = (
+  pendingStages: ReadonlyArray<typeof PreviewAutomationSnapshotStage.Type> = [],
+) =>
   new ServerBrowserOperationError(
     "PreviewAutomationTimeoutError",
-    "The page was too busy to capture a snapshot in time. Wait for it to settle and take another snapshot.",
+    `Snapshot capture timed out after ${SNAPSHOT_TIMEOUT_MS}ms. Try the snapshot again.`,
+    { timeoutMs: SNAPSHOT_TIMEOUT_MS, pendingStages },
   );
 
 const VALUE_TOO_LONG = "A password field holds a value too long to hide, so no snapshot was taken.";
@@ -535,35 +539,58 @@ const renderingOf = async (input: SnapshotInput) => {
 const capture = async (
   input: SnapshotInput,
   deadline: number,
+  pending: Map<typeof PreviewAutomationSnapshotStage.Type, number>,
 ): Promise<PreviewAutomationSnapshot> => {
-  const { renderScale, viewport, offset } = await renderingOf(input);
+  const track = async <A>(
+    stage: typeof PreviewAutomationSnapshotStage.Type,
+    operation: () => Promise<A>,
+  ) => {
+    // A retry can overlap the previous attempt's unanswered screenshot.
+    pending.set(stage, (pending.get(stage) ?? 0) + 1);
+    try {
+      return await operation();
+    } finally {
+      const count = (pending.get(stage) ?? 1) - 1;
+      if (count === 0) pending.delete(stage);
+      else pending.set(stage, count);
+    }
+  };
+  const { renderScale, viewport, offset } = await track("metrics", () => renderingOf(input));
   // A late metrics reply must not begin a capture after viewers have resumed.
-  if (Date.now() >= deadline) throw tooBusy();
+  if (Date.now() >= deadline) throw snapshotTimedOut();
   const scale = Math.min(1, MAX_SCREENSHOT_WIDTH / (viewport.width * renderScale));
   const state = refsFor(input.page);
   invalidateRefs(input.page);
   const generation = state.generation;
-  const { readers, read } = await openReaders(input.page, input.cdp);
-  const before = await read();
+  const { readers, read } = await track("frames", () => openReaders(input.page, input.cdp));
+  const before = await track("frames", () => read());
   // Taken between the reads, so a value that changes during either fails the comparison.
   // Awaited after the tree: a capture that fails has finished its tree before a retry starts.
   const pageAndScreenshot = Promise.all([
-    input.page.evaluate(SNAPSHOT_SCRIPT) as Promise<
-      Pick<
-        PreviewAutomationSnapshot,
-        "url" | "title" | "loading" | "visibleText" | "interactiveElements"
-      >
-    >,
-    captureViewport(input.page, input.cdp, { format: "png", scale, viewport, offset }),
+    track(
+      "page state",
+      () =>
+        input.page.evaluate(SNAPSHOT_SCRIPT) as Promise<
+          Pick<
+            PreviewAutomationSnapshot,
+            "url" | "title" | "loading" | "visibleText" | "interactiveElements"
+          >
+        >,
+    ),
+    track("screenshot", () =>
+      captureViewport(input.page, input.cdp, { format: "png", scale, viewport, offset }),
+    ),
   ]);
   void pageAndScreenshot.catch(constVoid);
   // Leaves time for the second read; a frame that never loads holds the tree until then.
-  const tree = await input.page.ariaSnapshot({
-    mode: "ai",
-    boxes: true,
-    timeout: Math.max(1, deadline - Date.now() - 2_000),
-  });
-  const after = await read(before);
+  const tree = await track("accessibility tree", () =>
+    input.page.ariaSnapshot({
+      mode: "ai",
+      boxes: true,
+      timeout: Math.max(1, deadline - Date.now() - 2_000),
+    }),
+  );
+  const after = await track("frames", () => read(before));
   // A value that changed meanwhile may be in the tree under neither reading.
   if (after.some((values, i) => values && JSON.stringify(values) !== JSON.stringify(before[i])))
     throw pageChanged();
@@ -577,7 +604,7 @@ const capture = async (
     if (!iframe) throw pageChanged();
     const frame = await iframe.contentFrame();
     void iframe.dispose().catch(constVoid);
-    if (frame && unread.includes(frame)) throw tooBusy();
+    if (frame && unread.includes(frame)) throw snapshotTimedOut();
   }
   const [page, data] = await pageAndScreenshot;
   if (state.generation !== generation) throw pageChanged();
@@ -614,26 +641,29 @@ const snapshotTurns = new WeakMap<Page, number>();
 
 export const snapshot = async (input: SnapshotInput): Promise<PreviewAutomationSnapshot> => {
   const deadline = Date.now() + SNAPSHOT_TIMEOUT_MS;
+  const pending = new Map<typeof PreviewAutomationSnapshotStage.Type, number>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(tooBusy()), SNAPSHOT_TIMEOUT_MS);
+    timer = setTimeout(() => reject(snapshotTimedOut([...pending.keys()])), SNAPSHOT_TIMEOUT_MS);
   });
   const turn = (snapshotTurns.get(input.page) ?? 0) + 1;
   snapshotTurns.set(input.page, turn);
   // A page that changed mid-capture, like one rotating ads, has usually settled by a second
   // try. None starts late or after another snapshot began, since it would revoke the refs of
   // whichever snapshot came next.
-  const captured = capture(input, deadline).catch((cause: unknown) =>
+  const captured = capture(input, deadline, pending).catch((cause: unknown) =>
     Date.now() < deadline &&
     snapshotTurns.get(input.page) === turn &&
     !(cause instanceof Error && cause.message === VALUE_TOO_LONG)
-      ? capture(input, deadline)
+      ? capture(input, deadline, pending)
       : Promise.reject(cause),
   );
   try {
     return await Promise.race([captured, expired]);
   } catch (cause) {
-    throw cause instanceof Error && cause.name === "TimeoutError" ? tooBusy() : cause;
+    throw cause instanceof Error && cause.name === "TimeoutError"
+      ? snapshotTimedOut([...pending.keys()])
+      : cause;
   } finally {
     clearTimeout(timer);
   }

@@ -5,9 +5,70 @@ import {
   type CDPSession,
   type Page,
 } from "playwright-core";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
+
+describe("snapshot deadline diagnostics", () => {
+  it.each(["metrics", "screenshot"] as const)(
+    "identifies a stalled %s operation",
+    async (stage) => {
+      vi.useFakeTimers();
+      try {
+        const frame = {};
+        const page = {
+          viewportSize: () => ({ width: 1280, height: 800 }),
+          mainFrame: () => frame,
+          frames: () => [frame],
+          on: () => {},
+          evaluate: async () => ({
+            url: "about:blank",
+            title: "",
+            loading: false,
+            visibleText: "",
+            interactiveElements: [],
+          }),
+          ariaSnapshot: async () => "",
+        } as unknown as Page;
+        const cdp = {
+          send: async (method: string) => {
+            if (stage === "metrics" || method === "Page.captureScreenshot")
+              return new Promise(() => {});
+            if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
+            if (method === "Page.createIsolatedWorld") return { executionContextId: 1 };
+            if (method === "Runtime.evaluate") return { result: { value: [] } };
+            throw new Error(`Unexpected command: ${method}`);
+          },
+        } as unknown as CDPSession;
+        const captured = ServerBrowserPage.snapshot({
+          page,
+          cdp,
+          renderScale: stage === "metrics" ? "display" : 1,
+          consoleEntries: [],
+          networkEntries: [],
+          actionTimeline: [],
+        }).catch((error: unknown) => error);
+
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(await captured).toMatchObject({
+          tag: "PreviewAutomationTimeoutError",
+          detail: { timeoutMs: 10_000, pendingStages: [stage] },
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+});
 
 describe("server browser element refs", () => {
   let browser: Browser;
