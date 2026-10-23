@@ -51,6 +51,14 @@ Pi loads its normal user and project extensions. Blocking `select`, `confirm`, `
 dialogs work in T3 Code. Notifications appear in the work log. Pi terminal decoration such as
 titles, status lines, and widgets does not have a T3 Code equivalent.
 
+T3 Code stops an idle Pi process after 30 minutes. An extension that keeps working after a turn
+ends, such as a background command, can keep the process alive by holding a status under the
+`t3:background` key, or `t3:background:<job>` for several jobs, until the work ends:
+`ctx.ui.setStatus("t3:background:build", "Build running")`, then
+`ctx.ui.setStatus("t3:background:build", undefined)`. The process stays up for at most four hours of
+background work. When the extension wakes the agent with the result, the reply appears in the
+thread.
+
 ## Permission Modes
 
 T3 Code applies the composer permission mode through Pi's blocking tool hook:

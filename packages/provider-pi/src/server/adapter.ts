@@ -90,6 +90,12 @@ const PI_SESSION_TIMEOUT_MS = 60_000;
 const PI_UNSOLICITED_ACTIVITY_ERROR =
   "Pi started agent work outside an active T3 turn. The session was stopped to prevent invisible tool execution.";
 const SETTLE_PROBE_MAX_ATTEMPTS = 3;
+/**
+ * Pi has no native signal for extension work that outlives a turn. Extensions
+ * hold a status under this key, or `<key>:<job>`, until the work ends, so the
+ * idle release keeps the process (and the work) alive.
+ */
+const PI_BACKGROUND_WORK_STATUS_KEY = "t3:background";
 const SETTLE_PROBE_RETRY_DELAY = Duration.millis(100);
 
 const PiProviderCapabilitiesV2 = {
@@ -539,6 +545,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       let stopRequested = false;
       let unsolicitedActivityDetected = false;
       let pendingWake: PiWake | null = null;
+      const backgroundWorkStatusKeys = new Set<string>();
       let rollbackBarrier: Deferred.Deferred<
         void,
         ProviderAdapter.ProviderAdapterProtocolError
@@ -1234,6 +1241,21 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const method = recordString(event, "method");
         const nativeRequestId = recordString(event, "id");
         if (method === undefined) return;
+        if (method === "setStatus") {
+          const statusKey = recordString(event, "statusKey");
+          if (
+            statusKey !== PI_BACKGROUND_WORK_STATUS_KEY &&
+            statusKey?.startsWith(`${PI_BACKGROUND_WORK_STATUS_KEY}:`) !== true
+          ) {
+            return;
+          }
+          if ((recordString(event, "statusText") ?? "").length > 0) {
+            backgroundWorkStatusKeys.add(statusKey);
+          } else {
+            backgroundWorkStatusKeys.delete(statusKey);
+          }
+          return;
+        }
         if (method === "notify") {
           const state = threadState;
           const turn = state?.activeTurn ?? null;
@@ -2374,7 +2396,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           return sessionEntity;
         },
         events: Stream.fromQueue(events),
-        hasPendingBackgroundWork: Effect.sync(() => pendingWake !== null),
+        hasPendingBackgroundWork: Effect.sync(
+          () => pendingWake !== null || backgroundWorkStatusKeys.size > 0,
+        ),
         hasPendingBackgroundWorkForThread: (providerThread) =>
           Effect.sync(
             () => pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id,

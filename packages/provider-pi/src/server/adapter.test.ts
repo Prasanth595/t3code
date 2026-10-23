@@ -1268,6 +1268,53 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("keeps the session while an extension reports background work", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      let barrier = 0;
+      const setStatus = Effect.fnUntraced(function* (statusKey: string, statusText?: string) {
+        yield* fake.emit({
+          type: "extension_ui_request",
+          id: `status-${statusKey}`,
+          method: "setStatus",
+          statusKey,
+          ...(statusText === undefined ? {} : { statusText }),
+        });
+        // setStatus is fire-and-forget; a dialog marks that Pi's earlier output was handled.
+        barrier += 1;
+        yield* fake.emit({
+          type: "extension_ui_request",
+          id: `barrier-${barrier}`,
+          method: "confirm",
+          title: `Barrier ${barrier}`,
+        });
+        yield* takeEvent(
+          (event) =>
+            event.type === "runtime_request.updated" &&
+            event.runtimeRequest.nativeRequestRef?.nativeId === `barrier-${barrier}`,
+        );
+      });
+
+      yield* setStatus("lint", "Lint clean");
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      yield* setStatus("t3:background:build", "Build running");
+      yield* setStatus("t3:background:tests", "Tests running");
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      // Completion arrives as a native wake, so the settled run stays closed.
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
+      yield* setStatus("t3:background:build");
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      yield* setStatus("t3:background:tests", "");
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each(["archive", "stop", "transport death"] as const)(
     "retiring a wake by %s cancels visible dialogs and invalidates its offer",
     (retirement) =>
