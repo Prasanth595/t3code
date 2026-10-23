@@ -3,11 +3,15 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { buildRemoteLaunchScript, buildRemoteLogTailScript } from "./tunnel.ts";
+import { remoteStateKey } from "./command.ts";
+import { SshCommandError } from "./errors.ts";
+import { buildRemoteLogTailScript, launchOrReuseRemoteServer } from "./tunnel.ts";
 
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "reports only the current SSH launch log in node and archive modes",
@@ -19,9 +23,11 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       const environment = yield* HostProcess.Environment;
       const executable = yield* HostProcess.ExecutablePath;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-log-" });
+      const target = { alias: "fixture", hostname: "fixture", username: null, port: null };
+      const stateKey = yield* remoteStateKey(target);
       for (const mode of ["node", "archive"] as const) {
         const home = path.join(root, mode, "home");
-        const state = path.join(home, ".t3", "ssh-launch", "test-key");
+        const state = path.join(home, ".t3", "ssh-launch", stateKey);
         const bin = path.join(root, mode, "bin");
         yield* fs.makeDirectory(state, { recursive: true });
         yield* fs.makeDirectory(bin);
@@ -42,42 +48,47 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
           yield* fs.writeFileString(path.join(installed, "t3"), fixtureScript, { mode: 0o700 });
           yield* fs.writeFileString(path.join(installed, ".install-complete"), "1.2.3\n");
         }
-        const script = buildRemoteLaunchScript(
-          mode === "node" ? { nodeScriptPath: fixture } : { archiveVersion: "1.2.3" },
-        );
-        const child = yield* spawner.spawn(
-          ChildProcess.make(
-            "sh",
-            [
-              "-c",
-              'exec 3>>"$1"; sh -c "$2" sh test-key; status=$?; printf "LATE_OLD_DESCRIPTOR\\n" >&3; exit "$status"',
+        // Execute the service's SSH payload locally against fake runners, never a remote host.
+        const localSsh = ChildProcessSpawner.make((command) => {
+          assert.isTrue(ChildProcess.isStandardCommand(command));
+          if (!ChildProcess.isStandardCommand(command)) {
+            return Effect.die("Expected a standard SSH command");
+          }
+          return spawner.spawn(
+            ChildProcess.make(
               "sh",
-              legacyLog,
-              script,
-            ],
-            {
-              env: {
-                HOME: home,
-                PATH: `${bin}:${environment.PATH ?? "/usr/bin:/bin"}`,
-                T3_TEST_REAL_NODE: executable,
+              [
+                "-c",
+                'exec 3>>"$1"; sh -s -- "$2"; status=$?; printf "LATE_OLD_DESCRIPTOR\\n" >&3; exit "$status"',
+                "sh",
+                legacyLog,
+                stateKey,
+              ],
+              {
+                stdin: command.options.stdin,
+                env: {
+                  HOME: home,
+                  PATH: `${bin}:${environment.PATH ?? "/usr/bin:/bin"}`,
+                  T3_TEST_REAL_NODE: executable,
+                },
+                extendEnv: false,
               },
-              extendEnv: false,
-            },
-          ),
-        );
-        const [stderr, exitCode] = yield* Effect.all(
-          [
-            child.stderr.pipe(
-              Stream.decodeText(),
-              Stream.runFold(
-                () => "",
-                (text, chunk) => text + chunk,
-              ),
             ),
-            child.exitCode.pipe(Effect.map(Number)),
-          ],
-          { concurrency: "unbounded" },
+          );
+        });
+        const result = yield* launchOrReuseRemoteServer(
+          target,
+          undefined,
+          mode === "node" ? { nodeScriptPath: fixture } : { archiveVersion: "1.2.3" },
+        ).pipe(
+          Effect.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, localSsh)),
+          Effect.result,
         );
+        assert.isTrue(Result.isFailure(result));
+        if (!Result.isFailure(result) || !(result.failure instanceof SshCommandError)) {
+          return yield* Effect.die("Expected the failed launch's SSH diagnostic");
+        }
+        const { stderr, exitCode } = result.failure;
         const [logPid, logBasename] = (yield* fs.readFileString(path.join(state, "current-log")))
           .trimEnd()
           .split("\n");
@@ -100,7 +111,7 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         yield* fs.writeFileString(pid, `${logPid}\n`);
         const runTail = Effect.gen(function* () {
           const tail = yield* spawner.spawn(
-            ChildProcess.make("sh", ["-c", buildRemoteLogTailScript("test-key")], {
+            ChildProcess.make("sh", ["-c", buildRemoteLogTailScript(stateKey)], {
               env: { HOME: home, PATH: environment.PATH ?? "/usr/bin:/bin" },
               extendEnv: false,
             }),
