@@ -281,6 +281,9 @@ if (args[0] === "--version") {
   if (process.env.FAKE_AUTH === "invalid") {
     console.error("Authentication failed: invalid PAT");
     process.exitCode = 1;
+  } else if (process.env.FAKE_AUTH === "offline") {
+    console.error("HTTPSConnectionPool(host='dev.azure.com', port=443): Max retries exceeded with url: /acme/_apis/connectionData");
+    process.exitCode = 1;
   } else if (process.env.FAKE_AUTH === "no-org") {
     console.error("--organization must be specified.");
     process.exitCode = 1;
@@ -304,7 +307,7 @@ if (args[0] === "--version") {
 `;
 
 const fakePatProcess = Effect.fn("fakePatProcess")(function* (
-  mode: "valid" | "invalid" | "no-org" | "anonymous",
+  mode: "valid" | "invalid" | "offline" | "no-org" | "anonymous",
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const run: SourceControlHost.SourceControlHost["Service"]["process"]["run"] = (input) =>
@@ -388,6 +391,14 @@ it.live("does not authenticate a rejected PAT", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.live("leaves authentication unknown when Azure DevOps cannot be reached", () =>
+  Effect.gen(function* () {
+    const process = yield* fakePatProcess("offline");
+    const item = yield* probeSourceControlProvider({ spec: discovery, process, cwd: "/repo" });
+    assert.strictEqual(item.auth.status, "unknown");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.live("leaves authentication unknown when no organization can be resolved", () =>
   Effect.gen(function* () {
     const process = yield* fakePatProcess("no-org");
@@ -400,7 +411,7 @@ it.live("does not authenticate public access to an organization", () =>
   Effect.gen(function* () {
     const process = yield* fakePatProcess("anonymous");
     const item = yield* probeSourceControlProvider({ spec: discovery, process, cwd: "/repo" });
-    assert.notStrictEqual(item.auth.status, "authenticated");
+    assert.strictEqual(item.auth.status, "unauthenticated");
     const support = TestSourceControlHost.layer({ process });
     const cliLayer = AzureDevOpsPullRequestCli.layer.pipe(
       Layer.provide(AzureDevOpsCli.layer.pipe(Layer.provide(support))),

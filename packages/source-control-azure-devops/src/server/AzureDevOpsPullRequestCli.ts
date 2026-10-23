@@ -499,9 +499,10 @@ export const make = Effect.gen(function* () {
               }),
             );
           }
-          return decoded.success === null
-            ? Effect.fail(new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }))
-            : Effect.succeed(decoded.success);
+          const viewer = decoded.success;
+          return viewer._tag === "SignedIn" && viewer.account !== null
+            ? Effect.succeed(viewer.account)
+            : Effect.fail(new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }));
         }),
       ),
 

@@ -305,20 +305,25 @@ export function decodePullRequestJson(
     : Result.fail(decoded.failure);
 }
 
-export function decodeViewerJson(raw: string): Result.Result<string | null, DecodeFailure> {
+/** `Anonymous` is a definitive signed-out answer; a signed-in identity may still lack a name. */
+export type AzureDevOpsViewer =
+  | { readonly _tag: "Anonymous" }
+  | { readonly _tag: "SignedIn"; readonly account: string | null };
+
+export function decodeViewerJson(raw: string): Result.Result<AzureDevOpsViewer, DecodeFailure> {
   const decoded = decodeViewer(raw);
   if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
   const user = decoded.success.authenticatedUser;
-  if (user?.isActive === false) return Result.succeed(null);
   const id = trimmed(user?.id);
   // Public organizations return an active identity even for a request with no credentials.
   if (
+    user?.isActive === false ||
     id === "00000000-0000-0000-0000-000000000000" ||
     id?.toLowerCase() === "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" ||
     /^System:PublicAccess(?:;|$)/i.test(user?.descriptor ?? "")
   )
-    return Result.succeed(null);
-  return Result.succeed(trimmed(user?.properties?.Account?.$value));
+    return Result.succeed({ _tag: "Anonymous" });
+  return Result.succeed({ _tag: "SignedIn", account: trimmed(user?.properties?.Account?.$value) });
 }
 
 export function decodeThreadsJson(

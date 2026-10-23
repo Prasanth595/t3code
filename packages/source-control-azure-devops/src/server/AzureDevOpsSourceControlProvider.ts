@@ -15,22 +15,36 @@ import {
   type SourceControlCliDiscoverySpec,
 } from "@t3tools/source-control-core/server/discovery";
 
+// A nonzero exit is only a sign-in problem when Azure says so. Network, service, and CLI
+// failures leave the status indeterminate so a signed-in user is not told to log in again.
+const AZURE_AUTH_FAILURE =
+  /\baz (?:devops )?login\b|authentication failed|unauthori[sz]ed|\b401\b|TF400813|personal access token/i;
+
 function parseAzureAuth(input: SourceControlAuthProbeInput) {
   const output = combinedAuthOutput(input);
-  const decoded = decodeViewerJson(input.stdout);
-  const account = Result.isSuccess(decoded) ? decoded.success : null;
 
   if (input.exitCode !== 0) {
     return providerAuth({
-      status: /--organization must be specified/i.test(output) ? "unknown" : "unauthenticated",
+      status: AZURE_AUTH_FAILURE.test(output) ? "unauthenticated" : "unknown",
       detail: firstSafeAuthLine(output) ?? "Run `az devops login` to authenticate Azure DevOps.",
     });
   }
 
-  if (account !== null) {
+  const decoded = decodeViewerJson(input.stdout);
+  const viewer = Result.isSuccess(decoded) ? decoded.success : null;
+
+  if (viewer?._tag === "Anonymous") {
+    return providerAuth({
+      status: "unauthenticated",
+      host: "dev.azure.com",
+      detail: "Run `az devops login` to authenticate Azure DevOps.",
+    });
+  }
+
+  if (viewer?._tag === "SignedIn" && viewer.account !== null) {
     return providerAuth({
       status: "authenticated",
-      account,
+      account: viewer.account,
       host: "dev.azure.com",
     });
   }
