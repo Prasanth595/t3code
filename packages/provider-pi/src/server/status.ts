@@ -200,7 +200,7 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
     Effect.orElseSucceed(() => undefined),
     Effect.timeoutOrElse({
       duration: PI_TEXT_GENERATION_DISCOVERY_TIMEOUT_MS,
-      orElse: () => Effect.succeed(undefined),
+      orElse: () => Effect.void,
     }),
     Effect.forkScoped,
   );

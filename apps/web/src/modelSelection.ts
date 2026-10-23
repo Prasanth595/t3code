@@ -392,6 +392,7 @@ export function resolveAppModelSelectionState(
       ) ??
       options.find((option) => option.isDefault)?.slug ??
       options[0]?.slug ??
+      entry.models.find((model) => model.supportsTextGeneration !== false)?.slug ??
       DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind];
     if (!model) {
       return createModelSelection(entry.instanceId, "", []);
