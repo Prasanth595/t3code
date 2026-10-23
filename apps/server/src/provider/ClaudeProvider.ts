@@ -663,9 +663,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     !customApiEndpoint &&
     capabilities.apiProvider === "firstParty" &&
     capabilities.apiKeySource === "none" &&
-    Boolean(capabilities.tokenSource) &&
-    normalizeClaudeAuthMethod(capabilities.tokenSource) !== "apiKey" &&
-    capabilities.tokenSource !== "none";
+    (capabilities.tokenSource === "oauth" ||
+      capabilities.tokenSource === "CLAUDE_CODE_OAUTH_TOKEN");
   const usageLimits = !capabilities.usage
     ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
     : scopedLimitNames

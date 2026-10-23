@@ -2150,6 +2150,12 @@ it.layer(
   describe("checkClaudeProviderStatus", () => {
     it.effect.each([
       {
+        tokenSource: "unknown-auth-source",
+        apiKeySource: "none",
+        apiProvider: "firstParty",
+        expected: "unsupported",
+      },
+      {
         tokenSource: "CLAUDE_CODE_OAUTH_TOKEN",
         apiKeySource: "none",
         apiProvider: "firstParty",
