@@ -140,9 +140,16 @@ function collapsedEditorInset(text: ScaledTextRole): number {
   return Math.max(0, Math.round(COLLAPSED_EDITOR_DEFAULT_INSET - shift));
 }
 
-export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
+export function useCompactComposerEditor(
+  text: ScaledTextRole,
+  value: string,
+  opensOnFocus: boolean,
+  yieldsModelLabel: boolean,
+) {
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
   const [compactWidth, setCompactWidth] = useState(0);
+  const [labelYielded, setLabelYielded] = useState(false);
+  if (labelYielded && value.length === 0) setLabelYielded(false);
   const contentHeight = contentSize.height;
   const rowWidth = useSharedValue(0);
   const editorX = useSharedValue(0);
@@ -157,9 +164,16 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
   // A line that fits the expanded editor may still overflow its compact slot.
   // Compare its measured width too so widening cannot trigger a collapse loop.
   const isExpanded =
+    opensOnFocus ||
+    (value.length > 0 &&
+      (contentHeight > text.lineHeight * 1.5 ||
+        (compactWidth > 0 && contentSize.width > compactWidth)));
+  const nearsModelLabel =
+    yieldsModelLabel &&
     value.length > 0 &&
-    (contentHeight > text.lineHeight * 1.5 ||
-      (compactWidth > 0 && contentSize.width > compactWidth));
+    compactWidth > 0 &&
+    contentSize.width > compactWidth - text.fontSize;
+  if (nearsModelLabel && !labelYielded) setLabelYielded(true);
   const compactRowHeight = Math.max(44, minimum);
   const animatedHeight = useSharedValue(height);
   const surfaceHeight = useSharedValue(compactRowHeight);
@@ -202,6 +216,7 @@ export function useCompactComposerEditor(text: ScaledTextRole, value: string) {
   }));
   return {
     isExpanded,
+    labelYielded: labelYielded && value.length > 0,
     containerStyle,
     editorStyle,
     onRowLayout: (event: { nativeEvent: { layout: { width: number } } }) => {
@@ -599,8 +614,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const { setComposerEditing } = useAdaptiveWorkspaceLayout();
   const hasSidebarTabBar = useSidebarWorkspaceTabs() === "picker";
   const [compactRowWidth, setCompactRowWidth] = useState(0);
-  const compactAttachmentLimit = compactRowWidth >= 500 ? 3 : 1;
-  const compactEditor = useCompactComposerEditor(bodyText, draftMessage);
+  const isWideRow = compactRowWidth >= 500;
+  const compactAttachmentLimit = isWideRow ? 3 : 1;
+  const compactEditor = useCompactComposerEditor(
+    bodyText,
+    draftMessage,
+    isExpanded && compactRowWidth > 0 && !isWideRow,
+    isWideRow,
+  );
   const showsCompactDictation = isVoiceInputPresented;
   const isToolbarVisible = isVoiceInputPresented;
   const hasEditingAttachments =
@@ -855,7 +876,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         reportedSelection={props.reportedModelSelection}
         prompt={draftMessage}
         surfaceColor={composerPanel}
-        iconOnly={!compactEditor.isExpanded}
+        iconOnly={
+          !compactEditor.isExpanded &&
+          (!isWideRow || compactEditor.labelYielded || stripAttachments.length > 0)
+        }
         onPress={openSettings}
       />
     </View>
