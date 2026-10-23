@@ -48,6 +48,12 @@ const collectBoundedText = (
         truncated: acc.truncated || kept.byteLength < chunk.byteLength,
       };
     },
+  ).pipe(
+    // Flush any buffered incomplete UTF-8 sequence the stream left behind.
+    Effect.map((acc) => ({
+      text: acc.text + decoder.decode(),
+      truncated: acc.truncated,
+    })),
   );
 };
 

@@ -38,15 +38,28 @@ function sourceIdFromUrl(url: string): UsageLimitSourceId {
 
 function sourceIdFromCommand(command: string, args: ReadonlyArray<string>): UsageLimitSourceId {
   const slug = slugify([command, ...args].join(" "))
-    .slice(0, 48)
+    .slice(0, 40)
     .replace(/-+$/g, "");
-  return UsageLimitSourceId.make(`command-${slug || "usage"}`);
+  // The slug is a display hint; the hash keeps two differently-argumented
+  // sources for the same executable distinct even past the cutoff.
+  return UsageLimitSourceId.make(
+    `command-${slug || "usage"}-${shortHash(`${command}${args.join("\0")}`)}`,
+  );
+}
+
+function shortHash(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i++) {
+    hash = Math.imul(hash ^ value.charCodeAt(i), 0x01000193) >>> 0;
+  }
+  return hash.toString(36);
 }
 
 /**
- * Whitespace separates arguments; single and double quotes group them, and a
- * backslash escapes the next character outside single quotes. An unclosed
- * quote just runs to the end of the input.
+ * Whitespace separates arguments; single and double quotes group them. A
+ * backslash only escapes a quote or another backslash, so ordinary path
+ * separators in quoted Windows paths survive. An unclosed quote just runs to
+ * the end of the input.
  */
 function parseArgsText(text: string): string[] {
   const args: string[] = [];
@@ -60,8 +73,10 @@ function parseArgsText(text: string): string[] {
       else current += ch;
       continue;
     }
-    if (ch === "\\" && i + 1 < text.length) {
-      current += text[++i];
+    const next = text[i + 1];
+    if (ch === "\\" && (next === '"' || next === "'" || next === "\\")) {
+      current += next;
+      i++;
       pending = true;
       continue;
     }
