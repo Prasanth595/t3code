@@ -1,12 +1,11 @@
+import { act, render as renderScreen, stubGlobal, type Screen } from "../../test/render";
 import {
   BUILT_IN_BROWSER_PROFILES,
   DEFAULT_BROWSER_PROFILE_ID,
   INCOGNITO_BROWSER_PROFILE_ID,
 } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 // The profile list normally comes from client settings; the built-ins are enough to choose from.
 vi.mock("~/browser/browserDefaults", () => ({
@@ -15,35 +14,7 @@ vi.mock("~/browser/browserDefaults", () => ({
 
 import { RightPanelTabs } from "./RightPanelTabs";
 
-let root: Root;
-let container: HTMLDivElement;
 let opened: string[];
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  // Browser is desktop-only; the launcher offers it once the preview bridge exists.
-  vi.stubGlobal("desktopBridge", { preview: {} });
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  );
-  // jsdom lacks the Web Animations API that the tab bar's scroll area waits on.
-  Element.prototype.getAnimations ??= () => [];
-  opened = [];
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
 
 // Records Browser opens the way ChatView's createBrowserSurface does: one
 // handler for the default open and the profile chooser, where an omitted
@@ -93,8 +64,8 @@ function Harness() {
   );
 }
 
-function launcherRow(label: string): HTMLButtonElement {
-  const launcher = container.querySelector('[aria-label="Open a surface"]');
+function launcherRow(screen: Screen, label: string): HTMLButtonElement {
+  const launcher = screen.container.querySelector('[aria-label="Open a surface"]');
   const row = [...(launcher?.querySelectorAll("button") ?? [])].find((button) =>
     button.textContent?.startsWith(label),
   );
@@ -122,13 +93,28 @@ async function click(element: Element) {
 
 describe("opening Browser from the launcher", () => {
   it("opens the default profile from the row and another profile from the chooser", async () => {
-    await act(async () => root.render(<Harness />));
+    resetFixture();
+    using _desktopBridge = stubGlobal("desktopBridge", { preview: {} });
+    using _resizeObserver = stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    await using screen = await renderScreen(null, { router: false });
+    await screen.rerender(<Harness />);
 
-    await click(launcherRow("Browser"));
+    await click(launcherRow(screen, "Browser"));
     expect(opened).toEqual([DEFAULT_BROWSER_PROFILE_ID]);
 
-    await click(container.querySelector('[aria-label="Open browser in a profile"]')!);
+    await click(screen.container.querySelector('[aria-label="Open browser in a profile"]')!);
     await click(menuItem("Incognito"));
     expect(opened).toEqual([DEFAULT_BROWSER_PROFILE_ID, INCOGNITO_BROWSER_PROFILE_ID]);
   });
 });
+
+function resetFixture() {
+  opened = [];
+}

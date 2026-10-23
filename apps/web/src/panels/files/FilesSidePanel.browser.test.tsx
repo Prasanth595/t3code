@@ -1,10 +1,10 @@
+import { act, render as renderScreen, type Screen } from "../../../test/render";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
-  act,
   cloneElement,
   Suspense,
   use,
@@ -12,8 +12,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { ChatComposerHandle } from "~/components/chat/ChatComposer";
 import { toastManager } from "~/components/ui/toast";
@@ -54,13 +53,18 @@ const { siblingsByEnvironment, late, Wrapper, MenuContext, RadioContext } = awai
   },
 );
 
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
-vi.mock("~/state/server", () => ({
+vi.mock("@effect/atom-react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@effect/atom-react")>()),
+  useAtomValue: () => [],
+}));
+vi.mock("~/state/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/server")>()),
   primaryServerKeybindingsAtom: {},
   serverEnvironment: { configValueAtom: () => null },
 }));
 // This client holds every scope, so files can be read, written and previewed.
-vi.mock("~/state/filesystem", () => ({
+vi.mock("~/state/filesystem", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/filesystem")>()),
   useFilesystemReadAccess: () => ({ canReadFiles: true, isPending: false, error: null }),
 }));
 vi.mock("~/state/session", async (importOriginal) => ({
@@ -75,17 +79,26 @@ vi.mock("~/browser/previewRuntime", async (importOriginal) => ({
   isPreviewAvailableFor: () => true,
   usePreviewAvailable: () => true,
 }));
-vi.mock("~/state/environments", () => ({
+vi.mock("~/state/environments", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/environments")>()),
   useEnvironmentHttpBaseUrl: () => "http://localhost:3773/",
   usePrimaryEnvironmentId: () => null,
+  useEnvironment: () => ({ label: "Local" }),
 }));
-vi.mock("~/remoteOpen", () => ({ useRemoteOpenState: () => ({ mode: "local-exec" }) }));
-vi.mock("~/hooks/useSettings", () => ({
+vi.mock("~/remoteOpen", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/remoteOpen")>()),
+  useRemoteOpenState: () => ({ mode: "local-exec" }),
+}));
+vi.mock("~/hooks/useSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/hooks/useSettings")>()),
   useClientSettings: (select: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
     select(DEFAULT_CLIENT_SETTINGS),
   useUpdateClientSettings: () => vi.fn(),
 }));
-vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "light" }) }));
+vi.mock("~/hooks/useTheme", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/hooks/useTheme")>()),
+  useTheme: () => ({ resolvedTheme: "light" }),
+}));
 // The panel's only command and query runner: open a preview session, create an asset URL.
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: () => () => {
@@ -173,7 +186,8 @@ vi.mock("~/state/queries", () => ({
 vi.mock("~/fileContextMenu", () => ({
   useFileContextMenu: () => ({ buildItems: () => [], activate: vi.fn() }),
 }));
-vi.mock("~/localApi", () => ({
+vi.mock("~/localApi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/localApi")>()),
   readLocalApi: () => ({ contextMenu: { show: () => late.menuChoice.promise } }),
 }));
 vi.mock("~/components/chat/PierreEntryIcon", () => ({ PierreEntryIcon: () => null }));
@@ -185,6 +199,11 @@ vi.mock("~/components/ui/tooltip", () => ({
 }));
 // Menus render through a portal; these stand-ins keep their open and pick semantics.
 vi.mock("~/components/ui/menu", () => ({
+  MenuItemLabel: Wrapper,
+  MenuShortcut: () => null,
+  MenuSub: Wrapper,
+  MenuSubTrigger: Wrapper,
+  MenuSubPopup: Wrapper,
   Menu: ({
     children,
     onOpenChange,
@@ -233,8 +252,6 @@ const refOn = (environmentId: string, thread = "thread-a"): ScopedThreadRef => (
   environmentId: EnvironmentId.make(environmentId),
   threadId: ThreadId.make(thread),
 });
-let root: Root;
-let container: HTMLDivElement;
 
 // The chat layout owns one composer ref; navigation swaps the composer behind it.
 const composerRef: ComposerHandleRef = { current: null };
@@ -259,6 +276,7 @@ function DuringCommit({ run }: { run: (() => void) | undefined }) {
 }
 
 async function renderFileFor(
+  screen: Screen,
   threadRef: ScopedThreadRef,
   relativePath: string | null = "src/a.ts",
   composerDraftTarget: PanelHost["composerDraftTarget"] = threadRef,
@@ -298,7 +316,7 @@ async function renderFileFor(
     composerRef.current = {
       insertTextAtEnd: composerOf(threadRef),
     } as unknown as ChatComposerHandle;
-    root.render(element);
+    await screen.rerender(element);
   });
 }
 
@@ -306,14 +324,16 @@ async function press(node: HTMLButtonElement) {
   await act(async () => node.click());
 }
 
-async function openSrcFolder() {
-  const browse = container.querySelectorAll<HTMLButtonElement>('button[aria-label="Browse src"]');
+async function openSrcFolder(screen: Screen) {
+  const browse = screen.container.querySelectorAll<HTMLButtonElement>(
+    'button[aria-label="Browse src"]',
+  );
   expect(browse).toHaveLength(1);
   await press(browse[0]!);
 }
 
-const siblingValues = () =>
-  Array.from(container.querySelectorAll<HTMLButtonElement>("button[data-value]")).map(
+const siblingValues = (screen: Screen) =>
+  Array.from(screen.container.querySelectorAll<HTMLButtonElement>("button[data-value]")).map(
     (node) => node.dataset.value,
   );
 
@@ -344,11 +364,11 @@ const browsersOf = (threadRef: ScopedThreadRef) =>
   (surfacesOf(threadRef) ?? []).filter((surface) => surface.kind === "preview");
 
 // Presses "Open file in preview browser" with the asset URL and preview session still pending.
-async function openInBrowser() {
+async function openInBrowser(screen: Screen) {
   late.assetUrl = late.deferred();
   late.session = late.deferred();
   await press(
-    container.querySelector<HTMLButtonElement>(
+    screen.container.querySelector<HTMLButtonElement>(
       'button[aria-label="Open file in preview browser"]',
     )!,
   );
@@ -385,65 +405,51 @@ const browserErrorToasts = () =>
     .mocked(toastManager.add)
     .mock.calls.filter(([toast]) => toast.title === "Unable to open file in browser");
 
-// Transform the lazy body once up front, so mounting it settles inside one act().
-beforeAll(() => import("./FilesSidePanel"), 30_000);
-beforeEach(() => {
-  late.selectTreeRows = null;
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  localStorage.clear();
-  siblingsByEnvironment.clear();
-  composers.clear();
-  late.previewRequests = 0;
-  late.browserDefaults = null;
-  vi.spyOn(toastManager, "add");
-  resetPreviewStateForTests();
-  siblingsByEnvironment.set("environment-a", ["src/a.ts", "src/b.ts"]);
-  siblingsByEnvironment.set("environment-b", ["src/a.ts", "src/c.ts"]);
-  useRightPanelStore.setState({
-    byThreadKey: {},
-    threadPanelVisibilityByThreadKey: {},
-    userActionRevisionByThreadKey: {},
-  });
-});
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-  vi.restoreAllMocks();
-});
-
 describe("files side panel", () => {
   it("opens a sibling file as a tab in the host's own thread", async () => {
+    resetFixture();
+    using _toast = vi.spyOn(toastManager, "add");
+    await import("./FilesSidePanel");
+    await using screen = await renderScreen(null, { router: false });
     const threadRef = refOn("environment-a");
-    await renderFileFor(threadRef);
-    await openSrcFolder();
-    expect(siblingValues()).toEqual(["src/a.ts", "src/b.ts"]);
+    await renderFileFor(screen, threadRef);
+    await openSrcFolder(screen);
+    expect(siblingValues(screen)).toEqual(["src/a.ts", "src/b.ts"]);
 
-    await press(container.querySelector<HTMLButtonElement>('button[data-value="src/b.ts"]')!);
+    await press(
+      screen.container.querySelector<HTMLButtonElement>('button[data-value="src/b.ts"]')!,
+    );
     expect(surfacesOf(threadRef)).toMatchObject([{ kind: "file", relativePath: "src/b.ts" }]);
     expect(surfacesOf(refOn("environment-b"))).toBeUndefined();
   });
 
   it("follows the host to another environment's thread with the same id", async () => {
-    await renderFileFor(refOn("environment-a"));
+    resetFixture();
+    using _toast = vi.spyOn(toastManager, "add");
+    await import("./FilesSidePanel");
+    await using screen = await renderScreen(null, { router: false });
+    await renderFileFor(screen, refOn("environment-a"));
     const threadRef = refOn("environment-b");
-    await renderFileFor(threadRef);
-    await openSrcFolder();
-    expect(siblingValues()).toEqual(["src/a.ts", "src/c.ts"]);
+    await renderFileFor(screen, threadRef);
+    await openSrcFolder(screen);
+    expect(siblingValues(screen)).toEqual(["src/a.ts", "src/c.ts"]);
 
-    await press(container.querySelector<HTMLButtonElement>('button[data-value="src/c.ts"]')!);
+    await press(
+      screen.container.querySelector<HTMLButtonElement>('button[data-value="src/c.ts"]')!,
+    );
     expect(surfacesOf(threadRef)).toMatchObject([{ kind: "file", relativePath: "src/c.ts" }]);
     expect(surfacesOf(refOn("environment-a"))).toBeUndefined();
   });
 
   it("opens a tree click in the thread showing now, not the one the tree first showed", async () => {
+    resetFixture();
+    using _toast = vi.spyOn(toastManager, "add");
+    await import("./FilesSidePanel");
+    await using screen = await renderScreen(null, { router: false });
     // Threads in the same project share one tree, so it outlives the switch.
-    await renderFileFor(refOn("environment-a"));
+    await renderFileFor(screen, refOn("environment-a"));
     const threadRef = refOn("environment-a", "thread-b");
-    await renderFileFor(threadRef);
+    await renderFileFor(screen, threadRef);
 
     await act(async () => late.selectTreeRows!(["README.md"]));
     expect(surfacesOf(threadRef)).toMatchObject([{ kind: "file", relativePath: "README.md" }]);
@@ -451,9 +457,13 @@ describe("files side panel", () => {
   });
 
   it("opens a tree click that lands before the switch's passive effects in the new thread", async () => {
-    await renderFileFor(refOn("environment-a"));
+    resetFixture();
+    using _toast = vi.spyOn(toastManager, "add");
+    await import("./FilesSidePanel");
+    await using screen = await renderScreen(null, { router: false });
+    await renderFileFor(screen, refOn("environment-a"));
     const threadRef = refOn("environment-a", "thread-b");
-    await renderFileFor(threadRef, "src/a.ts", threadRef, () =>
+    await renderFileFor(screen, threadRef, "src/a.ts", threadRef, () =>
       late.selectTreeRows!(["README.md"]),
     );
 
@@ -464,8 +474,12 @@ describe("files side panel", () => {
 
 describe("files actions that settle late", () => {
   it("adds a tree entry to the chat of the thread it was picked in", async () => {
+    resetFixture();
+    using _toast = vi.spyOn(toastManager, "add");
+    await import("./FilesSidePanel");
+    await using screen = await renderScreen(null, { router: false });
     const threadRef = refOn("environment-a");
-    await renderFileFor(threadRef, null);
+    await renderFileFor(screen, threadRef, null);
     const pick = rightClickTreeRow();
     await pick("add-to-chat");
     expect(composerOf(threadRef)).toHaveBeenCalledExactlyOnceWith("[a.ts](src/a.ts) ", {
@@ -474,17 +488,25 @@ describe("files actions that settle late", () => {
   });
 
   it("drops a late Add to chat after moving to the same thread id in another environment", async () => {
-    await renderFileFor(refOn("environment-a"), null);
+    resetFixture();
+    using _toast = vi.spyOn(toastManager, "add");
+    await import("./FilesSidePanel");
+    await using screen = await renderScreen(null, { router: false });
+    await renderFileFor(screen, refOn("environment-a"), null);
     const pick = rightClickTreeRow();
-    await renderFileFor(refOn("environment-b"), null);
+    await renderFileFor(screen, refOn("environment-b"), null);
     await pick("add-to-chat");
     expect(insertedAnywhere()).toBe(false);
   });
 
   it("drops a late Add to chat after moving to another thread in the project", async () => {
-    await renderFileFor(refOn("environment-a"), null);
+    resetFixture();
+    using _toast = vi.spyOn(toastManager, "add");
+    await import("./FilesSidePanel");
+    await using screen = await renderScreen(null, { router: false });
+    await renderFileFor(screen, refOn("environment-a"), null);
     const pick = rightClickTreeRow();
-    await renderFileFor(refOn("environment-a", "thread-other"), null);
+    await renderFileFor(screen, refOn("environment-a", "thread-other"), null);
     await pick("add-to-chat");
     expect(insertedAnywhere()).toBe(false);
 
@@ -494,40 +516,61 @@ describe("files actions that settle late", () => {
   });
 
   it("keeps a late Add to chat dropped after leaving and returning to the thread", async () => {
+    resetFixture();
+    using _toast = vi.spyOn(toastManager, "add");
+    await import("./FilesSidePanel");
+    await using screen = await renderScreen(null, { router: false });
     const threadRef = refOn("environment-a");
-    await renderFileFor(threadRef, null);
+    await renderFileFor(screen, threadRef, null);
     const pick = rightClickTreeRow();
-    await renderFileFor(refOn("environment-a", "thread-other"), null);
-    await renderFileFor(threadRef, null);
+    await renderFileFor(screen, refOn("environment-a", "thread-other"), null);
+    await renderFileFor(screen, threadRef, null);
     await pick("add-to-chat");
     expect(insertedAnywhere()).toBe(false);
   });
 
   it("opens a Browser tab in the thread that is still showing", async () => {
+    resetFixture();
+    using _toast = vi.spyOn(toastManager, "add");
+    await import("./FilesSidePanel");
+    await using screen = await renderScreen(null, { router: false });
     const threadRef = refOn("environment-a");
-    await renderFileFor(threadRef, "index.html");
-    await openInBrowser();
+    await renderFileFor(screen, threadRef, "index.html");
+    await openInBrowser(screen);
     await settleAsset();
     await settleSession();
     expect(browsersOf(threadRef).map((surface) => surface.id)).toEqual(["browser:tab-1"]);
   });
 
   it("still opens a browser after the composer switches drafts in the same thread", async () => {
+    resetFixture();
+    using _toast = vi.spyOn(toastManager, "add");
+    await import("./FilesSidePanel");
+    await using screen = await renderScreen(null, { router: false });
     const threadRef = refOn("environment-a");
-    await renderFileFor(threadRef, "index.html");
-    await openInBrowser();
+    await renderFileFor(screen, threadRef, "index.html");
+    await openInBrowser(screen);
     // Editing a queued message moves the composer to a draft; the thread stays.
-    await renderFileFor(threadRef, "index.html", "draft-1" as PanelHost["composerDraftTarget"]);
+    await renderFileFor(
+      screen,
+      threadRef,
+      "index.html",
+      "draft-1" as PanelHost["composerDraftTarget"],
+    );
     await settleAsset();
     await settleSession();
     expect(browsersOf(threadRef).map((surface) => surface.id)).toEqual(["browser:tab-1"]);
   });
 
   it("never asks for a browser when the thread was left while the file was prepared", async () => {
+    resetFixture();
+    using _toast = vi.spyOn(toastManager, "add");
+    await import("./FilesSidePanel");
+    await using screen = await renderScreen(null, { router: false });
     const threadRef = refOn("environment-a");
-    await renderFileFor(threadRef, "index.html");
-    await openInBrowser();
-    await renderFileFor(refOn("environment-b"), "index.html");
+    await renderFileFor(screen, threadRef, "index.html");
+    await openInBrowser(screen);
+    await renderFileFor(screen, refOn("environment-b"), "index.html");
     await settleAsset();
     expect(late.previewRequests).toBe(0);
     expect(browsersOf(threadRef)).toEqual([]);
@@ -535,12 +578,16 @@ describe("files actions that settle late", () => {
   });
 
   it("keeps a browser the server opened after the thread was left in that thread", async () => {
+    resetFixture();
+    using _toast = vi.spyOn(toastManager, "add");
+    await import("./FilesSidePanel");
+    await using screen = await renderScreen(null, { router: false });
     const threadRef = refOn("environment-a");
-    await renderFileFor(threadRef, "index.html");
-    await openInBrowser();
+    await renderFileFor(screen, threadRef, "index.html");
+    await openInBrowser(screen);
     await settleAsset();
     expect(late.previewRequests).toBe(1);
-    await renderFileFor(refOn("environment-a", "thread-other"), "index.html");
+    await renderFileFor(screen, refOn("environment-a", "thread-other"), "index.html");
     await settleSession();
     expect(readThreadPreviewState(threadRef).snapshot?.tabId).toBe("tab-1");
     expect(browsersOf(threadRef).map((surface) => surface.id)).toEqual(["browser:tab-1"]);
@@ -548,51 +595,88 @@ describe("files actions that settle late", () => {
   });
 
   it("keeps a late open dropped after leaving and returning to the thread", async () => {
+    resetFixture();
+    using _toast = vi.spyOn(toastManager, "add");
+    await import("./FilesSidePanel");
+    await using screen = await renderScreen(null, { router: false });
     const threadRef = refOn("environment-a");
-    await renderFileFor(threadRef, "index.html");
-    await openInBrowser();
-    await renderFileFor(refOn("environment-a", "thread-other"), "index.html");
-    await renderFileFor(threadRef, "index.html");
+    await renderFileFor(screen, threadRef, "index.html");
+    await openInBrowser(screen);
+    await renderFileFor(screen, refOn("environment-a", "thread-other"), "index.html");
+    await renderFileFor(screen, threadRef, "index.html");
     await settleAsset();
     expect(late.previewRequests).toBe(0);
     expect(browsersOf(threadRef)).toEqual([]);
   });
 
   it("reports a browser failure in the thread that is still showing", async () => {
-    await renderFileFor(refOn("environment-a"), "index.html");
-    await openInBrowser();
+    resetFixture();
+    using _toast = vi.spyOn(toastManager, "add");
+    await import("./FilesSidePanel");
+    await using screen = await renderScreen(null, { router: false });
+    await renderFileFor(screen, refOn("environment-a"), "index.html");
+    await openInBrowser(screen);
     await failAsset();
     expect(browserErrorToasts()).toHaveLength(1);
   });
 
   it("stays silent when the file fails to prepare after the thread was left", async () => {
-    await renderFileFor(refOn("environment-a"), "index.html");
-    await openInBrowser();
-    await renderFileFor(refOn("environment-b"), "index.html");
+    resetFixture();
+    using _toast = vi.spyOn(toastManager, "add");
+    await import("./FilesSidePanel");
+    await using screen = await renderScreen(null, { router: false });
+    await renderFileFor(screen, refOn("environment-a"), "index.html");
+    await openInBrowser(screen);
+    await renderFileFor(screen, refOn("environment-b"), "index.html");
     await failAsset();
     expect(browserErrorToasts()).toEqual([]);
   });
 
   it("stays silent when browser settings fail to load after the panel closed", async () => {
-    await renderFileFor(refOn("environment-a"), "index.html");
+    resetFixture();
+    using _toast = vi.spyOn(toastManager, "add");
+    await import("./FilesSidePanel");
+    await using screen = await renderScreen(null, { router: false });
+    await renderFileFor(screen, refOn("environment-a"), "index.html");
     let rejectSettings!: (error: Error) => void;
     late.browserDefaults = new Promise((_, reject) => (rejectSettings = reject));
-    await openInBrowser();
+    await openInBrowser(screen);
     await settleAsset();
-    await act(() => root.unmount());
+    await screen.unmount();
     await act(async () => rejectSettings(new Error("settings unreadable")));
     expect(late.previewRequests).toBe(0);
     expect(browserErrorToasts()).toEqual([]);
   });
 
   it("stays silent when a browser fails to open after leaving and returning", async () => {
+    resetFixture();
+    using _toast = vi.spyOn(toastManager, "add");
+    await import("./FilesSidePanel");
+    await using screen = await renderScreen(null, { router: false });
     const threadRef = refOn("environment-a");
-    await renderFileFor(threadRef, "index.html");
-    await openInBrowser();
+    await renderFileFor(screen, threadRef, "index.html");
+    await openInBrowser(screen);
     await settleAsset();
-    await renderFileFor(refOn("environment-a", "thread-other"), "index.html");
-    await renderFileFor(threadRef, "index.html");
+    await renderFileFor(screen, refOn("environment-a", "thread-other"), "index.html");
+    await renderFileFor(screen, threadRef, "index.html");
     await failSession();
     expect(browserErrorToasts()).toEqual([]);
   });
 });
+
+function resetFixture() {
+  late.selectTreeRows = null;
+  localStorage.clear();
+  siblingsByEnvironment.clear();
+  composers.clear();
+  late.previewRequests = 0;
+  late.browserDefaults = null;
+  resetPreviewStateForTests();
+  siblingsByEnvironment.set("environment-a", ["src/a.ts", "src/b.ts"]);
+  siblingsByEnvironment.set("environment-b", ["src/a.ts", "src/c.ts"]);
+  useRightPanelStore.setState({
+    byThreadKey: {},
+    threadPanelVisibilityByThreadKey: {},
+    userActionRevisionByThreadKey: {},
+  });
+}

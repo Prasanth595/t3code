@@ -1,7 +1,7 @@
+import { act, render as renderScreen } from "../../test/render";
 import { EnvironmentId, ProjectId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
-import { act, Suspense } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { Suspense } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 const loaded = vi.hoisted(() => ({
   diff: 0,
@@ -14,13 +14,22 @@ const loaded = vi.hoisted(() => ({
   pluginView: 0,
   previewRenders: [] as unknown[],
 }));
+const imports = vi.hoisted(() => {
+  const deferred = () => {
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => (resolve = done));
+    return { promise, resolve };
+  };
+  return { preview: deferred(), terminal: deferred() };
+});
 vi.mock("./diff/DiffSidePanel", () => {
   loaded.diff += 1;
   return { default: () => null };
 });
 vi.mock("./terminal/TerminalSidePanel", () => {
   loaded.terminal += 1;
-  return { default: () => null };
+  imports.terminal.resolve();
+  return { default: () => <span>Terminal body</span> };
 });
 vi.mock("./device/DeviceSidePanel", () => {
   loaded.device += 1;
@@ -36,6 +45,7 @@ vi.mock("./pluginView/PluginViewSidePanel", () => {
 });
 vi.mock("./preview/PreviewSidePanel", () => {
   loaded.preview += 1;
+  imports.preview.resolve();
   return {
     default: function PreviewSidePanel(props: unknown) {
       loaded.previewRenders.push({ props, host: usePanelHost() });
@@ -70,22 +80,9 @@ const host: PanelHost = {
   sendAnnotation: () => undefined,
 };
 
-let root: Root;
-let container: HTMLDivElement;
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
-
 describe("bundled side panels", () => {
   it("loads only the selected panel body and lends it the host", async () => {
+    await using screen = await renderScreen(null, { router: false });
     expect(loaded).toMatchObject({
       diff: 0,
       preview: 0,
@@ -96,15 +93,15 @@ describe("bundled side panels", () => {
       files: 0,
       pluginView: 0,
     });
-    await act(async () => {
-      root.render(
-        <PanelHostContext value={host}>
-          <Suspense fallback={null}>
-            <RegisteredSidePanel id="preview" tabId="tab-1" />
-          </Suspense>
-        </PanelHostContext>,
-      );
-    });
+    await screen.rerender(
+      <PanelHostContext value={host}>
+        <Suspense fallback={null}>
+          <RegisteredSidePanel id="preview" tabId="tab-1" />
+        </Suspense>
+      </PanelHostContext>,
+    );
+    // Await the selected chunk after the registry has requested it.
+    await act(() => imports.preview.promise);
     expect(loaded).toMatchObject({
       diff: 0,
       preview: 1,
@@ -119,6 +116,7 @@ describe("bundled side panels", () => {
   });
 
   it("loads only the terminal body when the terminal is selected", async () => {
+    await using screen = await renderScreen(null, { router: false });
     const surface: Extract<RightPanelSurface, { kind: "terminal" }> = {
       id: "terminal:term-1",
       kind: "terminal",
@@ -126,27 +124,36 @@ describe("bundled side panels", () => {
       terminalIds: ["term-1"],
       activeTerminalId: "term-1",
     };
-    await act(async () => {
-      root.render(
-        <PanelHostContext value={host}>
-          <Suspense fallback={null}>
-            <RegisteredSidePanel
-              id="terminal"
-              surface={surface}
-              launchContext={null}
-              focusRequestId={0}
-              onAddTerminalContext={() => undefined}
-              onSplitTerminal={() => undefined}
-              onSplitTerminalVertical={() => undefined}
-              onNewTerminal={() => undefined}
-              onActiveTerminalChange={() => undefined}
-              onCloseTerminal={() => undefined}
-            />
-          </Suspense>
-        </PanelHostContext>,
-      );
+    await screen.rerender(
+      <PanelHostContext value={host}>
+        <Suspense fallback={null}>
+          <RegisteredSidePanel
+            id="terminal"
+            surface={surface}
+            launchContext={null}
+            focusRequestId={0}
+            onAddTerminalContext={() => undefined}
+            onSplitTerminal={() => undefined}
+            onSplitTerminalVertical={() => undefined}
+            onNewTerminal={() => undefined}
+            onActiveTerminalChange={() => undefined}
+            onCloseTerminal={() => undefined}
+          />
+        </Suspense>
+      </PanelHostContext>,
+    );
+    await act(() => imports.terminal.promise);
+    expect(screen.container.textContent).toBe("Terminal body");
+    expect(loaded).toMatchObject({
+      diff: 0,
+      preview: 1,
+      terminal: 1,
+      device: 0,
+      pullRequest: 0,
+      pullRequests: 0,
+      files: 0,
+      pluginView: 0,
     });
-    expect(loaded).toMatchObject({ diff: 0, terminal: 1 });
   });
 });
 

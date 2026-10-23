@@ -1,7 +1,7 @@
+import { act, render as renderScreen, stubGlobal, type Screen } from "../../../test/render";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
-import { act, Suspense } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { Suspense } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 // Drives the registered terminal through the real RegisteredSidePanel ->
 // TerminalSidePanel -> ThreadTerminalDrawer -> TerminalViewport path. Only the
@@ -56,6 +56,7 @@ vi.mock("~/state/entities", () => {
   const project = { workspaceRoot: "/repo" };
   return {
     readEnvironmentSupportsServerBrowser: () => false,
+    useEnvironmentSupportsServerBrowser: () => false,
     useQuietThreadShell: (ref: ScopedThreadRef) => ({
       environmentId: ref.environmentId,
       projectId: "project-a",
@@ -93,53 +94,24 @@ const hostFor = (threadRef: ScopedThreadRef): PanelHost => ({
   sendAnnotation: () => undefined,
 });
 
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
-  transport.attached = [];
-  transport.commands = [];
-  transport.surfaces = [];
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-  vi.restoreAllMocks();
-});
-
-async function renderTerminal(threadRef: ScopedThreadRef) {
-  await act(async () =>
-    root.render(
-      <PanelHostContext value={hostFor(threadRef)}>
-        <Suspense fallback={null}>
-          <RegisteredSidePanel
-            id="terminal"
-            surface={surface}
-            launchContext={null}
-            focusRequestId={0}
-            onAddTerminalContext={() => undefined}
-            onSplitTerminal={() => undefined}
-            onSplitTerminalVertical={() => undefined}
-            onNewTerminal={() => undefined}
-            onActiveTerminalChange={() => undefined}
-            onCloseTerminal={() => undefined}
-          />
-        </Suspense>
-      </PanelHostContext>,
-    ),
+async function renderTerminal(screen: Screen, threadRef: ScopedThreadRef) {
+  await screen.rerender(
+    <PanelHostContext value={hostFor(threadRef)}>
+      <Suspense fallback={null}>
+        <RegisteredSidePanel
+          id="terminal"
+          surface={surface}
+          launchContext={null}
+          focusRequestId={0}
+          onAddTerminalContext={() => undefined}
+          onSplitTerminal={() => undefined}
+          onSplitTerminalVertical={() => undefined}
+          onNewTerminal={() => undefined}
+          onActiveTerminalChange={() => undefined}
+          onCloseTerminal={() => undefined}
+        />
+      </Suspense>
+    </PanelHostContext>,
   );
 }
 
@@ -156,7 +128,16 @@ async function type(data: string) {
 
 describe("registered terminal panel", () => {
   it("attaches the host thread's terminal and sends typing to it, then follows a thread switch", async () => {
-    await renderTerminal(threadA);
+    resetFixture();
+    using _resizeObserver = stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    await using screen = await renderScreen(null, { router: false });
+    await renderTerminal(screen, threadA);
     await settle();
     expect(transport.attached.at(-1)).toMatchObject({
       environmentId: threadA.environmentId,
@@ -171,7 +152,7 @@ describe("registered terminal panel", () => {
       },
     });
 
-    await renderTerminal(threadB);
+    await renderTerminal(screen, threadB);
     await settle();
     expect(transport.attached.at(-1)).toMatchObject({
       environmentId: threadB.environmentId,
@@ -190,3 +171,9 @@ describe("registered terminal panel", () => {
     ]);
   });
 });
+
+function resetFixture() {
+  transport.attached = [];
+  transport.commands = [];
+  transport.surfaces = [];
+}

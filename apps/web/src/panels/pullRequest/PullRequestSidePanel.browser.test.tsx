@@ -1,3 +1,4 @@
+import { act, render as renderScreen, type Screen } from "../../../test/render";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   EnvironmentId,
@@ -8,9 +9,8 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import { act, Suspense, type ComponentProps, type ReactElement, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { Suspense, type ComponentProps, type ReactElement, type ReactNode } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -38,9 +38,16 @@ const configFor = (environmentId: string) => {
     ? null
     : { environment: { capabilities: { pullRequests, threadPullRequests: pullRequests } } };
 };
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
-vi.mock("~/state/server", () => ({ primaryServerKeybindingsAtom: {} }));
-vi.mock("~/state/entities", () => ({
+vi.mock("@effect/atom-react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@effect/atom-react")>()),
+  useAtomValue: () => [],
+}));
+vi.mock("~/state/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/server")>()),
+  primaryServerKeybindingsAtom: {},
+}));
+vi.mock("~/state/entities", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/entities")>()),
   useProjects: () => [],
   useServerConfigs: () =>
     new Map(
@@ -78,7 +85,8 @@ vi.mock("~/state/pullRequests", async (importOriginal) => ({
   useSharedPullRequestSummary: () => null,
 }));
 vi.mock("~/state/vcs", () => ({ vcsEnvironment: { listRefs: () => null } }));
-vi.mock("~/state/query", () => ({
+vi.mock("~/state/query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/query")>()),
   useEnvironmentQuery: (query: string) => ({
     data: query === "detail" ? detail : null,
     isPending: false,
@@ -107,7 +115,10 @@ vi.mock("~/components/pullRequest/PullRequestStackMenu", () => ({
     typeof import("~/components/pullRequest/PullRequestStackMenu").PullRequestStackMenu
   >) => <button onClick={() => onSelect?.({ ...reference, number: 8 })}>Open #8</button>,
 }));
-vi.mock("~/components/ui/toast", () => ({ toastManager: { add: vi.fn(), update: vi.fn() } }));
+vi.mock("~/components/ui/toast", () => ({
+  toastManager: { add: vi.fn(), update: vi.fn() },
+  stackedThreadToast: vi.fn(),
+}));
 vi.mock("~/components/ui/tooltip", () => ({
   TooltipProvider: Wrapper,
   Tooltip: Wrapper,
@@ -117,6 +128,7 @@ vi.mock("~/components/ui/tooltip", () => ({
 vi.mock("~/components/ui/menu", () => ({
   Menu: Wrapper,
   MenuPopup: Wrapper,
+  MenuGroup: Wrapper,
   MenuTrigger: Trigger,
   MenuItem: "button",
   MenuRadioGroup: Wrapper,
@@ -216,8 +228,6 @@ const refOn = (environmentId: string): ScopedThreadRef => ({
   threadId,
 });
 const reference = { projectId: detail.projectId, repository: detail.repository, number: 7 };
-let root: Root;
-let container: HTMLDivElement;
 
 // Lets the body's code arrive and settles it before rendering, so mounts finish inside one act().
 async function loadBody() {
@@ -225,7 +235,7 @@ async function loadBody() {
   await import("./PullRequestSidePanel");
 }
 
-async function renderFor(threadRef: ScopedThreadRef) {
+async function renderFor(screen: Screen, threadRef: ScopedThreadRef) {
   const host: PanelHost = {
     threadRef,
     visible: true,
@@ -233,46 +243,110 @@ async function renderFor(threadRef: ScopedThreadRef) {
     workspaceMutationId: null,
     sendAnnotation: () => undefined,
   };
-  await act(async () => {
-    root.render(
-      <PanelHostContext value={host}>
-        <Suspense fallback={null}>
-          <RegisteredSidePanel
-            id="pull-request"
-            reference={reference}
-            context="thread"
-            shortcutsEnabled={false}
-            getShortcutContext={() => ({
-              terminalFocus: false,
-              terminalOpen: false,
-              previewFocus: false,
-              previewOpen: false,
-              isWeb: true,
-              isDesktop: false,
-            })}
-          />
-        </Suspense>
-      </PanelHostContext>,
-    );
-  });
+  await screen.rerender(
+    <PanelHostContext value={host}>
+      <Suspense fallback={null}>
+        <RegisteredSidePanel
+          id="pull-request"
+          reference={reference}
+          context="thread"
+          shortcutsEnabled={false}
+          getShortcutContext={() => ({
+            terminalFocus: false,
+            terminalOpen: false,
+            previewFocus: false,
+            previewOpen: false,
+            isWeb: true,
+            isDesktop: false,
+          })}
+        />
+      </Suspense>
+    </PanelHostContext>,
+  );
 }
 
-const hasText = (text: string) => container.textContent?.includes(text) ?? false;
+const hasText = (screen: Screen, text: string) =>
+  screen.container.textContent?.includes(text) ?? false;
 
-async function click(label: string) {
-  const button = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+async function click(screen: Screen, label: string) {
+  const button = Array.from(screen.container.querySelectorAll<HTMLButtonElement>("button")).find(
     (node) => node.getAttribute("aria-label") === label || node.textContent?.includes(label),
   );
   expect(button, label).toBeDefined();
   await act(async () => button!.click());
 }
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
+const isLoading = (screen: Screen) =>
+  screen.container.querySelector('[role="status"][aria-label="Loading pull request"]') !== null;
 
+describe("pull request side panel", () => {
+  // Runs first, while the body's code is still held back.
+  it("shows the pull request loading state until its code arrives", async () => {
+    resetFixture();
+    await using screen = await renderScreen(null, { router: false });
+    await renderFor(screen, refOn("environment-new"));
+    expect(isLoading(screen)).toBe(true);
+    expect(hasText(screen, "Test pull request")).toBe(false);
+
+    await act(loadBody);
+    expect(isLoading(screen)).toBe(false);
+    expect(hasText(screen, "Test pull request")).toBe(true);
+    await click(screen, "Ask a question");
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(refOn("environment-new"))?.reviewComments,
+    ).toHaveLength(1);
+  });
+
+  it("follows the host environment's pull request support", async () => {
+    resetFixture();
+    await using screen = await renderScreen(null, { router: false });
+    await loadBody();
+    await renderFor(screen, refOn("environment-loading"));
+    expect(isLoading(screen)).toBe(true);
+    expect(hasText(screen, "Test pull request")).toBe(false);
+    expect(hasText(screen, "Pull requests unavailable")).toBe(false);
+
+    await renderFor(screen, refOn("environment-old"));
+    expect(hasText(screen, "Pull requests unavailable")).toBe(true);
+    expect(
+      hasText(screen, "Update this environment's T3 Code server to browse pull requests."),
+    ).toBe(true);
+    expect(hasText(screen, "Test pull request")).toBe(false);
+
+    await renderFor(screen, refOn("environment-new"));
+    expect(hasText(screen, "Test pull request")).toBe(true);
+  });
+
+  it("writes a question into the host thread's composer only", async () => {
+    resetFixture();
+    await using screen = await renderScreen(null, { router: false });
+    await loadBody();
+    const threadRef = refOn("environment-new");
+    useComposerDraftStore.getState().setPrompt(threadRef, "Keep my draft");
+    await renderFor(screen, threadRef);
+    await click(screen, "Ask a question");
+    const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
+    expect(draft?.prompt).toContain("Keep my draft");
+    expect(draft?.reviewComments?.length).toBeGreaterThan(0);
+    expect(useComposerDraftStore.getState().getComposerDraft(refOn("environment-old"))).toBeNull();
+  });
+
+  it("opens a stack layer as a tab in the host's own thread", async () => {
+    resetFixture();
+    await using screen = await renderScreen(null, { router: false });
+    await loadBody();
+    const threadRef = refOn("environment-new");
+    await renderFor(screen, threadRef);
+    await click(screen, "Open #8");
+    const { byThreadKey } = useRightPanelStore.getState();
+    expect(byThreadKey[scopedThreadKey(threadRef)]?.surfaces).toMatchObject([
+      { kind: "pull-request", repository: "owner/repo", number: 8 },
+    ]);
+    expect(byThreadKey[scopedThreadKey(refOn("environment-old"))]).toBeUndefined();
+  });
+});
+
+function resetFixture() {
   capabilities.clear();
   capabilities.set("environment-old", false);
   capabilities.set("environment-new", true);
@@ -283,69 +357,4 @@ beforeEach(() => {
     threadPanelVisibilityByThreadKey: {},
     userActionRevisionByThreadKey: {},
   });
-});
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
-
-const isLoading = () =>
-  container.querySelector('[role="status"][aria-label="Loading pull request"]') !== null;
-
-describe("pull request side panel", () => {
-  // Runs first, while the body's code is still held back.
-  it("shows the pull request loading state until its code arrives", async () => {
-    await renderFor(refOn("environment-new"));
-    expect(isLoading()).toBe(true);
-    expect(hasText("Test pull request")).toBe(false);
-
-    await act(loadBody);
-    expect(isLoading()).toBe(false);
-    expect(hasText("Test pull request")).toBe(true);
-    await click("Ask a question");
-    expect(
-      useComposerDraftStore.getState().getComposerDraft(refOn("environment-new"))?.reviewComments,
-    ).toHaveLength(1);
-  });
-
-  it("follows the host environment's pull request support", async () => {
-    await loadBody();
-    await renderFor(refOn("environment-loading"));
-    expect(isLoading()).toBe(true);
-    expect(hasText("Test pull request")).toBe(false);
-    expect(hasText("Pull requests unavailable")).toBe(false);
-
-    await renderFor(refOn("environment-old"));
-    expect(hasText("Pull requests unavailable")).toBe(true);
-    expect(hasText("Update this environment's T3 Code server to browse pull requests.")).toBe(true);
-    expect(hasText("Test pull request")).toBe(false);
-
-    await renderFor(refOn("environment-new"));
-    expect(hasText("Test pull request")).toBe(true);
-  });
-
-  it("writes a question into the host thread's composer only", async () => {
-    await loadBody();
-    const threadRef = refOn("environment-new");
-    useComposerDraftStore.getState().setPrompt(threadRef, "Keep my draft");
-    await renderFor(threadRef);
-    await click("Ask a question");
-    const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
-    expect(draft?.prompt).toContain("Keep my draft");
-    expect(draft?.reviewComments?.length).toBeGreaterThan(0);
-    expect(useComposerDraftStore.getState().getComposerDraft(refOn("environment-old"))).toBeNull();
-  });
-
-  it("opens a stack layer as a tab in the host's own thread", async () => {
-    await loadBody();
-    const threadRef = refOn("environment-new");
-    await renderFor(threadRef);
-    await click("Open #8");
-    const { byThreadKey } = useRightPanelStore.getState();
-    expect(byThreadKey[scopedThreadKey(threadRef)]?.surfaces).toMatchObject([
-      { kind: "pull-request", repository: "owner/repo", number: 8 },
-    ]);
-    expect(byThreadKey[scopedThreadKey(refOn("environment-old"))]).toBeUndefined();
-  });
-});
+}

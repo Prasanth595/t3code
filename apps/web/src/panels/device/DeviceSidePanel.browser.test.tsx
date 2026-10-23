@@ -1,12 +1,12 @@
+import { act, render as renderScreen, type Screen } from "../../../test/render";
 import {
   EnvironmentId,
   ThreadId,
   type DeviceServiceState,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { act, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import type { ReactNode } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { RightPanelSurface } from "~/rightPanelStore";
 
@@ -78,7 +78,13 @@ vi.mock("~/rightPanelStore", () => ({
   },
 }));
 vi.mock("~/components/device/DeviceHostUpdates", () => ({ DeviceHostUpdates: () => null }));
-vi.mock("~/components/device/DeviceLoadingView", () => ({ DeviceLoadingView: () => null }));
+vi.mock("~/components/device/DeviceLoadingView", () => ({
+  DeviceLoadingView: ({ name, message }: { name: string; message: string }) => (
+    <div role="status" aria-label={`Opening ${name}`}>
+      {message}
+    </div>
+  ),
+}));
 vi.mock("~/components/device/DeviceWorkspace", () => ({
   DeviceWorkspace: ({ onPowerOff }: { onPowerOff: () => void }) => (
     <button onClick={onPowerOff}>Power off</button>
@@ -121,8 +127,8 @@ const render = (threadRef: ScopedThreadRef, surface = picker) => (
     />
   </PanelHostContext>
 );
-const mount = async (threadRef: ScopedThreadRef, surface = picker) => {
-  await act(async () => root.render(render(threadRef, surface)));
+const mount = async (screen: Screen, threadRef: ScopedThreadRef, surface = picker) => {
+  await screen.rerender(render(threadRef, surface));
   // Wait for the registered lazy body to load and replace the Suspense fallback.
   await act(async () => {
     await import("./DeviceSidePanel");
@@ -133,38 +139,22 @@ const deferred = () => {
   const promise = new Promise<CommandResult>((resolve) => (settle = resolve));
   return { promise, settle };
 };
-const startPhone = () =>
+const startPhone = (screen: Screen) =>
   act(async () => {
-    container.querySelector<HTMLButtonElement>('[aria-label="Start Phone"]')!.click();
+    screen.container.querySelector<HTMLButtonElement>('[aria-label="Start Phone"]')!.click();
   });
-const errors = () => container.querySelectorAll('[role="alert"]');
+const errors = (screen: Screen) => screen.container.querySelectorAll('[role="alert"]');
 const opened = { _tag: "Success", value: { hostId: "local", deviceId: "phone" } } as const;
-
-beforeEach(() => {
-  vi.clearAllMocks();
-});
-
-let root: Root;
-let container: HTMLDivElement;
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
 
 describe("registered Device panel", () => {
   it("opens a picked device when the pick settles in the same thread", async () => {
+    resetFixture();
+    await using screen = await renderScreen(null, { router: false });
     const pick = deferred();
     mocks.open.mockReturnValue(pick.promise);
-    await mount(picking);
+    await mount(screen, picking);
 
-    await startPhone();
+    await startPhone(screen);
     expect(mocks.open).toHaveBeenCalledWith({
       environmentId: picking.environmentId,
       input: { threadId: picking.threadId, hostId: "local", deviceId: "phone", platform: "ios" },
@@ -180,24 +170,28 @@ describe("registered Device panel", () => {
   });
 
   it("keeps the next thread's picker usable while an earlier pick is pending", async () => {
+    resetFixture();
+    await using screen = await renderScreen(null, { router: false });
     mocks.open.mockReturnValue(deferred().promise);
-    await mount(picking);
+    await mount(screen, picking);
 
-    await startPhone();
-    await act(async () => root.render(render(next)));
+    await startPhone(screen);
+    await screen.rerender(render(next));
 
-    expect(container.querySelector<HTMLButtonElement>('[aria-label="Start Phone"]')!.disabled).toBe(
-      false,
-    );
+    expect(
+      screen.container.querySelector<HTMLButtonElement>('[aria-label="Start Phone"]')!.disabled,
+    ).toBe(false);
   });
 
   it("opens a pick that settles after a switch in the thread it started in", async () => {
+    resetFixture();
+    await using screen = await renderScreen(null, { router: false });
     const pick = deferred();
     mocks.open.mockReturnValue(pick.promise);
-    await mount(picking);
+    await mount(screen, picking);
 
-    await startPhone();
-    await act(async () => root.render(render(next)));
+    await startPhone(screen);
+    await screen.rerender(render(next));
     await act(async () => pick.settle(opened));
 
     expect(mocks.openDevice).toHaveBeenCalledExactlyOnceWith(picking, {
@@ -206,62 +200,86 @@ describe("registered Device panel", () => {
       platform: "ios",
       name: "Phone",
     });
-    expect(container.querySelector<HTMLButtonElement>('[aria-label="Start Phone"]')!.disabled).toBe(
-      false,
-    );
+    expect(
+      screen.container.querySelector<HTMLButtonElement>('[aria-label="Start Phone"]')!.disabled,
+    ).toBe(false);
   });
 
   it("shows a late failed pick when returning to its starting scope", async () => {
+    resetFixture();
+    await using screen = await renderScreen(null, { router: false });
     const pick = deferred();
     mocks.open.mockReturnValue(pick.promise);
-    await mount(picking);
+    await mount(screen, picking);
 
-    await startPhone();
-    await act(async () => root.render(render(next)));
-    await act(async () => root.render(render(picking)));
+    await startPhone(screen);
+    await screen.rerender(render(next));
+    await screen.rerender(render(picking));
+    expect(screen.container.querySelector('[aria-label="Start Phone"]')).toBeNull();
+    expect(
+      screen.container.querySelector('[role="status"][aria-label="Opening Phone"]')?.textContent,
+    ).toBe("Starting device…");
+    expect(errors(screen)).toHaveLength(0);
     await act(async () => pick.settle({ _tag: "Failure", cause: new Error("boom") }));
 
-    expect(errors()).toHaveLength(1);
+    expect(errors(screen)).toHaveLength(1);
+    expect(errors(screen)[0]?.textContent).toContain("Device failed");
+    expect(
+      screen.container.querySelector('[role="status"][aria-label="Opening Phone"]'),
+    ).toBeNull();
+    expect(
+      screen.container.querySelector<HTMLButtonElement>('[aria-label="Start Phone"]')!.disabled,
+    ).toBe(false);
     expect(mocks.openDevice).not.toHaveBeenCalled();
   });
 
   it("does not carry an operation error into another thread", async () => {
+    resetFixture();
+    await using screen = await renderScreen(null, { router: false });
     mocks.open.mockResolvedValue({ _tag: "Failure", cause: new Error("boom") });
-    await mount(picking);
+    await mount(screen, picking);
 
-    await startPhone();
-    expect(errors()).toHaveLength(1);
-    await act(async () => root.render(render(next)));
+    await startPhone(screen);
+    expect(errors(screen)).toHaveLength(1);
+    await screen.rerender(render(next));
 
-    expect(errors()).toHaveLength(0);
+    expect(errors(screen)).toHaveLength(0);
   });
 
   it("closes a powered-off surface in its own thread after the panel moved", async () => {
+    resetFixture();
+    await using screen = await renderScreen(null, { router: false });
     const powerOff = deferred();
     mocks.close.mockReturnValue(powerOff.promise);
-    await mount(picking, streaming);
+    await mount(screen, picking, streaming);
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>("button")!.click();
+      screen.container.querySelector<HTMLButtonElement>("button")!.click();
     });
     expect(mocks.close).toHaveBeenCalledWith({
       environmentId: picking.environmentId,
       input: { threadId: picking.threadId, hostId: "local", deviceId: "phone", shutdown: true },
     });
-    await act(async () => root.render(render(next, streaming)));
+    await screen.rerender(render(next, streaming));
     await act(async () => powerOff.settle(opened));
 
     expect(mocks.closeSurface).toHaveBeenCalledExactlyOnceWith(picking, streaming.id);
   });
 
   it("closes the surface when a power-off settles in the same thread", async () => {
+    resetFixture();
+    await using screen = await renderScreen(null, { router: false });
     mocks.close.mockResolvedValue(opened);
-    await mount(picking, streaming);
+    await mount(screen, picking, streaming);
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>("button")!.click();
+      screen.container.querySelector<HTMLButtonElement>("button")!.click();
     });
 
     expect(mocks.closeSurface).toHaveBeenCalledExactlyOnceWith(picking, streaming.id);
   });
 });
+
+function resetFixture() {
+  vi.clearAllMocks();
+}
