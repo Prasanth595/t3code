@@ -8,11 +8,16 @@ import * as Upstream from "../../orchestration-v2/ProjectionStore.ts";
 /**
  * The projection store with its two whole-table reads moved off the event loop.
  *
- * `getShellSnapshot` (ThreadLaunchService's prepare loop) and `getThreadsWithPullRequests` (both
- * pull request reactor sweeps) scan every thread. Upstream runs them on the writer connection,
- * which blocks the main thread; inside `readOnly` they run on the reader worker, and only the
- * decode stays on the loop. `readOnly` wraps the whole transaction and falls back to the writer
- * inside an open write transaction, so it is safe for every caller.
+ * `getThreadsWithPullRequests` (both pull request reactor sweeps) and `getShellSnapshot` (for the
+ * consumers `server.ts` provides with `ProjectionStoreV2.layer`) scan every thread. Upstream runs
+ * them on the writer connection, which blocks the main thread; inside `readOnly` they run on the
+ * reader worker, and only the decode stays on the loop. `readOnly` wraps the whole transaction and
+ * falls back to the writer inside an open write transaction, so it is safe for every caller.
+ *
+ * NOT routed: `ThreadLaunchService`'s prepare-loop `getShellSnapshot`. It reaches the store
+ * through `ThreadManagementService` and the Orchestrator, whose `ProjectionStore.layer` is
+ * provided inside upstream's `orchestration-v2/runtimeLayer.ts` (`layerStores`), out of reach of
+ * `server.ts`. That snapshot still runs on the writer.
  *
  * `server.ts` imports the store through this module, so every `ProjectionStoreV2.layer` it
  * provides is this one. Everything else upstream exports passes through untouched.
