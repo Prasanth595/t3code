@@ -26,6 +26,7 @@ describe("makeStallProfiler", () => {
   it("writes a cpuprofile for a noticeable stall, once per interval, and ignores smaller stalls", async () => {
     const dir = NodePath.join(tempDir(), "stall-profiles");
     const written: Array<string> = [];
+    let started: ReadonlyArray<boolean> = [];
     const file = await new Promise<string>((resolve, reject) => {
       const profile = makeStallProfiler({
         dir,
@@ -37,10 +38,9 @@ describe("makeStallProfiler", () => {
         },
         onError: reject,
       });
-      profile(4999);
-      profile(6000);
-      profile(9000);
+      started = [profile(4999), profile(6000), profile(9000)];
     });
+    expect(started).toEqual([false, true, false]);
     expect(written).toEqual([file]);
     expect(NodePath.dirname(file)).toBe(dir);
     expect(file.endsWith(".cpuprofile")).toBe(true);
