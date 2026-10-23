@@ -288,12 +288,29 @@ const layerTest = ProviderHostLive.layer.pipe(
 );
 
 it.layer(layerTest)("AntigravityDriver", (it) => {
-  it.effect.skipIf(windowsHost)("delivers a title while runtime cleanup exceeds the deadline", () =>
+  it.effect.skipIf(windowsHost)("returns the title before runtime cleanup finishes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-title-cleanup-" });
       const entered = yield* Deferred.make<void>();
+      const removals: string[] = [];
+      const trackedFs = FileSystem.FileSystem.of({
+        ...fs,
+        remove: (directory, options) => {
+          if (
+            (directory.startsWith(root) || directory.includes("antigravity-tmp")) &&
+            options?.recursive
+          ) {
+            removals.push(directory);
+            return fs
+              .remove(directory, options)
+              .pipe(Effect.andThen(TestClock.adjust("4 minutes")));
+          }
+          return fs.remove(directory, options);
+        },
+      });
       const runtimeTemp = yield* AntigravityRuntimeTemp.make(root).pipe(
+        Effect.provideService(FileSystem.FileSystem, trackedFs),
         Effect.provideService(
           ChildProcessSpawner.ChildProcessSpawner,
           ChildProcessSpawner.make(() =>
@@ -301,50 +318,18 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           ),
         ),
       );
-      const h = yield* makeHarness({ runtimeTemp });
+      const h = yield* makeHarness({ runtimeTemp, fileSystem: trackedFs });
       const result = yield* h.instance.textGeneration.generateThreadTitle({
         cwd: h.profileDirectory,
         message: "Repair login",
         modelSelection: { instanceId: h.instance.instanceId, model: "gemini-test-high" },
       });
       yield* Deferred.await(entered);
-      yield* TestClock.adjust("4 minutes");
       expect(result).toEqual({ title: "Repair login" });
+      expect(removals).toEqual([]);
       expect(h.releases).toEqual([h.first.version]);
       expect(h.launches.filter((launch) => launch.harnessPath !== undefined)).toHaveLength(1);
       expect((yield* fs.readDirectory(root)).length).toBe(1);
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect.skipIf(windowsHost)("keeps runtime tree deletion off the server filesystem pool", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const removals: string[] = [];
-      const h = yield* makeHarness({
-        fileSystem: FileSystem.FileSystem.of({
-          ...fs,
-          remove: (directory, options) => {
-            if (
-              (directory.includes("antigravity-tmp") || directory.includes("antigravity-gc")) &&
-              options?.recursive
-            ) {
-              removals.push(directory);
-              return fs
-                .remove(directory, options)
-                .pipe(Effect.andThen(TestClock.adjust("4 minutes")));
-            }
-            return fs.remove(directory, options);
-          },
-        }),
-      });
-      expect(
-        yield* h.instance.textGeneration.generateThreadTitle({
-          cwd: h.profileDirectory,
-          message: "Repair login",
-          modelSelection: { instanceId: h.instance.instanceId, model: "gemini-test-high" },
-        }),
-      ).toEqual({ title: "Repair login" });
-      expect(removals).toEqual([]);
     }).pipe(Effect.scoped),
   );
 

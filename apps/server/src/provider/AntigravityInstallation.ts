@@ -354,12 +354,13 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     Effect.fn("AntigravityInstallation.validate")(
       function* (executable: AntigravityExecutable, expectedVersion: string) {
         const validationScope = yield* Effect.scope;
-        const profileDirectory = yield* runtimeTemp.makeDirectory;
+        const profileDirectory = yield* runtimeTemp.makeDirectory.pipe(
+          Effect.provideService(HostProcess.Environment, environment),
+        );
         const profile = yield* prepareAntigravityProfile({
           profileDirectory,
           platform,
           baseEnv: environment,
-          // Keeping the unpack inside the owned profile schedules both for cleanup.
           tempDirectory: profileDirectory,
         });
         const runtime = yield* makeAntigravityAcpRuntime({

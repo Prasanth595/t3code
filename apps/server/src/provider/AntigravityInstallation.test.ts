@@ -245,7 +245,7 @@ const expectPreviousRelease = Effect.fn("test.expectPreviousAntigravityRelease")
 });
 
 it.layer(NodeServices.layer)("Antigravity installation", (it) => {
-  it.effect("activates a validated runtime while profile cleanup exceeds its deadline", () =>
+  it.effect("activates a validated runtime before profile cleanup finishes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -303,8 +303,6 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       yield* installation.start;
       expect((yield* terminalState(installation)).phase).toBe("succeeded");
       yield* Deferred.await(cleanupEntered);
-      yield* TestClock.adjust("2 minutes");
-      expect((yield* installation.state).phase).toBe("succeeded");
       expect((yield* installation.resolve()).version).toBe("fixture-new");
       expect(validators).toHaveLength(1);
       for (const handle of validators) expect(yield* handle.isRunning).toBe(false);

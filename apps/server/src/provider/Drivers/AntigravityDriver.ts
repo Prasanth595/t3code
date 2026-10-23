@@ -194,13 +194,15 @@ export const AntigravityDriver: ProviderDriver<
       );
       // Registered before ACP so release only hands off cleanup after the child exits.
       const runtimeTempDirectory = yield* runtimeTemp.makeDirectory.pipe(
+        Effect.provideService(HostProcess.Environment, processEnvironment),
         Effect.mapError(
           (cause) =>
             new ProviderSetupError({
               instanceId,
               operation: "start",
-              detail:
-                cause._tag === "AntigravityRuntimeTempBacklogFullError"
+              detail: isNodeRuntimeUnavailableError(cause)
+                ? nodeRuntimeUnavailableMessage("Antigravity sign-in")
+                : cause._tag === "AntigravityRuntimeTempBacklogFullError"
                   ? AntigravityRuntimeTemp.BACKLOG_FULL_MESSAGE
                   : "Could not create an Antigravity runtime temp directory.",
               cause,

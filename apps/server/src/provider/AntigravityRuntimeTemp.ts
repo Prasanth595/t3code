@@ -1,4 +1,8 @@
-import { resolveNodeExecutable } from "@t3tools/shared/nodeRuntime";
+import {
+  resolveNodeExecutable,
+  type NodeRuntimeUnavailableError,
+} from "@t3tools/shared/nodeRuntime";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -37,7 +41,7 @@ export class AntigravityRuntimeTemp extends Context.Service<
   {
     readonly makeDirectory: Effect.Effect<
       string,
-      PlatformError.PlatformError | BacklogFullError,
+      PlatformError.PlatformError | BacklogFullError | NodeRuntimeUnavailableError,
       Scope.Scope
     >;
     readonly adopt: (directory: string) => Effect.Effect<void>;
@@ -56,6 +60,14 @@ export const make = Effect.fn("AntigravityRuntimeTemp.make")(function* (director
   // The directories are the durable queue. Only wake-ups are coalesced in memory.
   const wake = yield* Queue.dropping<void>(1);
   const notify = Queue.offer(wake, undefined).pipe(Effect.asVoid);
+  const resolveNode = resolveNodeExecutable("Antigravity").pipe(
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
+  );
+  // A standalone provider can supply Node through its own PATH or version manager.
+  let cleanupRuntime:
+    | { readonly node: string; readonly environment: NodeJS.ProcessEnv }
+    | undefined;
 
   const drain = Effect.gen(function* () {
     const pending = yield* allocation.withPermit(
@@ -73,18 +85,19 @@ export const make = Effect.fn("AntigravityRuntimeTemp.make")(function* (director
       ),
     );
     if (pending.length === 0) return;
-    const node = yield* resolveNodeExecutable("Antigravity").pipe(
-      Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provideService(Path.Path, path),
-    );
+    const runtime = cleanupRuntime ?? {
+      node: yield* resolveNode,
+      environment: yield* HostProcess.Environment,
+    };
     for (const entry of pending) {
       yield* Effect.gen(function* () {
         const child = yield* spawner.spawn(
-          ChildProcess.make(node, ["--eval", REMOVE_SCRIPT, entry], {
+          ChildProcess.make(runtime.node, ["--eval", REMOVE_SCRIPT, entry], {
             stdin: "ignore",
             stdout: "ignore",
             stderr: "ignore",
-            env: { ELECTRON_RUN_AS_NODE: "1" },
+            env: { ...runtime.environment, ELECTRON_RUN_AS_NODE: "1" },
+            extendEnv: false,
           }),
         );
         const code = yield* child.exitCode;
@@ -107,22 +120,25 @@ export const make = Effect.fn("AntigravityRuntimeTemp.make")(function* (director
     ),
   );
 
-  const makeDirectory = Effect.acquireRelease(
-    allocation.withPermit(
-      Effect.gen(function* () {
-        yield* fs.makeDirectory(directory, { recursive: true });
-        const pending = (yield* fs.readDirectory(directory)).filter(
-          (entry) => entry.startsWith("run-") && !active.has(path.join(directory, entry)),
-        );
-        // Cap additional extractions, without limiting already-live sessions.
-        if (pending.length >= MAX_PENDING_DIRECTORIES) return yield* new BacklogFullError();
-        const created = yield* fs.makeTempDirectory({ directory, prefix: "run-" });
-        active.add(created);
-        return created;
-      }),
-    ),
-    (created) => Effect.sync(() => active.delete(created)).pipe(Effect.andThen(notify)),
-  );
+  const makeDirectory = Effect.gen(function* () {
+    cleanupRuntime = { node: yield* resolveNode, environment: yield* HostProcess.Environment };
+    yield* notify;
+    return yield* Effect.acquireRelease(
+      allocation.withPermit(
+        Effect.gen(function* () {
+          yield* fs.makeDirectory(directory, { recursive: true });
+          const pending = (yield* fs.readDirectory(directory)).filter(
+            (entry) => entry.startsWith("run-") && !active.has(path.join(directory, entry)),
+          );
+          if (pending.length >= MAX_PENDING_DIRECTORIES) return yield* new BacklogFullError();
+          const created = yield* fs.makeTempDirectory({ directory, prefix: "run-" });
+          active.add(created);
+          return created;
+        }),
+      ),
+      (created) => Effect.sync(() => active.delete(created)).pipe(Effect.andThen(notify)),
+    );
+  });
 
   const adopt = Effect.fn("AntigravityRuntimeTemp.adopt")(
     function* (previous: string) {
@@ -155,7 +171,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const path = yield* Path.Path;
-    // Shorter than the old instance-specific root, including validation profiles.
+    // Keep PyInstaller extraction paths below Windows' MAX_PATH.
     return yield* make(path.join(config.stateDir, "antigravity-gc"));
   }),
 );
