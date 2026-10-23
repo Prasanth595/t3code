@@ -389,6 +389,86 @@ it.layer(layerTest)("CodexDriver", (it) => {
     { name: "malformed native metadata", tag: "not-a-version", status: 200, expected: null },
     { name: "a newer native release", tag: "rust-v0.164.0", status: 200, expected: "0.164.0" },
     {
+      name: "missing platform assets",
+      tag: "rust-v0.163.0",
+      status: 200,
+      expected: null,
+      assets: [],
+    },
+    {
+      name: "a missing checksum manifest",
+      tag: "rust-v0.163.0",
+      status: 200,
+      expected: null,
+      assets: ["codex-package-aarch64-apple-darwin.tar.gz"],
+    },
+    {
+      name: "an invalid asset digest",
+      tag: "rust-v0.163.0",
+      status: 200,
+      expected: null,
+      digest: "invalid",
+    },
+    {
+      name: "the legacy npm archive",
+      tag: "rust-v0.163.0",
+      status: 200,
+      expected: "0.163.0",
+      assets: ["codex-npm-darwin-arm64-0.163.0.tgz"],
+    },
+    {
+      name: "Linux x64 packages",
+      tag: "rust-v0.163.0",
+      status: 200,
+      expected: "0.163.0",
+      platform: "linux" as const,
+      architecture: "x64" as const,
+      assets: ["codex-package-x86_64-unknown-linux-musl.tar.gz", "codex-package_SHA256SUMS"],
+    },
+    {
+      name: "Linux arm64 packages",
+      tag: "rust-v0.163.0",
+      status: 200,
+      expected: "0.163.0",
+      platform: "linux" as const,
+      architecture: "arm64" as const,
+      assets: ["codex-package-aarch64-unknown-linux-musl.tar.gz", "codex-package_SHA256SUMS"],
+    },
+    {
+      name: "Windows x64 packages",
+      tag: "rust-v0.163.0",
+      status: 200,
+      expected: "0.163.0",
+      platform: "win32" as const,
+      architecture: "x64" as const,
+      assets: ["codex-package-x86_64-pc-windows-msvc.tar.gz", "codex-package_SHA256SUMS"],
+    },
+    {
+      name: "Windows arm64 packages",
+      tag: "rust-v0.163.0",
+      status: 200,
+      expected: "0.163.0",
+      platform: "win32" as const,
+      architecture: "arm64" as const,
+      assets: ["codex-package-aarch64-pc-windows-msvc.tar.gz", "codex-package_SHA256SUMS"],
+    },
+    {
+      name: "Intel macOS packages",
+      tag: "rust-v0.163.0",
+      status: 200,
+      expected: "0.163.0",
+      platform: "darwin" as const,
+      architecture: "x64" as const,
+      assets: ["codex-package-x86_64-apple-darwin.tar.gz", "codex-package_SHA256SUMS"],
+    },
+    {
+      name: "assets for another platform",
+      tag: "rust-v0.163.0",
+      status: 200,
+      expected: null,
+      assets: ["codex-package-x86_64-unknown-linux-musl.tar.gz", "codex-package_SHA256SUMS"],
+    },
+    {
       name: "an explicit release",
       tag: "rust-v0.164.0",
       status: 200,
@@ -421,7 +501,21 @@ it.layer(layerTest)("CodexDriver", (it) => {
               request,
               request.url.includes("registry.npmjs.org")
                 ? Response.json({ version: "0.164.0" })
-                : Response.json({ tag_name: fixture.tag }, { status: fixture.status }),
+                : Response.json(
+                    {
+                      tag_name: fixture.tag,
+                      assets: (
+                        fixture.assets ?? [
+                          "codex-package-aarch64-apple-darwin.tar.gz",
+                          "codex-package_SHA256SUMS",
+                        ]
+                      ).map((name) => ({
+                        name,
+                        digest: fixture.digest ?? `sha256:${"a".repeat(64)}`,
+                      })),
+                    },
+                    { status: fixture.status },
+                  ),
             );
           }),
         );
@@ -436,6 +530,8 @@ it.layer(layerTest)("CodexDriver", (it) => {
         expect(requests).toEqual([]);
         const latest = yield* resolveLatestProviderVersion(capabilities).pipe(
           Effect.provideService(HttpClient.HttpClient, http),
+          Effect.provideService(HostProcess.Platform, fixture.platform ?? "darwin"),
+          Effect.provideService(HostProcess.Architecture, fixture.architecture ?? "arm64"),
         );
         expect(latest).toBe(fixture.expected);
         expect(requests).toEqual(

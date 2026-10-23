@@ -65,7 +65,12 @@ function isCodexStandaloneCommandPath(commandPath: string): boolean {
   return normalizeCommandPath(commandPath).includes("/packages/standalone/");
 }
 
-const CodexNativeReleaseMetadata = Schema.Struct({ tag_name: Schema.String });
+const CodexNativeReleaseMetadata = Schema.Struct({
+  tag_name: Schema.String,
+  assets: Schema.Array(
+    Schema.Struct({ name: Schema.String, digest: Schema.optional(Schema.NullOr(Schema.String)) }),
+  ),
+});
 
 /** The standalone installer consumes this channel, whose rollout can lag npm. */
 const lookupCodexNativeVersion = Effect.gen(function* () {
@@ -84,7 +89,33 @@ const lookupCodexNativeVersion = Effect.gen(function* () {
   const metadata = yield* response.json.pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(CodexNativeReleaseMetadata)),
   );
-  return /^(?:rust-v|v)?(\d+\.\d+\.\d+)$/.exec(metadata.tag_name)?.[1] ?? null;
+  const version = /^rust-v(\d+\.\d+\.\d+)$/.exec(metadata.tag_name)?.[1];
+  if (!version) return null;
+  const platform = yield* HostProcess.Platform;
+  const architecture = yield* HostProcess.Architecture;
+  const targetArchitecture =
+    architecture === "arm64" ? "aarch64" : architecture === "x64" ? "x86_64" : null;
+  const targetPlatform =
+    platform === "darwin"
+      ? "apple-darwin"
+      : platform === "linux"
+        ? "unknown-linux-musl"
+        : platform === "win32"
+          ? "pc-windows-msvc"
+          : null;
+  if (!targetArchitecture || !targetPlatform) return null;
+  // The native installer accepts a package plus checksums, or a legacy platform
+  // npm archive. Both layouts require asset SHA-256 metadata, not just a tag.
+  const assets = new Set(
+    metadata.assets
+      .filter((asset) => /^sha256:[0-9a-fA-F]{64}$/.test(asset.digest ?? ""))
+      .map((asset) => asset.name),
+  );
+  const hasPackage =
+    assets.has(`codex-package-${targetArchitecture}-${targetPlatform}.tar.gz`) &&
+    assets.has("codex-package_SHA256SUMS");
+  const hasLegacyPackage = assets.has(`codex-npm-${platform}-${architecture}-${version}.tgz`);
+  return hasPackage || hasLegacyPackage ? version : null;
 }).pipe(
   Effect.timeoutOption("4 seconds"),
   Effect.map(Option.getOrNull),
