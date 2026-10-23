@@ -265,7 +265,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       const script = [
         'const fs = require("node:fs");',
         'const path = require("node:path");',
-        'const unpack = path.join(process.env.TMPDIR, "_MEI-fixture");',
+        'const unpack = path.join(process.env.TMPDIR ?? process.env.TEMP, "_MEI-fixture");',
         "fs.mkdirSync(unpack, { recursive: true });",
         'fs.writeFileSync(path.join(unpack, "payload.bin"), "fixture");',
         'require("node:readline").createInterface({ input: process.stdin }).on("line", line => {',
