@@ -2469,6 +2469,53 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("keeps the cleared session when the next turn carries the pre-clear thread", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        freshQueueOnReopen: true,
+        close: (queue) => Queue.shutdown(queue),
+      });
+      const turn = (ordinal: number) =>
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: DateTime.makeUnsafe(0),
+          attemptId: RunAttemptId.make(`stale-clear-session-${ordinal}`),
+          text: ordinal === 1 ? "/clear" : "Continue the cleared conversation",
+          attachments: [],
+          providerTurnOrdinal: ordinal,
+        });
+      yield* harness.runtime.startTurn(turn(1));
+      yield* harness.offerAndWait(turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          session_id: "cleared-native-session",
+          uuid: "00000000-0000-4000-8000-000000000511",
+        }),
+      );
+      yield* harness.runtime.startTurn(turn(2));
+      assert.equal(harness.processQueues.length, 1);
+      yield* harness.offerAndWait(turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+      assert.equal(lastProviderTurn(harness.events).providerThreadId, harness.providerThread.id);
+      const thread = harness.events.findLast((event) => event.type === "provider_thread.updated");
+      assert.equal(
+        thread?.type === "provider_thread.updated"
+          ? thread.providerThread.nativeThreadRef?.nativeId
+          : undefined,
+        "cleared-native-session",
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   describe("Claude settings restrictions", () => {
     it.effect("resolves cached managed policy from the configured home through the real SDK", () =>
       Effect.gen(function* () {
@@ -5921,6 +5968,38 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
       ),
     ),
+  );
+
+  it.effect.each([
+    { listId: undefined, status: "superseded" },
+    { listId: "shared-list", status: "active" },
+  ] as const)(
+    "retires a session task list after an idle /clear (shared list: $listId)",
+    ({ listId, status }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeTaskToolHarnessWithOptions({ CLAUDE_CODE_TASK_LIST_ID: listId });
+        yield* harness.startTurn();
+        yield* harness.call(createTask("1", "Before clear"));
+        yield* harness.finishTurn();
+        yield* harness.offer(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            session_id: "cleared-native-session",
+            uuid: harness.nextUuid(),
+          }),
+        );
+        yield* harness.startTurn();
+        yield* harness.finishTurn();
+        const plans = harness.plans();
+        assert.equal(plans.at(-1)?.id, plans[0]?.id);
+        assert.equal(plans.at(-1)?.status, status);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
   );
 
   it.effect("removes deleted tasks without resurrecting them on later updates or turns", () =>

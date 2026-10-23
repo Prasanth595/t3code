@@ -4426,6 +4426,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
           });
 
+        // Old native ID -> the session `/clear` replaced it with, for turns built from a
+        // projection that has not caught up yet. Adoption removes the new ID as a key
+        // first, so following the chain cannot loop.
+        const adoptedNativeSessionIds = new Map<string, string>();
+        // Todo lists retired by an idle `/clear`. Nothing persists adapter events while no
+        // run is subscribed, so the next turn publishes them.
+        const supersededTodoPlans: Array<OrchestrationV2PlanArtifact> = [];
         const adoptNativeSessionId = Effect.fnUntraced(function* (
           query: ClaudeLiveQueryContext,
           nativeThreadId: string,
@@ -4517,6 +4524,31 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               },
             };
           }
+          // Without a shared CLAUDE_CODE_TASK_LIST_ID the new session starts with no tasks,
+          // so the pre-clear todo list must stop being the thread's current one.
+          const todoKey = `${previous.appThreadId}:todo_list`;
+          const todoPlan = (yield* Ref.get(latestPlanByKind)).get(todoKey);
+          if (
+            !adapterOptions.environment.CLAUDE_CODE_TASK_LIST_ID?.trim() &&
+            previous.appThreadId !== null &&
+            todoPlan !== undefined
+          ) {
+            yield* Ref.update(latestPlanByKind, (current) => {
+              const updated = new Map(current);
+              updated.delete(todoKey);
+              return updated;
+            });
+            const superseded = { ...todoPlan, status: "superseded" as const };
+            if ((yield* Ref.get(activeTurn)) === null) supersededTodoPlans.push(superseded);
+            else
+              yield* emitProviderEvent({
+                type: "plan.updated",
+                driver: CLAUDE_PROVIDER,
+                plan: superseded,
+              });
+          }
+          adoptedNativeSessionIds.delete(nativeThreadId);
+          adoptedNativeSessionIds.set(previousId, nativeThreadId);
           query.nativeThreadId = nativeThreadId;
           yield* emitProviderEvent({
             type: "provider_thread.updated",
@@ -9546,7 +9578,31 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
 
         const startTurn = Effect.fn("ClaudeAdapterV2.startTurn")(
-          function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
+          function* (requestedTurnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
+            // A turn can be built from a projection read before an idle `/clear` adoption
+            // landed. Opening its native ID would replace the live process with the
+            // pre-clear session, so follow the adoption this adapter already made.
+            const requestedNativeId =
+              requestedTurnInput.providerThread.nativeThreadRef?.nativeId ?? undefined;
+            let adoptedNativeId = requestedNativeId;
+            while (adoptedNativeId !== undefined && adoptedNativeSessionIds.has(adoptedNativeId)) {
+              adoptedNativeId = adoptedNativeSessionIds.get(adoptedNativeId);
+            }
+            const turnInput =
+              adoptedNativeId === undefined || adoptedNativeId === requestedNativeId
+                ? requestedTurnInput
+                : {
+                    ...requestedTurnInput,
+                    providerThread: {
+                      ...requestedTurnInput.providerThread,
+                      nativeThreadRef: {
+                        driver: CLAUDE_PROVIDER,
+                        nativeId: adoptedNativeId,
+                        strength: "strong" as const,
+                      },
+                      nativeConversationHeadRef: null,
+                    },
+                  };
             const startedAt = yield* DateTime.now;
             let nativeThreadId = yield* getNativeThreadId(turnInput.providerThread);
             const nativeTurnId = `turn:${turnInput.attemptId}`;
@@ -9664,6 +9720,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               nativeThreadId = context.nativeThreadId;
               querySession.lastTurn = context;
               yield* Ref.set(activeTurn, context);
+              for (const plan of supersededTodoPlans.splice(0)) {
+                yield* emitProviderEvent({ type: "plan.updated", driver: CLAUDE_PROVIDER, plan });
+              }
               if (
                 !isClaudeProviderContinuationTurn(turnInput) &&
                 permissionModeForClaudeRuntimePolicy(turnInput.runtimePolicy) ===
