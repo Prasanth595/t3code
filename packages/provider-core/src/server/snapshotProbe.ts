@@ -47,7 +47,7 @@ export const DEFAULT_TIMEOUT_MS = 4_000;
 export const AUTH_PROBE_TIMEOUT_MS = 10_000;
 // Probe output is a version line or a small JSON document; the cap only stops
 // a misbehaving CLI from filling server memory before its timeout fires.
-export const PROVIDER_COMMAND_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
+const PROVIDER_COMMAND_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
 export const COMPACT_SLASH_COMMAND = {
   name: "compact",
