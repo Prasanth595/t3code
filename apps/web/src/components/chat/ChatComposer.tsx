@@ -2482,7 +2482,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
       const scrollNode = getTimelineScrollableNode();
       if (!scrollNode) return;
-      const targetsTimeline = isTimelineScrollTarget(event.target, scrollNode, event.deltaY);
+      const targetsTimeline = isTimelineScrollTarget(event.target, scrollNode, event.deltaY, event);
       if (
         !scrollNode.contains(event.target) &&
         !composerScrollGestureRef.current.collapseSuppressed
