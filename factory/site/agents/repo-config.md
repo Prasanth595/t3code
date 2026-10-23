@@ -38,7 +38,7 @@ factory:
 | `factory.limits`                      | mapping         | yes      |         |                                                                              |
 | `factory.limits.gate_retries`         | integer ≥ 0     | yes      |         |                                                                              |
 | `factory.limits.minutes`              | integer ≥ 1     | no       | `180`   |                                                                              |
-| `factory.limits.regates`              | integer ≥ 1     | no       | `5`     | Accepted and ignored.                                                        |
+| `factory.limits.regates`              | any             | no       |         | Accepted and ignored.                                                        |
 | `factory.limits.checks_minutes`       | integer ≥ 1     | no       | `30`    |                                                                              |
 | `factory.limits.interruption_resumes` | integer ≥ 0     | no       | `2`     |                                                                              |
 | `factory.autonomy`                    | string          | yes      |         | Only `pr`.                                                                   |

@@ -48,28 +48,26 @@ export interface Interruption {
 }
 
 /**
- * What a re-gate found moved since the last recorded pass, for the run's line: `conflict` when
- * nothing moved and the re-gate ran because GitHub says the pull request conflicts.
+ * What started a re-gate, for the run's line. A moved head (with or without the base) is `head` or
+ * `both`; a head that did not move leaves only `conflict`: GitHub says the pull request conflicts
+ * with the base branch, whatever the base did. A moved base alone starts no gate.
  */
-export type Moved = "base" | "head" | "both" | "unknown" | "conflict";
+export type Moved = "head" | "both" | "conflict";
 
 /**
- * What differs between the pass (`passedHead` on `passedAgainst`) and now (`head` on `tip`):
- * `unknown` when the pass has a head and no base and the head did not move; `null` only when no
- * pass is on record to compare with, or nothing differs.
+ * Whether the head moved since the pass (`passedHead` on `passedAgainst`): `head`, or `both` when
+ * the tip differs from `passedAgainst` too. `null` when no pass head is on record or the head did
+ * not move, whatever the base did.
  */
 export const movedSince = (
   passedHead: string,
   passedAgainst: string,
   head: string,
   tip: string,
-): Moved | null => {
-  const headMoved = passedHead !== "" && head.toLowerCase() !== passedHead.toLowerCase();
+): Extract<Moved, "head" | "both"> | null => {
+  if (passedHead === "" || head.toLowerCase() === passedHead.toLowerCase()) return null;
   const baseMoved = passedAgainst !== "" && tip.toLowerCase() !== passedAgainst.toLowerCase();
-  if (headMoved && baseMoved) return "both";
-  if (headMoved) return "head";
-  if (baseMoved) return "base";
-  return passedHead !== "" && passedAgainst === "" ? "unknown" : null;
+  return baseMoved ? "both" : "head";
 };
 
 /**
@@ -227,7 +225,7 @@ export interface Seen {
   } | null;
   /** A `gate_regate` line since the run last changed state or posted the results of a pass: a re-gate is under way. */
   readonly regating: boolean;
-  /** What the newest `gate_regate` line says moved, compared with the pass on record when it was written. */
+  /** What started the re-gate the newest `gate_regate` line begins, judged against the pass on record when it was written. */
   readonly regateMoved: Moved | null;
   /** That re-gate recorded its pass (`gate-passed`), and the results are not posted yet. */
   readonly regatePassed: boolean;
@@ -720,8 +718,10 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         const sha = dataField(entry.data, "sha");
         const baseSha = dataField(entry.data, "base_sha");
         const previous = dataField(entry.data, "previous_base_sha");
-        // The pass this re-gate replaces is still the one on record here. With a pass and
-        // nothing moved, only a conflict GitHub reported starts a re-gate.
+        // The pass this re-gate replaces is still the one on record here. With the head where the
+        // pass left it, the only trigger left is a conflict GitHub reported. A line written before
+        // a moved base stopped starting a gate and resumed after an upgrade reads `conflict` too:
+        // a transitional label.
         regateMoved =
           movedSince(
             pass?.sha ?? "",

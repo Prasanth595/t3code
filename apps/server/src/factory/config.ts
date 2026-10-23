@@ -51,7 +51,6 @@ export interface ProjectConfig {
 
 const DEFAULT_MINUTES = 180;
 const DEFAULT_CHECKS_MINUTES = 30;
-const DEFAULT_REGATES = 5;
 const DEFAULT_INTERRUPTION_RESUMES = 2;
 export const DEFAULT_POLL_SECONDS = 60;
 export const DEFAULT_MAX_CONCURRENT_GATES = 2;
@@ -386,9 +385,6 @@ const projectFrom = (c: Checker, root: Mapping): ProjectConfig | undefined => {
     "factory.limits.gate_retries",
     0,
   );
-  // `regates` limited how often a moved base branch re-ran the gate. Nothing reads it now, but an
-  // unknown key fails the block, so a block that still sets it keeps loading, checked as before.
-  const regates = c.optionalUint(limits, "factory.limits", "regates", DEFAULT_REGATES, 1);
   const checksMinutes = c.optionalUint(
     limits,
     "factory.limits",
@@ -413,7 +409,6 @@ const projectFrom = (c: Checker, root: Mapping): ProjectConfig | undefined => {
     requiredChecks === undefined ||
     minutes === undefined ||
     gateRetries === undefined ||
-    regates === undefined ||
     checksMinutes === undefined ||
     interruptionResumes === undefined ||
     autonomy === undefined

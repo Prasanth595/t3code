@@ -1168,7 +1168,7 @@ const launchForRegate = Effect.fn("RunnerGating.launchForRegate")(function* (
   return yield* finishRegateFailure(ctx, out, issue, at, from.pr, attempt);
 });
 
-/** What `regate` did, and what moved since the last recorded pass, for the run's line. */
+/** What `regate` did, and what started it, for the run's line. */
 export interface Regated {
   readonly step: GateStep;
   readonly moved: Moved | null;
