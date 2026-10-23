@@ -23,6 +23,7 @@ import {
 } from "./config.ts";
 import type { FreeSpace } from "./disk.ts";
 import { stateLabel, type State } from "./domain/lifecycle.ts";
+import { overload, type Load, type Overload } from "./load.ts";
 import type { LedgerError } from "./ledger/errors.ts";
 import type { CauseStep, ErrorKind, MachineEvent } from "./ledger/events.ts";
 import { holdsSlot, type RunInfo } from "./ledger/listRuns.ts";
@@ -236,6 +237,8 @@ export interface PassWorld {
    * checkouts; not read when `min_free_gib` is 0.
    */
   readonly freeSpace: () => Effect.Effect<FreeSpace, PassError>;
+  /** The machine's 1-minute load and its cores; not read when `max_load_per_core` is 0. */
+  readonly load: () => Load;
   /** The live threads whose worktree is gone or no longer a git checkout: `brokenWorktrees` on the sessions. */
   readonly threadsOnBrokenWorktrees: () => Effect.Effect<
     ReadonlyArray<ThreadOnBrokenWorktree>,
@@ -253,10 +256,14 @@ export interface PassWorld {
   readonly attention: Pick<Attention["Service"], "list" | "raise" | "clear">;
 }
 
-/** What starting a gate did: it runs now, or `max_concurrent_gates` are running already. */
+/**
+ * What starting a gate did: it runs now, `max_concurrent_gates` are running already, or one is
+ * running and the load is above `max_load_per_core`.
+ */
 export type GateStart =
   | { readonly kind: "started" }
-  | { readonly kind: "queued"; readonly running: number; readonly max: number };
+  | { readonly kind: "queued"; readonly running: number; readonly max: number }
+  | { readonly kind: "high-load"; readonly oneMinute: number; readonly limit: number };
 
 /** The line of a run that ended in `stuck`. The reason is not printed: it can hold text the session or GitHub wrote. */
 export const stuckLine = (run: string): string =>
@@ -400,6 +407,12 @@ const GATE_STARTED = "gate started in the background";
 /** The words for a gate that could not start: `max_concurrent_gates` are running. */
 export const gateQueued = (start: { readonly running: number; readonly max: number }) =>
   `gate queued: ${start.running} gates running, max_concurrent_gates is ${start.max}`;
+/** `1-minute load 55.2 is above 12`. */
+const loadAboveLimit = (over: Pick<Overload, "oneMinute" | "limit">): string =>
+  `1-minute load ${over.oneMinute.toFixed(1)} is above ${over.limit}`;
+/** The line of a gate held back because the load is high and a gate runs already. */
+const gateHeldByLoad = (over: Pick<Overload, "oneMinute" | "limit">) =>
+  `gate queued: ${loadAboveLimit(over)} and a gate is already running`;
 /** The line of a run whose gate passed. */
 export const GATE_PASSED_LINE = "the gate passed and the pull request is ready for review";
 
@@ -434,6 +447,8 @@ class Pass {
   readonly report: Report = { runs: 0, claimed: 0, errors: 0, attention: 0 };
   /** A probed volume is below `min_free_gib`: nothing is claimed and no gate starts. */
   lowDisk = false;
+  /** The load is above `max_load_per_core`: nothing is claimed. */
+  highLoad = false;
   private logFailed = false;
   private readonly world: PassWorld;
   private readonly out: (line: string) => void;
@@ -605,6 +620,7 @@ export const runPass = Effect.fn("Pass.runPass")(function* (
   }
   const repos = yield* loadRepos(world, watched, pass);
   pass.lowDisk = yield* lowDisk(world, machine, pass);
+  pass.highLoad = yield* highLoad(world, machine, pass);
   yield* brokenWorktrees(world, pass);
   // Without the ledger there is no telling how many runs are active, so nothing is claimed.
   const infos = yield* runs(world, pass);
@@ -736,6 +752,28 @@ const lowDisk = Effect.fn("Pass.lowDisk")(function* (
     // No figure and no path: an open item is not raised again, so they would go stale.
     message: `low disk: free space is below min_free_gib ${machine.minFreeGib}; ${held}`,
   });
+  return true;
+});
+
+/**
+ * Whether the 1-minute load is above `max_load_per_core` times the cores. Gates on an overloaded
+ * machine fail on timeouts the code did not cause, so while it is the pass claims nothing: one
+ * line and one `claim_skipped` event. No attention item: the load drops without a person, and an
+ * item would notify each time it flaps. The world's gate holds a second gate on the same reading
+ * (`Factory.startGate`). 0 turns the check off. Session relaunches of runs already claimed are
+ * not held back.
+ */
+const highLoad = Effect.fn("Pass.highLoad")(function* (
+  world: PassWorld,
+  machine: MachineConfig,
+  pass: Pass,
+) {
+  const over = overload(machine.maxLoadPerCore, () => world.load());
+  if (over === null) return false;
+  pass.line(
+    `high load: ${loadAboveLimit(over)} (${over.cores} cores x max_load_per_core ${machine.maxLoadPerCore}); no issue is claimed and a second gate waits until it drops`,
+  );
+  yield* pass.record({ event: "claim_skipped", data: { reason: "high-load" } });
   return true;
 });
 
@@ -1361,7 +1399,13 @@ const startGate = (
     return Effect.void;
   }
   return Effect.map(world.gate(repo, info.id), (start) => {
-    notes.parts.push(start.kind === "started" ? GATE_STARTED : gateQueued(start));
+    notes.parts.push(
+      start.kind === "started"
+        ? GATE_STARTED
+        : start.kind === "queued"
+          ? gateQueued(start)
+          : gateHeldByLoad(start),
+    );
   });
 };
 
@@ -1784,6 +1828,8 @@ const claim = Effect.fn("Pass.claim")(function* (
   if (known.lost) return;
   // Said once by `lowDisk`: a run started now would write to a disk that is nearly full.
   if (pass.lowDisk) return;
+  // Said once by `highLoad`: a run claimed now would gate on a machine too busy to pass it.
+  if (pass.highLoad) return;
   const paused = world.handPause();
   // Ready issues that were not tried because the limit was reached. Every repo is still
   // listed, so the count is the whole machine's.
