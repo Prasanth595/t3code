@@ -1,3 +1,4 @@
+import { act, render as renderScreen, type Screen } from "../../../test/render";
 import { RegistryContext } from "@effect/atom-react";
 import {
   EnvironmentId,
@@ -8,13 +9,9 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import { type Atom, AtomRegistry } from "effect/reactivity";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-
+import { describe, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentPresentation } from "../../state/environments";
 import type { HeldCall, makeFakePluginEnvironment } from "../../test/fakePluginEnvironment";
-
 const server = vi.hoisted(() => ({
   current: null as ReturnType<typeof makeFakePluginEnvironment> | null,
 }));
@@ -30,17 +27,25 @@ vi.mock("../../connection/runtime", async () => {
 });
 // Imported by the settings page's other sections, which these tests do not render.
 vi.mock("../../environments/primary", () => ({ usePrimarySessionState: () => null }));
-vi.mock("../../state/session", () => ({
-  environmentSession: { sessionStateAtom: () => null },
-  useEnvironmentSessionState: () => null,
-  // Settings rows read settings:write; plugin management reads its own session state above.
-  useEnvironmentScope: () => true,
-  useEnvironmentsWithScope: () => new Set(),
-}));
-
+vi.mock("../../state/session", async () => {
+  const Option = await import("effect/Option");
+  const { Atom } = await import("effect/reactivity");
+  const sessionStates = Atom.make([]);
+  return {
+    usePreparedConnection: (): ReturnType<
+      typeof import("../../state/session").usePreparedConnection
+    > => Option.none(),
+    environmentSession: { sessionStateAtom: () => null },
+    environmentSessionStatesAtom: () => sessionStates,
+    readEnvironmentScope: () => true,
+    useEnvironmentSessionState: () => null,
+    // Settings rows read settings:write; plugin management reads its own session state above.
+    useEnvironmentScope: () => true,
+    useEnvironmentsWithScope: () => new Set(),
+  };
+});
 import { pluginEnvironment, pluginNpmEnvironment } from "../../state/plugins";
 import { PluginEnvironmentCatalog } from "./PluginsSettings";
-
 const environmentId = EnvironmentId.make("remote");
 const environment = {
   environmentId,
@@ -54,7 +59,6 @@ const environment = {
     },
   },
 } as unknown as EnvironmentPresentation;
-
 const installationId = PluginInstallationId.make("installation-npm");
 const DIGEST = `sha256:${"a".repeat(64)}`;
 const STAGED = `sha256:${"1".repeat(64)}`;
@@ -110,14 +114,10 @@ const npmPackage = (staged: string | null = null): PluginNpmPackage => ({
           stagedAt: "2026-10-04T01:00:00.000Z",
         },
 });
-
 let registry: AtomRegistry.AtomRegistry;
-let container: HTMLDivElement;
-let root: Root;
 const fake = () => server.current!;
 const npmAtom = pluginNpmEnvironment.packages({ environmentId, input: {} });
 const catalogAtom = pluginEnvironment.catalog({ environmentId, input: {} });
-
 /** Resolves once `atom` holds a value `matches` accepts; the registry's own notification is the receipt. */
 function until<A>(atom: Atom.Atom<A>, matches: (value: A) => boolean) {
   return act(
@@ -154,7 +154,6 @@ async function publish(installations: ReadonlyArray<PluginInstallation>) {
       result.value.installations === installations,
   );
 }
-
 const elements = (selector: string, text: string) =>
   [...document.querySelectorAll<HTMLElement>(selector)].filter(
     (element) => element.textContent?.trim() === text,
@@ -181,18 +180,19 @@ const type = (input: HTMLInputElement, value: string) =>
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
 const acknowledge = () => click(document.querySelector<HTMLElement>("[role=checkbox]")!);
-
 async function publishAndRender(
+  screen: Screen,
   installations: ReadonlyArray<PluginInstallation>,
   target = environment,
 ) {
   fake().publish(installations);
-  await act(async () =>
-    root.render(
-      <RegistryContext.Provider value={registry}>
-        <PluginEnvironmentCatalog environment={target} access="granted" onRetryAccess={null} />
-      </RegistryContext.Provider>,
-    ),
+  await act(
+    async () =>
+      await screen.rerender(
+        <RegistryContext.Provider value={registry}>
+          <PluginEnvironmentCatalog environment={target} access="granted" onRetryAccess={null} />
+        </RegistryContext.Provider>,
+      ),
   );
   await until(
     catalogAtom,
@@ -202,56 +202,43 @@ async function publishAndRender(
       result.value.installations === installations,
   );
 }
-
 /** Mounts the environment's plugin list and answers its first npm list read with `list`. */
-async function mount(installations: ReadonlyArray<PluginInstallation>, list: PluginNpmListResult) {
-  await publishAndRender(installations);
+async function mount(
+  screen: Screen,
+  installations: ReadonlyArray<PluginInstallation>,
+  list: PluginNpmListResult,
+) {
+  await publishAndRender(screen, installations);
   await answerList(await nextCall(WS_METHODS.pluginsNpmList), list);
 }
-
-beforeAll(() => {
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-});
-beforeEach(() => {
-  fake().reset();
-  registry = AtomRegistry.make();
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  registry.dispose();
-});
-
 describe("installing a plugin from npm", () => {
   it("offers nothing from npm and reads no npm list on a server without it", async () => {
+    using _setup = await setup();
+    await using screen = await renderScreen(null, { router: false });
     const older = {
       ...environment,
       serverConfig: {
         environment: { platform: { machine: "server" }, capabilities: { plugins: true } },
       },
     } as unknown as EnvironmentPresentation;
-    await publishAndRender([installation()], older);
+    await publishAndRender(screen, [installation()], older);
     expect(elements("button", "Install from npm")).toEqual([]);
     expect(button("Review")).toBeTruthy();
     expect(fake().calls(WS_METHODS.pluginsNpmList)).toEqual([]);
   });
-
   it("downloads the exact version typed and keeps its reply over a list read that started before it", async () => {
-    await mount([], { packages: [] });
+    using _setup = await setup();
+    await using screen = await renderScreen(null, { router: false });
+    await mount(screen, [], { packages: [] });
     await click(button("Install from npm"));
     await type(field("Package"), " @acme/t3-notifier ");
     await type(field("Version or tag"), "1.2.3");
     await click(button("Download and review"));
     const add = await nextCall(WS_METHODS.pluginsNpmAdd);
     expect(add.input).toEqual({ name: "@acme/t3-notifier", version: "1.2.3" });
-
     // While the download runs, another client adds a plugin and the list is read again.
     await publish([other]);
     await answerList(await nextCall(WS_METHODS.pluginsNpmList), { packages: [] });
-
     // The server lists the install just before replying, which starts another read.
     await publish([other, installation()]);
     const readDuring = await nextCall(WS_METHODS.pluginsNpmList);
@@ -262,10 +249,8 @@ describe("installing a plugin from npm", () => {
     expect(readDuring.interrupted).toBe(true);
     expect(reviewField("Package")).toBe("@acme/t3-notifier@1.0.0");
     expect(reviewField("Integrity")).toContain(INTEGRITY);
-
     await answerList(afterInstall, { packages: [reply] });
     expect(reviewField("Package")).toBe("@acme/t3-notifier@1.0.0");
-
     await acknowledge();
     await click(button("Approve and enable"));
     const consent = await nextCall(WS_METHODS.pluginsConsent);
@@ -276,9 +261,10 @@ describe("installing a plugin from npm", () => {
     const enable = await nextCall(WS_METHODS.pluginsEnable);
     expect(enable.input).toEqual({ installationId });
   });
-
   it("sends nothing for a version range", async () => {
-    await mount([], { packages: [] });
+    using _setup = await setup();
+    await using screen = await renderScreen(null, { router: false });
+    await mount(screen, [], { packages: [] });
     await click(button("Install from npm"));
     await type(field("Package"), "t3-notifier");
     await type(field("Version or tag"), "^1.0.0");
@@ -287,10 +273,11 @@ describe("installing a plugin from npm", () => {
     expect(fake().calls(WS_METHODS.pluginsNpmAdd)).toEqual([]);
   });
 });
-
 describe("reviewing an npm download", () => {
   it("discards an unapproved download by removing it, once", async () => {
-    await mount([installation()], { packages: [npmPackage()] });
+    using _setup = await setup();
+    await using screen = await renderScreen(null, { router: false });
+    await mount(screen, [installation()], { packages: [npmPackage()] });
     await click(button("Review"));
     expect(reviewField("Package")).toBe("@acme/t3-notifier@1.0.0");
     await click(button("Discard"));
@@ -300,27 +287,25 @@ describe("reviewing an npm download", () => {
     expect(fake().calls(WS_METHODS.pluginsRemove)).toHaveLength(1);
   });
 });
-
 describe("updating an npm plugin", () => {
   it("checks what is installed after a failed download, even when a list arrived during it", async () => {
-    await mount([approved], { packages: [npmPackage()] });
+    using _setup = await setup();
+    await using screen = await renderScreen(null, { router: false });
+    await mount(screen, [approved], { packages: [npmPackage()] });
     await click(button("Actions for Notifier"));
     await click(button("Details"));
     await type(field("Version or tag"), "1.1.0");
     await click(button("Download update"));
     const stage = await nextCall(WS_METHODS.pluginsNpmStageUpdate);
     expect(stage.input).toEqual({ installationId, version: "1.1.0" });
-
     await publish([approved, other]);
     await answerList(await nextCall(WS_METHODS.pluginsNpmList), { packages: [npmPackage()] });
-
     await act(async () => stage.fail(new Error("The registry did not answer.")));
     const afterFailure = await nextCall(WS_METHODS.pluginsNpmList);
     expect(elements("[role=status]", "Checking what is installed…")).toHaveLength(1);
     expect(document.querySelector("[role=alert]")?.textContent).toBe(
       "The registry did not answer.",
     );
-
     // The download had landed after all: the next read shows it for review.
     await answerList(afterFailure, { packages: [npmPackage(STAGED)] });
     expect(reviewField("New version")).toBe("1.1.0");
@@ -336,3 +321,13 @@ describe("updating an npm plugin", () => {
     expect(apply.input).toEqual({ installationId, digest: STAGED });
   });
 });
+
+async function setup() {
+  fake().reset();
+  registry = AtomRegistry.make();
+  return {
+    [Symbol.dispose]() {
+      registry.dispose();
+    },
+  };
+}

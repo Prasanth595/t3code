@@ -1,5 +1,4 @@
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { act, render as renderScreen, type Screen } from "../../../test/render";
 import {
   AuthOrchestrationReadScope,
   AuthStandardClientScopes,
@@ -12,11 +11,10 @@ import {
   resolvePluginManageAccess,
 } from "@t3tools/client-runtime/state/pluginPresentation";
 import { AsyncResult } from "effect/reactivity";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-
+import { describe, expect, it, vi } from "vite-plus/test";
 const update = vi.hoisted(() => vi.fn());
-
-vi.mock("@effect/atom-react", () => ({
+vi.mock("@effect/atom-react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@effect/atom-react")>()),
   useAtomValue: () =>
     AsyncResult.success({
       _tag: "available",
@@ -31,9 +29,7 @@ vi.mock("../../state/plugins", () => ({
   pluginSettingsEnvironment: { values: () => "values", update: "update" },
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => update }));
-
 import { PluginSettingsForm } from "./PluginSettingsForm";
-
 const environmentId = EnvironmentId.make("remote");
 const installation = {
   installationId: PluginInstallationId.make("installation-1"),
@@ -45,7 +41,6 @@ const installation = {
     ],
   },
 } as unknown as PluginInstallation;
-
 /** The form as a session with these scopes sees it, settled. */
 function readOnlyFor(scopes: ReadonlyArray<string>) {
   return pluginSettingsReadOnly(
@@ -56,35 +51,21 @@ function readOnlyFor(scopes: ReadonlyArray<string>) {
     }),
   );
 }
-
-let root: Root;
-let container: HTMLDivElement;
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
-async function renderForm(readOnly: boolean) {
-  await act(async () =>
-    root.render(
-      <PluginSettingsForm
-        environmentId={environmentId}
-        installation={installation}
-        readOnly={readOnly}
-      />,
-    ),
+async function renderForm(screen: Screen, readOnly: boolean) {
+  await act(
+    async () =>
+      await screen.rerender(
+        <PluginSettingsForm
+          environmentId={environmentId}
+          installation={installation}
+          readOnly={readOnly}
+        />,
+      ),
   );
 }
-
 /** Edits the endpoint, submits through the form, and presses the saved secret's Clear control. */
-async function editAndSave(readOnly: boolean) {
-  await renderForm(readOnly);
+async function editAndSave(screen: Screen, readOnly: boolean) {
+  await renderForm(screen, readOnly);
   const input = document.getElementById("plugin-setting-installation-1-endpoint")!;
   await act(async () => {
     Object.getOwnPropertyDescriptor(
@@ -105,23 +86,21 @@ async function editAndSave(readOnly: boolean) {
   )!;
   await act(async () => clear.click());
 }
-
 describe("PluginSettingsForm access", () => {
-  beforeEach(() => {
-    update.mockReset().mockReturnValue(new Promise(() => undefined));
-  });
-
   it("is read-only for a pairing without management access and saves nothing by any path", async () => {
+    using _setup = await setup();
+    await using screen = await renderScreen(null, { router: false });
     const readOnly = readOnlyFor([AuthOrchestrationReadScope]);
     expect(readOnly).toBe(true);
-    await editAndSave(readOnly);
+    await editAndSave(screen, readOnly);
     expect(update).not.toHaveBeenCalled();
   });
-
   it("saves a standard session's edit", async () => {
+    using _setup = await setup();
+    await using screen = await renderScreen(null, { router: false });
     const readOnly = readOnlyFor(AuthStandardClientScopes);
     expect(readOnly).toBe(false);
-    await editAndSave(readOnly);
+    await editAndSave(screen, readOnly);
     // The submit saves; the form then locks until it settles, so Clear waits.
     expect(update).toHaveBeenCalledTimes(1);
     expect(update).toHaveBeenCalledWith({
@@ -132,9 +111,10 @@ describe("PluginSettingsForm access", () => {
       },
     });
   });
-
   it("preserves multiline text and replacement secrets through a save", async () => {
-    await renderForm(false);
+    using _setup = await setup();
+    await using screen = await renderScreen(null, { router: false });
+    await renderForm(screen, false);
     const values = [
       ["endpoint", '{\n  "endpoint": "https://example.test"\n}'],
       ["token", "-----BEGIN KEY-----\nprivate-data\n-----END KEY-----"],
@@ -152,7 +132,7 @@ describe("PluginSettingsForm access", () => {
       });
     }
     await act(async () =>
-      container
+      screen.container
         .querySelector("form")!
         .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
     );
@@ -165,3 +145,8 @@ describe("PluginSettingsForm access", () => {
     });
   });
 });
+
+async function setup() {
+  update.mockReset().mockReturnValue(new Promise(() => undefined));
+  return { [Symbol.dispose]() {} };
+}
