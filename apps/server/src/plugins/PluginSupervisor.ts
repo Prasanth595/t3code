@@ -806,7 +806,15 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
         }
         if (exit && drained) return yield* handleExit(entry, child, exit.code, exit.signal);
       }
-    }).pipe(Effect.forkIn(fibers));
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          channel.destroy();
+          childProcess.stderr?.destroy();
+        }),
+      ),
+      Effect.forkIn(fibers, { startImmediately: true }),
+    );
     return child;
   });
 
@@ -884,6 +892,8 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
         return child;
       }).pipe(Effect.exit);
       entry.starting = undefined;
+      if (Exit.isFailure(started) && entry.state._tag === "starting")
+        yield* setState(entry, { _tag: "idle" });
       yield* Deferred.done(claim.deferred, started);
     }).pipe(Effect.forkIn(fibers, { startImmediately: true, uninterruptible: true }));
     return yield* Effect.interruptible(Deferred.await(claim.deferred));
