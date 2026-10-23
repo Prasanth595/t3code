@@ -165,6 +165,19 @@ describe("ChatMarkdown ordered list layout", () => {
       document.documentElement.style.removeProperty("--test-ordered-list-font");
     }
   });
+
+  it("restores the single-digit gutter after reusing a list with wider numbers", async () => {
+    setup();
+    const markdown = (text: string) => <ChatMarkdown cwd={undefined} text={text} />;
+    await using screen = await render(markdown("1. First"));
+    const padding = () =>
+      Number.parseFloat(getComputedStyle(screen.container.querySelector("ol")!).paddingInlineStart);
+    const originalPadding = padding();
+    await screen.rerender(markdown("99. First\n100. Second"));
+    expect(padding()).toBeGreaterThan(originalPadding);
+    await screen.rerender(markdown("1. First"));
+    expect(padding()).toBe(originalPadding);
+  });
 });
 
 describe("ChatMarkdown favicon privacy", () => {
