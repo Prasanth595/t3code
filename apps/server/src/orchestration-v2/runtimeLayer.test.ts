@@ -3700,6 +3700,82 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("marks a thread its own agent marked unread once the turn completes", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const projectId = ProjectId.make("runtime-layer-mark-unread-after-run-project");
+      const threadId = ThreadId.make("runtime-layer-mark-unread-after-run-thread");
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-mark-unread-after-run-create"),
+        threadId,
+        projectId,
+        title: "Mark unread after run",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/runtime-layer-mark-unread-after-run",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-mark-unread-after-run-message"),
+        threadId,
+        messageId: MessageId.make("runtime-layer-mark-unread-after-run-message"),
+        text: "Report back and then mark this thread unread.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const started = yield* orchestrator.getThreadProjection(threadId);
+      const run = started.runs[0];
+      if (run === undefined) return yield* Effect.die(new Error("Run missing."));
+
+      const markedUnread = yield* orchestrator
+        .streamStoredEventsFrom({ threadId, afterSequence: 0, eventType: "thread.marked-unread" })
+        .pipe(Stream.runHead, Effect.forkChild);
+      const result = yield* threadManagement.markThreadUnread({
+        threadId,
+        commandId: CommandId.make("runtime-layer-mark-unread-after-run-mark"),
+        byOwnAgent: true,
+      });
+      assert.deepEqual(result, { marksUnreadWhenTurnEnds: true });
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.lastVisitedAt,
+        started.thread.lastVisitedAt,
+      );
+      yield* TestClock.adjust("1 second");
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        commandId: CommandId.make("runtime-layer-mark-unread-after-run-completed"),
+        events: [
+          {
+            id: EventId.make("runtime-layer-mark-unread-after-run-completed"),
+            type: "run.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+          },
+        ],
+      });
+      yield* Fiber.join(markedUnread);
+
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        projection.thread.lastVisitedAt,
+        DateTime.subtract(now, { milliseconds: 1 }),
+      );
+    }),
+  );
+
   it.effect("settles past held automatic runs but not held user messages", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
