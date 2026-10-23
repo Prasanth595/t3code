@@ -40,6 +40,8 @@ const VARIANT_WORDS = new Set([
   "chat",
   "tts",
   "stt",
+  "non",
+  "transcribe",
 ]);
 
 const VERSION = /^v?\d+(?:\.\d+)*[a-z]?$/i;
@@ -59,7 +61,7 @@ function withoutFamily(name: string, driver: string): string | undefined {
   const named = nonVersionWords(rest);
   if (named.length === 0) return undefined;
   if (!family.nativeDrivers.includes(driver) && !namesModel(rest)) return undefined;
-  return rest.replace(/(?<=\S)-(?=\S)/g, " ");
+  return /\s/.test(rest) ? rest : rest.replaceAll("-", " ");
 }
 
 function nonVersionWords(text: string): ReadonlyArray<string> {
