@@ -57,10 +57,7 @@ export function composerRequiresModifier(
   );
 }
 
-/**
- * Intent for a plain send (Enter, the send button). The Start in Background
- * binding does the opposite in a new thread.
- */
+/** Intent for a plain send from this route: Enter and the send button. */
 export function composerDefaultSendIntent(input: {
   isDraftThread: boolean;
   startNewThreadsInBackground: boolean;
