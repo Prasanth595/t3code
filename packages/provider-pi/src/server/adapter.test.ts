@@ -1311,74 +1311,72 @@ describe("PiAdapterV2", () => {
         [providerThread.id, "t3:background:tests", "Tests running"],
       ]);
 
-      // A vetoed switch keeps the outgoing session, so its unfinished jobs are
-      // listed again; a job that ended while the switch was in flight is not.
-      yield* setStatus("t3:background:build", "Build running");
+      // While a switch waits on Pi's hooks, the outgoing session still owns its
+      // jobs: they stay listed and keep the run listening for their updates.
+      const switchSession = Effect.fnUntraced(function* (
+        duringSwitch: Effect.Effect<void>,
+        cancelled: boolean,
+      ) {
+        fake.deferNextLifecycle("new_session");
+        const switching = yield* runtime
+          .ensureThread({
+            threadId: THREAD_ID,
+            modelSelection: modelSelection("default"),
+            runtimePolicy,
+          })
+          .pipe(Effect.result, Effect.forkScoped);
+        const newSession = yield* fake.takeRequest("new_session");
+        assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
+        yield* duringSwitch;
+        yield* fake.emit({
+          type: "response",
+          id: newSession["id"],
+          command: "new_session",
+          success: true,
+          data: { cancelled },
+        });
+        return yield* Fiber.join(switching);
+      });
+
+      // A vetoed switch keeps the outgoing session and every job it still runs.
       yield* setStatus("t3:background:docs", "Docs building");
       assert.lengthOf(yield* takeRoster(), 2);
-      assert.lengthOf(yield* takeRoster(), 3);
-      fake.deferNextLifecycle("new_session");
-      const vetoing = yield* runtime
-        .ensureThread({
-          threadId: THREAD_ID,
-          modelSelection: modelSelection("default"),
-          runtimePolicy,
-        })
-        .pipe(Effect.flip, Effect.forkScoped);
-      const newSession = yield* fake.takeRequest("new_session");
-      assert.lengthOf(yield* takeRoster(), 0);
-      yield* setStatus("t3:background:build");
-      // Pi's events are handled in order, so an answered dialog proves the clear landed.
-      yield* fake.emit({
-        type: "extension_ui_request",
-        id: "switch-hook-dialog",
-        method: "confirm",
-        title: "Switch sessions?",
-      });
-      const dialog = yield* takeEvent((event) => event.type === "runtime_request.updated");
-      if (dialog.type !== "runtime_request.updated") return;
-      yield* runtime.respondToRuntimeRequest({
-        requestId: dialog.runtimeRequest.id,
-        decision: "accept",
-      });
-      yield* fake.takeRequest("extension_ui_response");
-      yield* fake.emit({
-        type: "response",
-        id: newSession["id"],
-        command: "new_session",
-        success: true,
-        data: { cancelled: true },
-      });
-      assert.equal((yield* Fiber.join(vetoing))._tag, "ProviderAdapterEnsureThreadError");
-      assert.deepStrictEqual(yield* takeRoster(), [
-        [providerThread.id, "t3:background:tests", "Tests running"],
-        [providerThread.id, "t3:background:docs", "Docs building"],
-      ]);
-      // The veto left no bound thread, but the roster still follows the work.
-      yield* setStatus("t3:background:docs");
-      assert.lengthOf(yield* takeRoster(), 1);
-      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
-
-      // A replaced session invalidates the job's context, so it can never clear.
-      const replacement = yield* runtime.ensureThread({
-        threadId: THREAD_ID,
-        modelSelection: modelSelection("default"),
-        runtimePolicy,
-      });
-      // The vetoed switch already unbound the thread; its roster still empties.
-      assert.lengthOf(yield* takeRoster(), 0);
-      const registered = yield* takeEvent((event) => event.type === "provider_thread.updated");
-      assert.isTrue(
-        registered.type === "provider_thread.updated" &&
-          registered.providerThread.id === replacement.id &&
-          replacement.id !== providerThread.id,
+      const vetoed = yield* switchSession(
+        Effect.gen(function* () {
+          yield* setStatus("t3:background:docs");
+          assert.lengthOf(yield* takeRoster(), 1);
+        }),
+        true,
       );
-      assert.deepStrictEqual(replacement.pendingBackgroundTasks, []);
-      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
-      yield* setStatus("t3:background:deploy", "Deploying");
-      assert.lengthOf(yield* takeRoster(), 1);
-      yield* setStatus("t3:background:deploy", "");
-      assert.lengthOf(yield* takeRoster(), 0);
+      assert.equal(vetoed._tag, "Failure");
+      // The veto left no bound thread, but the roster still follows the work.
+      yield* setStatus("t3:background:docs", "Docs building");
+      assert.lengthOf(yield* takeRoster(), 2);
+
+      // A replaced session invalidates the old jobs' context, so they can never
+      // clear. A job's progress update that Pi sent mid-switch is still old work;
+      // a key first set mid-switch comes from the new session's start hooks.
+      fake.queueState({ sessionFile: "/fake/replaced.jsonl" });
+      const replaced = yield* switchSession(
+        Effect.gen(function* () {
+          yield* setStatus("t3:background:tests", "Tests 50%");
+          yield* setStatus("t3:background:deploy", "Deploying");
+        }),
+        false,
+      );
+      assert.equal(replaced._tag, "Success");
+      if (replaced._tag !== "Success") return;
+      assert.deepStrictEqual(
+        replaced.success.pendingBackgroundTasks?.map((task) => task.taskId),
+        ["t3:background:deploy"],
+      );
+      yield* setStatus("t3:background:deploy");
+      yield* takeEvent(
+        (event) =>
+          event.type === "provider_thread.updated" &&
+          event.providerThread.id === replaced.success.id &&
+          event.providerThread.pendingBackgroundTasks?.length === 0,
+      );
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );

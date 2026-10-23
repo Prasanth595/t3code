@@ -552,8 +552,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       // The last bound thread, whose roster lists backgroundWork. Unlike
       // threadState it survives a failed or vetoed session switch.
       let backgroundWorkState: PiThreadState | null = null;
-      // Work dropped by an in-flight lifecycle request, restored if it is vetoed.
-      let outgoingBackgroundWork: Map<string, string> | null = null;
       let rollbackBarrier: Deferred.Deferred<
         void,
         ProviderAdapter.ProviderAdapterProtocolError
@@ -679,15 +677,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       const syncBackgroundWork = (state: PiThreadState) =>
         updateProviderThread(state, { pendingBackgroundTasks: pendingBackgroundTasks() });
 
-      const lifecycleRequest = Effect.fnUntraced(function* (record: PiRpcRecord) {
-        // Pi invalidates the outgoing session's extension context, so its jobs
-        // can no longer clear their statuses. Pi's own TUI drops them here too.
-        const outgoingWork = new Map(backgroundWork);
-        const outgoingState = backgroundWorkState;
-        outgoingBackgroundWork = outgoingWork;
-        backgroundWork.clear();
-        if (outgoingState !== null && outgoingWork.size > 0)
-          yield* syncBackgroundWork(outgoingState);
+      const lifecycleRequest = Effect.fn("PiAdapter.lifecycleRequest")(function* (
+        record: PiRpcRecord,
+      ) {
+        const outgoingKeys = new Set(backgroundWork.keys());
         const result = yield* request(record, PI_SESSION_TIMEOUT_MS).pipe(
           // A local timeout does not cancel Pi's lifecycle hook. Retire the
           // process before fallback can race its eventual switch/new-session.
@@ -703,18 +696,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               connection.terminate.pipe(Effect.andThen(Effect.fail(error))),
           }),
           Effect.onInterrupt(() => connection.terminate),
-          Effect.ensuring(
-            Effect.sync(() => {
-              outgoingBackgroundWork = null;
-            }),
-          ),
         );
-        if (recordField(result, "cancelled") === true && outgoingState !== null) {
-          // A job may have cleared its status while the switch was in flight.
-          for (const [key, description] of outgoingWork) {
-            if (!backgroundWork.has(key)) backgroundWork.set(key, description);
-          }
-          if (backgroundWork.size > 0) yield* syncBackgroundWork(outgoingState);
+        if (recordField(result, "cancelled") !== true && outgoingKeys.size > 0) {
+          // Pi invalidates the outgoing session's extension context, so its
+          // jobs can no longer clear their statuses; Pi's own TUI drops them
+          // here too. Responses bypass the pump, so first apply every status
+          // Pi sent before replying. Keys first set during the switch belong
+          // to the replacement session's start hooks.
+          const drained = yield* Deferred.make<void>();
+          if (yield* Queue.offer(connection.events, { type: "t3.drain", drained }))
+            yield* Deferred.await(drained);
+          for (const key of outgoingKeys) backgroundWork.delete(key);
+          if (backgroundWorkState !== null) yield* syncBackgroundWork(backgroundWorkState);
         }
         return result;
       });
@@ -1296,9 +1289,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           if (description.length > 0) {
             if (backgroundWork.get(statusKey) === description) return;
             backgroundWork.set(statusKey, description);
-          } else {
-            outgoingBackgroundWork?.delete(statusKey);
-            if (!backgroundWork.delete(statusKey)) return;
+          } else if (!backgroundWork.delete(statusKey)) {
+            return;
           }
           if (backgroundWorkState !== null) yield* syncBackgroundWork(backgroundWorkState);
           return;
@@ -2118,6 +2110,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             for (const extensionError of outOfTurnExtensionErrors.splice(0)) {
               yield* emitExtensionError(extensionError);
             }
+            return;
+          }
+          case "t3.drain": {
+            const drained = event["drained"];
+            if (Deferred.isDeferred<void, never>(drained))
+              yield* Deferred.succeed(drained, undefined);
             return;
           }
           case "t3.rollback_barrier": {
