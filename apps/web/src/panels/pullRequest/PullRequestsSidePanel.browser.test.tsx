@@ -1,3 +1,4 @@
+import { act, render as renderScreen, type Screen } from "../../../test/render";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   EnvironmentId,
@@ -5,9 +6,8 @@ import {
   type ScopedThreadRef,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import { act, Fragment, Suspense, type ReactElement, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { Fragment, Suspense, type ReactElement, type ReactNode } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 const { commands, linksByThread, Wrapper, Trigger } = vi.hoisted(() => ({
   commands: [] as Array<{ command: string; request: unknown }>,
@@ -21,17 +21,38 @@ const { commands, linksByThread, Wrapper, Trigger } = vi.hoisted(() => ({
     </>
   ),
 }));
+vi.mock("~/hooks/useHandleNewThread", () => ({ useNewThreadHandler: () => vi.fn() }));
+vi.mock("~/state/pullRequests", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    useSharedPullRequestSummary: () => null,
+    pullRequestEnvironment: {
+      changeBreakdown: () => null,
+      runAction: { permissionAtom: () => Atom.make(false) },
+    },
+  };
+});
 // The panel's list behavior is exercised without the virtualizer's browser geometry.
 vi.mock("@legendapp/list/react", () => ({
   LegendList: <T,>({
     data,
     renderItem,
+    keyExtractor,
   }: {
     data: ReadonlyArray<T>;
     renderItem: (input: { item: T; index: number }) => ReactNode;
-  }) => data.map((item, index) => <Fragment key={index}>{renderItem({ item, index })}</Fragment>),
+    keyExtractor: (item: T, index: number) => string;
+  }) =>
+    data.map((item, index) => (
+      <Fragment key={keyExtractor(item, index)}>{renderItem({ item, index })}</Fragment>
+    )),
 }));
 vi.mock("~/state/entities", () => ({
+  readProject: () => null,
+  readProjects: () => [],
+  readThreadShell: () => null,
+  readThreadShells: () => [],
+  useQuietThreadShell: () => null,
   // No projects, so rows offer no project-scoped fast actions.
   useProjects: () => [],
   // Only environment-new supports linked pull requests.
@@ -81,8 +102,12 @@ vi.mock("~/components/ui/tooltip", () => ({
 vi.mock("~/components/ui/menu", () => ({
   Menu: Wrapper,
   MenuPopup: Wrapper,
+  MenuGroup: Wrapper,
+  MenuRadioGroup: Wrapper,
+  MenuRadioItem: "button",
   MenuTrigger: Trigger,
   MenuItem: "button",
+  MenuSeparator: () => null,
 }));
 
 import { RegisteredSidePanel } from "../bundledPanels";
@@ -104,8 +129,6 @@ const link = (repository: string, number: number): ThreadPullRequestLink => ({
   snapshot: null,
   stack: null,
 });
-let root: Root;
-let container: HTMLDivElement;
 
 const panelFor = (threadRef: ScopedThreadRef) => {
   const host: PanelHost = {
@@ -125,40 +148,23 @@ const panelFor = (threadRef: ScopedThreadRef) => {
 };
 
 // One root across hosts, so a host change reaches the already mounted list.
-async function renderFor(threadRef: ScopedThreadRef) {
-  await act(async () => {
-    root.render(panelFor(threadRef));
-  });
+async function renderFor(screen: Screen, threadRef: ScopedThreadRef) {
+  await screen.rerender(panelFor(threadRef));
 }
 
-const hasText = (text: string) => container.textContent?.includes(text) ?? false;
-
-// Transform the lazy body once up front, so mounting it settles inside one act().
-beforeAll(() => import("./PullRequestsSidePanel"));
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-
-  commands.length = 0;
-  linksByThread.clear();
-  linksByThread.set(scopedThreadKey(refOn("environment-new")), [link("owner/alpha", 11)]);
-  linksByThread.set(scopedThreadKey(refOn("environment-old")), [link("owner/beta", 22)]);
-});
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
+const hasText = (screen: Screen, text: string) =>
+  screen.container.textContent?.includes(text) ?? false;
 
 describe("linked pull requests side panel", () => {
   it("lists and unlinks the host thread's pull requests", async () => {
-    await renderFor(refOn("environment-new"));
-    expect(hasText("owner/alpha")).toBe(true);
-    expect(hasText("owner/beta")).toBe(false);
+    resetFixture();
+    await import("./PullRequestsSidePanel");
+    await using screen = await renderScreen(null, { router: false });
+    await renderFor(screen, refOn("environment-new"));
+    expect(hasText(screen, "owner/alpha")).toBe(true);
+    expect(hasText(screen, "owner/beta")).toBe(false);
 
-    const unlink = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+    const unlink = Array.from(screen.container.querySelectorAll<HTMLButtonElement>("button")).find(
       (node) => node.textContent?.includes("Unlink from thread"),
     );
     expect(unlink).toBeDefined();
@@ -175,16 +181,26 @@ describe("linked pull requests side panel", () => {
   });
 
   it("follows the host to a thread whose environment cannot link pull requests", async () => {
-    await renderFor(refOn("environment-new"));
-    expect(hasText("owner/alpha")).toBe(true);
+    resetFixture();
+    await import("./PullRequestsSidePanel");
+    await using screen = await renderScreen(null, { router: false });
+    await renderFor(screen, refOn("environment-new"));
+    expect(hasText(screen, "owner/alpha")).toBe(true);
 
-    await renderFor(refOn("environment-old"));
-    expect(hasText("Linked pull requests unavailable")).toBe(true);
-    expect(hasText("owner/alpha")).toBe(false);
-    expect(hasText("owner/beta")).toBe(false);
+    await renderFor(screen, refOn("environment-old"));
+    expect(hasText(screen, "Linked pull requests unavailable")).toBe(true);
+    expect(hasText(screen, "owner/alpha")).toBe(false);
+    expect(hasText(screen, "owner/beta")).toBe(false);
 
     linksByThread.set(scopedThreadKey(refOn("environment-new")), [link("owner/gamma", 33)]);
-    await renderFor(refOn("environment-new"));
-    expect(hasText("owner/gamma")).toBe(true);
+    await renderFor(screen, refOn("environment-new"));
+    expect(hasText(screen, "owner/gamma")).toBe(true);
   });
 });
+
+function resetFixture() {
+  commands.length = 0;
+  linksByThread.clear();
+  linksByThread.set(scopedThreadKey(refOn("environment-new")), [link("owner/alpha", 11)]);
+  linksByThread.set(scopedThreadKey(refOn("environment-old")), [link("owner/beta", 22)]);
+}
