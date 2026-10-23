@@ -1,8 +1,7 @@
+import { act, render as renderScreen, stubGlobal, type Screen } from "../../test/render";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 
@@ -12,33 +11,6 @@ const threadRef: ScopedThreadRef = {
   environmentId: EnvironmentId.make("environment-a"),
   threadId: ThreadId.make("thread-a"),
 };
-
-let root: Root;
-let container: HTMLDivElement;
-
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  );
-  // jsdom lacks the Web Animations API that the tab bar's scroll area waits on.
-  Element.prototype.getAnimations ??= () => [];
-  useRightPanelStore.setState({ byThreadKey: {} });
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
 
 // Shows the thread's surfaces from the real right-panel store and opens the
 // terminal into it the way ChatView's addTerminalSurface does.
@@ -90,8 +62,8 @@ function Harness({ terminalAvailable }: { terminalAvailable: boolean }) {
   );
 }
 
-function launcherRow(label: string): HTMLElement {
-  const launcher = container.querySelector('[aria-label="Open a surface"]');
+function launcherRow(screen: Screen, label: string): HTMLElement {
+  const launcher = screen.container.querySelector('[aria-label="Open a surface"]');
   // Unavailable rows render as aria-disabled elements rather than buttons.
   const row = [
     ...(launcher?.querySelectorAll<HTMLElement>('button, [aria-disabled="true"]') ?? []),
@@ -115,21 +87,45 @@ const threadSurfaces = () =>
 
 describe("opening Terminal from the launcher", () => {
   it("opens a terminal surface from the row when a project allows it", async () => {
-    await act(async () => root.render(<Harness terminalAvailable />));
+    resetFixture();
+    using _resizeObserver = stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    await using screen = await renderScreen(null, { router: false });
+    await screen.rerender(<Harness terminalAvailable />);
 
-    await click(launcherRow("Terminal"));
+    await click(launcherRow(screen, "Terminal"));
     expect(threadSurfaces()).toMatchObject([{ kind: "terminal", activeTerminalId: "term-1" }]);
-    expect(container.querySelector('[aria-label="Open a surface"]')).toBeNull();
-    expect(container.textContent).toContain("Terminal 1");
+    expect(screen.container.querySelector('[aria-label="Open a surface"]')).toBeNull();
+    expect(screen.container.textContent).toContain("Terminal 1");
   });
 
   it("keeps the row disabled and opens nothing without a project", async () => {
-    await act(async () => root.render(<Harness terminalAvailable={false} />));
+    resetFixture();
+    using _resizeObserver = stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    await using screen = await renderScreen(null, { router: false });
+    await screen.rerender(<Harness terminalAvailable={false} />);
 
-    const row = launcherRow("Terminal");
+    const row = launcherRow(screen, "Terminal");
     expect(row.getAttribute("aria-disabled")).toBe("true");
     await click(row);
     expect(threadSurfaces()).toEqual([]);
-    expect(container.querySelector('[aria-label="Open a surface"]')).not.toBeNull();
+    expect(screen.container.querySelector('[aria-label="Open a surface"]')).not.toBeNull();
   });
 });
+
+function resetFixture() {
+  useRightPanelStore.setState({ byThreadKey: {} });
+}
