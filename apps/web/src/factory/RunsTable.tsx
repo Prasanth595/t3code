@@ -16,7 +16,15 @@ import {
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import type { FactoryRunRow } from "./api";
-import { formatAge, labelForState, parseRunId, shownState, stateBadgeVariant } from "./format";
+import {
+  formatAge,
+  issueRef,
+  labelForState,
+  parseRunId,
+  prRef,
+  shownState,
+  stateBadgeVariant,
+} from "./format";
 import { TouchLink } from "./TouchLink";
 
 const startedMs = (run: FactoryRunRow) =>
@@ -37,29 +45,6 @@ const newestFirst = (a: EnvironmentRun, b: EnvironmentRun) => {
   return y - x;
 };
 
-/** `#30` for a GitHub pull request URL, else a plain label. */
-const prLabel = (url: string) => {
-  const match = /\/pull\/(\d+)/.exec(url);
-  return match ? `#${match[1]}` : "PR";
-};
-
-/** The issue of a run id: `#20` linked to GitHub when numeric, else the bare text. */
-const issueRef = (parsed: NonNullable<ReturnType<typeof parseRunId>>) =>
-  /^[0-9]+$/.test(parsed.issue)
-    ? {
-        text: `#${parsed.issue}`,
-        href: `https://github.com/${parsed.owner}/${parsed.repo}/issues/${parsed.issue}`,
-      }
-    : { text: parsed.issue, href: null };
-
-/** The pull request of a run: linked only for a github.com URL, else the URL as text. */
-const prRef = (url: string | null | undefined) => {
-  if (!url) return null;
-  return url.startsWith("https://github.com/")
-    ? { text: prLabel(url), href: url }
-    : { text: url, href: null };
-};
-
 const stateBadge = (run: FactoryRunRow) => {
   if (run.unreadable) return <Badge variant="error">unreadable</Badge>;
   const state = shownState(run.state, run.pr_end);
@@ -67,7 +52,7 @@ const stateBadge = (run: FactoryRunRow) => {
 };
 
 /** A reference that is a link when it has a target, else plain text; `touch` on the phone cards. */
-function Ref({
+export function Ref({
   text,
   href,
   touch = false,
@@ -99,7 +84,7 @@ function RunCard({
   nowMs: number;
 }) {
   const parsed = parseRunId(run.id);
-  const issue = parsed ? issueRef(parsed) : null;
+  const issue = parsed ? issueRef(`${parsed.owner}/${parsed.repo}`, parsed.issue) : null;
   const pr = prRef(run.pr_url);
   return (
     <li className="flex flex-col rounded-lg border bg-card text-sm">
@@ -227,7 +212,7 @@ export function RunsTable({
         <TableBody>
           {sorted.map(({ environmentId, label, run }) => {
             const parsed = parseRunId(run.id);
-            const issue = parsed ? issueRef(parsed) : null;
+            const issue = parsed ? issueRef(`${parsed.owner}/${parsed.repo}`, parsed.issue) : null;
             const pr = prRef(run.pr_url);
             return (
               <TableRow key={`${environmentId} ${run.id}`}>

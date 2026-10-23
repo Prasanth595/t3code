@@ -337,6 +337,12 @@ describe("FactoryPage", () => {
     expect(text).toContain("run ended stuck: the gate failed");
     expect(text).toContain("1h");
     expect(text.indexOf("run ended stuck")).toBeLessThan(text.indexOf("launch-sending"));
+    const issue = page
+      .all("a")
+      .find((a) => a.textContent === "original-solutions/t3code-factory#20");
+    expect(issue?.getAttribute("href")).toBe(
+      "https://github.com/original-solutions/t3code-factory/issues/20",
+    );
   });
 
   it("shows an idle factory with its reason", async () => {
@@ -348,6 +354,8 @@ describe("FactoryPage", () => {
     const text = page.text();
     expect(text).toContain("Mac Studio");
     expect(text).toContain("Idle: no factory config");
+    const settings = page.all("a").find((a) => a.textContent === "Factory settings");
+    expect(settings?.getAttribute("data-to")).toBe("/settings/factory");
   });
 
   it("pauses claims, shows the answer and refreshes", async () => {
@@ -866,7 +874,7 @@ describe("FactoryPage dismissing attention items", () => {
     state.status = resource({ data: statusData({ attention: [ATTENTION, CONFIG, PASS] }) });
     await using page = await render(createElement(FactoryPage));
     const linksIn = (message: string) => Array.from(itemOf(page, message)!.querySelectorAll("a"));
-    const [run] = linksIn(ATTENTION.message);
+    const run = linksIn(ATTENTION.message).find((a) => a.hasAttribute("data-to"));
     expect(run!.getAttribute("data-to")).toBe("/factory/$environmentId/$runId");
     expect(JSON.parse(run!.getAttribute("data-params")!)).toEqual({
       environmentId: "env-2",

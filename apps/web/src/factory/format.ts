@@ -80,7 +80,6 @@ export interface GateOutput {
   readonly commands: ReadonlyArray<GateCommand>;
   /** What was last sent to the session: untrusted text, show it as text only. */
   readonly message: string | null;
-  readonly stuckReason: string | null;
 }
 
 const MESSAGE_EVENTS = new Set([
@@ -90,8 +89,8 @@ const MESSAGE_EVENTS = new Set([
 ]);
 
 /**
- * What a ledger holds of the last gate: the commands of the highest attempt, the message of the
- * last relaunch or forward after that attempt's last command, and the reason of the last `stuck` entry when it names the gate.
+ * What a ledger holds of the last gate: the commands of the highest attempt, and the message of
+ * the last relaunch or forward after that attempt's last command.
  */
 export function lastGateOutput(entries: ReadonlyArray<FactoryEntry>): GateOutput {
   let attempt: number | null = null;
@@ -110,7 +109,6 @@ export function lastGateOutput(entries: ReadonlyArray<FactoryEntry>): GateOutput
   });
   const commands: Array<GateCommand> = [];
   let message: string | null = null;
-  let stuckReason: string | null = null;
   for (const [index, entry] of entries.entries()) {
     if (entry.event === "gate_command" && numberField(entry.data, "attempt") === attempt) {
       const command = textField(entry.data, "command");
@@ -121,12 +119,9 @@ export function lastGateOutput(entries: ReadonlyArray<FactoryEntry>): GateOutput
       }
     } else if (MESSAGE_EVENTS.has(entry.event) && index > lastCommandAt) {
       message = textField(entry.data, "message") ?? message;
-    } else if (entry.event === "stuck") {
-      const reason = textField(entry.data, "reason");
-      stuckReason = reason !== null && /gate/i.test(reason) ? reason : null;
     }
   }
-  return { attempt, commands, message, stuckReason };
+  return { attempt, commands, message };
 }
 
 /** The time since `sinceMs` (Unix epoch ms) as `5m`; a dash when it is not a time. */
@@ -186,4 +181,47 @@ export function prEndOf(entries: ReadonlyArray<FactoryEntry>): PrEnd | null {
 /** A `finished` entry is written: the run is over whatever its last state says. */
 export function runIsFinished(entries: ReadonlyArray<FactoryEntry>): boolean {
   return entries.some((entry) => entry.event === "finished");
+}
+
+/** What a stuck or needs-info run waits on a person for: untrusted text, show it as text only. */
+export function whyStopped(
+  entries: ReadonlyArray<FactoryEntry>,
+): { readonly title: string; readonly text: string } | null {
+  const state = runState(entries);
+  const [event, key, title] =
+    state === "stuck"
+      ? ["stuck", "reason", "Why it is stuck"]
+      : state === "needs-info"
+        ? ["questions_posted", "questions", "Questions on the issue"]
+        : [null, null, null];
+  if (event === null) return null;
+  const text = textField(entries.findLast((entry) => entry.event === event)?.data, key);
+  return text === null ? null : { title, text };
+}
+
+/** A reference to show: a link when it has a target, else plain text. */
+export interface LinkRef {
+  readonly text: string;
+  readonly href: string | null;
+}
+
+/** An issue of `owner/repo`: `#20` linked to GitHub when numeric, else the bare text. */
+export const issueRef = (repo: string, issue: string): LinkRef =>
+  /^[0-9]+$/.test(issue)
+    ? { text: `#${issue}`, href: `https://github.com/${repo}/issues/${issue}` }
+    : { text: issue, href: null };
+
+/** A pull request: `#30` linked only for a github.com URL, else the URL as text. */
+export const prRef = (url: string | null | undefined): LinkRef | null => {
+  if (!url) return null;
+  const match = /\/pull\/(\d+)/.exec(url);
+  return url.startsWith("https://github.com/")
+    ? { text: match ? `#${match[1]}` : "PR", href: url }
+    : { text: url, href: null };
+};
+
+/** The `finished` line's pull request URL, else the last `pr_opened` one, as the runs list reads it. */
+export function prUrlOf(entries: ReadonlyArray<FactoryEntry>): string | null {
+  const end = textField(entries.findLast((entry) => entry.event === "finished")?.data, "pr_url");
+  return end ?? textField(entries.findLast((entry) => entry.event === "pr_opened")?.data, "url");
 }

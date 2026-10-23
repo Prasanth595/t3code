@@ -250,6 +250,46 @@ describe("FactoryRunPage", () => {
     expect(page.text()).toContain("run is not building");
   });
 
+  it("shows a stuck run's whole reason as text, and links its issue and pull request", async () => {
+    using _state = setup();
+    const reason = `the session stopped and said it was stuck <b>disk</b> ${"x".repeat(400)}`;
+    state.run = resource({
+      data: detail([
+        ...BUILDING,
+        entry("pr_opened", {
+          pr: 31,
+          url: "https://github.com/original-solutions/t3code-factory/pull/31",
+        }),
+        entry("stuck", { reason }),
+        entry("state_changed", { from: "building", to: "stuck" }),
+        entry("finished", { outcome: "stuck", pr_url: null }),
+      ]),
+    });
+    await using page = await mount();
+    const why = page.all("section").find((s) => s.textContent?.startsWith("Why it is stuck"));
+    expect(why?.querySelector("p")?.textContent).toBe(reason);
+    expect(page.all("b")).toHaveLength(0);
+    const hrefs = page.all("a").map((a) => a.getAttribute("href"));
+    expect(hrefs).toContain("https://github.com/original-solutions/t3code-factory/issues/20");
+    expect(hrefs).toContain("https://github.com/original-solutions/t3code-factory/pull/31");
+  });
+
+  it("shows the questions a needs-info run posted on its issue", async () => {
+    using _state = setup();
+    state.run = resource({
+      data: detail([
+        ...BUILDING,
+        entry("questions_posted", { questions: "Which page should the link go on?" }),
+        entry("state_changed", { from: "building", to: "needs-info" }),
+      ]),
+    });
+    await using page = await mount();
+    const why = page
+      .all("section")
+      .find((s) => s.textContent?.startsWith("Questions on the issue"));
+    expect(why?.textContent).toContain("Which page should the link go on?");
+  });
+
   it("disables Stop for a run that is not building or is finished", async () => {
     using _state = setup();
     state.run = resource({
