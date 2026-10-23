@@ -6,18 +6,32 @@ import * as Path from "effect/Path";
 import * as Tracer from "effect/Tracer";
 
 import * as ServerConfig from "../../config.ts";
-import { makeSpanRegistry, wrapTracer } from "../observability/spanRegistry.ts";
+import {
+  makeSpanRegistry,
+  type TrackedSpanReport,
+  wrapTracer,
+} from "../observability/spanRegistry.ts";
 import { startStallDetector } from "../observability/stallDetector.ts";
 import { makeStallProfiler } from "../observability/stallProfiler.ts";
 
 const STALL_LOG_MAX_BYTES = 256 * 1024;
 const REPORTED_SPANS = 5;
 
+const listed = (label: string, spans: ReadonlyArray<TrackedSpanReport>) =>
+  spans.length === 0
+    ? ""
+    : `; ${label}: ${spans
+        .map((s) => `${s.name} (${s.ageMs} ms)${s.query === undefined ? "" : ` ${s.query}`}`)
+        .join(", ")}`;
+
 export interface StallAttributionOptions {
   readonly intervalMs?: number;
   readonly thresholdMs?: number;
   /** Set false to skip CPU profiles. */
   readonly profile?: boolean;
+  /** Tests shorten these; the profiler's defaults are 5 s and 30 s. */
+  readonly profileThresholdMs?: number;
+  readonly profileDurationMs?: number;
 }
 
 /**
@@ -67,6 +81,12 @@ const attributionLayer = (options: StallAttributionOptions) =>
           ? undefined
           : makeStallProfiler({
               dir: path.join(logsDir, "stall-profiles"),
+              ...(options.profileThresholdMs !== undefined && {
+                thresholdMs: options.profileThresholdMs,
+              }),
+              ...(options.profileDurationMs !== undefined && {
+                durationMs: options.profileDurationMs,
+              }),
               onWritten: (file) =>
                 void runFork(Effect.logInfo("factory stall profile written", { file })),
               onError: (error) =>
@@ -82,15 +102,11 @@ const attributionLayer = (options: StallAttributionOptions) =>
             thresholdMs: options.thresholdMs ?? 2000,
             onStall: ({ stallMs, windowStartMs, windowEndMs }) => {
               const spans = registry.active(windowStartMs, windowEndMs, REPORTED_SPANS);
-              const summary = spans
-                .map(
-                  (s) => `${s.name} (${s.ageMs} ms)${s.query === undefined ? "" : ` ${s.query}`}`,
-                )
-                .join(", ");
+              const oldestInFlight = registry.oldestInFlight(windowEndMs, REPORTED_SPANS);
               if (sink !== undefined) {
                 try {
                   sink.write(
-                    `${JSON.stringify({ time: DateTime.formatIso(DateTime.nowUnsafe()), stallMs, spans })}\n`,
+                    `${JSON.stringify({ time: DateTime.formatIso(DateTime.nowUnsafe()), stallMs, spans, oldestInFlight })}\n`,
                   );
                 } catch {
                   runFork(
@@ -100,8 +116,8 @@ const attributionLayer = (options: StallAttributionOptions) =>
               }
               runFork(
                 Effect.logWarning(
-                  `factory event loop stalled for ${stallMs} ms${summary === "" ? "" : `; in flight: ${summary}`}`,
-                  { stallMs, spans },
+                  `factory event loop stalled for ${stallMs} ms${listed("during the stall", spans)}${listed("oldest in flight", oldestInFlight)}`,
+                  { stallMs, spans, oldestInFlight },
                 ),
               );
               profileOnStall?.(stallMs);

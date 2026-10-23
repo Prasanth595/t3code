@@ -47,6 +47,11 @@ export interface SpanRegistry {
     windowEndMs: number,
     limit: number,
   ): ReadonlyArray<TrackedSpanReport>;
+  /**
+   * The root spans and SQL statements still open at `atMs`, oldest first: what the server was
+   * in the middle of, as opposed to `active`'s likely blocker.
+   */
+  oldestInFlight(atMs: number, limit: number): ReadonlyArray<TrackedSpanReport>;
 }
 
 export interface SpanRegistryOptions {
@@ -70,6 +75,14 @@ export const makeSpanRegistry = (options: SpanRegistryOptions = {}): SpanRegistr
   const recent: Array<Entry | undefined> = Array.from({ length: maxRecent });
   let recentNext = 0;
   let nextId = 0;
+
+  const report = (entry: Entry, atMs: number): TrackedSpanReport => ({
+    name: entry.name,
+    kind: entry.kind,
+    ageMs: Math.round(atMs - entry.startMs),
+    open: entry.endMs === undefined,
+    ...(entry.query !== undefined && { query: entry.query }),
+  });
 
   return {
     start(name, kind, parentId) {
@@ -132,13 +145,16 @@ export const makeSpanRegistry = (options: SpanRegistryOptions = {}): SpanRegistr
           b.startMs - a.startMs,
       );
       earlier.sort((a, b) => b.startMs - a.startMs);
-      return [...inWindow, ...earlier].slice(0, limit).map((entry) => ({
-        name: entry.name,
-        kind: entry.kind,
-        ageMs: Math.round(windowEndMs - entry.startMs),
-        open: entry.endMs === undefined,
-        ...(entry.query !== undefined && { query: entry.query }),
-      }));
+      return [...inWindow, ...earlier].slice(0, limit).map((entry) => report(entry, windowEndMs));
+    },
+    oldestInFlight(atMs, limit) {
+      const found: Array<TrackedSpanReport> = [];
+      for (const entry of open.values()) {
+        if (found.length >= limit) break;
+        if (entry.startMs > atMs) continue;
+        if (entry.parentId === undefined || entry.kind === "sql") found.push(report(entry, atMs));
+      }
+      return found;
     },
   };
 };
