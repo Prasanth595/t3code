@@ -2421,71 +2421,91 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("restores approvals and questions after a slow owned-server recovery", () =>
-    Effect.gen(function* () {
-      const reading = yield* Deferred.make<void>();
-      const resume = yield* Deferred.make<void>();
-      const requests = yield* Queue.unbounded<RuntimeRequestId>();
-      const { runtime, thread } = yield* resumed(
-        [
-          out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
-          promptAccepted,
-          ...reconnected({ [SESSION]: { type: "running" } }),
-          ...openRequests([shellAsk.data], [colorForm]),
-          out("permission.reply", {
-            sessionID: SESSION,
-            requestID: shellAsk.data.id,
-            decision: "once",
-          }),
-          reply("permission.reply", null),
-          out("session.form.reply", {
-            sessionID: SESSION,
-            formID: colorForm.id,
-            answer: { q0: "Red" },
-          }),
-          reply("session.form.reply", null),
-          event("session.execution.succeeded", { sessionID: SESSION }),
-        ],
-        {
-          supervised: true,
-          beforeResponse: (path) =>
-            path.endsWith("/message")
-              ? Deferred.succeed(reading, undefined).pipe(Effect.andThen(Deferred.await(resume)))
-              : Effect.void,
-        },
-      );
-      const ended = yield* Deferred.make<void>();
-      yield* runtime.events.pipe(
-        Stream.runForEach((event) =>
-          Effect.gen(function* () {
-            if (
-              event.type === "runtime_request.updated" &&
-              event.runtimeRequest.status === "pending"
-            ) {
-              yield* Queue.offer(requests, event.runtimeRequest.id);
-            }
-            if (event.type === "turn.terminal") {
-              assert.equal(event.status, "completed");
-              yield* Deferred.succeed(ended, undefined);
-            }
-          }),
-        ),
-        Effect.forkScoped,
-      );
-      yield* runtime.startTurn(turnInput(thread, bigPickle, "approval-required"));
-      yield* Deferred.await(reading);
-      yield* TestClock.adjust("2 minutes");
-      yield* Deferred.succeed(resume, undefined);
-      yield* runtime.respondToRuntimeRequest({
-        requestId: yield* Queue.take(requests),
-        decision: "accept",
-      });
-      yield* runtime.respondToRuntimeRequest({
-        requestId: yield* Queue.take(requests),
-        answers: { q0: "Red" },
-      });
-      yield* Deferred.await(ended);
-    }).pipe(Effect.scoped),
+  it.effect.each(["lists", "stream"] as const)(
+    "restores approvals and questions from %s after slow recovery",
+    (source) =>
+      Effect.gen(function* () {
+        const gate = makeProviderReplayGate(["late-permission"]);
+        let holdReads = false;
+        const reading = yield* Deferred.make<void>();
+        const resume = yield* Deferred.make<void>();
+        const requests = yield* Queue.unbounded<RuntimeRequestId>();
+        const { runtime, thread } = yield* resumed(
+          [
+            out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+            promptAccepted,
+            ...reconnected({ [SESSION]: { type: "running" } }),
+            ...openRequests(
+              source === "lists" ? [shellAsk.data] : [],
+              source === "lists" ? [colorForm] : [],
+            ),
+            ...(source === "stream"
+              ? [
+                  event("permission.asked", shellAsk.data, "late-permission"),
+                  event("form.created", { form: colorForm }),
+                ]
+              : []),
+            out("permission.reply", {
+              sessionID: SESSION,
+              requestID: shellAsk.data.id,
+              decision: "once",
+            }),
+            reply("permission.reply", null),
+            out("session.form.reply", {
+              sessionID: SESSION,
+              formID: colorForm.id,
+              answer: { q0: "Red" },
+            }),
+            reply("session.form.reply", null),
+            event("session.execution.succeeded", { sessionID: SESSION }),
+          ],
+          {
+            supervised: true,
+            replayGate: gate,
+            beforeResponse: (path) =>
+              holdReads && path.endsWith(source === "stream" ? "/form" : "/message")
+                ? Deferred.succeed(reading, undefined).pipe(Effect.andThen(Deferred.await(resume)))
+                : Effect.void,
+          },
+        );
+        const ended = yield* Deferred.make<void>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) =>
+            Effect.gen(function* () {
+              if (
+                event.type === "runtime_request.updated" &&
+                event.runtimeRequest.status === "pending"
+              ) {
+                yield* Queue.offer(requests, event.runtimeRequest.id);
+              }
+              if (event.type === "turn.terminal") {
+                assert.equal(event.status, "completed");
+                yield* Deferred.succeed(ended, undefined);
+              }
+            }),
+          ),
+          Effect.forkScoped,
+        );
+        holdReads = true;
+        yield* runtime.startTurn(turnInput(thread, bigPickle, "approval-required"));
+        yield* Deferred.await(reading);
+        if (source === "stream") {
+          yield* Effect.promise(() => gate.waitForReached("late-permission"));
+          gate.release("late-permission");
+        }
+        yield* TestClock.adjust("2 minutes");
+        assert.equal(yield* Queue.size(requests), 0);
+        yield* Deferred.succeed(resume, undefined);
+        yield* runtime.respondToRuntimeRequest({
+          requestId: yield* Queue.take(requests),
+          decision: "accept",
+        });
+        yield* runtime.respondToRuntimeRequest({
+          requestId: yield* Queue.take(requests),
+          answers: { q0: "Red" },
+        });
+        yield* Deferred.await(ended);
+      }).pipe(Effect.scoped),
   );
 
   it.effect("fails owned work when the process exits during a stalled history read", () =>
