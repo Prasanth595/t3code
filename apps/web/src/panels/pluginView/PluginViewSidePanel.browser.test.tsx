@@ -7,9 +7,8 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { act, render as renderScreen, type Screen } from "../../../test/render";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { SessionPluginViews } from "~/state/pluginViewSessions";
 
@@ -93,45 +92,28 @@ async function publish(next: SessionPluginViews) {
   });
 }
 
-const frames = () => [...container.querySelectorAll("iframe")];
-
-let container: HTMLDivElement;
-let root: Root;
-
-// Transform the lazy body once up front, so mounting it settles inside one act().
-beforeAll(async () => {
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-  await import("./PluginViewSidePanel");
-});
-
-beforeEach(async () => {
-  state.current = { session: null, views: null };
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  await act(async () => {
-    root.render(
-      <PanelHostContext value={host}>
-        <RegisteredSidePanel id="plugin-view" surface={surface} />
-      </PanelHostContext>,
-    );
-  });
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-});
+const frames = (screen: Screen) => [...screen.container.querySelectorAll("iframe")];
 
 describe("a registered plugin view tab", () => {
   it("mounts only what the current session offers and tears the frame down when that ends", async () => {
+    state.current = { session: null, views: null };
+    await using screen = await renderScreen(
+      <PanelHostContext value={host}>
+        <RegisteredSidePanel id="plugin-view" surface={surface} />
+      </PanelHostContext>,
+      { router: false },
+    );
+    await expect
+      .element(screen.getByText("Waiting for the environment.", { exact: true }))
+      .toBeVisible();
+
     const sessionA = {} as NonNullable<SessionPluginViews["session"]>;
     await publish({
       session: sessionA,
       views: { _tag: "available", views: [view(1)], problems: [] },
     });
-    expect(frames()).toHaveLength(1);
-    const [first] = frames();
+    expect(frames(screen)).toHaveLength(1);
+    const [first] = frames(screen);
     expect(first!.getAttribute("sandbox")).toBe("allow-scripts");
     expect(first!.getAttribute("allow")).toBe("");
     expect(first!.srcdoc).toContain("'sha256-hash-1'");
@@ -142,24 +124,24 @@ describe("a registered plugin view tab", () => {
       session: sessionA,
       views: { _tag: "available", views: [view(2)], problems: [] },
     });
-    expect(frames()).toHaveLength(1);
-    expect(frames()[0]).not.toBe(first);
-    expect(frames()[0]!.srcdoc).toContain("'sha256-hash-2'");
-    expect(frames()[0]!.srcdoc).not.toContain("'sha256-hash-1'");
+    expect(frames(screen)).toHaveLength(1);
+    expect(frames(screen)[0]).not.toBe(first);
+    expect(frames(screen)[0]!.srcdoc).toContain("'sha256-hash-2'");
+    expect(frames(screen)[0]!.srcdoc).not.toContain("'sha256-hash-1'");
 
     // Disable or remove: the snapshot no longer lists the view.
     await publish({ session: sessionA, views: { _tag: "available", views: [], problems: [] } });
-    expect(frames()).toHaveLength(0);
-    expect(container.textContent).toContain("Board is not available");
+    expect(frames(screen)).toHaveLength(0);
+    expect(screen.container.textContent).toContain("Board is not available");
 
     // A new session has no authority until it sends its own snapshot.
     await publish({ session: {} as NonNullable<SessionPluginViews["session"]>, views: null });
-    expect(frames()).toHaveLength(0);
-    expect(container.textContent).toContain("Waiting for the environment.");
+    expect(frames(screen)).toHaveLength(0);
+    expect(screen.container.textContent).toContain("Waiting for the environment.");
 
     // A server without views never shows one.
     await publish({ session: sessionA, views: { _tag: "unsupported" } });
-    expect(frames()).toHaveLength(0);
-    expect(container.textContent).toContain("Plugin views are unavailable");
+    expect(frames(screen)).toHaveLength(0);
+    expect(screen.container.textContent).toContain("Plugin views are unavailable");
   });
 });

@@ -81,7 +81,8 @@ vi.mock("~/state/session", async () => {
     },
     environmentSessionStatesAtom: () => Atom.make([]),
     readPreparedConnection: () => null,
-    usePreparedConnection: () => null,
+    usePreparedConnection: (): ReturnType<typeof import("~/state/session").usePreparedConnection> =>
+      Option.none(),
 
     useEnvironmentScope: () => true,
     readEnvironmentScope: () => true,
@@ -167,7 +168,7 @@ vi.mock("~/components/files/projectFilesQueryState", () => ({
 vi.mock("~/components/DiffWorkerPoolProvider", () => ({ DiffWorkerPoolProvider: Wrapper }));
 // The Pierre tree is a web component; this stand-in keeps the real panel's right-click handler.
 vi.mock("@pierre/trees/react", () => ({
-  FileTree: () => null,
+  FileTree: () => <span>File tree ready</span>,
   useFileTree: (options: {
     composition: { contextMenu: { onOpen: (item: unknown, context: unknown) => void } };
     onSelectionChange: (paths: ReadonlyArray<string>) => void;
@@ -341,6 +342,13 @@ async function renderFileFor(
     } as unknown as ChatComposerHandle;
     await screen.rerender(element);
   });
+  if (relativePath === null) {
+    await expect.element(screen.getByText("File tree ready", { exact: true })).toBeVisible();
+  } else {
+    await expect
+      .element(screen.getByRole("navigation", { name: "File path", exact: true }))
+      .toBeVisible();
+  }
 }
 
 async function press(node: HTMLButtonElement) {
@@ -348,6 +356,9 @@ async function press(node: HTMLButtonElement) {
 }
 
 async function openSrcFolder(screen: Screen) {
+  await expect
+    .element(screen.getByRole("button", { name: "Browse src", exact: true }))
+    .toBeVisible();
   const browse = screen.container.querySelectorAll<HTMLButtonElement>(
     'button[aria-label="Browse src"]',
   );
