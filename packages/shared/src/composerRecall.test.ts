@@ -81,4 +81,16 @@ describe("composer recall provenance", () => {
       edited,
     );
   });
+
+  it("retains original whitespace when an unchanged queued draft is saved again", () => {
+    const authored = "  original draft\n";
+    const queued = authored.trim();
+    const context = composerRecallContext(queued, authored);
+    expect(recallComposerText(queued, composerRecallContext(queued, queued, context, queued))).toBe(
+      authored,
+    );
+    expect(
+      recallComposerText("edited", composerRecallContext("edited", "edited", context, queued)),
+    ).toBe("edited");
+  });
 });

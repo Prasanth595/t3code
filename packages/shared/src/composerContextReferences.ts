@@ -369,7 +369,17 @@ export function composerRecallContext(
   sentText: string,
   composerText: string,
   context?: OrchestrationMessageContext,
+  previousText?: string,
 ): OrchestrationMessageContext | undefined {
+  // A queued editor can reopen the already-trimmed wire text. A no-op save
+  // must not replace the captured original with that lossy representation.
+  if (
+    context?.composerRecall !== undefined &&
+    composerText === previousText &&
+    sentText === previousText
+  ) {
+    return context;
+  }
   const ids = new Set(context?.records.map((record) => record.contextId));
   let text = composerText;
   const references = collectComposerContextReferences(text);

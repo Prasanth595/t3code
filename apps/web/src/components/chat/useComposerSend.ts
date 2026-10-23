@@ -90,6 +90,7 @@ import { useClientSettingsHydrated, useEnvironmentSettings } from "../../hooks/u
 import { environmentPresentations } from "../../state/presentation";
 import {
   approvalRedirectNotice,
+  approvalFeedbackBlockReason,
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
@@ -995,11 +996,12 @@ export function useComposerSend(input: ComposerSendInput) {
         respondingRequestIdsRef.current.includes(approval.requestId),
       );
       if (approvalFeedbackTarget !== undefined) {
-        if (composerAttachmentsSnapshot.length > 0 || outgoingMessageContext !== undefined) {
-          setThreadError(
-            threadIdForSend,
-            "Send approval feedback without attachments or added context.",
-          );
+        const blocked = approvalFeedbackBlockReason(
+          composerAttachmentsSnapshot.length,
+          outgoingMessageContext,
+        );
+        if (blocked) {
+          setThreadError(threadIdForSend, blocked);
           sendInFlightRef.current = false;
           return;
         }

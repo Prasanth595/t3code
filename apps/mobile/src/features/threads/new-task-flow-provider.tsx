@@ -1038,7 +1038,7 @@ export function NewTaskFlowProvider(
       commandId: CommandId.make(metadata.commandId),
       text,
       attachments: draft.attachments,
-      context: composerRecallContext(text, draft.text, draft.context),
+      context: composerRecallContext(text, draft.text, draft.context, editingPendingTask?.text),
       modelSelection: draftModelSelection,
       runtimeMode: draft.runtimeMode ?? defaultRuntimeMode,
       interactionMode: resolvePendingTaskInteractionMode({
