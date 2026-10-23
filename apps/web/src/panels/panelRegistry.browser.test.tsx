@@ -1,6 +1,6 @@
-import { act, Suspense, useEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { act, render as renderScreen } from "../../test/render";
+import { Suspense, useEffect } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { createPanelRegistry } from "./panelRegistry";
 
@@ -13,22 +13,7 @@ const metadata = {
 
 // These exercise lazy evaluation and actual mount/disposal, without inspecting markup.
 describe("panel registry", () => {
-  let root: Root;
-  let container: HTMLDivElement;
-
-  beforeEach(() => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    container = document.createElement("div");
-    document.body.append(container);
-    root = createRoot(container);
-  });
-
-  afterEach(async () => {
-    await act(() => root.unmount());
-    container.remove();
-    vi.unstubAllGlobals();
-  });
-  it("rejects duplicate ids without loading either panel", () => {
+  it("rejects duplicate ids without loading either panel", async () => {
     const load = vi.fn();
     const definition = { ...metadata, id: "diff", title: "Diff", load } as const;
     expect(() => createPanelRegistry([definition, definition])).toThrow("Duplicate panel id: diff");
@@ -36,6 +21,7 @@ describe("panel registry", () => {
   });
 
   it("does no work until opened and keeps one mount across lookups", async () => {
+    await using screen = await renderScreen(null, { router: false });
     let finish!: (value: { default: typeof Panel }) => void;
     const loaded = new Promise<{ default: typeof Panel }>((resolve) => {
       finish = resolve;
@@ -53,13 +39,11 @@ describe("panel registry", () => {
     const registry = createPanelRegistry([{ ...metadata, id: "diff", title: "Diff", load }]);
     expect(load).not.toHaveBeenCalled();
     const Component = registry.get("diff").Component;
-    await act(async () => {
-      root.render(
-        <Suspense fallback={null}>
-          <Component />
-        </Suspense>,
-      );
-    });
+    await screen.rerender(
+      <Suspense fallback={null}>
+        <Component />
+      </Suspense>,
+    );
     expect(load).toHaveBeenCalledTimes(1);
     expect(mounted).not.toHaveBeenCalled();
     await act(async () => {
@@ -70,21 +54,20 @@ describe("panel registry", () => {
     // A parent re-render looks the panel up again; it must keep the same mount and state.
     const Again = registry.get("diff").Component;
     expect(Again).toBe(Component);
-    await act(async () => {
-      root.render(
-        <Suspense fallback={null}>
-          <Again />
-        </Suspense>,
-      );
-    });
+    await screen.rerender(
+      <Suspense fallback={null}>
+        <Again />
+      </Suspense>,
+    );
     expect(load).toHaveBeenCalledTimes(1);
     expect(mounted).toHaveBeenCalledTimes(1);
     expect(disposed).not.toHaveBeenCalled();
-    await act(() => root.render(null));
+    await screen.rerender(null);
     expect(disposed).toHaveBeenCalledTimes(1);
   });
 
   it("keeps heterogeneous panels independent and their lazy identities stable", async () => {
+    await using screen = await renderScreen(null, { router: false });
     const events: string[] = [];
     function Notes({ text }: { text: string }) {
       useEffect(() => {
@@ -122,32 +105,26 @@ describe("panel registry", () => {
     expect(loadNotes).not.toHaveBeenCalled();
     expect(loadCounter).not.toHaveBeenCalled();
 
-    await act(async () => {
-      root.render(
-        <Suspense fallback={null}>
-          <NotesPanel text="a" />
-        </Suspense>,
-      );
-    });
-    await act(async () => {
-      root.render(
-        <Suspense fallback={null}>
-          <NotesPanel text="a" />
-        </Suspense>,
-      );
-    });
+    await screen.rerender(
+      <Suspense fallback={null}>
+        <NotesPanel text="a" />
+      </Suspense>,
+    );
+    await screen.rerender(
+      <Suspense fallback={null}>
+        <NotesPanel text="a" />
+      </Suspense>,
+    );
     expect(loadNotes).toHaveBeenCalledTimes(1);
     expect(loadCounter).not.toHaveBeenCalled();
     expect(events).toEqual(["mount notes:a"]);
 
     const CounterPanel = registry.get("counter").Component;
-    await act(async () => {
-      root.render(
-        <Suspense fallback={null}>
-          <CounterPanel count={2} />
-        </Suspense>,
-      );
-    });
+    await screen.rerender(
+      <Suspense fallback={null}>
+        <CounterPanel count={2} />
+      </Suspense>,
+    );
     expect(loadCounter).toHaveBeenCalledTimes(1);
     expect(events).toEqual(["mount notes:a", "dispose notes", "mount counter:2"]);
     expect(registry.get("counter").Component).toBe(CounterPanel);
