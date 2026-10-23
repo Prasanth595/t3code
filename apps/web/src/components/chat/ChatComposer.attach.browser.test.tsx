@@ -6,7 +6,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { createRef } from "react";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -145,6 +145,10 @@ it("keeps a file picked on a phone after the picker collapses the composer", asy
   await expect.element(screen.getByRole("button", { name: "Attach files" })).toBeVisible();
   const input = screen.container.querySelector<HTMLInputElement>('input[type="file"]');
   if (!input) throw new Error("The composer has no file input.");
+  // Stubbed so no real picker opens; the paperclip must open this input.
+  const openPicker = vi.spyOn(input, "click").mockImplementation(() => {});
+  await userEvent.click(screen.getByRole("button", { name: "Attach files" }));
+  expect(openPicker).toHaveBeenCalledOnce();
 
   // Opening the OS picker blurs the editor, so the composer collapses while it is open.
   await act(() => (document.activeElement as HTMLElement | null)?.blur());
@@ -159,12 +163,12 @@ it("keeps a file picked on a phone after the picker collapses the composer", asy
   input.files = picked.files;
   await act(() => input.dispatchEvent(new Event("change", { bubbles: true })));
 
-  await expect
-    .poll(() =>
+  await vi.waitFor(() => {
+    expect(
       useComposerDraftStore
         .getState()
         .getComposerDraft(draftId)
         ?.files.map((file) => file.name),
-    )
-    .toEqual(["notes.txt"]);
+    ).toEqual(["notes.txt"]);
+  });
 });
