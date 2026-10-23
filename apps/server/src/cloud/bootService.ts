@@ -26,6 +26,7 @@ import {
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STATE_FILE,
   compareExactServiceVersions,
+  isExactServiceVersion,
   parseServiceState,
   serviceStateActiveVersion,
   serviceStateHasPendingUpdate,
@@ -756,18 +757,56 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (remaining[0]) return yield* new BootServicePrerequisiteError({ problem: remaining[0] });
   });
 
-  // Copies bytes, so the executable keeps its mode and embedded signature.
+  const launcherComplete = (directory: string) =>
+    Effect.all([
+      fs.exists(path.join(directory, path.basename(runtimePaths.entryPath))),
+      fs
+        .readFileString(path.join(directory, path.basename(runtimePaths.sentinelPath)))
+        .pipe(
+          Effect.catch((error) =>
+            error.reason._tag === "NotFound" ? Effect.succeed("") : Effect.fail(error),
+          ),
+        ),
+    ]).pipe(
+      Effect.map(
+        ([entryExists, sentinel]) => entryExists && isExactServiceVersion(sentinel.trim()),
+      ),
+    );
+  const recoverLauncher = Effect.suspend(() =>
+    launcher === undefined
+      ? Effect.void
+      : Effect.gen(function* () {
+          if (yield* launcherComplete(launcher.dir)) return;
+          // Restore a complete candidate before fallible runtime preparation.
+          // Prefer the previous launcher, since publication did not commit.
+          for (const candidate of [launcher.retiredDir, launcher.stagingDir]) {
+            if (yield* launcherComplete(candidate)) {
+              yield* fs.remove(launcher.dir, { recursive: true, force: true });
+              yield* fs.rename(candidate, launcher.dir);
+              return;
+            }
+          }
+        }),
+  ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+  // Copy the completion marker last: an interrupted tree copy must not look
+  // recoverable just because it already copied the source's marker and entry.
   const stageLauncher = Effect.suspend(() =>
     launcher === undefined
       ? Effect.void
       : Effect.gen(function* () {
-          // A process exit between the two publication renames can leave only
-          // the retired copy. Restore it before any fallible staging work.
-          if (!(yield* fs.exists(launcher.dir)) && (yield* fs.exists(launcher.retiredDir))) {
-            yield* fs.rename(launcher.retiredDir, launcher.dir);
-          }
           yield* fs.remove(launcher.stagingDir, { recursive: true, force: true });
-          yield* fs.copy(runtimePaths.versionDir, launcher.stagingDir);
+          const mode = (yield* fs.stat(runtimePaths.versionDir)).mode & 0o777;
+          yield* fs.makeDirectory(launcher.stagingDir, { mode });
+          const sentinel = path.basename(runtimePaths.sentinelPath);
+          for (const entry of yield* fs.readDirectory(runtimePaths.versionDir)) {
+            if (entry !== sentinel) {
+              yield* fs.copy(
+                path.join(runtimePaths.versionDir, entry),
+                path.join(launcher.stagingDir, entry),
+              );
+            }
+          }
+          yield* fs.copy(runtimePaths.sentinelPath, path.join(launcher.stagingDir, sentinel));
         }),
   ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
   // Renames, never overwrites: a launcher that is still running keeps its
@@ -804,7 +843,14 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const discardStagedLauncher = Effect.suspend(() =>
     launcher === undefined
       ? Effect.void
-      : fs.remove(launcher.stagingDir, { recursive: true, force: true }).pipe(Effect.ignore),
+      : launcherComplete(launcher.dir).pipe(
+          Effect.flatMap((complete) =>
+            complete
+              ? fs.remove(launcher.stagingDir, { recursive: true, force: true })
+              : Effect.void,
+          ),
+          Effect.ignore,
+        ),
   );
 
   const install = Effect.fn("cloud.boot_service.install")(function* (options?: {
@@ -820,6 +866,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* requireSystemdPrerequisites.pipe(Effect.tapError(logFailure));
     }
 
+    yield* recoverLauncher;
     yield* ensurePinnedRuntimeInstalled({
       baseDir: input.baseDir,
       version: input.cliVersion,

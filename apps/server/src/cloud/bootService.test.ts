@@ -904,7 +904,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const failingFs = FileSystem.FileSystem.of({
         ...fs,
         copy: (from, to, options) =>
-          to === `${launcherDir}.next`
+          to.startsWith(`${launcherDir}.next`)
             ? Effect.fail(
                 PlatformError.systemError({
                   _tag: "PermissionDenied",
@@ -926,39 +926,41 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("retries launcher cleanup after uninstall removed the plist", () =>
-    Effect.gen(function* () {
-      const { service, makeService, fs, baseDir } = yield* makeHarness("darwin");
-      const path = yield* Path.Path;
-      const launcherDir = path.join(baseDir, "runtime", "launcher");
-      yield* service.install();
-      yield* fs.makeDirectory(`${launcherDir}.next`);
-      yield* fs.makeDirectory(`${launcherDir}.prev`);
-      const failingFs = FileSystem.FileSystem.of({
-        ...fs,
-        remove: (target, options) =>
-          target === launcherDir
-            ? Effect.fail(
-                PlatformError.systemError({
-                  _tag: "PermissionDenied",
-                  module: "FileSystem",
-                  method: "remove",
-                  pathOrDescriptor: target,
-                }),
-              )
-            : fs.remove(target, options),
-      });
-      const failing = yield* makeService().pipe(
-        Effect.provideService(FileSystem.FileSystem, failingFs),
-      );
-      expect((yield* failing.uninstall.pipe(Effect.flip))._tag).toBe("BootServiceInstallError");
-      expect((yield* service.status).installed).toBe(false);
-      expect(yield* service.uninstall).toBe(true);
-      for (const directory of [launcherDir, `${launcherDir}.next`, `${launcherDir}.prev`]) {
-        expect(yield* fs.exists(directory)).toBe(false);
-      }
-      expect(yield* service.uninstall).toBe(false);
-    }),
+  it.effect.each(["", ".next", ".prev"])(
+    "retries launcher%s cleanup after uninstall removed the plist",
+    (suffix) =>
+      Effect.gen(function* () {
+        const { service, makeService, fs, baseDir } = yield* makeHarness("darwin");
+        const path = yield* Path.Path;
+        const launcherDir = path.join(baseDir, "runtime", "launcher");
+        yield* service.install();
+        yield* fs.makeDirectory(`${launcherDir}.next`);
+        yield* fs.makeDirectory(`${launcherDir}.prev`);
+        const failingFs = FileSystem.FileSystem.of({
+          ...fs,
+          remove: (target, options) =>
+            target === `${launcherDir}${suffix}`
+              ? Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "remove",
+                    pathOrDescriptor: target,
+                  }),
+                )
+              : fs.remove(target, options),
+        });
+        const failing = yield* makeService().pipe(
+          Effect.provideService(FileSystem.FileSystem, failingFs),
+        );
+        expect((yield* failing.uninstall.pipe(Effect.flip))._tag).toBe("BootServiceInstallError");
+        expect((yield* service.status).installed).toBe(false);
+        expect(yield* service.uninstall).toBe(true);
+        for (const directory of [launcherDir, `${launcherDir}.next`, `${launcherDir}.prev`]) {
+          expect(yield* fs.exists(directory)).toBe(false);
+        }
+        expect(yield* service.uninstall).toBe(false);
+      }),
   );
 
   it.effect("puts the previous launcher copy back when the swap fails on macOS", () =>
@@ -994,7 +996,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("retains recovery when publication and rollback both fail", () =>
+  it.effect("retains both complete copies when publication and rollback fail", () =>
     Effect.gen(function* () {
       const { service, makeService, fs, baseDir } = yield* makeHarness("darwin");
       const path = yield* Path.Path;
@@ -1017,16 +1019,223 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       const updated = yield* makeService(undefined, "1.2.4").pipe(
         Effect.provideService(FileSystem.FileSystem, failingFs),
       );
+      const runtime = pinnedRuntimePaths(path, baseDir, "1.2.4", "darwin");
+      yield* fs.writeFileString(runtime.entryPath, "new launcher\n");
+      yield* fs.chmod(runtime.entryPath, 0o755);
+      yield* fs.writeFileString(path.join(runtime.versionDir, "native.node"), "native payload\n");
       expect((yield* updated.install().pipe(Effect.flip))._tag).toBe("BootServiceInstallError");
       expect(yield* fs.exists(launcherDir)).toBe(false);
       expect(yield* fs.readFileString(path.join(`${launcherDir}.prev`, ".install-complete"))).toBe(
         "1.2.3\n",
       );
-      expect(yield* fs.exists(`${launcherDir}.next`)).toBe(false);
+      expect(yield* fs.readFileString(path.join(`${launcherDir}.next`, ".install-complete"))).toBe(
+        "1.2.4\n",
+      );
+      expect(yield* fs.readFileString(path.join(`${launcherDir}.next`, "t3"))).toBe(
+        "new launcher\n",
+      );
+      expect((yield* fs.stat(path.join(`${launcherDir}.next`, "t3"))).mode & 0o777).toBe(0o755);
+      expect(yield* fs.readFileString(path.join(`${launcherDir}.next`, "native.node"))).toBe(
+        "native payload\n",
+      );
+      expect((yield* updated.status).current).toBe(false);
+      expect(yield* fs.exists(path.join(baseDir, "runtime", SERVICE_RESTART_PENDING_FILE))).toBe(
+        true,
+      );
       const retry = yield* makeService(undefined, "1.2.4");
       yield* retry.install();
       expect((yield* retry.status).current).toBe(true);
       expect(yield* fs.exists(`${launcherDir}.prev`)).toBe(false);
+      expect(yield* fs.exists(`${launcherDir}.next`)).toBe(false);
+    }),
+  );
+
+  it.effect("recovers a first install's complete stage before a fresh copy can fail", () =>
+    Effect.gen(function* () {
+      const { makeService, fs, baseDir, commands } = yield* makeHarness("darwin");
+      const path = yield* Path.Path;
+      const launcherDir = path.join(baseDir, "runtime", "launcher");
+      const failingFs = FileSystem.FileSystem.of({
+        ...fs,
+        rename: (from, to) =>
+          from === `${launcherDir}.next` && to === launcherDir
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "rename",
+                  pathOrDescriptor: from,
+                }),
+              )
+            : fs.rename(from, to),
+      });
+      const service = yield* makeService().pipe(
+        Effect.provideService(FileSystem.FileSystem, failingFs),
+      );
+      expect((yield* service.install().pipe(Effect.flip))._tag).toBe("BootServiceInstallError");
+      expect(yield* fs.exists(launcherDir)).toBe(false);
+      expect(yield* fs.exists(`${launcherDir}.prev`)).toBe(false);
+      expect(yield* fs.readFileString(path.join(`${launcherDir}.next`, ".install-complete"))).toBe(
+        "1.2.3\n",
+      );
+      expect(commands.some((command) => command.startsWith("launchctl "))).toBe(false);
+      const retry = yield* makeService().pipe(
+        Effect.provideService(
+          FileSystem.FileSystem,
+          FileSystem.FileSystem.of({
+            ...fs,
+            copy: (from, to, options) =>
+              to.startsWith(`${launcherDir}.next`)
+                ? Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "PermissionDenied",
+                      module: "FileSystem",
+                      method: "copy",
+                      pathOrDescriptor: to,
+                    }),
+                  )
+                : fs.copy(from, to, options),
+          }),
+        ),
+      );
+      expect((yield* retry.install().pipe(Effect.flip))._tag).toBe("BootServiceInstallError");
+      expect(yield* fs.readFileString(path.join(launcherDir, ".install-complete"))).toBe("1.2.3\n");
+      expect(yield* fs.readFileString(path.join(launcherDir, "t3"))).toBe("#!/bin/sh\n");
+      yield* (yield* makeService()).install();
+      expect((yield* (yield* makeService()).status).current).toBe(true);
+    }),
+  );
+
+  it.effect.each(["absent", "empty", "entry-only"] as const)(
+    "recovers a complete stage with an %s fixed copy before runtime validation fails",
+    (fixed) =>
+      Effect.gen(function* () {
+        const { service, fs, baseDir, runtime, control } = yield* makeHarness("darwin");
+        const path = yield* Path.Path;
+        const launcherDir = path.join(baseDir, "runtime", "launcher");
+        yield* service.install();
+        yield* fs.rename(launcherDir, `${launcherDir}.next`);
+        yield* fs.makeDirectory(`${launcherDir}.prev`);
+        if (fixed !== "absent") yield* fs.makeDirectory(launcherDir);
+        if (fixed === "entry-only")
+          yield* fs.writeFileString(path.join(launcherDir, "t3"), "partial");
+        control.failCommand = `${runtime.entryPath} --version`;
+        expect((yield* service.install().pipe(Effect.flip))._tag).toBe("BootServiceCommandError");
+        expect(yield* fs.readFileString(path.join(launcherDir, ".install-complete"))).toBe(
+          "1.2.3\n",
+        );
+        expect(yield* fs.readFileString(path.join(launcherDir, "t3"))).toBe("#!/bin/sh\n");
+      }),
+  );
+
+  it.effect("restores the retired launcher before runtime validation can fail", () =>
+    Effect.gen(function* () {
+      const { service, fs, baseDir, runtime, control } = yield* makeHarness("darwin");
+      const path = yield* Path.Path;
+      const launcherDir = path.join(baseDir, "runtime", "launcher");
+      yield* service.install();
+      yield* fs.rename(launcherDir, `${launcherDir}.prev`);
+      yield* fs.makeDirectory(`${launcherDir}.next`);
+      control.failCommand = `${runtime.entryPath} --version`;
+      expect((yield* service.install().pipe(Effect.flip))._tag).toBe("BootServiceCommandError");
+      expect(yield* fs.readFileString(path.join(launcherDir, ".install-complete"))).toBe("1.2.3\n");
+    }),
+  );
+
+  it.effect.each(["read", "exists", "rename"] as const)(
+    "retains the only complete stage when recovery fails at %s",
+    (operation) =>
+      Effect.gen(function* () {
+        const { service, makeService, fs, baseDir, commands } = yield* makeHarness("darwin");
+        const path = yield* Path.Path;
+        const launcherDir = path.join(baseDir, "runtime", "launcher");
+        yield* service.install();
+        yield* fs.rename(launcherDir, `${launcherDir}.next`);
+        commands.length = 0;
+        const denied = (target: string) =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "FileSystem",
+              method: operation,
+              pathOrDescriptor: target,
+            }),
+          );
+        const failingFs = FileSystem.FileSystem.of({
+          ...fs,
+          readFileString: (target, ...args) =>
+            operation === "read" && target === path.join(`${launcherDir}.next`, ".install-complete")
+              ? denied(target)
+              : fs.readFileString(target, ...args),
+          exists: (target) =>
+            operation === "exists" && target === path.join(launcherDir, "t3")
+              ? denied(target)
+              : fs.exists(target),
+          rename: (from, to) =>
+            operation === "rename" && to === launcherDir ? denied(from) : fs.rename(from, to),
+        });
+        const retry = yield* makeService().pipe(
+          Effect.provideService(FileSystem.FileSystem, failingFs),
+        );
+        expect((yield* retry.install().pipe(Effect.flip))._tag).toBe("BootServiceInstallError");
+        expect(
+          yield* fs.readFileString(path.join(`${launcherDir}.next`, ".install-complete")),
+        ).toBe("1.2.3\n");
+        expect(yield* fs.readFileString(path.join(`${launcherDir}.next`, "t3"))).toBe(
+          "#!/bin/sh\n",
+        );
+        expect(yield* fs.exists(launcherDir)).toBe(false);
+        expect(commands).toEqual([]);
+      }),
+  );
+
+  it.effect("does not mark a partial launcher copy complete or recover it", () =>
+    Effect.gen(function* () {
+      const { service, makeService, fs, baseDir, runtime, control } = yield* makeHarness("darwin");
+      const path = yield* Path.Path;
+      const launcherDir = path.join(baseDir, "runtime", "launcher");
+      yield* fs.writeFileString(path.join(runtime.versionDir, "native.node"), "native payload");
+      let partialHadMarker = false;
+      const failingFs = FileSystem.FileSystem.of({
+        ...fs,
+        copy: (from, to, options) =>
+          fs.copy(from, to, options).pipe(
+            Effect.andThen(
+              to === `${launcherDir}.next` || to.endsWith("/native.node")
+                ? fs.remove(path.join(`${launcherDir}.next`, "native.node"), { force: true }).pipe(
+                    Effect.andThen(
+                      fs.exists(path.join(`${launcherDir}.next`, ".install-complete")),
+                    ),
+                    Effect.tap((exists) =>
+                      Effect.sync(() => {
+                        partialHadMarker = exists;
+                      }),
+                    ),
+                    Effect.andThen(
+                      Effect.fail(
+                        PlatformError.systemError({
+                          _tag: "PermissionDenied",
+                          module: "FileSystem",
+                          method: "copy",
+                          pathOrDescriptor: to,
+                        }),
+                      ),
+                    ),
+                  )
+                : Effect.void,
+            ),
+          ),
+      });
+      const failing = yield* makeService().pipe(
+        Effect.provideService(FileSystem.FileSystem, failingFs),
+      );
+      expect((yield* failing.install().pipe(Effect.flip))._tag).toBe("BootServiceInstallError");
+      expect(partialHadMarker).toBe(false);
+      expect(yield* fs.exists(`${launcherDir}.next`)).toBe(true);
+      expect(yield* fs.exists(path.join(`${launcherDir}.next`, ".install-complete"))).toBe(false);
+      control.failCommand = `${runtime.entryPath} --version`;
+      expect((yield* service.install().pipe(Effect.flip))._tag).toBe("BootServiceCommandError");
+      expect(yield* fs.exists(launcherDir)).toBe(false);
     }),
   );
 
@@ -1086,21 +1295,27 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("keeps the launcher copy when an install refuses a downgrade on macOS", () =>
-    Effect.gen(function* () {
-      const { makeService, fs, baseDir } = yield* makeHarness("darwin");
-      const path = yield* Path.Path;
-      yield* (yield* makeService(undefined, "1.2.4")).install();
+  it.effect.each([false, true])(
+    "preserves downgrade refusal after launcher recovery=%s",
+    (recover) =>
+      Effect.gen(function* () {
+        const { makeService, fs, baseDir } = yield* makeHarness("darwin");
+        const path = yield* Path.Path;
+        yield* (yield* makeService(undefined, "1.2.4")).install();
+        if (recover) {
+          const launcherDir = path.join(baseDir, "runtime", "launcher");
+          yield* fs.rename(launcherDir, `${launcherDir}.prev`);
+        }
 
-      const older = yield* makeService(undefined, "1.2.3");
-      expect((yield* older.install().pipe(Effect.flip))._tag).toBe(
-        "BootServiceDowngradeRefusedError",
-      );
-      expect(
-        yield* fs.readFileString(path.join(baseDir, "runtime", "launcher", ".install-complete")),
-      ).toBe("1.2.4\n");
-      expect(yield* fs.exists(path.join(baseDir, "runtime", "launcher.next"))).toBe(false);
-    }),
+        const older = yield* makeService(undefined, "1.2.3");
+        expect((yield* older.install().pipe(Effect.flip))._tag).toBe(
+          "BootServiceDowngradeRefusedError",
+        );
+        expect(
+          yield* fs.readFileString(path.join(baseDir, "runtime", "launcher", ".install-complete")),
+        ).toBe("1.2.4\n");
+        expect(yield* fs.exists(path.join(baseDir, "runtime", "launcher.next"))).toBe(false);
+      }),
   );
 
   it.effect("restarts the launch agent when repair fails", () =>
