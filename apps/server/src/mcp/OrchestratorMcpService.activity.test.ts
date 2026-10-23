@@ -6,6 +6,8 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderTurnId,
+  RunAttemptId,
   RunId,
   ScheduledTaskId,
   ThreadId,
@@ -14,7 +16,9 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import { expect, it } from "vite-plus/test";
+import { it as effectIt } from "@effect/vitest";
+import { TestClock } from "effect/testing";
+import { describe, expect, it } from "vite-plus/test";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -256,6 +260,8 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
     ],
     subagents: [],
     providerThreads: [],
+    providerTurns: [],
+    turnItems: [],
     updatedAt: now,
   } as unknown as OrchestrationV2ThreadProjection;
 
@@ -537,4 +543,303 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       .pipe(Effect.flip);
     expect(stopped.code).toBe("parent_not_active");
   }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+describe("taskStatus activity", () => {
+  const attemptId = RunAttemptId.make("attempt-mcp-child-2");
+  const supersededAttemptId = RunAttemptId.make("attempt-mcp-child-1");
+  const activeTurnId = ProviderTurnId.make("provider-turn-mcp-child-2");
+  const supersededTurnId = ProviderTurnId.make("provider-turn-mcp-child-1");
+  const lastEventAt = DateTime.makeUnsafe("2026-08-04T12:05:00.000Z");
+
+  const openItem = (
+    providerTurnId: ProviderTurnId | null,
+    overrides: { readonly status?: string; readonly runId?: RunId } = {},
+  ) => ({
+    id: `item-${providerTurnId ?? "app"}`,
+    type: "command_execution",
+    runId: overrides.runId ?? childRunId,
+    providerTurnId,
+    status: overrides.status ?? "running",
+    updatedAt: now,
+  });
+
+  const secondRunId = RunId.make("run-mcp-child-second");
+
+  const statusLayer = (input: {
+    readonly runStatus: "running" | "queued" | "completed";
+    readonly openItems?: ReadonlyArray<ReturnType<typeof openItem>>;
+    readonly activeAttemptId?: RunAttemptId | null;
+    readonly secondActiveRun?: boolean;
+    readonly requests?: Array<{
+      readonly fields: ReadonlyArray<string> | undefined;
+      readonly filter: unknown;
+    }>;
+  }) => {
+    const terminal = input.runStatus === "completed";
+    const parentProjection = {
+      thread: baseThread({
+        threadId: parentThreadId,
+        title: "Parent",
+        instanceId: parentInstanceId,
+        model: "gpt-5.4",
+      }),
+      runs: [makeRun({ id: activeRunId, ordinal: 1, status: "running" })],
+      runtimeRequests: [],
+      messages: [],
+      contextTransfers: [],
+      subagents: [
+        {
+          id: taskId,
+          threadId: parentThreadId,
+          runId: activeRunId,
+          origin: "app_owned",
+          providerInstanceId: parentInstanceId,
+          childThreadId,
+          model: "gpt-5.4",
+          status: input.runStatus === "queued" ? "running" : input.runStatus,
+          result: terminal ? "Done." : null,
+          completionDelivery: terminal ? { state: "acknowledged" } : undefined,
+        },
+      ],
+      updatedAt: now,
+    } as unknown as OrchestrationV2ThreadProjection;
+    const childProjection = {
+      thread: {
+        ...baseThread({
+          threadId: childThreadId,
+          title: "Child",
+          instanceId: parentInstanceId,
+          model: "gpt-5.4",
+        }),
+        updatedAt: lastEventAt,
+      },
+      runs: [
+        {
+          ...makeRun({ id: childRunId, ordinal: 1, status: input.runStatus }),
+          activeAttemptId: input.activeAttemptId === undefined ? attemptId : input.activeAttemptId,
+        },
+        ...(input.secondActiveRun
+          ? [
+              {
+                ...makeRun({ id: secondRunId, ordinal: 2, status: "running" }),
+                activeAttemptId: null,
+              },
+            ]
+          : []),
+      ],
+      providerTurns: [
+        { id: supersededTurnId, runAttemptId: supersededAttemptId },
+        { id: activeTurnId, runAttemptId: attemptId },
+      ],
+      turnItems: input.openItems ?? [],
+      nodes: [],
+      runtimeRequests: [],
+      messages: [],
+      contextTransfers: [
+        {
+          type: "subagent_spawn",
+          sourceThreadId: parentThreadId,
+          targetThreadId: childThreadId,
+          targetRunId: childRunId,
+        },
+      ],
+      subagents: [],
+      providerThreads: [],
+      updatedAt: lastEventAt,
+    } as unknown as OrchestrationV2ThreadProjection;
+
+    return layerOrchestratorService.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: (threadId, fields, filter) => {
+              if (threadId === parentThreadId) return Effect.succeed(parentProjection);
+              if (threadId !== childThreadId) return Effect.die(`unexpected thread ${threadId}`);
+              input.requests?.push({ fields, filter });
+              return Effect.succeed(childProjection);
+            },
+            delegatedTaskResultPending: () => Effect.succeed(false),
+          } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+          ServerSettings.layerTest(),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed([]),
+          } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+            list: () => Effect.succeed([]),
+          } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
+          NodeCrypto.layer,
+        ),
+      ),
+    );
+  };
+
+  const readStatus = Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    return yield* service.taskStatus(makeScope(), taskId);
+  });
+
+  effectIt.effect("reports how long a running task has recorded no activity", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(DateTime.toEpochMillis(lastEventAt) + 12 * 60_000);
+      const stale = yield* readStatus;
+      expect(stale).toMatchObject({
+        status: "running",
+        lastActivityAt: "2026-08-04T12:05:00.000Z",
+        idleForMs: 12 * 60_000,
+        hasRunningItem: false,
+      });
+
+      yield* TestClock.adjust("3 minutes");
+      expect((yield* readStatus).idleForMs).toBe(15 * 60_000);
+    }).pipe(Effect.provide(statusLayer({ runStatus: "running" }))),
+  );
+
+  const hasRunningItem = (input: Parameters<typeof statusLayer>[0]) =>
+    readStatus.pipe(
+      Effect.map((result) => result.hasRunningItem),
+      Effect.provide(statusLayer(input)),
+    );
+
+  effectIt.effect("counts open items only from the run's active attempt", () =>
+    Effect.gen(function* () {
+      const running = { runStatus: "running" } as const;
+      expect(yield* hasRunningItem({ ...running, openItems: [openItem(supersededTurnId)] })).toBe(
+        false,
+      );
+      expect(yield* hasRunningItem({ ...running, openItems: [openItem(activeTurnId)] })).toBe(true);
+      // Workspace preparation runs before the provider turn exists.
+      expect(yield* hasRunningItem({ ...running, openItems: [openItem(null)] })).toBe(true);
+      const unknownTurn = ProviderTurnId.make("provider-turn-mcp-unknown");
+      expect(yield* hasRunningItem({ ...running, openItems: [openItem(unknownTurn)] })).toBe(true);
+      // Without an active attempt nothing is known to be superseded.
+      expect(
+        yield* hasRunningItem({
+          ...running,
+          activeAttemptId: null,
+          openItems: [openItem(supersededTurnId)],
+        }),
+      ).toBe(true);
+    }),
+  );
+
+  effectIt.effect("ignores settled items and items of runs the child does not have", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* hasRunningItem({
+          runStatus: "running",
+          openItems: [
+            openItem(activeTurnId, { status: "completed" }),
+            openItem(null, { runId: RunId.make("run-mcp-missing") }),
+          ],
+        }),
+      ).toBe(false);
+    }),
+  );
+
+  effectIt.effect("counts an open item of another active run in the child", () =>
+    Effect.gen(function* () {
+      const requests: NonNullable<Parameters<typeof statusLayer>[0]["requests"]> = [];
+      expect(
+        yield* hasRunningItem({
+          runStatus: "running",
+          secondActiveRun: true,
+          openItems: [openItem(null, { runId: secondRunId })],
+          requests,
+        }),
+      ).toBe(true);
+      expect(
+        requests.find(
+          (request) => request.fields?.length === 1 && request.fields[0] === "turnItems",
+        )?.filter,
+      ).toMatchObject({ turnItemRunIds: [childRunId, secondRunId] });
+    }),
+  );
+
+  effectIt.effect("loads open items and provider turns only when they are needed", () =>
+    Effect.gen(function* () {
+      type Requests = NonNullable<Parameters<typeof statusLayer>[0]["requests"]>;
+      const activityQueries = (requests: Requests) =>
+        requests.filter(
+          (request) =>
+            request.fields?.length === 1 &&
+            (request.fields[0] === "turnItems" || request.fields[0] === "providerTurns"),
+        );
+
+      const appItem: Requests = [];
+      yield* hasRunningItem({
+        runStatus: "running",
+        openItems: [openItem(null)],
+        requests: appItem,
+      });
+      expect(activityQueries(appItem)).toEqual([
+        {
+          fields: ["turnItems"],
+          filter: {
+            turnItemRunIds: [childRunId],
+            turnItemStatuses: ["pending", "running", "waiting"],
+          },
+        },
+      ]);
+      expect(appItem.some((request) => request.fields?.includes("providerTurns"))).toBe(false);
+
+      const providerItem: Requests = [];
+      yield* hasRunningItem({
+        runStatus: "running",
+        openItems: [openItem(activeTurnId)],
+        requests: providerItem,
+      });
+      expect(activityQueries(providerItem).map((request) => request.fields)).toEqual([
+        ["turnItems"],
+        ["providerTurns"],
+      ]);
+
+      for (const [runStatus, expected] of [
+        ["queued", "queued"],
+        ["completed", "completed"],
+      ] as const) {
+        const requests: Requests = [];
+        const result = yield* readStatus.pipe(
+          Effect.provide(statusLayer({ runStatus, openItems: [openItem(activeTurnId)], requests })),
+        );
+        expect(result.status).toBe(expected);
+        expect(activityQueries(requests)).toEqual([]);
+      }
+
+      // A terminal task whose child still has other active work reports no activity.
+      const laterWork: Requests = [];
+      const terminal = yield* readStatus.pipe(
+        Effect.provide(
+          statusLayer({
+            runStatus: "completed",
+            secondActiveRun: true,
+            openItems: [openItem(null, { runId: secondRunId })],
+            requests: laterWork,
+          }),
+        ),
+      );
+      expect(terminal.status).toBe("completed");
+      expect(terminal.hasRunningItem).toBe(false);
+      expect(activityQueries(laterWork)).toEqual([]);
+    }),
+  );
+
+  effectIt.effect("omits activity for a terminal task", () =>
+    Effect.gen(function* () {
+      const finished = yield* readStatus.pipe(
+        Effect.provide(
+          statusLayer({ runStatus: "completed", openItems: [openItem(activeTurnId)] }),
+        ),
+      );
+      expect(finished).toMatchObject({
+        status: "completed",
+        lastActivityAt: null,
+        idleForMs: null,
+        hasRunningItem: false,
+      });
+    }),
+  );
 });

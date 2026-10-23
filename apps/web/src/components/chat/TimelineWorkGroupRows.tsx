@@ -55,7 +55,7 @@ import {
   toolGroupSummaryIconName,
   workEntryIconName,
 } from "./TimelineWorkEntryRow.logic";
-import { formatWorkingTimerNow } from "./TimelineWorkGroupRows.logic";
+import { formatIdleHint, formatWorkingTimerNow } from "./TimelineWorkGroupRows.logic";
 
 export const WorkGroupSection = memo(function WorkGroupSection({
   anchorKey,
@@ -128,6 +128,19 @@ function WorkingTimer({ createdAt }: { createdAt: string }) {
       {initialText}
     </span>
   );
+}
+
+function IdleHint({ lastActivityAt }: { lastActivityAt: string }) {
+  const [nowMs, setNowMs] = useState(Date.now);
+
+  useEffect(() => {
+    // Minute resolution, so a coarse tick is enough to cross the threshold on time.
+    const id = setInterval(() => setNowMs(Date.now()), 15_000);
+    return () => clearInterval(id);
+  }, []);
+
+  const hint = formatIdleHint(lastActivityAt, nowMs);
+  return hint === null ? null : <span className="-ml-1 min-w-0 truncate">· {hint}</span>;
 }
 
 const compactWorkEntryHeight = 24;
@@ -284,8 +297,13 @@ function ExpandedWorkGroupEntries({
 const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 
 export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
-  const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
-    use(TimelineRowActivityCtx);
+  const {
+    isCompacting,
+    isPreparingWorktree,
+    backgroundWorktreeSetup,
+    awaitingUser,
+    activeTurnLastActivityAt,
+  } = use(TimelineRowActivityCtx);
   const shimmer = isPreparingWorktree || isCompacting;
   const label = isPreparingWorktree ? (
     "Setting up worktree…"
@@ -308,6 +326,9 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
           {label}
           {shimmer ? <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay> : null}
         </span>
+        {row.createdAt && !shimmer && !awaitingUser && activeTurnLastActivityAt !== null ? (
+          <IdleHint lastActivityAt={activeTurnLastActivityAt} />
+        ) : null}
         {backgroundWorktreeSetup ? (
           <BackgroundWorktreeSetupChip snapshot={backgroundWorktreeSetup} />
         ) : null}

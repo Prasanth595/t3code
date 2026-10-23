@@ -57,6 +57,8 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 
 const decodeTarget = Schema.decodeUnknownEffect(OrchestratorMcpTarget);
 
+const childUpdatedAt = DateTime.makeUnsafe("2026-10-03T10:00:00Z");
+
 const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
@@ -89,7 +91,8 @@ describe("OrchestratorMcpService", () => {
         ],
       } as unknown as OrchestrationV2ThreadProjection;
       const childProjection = {
-        thread: { id: childThreadId },
+        thread: { id: childThreadId, updatedAt: childUpdatedAt },
+        turnItems: [],
         runs: [
           {
             id: childRunId,
@@ -223,7 +226,7 @@ describe("OrchestratorMcpService", () => {
         ],
       } as unknown as OrchestrationV2ThreadProjection;
       const childProjection = {
-        thread: { id: childThreadId },
+        thread: { id: childThreadId, updatedAt: childUpdatedAt },
         runs: [
           {
             id: RunId.make("run:mcp-restart-child"),
@@ -316,7 +319,8 @@ describe("OrchestratorMcpService", () => {
         ],
       } as unknown as OrchestrationV2ThreadProjection;
       const childProjection = {
-        thread: { id: childThreadId },
+        thread: { id: childThreadId, updatedAt: childUpdatedAt },
+        turnItems: [],
         runs: [],
         contextTransfers: [],
         messages: [],
@@ -400,7 +404,7 @@ describe("OrchestratorMcpService", () => {
           }) as unknown as OrchestrationV2ThreadProjection;
         // A finished run whose binding to the follow-up was lost (#19002).
         const childProjection = {
-          thread: { id: childThreadId },
+          thread: { id: childThreadId, updatedAt: childUpdatedAt },
           runs:
             childState === "no runs"
               ? []
@@ -503,7 +507,8 @@ describe("OrchestratorMcpService", () => {
         ],
       } as unknown as OrchestrationV2ThreadProjection;
       const childProjection = {
-        thread: { id: childThreadId },
+        thread: { id: childThreadId, updatedAt: childUpdatedAt },
+        turnItems: [],
         runs: [{ id: childRunId, status: "running" }],
         contextTransfers: [],
         messages: [],
@@ -583,7 +588,8 @@ describe("OrchestratorMcpService", () => {
         ],
       } as unknown as OrchestrationV2ThreadProjection;
       const childProjection = {
-        thread: { id: childThreadId },
+        thread: { id: childThreadId, updatedAt: childUpdatedAt },
+        turnItems: [],
         runs: [{ id: childRunId, status: "running" }],
         contextTransfers: [],
         messages: [],
@@ -669,7 +675,8 @@ describe("OrchestratorMcpService", () => {
         ],
       } as unknown as OrchestrationV2ThreadProjection;
       const childProjection = {
-        thread: { id: childThreadId },
+        thread: { id: childThreadId, updatedAt: childUpdatedAt },
+        turnItems: [],
         runs: [{ id: childRunId, status: "running" }],
         contextTransfers: [],
         messages: [],
@@ -764,7 +771,8 @@ describe("OrchestratorMcpService", () => {
         [
           childThreadId,
           {
-            thread: { id: childThreadId },
+            thread: { id: childThreadId, updatedAt: childUpdatedAt },
+            turnItems: [],
             runs: [{ id: RunId.make("run:mcp-cancel-grandchild-child"), status: "running" }],
             contextTransfers: [],
             messages: [],
@@ -992,7 +1000,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     }) as unknown as OrchestrationV2ThreadProjection;
 
   const childProjection = {
-    thread: { id: childThreadId },
+    thread: { id: childThreadId, updatedAt: childUpdatedAt },
     runs: [],
     contextTransfers: [],
     messages: [],

@@ -72,6 +72,8 @@ export interface TimelineRowActivityState {
   isRevertingCheckpoint: boolean;
   activeTurnInProgress: boolean;
   awaitingUser: boolean;
+  /** Null while an item is in progress or no turn is active. */
+  activeTurnLastActivityAt: string | null;
   isPreparingWorktree: boolean;
   latestRunId: RunId | null;
   backgroundWorktreeSetup: WorktreeSetupSnapshot | null;
