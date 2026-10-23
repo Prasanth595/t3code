@@ -538,6 +538,7 @@ export type PullRequestInvalidateInput = typeof PullRequestInvalidateInput.Type;
 export const PullRequestReportStateInput = Schema.Struct({
   reference: PullRequestRef,
   state: PullRequestState,
+  isDraft: Schema.optional(Schema.Boolean),
 });
 export type PullRequestReportStateInput = typeof PullRequestReportStateInput.Type;
 
@@ -598,6 +599,7 @@ export const PullRequestDetail = Schema.Struct({
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 
 export const PullRequestChecks = Schema.Struct({
+  observedAt: Schema.optional(Schema.Finite),
   state: PullRequestState,
   checks: Schema.Array(PullRequestCheck),
 });
