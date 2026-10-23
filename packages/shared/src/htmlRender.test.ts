@@ -3,6 +3,7 @@ import * as NodeVM from "node:vm";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  HTML_RENDER_WEBVIEW_APP_NAME,
   htmlRenderThemeFragment,
   injectHtmlRenderBootstrap,
   readHtmlRenderImageRequest,
@@ -18,46 +19,31 @@ const themed = htmlRenderThemeFragment({
   variables: { "--background": "#000" },
 });
 
-// Loads the bootstrap the way a browser runs it: `window` is top-level unless
-// framed, and `unload` fires pagehide and returns what a reload could inherit.
+// Loads the bootstrap the way a browser runs it, top-level unless framed.
 function openPage(options: {
   readonly framed?: boolean;
   readonly hash?: string;
+  readonly userAgent?: string;
   readonly name?: string;
   readonly state?: unknown;
-  readonly pathname?: string;
 }) {
   const style = { textContent: "" };
-  const pagehide: Array<(event: { persisted: boolean }) => void> = [];
   const history: { state: unknown; replaceState: (state: unknown) => void } = {
     state: options.state ?? null,
     replaceState(state: unknown) {
       history.state = state;
     },
   };
-  const window = {
-    name: options.name ?? "",
-    parent: {},
-    addEventListener: (type: string, listener: (event: { persisted: boolean }) => void) => {
-      if (type === "pagehide") pagehide.push(listener);
-    },
-  };
+  const window = { name: options.name ?? "", parent: {}, addEventListener() {} };
   if (!options.framed) window.parent = window;
   NodeVM.runInNewContext(bootstrap, {
     window,
     history,
-    location: { hash: options.hash ?? "", pathname: options.pathname ?? "/page.html", search: "" },
+    navigator: { userAgent: options.userAgent ?? "Mozilla/5.0" },
+    location: { hash: options.hash ?? "", pathname: "/page.html", search: "" },
     document: { getElementById: () => style, addEventListener() {}, documentElement: {} },
   });
-  return {
-    window,
-    history,
-    padded: () => style.textContent.includes("padding:16px"),
-    unload: () => {
-      for (const listener of pagehide) listener({ persisted: false });
-      return { name: window.name, state: history.state };
-    },
-  };
+  return { window, history, padded: () => style.textContent.includes("padding:16px") };
 }
 
 describe("html render bootstrap", () => {
@@ -65,33 +51,22 @@ describe("html render bootstrap", () => {
     { page: "standalone", options: {}, padded: true },
     { page: "framed", options: { framed: true }, padded: false },
     { page: "top-level themed", options: { hash: themed }, padded: false },
+    {
+      page: "reloaded in the mobile WebView",
+      options: { userAgent: `Mozilla/5.0 Mobile/15E148 ${HTML_RENDER_WEBVIEW_APP_NAME}` },
+      padded: false,
+    },
   ])("gives only a page opened on its own the gutter: $page", ({ options, padded }) => {
     expect(openPage(options).padded()).toBe(padded);
   });
 
   it.each([
-    { engine: "Chromium", kept: "name" },
-    { engine: "WebKit", kept: "state" },
-  ] as const)(
-    "keeps a hosted page unpadded through its own reload in $engine, showing it only its own values",
-    ({ kept }) => {
-      const hosted = openPage({ hash: themed, state: { tab: 1 } });
-      expect(hosted.window.name).toBe("");
-      expect(hosted.history.state).toEqual({ tab: 1 });
-      hosted.window.name = "saved";
-      const left = hosted.unload();
-      const reloaded = openPage({ [kept]: left[kept] });
-      expect(reloaded.padded()).toBe(false);
-      expect(reloaded.window.name).toBe(kept === "name" ? "saved" : "");
-      expect(reloaded.history.state).toEqual(kept === "state" ? { tab: 1 } : null);
-    },
-  );
-
-  it("pads a standalone page that the tab opens after a hosted one", () => {
-    const hosted = openPage({ hash: themed, pathname: "/a.html" });
-    const next = openPage({ name: hosted.unload().name, pathname: "/b.html" });
-    expect(next.padded()).toBe(true);
-    expect(next.window.name).toBe("");
+    { page: "standalone", options: {} },
+    { page: "top-level themed", options: { hash: themed } },
+  ])("leaves a $page page's window.name and history.state alone", ({ options }) => {
+    const page = openPage({ ...options, name: '{"key":"t3-hosted:"}', state: "tab2" });
+    expect(page.window.name).toBe('{"key":"t3-hosted:"}');
+    expect(page.history.state).toBe("tab2");
   });
 });
 
