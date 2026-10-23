@@ -14,17 +14,41 @@ const isFull = (sizes: number[]) =>
   sizes.length >= MAX_PENDING_CHUNKS ||
   sizes.reduce((total, size) => total + size, 0) >= MAX_PENDING_BYTES;
 
+const byteLengthOf = (value: unknown) => (typeof value === "string" ? Buffer.byteLength(value) : 0);
+
+// Charges every variable-size field a terminal event can carry, so the byte
+// budgets below cannot be bypassed by a large payload in an uncharged field.
 const queuedSize = (event: TerminalEvent | TerminalAttachStreamEvent) =>
   EVENT_OVERHEAD +
   (event.type === "output"
-    ? Buffer.byteLength(event.data)
-    : "snapshot" in event
-      ? Buffer.byteLength(event.snapshot.history)
-      : 0);
+    ? byteLengthOf(event.data)
+    : event.type === "error"
+      ? byteLengthOf(event.message)
+      : event.type === "activity"
+        ? byteLengthOf(event.label)
+        : "snapshot" in event
+          ? byteLengthOf(event.snapshot.history) +
+            byteLengthOf(event.snapshot.cwd) +
+            byteLengthOf(event.snapshot.worktreePath) +
+            byteLengthOf(event.snapshot.label)
+          : 0);
+
+const TERMINAL_EVENT_TYPES = new Set([
+  "started",
+  "output",
+  "exited",
+  "closed",
+  "error",
+  "cleared",
+  "restarted",
+  "activity",
+  "snapshot",
+]);
 
 // Windowed chunks carry terminal events, so charge them the way the output
 // queue below does instead of serializing the frame a second time just to
-// measure it. Unrecognized values keep the exact JSON measurement.
+// measure it. Only the event shapes queuedSize measures take the fast path;
+// anything else keeps the exact JSON measurement.
 const chunkSize = (values: ReadonlyArray<unknown>) =>
   values.reduce<number>((total, value) => {
     if (typeof value === "string") return total + EVENT_OVERHEAD + Buffer.byteLength(value);
@@ -32,7 +56,8 @@ const chunkSize = (values: ReadonlyArray<unknown>) =>
       typeof value === "object" &&
       value !== null &&
       "type" in value &&
-      typeof value.type === "string"
+      typeof value.type === "string" &&
+      TERMINAL_EVENT_TYPES.has(value.type)
     ) {
       return total + queuedSize(value as TerminalEvent | TerminalAttachStreamEvent);
     }
