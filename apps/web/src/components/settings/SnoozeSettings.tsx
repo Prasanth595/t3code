@@ -1,3 +1,4 @@
+import { useState } from "react";
 import * as Schema from "effect/Schema";
 import {
   DEFAULT_SNOOZE_PRESETS,
@@ -22,6 +23,38 @@ import { FoldedSettingsSection } from "./FoldedSettingsSection";
 
 const isSnoozeTime = Schema.is(SnoozeTime);
 const isSnoozeDay = Schema.is(SnoozeDay);
+
+function SnoozeTimeInput({
+  label,
+  value,
+  onCommit,
+}: {
+  label: string;
+  value: string;
+  onCommit: (time: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const [draftSource, setDraftSource] = useState(value);
+  if (draftSource !== value) {
+    setDraftSource(value);
+    setDraft(value);
+  }
+
+  return (
+    <Input
+      size="sm"
+      type="time"
+      aria-label={label}
+      value={draft}
+      onChange={(event) => {
+        const time = event.target.value;
+        setDraft(time);
+        if (isSnoozeTime(time)) onCommit(time);
+      }}
+      onBlur={() => setDraft(value)}
+    />
+  );
+}
 
 function SnoozeSlotEditor({
   slot,
@@ -112,15 +145,10 @@ function SnoozeSlotEditor({
             </div>
             <span className="text-xs text-muted-foreground">at</span>
             <div className="w-32">
-              <Input
-                size="sm"
-                type="time"
-                aria-label={`${label} time`}
+              <SnoozeTimeInput
+                label={`${label} time`}
                 value={slot.time}
-                onChange={(event) => {
-                  if (isSnoozeTime(event.target.value))
-                    onChange({ ...slot, time: event.target.value });
-                }}
+                onCommit={(time) => onChange({ ...slot, time })}
               />
             </div>
           </>

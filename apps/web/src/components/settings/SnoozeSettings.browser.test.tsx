@@ -82,3 +82,54 @@ it("ignores fractional hours without blocking later client-setting persistence",
     snoozePreferences: [{ mode: "relative", hours: 168 }, ...DEFAULT_SNOOZE_PRESETS.slice(1)],
   });
 });
+
+it("allows clearing and replacing a snooze time without persisting an empty value", async () => {
+  using _settings = setup();
+  await using screen = await render(<SnoozeSettings />);
+  await userEvent.click(screen.getByRole("button", { name: "Snooze", exact: true }));
+  const time = screen.container.querySelector<HTMLInputElement>(
+    'input[aria-label="Snooze slot 3 time"]',
+  )!;
+
+  await userEvent.fill(time, "");
+  await expect.element(time).toHaveValue("");
+  await act(() => persistClientSettingsPatch({ timestampFormat: "24-hour" }));
+  expect(readBrowserClientSettings()?.snoozePreferences?.[2]).toEqual({
+    mode: "absolute",
+    day: "today",
+    time: "18:00",
+  });
+  await expect.element(time).toHaveValue("");
+
+  await userEvent.fill(time, "06:30");
+  await vi.waitFor(() => {
+    expect(readBrowserClientSettings()?.snoozePreferences?.[2]).toEqual({
+      mode: "absolute",
+      day: "today",
+      time: "06:30",
+    });
+  });
+});
+
+it("restores an empty time on blur and reflects changes to the saved time", async () => {
+  using _settings = setup();
+  await using screen = await render(<SnoozeSettings />);
+  await userEvent.click(screen.getByRole("button", { name: "Snooze", exact: true }));
+  const time = screen.container.querySelector<HTMLInputElement>(
+    'input[aria-label="Snooze slot 3 time"]',
+  )!;
+  const hours = screen.container.querySelector<HTMLInputElement>(
+    'input[aria-label="Snooze slot 1 hours"]',
+  )!;
+
+  await userEvent.fill(time, "");
+  await expect.element(time).toHaveValue("");
+  await userEvent.click(hours);
+  await expect.element(time).toHaveValue("18:00");
+
+  await userEvent.fill(time, "");
+  const preferences = [...DEFAULT_SNOOZE_PRESETS];
+  preferences[2] = { mode: "absolute", day: "today", time: "20:00" };
+  await act(() => persistClientSettingsPatch({ snoozePreferences: preferences }));
+  await expect.element(time).toHaveValue("20:00");
+});
