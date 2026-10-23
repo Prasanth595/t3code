@@ -61,27 +61,30 @@ export function evaluatePullRequestWatch(
     const gate = required.length > 0 ? required : detail.checks;
     const passedNow = gate.every((check) => check.status !== "pending" && !isFailedCheck(check));
     const gateNames = gate.map((check) => check.name);
-    const allNames = detail.checks.map((check) => check.name);
-    const told = passed && passedChecks.length === 0 ? allNames : passedChecks;
+    const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;
     // A required job created and finished between two passes is never seen pending. Without
     // required checks, any check counts, and advisory bots keep adding passed ones: no wake.
     const gateGrew = required.length > 0 && gateNames.some((name) => !told.includes(name));
-    // Once required checks passed early, the rest finishing is news once. The told names hold
-    // only required ones until then, so a later advisory job alone does not wake again.
+    // Other checks still pending when required ones passed are owed one wake when all settle.
+    // They are kept with the told names until then, so later advisory churn never wakes.
+    const owed =
+      required.length > 0
+        ? detail.checks.filter((check) => check.required !== true && told.includes(check.name))
+        : [];
     const settled =
       failed.length === 0 && detail.checks.every((check) => check.status !== "pending");
-    const restSettled =
-      passed &&
-      settled &&
-      required.length < detail.checks.length &&
-      !detail.checks.some((check) => check.required !== true && told.includes(check.name));
+    let owedNow = passedNow && passed ? owed : [];
     if (passedNow && (!passed || gateGrew)) {
       changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
-    } else if (restSettled) {
+      owedNow = detail.checks.filter(
+        (check) => check.required !== true && check.status === "pending",
+      );
+    } else if (settled && owedNow.length > 0) {
       changes.push({ kind: "checks-passed", count: detail.checks.length, required: false });
+      owedNow = [];
     }
     passed = passedNow;
-    passedChecks = !passedNow ? [] : settled ? allNames : gateNames;
+    passedChecks = passedNow ? [...gateNames, ...owedNow.map((check) => check.name)] : [];
   }
 
   // Only a head never read with checks waits for them: an empty read after checks were seen is

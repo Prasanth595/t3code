@@ -155,8 +155,17 @@ describe("evaluatePullRequestWatch", () => {
       ["checks-passed"],
     );
     assert.deepEqual(evaluatePullRequestWatch(final.next, done, noRemarks).changes, []);
-    const advisory = detail({ checks: [...done.checks, check("bot", "success")] });
-    assert.deepEqual(evaluatePullRequestWatch(final.next, advisory, noRemarks).changes, []);
+    // A later advisory job running and passing is not more news.
+    const botPending = detail({ checks: [...done.checks, check("bot", "pending")] });
+    const churn = evaluatePullRequestWatch(final.next, botPending, noRemarks);
+    assert.deepEqual(churn.changes, []);
+    const botDone = detail({ checks: [...done.checks, check("bot", "success")] });
+    assert.deepEqual(evaluatePullRequestWatch(churn.next, botDone, noRemarks).changes, []);
+
+    // Nothing else was pending when the required ones passed, so nothing more is owed.
+    const green = evaluatePullRequestWatch(watch(), done, noRemarks);
+    assert.deepEqual(green.changes, [{ kind: "checks-passed", count: 1, required: true }]);
+    assert.deepEqual(evaluatePullRequestWatch(green.next, botDone, noRemarks).changes, []);
   });
 
   // regression: #16208 PR watches burned GitHub's rate limit and gave up
