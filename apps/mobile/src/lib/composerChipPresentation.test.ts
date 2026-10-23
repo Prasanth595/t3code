@@ -70,7 +70,7 @@ const BUILT_IN_THEMES = MOBILE_THEME_IDS.filter((id) => id !== "material-you").f
 );
 
 describe("contextChipAccent", () => {
-  it("draws one color per theme that reads at 4.5:1 in messages, replies and the composer", () => {
+  it("draws one color per theme that reads at 5:1 in messages, replies and the composer", () => {
     for (const { name, theme } of BUILT_IN_THEMES) {
       for (const accent of CHIP_ACCENTS) {
         const shown = contextChipAccent(accent, theme, theme["--color-md-body"])!;
@@ -79,7 +79,7 @@ describe("contextChipAccent", () => {
           expect(
             contrastRatio(shown, surface),
             `${name}: ${accent} → ${shown} on ${surface}`,
-          ).toBeGreaterThanOrEqual(4.5);
+          ).toBeGreaterThanOrEqual(5);
         }
       }
     }
@@ -97,7 +97,7 @@ describe("contextChipAccent", () => {
         expect(
           contrastRatio(shown, surface),
           `${accent} → ${shown} on ${surface}`,
-        ).toBeGreaterThanOrEqual(4.5);
+        ).toBeGreaterThanOrEqual(5);
       }
     }
   });

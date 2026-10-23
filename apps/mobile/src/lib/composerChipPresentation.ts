@@ -45,6 +45,8 @@ const CONTEXT_CHIP_PRESENTATIONS = {
   },
 } as const satisfies Record<string, ContextChipPresentation>;
 
+const CHIP_CONTRAST = 5;
+
 const readableChipAccents = new Map<string, string>();
 
 /**
@@ -73,7 +75,7 @@ export function contextChipAccent(
   const key = [accent, ...surfaces].join();
   let readable = readableChipAccents.get(key);
   if (readable === undefined) {
-    readable = themeAccentWithContrast(accent, surfaces);
+    readable = themeAccentWithContrast(accent, surfaces, CHIP_CONTRAST);
     readableChipAccents.set(key, readable);
   }
   return readable;
