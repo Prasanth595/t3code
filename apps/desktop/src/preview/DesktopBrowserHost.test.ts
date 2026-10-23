@@ -30,24 +30,34 @@ const command = (
     }),
   );
 
-const makeDebuggee = () => {
+const makeDebuggee = (prepareSurface: () => Promise<unknown> = async () => true) => {
   const emitter = new NodeEvents.EventEmitter();
-  const pending: Array<() => void> = [];
+  const pending: Array<(cause?: Error) => void> = [];
   const sent: Array<unknown> = [];
   const sendWaiters: Array<() => void> = [];
   const debuggee = Object.assign(emitter, {
     sendCommand: (method: string, params?: { id?: number }) =>
-      new Promise((resolve) => {
+      new Promise((resolve, reject) => {
         if (method === "Target.getTargetInfo") {
           resolve({ targetInfo: { targetId: "GUEST" } });
           return;
         }
         sent.push(params?.id);
-        pending.push(() => resolve({ method }));
+        pending.push((cause) => (cause ? reject(cause) : resolve({ method })));
         sendWaiters.shift()?.();
       }),
   });
+  const surfaceRequests: string[] = [];
   const webContents = Object.assign(new NodeEvents.EventEmitter(), {
+    id: 42,
+    isDestroyed: () => false,
+    hostWebContents: {
+      isDestroyed: () => false,
+      executeJavaScript: (expression: string) => {
+        surfaceRequests.push(expression);
+        return surfaceRequests.length === 1 ? prepareSurface() : Promise.resolve(true);
+      },
+    },
     getURL: () => "http://localhost/",
     getTitle: () => "Page",
     getUserAgent: () => "Electron",
@@ -61,9 +71,10 @@ const makeDebuggee = () => {
     navigate: () => webContents.emit("did-navigate"),
     /** Ids of the commands the debugger received, in order. */
     sent,
+    surfaceRequests,
     nextSend: () => new Promise<void>((resolve) => sendWaiters.push(resolve)),
     release: () => pending.splice(0).forEach((resolve) => resolve()),
-    releaseFirst: () => pending.shift()?.(),
+    releaseFirst: (cause?: Error) => pending.shift()?.(cause),
   };
 };
 
@@ -73,6 +84,16 @@ const takeEvents = (host: DesktopBrowserHost.DesktopBrowserHost["Service"], coun
     Stream.runCollect,
     Effect.map((lines) => lines.map((line) => decodeEvent(new TextDecoder().decode(line)))),
   );
+
+const sendScreenshot = Effect.fn("test.sendScreenshot")(function* (
+  host: DesktopBrowserHost.DesktopBrowserHost["Service"],
+  debuggee: ReturnType<typeof makeDebuggee>,
+  id: number,
+) {
+  const sent = debuggee.nextSend();
+  yield* command(host, id, "Page.captureScreenshot");
+  yield* Effect.promise(() => sent);
+});
 
 /**
  * Ids of the replies the host sends, in order. A screenshot's reply leaves after its turn
@@ -94,6 +115,58 @@ const watchReplies = (host: DesktopBrowserHost.DesktopBrowserHost["Service"]) =>
   });
 
 describe("DesktopBrowserHost", () => {
+  it.effect.each([false, true])(
+    "waits for a renderable surface and restores it after capture (failed: %s)",
+    (failed) =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.make;
+        const ready = Promise.withResolvers<boolean>();
+        const debuggee = makeDebuggee(() => ready.promise);
+        host.attach(key, debuggee.tab);
+        const replies = yield* watchReplies(host);
+
+        yield* command(host, 1, "Page.captureScreenshot");
+        expect(debuggee.sent).toEqual([]);
+
+        const sent = debuggee.nextSend();
+        ready.resolve(true);
+        yield* Effect.promise(() => sent);
+        debuggee.releaseFirst(failed ? new Error("Capture failed") : undefined);
+        expect(yield* Queue.take(replies)).toBe(1);
+        expect(debuggee.surfaceRequests).toHaveLength(2);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not send a screenshot superseded while its surface was becoming ready", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const ready = Promise.withResolvers<boolean>();
+      const debuggee = makeDebuggee(() => ready.promise);
+      host.attach(key, debuggee.tab);
+      const replies = yield* watchReplies(host);
+
+      yield* command(host, 1, "Page.captureScreenshot");
+      debuggee.navigate();
+      ready.resolve(true);
+      expect(yield* Queue.take(replies)).toBe(1);
+      expect(debuggee.sent).toEqual([]);
+      expect(debuggee.surfaceRequests).toHaveLength(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not issue a screenshot when its render surface is unavailable", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee(async () => false);
+      host.attach(key, debuggee.tab);
+      const replies = yield* watchReplies(host);
+
+      yield* command(host, 1, "Page.captureScreenshot");
+      expect(yield* Queue.take(replies)).toBe(1);
+      expect(debuggee.sent).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("announces tabs already attached to a backend that starts later", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
@@ -120,7 +193,7 @@ describe("DesktopBrowserHost", () => {
             message: encodeJson({ id, method, sessionId: "t3-preview-page" }),
           }),
         );
-      yield* command(1, "Page.captureScreenshot");
+      yield* sendScreenshot(host, debuggee, 1);
       yield* host.handleCommandLine(encodeJson({ type: "release", ...key }));
       yield* command(2, "DOM.enable");
       debuggee.release();
@@ -138,13 +211,15 @@ describe("DesktopBrowserHost", () => {
       host.attach(key, debuggee.tab);
       const replies = yield* watchReplies(host);
 
-      yield* command(host, 1, "Page.captureScreenshot");
+      yield* sendScreenshot(host, debuggee, 1);
       yield* command(host, 2, "Page.captureScreenshot");
       yield* command(host, 3, "DOM.enable");
       expect(debuggee.sent).toEqual([1, 3]);
 
+      const secondSent = debuggee.nextSend();
       debuggee.releaseFirst();
       expect(yield* Queue.take(replies)).toBe(1);
+      yield* Effect.promise(() => secondSent);
       expect(debuggee.sent).toEqual([1, 3, 2]);
     }).pipe(Effect.scoped),
   );
@@ -156,10 +231,12 @@ describe("DesktopBrowserHost", () => {
       host.attach(key, debuggee.tab);
       const replies = yield* watchReplies(host);
 
-      yield* command(host, 1, "Page.captureScreenshot");
+      yield* sendScreenshot(host, debuggee, 1);
       yield* command(host, 2, "Page.captureScreenshot");
       yield* command(host, 3, "Page.captureScreenshot");
+      const secondSent = debuggee.nextSend();
       debuggee.navigate();
+      yield* Effect.promise(() => secondSent);
       expect(debuggee.sent).toEqual([1, 2]);
 
       // The superseded screenshot answering late must not start a third beside the second.
@@ -167,8 +244,10 @@ describe("DesktopBrowserHost", () => {
       expect(yield* Queue.take(replies)).toBe(1);
       expect(debuggee.sent).toEqual([1, 2]);
 
+      const thirdSent = debuggee.nextSend();
       debuggee.releaseFirst();
       expect(yield* Queue.take(replies)).toBe(2);
+      yield* Effect.promise(() => thirdSent);
       expect(debuggee.sent).toEqual([1, 2, 3]);
     }).pipe(Effect.scoped),
   );
@@ -179,7 +258,7 @@ describe("DesktopBrowserHost", () => {
       const debuggee = makeDebuggee();
       host.attach(key, debuggee.tab);
 
-      yield* command(host, 1, "Page.captureScreenshot");
+      yield* sendScreenshot(host, debuggee, 1);
       yield* command(host, 2, "Page.captureScreenshot");
       yield* host.handleCommandLine(encodeJson({ type: "release", ...key }));
       yield* command(host, 3, "Page.captureScreenshot");

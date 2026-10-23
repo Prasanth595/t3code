@@ -4,12 +4,14 @@
  * the relay shares it.
  */
 import {
+  DESKTOP_PREVIEW_CAPTURE_SURFACE_TRIGGER,
   DesktopBrowserCommand,
   DesktopBrowserEvent,
   type DesktopBrowserEvent as DesktopBrowserEventType,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as NodePath from "node:path";
+import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -112,7 +114,7 @@ export const make = Effect.gen(function* () {
         }
         const turn = {};
         tab.screenshotTurn = turn;
-        capture()
+        withCaptureSurface(tab, relay, turn, capture)
           .finally(() => {
             if (tab.screenshotTurn === turn) nextScreenshot(tab);
           })
@@ -121,6 +123,37 @@ export const make = Effect.gen(function* () {
       if (tab.screenshotTurn === null) start();
       else tab.waitingScreenshots.push(start);
     });
+
+  const withCaptureSurface = async (
+    tab: AttachedTab,
+    relay: CdpRelayConnection,
+    turn: object,
+    capture: () => Promise<unknown>,
+  ) => {
+    const wc = tab.debuggee.webContents;
+    const host = wc.hostWebContents;
+    if (!host || host.isDestroyed() || wc.isDestroyed()) {
+      throw new Error("The preview render surface is unavailable.");
+    }
+    const captureId = NodeCrypto.randomUUID();
+    const setSurface = (active: boolean) =>
+      host.executeJavaScript(
+        `globalThis[${JSON.stringify(DESKTOP_PREVIEW_CAPTURE_SURFACE_TRIGGER)}]?.(${wc.id}, ${JSON.stringify(captureId)}, ${active})`,
+      );
+    try {
+      // The guest stays offscreen until React commits the activity lease and Electron
+      // receives its new bounds. CDP can otherwise wait forever for a composited frame.
+      if ((await setSurface(true)) !== true) {
+        throw new Error("The preview render surface did not become ready for capture.");
+      }
+      if (tab.relay !== relay || tab.screenshotTurn !== turn || wc.isDestroyed()) {
+        throw new Error("The preview connection that asked for this screenshot closed.");
+      }
+      return await capture();
+    } finally {
+      if (!host.isDestroyed()) await setSurface(false).catch(() => undefined);
+    }
+  };
 
   const relayFor = (tab: AttachedTab) => {
     if (tab.relay) return tab.relay;
