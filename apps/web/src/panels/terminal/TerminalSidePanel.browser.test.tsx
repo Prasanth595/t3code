@@ -1,7 +1,6 @@
+import { render as renderScreen } from "../../../test/render";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 const drawerRenders = vi.hoisted(() => [] as Array<{ visible: boolean; threadRef: unknown }>);
 const drawerWorktreePaths = vi.hoisted(() => [] as Array<string | null>);
@@ -74,38 +73,26 @@ const panelIn = (host: PanelHost) => (
   </PanelHostContext>
 );
 
-let root: Root;
-let container: HTMLDivElement;
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
-
 describe("terminal side panel", () => {
-  it("renders the host thread, skips rebuilt hosts with the same inputs, and follows visibility", () => {
-    act(() => {
-      root.render(panelIn(hostFor(true)));
-    });
+  it("renders the host thread, skips rebuilt hosts with the same inputs, and follows visibility", async () => {
+    resetFixture();
+    await using screen = await renderScreen(null, { router: false });
+    await screen.rerender(panelIn(hostFor(true)));
     expect(drawerRenders).toEqual([{ visible: true, threadRef }]);
 
-    act(() => root.render(panelIn(hostFor(true))));
+    await screen.rerender(panelIn(hostFor(true)));
     expect(drawerRenders).toHaveLength(1);
 
-    act(() => root.render(panelIn(hostFor(false))));
+    await screen.rerender(panelIn(hostFor(false)));
     expect(drawerRenders).toEqual([
       { visible: true, threadRef },
       { visible: false, threadRef },
     ]);
   });
 
-  it("keeps a local-checkout launch on the checkout after the thread gains a worktree", () => {
+  it("keeps a local-checkout launch on the checkout after the thread gains a worktree", async () => {
+    resetFixture();
+    await using screen = await renderScreen(null, { router: false });
     thread.worktreePath = "/repo/.worktrees/feature";
     drawerWorktreePaths.length = 0;
     const launchedLocally = (
@@ -116,33 +103,36 @@ describe("terminal side panel", () => {
         />
       </PanelHostContext>
     );
-    act(() => {
-      root.render(launchedLocally);
-    });
+    await screen.rerender(launchedLocally);
     expect(drawerWorktreePaths).toEqual([null]);
 
-    act(() => root.render(null));
+    await screen.rerender(null);
     drawerWorktreePaths.length = 0;
-    act(() => {
-      root.render(panelIn(hostFor(true)));
-    });
+    await screen.rerender(panelIn(hostFor(true)));
     expect(drawerWorktreePaths).toEqual(["/repo/.worktrees/feature"]);
     thread.worktreePath = null;
   });
 
-  it("keeps a terminal the server opened on the checkout off the thread's later worktree", () => {
+  it("keeps a terminal the server opened on the checkout off the thread's later worktree", async () => {
+    resetFixture();
+    await using screen = await renderScreen(null, { router: false });
     thread.worktreePath = "/repo/.worktrees/feature";
     terminalSessions.push({
       target: { terminalId: "term-1" },
       state: { summary: { cwd: "/repo", worktreePath: null } },
     });
-    act(() => root.render(null));
+    await screen.rerender(null);
     drawerWorktreePaths.length = 0;
-    act(() => {
-      root.render(panelIn(hostFor(true)));
-    });
+    await screen.rerender(panelIn(hostFor(true)));
     expect(drawerWorktreePaths).toEqual([null]);
     terminalSessions.length = 0;
     thread.worktreePath = null;
   });
 });
+
+function resetFixture() {
+  drawerRenders.length = 0;
+  drawerWorktreePaths.length = 0;
+  thread.worktreePath = null;
+  terminalSessions.length = 0;
+}
