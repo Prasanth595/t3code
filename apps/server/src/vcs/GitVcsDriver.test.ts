@@ -12,12 +12,15 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import { ChildProcessSpawner } from "effect/process";
+import * as Metric from "effect/Metric";
 import { assert, it } from "@effect/vitest";
 
 import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as ServerConfig from "../config.ts";
+import { gitCommandDuration, gitCommandsTotal } from "../observability/Metrics.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
@@ -1016,4 +1019,125 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       const detectionError = yield* driver.detectRepository(process.cwd()).pipe(Effect.flip);
       assert.strictEqual(detectionError._tag, "VcsProcessSpawnError");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+const gitCommandCount = (operation: string, outcome: string) =>
+  Metric.value(
+    Metric.withAttributes(gitCommandsTotal, [
+      ["operation", operation],
+      ["outcome", outcome],
+    ]),
+  ).pipe(Effect.map((state) => state.count));
+
+const gitCommandDurationCount = (operation: string) =>
+  Metric.value(Metric.withAttributes(gitCommandDuration, [["operation", operation]])).pipe(
+    Effect.map((state) => state.count),
+  );
+
+const makeMeteredDriver = (exitCode: number, failure?: VcsProcessExitError) =>
+  GitVcsDriver.makeVcsDriverShape().pipe(
+    Effect.provideService(VcsProcess.VcsProcess, {
+      run: () =>
+        failure === undefined
+          ? Effect.succeed({
+              exitCode: ChildProcessSpawner.ExitCode(exitCode),
+              stdout: "",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            })
+          : Effect.fail(failure),
+    }),
+  );
+
+it.effect("GitVcsDriver meters each git command once under its operation", () =>
+  Effect.gen(function* () {
+    const operation = "GitVcsDriver.checkpoints.test.metered";
+    const driver = yield* makeMeteredDriver(0);
+
+    yield* driver.execute({ operation, cwd: "/repo", args: ["status"] });
+    yield* driver.execute({ operation, cwd: "/repo", args: ["status"] });
+
+    assert.strictEqual(yield* gitCommandCount(operation, "success"), 2);
+    assert.strictEqual(yield* gitCommandCount(operation, "failure"), 0);
+    assert.strictEqual(yield* gitCommandDurationCount(operation), 2);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("GitVcsDriver counts an allowed non-zero exit as a success", () =>
+  Effect.gen(function* () {
+    const operation = "GitVcsDriver.checkpoints.test.allowedNonZero";
+    const driver = yield* makeMeteredDriver(1);
+
+    const result = yield* driver.execute({
+      operation,
+      cwd: "/repo",
+      args: ["diff", "--quiet"],
+      allowNonZeroExit: true,
+    });
+
+    assert.strictEqual(result.exitCode, 1);
+    assert.strictEqual(yield* gitCommandCount(operation, "success"), 1);
+    assert.strictEqual(yield* gitCommandCount(operation, "failure"), 0);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("GitVcsDriver counts a failed git command as a failure", () =>
+  Effect.gen(function* () {
+    const operation = "GitVcsDriver.checkpoints.test.failed";
+    const driver = yield* makeMeteredDriver(
+      128,
+      new VcsProcessExitError({
+        operation,
+        command: "git",
+        cwd: "/repo",
+        exitCode: 128,
+        detail: "fatal",
+      }),
+    );
+
+    const error = yield* driver
+      .execute({ operation, cwd: "/repo", args: ["rev-parse", "HEAD"] })
+      .pipe(Effect.flip);
+
+    assert.strictEqual(error._tag, "VcsProcessExitError");
+    assert.strictEqual(yield* gitCommandCount(operation, "failure"), 1);
+    assert.strictEqual(yield* gitCommandCount(operation, "success"), 0);
+    assert.strictEqual(yield* gitCommandDurationCount(operation), 1);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("checkpoint capture meters every git process it starts, including streamed ones", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
+    let started = 0;
+    let streamed = 0;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) => {
+          if (input.operation === operation) {
+            started++;
+            if (input.onStdoutChunk !== undefined) streamed++;
+          }
+          return liveProcess.run(input);
+        },
+      }),
+    );
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-metrics-" });
+    const { checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    const before =
+      (yield* gitCommandCount(operation, "success")) +
+      (yield* gitCommandCount(operation, "failure"));
+
+    yield* captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    const after =
+      (yield* gitCommandCount(operation, "success")) +
+      (yield* gitCommandCount(operation, "failure"));
+    assert.isTrue(streamed > 0);
+    assert.strictEqual(after - before, started);
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
