@@ -41,7 +41,7 @@ import type {
 import type { FeedbackError, FeedbackStep } from "./runner/feedback.ts";
 import { unchangedSince, type GateStepError, type LastPass } from "./runner/gating.ts";
 import { mention, type StartError, type StartOutcome } from "./runner/start.ts";
-import type { SessionsError } from "./t3/sessions.ts";
+import type { SessionsError, ThreadOnBrokenWorktree } from "./t3/sessions.ts";
 import type { StopRequestOutcome } from "./runner/stop.ts";
 import { sanitize } from "./text.ts";
 import { LIST_LIMIT, type Blocker, type Listing, type UnassignedClaim } from "./tracker/github.ts";
@@ -70,6 +70,27 @@ export interface ClaimScanResult {
   readonly claims: ReadonlyArray<UnassignedClaim>;
   /** Issues whose label history could not be read, each with the tracker's message. */
   readonly unread: ReadonlyArray<{ readonly issue: number; readonly message: string }>;
+}
+
+/**
+ * The run each session thread was launched for, and whether that session is stopped (ledger
+ * `runsByThread`). `complete` is false when a run file could not be read, so a thread missing
+ * from `runs` may still be a session's.
+ */
+export interface SessionRuns {
+  readonly runs: ReadonlyMap<string, { readonly run: RunId; readonly stopped: boolean }>;
+  readonly complete: boolean;
+}
+
+/** What the check for threads on broken worktrees keeps from pass to pass. */
+export interface BrokenThreadMemo {
+  /** Threads on a broken worktree that no run's session was on: a person's, never archived. */
+  readonly notFactory: Set<string>;
+  /**
+   * The threads the last ledger read could not settle (a run still going, or a run file that
+   * could not be read), with when it read, in epoch milliseconds.
+   */
+  readonly unsettled: Map<string, number>;
 }
 
 /** Everything a pass reads and writes. */
@@ -215,6 +236,16 @@ export interface PassWorld {
    * checkouts; not read when `min_free_gib` is 0.
    */
   readonly freeSpace: () => Effect.Effect<FreeSpace, PassError>;
+  /** The live threads whose worktree is gone or no longer a git checkout: `brokenWorktrees` on the sessions. */
+  readonly threadsOnBrokenWorktrees: () => Effect.Effect<
+    ReadonlyArray<ThreadOnBrokenWorktree>,
+    PassError
+  >;
+  /** Reads every run file in the ledger whole, so only for a pass that found such a thread. */
+  readonly sessionRuns: () => Effect.Effect<SessionRuns, PassError>;
+  /** Archives the thread: `archive` on the sessions. */
+  readonly archiveThread: (threadId: string) => Effect.Effect<void, PassError>;
+  readonly brokenThreads: BrokenThreadMemo;
   readonly nowMs: () => number;
   /** Writes one event to the machine log. */
   readonly record: (event: MachineEvent) => Effect.Effect<void, LedgerError>;
@@ -574,6 +605,7 @@ export const runPass = Effect.fn("Pass.runPass")(function* (
   }
   const repos = yield* loadRepos(world, watched, pass);
   pass.lowDisk = yield* lowDisk(world, machine, pass);
+  yield* brokenWorktrees(world, pass);
   // Without the ledger there is no telling how many runs are active, so nothing is claimed.
   const infos = yield* runs(world, pass);
   if (infos !== null) {
@@ -705,6 +737,92 @@ const lowDisk = Effect.fn("Pass.lowDisk")(function* (
     message: `low disk: free space is below min_free_gib ${machine.minFreeGib}; ${held}`,
   });
   return true;
+});
+
+/** How often a pass reads the whole ledger again for threads on a broken worktree it could not settle. */
+export const UNSETTLED_READ_EVERY_MS = 5 * 60 * 1000;
+
+/**
+ * Archives the live threads left on a stopped session's worktree that is gone or no longer a git
+ * checkout: subagents sharing the session's checkout, which archiving the session did not stop,
+ * or threads on a folder a removal left half done. T3's pull request lookup and settlement run git
+ * there every minute and fail every time; an archived thread is out of both. Only threads on the
+ * worktree of a run's session are the factory's, and only once that session is stopped: until
+ * then the run's own stop archives what is on its worktree. The ledger is read only while T3 has
+ * such a thread not ruled out before, and for a thread it could not settle, at most every
+ * `UNSETTLED_READ_EVERY_MS`. A thread the factory archived on any path is not found again until
+ * the server restarts, so a person who unarchives it keeps it until then. Each worktree gets one
+ * line and one attention item, and is not found again once its threads are archived. The item
+ * names the run in its text, not in `run`, so it stays after the run finished, which it nearly
+ * always has.
+ */
+const brokenWorktrees = Effect.fn("Pass.brokenWorktrees")(function* (world: PassWorld, pass: Pass) {
+  const cannotCheck = (failure: PassError) =>
+    pass.fail(
+      null,
+      passError(failure.kind, "cannot check the sessions' worktrees: ", failure.message),
+    );
+  const found = yield* Effect.result(world.threadsOnBrokenWorktrees());
+  if (found._tag === "Failure") return yield* cannotCheck(found.failure);
+  const memo = world.brokenThreads;
+  const broken = found.success.filter((thread) => !memo.notFactory.has(thread.threadId));
+  if (broken.length === 0) return;
+  const now = world.nowMs();
+  const waiting = broken.every((thread) => {
+    const last = memo.unsettled.get(thread.threadId);
+    return last !== undefined && now >= last && now - last < UNSETTLED_READ_EVERY_MS;
+  });
+  if (waiting) return;
+  const read = yield* Effect.result(world.sessionRuns());
+  if (read._tag === "Failure") return yield* cannotCheck(read.failure);
+  const { runs, complete } = read.success;
+  memo.unsettled.clear();
+  const byPath = new Map<string, { run: RunId; threadIds: Array<string> }>();
+  for (const { threadId, worktreePath, threadsOnPath } of broken) {
+    const owner = threadsOnPath.map((id) => runs.get(id)).find((r) => r !== undefined);
+    if (owner === undefined && complete) memo.notFactory.add(threadId);
+    else if (owner?.stopped !== true) memo.unsettled.set(threadId, now);
+    if (owner?.stopped !== true) continue;
+    const entry = byPath.get(worktreePath) ?? { run: owner.run, threadIds: [] };
+    entry.threadIds.push(threadId);
+    byPath.set(worktreePath, entry);
+  }
+  for (const [worktreePath, { run, threadIds }] of byPath) {
+    let archived = 0;
+    for (const threadId of threadIds) {
+      const result = yield* Effect.result(world.archiveThread(threadId));
+      if (result._tag === "Failure") {
+        yield* pass.fail(
+          null,
+          passError(
+            result.failure.kind,
+            `cannot archive thread ${threadId} on broken worktree ${worktreePath}: `,
+            result.failure.message,
+          ),
+        );
+      } else {
+        archived += 1;
+      }
+    }
+    if (archived === 0) continue;
+    const what = `${run.repo}#${run.issue}: worktree ${worktreePath} of run ${runIdToString(run)} is gone or no longer a git checkout`;
+    pass.line(
+      plain(
+        `${what}; archived ${archived} thread(s) still on it, so T3 stops looking up their branch there`,
+      ),
+    );
+    pass.report.attention += 1;
+    const issue = Number(run.issue);
+    yield* world.attention.raise({
+      id: `worktree:${worktreePath}`,
+      kind: "attention",
+      repo: run.repo,
+      issue: Number.isInteger(issue) ? issue : null,
+      run: null,
+      // No count: an open item is not raised again, so it would go stale.
+      message: plain(`${what}; the factory archived the threads still on it`),
+    });
+  }
 });
 
 /**

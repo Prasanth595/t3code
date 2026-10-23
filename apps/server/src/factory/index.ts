@@ -42,7 +42,7 @@ import type { State } from "./domain/lifecycle.ts";
 import { ledgerCall as ledger, type LedgerError } from "./ledger/errors.ts";
 import { makeCause, type CauseStep, type ErrorKind, type MachineEvent } from "./ledger/events.ts";
 import { Ledger } from "./ledger/ledger.ts";
-import { listUnfinishedRuns } from "./ledger/listRuns.ts";
+import { listUnfinishedRuns, runsByThread } from "./ledger/listRuns.ts";
 import { readRun } from "./ledger/read.ts";
 import { runIdToString, type RunId } from "./ledger/runId.ts";
 import {
@@ -61,6 +61,7 @@ import {
   runPass,
   stuckItem,
   stuckLine,
+  type BrokenThreadMemo,
   type PassError,
   type PassWorld,
   type Repo,
@@ -352,13 +353,14 @@ export const gateDecided = (step: GateStep | null): boolean =>
 /**
  * What a world keeps for as long as the factory runs, however often a reload builds a new one:
  * the claim judgements, the runs whose gate this process is running now (a gate holds the
- * run's lock file only while an attempt runs; this covers the whole call), and when each stuck
- * item's issue was last read.
+ * run's lock file only while an attempt runs; this covers the whole call), when each stuck
+ * item's issue was last read, and which threads on a broken worktree are ruled out or waiting.
  */
 export interface LiveShared {
   readonly gating: Set<string>;
   readonly claimMemo: ClaimMemo;
   readonly stuckReads: Map<string, number>;
+  readonly brokenThreads: BrokenThreadMemo;
 }
 
 /**
@@ -393,10 +395,11 @@ export const liveWorld = (
   gateRemoteBase?: string,
   onProject?: (repo: string, reading: RepoConfigReading) => void,
   // Built once per process by the factory, so a reload's new world goes on from the old one's.
-  { gating, claimMemo, stuckReads }: LiveShared = {
+  { gating, claimMemo, stuckReads, brokenThreads }: LiveShared = {
     gating: new Set(),
     claimMemo: new ClaimMemo(),
     stuckReads: new Map(),
+    brokenThreads: { notFactory: new Set(), unsettled: new Map() },
   },
 ): Omit<PassWorld, "watchedRepos" | "freeSpace"> => {
   const withProcess = <A, E>(effect: Effect.Effect<A, E, FactoryProcess>) =>
@@ -648,6 +651,13 @@ export const liveWorld = (
     feedback: (repo, run, base) => feedback(gateContext(repo, runProject(repo.project, base)), run),
     recordError,
     handPause: () => loadHandPause(dataDir),
+    threadsOnBrokenWorktrees: () =>
+      sessions.brokenWorktrees.pipe(Effect.mapError(asPassError("t3"))),
+    sessionRuns: () =>
+      ledger(() => runsByThread(dataDir)).pipe(Effect.mapError(asPassError("ledger"))),
+    brokenThreads,
+    archiveThread: (threadId) =>
+      sessions.archive(threadId).pipe(Effect.mapError(asPassError("t3"))),
     nowMs: clock,
     attention,
     record: (event: MachineEvent) =>
@@ -813,6 +823,7 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
     gating: new Set(),
     claimMemo: new ClaimMemo(),
     stuckReads: new Map(),
+    brokenThreads: { notFactory: new Set(), unsettled: new Map() },
   };
   // The threads of the unfinished runs, read at start and after every pass: a pass is what
   // launches and finishes sessions, so between passes the set does not change.
