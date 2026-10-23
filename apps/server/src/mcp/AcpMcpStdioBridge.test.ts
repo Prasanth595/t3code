@@ -30,7 +30,6 @@ function makeHarness(responder: (request: Request) => Promise<Response> | Respon
   return { input, written, requests, bridge };
 }
 
-// Never settles, so only the request's abort signal can end it.
 function pendingFetch(started: Deferred.Deferred<AbortSignal | undefined>) {
   return (_url: string, init?: RequestInit): Promise<Response> => {
     Deferred.doneUnsafe(started, Effect.succeed(init?.signal ?? undefined));
