@@ -1078,8 +1078,9 @@ const program = Effect.gen(function* () {
         );
         return {};
       }
-      if (process.env.T3_ACP_ANTIGRAVITY_HARNESS_FAILURE === "1") {
-        yield* Effect.promise(
+      const harnessFailure = process.env.T3_ACP_ANTIGRAVITY_HARNESS_FAILURE;
+      if (harnessFailure === "1" || harnessFailure === "after-end-turn") {
+        const writeHarnessFailure = Effect.promise(
           () =>
             new Promise<void>((resolve) => {
               process.stderr.write(
@@ -1088,7 +1089,17 @@ const program = Effect.gen(function* () {
               );
             }),
         );
-        // The native ACP parent can report success after its local harness has failed.
+        // The native ACP parent can report success after its local harness has
+        // failed. Its stderr and stdout are separate pipes, so the failure record
+        // can reach the client before or after the successful response.
+        if (harnessFailure === "after-end-turn") {
+          yield* Effect.sleep("200 millis").pipe(
+            Effect.andThen(writeHarnessFailure),
+            Effect.forkDetach,
+          );
+          return yield* finishPrompt(requestedSessionId, "end_turn");
+        }
+        yield* writeHarnessFailure;
         return yield* finishPrompt(requestedSessionId, "end_turn");
       }
       if (

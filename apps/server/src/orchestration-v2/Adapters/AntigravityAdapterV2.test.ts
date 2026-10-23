@@ -14,6 +14,7 @@ import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -125,7 +126,10 @@ const layerSession = Layer.mergeAll(
 );
 
 describe("AntigravityAdapterV2 harness recovery", () => {
-  it.effect("fails despite end_turn and resumes the saved session in a fresh process", () =>
+  const recoverHarnessFailure = (
+    harnessFailure: "1" | "after-end-turn",
+    firstTurnStatus: "failed" | "completed",
+  ) =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -137,6 +141,7 @@ describe("AntigravityAdapterV2 harness recovery", () => {
       const workspace = yield* fileSystem.makeTempDirectoryScoped();
       const requestLogPath = path.join(workspace, "requests.jsonl");
       let processCount = 0;
+      const firstRuntimeTerminated = yield* Deferred.make<void>();
       const instanceId = ProviderInstanceId.make("antigravity-recovery-test");
       const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
@@ -144,8 +149,17 @@ describe("AntigravityAdapterV2 harness recovery", () => {
         makeRuntime: (input) =>
           Effect.suspend(() => {
             processCount += 1;
+            const processNumber = processCount;
             return makeAntigravityAcpRuntime({
               ...input,
+              onTermination: (error) =>
+                (input.onTermination?.(error) ?? Effect.void).pipe(
+                  Effect.andThen(
+                    processNumber === 1
+                      ? Deferred.succeed(firstRuntimeTerminated, undefined)
+                      : Effect.void,
+                  ),
+                ),
               childProcessSpawner,
               spawn: {
                 command: process.execPath,
@@ -154,7 +168,9 @@ describe("AntigravityAdapterV2 harness recovery", () => {
                 env: {
                   T3_ACP_ANTIGRAVITY: "1",
                   T3_ACP_REQUEST_LOG_PATH: requestLogPath,
-                  ...(processCount === 1 ? { T3_ACP_ANTIGRAVITY_HARNESS_FAILURE: "1" } : {}),
+                  ...(processNumber === 1
+                    ? { T3_ACP_ANTIGRAVITY_HARNESS_FAILURE: harnessFailure }
+                    : {}),
                 },
               },
             }).pipe(Effect.provideService(Crypto.Crypto, crypto));
@@ -193,9 +209,11 @@ describe("AntigravityAdapterV2 harness recovery", () => {
       yield* session.startTurn(
         makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, modelSelection, now }),
       );
-      const failed = yield* terminal;
-      assert.equal(failed._tag, "Some");
-      if (failed._tag === "Some") assert.equal(failed.value.status, "failed");
+      const first = yield* terminal;
+      assert.equal(first._tag, "Some");
+      if (first._tag === "Some") assert.equal(first.value.status, firstTurnStatus);
+      // The adapter must retire the first process even when end_turn won the race.
+      yield* Deferred.await(firstRuntimeTerminated);
       yield* session.startTurn(
         makeTurnInput({
           threadId,
@@ -211,10 +229,21 @@ describe("AntigravityAdapterV2 harness recovery", () => {
       assert.equal(completed._tag, "Some");
       if (completed._tag === "Some") assert.equal(completed.value.status, "completed");
       assert.equal(processCount, 2);
-      const requests = yield* fileSystem.readFileString(requestLogPath);
-      assert.include(requests, "session/resume");
-      assert.include(requests, "mock-session-1");
-    }).pipe(Effect.provide(layerSession), Effect.scoped),
+      const requests = (yield* fileSystem.readFileString(requestLogPath))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { method?: string; params?: { sessionId?: string } });
+      const resumeRequests = requests.filter((request) => request.method === "session/resume");
+      assert.equal(resumeRequests.length, 1);
+      assert.equal(resumeRequests[0]?.params?.sessionId, "mock-session-1");
+    }).pipe(Effect.provide(layerSession), Effect.scoped);
+
+  it.live("fails despite end_turn and resumes the saved session in a fresh process", () =>
+    recoverHarnessFailure("1", "failed"),
+  );
+
+  it.live("resumes in a fresh process when the native failure arrives after end_turn", () =>
+    recoverHarnessFailure("after-end-turn", "completed"),
   );
 });
 
