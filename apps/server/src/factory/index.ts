@@ -476,11 +476,6 @@ export const liveWorld = (
       }
     });
   /**
-   * The gate as a background fiber: its line is logged when it ends, as the pass's lines are, an
-   * error goes to the run's ledger, a `stuck` or `abandoned` end raises its attention item, and the loop is
-   * woken so the next pass carries on at once.
-   */
-  /**
    * Whether GitHub says the run's pull request conflicts with its base. The gate of such a run
    * takes no slot (it records the conflict without a checkout), so it starts even when every slot
    * is taken. A run with no pull request on record, or a read that fails, is no conflict.
@@ -492,6 +487,11 @@ export const liveWorld = (
       const pull = yield* trackerFor(repo.watched).pullRequest(last.pr);
       return pull !== null && pull.open && pull.mergeable === "conflicting";
     }).pipe(Effect.orElseSucceed(() => false));
+  /**
+   * The gate as a background fiber: its line is logged when it ends, as the pass's lines are, an
+   * error goes to the run's ledger, a `stuck` or `abandoned` end raises its attention item, and the loop is
+   * woken so the next pass carries on at once.
+   */
   const startGate = Effect.fn("Factory.startGate")(function* (repo: Repo, run: RunId) {
     const id = runIdToString(run);
     if (gating.size >= machine.maxConcurrentGates && !(yield* conflicting(repo, run))) {
