@@ -156,7 +156,14 @@ const UNCHANGED_READ = `textCheck 10 ${LABELED} rawphp`;
 const ghFailure = () => new GitHubFailed({ args: ["issue"], status: 1, stderr: "boom" });
 const ghRateLimit = () => new GitHubRateLimited({ args: ["issue"], stderr: "rate limit" });
 const sessionsFailure = (
-  operation: "status" | "send" | "archive" | "thread" | "launch" | "find-project",
+  operation:
+    | "status"
+    | "send"
+    | "archive"
+    | "thread"
+    | "launch"
+    | "find-project"
+    | "remove-worktree",
 ) => new SessionsError({ operation, cause: "timeout" });
 
 const isThreadNotFound = Schema.is(ThreadNotFoundError);
@@ -459,7 +466,7 @@ class FakeT3 {
     removeWorktree: (path) => {
       this.calls.push(`removeWorktree ${path}`);
       if (this.worktreeRemoveFails) {
-        return Effect.fail(sessionsFailure("archive"));
+        return Effect.fail(sessionsFailure("remove-worktree"));
       }
       return Effect.void;
     },

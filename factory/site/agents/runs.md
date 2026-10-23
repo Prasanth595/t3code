@@ -121,20 +121,21 @@ On the server (`http://127.0.0.1:3876` in the LaunchAgent install), authenticate
 | POST   | `/api/factory/claims/resume`     | `orchestration:operate` | Resume claims.                                                                              |
 | POST   | `/api/factory/attention/dismiss` | `orchestration:operate` | Body `{ "ids": [...] }`; answers `{ "dismissed": [...] }`.                                  |
 | GET    | `/api/factory/config`            | `orchestration:read`    | Machine config report and watched repos.                                                    |
-| PUT    | `/api/factory/config`            | `settings:write`        | Save machine config keys; 422 `invalid_config` on errors.                                   |
+| POST   | `/api/factory/config`            | `settings:write`        | Save machine config keys; 422 `invalid_config` on errors.                                   |
 | POST   | `/api/factory/restart`           | `environment:maintain`  | 202, then the server exits; launchd restarts it. 409 `restart_pending` if one is under way. |
 
 Unauthenticated: 401.
 
 ## Attention items
 
-| Kind                        | Raised when                                                                                                         | Clears when                                      |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `stuck`                     | A run ends `stuck`.                                                                                                 | The issue is claimed again.                      |
-| `needs-info`                | A run ends `needs-info`.                                                                                            | The issue is claimed again.                      |
-| `attention`                 | Issue closed under a building run; a run holds a slot with nothing to move it; a thread may need archiving by hand. | The run finishes, or the issue is claimed again. |
-| `attention` (id `low-disk`) | Free space is below `min_free_gib`; no run.                                                                         | A pass finds it at or above, or reads none.      |
-| `config`                    | The machine config fails to load.                                                                                   | It loads.                                        |
-| `pass-errors`               | 3 passes in a row fail.                                                                                             | A pass succeeds.                                 |
+| Kind                               | Raised when                                                                                                         | Clears when                                      |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `stuck`                            | A run ends `stuck`.                                                                                                 | The issue is claimed again.                      |
+| `needs-info`                       | A run ends `needs-info`.                                                                                            | The issue is claimed again.                      |
+| `attention`                        | Issue closed under a building run; a run holds a slot with nothing to move it; a thread may need archiving by hand. | The run finishes, or the issue is claimed again. |
+| `attention` (id `worktree:<path>`) | A pass archived the live threads left on a stopped session's worktree that is gone or has no `.git`.                | The issue is claimed again.                      |
+| `attention` (id `low-disk`)        | Free space is below `min_free_gib`; no run.                                                                         | A pass finds it at or above, or reads none.      |
+| `config`                           | The machine config fails to load.                                                                                   | It loads.                                        |
+| `pass-errors`                      | 3 passes in a row fail.                                                                                             | A pass succeeds.                                 |
 
 Dismissed items stay hidden until they clear and are raised again.

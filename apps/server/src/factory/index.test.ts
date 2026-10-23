@@ -81,6 +81,7 @@ const stubSessions = Sessions.FactorySessions.of({
   send: () => Effect.die("not sent"),
   archive: () => Effect.die("not archived"),
   removeWorktree: () => Effect.die("not removed"),
+  brokenWorktrees: Effect.succeed([]),
   runningThreads: Effect.succeed(0),
   worktreesDirectory: (defaultDir) => Effect.succeed(defaultDir),
 });
@@ -1845,6 +1846,7 @@ describe("the gate in the background", () => {
         gating: new Set<string>(),
         claimMemo: new ClaimMemo(),
         stuckReads: new Map<string, number>(),
+        brokenThreads: { notFactory: new Set<string>(), unsettled: new Map<string, number>() },
       };
       const build = () =>
         liveWorld(
