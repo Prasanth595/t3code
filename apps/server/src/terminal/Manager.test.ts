@@ -1051,6 +1051,8 @@ it.layer(
     readonly environment?: TerminalShellSetting;
     readonly project?: TerminalShellSetting;
     readonly file?: T3ProjectFile;
+    readonly draftProjectId?: ProjectId;
+    readonly projected?: boolean;
   }) =>
     TerminalManager.resolveConfiguredTerminalShell({
       serverSettings: {
@@ -1064,9 +1066,10 @@ it.layer(
       projectFiles: {
         load: () => Effect.succeed(input.file ? Option.some(input.file) : Option.none()),
       },
-      threads,
+      threads: input.projected === false ? { getThreadShell: () => Effect.succeed(null) } : threads,
       threadId: ThreadId.make("thread-1"),
       cwd: "/repo",
+      ...(input.draftProjectId ? { projectId: input.draftProjectId } : {}),
     });
 
   it.effect("orders project override, environment default, t3.json, then auto", () =>
@@ -1077,6 +1080,107 @@ it.layer(
       expect(yield* resolve({ file })).toBe("cmd");
       expect(yield* resolve({})).toBe("auto");
       expect(yield* resolve({ project: "auto", file })).toBe("auto");
+      expect(yield* resolve({ environment: "auto", file })).toBe("auto");
+    }),
+  );
+
+  it.effect("resolves draft project overrides without a projected thread", () =>
+    Effect.gen(function* () {
+      const file = { terminalShell: "cmd" } satisfies T3ProjectFile;
+      expect(
+        yield* resolve({
+          project: "fish",
+          environment: "bash",
+          file,
+          draftProjectId: projectId,
+          projected: false,
+        }),
+      ).toBe("fish");
+      expect(
+        yield* resolve({
+          project: "auto",
+          environment: "bash",
+          file,
+          draftProjectId: projectId,
+          projected: false,
+        }),
+      ).toBe("auto");
+      expect(
+        yield* resolve({
+          project: "fish",
+          environment: "bash",
+          file,
+          draftProjectId: ProjectId.make("other"),
+          projected: false,
+        }),
+      ).toBe("bash");
+      expect(
+        yield* resolve({
+          project: "fish",
+          environment: "bash",
+          file,
+          draftProjectId: ProjectId.make("other"),
+        }),
+      ).toBe("fish");
+    }),
+  );
+
+  it.effect("keeps the inherited shell on restart after settings change", () =>
+    Effect.gen(function* () {
+      let setting: TerminalShellSetting = "fish";
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellProfiles,
+        resolveConfiguredShell: () => Effect.sync(() => setting),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* manager.open(openInput());
+      setting = "zsh";
+      yield* manager.restart(restartInput());
+      yield* manager.open(openInput({ terminalId: "term-2" }));
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual([
+        "/bin/fish",
+        "/bin/fish",
+        "/bin/zsh",
+      ]);
+    }),
+  );
+
+  it.effect("honors an explicit shell when attach creates the terminal before open", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellProfiles,
+        resolveConfiguredShell: configured("zsh"),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      const stop = yield* manager.attachStream(openInput(), () => Effect.void);
+      stop();
+      yield* manager.open(openInput({ shell: "fish" }));
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual(["/bin/zsh", "/bin/fish"]);
+      expect(ptyAdapter.processes[0]?.killed).toBe(true);
+      yield* manager.open(openInput({ shell: "fish" }));
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+    }),
+  );
+
+  it.effect("retains draft project context through open, attach recovery and restart", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellProfiles,
+        resolveConfiguredShell: (input) =>
+          Effect.succeed(input.projectId === projectId ? "fish" : "zsh"),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* manager.open(openInput({ projectId }));
+      yield* manager.restart(restartInput());
+      const stop = yield* manager.attachStream(
+        openInput({ terminalId: "term-2", projectId }),
+        () => Effect.void,
+      );
+      stop();
+      yield* manager.restart(restartInput({ terminalId: "term-2" }));
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual([
+        "/bin/fish",
+        "/bin/fish",
+        "/bin/fish",
+        "/bin/fish",
+      ]);
     }),
   );
 

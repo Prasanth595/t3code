@@ -19,7 +19,7 @@ export function NewTerminalShellMenu({
   disabled: boolean;
   onSelect: (shell: TerminalShellSetting) => void;
 }) {
-  const { shells, status, load } = useTerminalShells(threadRef.environmentId);
+  const { shells, status, load, canLoad } = useTerminalShells(threadRef.environmentId);
 
   return (
     <Menu onOpenChange={(open) => open && load()}>
@@ -28,7 +28,7 @@ export function NewTerminalShellMenu({
           <Button
             size="icon-micro"
             variant="ghost-muted"
-            disabled={disabled}
+            disabled={disabled || !canLoad}
             aria-label="New terminal with shell"
           />
         }

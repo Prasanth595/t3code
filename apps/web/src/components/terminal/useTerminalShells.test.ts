@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 const state = vi.hoisted(() => ({
   consumer: { value: null as unknown, updates: 0 },
   listShells: vi.fn(),
+  allowed: true,
 }));
 
 vi.mock("react", async (importOriginal) => ({
@@ -20,12 +21,16 @@ vi.mock("react", async (importOriginal) => ({
     ];
   },
 }));
-vi.mock("../../state/terminal", () => ({ terminalEnvironment: { listShells: {} } }));
+vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.allowed }));
+vi.mock("../../state/terminal", () => ({
+  terminalEnvironment: { listShells: { permissionAtom: () => ({}) } },
+}));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.listShells }));
 
 async function setup() {
   vi.resetModules();
   state.listShells.mockReset();
+  state.allowed = true;
   const { useTerminalShells } = await import("./useTerminalShells");
   const environmentId = EnvironmentId.make("shell-test");
   const shells = [{ id: "fish", label: "fish", command: "/bin/fish", args: [] }];
@@ -43,6 +48,17 @@ async function setup() {
 }
 
 describe("terminal shell discovery", () => {
+  it("does not discover or expose cached shells without a terminal grant", async () => {
+    const { consumer, shells } = await setup();
+    state.listShells.mockResolvedValue({ _tag: "Success", value: { shells } });
+    const menu = consumer();
+    await menu.read().load();
+    state.allowed = false;
+    state.listShells.mockClear();
+    await menu.read().load();
+    expect(menu.read()).toMatchObject({ canLoad: false, shells: null });
+    expect(state.listShells).not.toHaveBeenCalled();
+  });
   it("settles a failure and retries successfully", async () => {
     const { consumer, shells } = await setup();
     state.listShells.mockResolvedValueOnce({ _tag: "Failure" });

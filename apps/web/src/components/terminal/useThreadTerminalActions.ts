@@ -113,6 +113,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
       environmentId: threadRef.environmentId,
       input: {
         threadId: threadRef.threadId,
+        projectId: project.id,
         terminalId,
         cwd: location.cwd,
         ...(location.worktreePath !== null ? { worktreePath: location.worktreePath } : {}),

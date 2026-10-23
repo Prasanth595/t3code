@@ -40,6 +40,7 @@ import {
   ClaudeSettings,
   CodexSettings,
   ProviderInstanceId,
+  type ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -279,6 +280,7 @@ export interface TerminalStartInput extends TerminalOpenInput {
 }
 
 interface TerminalSessionState {
+  projectId: ProjectId | undefined;
   threadId: string;
   terminalId: string;
   cwd: string;
@@ -303,7 +305,7 @@ interface TerminalSessionState {
   hasRunningSubprocess: boolean;
   childCommandLabel: string | null;
   runtimeEnv: Record<string, string> | null;
-  /** Explicit choice for this terminal; undefined defers to the configured settings. */
+  /** Requested profile, resolved from settings on first launch when omitted. */
   shell: TerminalShellSetting | undefined;
   /** Label of the shell actually running. */
   shellLabel: string | null;
@@ -1415,6 +1417,7 @@ interface TerminalManagerOptions {
   resolveConfiguredShell?: (input: {
     readonly threadId: string;
     readonly cwd: string;
+    readonly projectId?: ProjectId;
   }) => Effect.Effect<TerminalShellSetting>;
   env?: NodeJS.ProcessEnv;
   managedBinaryCacheDir?: string;
@@ -1497,12 +1500,13 @@ export const resolveConfiguredTerminalShell = Effect.fn("terminal.resolveConfigu
     readonly threads: Pick<ProjectionStore.ProjectionStoreV2Shape, "getThreadShell">;
     readonly threadId: string;
     readonly cwd: string;
+    readonly projectId?: ProjectId;
   }) {
     const settings = yield* input.serverSettings.getSettings;
     const projectId = hasProjectSettingsOverrides(settings)
       ? yield* input.threads.getThreadShell(ThreadId.make(input.threadId)).pipe(
-          Effect.map((thread) => thread?.projectId ?? null),
-          Effect.orElseSucceed(() => null),
+          Effect.map((thread) => thread?.projectId ?? input.projectId ?? null),
+          Effect.orElseSucceed(() => input.projectId ?? null),
         )
       : null;
     const resolved = resolveProjectSettings(settings, projectId).settings.terminalShell;
@@ -1524,8 +1528,11 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
   const projectFiles = yield* T3ProjectFileLoader.T3ProjectFileLoader;
   const threads = yield* ProjectionStore.ProjectionStoreV2;
   const path = yield* Path.Path;
-  const resolveConfiguredShell = (input: { readonly threadId: string; readonly cwd: string }) =>
-    resolveConfiguredTerminalShell({ serverSettings, projectFiles, threads, ...input });
+  const resolveConfiguredShell = (input: {
+    readonly threadId: string;
+    readonly cwd: string;
+    readonly projectId?: ProjectId;
+  }) => resolveConfiguredTerminalShell({ serverSettings, projectFiles, threads, ...input });
   const resolveProviderInstanceEnvironment = Effect.fn(
     "terminal.resolveProviderInstanceEnvironment",
   )((rawProviderInstanceId: string, env: Record<string, string> | undefined) =>
@@ -2401,6 +2408,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                 : yield* options.resolveConfiguredShell({
                     threadId: session.threadId,
                     cwd: session.worktreePath ?? session.cwd,
+                    ...(session.projectId !== undefined ? { projectId: session.projectId } : {}),
                   }));
             const preferred = preferredShellCandidate(setting, profiles);
             const shellCandidates = resolveShellCandidates(
@@ -2465,6 +2473,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               session.process = ptyProcess;
               session.pid = processPid;
               session.status = "running";
+              session.shell = setting;
               session.shellLabel = shellLabel;
               session.shellFallbackFrom =
                 preferred === null
@@ -2837,6 +2846,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       const cols = input.cols ?? DEFAULT_OPEN_COLS;
       const rows = input.rows ?? DEFAULT_OPEN_ROWS;
       const session: TerminalSessionState = {
+        projectId: input.projectId,
         threadId: input.threadId,
         terminalId,
         cwd: input.cwd,
@@ -2892,6 +2902,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
 
     const liveSession = existing.value;
+    if (input.projectId !== undefined) liveSession.projectId = input.projectId;
+    // Attach may create the session before a queued open supplies the selected shell.
+    const shellChanged = input.shell !== undefined && input.shell !== liveSession.shell;
     if (input.shell !== undefined) liveSession.shell = input.shell;
     const nextRuntimeEnv = normalizedRuntimeEnv(input.env);
     const currentRuntimeEnv = liveSession.runtimeEnv;
@@ -2903,6 +2916,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const launchContextChanged =
       liveSession.cwd !== input.cwd ||
       runtimeEnvChanged ||
+      shellChanged ||
       liveSession.worktreePath !== nextWorktreePath;
 
     if (launchContextChanged) {
@@ -3326,6 +3340,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       const cols = input.cols ?? DEFAULT_OPEN_COLS;
       const rows = input.rows ?? DEFAULT_OPEN_ROWS;
       session = {
+        projectId: input.projectId,
         threadId: input.threadId,
         terminalId,
         cwd: input.cwd,
@@ -3364,6 +3379,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       yield* evictInactiveSessionsIfNeeded();
     } else {
       session = existingSession.value;
+      if (input.projectId !== undefined) session.projectId = input.projectId;
       if (input.shell !== undefined) session.shell = input.shell;
       yield* stopProcess(session);
       session.cwd = input.cwd;

@@ -270,6 +270,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
         <ThreadTerminalDrawer
           threadRef={threadRef}
           threadId={threadId}
+          projectId={project.id}
           cwd={cwd}
           worktreePath={effectiveWorktreePath}
           runtimeEnv={runtimeEnv}
@@ -404,6 +405,7 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
       visible={visible}
       threadRef={threadRef}
       threadId={threadRef.threadId}
+      projectId={project.id}
       cwd={cwd}
       worktreePath={worktreePath}
       runtimeEnv={runtimeEnv}

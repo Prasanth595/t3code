@@ -1,4 +1,5 @@
 import type { EnvironmentId, TerminalShellProfile } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { useState } from "react";
 
 import { terminalEnvironment } from "../../state/terminal";
@@ -12,6 +13,7 @@ const inflightByEnvironment = new Map<string, Promise<readonly TerminalShellProf
 
 /** Lists the shells detected on `environmentId`; nothing is fetched until `load` runs. */
 export function useTerminalShells(environmentId: EnvironmentId | null) {
+  const canLoad = useAtomValue(terminalEnvironment.listShells.permissionAtom(environmentId));
   const listShells = useAtomCommand(terminalEnvironment.listShells, { reportFailure: false });
   const [loaded, setLoaded] = useState<{
     readonly environmentId: string;
@@ -25,7 +27,7 @@ export function useTerminalShells(environmentId: EnvironmentId | null) {
   const status = cached !== undefined ? "success" : (current?.status ?? "idle");
 
   const load = async () => {
-    if (environmentId === null) return;
+    if (environmentId === null || !canLoad) return;
     const cachedShells = shellsByEnvironment.get(environmentId);
     if (cachedShells !== undefined) {
       setLoaded((previous) =>
@@ -50,5 +52,5 @@ export function useTerminalShells(environmentId: EnvironmentId | null) {
     setLoaded({ environmentId, shells: next, status: next === null ? "error" : "success" });
   };
 
-  return { shells, status, load };
+  return { shells: canLoad ? shells : null, status, load, canLoad };
 }

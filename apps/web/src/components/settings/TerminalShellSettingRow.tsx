@@ -27,7 +27,7 @@ export function TerminalShellSettingRow() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed(["terminalShell"]);
-  const { shells, status, load } = useTerminalShells(target?.environmentId ?? null);
+  const { shells, status, load, canLoad } = useTerminalShells(target?.environmentId ?? null);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const unavailable = connectedEnvironments.length === 0;
   const effective = target
@@ -56,7 +56,7 @@ export function TerminalShellSettingRow() {
       description={
         isProjectScope
           ? "Shell for new terminals in this project."
-          : "Shell for new terminals. Projects and their t3.json can override it."
+          : "Shell for new terminals. Projects can override it."
       }
       resetAction={
         !isProjectScope && settings.terminalShell !== null ? (
@@ -66,12 +66,12 @@ export function TerminalShellSettingRow() {
       control={
         <Select
           value={selectValue}
+          disabled={!canLoad}
           onOpenChange={(open) => {
             if (open) load();
           }}
           onValueChange={(value) => {
-            if (value === "auto") save(isProjectScope ? "auto" : null);
-            else if (value) save(value);
+            if (value) save(value);
           }}
         >
           <SelectTrigger size="sm" aria-label="Default shell">
@@ -96,7 +96,7 @@ export function TerminalShellSettingRow() {
         </Select>
       }
     >
-      {status === "error" ? (
+      {status === "error" && canLoad ? (
         <div className="flex items-center gap-2 pb-2">
           <span className="text-xs text-muted-foreground">Could not load shells.</span>
           <Button variant="ghost" size="sm" onClick={() => void load()}>

@@ -24,6 +24,7 @@ import {
   AuthTerminalOperateScope,
   type ContextMenuItem,
   type ProviderInstanceId,
+  type ProjectId,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type TerminalShellSetting,
@@ -420,6 +421,7 @@ interface TerminalViewportProps {
   advancedTypography: boolean;
   threadRef: ScopedThreadRef;
   threadId: ThreadId;
+  projectId?: ProjectId;
   terminalId: string;
   terminalLabel: string;
   cwd: string;
@@ -460,6 +462,7 @@ function TerminalSessionViewport({
   advancedTypography,
   threadRef,
   threadId,
+  projectId,
   terminalId,
   terminalLabel,
   cwd,
@@ -534,6 +537,7 @@ function TerminalSessionViewport({
     environmentId,
     terminal: {
       threadId,
+      ...(projectId !== undefined ? { projectId } : {}),
       terminalId,
       cwd,
       ...(worktreePath !== undefined ? { worktreePath } : {}),
@@ -1152,6 +1156,7 @@ interface ThreadTerminalDrawerProps {
   mode?: "drawer" | "panel";
   threadRef: ScopedThreadRef;
   threadId: ThreadId;
+  projectId?: ProjectId;
   cwd: string;
   worktreePath?: string | null;
   runtimeEnv?: Record<string, string>;
@@ -1235,6 +1240,7 @@ function TerminalSplitPanes({
   advancedTypography,
   threadRef,
   threadId,
+  projectId,
   onAddTerminalContext,
   focusRequestId,
   visible,
@@ -1252,6 +1258,7 @@ function TerminalSplitPanes({
   advancedTypography: boolean;
   threadRef: ScopedThreadRef;
   threadId: ThreadId;
+  projectId?: ProjectId;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   focusRequestId: number;
   visible: boolean;
@@ -1293,6 +1300,7 @@ function TerminalSplitPanes({
                 advancedTypography={advancedTypography}
                 threadRef={threadRef}
                 threadId={threadId}
+                {...(projectId !== undefined ? { projectId } : {})}
                 terminalId={terminalId}
                 terminalLabel={terminalLabelById.get(terminalId) ?? "Terminal"}
                 cwd={terminalLaunchLocation.cwd}
@@ -1435,6 +1443,7 @@ export default function ThreadTerminalDrawer({
   mode = "drawer",
   threadRef,
   threadId,
+  projectId,
   cwd,
   worktreePath,
   runtimeEnv,
@@ -1833,14 +1842,21 @@ export default function ThreadTerminalDrawer({
         ) : null}
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4 py-6 text-center text-sm text-muted-foreground">
           <p>No terminal sessions for this thread yet.</p>
-          <Button
-            size="xs"
-            variant="outline"
-            onClick={onNewTerminalAction}
-            disabled={!canOperateTerminal}
-          >
-            {newTerminalActionLabel}
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              size="xs"
+              variant="outline"
+              onClick={onNewTerminalAction}
+              disabled={!canOperateTerminal}
+            >
+              {newTerminalActionLabel}
+            </Button>
+            <NewTerminalShellMenu
+              threadRef={threadRef}
+              disabled={!canOperateTerminal}
+              onSelect={onNewTerminalWithShell}
+            />
+          </div>
         </div>
       </aside>
     );
@@ -1942,6 +1958,7 @@ export default function ThreadTerminalDrawer({
               advancedTypography={advancedTypography}
               threadRef={threadRef}
               threadId={threadId}
+              {...(projectId !== undefined ? { projectId } : {})}
               onAddTerminalContext={onAddTerminalContext}
               focusRequestId={focusRequestId}
               visible={visible}
