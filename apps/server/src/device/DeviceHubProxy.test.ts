@@ -109,6 +109,21 @@ describe("device hub proxy", () => {
     await response.text();
   });
 
+  it("reads Android foreground state with read scope and rejects writes", async () => {
+    const { handler, requests } = fixture([AuthOrchestrationReadScope]);
+    const path =
+      "http://t3.test/api/device-hub/vendor/serve-emu/api/foreground?device=physical-android";
+    const response = await handler(new Request(path));
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(requests).toEqual([
+      "http://hub.test/vendor/serve-emu/api/foreground?device=physical-android",
+    ]);
+    const operator = fixture([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]);
+    expect((await operator.handler(new Request(path, { method: "POST" }))).status).toBe(405);
+    expect(operator.requests).toEqual([]);
+  });
+
   it("reads Android fold state but requires operate scope to change it", async () => {
     const path = "http://t3.test/api/device-hub/vendor/serve-emu/api/fold?device=emulator-5554";
     const reader = fixture([AuthOrchestrationReadScope]);

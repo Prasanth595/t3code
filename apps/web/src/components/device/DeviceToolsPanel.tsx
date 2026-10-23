@@ -163,7 +163,7 @@ export function DeviceToolsPanel(props: {
           />
         </Section>
 
-        <Section title={isIos ? "Simulator" : "Emulator"}>
+        <Section title={device.physical ? "Device" : isIos ? "Simulator" : "Emulator"}>
           <Row label="Appearance">
             <ToggleGroup
               aria-label="Appearance"

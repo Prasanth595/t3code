@@ -28,7 +28,7 @@ export function DeviceWorkspace(props: {
   const captureRef = useRef<AbortController | null>(null);
   const downloadRef = useRef<string | null>(null);
   const access = useDeviceHubAccess(props.environmentId, props.device.hostId);
-  const controls = useDeviceControls({ ...props, access });
+  const controls = useDeviceControls({ ...props, access, watchForeground: toolsOpen });
   useEffect(() => {
     if (!access || !props.visible) captureRef.current?.abort();
     return () => {

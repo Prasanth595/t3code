@@ -46,13 +46,22 @@ const hubUrl = (target: Target, path: string, params?: Record<string, string>) =
   return withDeviceHubQuery(`${vendorBase(target)}${path}${search}`, target.access);
 };
 
+class DeviceHubRequestError extends Error {
+  constructor(
+    readonly status: number,
+    statusText: string,
+  ) {
+    super(`${status} ${statusText}`);
+  }
+}
+
 const fetchJson = async (target: Target, url: string, signal?: AbortSignal): Promise<unknown> => {
   const response = await fetch(url, {
     cache: "no-store",
     credentials: target.access.credentials ? "include" : "same-origin",
     ...(signal ? { signal } : {}),
   });
-  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  if (!response.ok) throw new DeviceHubRequestError(response.status, response.statusText);
   return response.json();
 };
 
@@ -170,8 +179,53 @@ const openEventSource = (
 export function subscribeDeviceForeground(
   target: Target,
   onChange: (app: DeviceForegroundInfo | null) => void,
+  onUnauthorized?: () => void,
 ): () => void {
-  if (target.platform !== "ios") return () => {};
+  if (target.platform === "android") {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const read = async () => {
+      const request = new AbortController();
+      const timeout = setTimeout(() => request.abort(), 15_000);
+      try {
+        const payload = await fetchJson(
+          target,
+          hubUrl(target, "/api/foreground", { device: target.deviceId }),
+          AbortSignal.any([controller.signal, request.signal]),
+        );
+        if (controller.signal.aborted) return;
+        const app =
+          isRecord(payload) && payload.ok === true && isRecord(payload.app) ? payload.app : null;
+        onChange(
+          app && typeof app.packageName === "string" && app.packageName.length > 0
+            ? {
+                id: app.packageName,
+                ...(typeof app.label === "string" ? { label: app.label } : {}),
+                ...(typeof app.pid === "number" ? { pid: app.pid } : {}),
+              }
+            : null,
+        );
+      } catch (cause) {
+        if (controller.signal.aborted) return;
+        onChange(null);
+        if (cause instanceof DeviceHubRequestError && cause.status === 401) {
+          // An open video socket can outlive its ticket. Wait for fresh access
+          // instead of continuing to inspect with expired credentials.
+          controller.abort();
+          if (target.access.query.wsTicket) onUnauthorized?.();
+        }
+      } finally {
+        clearTimeout(timeout);
+        // Schedule after settlement so a slow device never accumulates requests.
+        if (!controller.signal.aborted) timer = setTimeout(() => void read(), 5_000);
+      }
+    };
+    void read();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }
   return openEventSource(
     target,
     hubUrl(target, "/appstate", { device: target.deviceId }),

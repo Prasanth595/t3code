@@ -6,7 +6,7 @@ import type {
   EnvironmentId,
 } from "@t3tools/contracts";
 import { useEffect, useRef, useState } from "react";
-import { deviceEnvironment } from "~/state/device";
+import { deviceEnvironment, refreshDeviceHubAccess } from "~/state/device";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { subscribeDeviceForeground, type DeviceForegroundInfo } from "./deviceHubApi";
@@ -23,8 +23,9 @@ export function useDeviceControls(options: {
   device: DeviceSummary;
   access: DeviceHubAccess | null;
   visible: boolean;
+  watchForeground?: boolean;
 }) {
-  const { environmentId, device, access, visible } = options;
+  const { environmentId, device, access, visible, watchForeground = true } = options;
   const readDetail = useAtomCommand(deviceEnvironment.detail, { reportFailure: false });
   const runAction = useAtomCommand(deviceEnvironment.action, { reportFailure: false });
   const [detail, setDetail] = useState<DeviceDetail | null>(null);
@@ -60,12 +61,19 @@ export function useDeviceControls(options: {
   }, [deviceId, environmentId, hostId, readDetail, visible]);
 
   useEffect(() => {
-    if (!access || !visible) return;
+    if (!access || !visible || !watchForeground) return;
     let active = true;
     const unsubscribe = subscribeDeviceForeground(
-      { access, platform: device.platform, deviceId: device.id },
+      {
+        access: { ...access, query: { ...access.query, hostId } },
+        platform: device.platform,
+        deviceId: device.id,
+      },
       (app) => {
         if (active) setForeground(app);
+      },
+      () => {
+        if (active) refreshDeviceHubAccess(environmentId);
       },
     );
     return () => {
@@ -73,7 +81,7 @@ export function useDeviceControls(options: {
       unsubscribe();
       setForeground(undefined);
     };
-  }, [access, device.id, device.platform, visible]);
+  }, [access, device.id, device.platform, environmentId, hostId, visible, watchForeground]);
 
   const available = detail !== null && visible;
   const act = async (body: ActionBody) => {
