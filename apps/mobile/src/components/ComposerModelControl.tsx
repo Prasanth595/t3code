@@ -3,6 +3,7 @@ import {
   buildTraitsTriggerDisplay,
   getPromptControlledTraits,
 } from "@t3tools/client-runtime/model-traits";
+import { composerModelLabel } from "@t3tools/client-runtime/model-label";
 import type { ModelOption } from "../lib/modelOptions";
 import { resolveProviderOptionDescriptors } from "../lib/providerOptions";
 import { AppText as Text } from "./ui/AppText";
@@ -70,7 +71,11 @@ export function ComposerModelControl(props: {
           />
         )
       }
-      label={props.modelOption?.shortName ?? label}
+      label={
+        props.modelOption
+          ? composerModelLabel(props.modelOption.shortName ?? props.modelOption.label)
+          : label
+      }
       iconOnly={props.iconOnly}
       suffix={
         summary ? (
