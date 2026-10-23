@@ -293,6 +293,7 @@ const MOVED_WORDS: Record<Moved, string> = {
   head: "the pull request's head moved",
   both: "the pull request's head and the base branch moved",
   unknown: "the base of the last pass was not recorded",
+  conflict: "nothing moved but GitHub says the pull request conflicts with the base branch",
 };
 
 /**
@@ -645,11 +646,15 @@ export const liveWorld = (
         Effect.mapError(asPassError("tracker")),
       ),
     stuckReads,
-    openHead: (repo, pr) =>
+    openPull: (repo, pr) =>
       trackerFor(repo.watched)
         .pullRequest(pr)
         .pipe(
-          Effect.map((pull) => (pull === null || !pull.open ? null : pull.headSha.toLowerCase())),
+          Effect.map((pull) =>
+            pull === null || !pull.open
+              ? null
+              : { head: pull.headSha.toLowerCase(), mergeable: pull.mergeable },
+          ),
           Effect.mapError(asPassError("tracker")),
         ),
     gate: startGate,

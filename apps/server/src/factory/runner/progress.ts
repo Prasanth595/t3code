@@ -47,8 +47,11 @@ export interface Interruption {
   readonly sent: boolean;
 }
 
-/** What a re-gate found moved since the last recorded pass, for the run's line. */
-export type Moved = "base" | "head" | "both" | "unknown";
+/**
+ * What a re-gate found moved since the last recorded pass, for the run's line: `conflict` when
+ * nothing moved and the re-gate ran because GitHub says the pull request conflicts.
+ */
+export type Moved = "base" | "head" | "both" | "unknown" | "conflict";
 
 /**
  * What differs between the pass (`passedHead` on `passedAgainst`) and now (`head` on `tip`):
@@ -721,13 +724,15 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         const sha = dataField(entry.data, "sha");
         const baseSha = dataField(entry.data, "base_sha");
         const previous = dataField(entry.data, "previous_base_sha");
-        // The pass this re-gate replaces is still the one on record here.
-        regateMoved = movedSince(
-          pass?.sha ?? "",
-          typeof previous === "string" ? previous : "",
-          typeof sha === "string" ? sha : "",
-          typeof baseSha === "string" ? baseSha : "",
-        );
+        // The pass this re-gate replaces is still the one on record here. With a pass and
+        // nothing moved, only a conflict GitHub reported starts a re-gate.
+        regateMoved =
+          movedSince(
+            pass?.sha ?? "",
+            typeof previous === "string" ? previous : "",
+            typeof sha === "string" ? sha : "",
+            typeof baseSha === "string" ? baseSha : "",
+          ) ?? (pass === null ? null : "conflict");
         regates += 1;
         regating = true;
         regatePassed = false;

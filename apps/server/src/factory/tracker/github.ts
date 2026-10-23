@@ -535,6 +535,7 @@ const PullRequestView = Schema.Struct({
   isCrossRepository: Schema.Boolean,
   baseRefName: Schema.String,
   headRefOid: Schema.String,
+  mergeable: Schema.String,
 });
 
 const CheckRunRows = Schema.Array(
@@ -699,6 +700,12 @@ export interface BaseConfig {
   readonly text: string | null;
 }
 
+/**
+ * Whether GitHub can merge a pull request into its base. GitHub computes it lazily: the read
+ * that answers `unknown` starts the computation, and a later read usually has the answer.
+ */
+export type Mergeable = "mergeable" | "conflicting" | "unknown";
+
 /** One pull request, as read by `gh pr view`. */
 export interface PullRequest {
   readonly number: number;
@@ -715,6 +722,8 @@ export interface PullRequest {
   readonly baseRef: string;
   /** The commit the pull request's head branch points at, as GitHub reports it. */
   readonly headSha: string;
+  /** GitHub's word on a merge into the base; any answer it gives that is not `MERGEABLE` or `CONFLICTING` is `unknown`. */
+  readonly mergeable: Mergeable;
 }
 
 /**
@@ -1219,7 +1228,7 @@ export const makeGitHub = (options: GitHubOptions) => {
     const args = [
       ...repoArgs(["pr", "view", String(number)]),
       "--json",
-      "number,isDraft,state,headRefName,isCrossRepository,baseRefName,headRefOid",
+      "number,isDraft,state,headRefName,isCrossRepository,baseRefName,headRefOid,mergeable",
     ];
     const stdout = yield* gh(args).pipe(
       Effect.catchTags({
@@ -1241,6 +1250,12 @@ export const makeGitHub = (options: GitHubOptions) => {
       crossRepository: raw.isCrossRepository,
       baseRef: raw.baseRefName,
       headSha: raw.headRefOid,
+      mergeable:
+        raw.mergeable === "MERGEABLE"
+          ? "mergeable"
+          : raw.mergeable === "CONFLICTING"
+            ? "conflicting"
+            : "unknown",
     };
   });
 
