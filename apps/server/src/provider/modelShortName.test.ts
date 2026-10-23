@@ -19,6 +19,7 @@ describe("modelShortName", () => {
     ["Gemini 3.1 Pro Preview Custom Tools", "opencode", undefined],
     ["NVIDIA: Nemotron 3 Super", "opencode", "Nemotron 3 Super"],
     ["Google: Gemini 3.1 Pro", "opencode", "Gemini 3.1 Pro"],
+    ["Google: 3.1 Pro", "opencode", undefined],
     ["GPT-5.4 Mini", "pi", undefined],
     ["GPT-5.5", "codex", undefined],
     ["GPT-4o", "opencode", undefined],

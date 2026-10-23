@@ -48,7 +48,7 @@ const VENDOR_PREFIX = /^[A-Z][\w.&\- ]{0,24}: (?=\S)/;
 
 export function modelShortName(name: string, driver: string): string | undefined {
   const unprefixed = name.replace(VENDOR_PREFIX, "");
-  const short = withoutFamily(unprefixed, driver) ?? unprefixed;
+  const short = withoutFamily(unprefixed, driver) ?? (namesModel(unprefixed) ? unprefixed : name);
   return short === name ? undefined : short;
 }
 
@@ -56,19 +56,21 @@ function withoutFamily(name: string, driver: string): string | undefined {
   const family = MODEL_FAMILIES.find((candidate) => name.startsWith(candidate.prefix));
   if (!family) return undefined;
   const rest = name.slice(family.prefix.length).trim();
-  const words = rest
+  const named = nonVersionWords(rest);
+  if (named.length === 0) return undefined;
+  if (!family.nativeDrivers.includes(driver) && !namesModel(rest)) return undefined;
+  return rest.replace(/(?<=\S)-(?=\S)/g, " ");
+}
+
+function nonVersionWords(text: string): ReadonlyArray<string> {
+  return text
     .replace(/\(.*?\)/g, " ")
     .split(/[\s-]+/)
-    .filter(Boolean);
-  const named = words.filter((word) => !VERSION.test(word));
-  if (named.length === 0) return undefined;
-  if (
-    !family.nativeDrivers.includes(driver) &&
-    named.every((word) => VARIANT_WORDS.has(word.toLowerCase()))
-  ) {
-    return undefined;
-  }
-  return rest.replace(/(?<=\S)-(?=\S)/g, " ");
+    .filter((word) => word.length > 0 && !VERSION.test(word));
+}
+
+function namesModel(text: string): boolean {
+  return nonVersionWords(text).some((word) => !VARIANT_WORDS.has(word.toLowerCase()));
 }
 
 export function withModelShortNames(provider: ServerProvider): ServerProvider {
