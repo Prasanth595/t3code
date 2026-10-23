@@ -29,9 +29,11 @@ const TIER_WORDS = new Set([
 
 const VERSION = /^v?\d+(?:\.\d+)*$/i;
 
+const KEPT_WHOLE = new Set(["Grok Build"]);
+
 export function modelShortName(name: string, driver: string): string | undefined {
   const family = MODEL_FAMILIES.find((candidate) => name.startsWith(candidate.prefix));
-  if (!family) return undefined;
+  if (!family || KEPT_WHOLE.has(name)) return undefined;
   const rest = name.slice(family.prefix.length).trim();
   const words = rest
     .replace(/\(.*?\)/g, " ")
@@ -42,7 +44,7 @@ export function modelShortName(name: string, driver: string): string | undefined
   if (driver !== family.nativeDriver && named.every((word) => TIER_WORDS.has(word.toLowerCase()))) {
     return undefined;
   }
-  return rest;
+  return rest.replace(/(?<=\S)-(?=\S)/g, " ");
 }
 
 export function withModelShortNames(provider: ServerProvider): ServerProvider {

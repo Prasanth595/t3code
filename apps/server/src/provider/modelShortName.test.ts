@@ -12,6 +12,8 @@ describe("modelShortName", () => {
     ["Claude Opus 5.5", "claudeAgent", "Opus 5.5"],
     ["GPT-5.4 Mini", "codex", "5.4 Mini"],
     ["GPT-6.1 Sol", "opencode", "6.1 Sol"],
+    ["GPT-6.1-Sol", "opencode", "6.1 Sol"],
+    ["Grok Build", "grok", undefined],
     ["GPT-5.4 Mini", "pi", undefined],
     ["GPT-5.5", "codex", undefined],
     ["Gemini 3 (High)", "antigravity", undefined],

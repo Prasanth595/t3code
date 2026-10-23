@@ -921,7 +921,7 @@ it.layer(
               },
             );
             const retainedModels = [defaultModel, customModel, currentModel];
-            const presentedCurrentModel = { ...currentModel, shortName: "6.1-Sol" };
+            const presentedCurrentModel = { ...currentModel, shortName: "6.1 Sol" };
             const presentedRetainedModels = [defaultModel, customModel, presentedCurrentModel];
 
             for (const restarted of [false, true]) {
