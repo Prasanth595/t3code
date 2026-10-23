@@ -7,8 +7,10 @@ import {
   labelForState,
   lastGateOutput,
   parseRunId,
+  prEndOf,
   runIsFinished,
   runState,
+  shownState,
   stateBadgeVariant,
   threadIdOf,
 } from "./format";
@@ -203,5 +205,27 @@ describe("runState and runIsFinished", () => {
     expect(runIsFinished([entry("claimed", {}), entry("finished", { outcome: "stuck" })])).toBe(
       true,
     );
+  });
+});
+
+describe("shownState and prEndOf", () => {
+  it("shows how a finished run's pull request ended over the label it last set", () => {
+    expect(shownState("pr-open", "merged")).toBe("merged");
+    expect(shownState("building", "closed")).toBe("closed");
+    expect(shownState("pr-open", null)).toBe("pr-open");
+    expect(shownState("stuck", undefined)).toBe("stuck");
+    expect(stateBadgeVariant(shownState("pr-open", "merged"))).toBe("secondary");
+  });
+
+  it("reads the pull request's end from the finished entry", () => {
+    const finished = (pr_end: unknown) => [
+      entry("state_changed", { from: "pr-open", to: "building" }),
+      entry("finished", { outcome: "pr-open", pr_end }),
+    ];
+    expect(prEndOf(finished("merged"))).toBe("merged");
+    expect(prEndOf(finished("closed"))).toBe("closed");
+    expect(prEndOf(finished(null))).toBeNull();
+    expect(prEndOf(finished("reopened"))).toBeNull();
+    expect(prEndOf([entry("state_changed", { from: "building", to: "pr-open" })])).toBeNull();
   });
 });

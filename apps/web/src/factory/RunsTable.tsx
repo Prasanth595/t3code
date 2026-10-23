@@ -16,7 +16,7 @@ import {
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import type { FactoryRunRow } from "./api";
-import { formatAge, labelForState, parseRunId, stateBadgeVariant } from "./format";
+import { formatAge, labelForState, parseRunId, shownState, stateBadgeVariant } from "./format";
 import { TouchLink } from "./TouchLink";
 
 const startedMs = (run: FactoryRunRow) =>
@@ -60,12 +60,11 @@ const prRef = (url: string | null | undefined) => {
     : { text: url, href: null };
 };
 
-const stateBadge = (run: FactoryRunRow) =>
-  run.unreadable ? (
-    <Badge variant="error">unreadable</Badge>
-  ) : (
-    <Badge variant={stateBadgeVariant(run.state)}>{labelForState(run.state)}</Badge>
-  );
+const stateBadge = (run: FactoryRunRow) => {
+  if (run.unreadable) return <Badge variant="error">unreadable</Badge>;
+  const state = shownState(run.state, run.pr_end);
+  return <Badge variant={stateBadgeVariant(state)}>{labelForState(state)}</Badge>;
+};
 
 /** A reference that is a link when it has a target, else plain text; `touch` on the phone cards. */
 function Ref({

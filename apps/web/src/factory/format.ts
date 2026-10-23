@@ -167,6 +167,22 @@ export function runState(entries: ReadonlyArray<FactoryEntry>): string | null {
   return null;
 }
 
+export type PrEnd = "merged" | "closed";
+
+/**
+ * `merged` or `closed` for a run that finished because its pull request ended, else its last
+ * state: the issue keeps its label after the pull request ends, so that state alone reads as if
+ * the pull request were still waiting.
+ */
+export const shownState = (state: string | null, prEnd: PrEnd | null | undefined): string | null =>
+  prEnd ?? state;
+
+/** The `pr_end` of the `finished` entry, when it names one. */
+export function prEndOf(entries: ReadonlyArray<FactoryEntry>): PrEnd | null {
+  const end = textField(entries.findLast((entry) => entry.event === "finished")?.data, "pr_end");
+  return end === "merged" || end === "closed" ? end : null;
+}
+
 /** A `finished` entry is written: the run is over whatever its last state says. */
 export function runIsFinished(entries: ReadonlyArray<FactoryEntry>): boolean {
   return entries.some((entry) => entry.event === "finished");

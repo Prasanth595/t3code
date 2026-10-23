@@ -22,8 +22,10 @@ import {
   labelForState,
   lastGateOutput,
   messageOf,
+  prEndOf,
   runIsFinished,
   runState,
+  shownState,
   stateBadgeVariant,
   threadIdOf,
 } from "./format";
@@ -203,8 +205,10 @@ export function FactoryRunPage({
 
   const entries = run.data?.entries ?? [];
   const state = runState(entries);
+  const shown = shownState(state, prEndOf(entries));
   const canStop = run.data !== null && state === "building" && !runIsFinished(entries);
-  const step = currentStep(entries);
+  // A finished run's last step is over; the runs list says finished too.
+  const step = runIsFinished(entries) ? "finished" : currentStep(entries);
   const threadId = threadIdOf(entries);
 
   let body;
@@ -224,7 +228,7 @@ export function FactoryRunPage({
     body = (
       <>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-          <Badge variant={stateBadgeVariant(state)}>{labelForState(state)}</Badge>
+          <Badge variant={stateBadgeVariant(shown)}>{labelForState(shown)}</Badge>
           <span className="min-w-0 break-words text-muted-foreground">Step: {step ?? "-"}</span>
           {threadId ? (
             <TouchLink
