@@ -876,6 +876,7 @@ interface ActiveCursorTurn {
   readonly reasoning: ActiveCursorTextStream;
   interrupted: boolean;
   finalized: boolean;
+  /** The agent's latest turn ended and no new work has started since. */
   turnEnded: boolean;
 }
 
@@ -1920,6 +1921,15 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           if (context.finalized) {
             return;
           }
+          if (update.type === "turn-ended") {
+            context.turnEnded = true;
+          } else if (
+            update.type === "text-delta" ||
+            update.type === "thinking-delta" ||
+            update.type === "tool-call-started"
+          ) {
+            context.turnEnded = false;
+          }
           switch (update.type) {
             case "text-delta":
               // Classify each assistant message on its own, so earlier
@@ -1959,7 +1969,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               return;
             case "step-completed":
             case "turn-ended":
-              context.turnEnded ||= update.type === "turn-ended";
               yield* completeAssistant(context);
               yield* completeReasoning(context);
               return;
