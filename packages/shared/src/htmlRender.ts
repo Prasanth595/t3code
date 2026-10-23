@@ -243,6 +243,8 @@ export const HTML_RENDER_LAYOUT_GUIDE = [
   `The frame is borderless on the thread's background, as wide as the reply column (${HTML_RENDER_COLUMN_WIDTH}px on desktop by default, wider if the reader widens chat, about 360px on phones), and its left edge lines up with your reply text.`,
   "The page sits on the thread's own background, so by default leave html, body, and the outermost element with no background color. This overrides general style preferences such as a fixed black page background.",
   "Use a fluid width with no horizontal padding on the outermost element, and no outer card, border, or banner title: the page is part of your reply.",
+  "Size widths relative to the container (%, or auto) rather than the viewport (vw): opened on its own, the page gets a 16px gutter on every side, so a 100vw element overflows it.",
+  "Only a page that must run edge to edge when opened on its own, such as a full-bleed canvas, should set html{padding:0}. It is an exception, not a default: do not add it routinely, because it removes that gutter.",
   "If a box needs its own background (a mock of a specific screen, a panel that must stand apart), give it at least 16px of padding on every side and var(--radius) corners, so content never touches its edge.",
   "Give charts fixed pixel heights rather than heights that scale with width.",
   "Let content set the page's height. The frame grows to fit the page, so a height that follows the viewport makes it grow again and again: html_preview and html_render reject vh, svh, lvh, and dvh units, and height:100% on html or body has the same problem.",
