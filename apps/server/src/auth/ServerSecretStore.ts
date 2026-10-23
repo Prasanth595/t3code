@@ -261,7 +261,7 @@ export const make = Effect.gen(function* () {
           }),
       ),
       Effect.flatMap((uuid) => {
-        const tempPath = `${secretPath}.${uuid}.tmp`;
+        const tempPath = `${secretPath}.${process.pid}.${uuid}.tmp`;
         return Effect.gen(function* () {
           yield* Effect.scoped(
             Effect.gen(function* () {

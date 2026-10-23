@@ -223,6 +223,43 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
     }).pipe(Effect.provide(layerServerConfig())),
   );
 
+  it.effect("a second store preserves an active create during startup and removal", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig.ServerConfig;
+      const written = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+      const writer = yield* ServerSecretStore.make.pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          link: (from, to) =>
+            Deferred.succeed(written, undefined).pipe(
+              Effect.andThen(Deferred.await(finish)),
+              Effect.andThen(fs.link(from, to)),
+            ),
+        }),
+      );
+      yield* Effect.addFinalizer(() => Deferred.succeed(finish, undefined));
+      const writing = yield* writer
+        .create("shared-secret", Uint8Array.from([1, 2, 3]))
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(written);
+      const replacement = (yield* fs.readDirectory(config.secretsDir)).find((name) =>
+        name.endsWith(".tmp"),
+      )!;
+      const second = yield* ServerSecretStore.make;
+      yield* second.remove("shared-secret");
+      assert.isTrue(yield* fs.exists(`${config.secretsDir}/${replacement}`));
+      yield* Deferred.succeed(finish, undefined);
+      yield* Fiber.join(writing);
+      assert.deepEqual(
+        Array.from(Option.getOrThrow(yield* second.get("shared-secret"))),
+        [1, 2, 3],
+      );
+      assert.isFalse(yield* fs.exists(`${config.secretsDir}/${replacement}`));
+    }).pipe(Effect.provide(layerServerConfig())),
+  );
+
   it.effect("cleans its temporary when a replacement is interrupted", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
