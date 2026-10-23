@@ -86,7 +86,11 @@ const runtimePolicy = () =>
     cwd: "/workspace",
   });
 
-const openFor = (adapter: ProviderAdapter.ProviderAdapterV2["Service"], threadId: ThreadId) =>
+const openFor = (
+  adapter: ProviderAdapter.ProviderAdapterV2["Service"],
+  threadId: ThreadId,
+  cwd?: string,
+) =>
   adapter.openSession({
     threadId,
     providerSessionId: ProviderSessionId.make(`provider-session-${threadId}`),
@@ -95,7 +99,14 @@ const openFor = (adapter: ProviderAdapter.ProviderAdapterV2["Service"], threadId
       model: "anthropic/claude-sonnet",
       options: [],
     },
-    runtimePolicy: runtimePolicy(),
+    runtimePolicy:
+      cwd === undefined
+        ? runtimePolicy()
+        : ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd,
+          }),
   });
 
 it.effect(
@@ -116,6 +127,28 @@ it.effect(
       // OpenCode builds a session's tool catalog at session creation, so the
       // server must already be in place when the first `session.create` runs.
       assert.strictEqual(calls.filter((call) => call.op === "session.create").length, 0);
+    }).pipe(Effect.provide(makeLayers(calls)));
+  },
+);
+
+it.effect(
+  "registers the server in the thread's runtime directory, not the server launch directory",
+  () => {
+    const calls: Array<RecordedCall> = [];
+    return Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-490f020d");
+      const adapter = yield* make(ProviderInstanceId.make("opencode-test"));
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set(mcpConfig(threadId));
+
+      // OpenCode MCP registrations are directory-scoped, and the native
+      // session is created in the runtime policy's cwd — a server registered
+      // anywhere else never enters that session's tool catalog.
+      yield* openFor(adapter, threadId, "/projects/app-worktree");
+
+      const adds = calls.filter((call) => call.op === "mcp.add");
+      assert.strictEqual(adds.length, 1);
+      assert.deepStrictEqual(adds[0]!.args.location, { directory: "/projects/app-worktree" });
     }).pipe(Effect.provide(makeLayers(calls)));
   },
 );
