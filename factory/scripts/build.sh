@@ -24,7 +24,7 @@ fi
 
 # The SEA build needs the Node version upstream pins: root package.json engines.node, which
 # the server's vite config reads, or the SEA_NODE_VERSION constant older upstreams kept there.
-sea_node=$(node -p 'String((require("./package.json").engines || {}).node || "")' 2>/dev/null || true)
+sea_node=$(node -p 'String((require("./package.json").engines || {}).node || "")' || true)
 if [[ -z $sea_node ]]; then
   sea_node=$(sed -n 's/^const SEA_NODE_VERSION = "\([^"]*\)";.*/\1/p' apps/server/vite.config.ts 2>/dev/null || true)
 fi
