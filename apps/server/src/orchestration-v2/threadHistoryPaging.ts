@@ -307,6 +307,43 @@ function findCursorIndex(
   return Math.min(cursor.p, items.length);
 }
 
+/**
+ * Older pages allow twice the turns, and a targeted page widens further so it
+ * reaches `throughEntryId`. Callers that re-bound a page must reuse this policy
+ * or they drop the target again.
+ */
+export function olderHistoryPagePolicy<Row extends HistoryRow>(input: {
+  readonly items: ReadonlyArray<Row>;
+  readonly cursor: string;
+  readonly policy?: ThreadHistoryPagePolicy | undefined;
+  readonly throughEntryId?: string | undefined;
+}): ThreadHistoryPagePolicy {
+  const policy = input.policy ?? {
+    ...THREAD_HISTORY_PAGE_POLICY,
+    maxUserTurns: OLDER_THREAD_USER_TURN_LIMIT,
+  };
+  if (input.throughEntryId === undefined) return policy;
+  const anchorIndex = findCursorIndex(input.items, decodeThreadHistoryCursor(input.cursor));
+  const targetIndex = input.items.findIndex(
+    (row) => (row.item.messageId ?? row.item.id) === input.throughEntryId,
+  );
+  if (targetIndex < 0 || targetIndex >= anchorIndex) return policy;
+  const turns = input.items
+    .slice(targetIndex, anchorIndex)
+    .filter((row) => isThreadHistoryUserTurn(row.item)).length;
+  return {
+    ...policy,
+    maxUserTurns: Math.min(
+      OLDER_THREAD_USER_TURN_LIMIT * 2,
+      Math.max(
+        OLDER_THREAD_USER_TURN_LIMIT,
+        turns + (isThreadHistoryUserTurn(input.items[targetIndex]!.item) ? 0 : 1),
+      ),
+    ),
+    maxItems: policy.maxItems * 2,
+  };
+}
+
 export function selectHistoryPageFromCursor<Row extends HistoryRow>(input: {
   readonly items: ReadonlyArray<Row>;
   readonly cursor: string;
@@ -316,39 +353,40 @@ export function selectHistoryPageFromCursor<Row extends HistoryRow>(input: {
   readonly throughEntryId?: string | undefined;
 }): SelectTimelinePageResult<Row> {
   const decoded = decodeThreadHistoryCursor(input.cursor);
-  const anchorIndex = findCursorIndex(input.items, decoded);
-  let policy = input.policy ?? {
-    ...THREAD_HISTORY_PAGE_POLICY,
-    maxUserTurns: OLDER_THREAD_USER_TURN_LIMIT,
-  };
-  if (input.throughEntryId !== undefined) {
-    const targetIndex = input.items.findIndex(
-      (row) => (row.item.messageId ?? row.item.id) === input.throughEntryId,
-    );
-    if (targetIndex >= 0 && targetIndex < anchorIndex) {
-      const turns = input.items
-        .slice(targetIndex, anchorIndex)
-        .filter((row) => isThreadHistoryUserTurn(row.item)).length;
-      policy = {
-        ...policy,
-        maxUserTurns: Math.min(
-          OLDER_THREAD_USER_TURN_LIMIT * 2,
-          Math.max(
-            OLDER_THREAD_USER_TURN_LIMIT,
-            turns + (isThreadHistoryUserTurn(input.items[targetIndex]!.item) ? 0 : 1),
-          ),
-        ),
-        maxItems: policy.maxItems * 2,
-      };
-    }
-  }
   return selectOlderTimelinePage({
     items: input.items,
-    exclusiveEndIndex: anchorIndex,
+    exclusiveEndIndex: findCursorIndex(input.items, decoded),
     snapshotSequence: input.snapshotSequence,
     ...(input.rowEncodedBytes === undefined ? {} : { rowEncodedBytes: input.rowEncodedBytes }),
-    policy,
+    policy: olderHistoryPagePolicy(input),
   });
+}
+
+/**
+ * Row and byte budgets can split a turn between an interrupt result and its
+ * older request. Clients read a superseded result without a request as a
+ * legacy steer and hide it, so a page carries the requests its results need.
+ */
+export function missingInterruptRequests<Row extends HistoryRow>(
+  items: ReadonlyArray<Row>,
+  page: ReadonlyArray<Pick<HistoryRow, "item" | "sourceThreadId" | "sourceItemId">>,
+): Row[] {
+  const runs = new Set<string>();
+  for (const row of page) {
+    if (row.item.type === "run_interrupt_result" && row.item.runId != null)
+      runs.add(row.item.runId);
+  }
+  for (const row of page) {
+    if (row.item.type === "run_interrupt_request" && row.item.runId != null)
+      runs.delete(row.item.runId);
+  }
+  if (runs.size === 0) return [];
+  return items.filter(
+    (row) =>
+      row.item.type === "run_interrupt_request" &&
+      row.item.runId != null &&
+      runs.has(row.item.runId),
+  );
 }
 
 function isLocalProjectedRow(

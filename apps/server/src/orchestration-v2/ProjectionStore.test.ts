@@ -1576,6 +1576,67 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         WHERE thread_id = ${threadId} AND ordinal BETWEEN 2 AND 70
       `;
 
+      // A targeted page that needs more than 20 human turns must still reach its target
+      // after the byte pass re-bounds it.
+      yield* sql`
+        UPDATE orchestration_v2_projection_turn_items
+        SET type = 'user_message', payload_json = json_set(payload_json,
+          '$.type', 'user_message', '$.createdBy', 'user', '$.creationSource', 'web',
+          '$.inputIntent', 'turn_start', '$.messageId', turn_item_id, '$.text', 'Turn',
+          '$.attachments', json('[]'))
+        WHERE thread_id = ${threadId} AND ordinal BETWEEN 600 AND 624
+      `;
+      const targetedPage = yield* projectionStore.getThreadHistoryPage(
+        threadId,
+        encodeThreadHistoryCursor({
+          snapshotSequence: 0,
+          sourceThreadId: threadId,
+          sourceItemId: TurnItemId.make("turn-item:bounded-sql-history:625"),
+          position: 624,
+        }),
+        "turn-item:bounded-sql-history:600",
+      );
+      assert.strictEqual(
+        String(targetedPage.items[0]?.sourceItemId),
+        "turn-item:bounded-sql-history:600",
+      );
+      yield* sql`
+        UPDATE orchestration_v2_projection_turn_items
+        SET type = 'command_execution', payload_json = json_set(payload_json, '$.type', 'command_execution')
+        WHERE thread_id = ${threadId} AND ordinal BETWEEN 600 AND 624
+      `;
+
+      // A turn split by the row budget keeps an interrupt result's request on the same page.
+      yield* sql`
+        UPDATE orchestration_v2_projection_turn_items
+        SET run_id = 'run:bounded-sql-history:500',
+          type = CASE ordinal WHEN 500 THEN 'run_interrupt_request' ELSE 'run_interrupt_result' END,
+          payload_json = json_set(payload_json,
+            '$.runId', 'run:bounded-sql-history:500', '$.message', 'Stop',
+            '$.type', CASE ordinal WHEN 500 THEN 'run_interrupt_request' ELSE 'run_interrupt_result' END)
+        WHERE thread_id = ${threadId} AND ordinal IN (500, 580)
+      `;
+      const interruptPage = yield* projectionStore.getThreadHistoryPage(
+        threadId,
+        encodeThreadHistoryCursor({
+          snapshotSequence: 0,
+          sourceThreadId: threadId,
+          sourceItemId: TurnItemId.make("turn-item:bounded-sql-history:590"),
+          position: 589,
+        }),
+      );
+      const interruptIds = interruptPage.items.map((row) => String(row.sourceItemId));
+      assert.include(interruptIds, "turn-item:bounded-sql-history:580");
+      assert.include(interruptIds, "turn-item:bounded-sql-history:500");
+      assert.notInclude(interruptIds, "turn-item:bounded-sql-history:501");
+      yield* sql`
+        UPDATE orchestration_v2_projection_turn_items
+        SET run_id = 'run:bounded-sql-history:' || ordinal, type = 'command_execution',
+          payload_json = json_set(payload_json,
+            '$.runId', 'run:bounded-sql-history:' || ordinal, '$.type', 'command_execution')
+        WHERE thread_id = ${threadId} AND ordinal IN (500, 580)
+      `;
+
       const retainedRequestPlan = yield* sql<{ readonly detail: string }>`
         EXPLAIN QUERY PLAN
         WITH selected AS (
