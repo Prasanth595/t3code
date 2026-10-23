@@ -45,6 +45,7 @@ import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/Git
 import * as GitHubPullRequestProvider from "@t3tools/source-control-github/server/GitHubPullRequestProvider";
 import * as GitHubQuota from "@t3tools/source-control-github/server/GitHubQuota";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+import { parseDiffFileRevisions } from "@t3tools/source-control-core/server/diffFileRevisions";
 import {
   PullRequestProviderError,
   type ProviderChangeRequest,
@@ -3458,6 +3459,82 @@ it.effect("clears a file against what the head has now, not what it had a moment
     });
     yield* service.invalidate({ reference: GITLAB_REFERENCE });
 
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "viewed" },
+    ]);
+  }),
+);
+
+// The diff names each file's version on its `index` line, which is what a reader's press sends.
+const environmentViewedDiffService = (revisions: Map<string, string>) =>
+  makeService({
+    projects: [
+      project({
+        id: "p1",
+        title: "on gitlab",
+        workspaceRoot: "/a",
+        repository: "group/project",
+        provider: SourceControlProviderKind.make("gitlab"),
+      }),
+    ],
+    providers: [
+      {
+        ...environmentViewedProvider(revisions, []),
+        getDiff: () =>
+          Effect.sync(() => ({
+            patch: [
+              "diff --git a/src/a.ts b/src/a.ts",
+              `index 0000000..${revisions.get("src/a.ts")} 100644`,
+              "--- a/src/a.ts",
+              "+++ b/src/a.ts",
+              "@@ -0,0 +1 @@",
+              "+export const a = 1;",
+              "",
+            ].join("\n"),
+            truncated: false,
+            nextCursor: null,
+          })),
+      },
+    ],
+  });
+
+const shownRevision = (patch: string) => parseDiffFileRevisions(patch).get("src/a.ts") ?? "";
+
+it.effect("records the version the reader was shown, not one pushed after the diff was drawn", () =>
+  Effect.gen(function* () {
+    const revisions = new Map([["src/a.ts", "3464df0"]]);
+    const service = yield* environmentViewedDiffService(revisions);
+
+    const shown = shownRevision((yield* service.diff(GITLAB_REFERENCE)).patch);
+    revisions.set("src/a.ts", "e9ed029");
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true, revision: shown }],
+    });
+    yield* service.invalidate({ reference: GITLAB_REFERENCE });
+
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "dismissed" },
+    ]);
+  }),
+);
+
+it.effect("records a pushed version as seen once the diff shows it", () =>
+  Effect.gen(function* () {
+    const revisions = new Map([["src/a.ts", "3464df0"]]);
+    const service = yield* environmentViewedDiffService(revisions);
+
+    yield* service.diff(GITLAB_REFERENCE);
+    revisions.set("src/a.ts", "e9ed029");
+    yield* service.invalidate({ reference: GITLAB_REFERENCE });
+    const shown = shownRevision((yield* service.diff(GITLAB_REFERENCE)).patch);
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true, revision: shown }],
+    });
+    yield* service.invalidate({ reference: GITLAB_REFERENCE });
+
+    assert.strictEqual(shown, "e9ed029");
     assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
       { path: "src/a.ts", state: "viewed" },
     ]);

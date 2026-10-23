@@ -168,7 +168,12 @@ interface FileViewedToggleState {
   readonly enabled: boolean;
   readonly isViewed: (path: string) => boolean;
   readonly isStale: (path: string) => boolean;
-  readonly setFileViewed: (fileKey: string, path: string, viewed: boolean) => void;
+  readonly setFileViewed: (
+    fileKey: string,
+    path: string,
+    viewed: boolean,
+    revision: string | undefined,
+  ) => void;
 }
 
 // Header portals are memoized on the render props; the viewed toggle reads its state through
@@ -178,10 +183,12 @@ const FileViewedToggleContext = createContext<FileViewedToggleState | null>(null
 function FileViewedToggle({
   fileKey,
   path,
+  revision,
   stat,
 }: {
   readonly fileKey: string;
   readonly path: string;
+  readonly revision: string | undefined;
   readonly stat: ReactNode;
 }) {
   const viewedFiles = use(FileViewedToggleContext);
@@ -199,7 +206,9 @@ function FileViewedToggle({
         <Checkbox
           aria-label={stale ? "Changed" : "Viewed"}
           checked={viewed}
-          onCheckedChange={(next) => viewedFiles.setFileViewed(fileKey, path, next === true)}
+          onCheckedChange={(next) =>
+            viewedFiles.setFileViewed(fileKey, path, next === true, revision)
+          }
         />
         {stale ? (
           <Tooltip>
@@ -679,8 +688,13 @@ function PullRequestCodeTab({
       return next;
     });
 
-  const setFileViewed = (fileKey: string, path: string, viewed: boolean) => {
-    setViewed(path, viewed);
+  const setFileViewed = (
+    fileKey: string,
+    path: string,
+    viewed: boolean,
+    revision: string | undefined,
+  ) => {
+    setViewed(path, viewed, revision);
     setToggledFiles((current) =>
       toggleFileDiffFoldForViewed(fileKey, viewed, effectiveFoldOverride, current),
     );
@@ -818,6 +832,7 @@ function PullRequestCodeTab({
       <FileViewedToggle
         fileKey={item.id}
         path={path}
+        revision={item.fileDiff.newObjectId}
         stat={
           <PullRequestDiffStat
             additions={additions}
