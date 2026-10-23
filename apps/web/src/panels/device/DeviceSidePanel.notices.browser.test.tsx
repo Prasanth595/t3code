@@ -184,3 +184,26 @@ describe("DevicePanel thread switches", () => {
     ]);
   });
 });
+
+it("keeps a late power-off error in the environment that started it", async () => {
+  setup();
+  const streaming: Extract<RightPanelSurface, { kind: "device" }> = {
+    id: "device:phone",
+    kind: "device",
+    target: { hostId: "local", deviceId: "phone", platform: "ios", name: "Phone" },
+  };
+  const powerOff = deferred();
+  mocks.close.mockReturnValue(powerOff.promise);
+  await using screen = await render(devicePanel(threadA, streaming), { container });
+  await screen.getByRole("button", { name: "Power off", exact: true }).click();
+  expect(mocks.close).toHaveBeenCalledExactlyOnceWith({
+    environmentId: threadA.environmentId,
+    input: { threadId: threadA.threadId, hostId: "local", deviceId: "phone", shutdown: true },
+  });
+  await screen.rerender(devicePanel(switches[1][1], streaming));
+  await act(async () => powerOff.settle(failed));
+  expect(errors()).toHaveLength(0);
+  expect(mocks.closeSurface).not.toHaveBeenCalled();
+  await screen.rerender(devicePanel(threadA, streaming));
+  expect(errors()).toHaveLength(1);
+});

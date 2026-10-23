@@ -12,8 +12,7 @@ import { userEvent } from "vite-plus/test/browser";
 vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "light" }) }));
 
 // The profile list normally comes from client settings; the built-ins are enough to choose from.
-vi.mock("~/browser/browserDefaults", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/browser/browserDefaults")>()),
+vi.mock("~/browser/browserDefaults", () => ({
   useBrowserDefaults: () => ({ profiles: BUILT_IN_BROWSER_PROFILES }),
 }));
 
