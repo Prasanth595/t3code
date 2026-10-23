@@ -2106,6 +2106,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             }
             return;
           }
+          case "t3.drain": {
+            const drained = event["drained"];
+            if (Deferred.isDeferred<void, never>(drained))
+              yield* Deferred.succeed(drained, undefined);
+            return;
+          }
           case "t3.rollback_barrier": {
             if (rollbackBarrier !== null && event["barrier"] === rollbackBarrier)
               yield* Deferred.succeed(rollbackBarrier, undefined);
@@ -2258,6 +2264,15 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           if (recordField(result, "cancelled") === true) {
             return yield* protocolError("A Pi extension cancelled the session switch");
           }
+          // Responses bypass the pump. Apply the teardown marker and the
+          // replacement's start-hook statuses Pi sent before replying, so the
+          // new binding lists only its own background work.
+          const drained = yield* Deferred.make<void>();
+          if (yield* Queue.offer(connection.events, { type: "t3.drain", drained }))
+            yield* Deferred.await(drained).pipe(
+              Effect.timeout(Duration.millis(PI_REQUEST_TIMEOUT_MS)),
+              Effect.ignore,
+            );
         }
         const stateData = yield* request({ type: "get_state" });
         if (!modelsDiscovered) {
