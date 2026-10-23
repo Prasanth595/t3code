@@ -317,6 +317,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
         origin: hubOrigin,
         http,
         run,
+        iosAvailability: platformAvailability("ios"),
         androidAvailable: platformAvailability("android").pipe(
           Effect.map((availability) => availability.available),
         ),

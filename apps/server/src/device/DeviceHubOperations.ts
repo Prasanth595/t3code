@@ -3,6 +3,7 @@ import {
   type DeviceHostId,
   DeviceOperationError,
   type DevicePlatform,
+  type DevicePlatformAvailability,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -48,6 +49,7 @@ export const makeDeviceHubOperations = (options: {
   readonly origin: string;
   readonly http: HttpClient.HttpClient;
   readonly run: DeviceHostReady["run"];
+  readonly iosAvailability: Effect.Effect<DevicePlatformAvailability>;
   /** Whether to list AVDs, which the hub does not report until they boot. */
   readonly androidAvailable: Effect.Effect<boolean>;
 }): DeviceOperations => {
@@ -106,7 +108,15 @@ export const makeDeviceHubOperations = (options: {
           /(?:^Error:\s*ENOENT:|\bcode:\s*['"]ENOENT['"])/.test(error.error ?? "")
         ),
     );
-    const details = warnings?.map((error) => error.message) ?? [];
+    const iosAvailability = warnings?.some((error) => error.message.startsWith("[apple-utils]"))
+      ? yield* options.iosAvailability
+      : undefined;
+    const details =
+      warnings?.map((error) =>
+        error.message.startsWith("[apple-utils]")
+          ? `iOS simulator discovery: ${iosAvailability && !iosAvailability.available && iosAvailability.reason ? iosAvailability.reason : error.message}`
+          : error.message,
+      ) ?? [];
     let androidDiscoveryIncomplete = false;
     if (yield* options.androidAvailable) {
       const avds = yield* run("emulator", ["-list-avds"]);

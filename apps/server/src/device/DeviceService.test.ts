@@ -6,6 +6,7 @@ import {
   DeviceOperationError,
   LOCAL_DEVICE_HOST_ID,
   ThreadId,
+  type DevicePlatformAvailability,
   type DeviceSummary,
   type ServerSettings as Settings,
   type SshDeviceHostConfig,
@@ -58,6 +59,10 @@ const fixture = Effect.fn("fixture")(function* (
   const requests: string[] = [];
   const devices: Array<Omit<DeviceSummary, "hostId">> = [];
   const discoveryErrors = yield* Ref.make<Array<{ message: string; error?: string }>>([]);
+  const iosAvailability = yield* Ref.make<DevicePlatformAvailability>({
+    platform: "ios",
+    available: true,
+  });
   const encoderResult = yield* Ref.make({ code: 0, stdout: " V....D libx264", stderr: "" });
   let booted = false;
   let shutDown = false;
@@ -128,6 +133,7 @@ const fixture = Effect.fn("fixture")(function* (
         http,
         run,
         androidAvailable: Effect.succeed(true),
+        iosAvailability: Ref.get(iosAvailability),
       }),
       ...(options.endsDevices ? { endsDevices: true } : {}),
     },
@@ -230,6 +236,7 @@ const fixture = Effect.fn("fixture")(function* (
     devices,
     encoderResult,
     discoveryErrors,
+    iosAvailability,
     endDevice,
   };
 });
@@ -489,6 +496,31 @@ describe("device discovery after server restart", () => {
 const missingPlistMessage =
   "[apple-utils] Failed to read CoreSimulator plist at /Users/test/Library/Developer/CoreSimulator/Devices/deleted-simulator/device.plist:";
 
+it.effect("explains missing Simulator tools while keeping Android devices available", () =>
+  Effect.gen(function* () {
+    const { service, discoveryErrors, iosAvailability } = yield* fixture();
+    yield* Ref.set(discoveryErrors, [
+      { message: "[apple-utils] Failed to run `xcrun simctl list devices --json`:" },
+    ]);
+    yield* Ref.set(iosAvailability, {
+      platform: "ios",
+      available: false,
+      reason: "Full Xcode is required; Android devices are unaffected.",
+    });
+    yield* service.configure({ enabled: true });
+    const state = yield* service.list;
+    expect(state.hostStatus).toBe("ready");
+    expect(state.hostStatusDetail).toBe(
+      "iOS simulator discovery: Full Xcode is required; Android devices are unaffected.",
+    );
+    expect(state.devices.some((device) => device.platform === "android")).toBe(true);
+    yield* Ref.set(iosAvailability, { platform: "ios", available: true });
+    expect((yield* service.list).hostStatusDetail).toContain(
+      "iOS simulator discovery: [apple-utils]",
+    );
+  }).pipe(Effect.scoped),
+);
+
 it.effect("keeps other discovery warnings and clears them when only a deleted plist remains", () =>
   Effect.gen(function* () {
     const { service, discoveryErrors } = yield* fixture();
@@ -641,6 +673,7 @@ it.effect.each(["shutdown", "close"] as const)(
           origin: "http://device.test",
           http,
           run,
+          iosAvailability: Effect.succeed({ platform: "ios", available: true }),
           androidAvailable: Effect.succeed(true),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
@@ -740,6 +773,7 @@ it.effect.each([
           origin: "http://device.test",
           http,
           run,
+          iosAvailability: Effect.succeed({ platform: "ios", available: true }),
           androidAvailable: Effect.succeed(true),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
@@ -812,6 +846,7 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
           origin: "http://device.test",
           http,
           run,
+          iosAvailability: Effect.succeed({ platform: "ios", available: true }),
           androidAvailable: Effect.succeed(true),
         }),
         helpers: { serveSimAxSettings: null, serveSimCli: null },
