@@ -74,6 +74,8 @@ interface Registration {
 
 interface Installation {
   record: PluginInstallationRecord;
+  /** Revocation is visible even when storage fails; retry that write on refresh. */
+  unsaved?: boolean;
   /** The registration this installation runs under, while enabled. */
   registered: Registration | undefined;
   /** Waits for the process of the last registration revoked here to exit. */
@@ -236,6 +238,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
       Effect.andThen(
         Effect.sync(() => {
           installation.record = record;
+          installation.unsaved = false;
           revision++;
         }),
       ),
@@ -285,7 +288,16 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
         const stopping = yield* unregister(installation);
-        if (record !== installation.record) yield* commit(installation, record);
+        if (record !== installation.record || installation.unsaved)
+          yield* commit(installation, record).pipe(
+            Effect.tapError(() =>
+              Effect.sync(() => {
+                installation.record = record;
+                installation.unsaved = true;
+                revision++;
+              }),
+            ),
+          );
         if (stopping) yield* restore(Fiber.join(stopping));
       }),
     );
@@ -313,8 +325,10 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
         source: current.source,
         problem: current.problem,
       })
-    )
+    ) {
+      if (installation.unsaved) yield* commit(installation, current);
       return inspection;
+    }
     const record: PluginInstallationRecord = { ...current, ...found, inspectedAt: yield* now };
     if (record.enabled && !isReady(record)) {
       yield* Effect.logWarning("Plugin source changed; disabling until consent is renewed", {
