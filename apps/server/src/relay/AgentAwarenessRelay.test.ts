@@ -368,6 +368,21 @@ describe("AgentAwarenessRelay", () => {
       assert.equal(publications[3]?.state?.phase, "waiting_for_approval");
       assert.equal(publications[3]?.state?.updatedAt, "2026-09-04T12:05:00.000Z");
       assert.notEqual(publications[3]?.state?.updatedAt, publications[1]?.state?.updatedAt);
+
+      // With two pending requests, answering one shows the next with no clear between.
+      yield* setShell(
+        waitingChild({
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("child-request-3"),
+            kind: "command",
+            createdAt: DateTime.makeUnsafe("2026-09-04T12:06:00.000Z"),
+          },
+        }),
+      );
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      assert.equal(publications.length, 5);
+      assert.equal(publications[4]?.state?.phase, "waiting_for_approval");
+      assert.equal(publications[4]?.state?.updatedAt, "2026-09-04T12:06:00.000Z");
     }),
   );
 

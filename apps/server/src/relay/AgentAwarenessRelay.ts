@@ -4,6 +4,7 @@ import type {
   OrchestrationV2ThreadShell,
   OrchestrationV2TurnItem,
   Project,
+  RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -160,12 +161,21 @@ export const makeAgentAwarenessPublishWorker = Effect.fnUntraced(function* <R>(
   return { enqueue, drain: worker.drain };
 });
 
-function agentAwarenessPublishIdentity(state: RelayAgentActivityState | null): string {
+function agentAwarenessPublishIdentity(
+  state: RelayAgentActivityState | null,
+  subagentRequest: SubagentRequestAwareness | null = null,
+): string {
   if (state === null) {
     return "null";
   }
   const { updatedAt: _updatedAt, ...meaningfulState } = state;
-  return JSON.stringify(meaningfulState);
+  // A child's next request reads the same as its last one, but it is a new
+  // wait and must reach the phone.
+  return JSON.stringify(
+    subagentRequest === null
+      ? meaningfulState
+      : [meaningfulState, DateTime.formatIso(subagentRequest.requestedAt)],
+  );
 }
 
 function resolveAgentActivityPublishingStartupState(input: {
@@ -295,6 +305,7 @@ function describeThreadShellForAwareness(
 interface SubagentRequest {
   readonly topLevelThreadId: ThreadId;
   readonly request: PendingSubagentRequest;
+  readonly requestId: RuntimeRequestId;
 }
 
 function resolveAgentAwarenessRelayPublishSnapshot(input: {
@@ -553,14 +564,15 @@ export const make = Effect.gen(function* () {
     const project = Option.isSome(thread)
       ? yield* projects.getById(thread.value.projectId)
       : Option.none<Project>();
+    const pendingSubagentRequest = yield* currentSubagentRequestFor(threadId);
     const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
       threadId,
       thread,
       project,
-      pendingSubagentRequest: yield* currentSubagentRequestFor(threadId),
+      pendingSubagentRequest,
     });
-    const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
+    const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, pendingSubagentRequest);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
@@ -674,8 +686,9 @@ export const make = Effect.gen(function* () {
         ? null
         : subagentPendingRequest(threadShell);
     const previous = subagentRequests.get(threadId);
-    if (previous?.request === (request ?? undefined)) return;
-    if (request === null || threadShell === null) {
+    const requestId = request === null ? undefined : threadShell?.pendingRuntimeRequest?.id;
+    if (previous?.request === (request ?? undefined) && previous?.requestId === requestId) return;
+    if (request === null || threadShell === null || requestId === undefined) {
       if (previous === undefined) return;
       subagentRequests.delete(threadId);
       yield* enqueueTopLevelPublish(previous.topLevelThreadId);
@@ -684,7 +697,7 @@ export const make = Effect.gen(function* () {
     const topLevelThreadId =
       previous?.topLevelThreadId ?? (yield* findTopLevelThreadId(threadShell));
     if (topLevelThreadId === null) return;
-    subagentRequests.set(threadId, { topLevelThreadId, request });
+    subagentRequests.set(threadId, { topLevelThreadId, request, requestId });
     yield* enqueueTopLevelPublish(topLevelThreadId);
   });
 
@@ -704,12 +717,15 @@ export const make = Effect.gen(function* () {
       const child = yield* threads.getThreadShell(childId);
       const request =
         child === null || child.archivedAt !== null ? null : subagentPendingRequest(child);
-      const requestedAt = child?.pendingRuntimeRequest?.createdAt;
-      if (request === null || requestedAt === undefined) {
+      const pendingRequest = child?.pendingRuntimeRequest;
+      if (request === null || pendingRequest == null) {
         subagentRequests.delete(childId);
         continue;
       }
-      if (request !== entry.request) subagentRequests.set(childId, { ...entry, request });
+      const requestedAt = pendingRequest.createdAt;
+      if (request !== entry.request || pendingRequest.id !== entry.requestId) {
+        subagentRequests.set(childId, { ...entry, request, requestId: pendingRequest.id });
+      }
       if (request === "approval") return { kind: request, requestedAt };
       pending = { kind: request, requestedAt };
     }
