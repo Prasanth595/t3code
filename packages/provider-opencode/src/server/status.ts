@@ -143,6 +143,32 @@ function formatOpenCodeProbeError(input: {
   };
 }
 
+// The status check owns the span; keep handled failures visible without adding another span.
+const logDiscoveryFailure = Effect.fnUntraced(function* (input: {
+  readonly phase: "version" | "inventory" | "models";
+  readonly isExternalServer: boolean;
+  readonly version?: string;
+  readonly cause?: Cause.Cause<unknown>;
+}) {
+  const outcome = input.cause ? "failed" : "empty";
+  const attributes = {
+    provider: "opencode",
+    phase: input.phase,
+    outcome,
+    serverMode: input.isExternalServer ? "external" : "managed",
+    ...(input.version === undefined ? {} : { version: input.version }),
+  };
+  yield* Effect.annotateCurrentSpan({
+    "discovery.phase": input.phase,
+    "discovery.outcome": outcome,
+  });
+  yield* (
+    input.cause
+      ? Effect.logWarning("OpenCode discovery failed", input.cause)
+      : Effect.logWarning("OpenCode discovery failed")
+  ).pipe(Effect.annotateLogs(attributes));
+});
+
 function titleCaseSlug(value: string): string {
   const segments: Array<string> = [];
   for (const segment of value.split(/[-_/]+/)) {
@@ -598,7 +624,12 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
     message,
   });
   if (result._tag === "Failure") {
-    yield* Effect.logWarning("OpenCode 2 model list failed", result.cause);
+    yield* logDiscoveryFailure({
+      phase: "models",
+      isExternalServer: settings.serverUrl.trim().length > 0,
+      version,
+      cause: result.cause,
+    });
     return buildServerProvider({
       presentation: OPENCODE_2_PRESENTATION,
       enabled: true,
@@ -610,6 +641,13 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
       ),
       slashCommands: [COMPACT_SLASH_COMMAND],
       probe: probe("error", "OpenCode could not load its model list."),
+    });
+  }
+  if (result.value.length === 0) {
+    yield* logDiscoveryFailure({
+      phase: "models",
+      isExternalServer: settings.serverUrl.trim().length > 0,
+      version,
     });
   }
   const models = providerModelsFromSettings(
@@ -721,7 +759,10 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       ),
     ),
   );
-  if (probedExit._tag === "Failure") return fallback(Cause.squash(probedExit.cause));
+  if (probedExit._tag === "Failure") {
+    yield* logDiscoveryFailure({ phase: "version", isExternalServer, cause: probedExit.cause });
+    return fallback(Cause.squash(probedExit.cause));
+  }
   const probed = probedExit.value;
   if (probed.generation === "v2") {
     return yield* checkOpenCode2(openCodeSettings, probed.version, checkedAt, loadOpenCode2Models);
@@ -783,6 +824,12 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     ),
   );
   if (inventoryExit._tag === "Failure") {
+    yield* logDiscoveryFailure({
+      phase: "inventory",
+      isExternalServer,
+      version,
+      cause: inventoryExit.cause,
+    });
     return {
       ...fallback(Cause.squash(inventoryExit.cause), version, "inventory"),
       ...installedVersion,
@@ -798,6 +845,9 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   const skills = openCodeSkillsToServerProviderSkills(inventoryExit.value.skills);
   const connectedCount = inventoryExit.value.providerList.connected.length;
   const catalogReady = connectedCount > 0 && inventoryModels.length > 0;
+  if (connectedCount > 0 && inventoryModels.length === 0) {
+    yield* logDiscoveryFailure({ phase: "inventory", isExternalServer, version });
+  }
   return {
     ...buildServerProvider({
       presentation: OPENCODE_PRESENTATION,

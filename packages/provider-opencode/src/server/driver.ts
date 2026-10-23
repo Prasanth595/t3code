@@ -350,6 +350,9 @@ export const OpenCodeDriver: ProviderDriver<
           host.paths.cwd,
           runtimeProbe.refresh,
           loadOpenCode2Models,
+        ).pipe(
+          Effect.annotateLogs({ providerInstanceId: instanceId }),
+          Effect.annotateSpans({ providerInstanceId: instanceId }),
         ),
         usageLimits: readOpenCodeGoUsageLimits({
           enabled: effectiveConfig.enabled,

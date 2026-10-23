@@ -8,7 +8,9 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
+import * as Tracer from "effect/Tracer";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { beforeEach } from "vite-plus/test";
@@ -462,6 +464,83 @@ const checkProvider = Effect.fn("checkProvider")(function* (
 });
 
 it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
+  it.effect.each(["version", "inventory", "models", "empty-v1", "empty-v2"] as const)(
+    "records %s discovery failures in the existing trace and logger",
+    (failure) =>
+      Effect.gen(function* () {
+        const cause = new Error("discovery connection reset");
+        const v2 = failure === "models" || failure === "empty-v2";
+        runtimeMock.state.versionStdout = v2 ? "opencode v2.0.18\n" : DEFAULT_VERSION_STDOUT;
+        if (failure === "version") runtimeMock.state.runVersionError = cause;
+        if (failure === "inventory") runtimeMock.state.inventoryError = cause;
+        if (failure === "empty-v1") {
+          runtimeMock.state.inventory = {
+            providerList: {
+              connected: ["openai"],
+              all: [{ id: "openai", name: "OpenAI", models: {} }],
+              default: {},
+            },
+            agents: [],
+            skills: [],
+          };
+        }
+        const spans: Array<Tracer.NativeSpan> = [];
+        yield* checkProvider(
+          makeOpenCodeSettings({ serverPassword: "private-password" }),
+          process.cwd(),
+          undefined,
+          undefined,
+          failure === "models"
+            ? Effect.fail(
+                new OpenCodeRuntime.OpenCodeRuntimeError({
+                  operation: "model.list",
+                  detail: "model list failed",
+                  cause,
+                }),
+              )
+            : Effect.succeed([]),
+        ).pipe(
+          Effect.provideService(
+            Tracer.Tracer,
+            Tracer.make({
+              span: (options) => {
+                const span = new Tracer.NativeSpan(options);
+                spans.push(span);
+                return span;
+              },
+            }),
+          ),
+          Effect.provide(Logger.layer([Logger.tracerLogger], { mergeWithExisting: false })),
+        );
+
+        const diagnostics = spans.flatMap((span) =>
+          span.events
+            .filter(([name]) => name === "OpenCode discovery failed")
+            .map((event) => ({ span, event })),
+        );
+        NodeAssert.equal(diagnostics.length, 1);
+        const {
+          span,
+          event: [, timestamp, attributes],
+        } = diagnostics[0]!;
+        NodeAssert.equal(attributes.provider, "opencode");
+        NodeAssert.equal(
+          attributes.phase,
+          failure.startsWith("empty") ? (v2 ? "models" : "inventory") : failure,
+        );
+        NodeAssert.equal(attributes.outcome, failure.startsWith("empty") ? "empty" : "failed");
+        NodeAssert.equal(attributes.serverMode, "managed");
+        NodeAssert.equal(attributes["effect.logLevel"], "WARN");
+        NodeAssert.ok(timestamp >= 0n);
+        NodeAssert.ok(span.traceId.length > 0);
+        NodeAssert.equal(span.attributes.get("discovery.outcome"), attributes.outcome);
+        if (!failure.startsWith("empty")) {
+          NodeAssert.match(String(attributes["effect.cause"]), /discovery connection reset/);
+        }
+        NodeAssert.ok(!JSON.stringify(attributes).includes("private-password"));
+      }),
+  );
+
   it.effect("keeps an empty legacy catalog retryable until connected providers list models", () =>
     Effect.gen(function* () {
       const upstream = { id: "openai", name: "OpenAI", models: {} };

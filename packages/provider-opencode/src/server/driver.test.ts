@@ -12,6 +12,8 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as References from "effect/References";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
@@ -104,6 +106,12 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     (initialCatalog) =>
       Effect.gen(function* () {
         const releaseCatalog = yield* Deferred.make<void>();
+        const discoveryLogs: Array<Record<string, unknown>> = [];
+        const logger = Logger.make(({ message, fiber }) => {
+          if (Array.isArray(message) && message.includes("OpenCode discovery failed")) {
+            discoveryLogs.push({ ...fiber.getRef(References.CurrentLogAnnotations) });
+          }
+        });
         let catalogAvailable = false;
         let modelReads = 0;
         const replies = {
@@ -176,7 +184,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         const instance = yield* create(
           { serverUrl: "http://127.0.0.1:4096", serverPassword: "secret" },
           server,
-        );
+        ).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
         const initial = yield* instance.snapshot.streamChanges.pipe(
           Stream.filter(
             (snapshot) =>
@@ -194,6 +202,13 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         assert.strictEqual(failed?.auth.status, "unknown");
         assert.deepStrictEqual(failed?.models, []);
         if (initialCatalog === "probe") assert.strictEqual(failed?.version, null);
+        assert.strictEqual(discoveryLogs.length, 1);
+        assert.strictEqual(discoveryLogs[0]?.providerInstanceId, "opencode-test");
+        assert.strictEqual(discoveryLogs[0]?.serverMode, "external");
+        assert.strictEqual(
+          discoveryLogs[0]?.phase,
+          initialCatalog === "probe" ? "version" : "models",
+        );
 
         catalogAvailable = true;
         const recovered = yield* instance.snapshot.streamChanges.pipe(
@@ -214,6 +229,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         const readsAfterRecovery = modelReads;
         yield* TestClock.adjust("15 minutes");
         assert.strictEqual(modelReads, readsAfterRecovery);
+        assert.strictEqual(discoveryLogs.length, 1);
       }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
