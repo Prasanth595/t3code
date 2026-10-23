@@ -27,18 +27,19 @@ export function claudeTaskOutputRoot(
   environment: Readonly<Record<string, string | undefined>> | undefined,
   path: Path.Path,
   cwd: string | null,
+  platform: NodeJS.Platform,
 ): string | undefined {
   const uid = process.getuid?.();
   if (uid === undefined) return undefined;
-  // Claude Code falls back to `os.tmpdir()`, which reads these from the
-  // environment it was launched with: macOS always sets TMPDIR. A relative
-  // value is relative to Claude's working directory, not this server's.
-  const base =
-    environment?.CLAUDE_CODE_TMPDIR?.trim() ||
-    environment?.TMPDIR ||
-    environment?.TMP ||
-    environment?.TEMP ||
-    "/tmp";
+  // Claude Code's macOS build falls back to /tmp and ignores the TMPDIR that
+  // launchd always sets. Its other builds use `os.tmpdir()`, which reads these
+  // from the environment it was launched with. A relative value is relative
+  // to Claude's working directory, not this server's.
+  const fallback =
+    platform === "darwin"
+      ? "/tmp"
+      : environment?.TMPDIR || environment?.TMP || environment?.TEMP || "/tmp";
+  const base = environment?.CLAUDE_CODE_TMPDIR?.trim() || fallback;
   return path.resolve(cwd ?? ".", base, `claude-${uid}`);
 }
 

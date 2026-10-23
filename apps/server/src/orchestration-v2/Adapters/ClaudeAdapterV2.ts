@@ -3920,6 +3920,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     adapterOptions.environment,
   ).pipe(Effect.provideService(Path.Path, path));
   const hostEnvironment = yield* HostProcess.Environment;
+  const hostPlatform = yield* HostProcess.Platform;
   const customHome =
     adapterOptions.settings.homePath.trim().length > 0 ||
     adapterOptions.environment.CLAUDE_CONFIG_DIR !== hostEnvironment.CLAUDE_CONFIG_DIR;
@@ -9367,6 +9368,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               adapterOptions.environment,
               path,
               turnInput.runtimePolicy.cwd,
+              hostPlatform,
             ),
           };
           yield* Ref.set(queryContext, context);

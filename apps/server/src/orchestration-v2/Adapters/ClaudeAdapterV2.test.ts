@@ -6421,7 +6421,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             prefix: "t3-claude-task-output-cwd-",
           });
           // The session opens in /workspace; a relative TMPDIR puts Claude's
-          // task files under whichever cwd the CLI was launched in.
+          // task files under whichever cwd the CLI was launched in. Linux,
+          // because Claude Code's macOS build ignores TMPDIR.
           const harness = yield* makeWakeHarnessWithOptions({ environment: { TMPDIR: "tmp" } });
           const now = yield* DateTime.now;
           const toolUseId = "toolu_foreground_bash";
@@ -6506,6 +6507,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
           assert.deepEqual(chunks, ["line 1\n"]);
         }).pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
           Effect.provide(
             Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
           ),
