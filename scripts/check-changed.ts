@@ -50,19 +50,20 @@ if (files.length === 0) {
 console.log(`check:changed: ${files.length} files since ${base.slice(0, 12)}`);
 
 // The checked tree is the merge base plus the diff plus the untracked files.
-// Ignored files outside node_modules (generated sources, .astro types) and the
-// install state can change results too, so they are part of the key.
-// tsbuildinfo files are excluded: typecheck rewrites them on every run.
+// Ignored generated sources, .astro types, env files, and the install state can
+// change results too, so they are part of the key. Other ignored folders (iOS
+// Pods, dist, the Electron runtime) are large and no check reads them.
 // Computed again after a passing run, so edits made during the run are never
 // cached as passing.
 const inputKey = () => {
   const hash = NodeCrypto.createHash("sha256");
   hash.update(`${process.version}\0${base}\0`);
   hash.update(
-    NodeChildProcess.execFileSync("git", ["diff", "--binary", "--no-renames", base, "--"], {
-      cwd: root,
-      maxBuffer: 1024 * 1024 * 1024,
-    }),
+    NodeChildProcess.execFileSync(
+      "git",
+      ["diff", "--binary", "--no-renames", "--no-ext-diff", "--no-textconv", base, "--"],
+      { cwd: root, maxBuffer: 1024 * 1024 * 1024 },
+    ),
   );
   const ignored = git(
     "ls-files",
@@ -70,12 +71,15 @@ const inputKey = () => {
     "--ignored",
     "--exclude-standard",
     "--",
-    ":!node_modules/**",
+    ":(glob)**/.generated/**",
+    ":(glob)**/.astro/**",
+    ":(glob)**/.env*",
     ":!**/node_modules/**",
-    ":!.t3/**",
-    ":!**/*.tsbuildinfo",
   );
   for (const file of [
+    // Raw bytes of changed files too: .gitattributes normalizes line endings in
+    // the diff, but the formatter reads the file as it is on disk.
+    ...git("diff", "--name-only", "--no-renames", base, "--"),
     ...git("ls-files", "--others", "--exclude-standard"),
     ...ignored,
     "node_modules/.modules.yaml",
@@ -83,7 +87,10 @@ const inputKey = () => {
   ]) {
     hash.update(`\0${file}\0`);
     const path = NodePath.join(root, file);
-    if (NodeFS.existsSync(path)) hash.update(NodeFS.readFileSync(path));
+    // Untracked nested repositories are listed as directories.
+    if (NodeFS.statSync(path, { throwIfNoEntry: false })?.isFile()) {
+      hash.update(NodeFS.readFileSync(path));
+    }
   }
   return hash.digest("hex");
 };
