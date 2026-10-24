@@ -208,6 +208,10 @@ export function AgentActivity(
         : `${activeCount} active`;
   const activeLabel =
     props.isStale && !props.isExpired ? `Last observed: ${currentLabel}` : currentLabel;
+  // A retained observation keeps its "Last observed" label instead of a glyph
+  // that would claim agents are still working.
+  const showCompactGlyph =
+    !attentionRow && !failedRow && !allDone && !isSystemStale && !props.isExpired && !props.isStale;
   const summary = attentionSuffix || activeLabel;
 
   // Widget taps target the containing app, so its production scheme is safe in every build.
@@ -246,8 +250,15 @@ export function AgentActivity(
   // SF Symbols, like the logo, ignore frame/foregroundStyle applied directly to
   // the image; size + tint them through a container. Preserve the symbol's
   // intrinsic aspect ratio when the resizable image fills that frame.
-  const renderGlyph = (systemName: SFName, size: number, color: Foreground, modifiers: typeof linkModifiers = []) => (
-    <HStack modifiers={[frame({ width: size, height: size }), foregroundStyle(color), ...modifiers]}>
+  const renderGlyph = (
+    systemName: SFName,
+    size: number,
+    color: Foreground,
+    modifiers: typeof linkModifiers = [],
+  ) => (
+    <HStack
+      modifiers={[frame({ width: size, height: size }), foregroundStyle(color), ...modifiers]}
+    >
       <Image
         systemName={systemName}
         modifiers={[resizable(), aspectRatio({ contentMode: "fit" })]}
@@ -295,7 +306,9 @@ export function AgentActivity(
   // foreground style, which the template image inherits. The 3:2 frame matches
   // the glyph's aspect ratio so it never distorts.
   const renderLogo = (height: number, color: Foreground, modifiers: typeof linkModifiers = []) => (
-    <HStack modifiers={[frame({ width: height * 1.5, height }), foregroundStyle(color), ...modifiers]}>
+    <HStack
+      modifiers={[frame({ width: height * 1.5, height }), foregroundStyle(color), ...modifiers]}
+    >
       <Image assetName="T3Mark" modifiers={[resizable()]} />
     </HStack>
   );
@@ -578,8 +591,30 @@ export function AgentActivity(
     banner,
     bannerSmall: renderCompactLayout(),
     compactLeading: renderLogo(14, tint, linkModifiers),
-    compactTrailing: (
-      <Text modifiers={[font({ weight: "semibold", size: 11 }), foregroundStyle(tint), ...linkModifiers]}>
+    // While agents are only working, stay quiet: the thread list's Working
+    // glyph marks the activity without a count. Labels appear only for
+    // attention or outcomes.
+    compactTrailing: showCompactGlyph ? (
+      <HStack
+        modifiers={[
+          padding({ trailing: 2 }),
+          accessibilityElement("ignore"),
+          accessibilityLabel(agentsLabel),
+          ...linkModifiers,
+        ]}
+      >
+        {renderGlyph(phaseSymbol(heroRow?.phase ?? "running"), 14, tint)}
+      </HStack>
+    ) : (
+      <Text
+        modifiers={[
+          font({ weight: "semibold", size: 11 }),
+          foregroundStyle(tint),
+          lineLimit(1),
+          minimumScaleFactor(0.5),
+          ...linkModifiers,
+        ]}
+      >
         {attentionRow
           ? attentionRow.phase === "waiting_for_approval"
             ? "Approval"
@@ -589,13 +624,9 @@ export function AgentActivity(
             : activeLabel}
       </Text>
     ),
-    // The shared/minimal form is a ~22pt circle — a single signal reads there,
-    // the wordmark does not. Show the blocking/outcome phase glyph, else the
-    // mark (all-done shows the hero row's checkmark/cross).
-    minimal:
-      (attentionRow || failedRow || allDone) && heroRow
-        ? renderGlyph(phaseSymbol(heroRow.phase), 13, phaseTint(heroRow.phase), linkModifiers)
-        : renderLogo(11, tint, linkModifiers),
+    minimal: heroRow
+      ? renderGlyph(phaseSymbol(heroRow.phase), 13, phaseTint(heroRow.phase), linkModifiers)
+      : renderLogo(11, tint, linkModifiers),
     expandedLeading: (
       <HStack spacing={5} alignment="center" modifiers={[padding({ leading: 4, vertical: 4 })]}>
         {renderLogo(15, tint)}
