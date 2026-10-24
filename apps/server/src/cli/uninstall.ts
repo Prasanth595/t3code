@@ -66,6 +66,20 @@ export const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(functi
   return launcherOwnsVersionsDir(path, input.versionsDir, resolved) ? input.launchedAs : undefined;
 });
 
+/**
+ * Removes `dir` from a detached cmd.exe about two seconds later, once t3 has exited. `shell` makes
+ * Node pass cmd the line verbatim as `/d /s /c "<line>"`. As a plain argument, the quotes around
+ * `dir` would reach cmd escaped as `\"`, which cmd keeps literally, so `rmdir` would fail.
+ */
+export function spawnWindowsRemoval(comspec: string, dir: string) {
+  return NodeChildProcess.spawn(`ping -n 3 127.0.0.1 >nul & rmdir /s /q "${dir}"`, {
+    shell: comspec,
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+}
+
 const planUninstall = Effect.fn("cli.uninstall.plan")(function* (input: {
   readonly baseDir: string;
 }) {
@@ -183,14 +197,7 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
       const runtimeDir = plan.runtimeDir;
       const comspec = environment["ComSpec"] ?? environment["COMSPEC"] ?? "cmd.exe";
       yield* Effect.try({
-        try: () => {
-          const child = NodeChildProcess.spawn(
-            comspec,
-            ["/d", "/c", `ping -n 3 127.0.0.1 >nul & rmdir /s /q "${runtimeDir}"`],
-            { detached: true, stdio: "ignore", windowsHide: true },
-          );
-          child.unref();
-        },
+        try: () => spawnWindowsRemoval(comspec, runtimeDir).unref(),
         catch: () =>
           new CliUninstallError({
             reason: `Could not schedule removal of ${runtimeDir}. Delete it yourself once this window is closed.`,
