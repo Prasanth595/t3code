@@ -47,6 +47,7 @@ import {
 } from "./claudeUsageLimits.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
+  type ClaudeCodeReportedModel,
   type ClaudeModelCatalog,
   formatClaudeVersionUpgradeMessage,
   resolveClaudeModelsForVersion,
@@ -259,6 +260,7 @@ export type ClaudeCapabilitiesProbe = {
    */
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly models?: ReadonlyArray<ClaudeCodeReportedModel>;
   /**
    * Subscription windows from the SDK's `get_usage` control request, or
    * `undefined` when the request itself failed. Absent windows on an
@@ -415,6 +417,7 @@ const probeClaudeCapabilities = (
           apiKeySource: account?.apiKeySource,
           apiProvider: account?.apiProvider,
           slashCommands: parseClaudeInitializationCommands(init.commands),
+          models: (init.models ?? []).map(({ value, resolvedModel }) => ({ value, resolvedModel })),
           ...(usage ? { usage, usageCheckedAt } : {}),
         } satisfies ClaudeCapabilitiesProbe;
       }),

@@ -62,6 +62,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -85,6 +86,7 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
+import type { ClaudeCodeReportedModel } from "../../provider/ClaudeModelCatalog.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -2154,6 +2156,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly freshQueueOnReopen?: boolean;
     readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
     readonly allocateSessionId?: Effect.Effect<string>;
+    readonly claudeCodeModels?: Ref.Ref<ReadonlyArray<ClaudeCodeReportedModel>>;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2212,6 +2215,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         path: yield* Path.Path,
         crypto: yield* Crypto.Crypto,
         idAllocator,
+        ...(options?.claudeCodeModels ? { claudeCodeModels: options.claudeCodeModels } : {}),
         continuationRequests: {
           offer: (request) =>
             Effect.sync(() => {
@@ -3233,6 +3237,46 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       Effect.scoped,
       Effect.provide(
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("sends the model id Claude Code reported for the selected catalog model", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const claudeCodeModels = yield* Ref.make<ReadonlyArray<ClaudeCodeReportedModel>>([]);
+        const harness = yield* makeWakeHarnessWithOptions({ claudeCodeModels });
+        const now = yield* DateTime.now;
+        const turn = (ordinal: number, model: string) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-reported-model:${ordinal}`),
+            text: `Request ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            modelSelection: { instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID, model },
+          });
+        // Bedrock with ANTHROPIC_DEFAULT_*_MODEL set, as Claude Code 2.1.310 reports it.
+        yield* Ref.set(claudeCodeModels, [
+          { value: "default", resolvedModel: "global.anthropic.claude-opus-5-5" },
+          { value: "sonnet", resolvedModel: "global.anthropic.claude-sonnet-5-5[1m]" },
+          { value: "opus", resolvedModel: "global.anthropic.claude-opus-5-5" },
+          { value: "haiku", resolvedModel: "global.anthropic.claude-haiku-5-5" },
+        ]);
+
+        yield* harness.runtime.startTurn(turn(1, "claude-haiku-5-5"));
+        assert.equal(harness.getOpenedOptions()?.model, "haiku");
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+
+        yield* harness.runtime.startTurn(turn(2, "claude-sonnet-5-5"));
+        assert.deepEqual(harness.liveSelectionChanges[0], { model: "sonnet" });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
       ),
     ),
   );
