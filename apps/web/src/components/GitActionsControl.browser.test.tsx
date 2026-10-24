@@ -32,6 +32,11 @@ const state = vi.hoisted(() => ({
   workingTreeRoot: undefined as string | undefined,
   files: [{ path: "file.ts", insertions: 1, deletions: 0 }],
   editorOpens: [] as { environmentId: string; input: { cwd: string; editor: string } }[],
+  branchChanges: undefined as
+    | { baseRef: string | null; insertions: number; deletions: number }
+    | undefined,
+  // Totals the Changes panel reports for a comparison, keyed by `${baseRef}:${ignoreWhitespace}`.
+  previewTotals: {} as Record<string, { additions: number; deletions: number }>,
 }));
 
 vi.mock(import("~/state/session"), async (original) => {
@@ -52,30 +57,73 @@ vi.mock(import("~/state/entities"), async (original) => ({
       ? null
       : { projection: { thread: state.detail } }) as never,
 }));
+type PreviewQuery = { previewInput: { baseRef?: string; ignoreWhitespace?: boolean } };
+vi.mock(import("~/state/review"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    reviewEnvironment: {
+      ...actual.reviewEnvironment,
+      diffPreview: (({ input }: { input: PreviewQuery["previewInput"] }) => ({
+        previewInput: input,
+      })) as never,
+    },
+  };
+});
+vi.mock(import("~/state/filesystem"), async (original) => ({
+  ...(await original()),
+  useFilesystemReadAccess: (() => ({ canReadFiles: true, isPending: false, error: null })) as never,
+}));
+function previewData({ previewInput }: PreviewQuery) {
+  const totals =
+    state.previewTotals[`${previewInput.baseRef ?? "auto"}:${previewInput.ignoreWhitespace}`];
+  if (totals === undefined) throw new Error(`Unexpected preview ${JSON.stringify(previewInput)}`);
+  return {
+    cwd: "/repo",
+    generatedAt: new Date(0),
+    sources: [
+      {
+        id: "branch",
+        kind: "branch-range",
+        title: "Branch",
+        baseRef: previewInput.baseRef ?? "main",
+        headRef: "feature",
+        diff: totals.additions + totals.deletions === 0 ? "" : "diff --git a/file.ts b/file.ts\n",
+        diffHash: "hash",
+        truncated: false,
+        files: [{ path: "file.ts", previousPath: null, ...totals }],
+      },
+    ],
+  };
+}
 vi.mock(import("~/state/query"), async (original) => ({
   ...(await original()),
-  // Serves both the VCS status and the source-control discovery queries.
-  useEnvironmentQuery: (() => ({
-    data: {
-      sourceControlProviders: [],
-      isRepo: true,
-      refName: state.branch,
-      isDefaultRef: state.isDefaultRef,
-      hasPrimaryRemote: true,
-      hasWorkingTreeChanges: true,
-      workingTree: {
-        ...(state.workingTreeRoot === undefined ? {} : { rootPath: state.workingTreeRoot }),
-        files: state.files,
-        insertions: 1,
-        deletions: 0,
-      },
-      hasUpstream: true,
-      aheadCount: 0,
-      behindCount: 0,
-      pr: null,
-    },
-    error: null,
-  })) as never,
+  // Serves the VCS status, source-control discovery, and review diff preview queries.
+  useEnvironmentQuery: ((query: unknown) =>
+    query !== null && typeof query === "object" && "previewInput" in query
+      ? { data: previewData(query as PreviewQuery), error: null, isPending: false, isSuccess: true }
+      : {
+          data: {
+            ...(state.branchChanges === undefined ? {} : { branchChanges: state.branchChanges }),
+            sourceControlProviders: [],
+            isRepo: true,
+            refName: state.branch,
+            isDefaultRef: state.isDefaultRef,
+            hasPrimaryRemote: true,
+            hasWorkingTreeChanges: true,
+            workingTree: {
+              ...(state.workingTreeRoot === undefined ? {} : { rootPath: state.workingTreeRoot }),
+              files: state.files,
+              insertions: 1,
+              deletions: 0,
+            },
+            hasUpstream: true,
+            aheadCount: 0,
+            behindCount: 0,
+            pr: null,
+          },
+          error: null,
+        }) as never,
 }));
 vi.mock(import("~/state/use-atom-command"), async (original) => {
   const { shellEnvironment } = await import("~/state/shell");
@@ -163,15 +211,17 @@ vi.mock(import("~/components/ui/toast"), async (original) => {
 });
 
 import { useComposerDraftStore } from "~/composerDraftStore";
+import { useDiffPanelStore } from "~/diffPanelStore";
 import GitActionsControl from "./GitActionsControl";
 
 // ThreadDetailsPanel keeps this component mounted behind React.memo when threads change.
 const MemoGitActionsControl = memo(GitActionsControl);
 
-function control(thread = "thread", cwd = "/repo") {
+function control(thread = "thread", cwd = "/repo", displayMode?: "panel") {
   return (
     <MemoGitActionsControl
       gitCwd={cwd}
+      {...(displayMode ? { displayMode, onOpenChanges: () => {} } : {})}
       activeThreadRef={{
         environmentId: EnvironmentId.make("environment"),
         threadId: ThreadId.make(thread),
@@ -199,6 +249,9 @@ function setup() {
   state.workingTreeRoot = undefined;
   state.files = [{ path: "file.ts", insertions: 1, deletions: 0 }];
   state.editorOpens = [];
+  state.branchChanges = undefined;
+  state.previewTotals = {};
+  useDiffPanelStore.setState({ byThreadKey: {} });
   useComposerDraftStore.setState({
     getDraftSession: () => state.draft as never,
     getDraftThreadByRef: () => state.draft as never,
@@ -225,5 +278,42 @@ describe("Git action targets across thread navigation", () => {
       scope: { cwd: "/first" },
       input: { threadId: "first", action: "commit_push_pr" },
     });
+  });
+});
+
+describe("thread details Changes row", () => {
+  const threadRef = {
+    environmentId: EnvironmentId.make("environment"),
+    threadId: ThreadId.make("thread"),
+  };
+  const changesRow = () => page.getByRole("button", { name: /^Changes/ });
+
+  // main has `hello world`; the branch reflows it to `hello    world` and adds a line.
+  function featureBranch() {
+    state.branch = "feature";
+    state.branchChanges = { baseRef: "main", insertions: 2, deletions: 1 };
+    state.previewTotals = {
+      "auto:true": { additions: 1, deletions: 0 },
+      "auto:false": { additions: 2, deletions: 1 },
+      "HEAD:true": { additions: 0, deletions: 0 },
+      "HEAD:false": { additions: 0, deletions: 0 },
+    };
+  }
+
+  it("totals the comparison the panel opens with the default hidden whitespace", async () => {
+    setup();
+    featureBranch();
+    await using _ = await render(control("thread", "/repo", "panel"));
+
+    await expect.element(changesRow()).toHaveTextContent("Changes+1-0");
+  });
+
+  it("follows the base ref selected in the Changes panel", async () => {
+    setup();
+    featureBranch();
+    useDiffPanelStore.getState().selectBranchBaseRef(threadRef, "HEAD");
+    await using _ = await render(control("thread", "/repo", "panel"));
+
+    await expect.element(changesRow()).toHaveTextContent("Changes+0-0");
   });
 });
