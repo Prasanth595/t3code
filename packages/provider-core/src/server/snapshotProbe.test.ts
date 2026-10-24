@@ -161,10 +161,10 @@ describe("ProviderCommandNotFoundError", () => {
 });
 
 describe("ProviderCommandOutputLimitError", () => {
-  it.effect("fails instead of returning output past the byte cap", () => {
+  const collectOversizedOutput = (overflowingStream: "stdout" | "stderr") => {
     // 9 MiB, one chunk past the 8 MiB cap, from a single shared buffer.
     const mebibyte = new Uint8Array(1024 * 1024).fill(0x61);
-    const chunks = Array.from({ length: 9 }, () => mebibyte);
+    const oversized = Stream.fromIterable(Array.from({ length: 9 }, () => mebibyte));
     const spawner = ChildProcessSpawner.make(() =>
       Effect.succeed(
         ChildProcessSpawner.makeHandle({
@@ -174,33 +174,46 @@ describe("ProviderCommandOutputLimitError", () => {
           kill: () => Effect.void,
           unref: Effect.succeed(Effect.void),
           stdin: Sink.drain,
-          stdout: Stream.fromIterable(chunks),
-          stderr: Stream.empty,
+          stdout: overflowingStream === "stdout" ? oversized : Stream.empty,
+          stderr: overflowingStream === "stderr" ? oversized : Stream.empty,
           all: Stream.empty,
           getInputFd: () => Sink.drain,
           getOutputFd: () => Stream.empty,
         }),
       ),
     );
-    return Effect.gen(function* () {
-      const outcome = yield* spawnAndCollect(
-        "/usr/local/bin/claude",
-        ChildProcess.make("claude", ["--version"]),
-      ).pipe(
-        Effect.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
-        Effect.provideService(HostProcess.Platform, "linux"),
-        // Report a success as its byte count rather than printing 9 MiB of output.
-        Effect.match({
-          onFailure: (error) => ({ error: error._tag, message: error.message }),
-          onSuccess: (result) => ({ stdoutBytes: result.stdout.length }),
+    return spawnAndCollect(
+      "/usr/local/bin/claude",
+      ChildProcess.make("claude", ["--version"]),
+    ).pipe(
+      Effect.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+      Effect.provideService(HostProcess.Platform, "linux"),
+      // Report a success as its byte counts rather than printing 9 MiB of output.
+      Effect.match({
+        onFailure: (error) => ({ error: error._tag, message: error.message }),
+        onSuccess: (result) => ({
+          stdoutBytes: result.stdout.length,
+          stderrBytes: result.stderr.length,
         }),
-      );
+      }),
+    );
+  };
 
-      expect(outcome).toEqual({
-        error: "ProviderCommandOutputLimitError",
-        message:
-          "Provider command /usr/local/bin/claude wrote more than 8388608 bytes to stdout or stderr.",
-      });
-    });
-  });
+  const limitError = {
+    error: "ProviderCommandOutputLimitError",
+    message:
+      "Provider command /usr/local/bin/claude wrote more than 8388608 bytes to stdout or stderr.",
+  };
+
+  it.effect("fails instead of returning stdout past the byte cap", () =>
+    Effect.gen(function* () {
+      expect(yield* collectOversizedOutput("stdout")).toEqual(limitError);
+    }),
+  );
+
+  it.effect("fails instead of returning stderr past the byte cap", () =>
+    Effect.gen(function* () {
+      expect(yield* collectOversizedOutput("stderr")).toEqual(limitError);
+    }),
+  );
 });
