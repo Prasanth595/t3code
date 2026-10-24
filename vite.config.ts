@@ -151,6 +151,8 @@ export default defineConfig({
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
+      // Vendored and wasm2c-generated C.
+      "apps/mobile/modules/t3-highlights/cpp/**",
       "*.icon/**",
     ],
     sortPackageJson: {},
