@@ -159,6 +159,9 @@ export type ProjectionStoreV2Error = typeof ProjectionStoreV2Error.Type;
 export type ProjectionRecoveryKind =
   | "queued-runs"
   | "runtime"
+  // Runs a restart or CLI replacement would cut off: preparing, starting,
+  // running or waiting (a pending approval or question).
+  | "active-work"
   | "subagent-results"
   | "delegated-completions";
 
@@ -666,6 +669,10 @@ function needsRecovery(
             )))
       );
     }
+    case "active-work":
+      return projection.runs.some((run) =>
+        ["preparing", "starting", "running", "waiting"].includes(run.status),
+      );
     case "runtime":
       return (
         projection.runs.some(
@@ -3975,6 +3982,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND type = 'subagent_result'
                   )))
                   ELSE 0 END
+              `;
+            case "active-work":
+              return sql`
+                SELECT thread_id FROM orchestration_v2_projection_runs
+                WHERE status IN ('preparing', 'starting', 'running', 'waiting')
               `;
             case "runtime":
               return sql`
