@@ -5,6 +5,7 @@ import {
   AuthTokenExchangeGrantType,
   type ClientConnectionMethod,
   type AuthEnvironmentScope,
+  type AuthWebSocketTicketUse,
 } from "@t3tools/contracts";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import { hashTelemetryId } from "@t3tools/shared/telemetryId";
@@ -182,22 +183,25 @@ export const fetchRemoteSessionState = Effect.fn(
   );
 });
 
+const webSocketTicketPath = (use: AuthWebSocketTicketUse | undefined) =>
+  use === undefined ? "/api/auth/websocket-ticket" : `/api/auth/websocket-ticket/${use}`;
+
 export const issueRemoteWebSocketTicket = Effect.fn(
   "clientRuntime.authorization.issueRemoteWebSocketTicket",
 )(function* (input: {
   readonly httpBaseUrl: string;
   readonly bearerToken: string;
+  readonly use?: AuthWebSocketTicketUse;
   readonly timeoutMs?: number;
 }) {
   const client = yield* makeEnvironmentHttpApiGroupClient(input.httpBaseUrl, "auth");
+  const headers = { authorization: `Bearer ${input.bearerToken}` };
   return yield* executeEnvironmentHttpRequest(
-    environmentEndpointUrl(input.httpBaseUrl, "/api/auth/websocket-ticket"),
+    environmentEndpointUrl(input.httpBaseUrl, webSocketTicketPath(input.use)),
     input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
-    client.webSocketTicket({
-      headers: {
-        authorization: `Bearer ${input.bearerToken}`,
-      },
-    }),
+    input.use === undefined
+      ? client.webSocketTicket({ headers })
+      : client.webSocketTicketFor({ headers, params: { use: input.use } }),
   );
 });
 
@@ -207,20 +211,27 @@ export const issueRemoteDpopWebSocketTicket = Effect.fn(
   readonly httpBaseUrl: string;
   readonly accessToken: string;
   readonly dpopProof: string;
+  readonly use?: AuthWebSocketTicketUse;
   readonly timeoutMs?: number;
 }) {
   const client = yield* makeEnvironmentHttpApiGroupClient(input.httpBaseUrl, "auth");
+  const headers = { authorization: `DPoP ${input.accessToken}`, dpop: input.dpopProof };
   return yield* executeEnvironmentHttpRequest(
-    environmentEndpointUrl(input.httpBaseUrl, "/api/auth/websocket-ticket"),
+    environmentEndpointUrl(input.httpBaseUrl, webSocketTicketPath(input.use)),
     input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
-    client.webSocketTicket({
-      headers: {
-        authorization: `DPoP ${input.accessToken}`,
-        dpop: input.dpopProof,
-      },
-    }),
+    input.use === undefined
+      ? client.webSocketTicket({ headers })
+      : client.webSocketTicketFor({ headers, params: { use: input.use } }),
   );
 });
+
+function rpcSocketUrl(wsBaseUrl: string): URL {
+  const url = new URL(wsBaseUrl);
+  if (url.pathname === "" || url.pathname === "/") {
+    url.pathname = "/ws";
+  }
+  return url;
+}
 
 export const resolveRemoteWebSocketConnectionUrl = Effect.fn(
   "clientRuntime.authorization.resolveRemoteWebSocketConnectionUrl",
@@ -235,13 +246,11 @@ export const resolveRemoteWebSocketConnectionUrl = Effect.fn(
   const issued = yield* issueRemoteWebSocketTicket({
     httpBaseUrl: input.httpBaseUrl,
     bearerToken: input.bearerToken,
+    use: "rpc",
     ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
   });
 
-  const url = new URL(input.wsBaseUrl);
-  if (url.pathname === "" || url.pathname === "/") {
-    url.pathname = "/ws";
-  }
+  const url = rpcSocketUrl(input.wsBaseUrl);
   url.searchParams.set("wsTicket", issued.ticket);
   appendClientConnectionParams(
     url,
@@ -252,28 +261,46 @@ export const resolveRemoteWebSocketConnectionUrl = Effect.fn(
   return url.toString();
 });
 
+/**
+ * A DPoP client's RPC ticket is bound to its key, so the upgrade carries a
+ * proof too. A WebSocket cannot set headers, so it rides in the `dpop` query
+ * parameter and names the socket URL as the HTTP request the server sees.
+ */
 export const resolveRemoteDpopWebSocketConnectionUrl = Effect.fn(
   "clientRuntime.authorization.resolveRemoteDpopWebSocketConnectionUrl",
-)(function* (input: {
+)(function* <E>(input: {
   readonly wsBaseUrl: string;
   readonly httpBaseUrl: string;
   readonly accessToken: string;
-  readonly dpopProof: string;
+  readonly createProof: (input: {
+    readonly method: "GET" | "POST";
+    readonly url: string;
+    readonly accessToken: string;
+  }) => Effect.Effect<string, E>;
   readonly clientMetadata?: AuthClientPresentationMetadata;
   readonly connectionMethod?: ClientConnectionMethod;
   readonly timeoutMs?: number;
 }) {
+  const ticketProof = yield* input.createProof({
+    method: "POST",
+    url: environmentEndpointUrl(input.httpBaseUrl, webSocketTicketPath("rpc")),
+    accessToken: input.accessToken,
+  });
   const issued = yield* issueRemoteDpopWebSocketTicket({
     httpBaseUrl: input.httpBaseUrl,
     accessToken: input.accessToken,
-    dpopProof: input.dpopProof,
+    dpopProof: ticketProof,
+    use: "rpc",
     ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
   });
-  const url = new URL(input.wsBaseUrl);
-  if (url.pathname === "" || url.pathname === "/") {
-    url.pathname = "/ws";
-  }
+  const url = rpcSocketUrl(input.wsBaseUrl);
+  const upgradeProof = yield* input.createProof({
+    method: "GET",
+    url: `${url.protocol === "wss:" ? "https:" : "http:"}//${url.host}${url.pathname}`,
+    accessToken: issued.ticket,
+  });
   url.searchParams.set("wsTicket", issued.ticket);
+  url.searchParams.set("dpop", upgradeProof);
   appendClientConnectionParams(
     url,
     input.clientMetadata,

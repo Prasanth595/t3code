@@ -10,6 +10,7 @@ import {
   exchangeRemoteDpopAccessToken,
   issueRemoteDpopWebSocketTicket,
   issueRemoteWebSocketTicket,
+  resolveRemoteDpopWebSocketConnectionUrl,
   resolveRemoteWebSocketConnectionUrl,
 } from "./remote.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
@@ -209,6 +210,43 @@ describe("remote environment authorization", () => {
 
       expect(url).toBe(
         "wss://remote.example.com/ws?wsTicket=ws-ticket&clientSurface=mobile&clientAppVersion=1.2.3&clientDeviceType=phone&clientOs=Android&clientOsMajorVersion=15&clientDeviceModel=Pixel+9&connectionMethod=relay",
+      );
+    }),
+  );
+
+  it.effect("binds a DPoP client's rpc ticket to its key and proves the upgrade", () =>
+    Effect.gen(function* () {
+      const fetch = recordedFetch(
+        Response.json({ ticket: "ws-ticket", expiresAt: "2026-05-01T12:05:00.000Z" }),
+      );
+      const proofs: Array<{ method: string; url: string; accessToken: string }> = [];
+
+      const url = yield* resolveRemoteDpopWebSocketConnectionUrl({
+        wsBaseUrl: "wss://remote.example.com/",
+        httpBaseUrl: "https://remote.example.com/",
+        accessToken: "dpop-access-token",
+        createProof: (input) => {
+          proofs.push(input);
+          return Effect.succeed(`proof-${proofs.length}`);
+        },
+        connectionMethod: "relay",
+      }).pipe(provideRemoteHttp(fetch.fetchFn));
+
+      expectFetchCall(fetch.calls, 1, {
+        url: "https://remote.example.com/api/auth/websocket-ticket/rpc",
+        method: "POST",
+        headers: { authorization: "DPoP dpop-access-token", dpop: "proof-1" },
+      });
+      expect(proofs).toEqual([
+        {
+          method: "POST",
+          url: "https://remote.example.com/api/auth/websocket-ticket/rpc",
+          accessToken: "dpop-access-token",
+        },
+        { method: "GET", url: "https://remote.example.com/ws", accessToken: "ws-ticket" },
+      ]);
+      expect(url).toBe(
+        "wss://remote.example.com/ws?wsTicket=ws-ticket&dpop=proof-2&connectionMethod=relay",
       );
     }),
   );
