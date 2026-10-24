@@ -20,6 +20,7 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { describe } from "vite-plus/test";
 
@@ -1441,6 +1442,73 @@ describe("liveWorld", () => {
       }
     }),
   );
+
+  describe("a failed read is transient only when GitHub never received the call", () => {
+    const TLS = `Get "https://api.github.com/repos/x/y/contents/.dw/config.yml": net/http: TLS handshake timeout`;
+    // Past every wait between the gh attempts.
+    const PAST_RETRIES = 60_000;
+
+    /** A process whose every call fails with `stderr`. */
+    const failing = (stderr: string) =>
+      FactoryProcess.of({
+        run: () =>
+          Effect.succeed({
+            exitCode: 1,
+            timedOut: false,
+            tail: "",
+            stderrTail: stderr,
+            truncated: false,
+          } satisfies RunResult),
+      });
+
+    it.effect("a config read that GitHub never received is transient and leaves the reading", () =>
+      Effect.gen(function* () {
+        const { process } = baseConfigGh({ stderr: TLS });
+        const fiber = yield* Effect.forkChild(readProject(process, checkout("main").root), {
+          startImmediately: true,
+        });
+        yield* TestClock.adjust(PAST_RETRIES);
+        const { result, readings } = yield* Fiber.join(fiber);
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) assert.strictEqual(result.failure.transient, true);
+        // The last reading stands: the settings page is not told the config failed.
+        assert.deepStrictEqual(readings, []);
+      }),
+    );
+
+    it.effect("a config read GitHub answered with an error is not transient", () =>
+      Effect.gen(function* () {
+        const { process } = baseConfigGh({ stderr: "gh: Server Error (HTTP 502)" });
+        const { result, readings } = yield* readProject(process, checkout("main").root);
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) assert.notStrictEqual(result.failure.transient, true);
+        assert.strictEqual(readings[0]?.kind, "errors");
+      }),
+    );
+
+    it.effect("a login read that GitHub never received is transient", () =>
+      Effect.gen(function* () {
+        const world = worldOf(failing(TLS));
+        const fiber = yield* Effect.forkChild(
+          Effect.result(world.trackerUser({ repo: REPO, path: "/p" })),
+          { startImmediately: true },
+        );
+        yield* TestClock.adjust(PAST_RETRIES);
+        const result = yield* Fiber.join(fiber);
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) assert.strictEqual(result.failure.transient, true);
+      }),
+    );
+
+    it.effect("a login read GitHub refused is not transient", () =>
+      Effect.gen(function* () {
+        const world = worldOf(failing("gh: Bad credentials (HTTP 401)"));
+        const result = yield* Effect.result(world.trackerUser({ repo: REPO, path: "/p" }));
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) assert.notStrictEqual(result.failure.transient, true);
+      }),
+    );
+  });
 
   it.effect("a checkout config that does not parse names the local file in its errors", () =>
     Effect.gen(function* () {
