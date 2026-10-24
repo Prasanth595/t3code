@@ -57,6 +57,8 @@ import {
 export interface PassError {
   readonly kind: ErrorKind;
   readonly message: string;
+  /** True when the failure was one GitHub never received, so a later read may well succeed. */
+  readonly transient?: boolean;
 }
 
 /** A watched repo with its project config and the login its tracker knows the factory by. */
@@ -261,6 +263,11 @@ export interface PassWorld {
    * `owner/name`; kept from pass to pass, and from scratch after a restart.
    */
   readonly configSkips: Map<string, number>;
+  /**
+   * The project config and tracker login each repo last loaded, by lower-cased `owner/name`: what
+   * a pass runs on when a re-read fails in a way that says GitHub never received the call.
+   */
+  readonly lastGood: Map<string, { project?: ProjectConfig; trackerUser?: string }>;
   readonly nowMs: () => number;
   /** Writes one event to the machine log. */
   readonly record: (event: MachineEvent) => Effect.Effect<void, LedgerError>;
@@ -631,6 +638,9 @@ export const runPass = Effect.fn("Pass.runPass")(function* (
     for (const key of world.configSkips.keys()) {
       if (!watchedKeys.has(key)) world.configSkips.delete(key);
     }
+    for (const key of world.lastGood.keys()) {
+      if (!watchedKeys.has(key)) world.lastGood.delete(key);
+    }
     if (listing.unresolved.length > 0) {
       pass.line(
         `watched: ${listing.unresolved.length} project(s) could not be settled this pass (${listing.unresolved.map(plain).join(", ")})`,
@@ -925,16 +935,103 @@ const loadRepos = Effect.fn("Pass.loadRepos")(function* (
       world.configSkips.delete(key);
       continue;
     }
-    const project = yield* Effect.result(world.project(watched));
-    if (project._tag === "Failure") {
-      const message = project.failure.message;
-      pass.error(
-        `${plain(watched.repo)}: project config not loaded, repo skipped: ${plain(message)}`,
+    const entry = world.lastGood.get(key) ?? {};
+    // The first failure this pass fell back on a last good copy for, if any.
+    const stale: { message: string | null } = { message: null };
+    const useStale = Effect.fn("Pass.useStale")(function* (
+      what: "config" | "login",
+      message: string,
+    ) {
+      const text = prepareText(message);
+      pass.line(
+        plain(
+          `${watched.repo}: ${what === "config" ? "project config" : "tracker login"} could not be re-read, using the last good copy: ${text}`,
+        ),
       );
       yield* pass.record({
-        event: "repo_skipped",
-        data: { repo: watched.repo, reason: "config-not-loaded", message: prepareText(message) },
+        event: "repo_config_stale",
+        data: { repo: watched.repo, what, message: text },
       });
+      stale.message ??= message;
+    });
+    const loaded = yield* Effect.result(world.project(watched));
+    let projectNow: ProjectConfig;
+    if (loaded._tag === "Failure") {
+      const failure = loaded.failure;
+      const message = failure.message;
+      if (failure.transient === true && entry.project !== undefined) {
+        projectNow = entry.project;
+        yield* useStale("config", message);
+      } else {
+        // A real failure says the thing changed, so what was kept no longer describes it.
+        if (failure.transient !== true) world.lastGood.delete(key);
+        pass.error(
+          `${plain(watched.repo)}: project config not loaded, repo skipped: ${plain(message)}`,
+        );
+        yield* pass.record({
+          event: "repo_skipped",
+          data: { repo: watched.repo, reason: "config-not-loaded", message: prepareText(message) },
+        });
+        const skips = (world.configSkips.get(key) ?? 0) + 1;
+        world.configSkips.set(key, skips);
+        if (skips >= CONFIG_SKIPS_BEFORE_ATTENTION) {
+          pass.report.attention += 1;
+          yield* world.attention.raise({
+            id: configNotLoadedId(key),
+            kind: "attention",
+            repo: watched.repo,
+            issue: null,
+            run: null,
+            message: plain(
+              `${watched.repo}: project config not loaded for ${CONFIG_SKIPS_BEFORE_ATTENTION} passes in a row, issues are not being picked up; last error: ${message}`,
+            ),
+          });
+        }
+        repos.push({ kind: "broken", name: watched.repo });
+        continue;
+      }
+    } else {
+      projectNow = loaded.success;
+      world.lastGood.set(key, { ...entry, project: projectNow });
+    }
+    const loginResult = yield* Effect.result(world.trackerUser(watched));
+    let userNow: string;
+    if (loginResult._tag === "Failure") {
+      const failure = loginResult.failure;
+      if (failure.transient === true && entry.trackerUser !== undefined) {
+        userNow = entry.trackerUser;
+        yield* useStale("login", failure.message);
+      } else {
+        if (failure.transient !== true) {
+          const kept = world.lastGood.get(key);
+          if (kept?.project !== undefined) world.lastGood.set(key, { project: kept.project });
+        }
+        // A fresh config clears the count whatever became of the login, as it always has.
+        if (stale.message === null) {
+          world.configSkips.delete(key);
+          yield* world.attention.clear((item) => item.id === configNotLoadedId(key));
+        }
+        yield* pass.fail(
+          null,
+          passError(
+            failure.kind,
+            `${watched.repo}: cannot read the tracker's login: `,
+            failure.message,
+          ),
+        );
+        repos.push({ kind: "broken", name: watched.repo });
+        continue;
+      }
+    } else {
+      userNow = loginResult.success;
+      world.lastGood.set(key, { ...(world.lastGood.get(key) ?? {}), trackerUser: userNow });
+    }
+    if (stale.message === null) {
+      world.configSkips.delete(key);
+      // Cleared whether or not this process counted the skips: the item outlives a restart.
+      yield* world.attention.clear((item) => item.id === configNotLoadedId(key));
+    } else {
+      // Counted like a skip, so a read that keeps failing is still told to a person.
       const skips = (world.configSkips.get(key) ?? 0) + 1;
       world.configSkips.set(key, skips);
       if (skips >= CONFIG_SKIPS_BEFORE_ATTENTION) {
@@ -946,32 +1043,14 @@ const loadRepos = Effect.fn("Pass.loadRepos")(function* (
           issue: null,
           run: null,
           message: plain(
-            `${watched.repo}: project config not loaded for ${CONFIG_SKIPS_BEFORE_ATTENTION} passes in a row, issues are not being picked up; last error: ${message}`,
+            `${watched.repo}: project config or tracker login could not be re-read for ${CONFIG_SKIPS_BEFORE_ATTENTION} passes in a row, running on the last good copy; last error: ${stale.message}`,
           ),
         });
       }
-      repos.push({ kind: "broken", name: watched.repo });
-      continue;
-    }
-    world.configSkips.delete(key);
-    // Cleared whether or not this process counted the skips: the item outlives a restart.
-    yield* world.attention.clear((item) => item.id === configNotLoadedId(key));
-    const user = yield* Effect.result(world.trackerUser(watched));
-    if (user._tag === "Failure") {
-      yield* pass.fail(
-        null,
-        passError(
-          user.failure.kind,
-          `${watched.repo}: cannot read the tracker's login: `,
-          user.failure.message,
-        ),
-      );
-      repos.push({ kind: "broken", name: watched.repo });
-      continue;
     }
     repos.push({
       kind: "ready",
-      repo: { watched, project: project.success, trackerUser: user.success },
+      repo: { watched, project: projectNow, trackerUser: userNow },
     });
   }
   return repos;

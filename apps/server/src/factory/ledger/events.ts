@@ -420,6 +420,11 @@ export type MachineEvent =
       readonly data: { repo: string; reason: string; message: string };
     }
   | {
+      /** A repo's config or login could not be re-read, so the pass ran on the last good copy. */
+      readonly event: "repo_config_stale";
+      readonly data: { repo: string; what: "config" | "login"; message: string };
+    }
+  | {
       readonly event: "claim_skipped";
       readonly data: { repo: string; issue: string; reason: string } | { reason: string };
     }
@@ -498,7 +503,7 @@ type MachineDataKeys<N extends MachineEventName> = KeysOfEach<
 >;
 
 /**
- * The 19 event types the machine log can hold, each with the names of its `data` fields in the
+ * The 20 event types the machine log can hold, each with the names of its `data` fields in the
  * order they are written. A type with more than one shape lists the fields of all of them: the
  * ones that are absent are left out, and the shapes share no field that is ordered differently.
  */
@@ -507,6 +512,7 @@ export const MACHINE_EVENT_FIELDS = {
   pass_finished: ["runs", "claimed", "errors", "attention"],
   preflight_failed: ["check", "why"],
   repo_skipped: ["repo", "reason", "message"],
+  repo_config_stale: ["repo", "what", "message"],
   claim_skipped: ["repo", "issue", "reason"],
   claim_repaired: ["repo", "issue", "outcome"],
   attention: [

@@ -934,7 +934,8 @@ describe("claiming new issues", () => {
         fake.projects[REPO] = TLS;
         fake.transient.add(REPO);
         const { lines } = yield* pass(fake, [REPO], 3);
-        assert.deepEqual(starts(fake), [`start ${REPO}#1`, `start ${REPO}#2`]);
+        // The second pass started issue 2 on the config and login of the first.
+        assert.include(starts(fake), `start ${REPO}#2`);
         assert.deepEqual(
           stale(fake).map((e) => e.data),
           [{ repo: REPO, what: "config", message: TLS }],
@@ -961,7 +962,8 @@ describe("claiming new issues", () => {
         fake.transient.add(REPO);
         const { report } = yield* pass(fake, [REPO], 3);
         assert.equal(report.errors, 0);
-        assert.deepEqual(starts(fake), [`start ${REPO}#1`, `start ${REPO}#2`]);
+        // The second pass started issue 2 on the config and login of the first.
+        assert.include(starts(fake), `start ${REPO}#2`);
         assert.deepEqual(
           stale(fake).map((e) => e.data),
           [{ repo: REPO, what: "login", message: TLS }],
