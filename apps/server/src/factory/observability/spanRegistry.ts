@@ -14,7 +14,7 @@ export interface TrackedSpanReport {
   readonly open: boolean;
   /** A SQL span's statement, cut to QUERY_TEXT_MAX characters. */
   readonly query?: string;
-  /** A SQL span's connection, once the client has acquired one. */
+  /** A SQL span's connection, once the client has acquired one. Only a SQL span reports it. */
   readonly connection?: SqlConnection;
 }
 
@@ -39,9 +39,10 @@ export interface SpanRegistry {
   /** Marks a span as a SQL statement, once its attributes say it is one. */
   markSql(id: number, query?: string): void;
   /**
-   * Records which connection a SQL span ran on, once the client has acquired it. A span started
-   * under it afterwards inherits the connection: a transaction's statements run on the
-   * transaction's connection, which the client names on the transaction span alone.
+   * Records which connection a SQL span ran on, once the client has acquired it. Every span
+   * started under it afterwards carries the connection down to the statements among its
+   * descendants: a transaction's statements run on the transaction's connection, which the
+   * client names on the transaction span alone. Only SQL spans report it.
    */
   markConnection(id: number, connection: SqlConnection): void;
   /**
@@ -94,7 +95,7 @@ export const makeSpanRegistry = (options: SpanRegistryOptions = {}): SpanRegistr
     ageMs: Math.round(atMs - entry.startMs),
     open: entry.endMs === undefined,
     ...(entry.query !== undefined && { query: entry.query }),
-    ...(entry.connection !== undefined && { connection: entry.connection }),
+    ...(entry.kind === "sql" && entry.connection !== undefined && { connection: entry.connection }),
   });
 
   return {
@@ -188,8 +189,9 @@ export const makeSpanRegistry = (options: SpanRegistryOptions = {}): SpanRegistr
 const ATTR_DB_SYSTEM_NAME = "db.system.name";
 const ATTR_DB_QUERY_TEXT = "db.query.text";
 const ATTR_DB_CONNECTION = "db.connection";
-// effect's SqlClient opens this internal span around a transaction; the sqlite client names the
-// connection on it, and the statements inside use that connection without saying so.
+// effect's SqlClient opens this span around a transaction (not a client span in effect 4.0.5); the
+// sqlite client names the connection on it, and the statements inside use that connection
+// without saying so.
 const TRANSACTION_SPAN = "sql.transaction";
 
 const isSqlConnection = (value: unknown): value is SqlConnection =>

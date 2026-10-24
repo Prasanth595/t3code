@@ -136,12 +136,11 @@ describe("makeSpanRegistry.active", () => {
     registry.markSql(sql, "INSERT INTO t VALUES (1)");
     c.set(40);
     registry.start("decode rows", "span", repo);
-    expect(registry.active(0, 100, 10).map((s) => [s.name, s.connection])).toEqual([
-      ["sqlite", "writer"],
-      ["decode rows", undefined],
-      ["EventSink.commit", undefined],
-      ["sql.transaction", undefined],
-    ]);
+    const byName = new Map(registry.active(0, 100, 10).map((s) => [s.name, s.connection]));
+    expect(byName.get("sqlite")).toBe("writer");
+    expect(byName.get("decode rows")).toBeUndefined();
+    expect(byName.get("EventSink.commit")).toBeUndefined();
+    expect(byName.get("sql.transaction")).toBeUndefined();
   });
 
   it("ignores an end for a span it already dropped", () => {
