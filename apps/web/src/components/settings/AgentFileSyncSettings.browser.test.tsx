@@ -4,7 +4,12 @@ import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 
-const state = vi.hoisted(() => ({ offline: false, writable: true, project: false }));
+const state = vi.hoisted(() => ({
+  offline: false,
+  writable: true,
+  project: false,
+  missing: false,
+}));
 
 vi.mock(import("../../state/agentFileSync"), async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
@@ -22,6 +27,9 @@ vi.mock(import("../../state/agentFileSync"), async () => {
       ],
       warnings: [],
     }),
+  );
+  const emptyCatalog = Atom.make(
+    AsyncResult.success({ skills: [], instructions: [], warnings: [] }),
   );
   const projectCatalog = Atom.make(
     AsyncResult.success({
@@ -89,7 +97,7 @@ vi.mock(import("../../state/agentFileSync"), async () => {
   return {
     agentFileSync: {
       list: ({ input }: { input: { cwd?: string } }) =>
-        input.cwd ? projectCatalog : globalCatalog,
+        state.missing ? emptyCatalog : input.cwd ? projectCatalog : globalCatalog,
       links: ({ environmentId }: { environmentId: string }) =>
         environmentId === "available" ? destinationLinks : sourceLinks,
       export: () => exported,
@@ -139,6 +147,7 @@ function setup(reason = "") {
   state.offline = reason === "offline";
   state.writable = reason !== "read-only";
   state.project = reason === "project";
+  state.missing = reason === "missing";
   const key = "t3:agent-file-sync:source:home";
   localStorage.setItem(`${key}:targets`, JSON.stringify(["available", "unavailable"]));
   return key;
@@ -219,4 +228,19 @@ it("shows sharing on the global skill without attributing it to the project copy
     "CLAUDE",
   );
   await expect.element(screen.getByText("Global instructions.", { exact: true })).toBeVisible();
+});
+
+it("keeps a missing shared skill visible so its destination can be managed", async () => {
+  setup("missing");
+  await using screen = await render(
+    <RegistryProvider>
+      <AgentFileSyncSettings />
+    </RegistryProvider>,
+  );
+  await expect.element(screen.getByRole("button", { name: /^review.*Unavailable/ })).toBeVisible();
+  await expect.element(screen.getByText("Shared with available", { exact: true })).toBeVisible();
+  await expect.element(screen.getByRole("button", { name: "Stop sharing" })).toBeEnabled();
+  await expect
+    .element(screen.getByText("Share this skill…", { exact: true }))
+    .not.toBeInTheDocument();
 });

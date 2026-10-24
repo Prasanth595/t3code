@@ -13,6 +13,7 @@ export interface AgentLibraryResource {
   name: string;
   location: AgentFileLocation;
   contents?: string;
+  unavailable?: boolean;
   sections: readonly AgentFileSyncSection[];
 }
 

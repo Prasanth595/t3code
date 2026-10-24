@@ -94,23 +94,55 @@ export function AgentFileLibrary({
   }, [ids]);
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
-  const resources: AgentLibraryResource[] = [
+  const resources = [
     ...(source.cwd ? [{ location: source, catalog: projectCatalog }] : []),
     { location: globalLocation, catalog: globalCatalog },
-  ].flatMap(({ location, catalog }) => [
-    ...(catalog.data?.skills ?? []).map((skill) => ({
-      ...skill,
-      kind: "skill" as const,
-      location,
-      sections: [],
-    })),
-    ...(catalog.data?.instructions ?? []).map((file) => ({
-      ...file,
-      kind: "instructions" as const,
-      name: file.path.split("/").at(-1)!,
-      location,
-    })),
-  ]);
+  ].flatMap(({ location, catalog }) => {
+    const entries: AgentLibraryResource[] = [
+      ...(catalog.data?.skills ?? []).map((skill) => ({
+        ...skill,
+        kind: "skill" as const,
+        location,
+        sections: [],
+      })),
+      ...(catalog.data?.instructions ?? []).map((file) => ({
+        ...file,
+        kind: "instructions" as const,
+        name: file.path.split("/").at(-1)!,
+        location,
+      })),
+    ];
+    if (catalog.isSuccess || catalog.error) {
+      const known = new Set(entries.map((entry) => `${entry.kind}:${entry.path}`));
+      for (const { environmentId, link } of shares) {
+        const incoming =
+          environmentId === location.environmentId && link.scope.cwd === location.cwd;
+        const outgoing =
+          link.sourceEnvironmentId === location.environmentId &&
+          link.selection.cwd === location.cwd;
+        if (!incoming && !outgoing) continue;
+        for (const candidate of [
+          ...link.selection.skills.map((path) => ({ kind: "skill" as const, path })),
+          ...link.selection.instructions.map(({ path }) => ({
+            kind: "instructions" as const,
+            path,
+          })),
+        ]) {
+          const key = `${candidate.kind}:${candidate.path}`;
+          if (known.has(key)) continue;
+          known.add(key);
+          entries.push({
+            ...candidate,
+            name: candidate.path.split("/").at(-1)!,
+            location,
+            sections: [],
+            unavailable: true,
+          });
+        }
+      }
+    }
+    return entries;
+  });
   const visible = resources.filter((resource) =>
     `${resource.name} ${resource.path} ${resourceScopeLabel(resource.location)}`
       .toLowerCase()
@@ -215,6 +247,9 @@ export function AgentFileLibrary({
                         </span>
                         <span className="flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
                           <span>{resourceScopeLabel(item.location)}</span>
+                          {item.unavailable ? (
+                            <span className="text-warning">Unavailable</span>
+                          ) : null}
                           {incoming.length ? (
                             <span>
                               Inherited from{" "}
@@ -317,7 +352,7 @@ function ResourceDetails({
       </div>
       <div className="flex flex-col gap-3 border-t p-4">
         <h4 className="text-sm font-medium">Source & sharing</h4>
-        {!incoming.length ? (
+        {!incoming.length && !resource.unavailable ? (
           <p className="text-xs text-muted-foreground">
             {resource.location.cwd
               ? "Defined in this project."
@@ -342,19 +377,21 @@ function ResourceDetails({
             resource={resource}
           />
         ))}
-        <details className="rounded-md border p-3">
-          <summary className="cursor-pointer text-sm font-medium">
-            Share {resource.kind === "skill" ? "this skill" : "sections of this file"}…
-          </summary>
-          <div className="mt-4">
-            <AgentFileSharing
-              resource={resource}
-              destinations={destinations}
-              compatible={compatible}
-              connected={connected}
-            />
-          </div>
-        </details>
+        {!resource.unavailable ? (
+          <details className="rounded-md border p-3">
+            <summary className="cursor-pointer text-sm font-medium">
+              Share {resource.kind === "skill" ? "this skill" : "sections of this file"}…
+            </summary>
+            <div className="mt-4">
+              <AgentFileSharing
+                resource={resource}
+                destinations={destinations}
+                compatible={compatible}
+                connected={connected}
+              />
+            </div>
+          </details>
+        ) : null}
       </div>
     </section>
   );
@@ -399,7 +436,11 @@ function ResourceOrigin({
                 {resourceScopeLabel(resource.location)} · {resource.location.label}
               </span>
               <span className="block text-xs text-muted-foreground">
-                {incoming.length ? "Receives shared content" : "Local file"}
+                {incoming.length
+                  ? "Receives shared content"
+                  : resource.unavailable
+                    ? "Unavailable local file"
+                    : "Local file"}
               </span>
             </span>
             <CheckIcon className="mt-0.5 size-3.5 shrink-0 text-primary" />
@@ -418,7 +459,7 @@ function ResourceOrigin({
 
 function ResourceContents({ resource }: { resource: AgentLibraryResource }) {
   const exported = useEnvironmentQuery(
-    resource.kind === "skill"
+    resource.kind === "skill" && !resource.unavailable
       ? agentFileSync.export({
           environmentId: resource.location.environmentId,
           input: {
@@ -436,6 +477,14 @@ function ResourceContents({ resource }: { resource: AgentLibraryResource }) {
     )?.files ?? [];
   const [filePath, setFilePath] = useState("SKILL.md");
   const file = files.find((item) => item.path === filePath) ?? files[0];
+  if (resource.unavailable)
+    return (
+      <p role="status" className="text-sm text-muted-foreground">
+        This shared file is unavailable in the current inventory. Check its path on the environment
+        and refresh, or stop sharing below.
+      </p>
+    );
+
   let text = resource.contents ?? resource.sections.map((section) => section.contents).join("");
   let binary = false;
   if (resource.kind === "skill" && file) {
