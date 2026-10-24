@@ -1149,7 +1149,6 @@ describe("EnvironmentThreads", () => {
         historyCursor: "socket-history-cursor",
         hasMoreHistory: true,
         latestLocalTurnOrdinal: 47,
-        payloadBudgetExceeded: false,
       });
 
       const state = yield* awaitThreadState(
@@ -1264,7 +1263,6 @@ describe("EnvironmentThreads", () => {
           historyCursor: "progressive-cursor",
           hasMoreHistory: true,
           latestLocalTurnOrdinal: 47,
-          payloadBudgetExceeded: false,
         });
         yield* awaitThreadState(
           harness.observed,
@@ -1373,7 +1371,6 @@ describe("EnvironmentThreads", () => {
         historyCursor: "compact-cursor",
         hasMoreHistory: true,
         latestLocalTurnOrdinal: 2,
-        payloadBudgetExceeded: false,
         turnItemsOmitLocalVisible: true,
       });
 

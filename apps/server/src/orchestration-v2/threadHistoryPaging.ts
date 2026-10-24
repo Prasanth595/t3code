@@ -7,12 +7,15 @@ import type {
 } from "@t3tools/contracts";
 
 /**
- * Bound every history window by rows and bytes, including a single long human
- * turn. Turn limits can stop a window earlier.
+ * Every window stops at the byte budget. A window that holds a user turn also
+ * stops at `maxUserTurns` or `maxTurnItems` rows, which keeps ordinary turns
+ * whole (V1 kept 500 activities). Any other window, such as an agent-driven
+ * thread or the inside of one very long turn, stops at `maxItems` rows.
  */
 export const THREAD_HISTORY_PAGE_POLICY = {
   maxUserTurns: 10,
   maxItems: 75,
+  maxTurnItems: 500,
   maxEncodedBytes: 1_048_576,
 } as const;
 
@@ -24,12 +27,16 @@ export function isConversationHistoryItem(item: Pick<OrchestrationV2TurnItem, "t
 export const THREAD_HISTORY_MAX_RAW_TURNS = 150;
 
 export const THREAD_HISTORY_SNAPSHOT_ROW_LIMIT = THREAD_HISTORY_PAGE_POLICY.maxItems + 2;
+/** The snapshot query's row limit once the history has a user turn. */
+export const THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT = THREAD_HISTORY_PAGE_POLICY.maxTurnItems + 2;
 
 const THREAD_HISTORY_CURSOR_MAX_LENGTH = 4_096;
 
 export type ThreadHistoryPagePolicy = {
   readonly maxUserTurns?: number | undefined;
   readonly maxItems: number;
+  /** Defaults to `maxItems`. */
+  readonly maxTurnItems?: number | undefined;
   readonly maxEncodedBytes: number;
 };
 
@@ -64,7 +71,6 @@ export type BoundedProjectionResult = {
   readonly historyCursor: string | null;
   readonly hasMoreHistory: boolean;
   readonly latestLocalTurnOrdinal: number | null;
-  readonly payloadBudgetExceeded: boolean;
 };
 
 export class InvalidThreadHistoryCursorError extends Error {
@@ -77,27 +83,6 @@ export class InvalidThreadHistoryCursorError extends Error {
 
 function bytesOfJson(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value), "utf8");
-}
-
-/**
- * Proves overflow without serializing: a string's UTF-16 length never exceeds
- * its UTF-8 JSON bytes, and local items are encoded once per array they sit in.
- */
-function timelineTextExceedsBudget(
-  projection: OrchestrationV2ThreadProjection,
-  budget: number,
-): boolean {
-  let length = 0;
-  const exceeds = (item: OrchestrationV2TurnItem): boolean => {
-    if ("text" in item) {
-      length += item.text.length;
-    }
-    return length > budget;
-  };
-  return (
-    projection.visibleTurnItems.some((row) => exceeds(row.item)) ||
-    projection.turnItems.some(exceeds)
-  );
 }
 
 export function projectedRowEncodedBytes(row: HistoryRow): number {
@@ -235,12 +220,14 @@ function selectOlderTimelinePage<Row extends HistoryRow>(input: {
   const turnLimit = candidates.some((row) => isThreadHistoryUserTurn(row.item))
     ? policy.maxUserTurns
     : undefined;
+  const maxItems =
+    turnLimit === undefined ? policy.maxItems : (policy.maxTurnItems ?? policy.maxItems);
   for (let index = end - 1; index >= 0; index -= 1) {
     const row = input.items[index]!;
     const rowBytes = rowCost(row);
     if (
       selected.length > 0 &&
-      (selected.length >= policy.maxItems ||
+      (selected.length >= maxItems ||
         encodedBytes + rowBytes > policy.maxEncodedBytes ||
         (turnLimit !== undefined &&
           (userTurns >= turnLimit || rawTurns >= THREAD_HISTORY_MAX_RAW_TURNS)))
@@ -252,6 +239,10 @@ function selectOlderTimelinePage<Row extends HistoryRow>(input: {
     if (isThreadHistoryUserTurn(row.item)) userTurns += 1;
     if (turnStarts[index]) rawTurns += 1;
   }
+  // Inside a turn longer than the window, no selected row starts a user turn.
+  // Later pages and the snapshot query see only such rows and use `maxItems`,
+  // so this page uses it too.
+  if (userTurns === 0) selected.splice(policy.maxItems);
   selected.reverse();
 
   const oldest = selected[0];
@@ -341,6 +332,7 @@ export function olderHistoryPagePolicy<Row extends HistoryRow>(input: {
       ),
     ),
     maxItems: policy.maxItems * 2,
+    maxTurnItems: (policy.maxTurnItems ?? policy.maxItems) * 2,
   };
 }
 
@@ -567,11 +559,7 @@ export function buildBoundedThreadProjection(input: {
     policy.maxEncodedBytes / 2,
     policy.maxEncodedBytes - dependencyReserve - controlBytes - 1_024,
   );
-  const windowPolicy: ThreadHistoryPagePolicy = {
-    maxUserTurns: policy.maxUserTurns,
-    maxItems: policy.maxItems,
-    maxEncodedBytes: windowBudget,
-  };
+  const windowPolicy: ThreadHistoryPagePolicy = { ...policy, maxEncodedBytes: windowBudget };
 
   const window = selectRecentTimelineWindow({
     items: controlProjection.visibleTurnItems,
@@ -642,9 +630,5 @@ export function buildBoundedThreadProjection(input: {
     historyCursor: window.nextCursor,
     hasMoreHistory: window.hasMoreHistory,
     latestLocalTurnOrdinal,
-    payloadBudgetExceeded:
-      controlBytes > policy.maxEncodedBytes ||
-      timelineTextExceedsBudget(projection, policy.maxEncodedBytes) ||
-      bytesOfJson(projection) > policy.maxEncodedBytes,
   };
 }

@@ -43,6 +43,7 @@ import {
   encodeThreadHistoryCursor,
   selectHistoryPageFromCursor,
   THREAD_HISTORY_PAGE_POLICY,
+  THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT,
 } from "./threadHistoryPaging.ts";
 
 const layerTest = Layer.mergeAll(
@@ -1530,11 +1531,24 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           [baselineId],
         );
       }
-      const humanWindow = yield* projectionStore.getThreadSnapshotWindow(threadId, {
-        rowLimit: 77,
-        userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
-      });
-      assert.lengthOf(humanWindow.projection.turnItems, 77);
+      const humanWindow = () =>
+        projectionStore.getThreadSnapshotWindow(threadId, {
+          rowLimit: 77,
+          userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
+        });
+      assert.lengthOf(
+        (yield* humanWindow()).projection.turnItems,
+        THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT,
+      );
+      // With the newest user turn 1,000 rows back, the window pages from inside it.
+      const setNewestTurnType = (type: "command_execution" | "user_message") => sql`
+        UPDATE orchestration_v2_projection_turn_items
+        SET type = ${type}, payload_json = json_set(payload_json, '$.type', ${type})
+        WHERE thread_id = ${threadId} AND ordinal = 1000
+      `;
+      yield* setNewestTurnType("command_execution");
+      assert.lengthOf((yield* humanWindow()).projection.turnItems, 77);
+      yield* setNewestTurnType("user_message");
 
       // Fewer than 75 rows still need a byte pass after materializing wire payloads.
       yield* sql`
@@ -1697,6 +1711,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           userTurnLimit: 20,
           anchorItemId,
         });
+        assert.isAtMost(
+          snapshot.projection.visibleTurnItems.length,
+          THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT,
+        );
         const page = selectHistoryPageFromCursor({
           items: snapshot.projection.visibleTurnItems,
           cursor,
@@ -1707,7 +1725,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         cursor = page.nextCursor;
       }
 
-      assert.isAtLeast(pageCount, 4);
+      assert.isAtLeast(pageCount, 3);
       assert.lengthOf(loadedIds, 1_000);
       assert.strictEqual(new Set(loadedIds).size, 1_000);
       assert.deepEqual(
