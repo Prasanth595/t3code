@@ -1335,18 +1335,36 @@ const make = Effect.gen(function* () {
   );
   const fileServices = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
   const saveProfilesLock = yield* Semaphore.make(1);
-  let savedProfiles = yield* (yield* FileSystem.FileSystem)
-    .readFileString(savedProfilesPath)
-    .pipe(Effect.orElseSucceed(() => ""));
+  let savedProfiles = yield* (yield* FileSystem.FileSystem).readFileString(savedProfilesPath).pipe(
+    Effect.tapError((cause) =>
+      cause.reason._tag === "NotFound"
+        ? Effect.void
+        : Effect.logWarning("failed to read saved browser profiles", {
+            path: savedProfilesPath,
+            cause,
+          }),
+    ),
+    Effect.orElseSucceed(() => ""),
+  );
   let reportedProfiles: {
     readonly profiles: ReadonlyArray<BrowserProfile>;
     readonly defaultProfileId: string;
   } | null = yield* decodeSavedProfiles(savedProfiles).pipe(
     Effect.map(resolveReportedProfiles),
+    Effect.tapError((cause) =>
+      savedProfiles === ""
+        ? Effect.void
+        : Effect.logWarning("ignoring invalid saved browser profiles", {
+            path: savedProfilesPath,
+            cause,
+          }),
+    ),
     Effect.orElseSucceed(() => null),
   );
 
-  const reportProfiles: ServerBrowser["Service"]["reportProfiles"] = (input) =>
+  const reportProfiles: ServerBrowser["Service"]["reportProfiles"] = Effect.fn(
+    "ServerBrowser.reportProfiles",
+  )((input) =>
     saveProfilesLock.withPermits(1)(
       Effect.suspend(() => {
         const reported = resolveReportedProfiles(input);
@@ -1368,7 +1386,8 @@ const make = Effect.gen(function* () {
           }),
         );
       }),
-    );
+    ),
+  );
 
   const profileStatus = () => {
     const profiles = reportedProfiles?.profiles ?? BUILT_IN_BROWSER_PROFILES;
