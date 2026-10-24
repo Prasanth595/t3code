@@ -708,6 +708,42 @@ const launchEditor = Effect.fn("externalLauncher.launchEditor")(function* (
   yield* launchEditorProcess(launch);
 });
 
+const GRAPHICAL_SESSION_ENV_KEYS: ReadonlySet<string> = new Set([
+  "DISPLAY",
+  "WAYLAND_DISPLAY",
+  "XAUTHORITY",
+]);
+
+// A boot service starts before the desktop session and never receives the
+// variables a window needs, so an editor launched from it exits without one. The
+// systemd user manager learns them when the session starts; read them there.
+const readGraphicalSessionEnv = Effect.fn("externalLauncher.readGraphicalSessionEnv")(
+  function* () {
+    const hostEnv = yield* HostProcess.Environment;
+    if ((yield* HostProcess.Platform) !== "linux" || hasGraphicalLinuxSession(hostEnv)) {
+      return {};
+    }
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const output = yield* spawner.string(
+      ChildProcess.make("systemctl", ["--user", "show-environment"], {
+        stdin: "ignore",
+        stderr: "ignore",
+      }),
+    );
+    return Object.fromEntries(
+      output.split("\n").flatMap((line) => {
+        const separator = line.indexOf("=");
+        const key = line.slice(0, separator);
+        return separator > 0 && GRAPHICAL_SESSION_ENV_KEYS.has(key)
+          ? [[key, line.slice(separator + 1)]]
+          : [];
+      }),
+    );
+  },
+  Effect.timeout("2 seconds"),
+  Effect.orElseSucceed((): NodeJS.ProcessEnv => ({})),
+);
+
 const launchAndUnref = Effect.fn("externalLauncher.launchAndUnref")(function* (
   launch: ProcessLaunch,
   onError: (cause: unknown) => ExternalLauncherError,
@@ -719,7 +755,7 @@ const launchAndUnref = Effect.fn("externalLauncher.launchAndUnref")(function* (
   const { ELECTRON_RUN_AS_NODE: _runAsNode, ...env } = yield* HostProcess.Environment;
   const command = ChildProcess.make(launch.command, launch.args, {
     ...launch.options,
-    env,
+    env: { ...env, ...launch.options.env },
     extendEnv: false,
   });
 
@@ -773,6 +809,7 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
       options: {
         detached: launch.detached ?? true,
         shell: spawnCommand.shell,
+        env: yield* readGraphicalSessionEnv(),
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",
