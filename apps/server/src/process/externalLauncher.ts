@@ -31,6 +31,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -714,6 +715,12 @@ const GRAPHICAL_SESSION_ENV_KEYS: ReadonlySet<string> = new Set([
   "XAUTHORITY",
 ]);
 
+// The user manager's environment over D-Bus. `systemctl show-environment` would
+// shell-quote values with spaces as $'...', while this JSON carries them raw.
+const decodeManagerEnvironment = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ data: Schema.Array(Schema.String) })),
+);
+
 // A boot service starts before the desktop session and never receives the
 // variables a window needs, so an editor launched from it exits without one. The
 // systemd user manager learns them when the session starts; read them there.
@@ -725,13 +732,23 @@ const readGraphicalSessionEnv = Effect.fn("externalLauncher.readGraphicalSession
     }
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const output = yield* spawner.string(
-      ChildProcess.make("systemctl", ["--user", "show-environment"], {
-        stdin: "ignore",
-        stderr: "ignore",
-      }),
+      ChildProcess.make(
+        "busctl",
+        [
+          "--user",
+          "--json=short",
+          "get-property",
+          "org.freedesktop.systemd1",
+          "/org/freedesktop/systemd1",
+          "org.freedesktop.systemd1.Manager",
+          "Environment",
+        ],
+        { stdin: "ignore", stderr: "ignore" },
+      ),
     );
+    const { data } = yield* decodeManagerEnvironment(output);
     return Object.fromEntries(
-      output.split("\n").flatMap((line) => {
+      data.flatMap((line) => {
         const separator = line.indexOf("=");
         const key = line.slice(0, separator);
         return separator > 0 && GRAPHICAL_SESSION_ENV_KEYS.has(key)

@@ -141,7 +141,7 @@ it.effect.skipIf(windowsHost)(
 );
 
 it.effect.skipIf(windowsHost)(
-  "a Linux editor launch without a display takes the desktop session's display from systemd",
+  "a Linux editor launch without a display takes the desktop session's display from the systemd user manager",
   () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -165,7 +165,7 @@ it.effect.skipIf(windowsHost)(
                 env: { PATH: binDir },
                 onSpawn: (command) => spawned.push(command),
                 spawnResult: (command) =>
-                  command.command === "systemctl" ? sessionManager : undefined,
+                  command.command === "busctl" ? sessionManager : undefined,
               }),
             ),
             Effect.provideService(HostProcess.Environment, { PATH: binDir }),
@@ -179,19 +179,22 @@ it.effect.skipIf(windowsHost)(
 
       assert.deepEqual(
         yield* launchEnv({
-          stdout: [
-            "DISPLAY=:0",
-            "HOME=/home/user",
-            "WAYLAND_DISPLAY=wayland-1",
-            "XAUTHORITY=/run/user/1000/xauth",
-            "",
-          ].join("\n"),
+          stdout: JSON.stringify({
+            type: "as",
+            data: [
+              "DISPLAY=:0",
+              "HOME=/home/user",
+              "WAYLAND_DISPLAY=wayland-1",
+              "XAUTHORITY=/home/user/auth files/cookie",
+            ],
+          }),
         }),
         {
           PATH: binDir,
           DISPLAY: ":0",
           WAYLAND_DISPLAY: "wayland-1",
-          XAUTHORITY: "/run/user/1000/xauth",
+          // Raw, not the $'...' quoting `systemctl show-environment` would print.
+          XAUTHORITY: "/home/user/auth files/cookie",
         },
       );
       // Without a systemd user manager the editor still launches with the server's environment.
