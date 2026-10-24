@@ -42,6 +42,22 @@ describe("buildCodexDeveloperInstructions", () => {
   });
 });
 
+describe("Codex orchestration context", () => {
+  it("routes same-child follow-ups to t3_thread_send and independent reviews to delegate_task", () => {
+    const orchestration = Object.entries(buildCodexAdditionalContext({ model: "gpt-6.1-sol" }))
+      .filter(([key]) => key.startsWith("t3_code_orchestration_"))
+      .map(([, entry]) => entry.value)
+      .join("\n");
+
+    NodeAssert.match(orchestration, /independent[^.]*review rounds?, call `delegate_task` again/i);
+    NodeAssert.match(
+      orchestration,
+      /same child's conversation[^.]*`t3_thread_send`[^.]*`childThreadId`/,
+    );
+    NodeAssert.doesNotMatch(orchestration, /Do not use `t3_thread_send`/);
+  });
+});
+
 function runtimeInstructions(runtime: Parameters<typeof buildCodexAdditionalContext>[0]) {
   return buildCodexAdditionalContext(runtime).t3_code_runtime!.value;
 }
