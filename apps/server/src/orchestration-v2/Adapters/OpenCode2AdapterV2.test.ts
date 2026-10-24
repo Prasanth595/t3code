@@ -3778,6 +3778,36 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("forks after a Stop before the interrupted execution's end event arrives", () =>
+    Effect.gen(function* () {
+      const FORK = "ses_f1484db83ffeLGtrRCFimo1H0e";
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.started", { sessionID: SESSION }),
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+        // OpenCode has ended the run; its event has not reached T3 yet.
+        out("session.active"),
+        replyData("session.active", {}),
+        out("session.fork", { sessionID: SESSION }),
+        replyData("session.fork", sessionInfo({ id: FORK })),
+        out("session.update", { sessionID: FORK, permissions: "<any>" }),
+        reply("session.update", null),
+      ]);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+      });
+      const forked = yield* runtime.forkThread({
+        sourceProviderThread: thread,
+        targetThreadId: ThreadId.make("thread:opencode2-adapter:fork-after-stop"),
+      });
+      assert.equal(forked.nativeThreadRef?.nativeId, FORK);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("moves a fork into its target thread's worktree before the first prompt", () =>
     Effect.gen(function* () {
       const FORK = "ses_f1484db83ffeLGtrRCFimo1H0e";

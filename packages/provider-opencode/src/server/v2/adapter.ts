@@ -2899,16 +2899,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       verb: "roll back" | "fork",
     ) {
       const state = threads.get(sessionId);
+      const background = state !== undefined && verb === "roll back" && hasBackground(state);
       const busyHere =
-        state !== undefined &&
-        (state.active !== undefined ||
-          busy.has(sessionId) ||
-          (verb === "roll back" && hasBackground(state)));
-      const busyThere =
-        !busyHere &&
-        (state === undefined || state.unsettled) &&
-        sessionId in (yield* client.session.active().pipe(Effect.timeout(ACTIVE_CHECK_TIMEOUT)));
-      if (busyHere || busyThere) {
+        state !== undefined && (state.active !== undefined || busy.has(sessionId) || background);
+      // A Stop replies before OpenCode's execution-end event reaches T3. The
+      // run is already over there, so ask the server instead of refusing.
+      const stopping = state?.active?.interrupted === true;
+      const active =
+        (busyHere && stopping) || state === undefined || state.unsettled
+          ? yield* client.session.active().pipe(Effect.timeout(ACTIVE_CHECK_TIMEOUT))
+          : undefined;
+      const busyThere = active !== undefined && sessionId in active;
+      const stoppedBeforeEvent = stopping && !background && active !== undefined && !busyThere;
+      if ((busyHere && !stoppedBeforeEvent) || busyThere) {
         return yield* new ProviderAdapter.ProviderAdapterProtocolError({
           driver: OPENCODE_PROVIDER,
           detail: `Cannot ${verb} OpenCode session ${sessionId} while it is still working`,
