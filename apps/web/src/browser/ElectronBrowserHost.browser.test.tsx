@@ -114,6 +114,42 @@ async function renderHost() {
 }
 
 describe("ElectronBrowserHost", () => {
+  it("keeps a background guest paintable only for the requested capture", async () => {
+    using _state = setup();
+    let prepare: Parameters<DesktopPreviewBridge["onPrepareCapture"]>[0] | undefined;
+    vi.stubGlobal("desktopBridge", {
+      preview: {
+        onPrepareCapture: (listener: typeof prepare) => {
+          prepare = listener;
+          return () => undefined;
+        },
+        onPointerEvent: () => () => undefined,
+        onOpenLink: () => () => undefined,
+        setAnnotationTheme: async () => undefined,
+      },
+    });
+    using _bridge = { [Symbol.dispose]: () => vi.unstubAllGlobals() };
+    reconcilePreviewServerSessions(threadRef, {
+      sessions: [snapshot("tab_capture", "2026-01-01T00:00:01.000Z")],
+      serverEpoch: "server-a",
+      revision: 1,
+    });
+    await using screen = await renderHost();
+    const wrapper = screen.container.querySelector<HTMLElement>("[data-preview-viewport]")!;
+    const runtimeTabId = wrapper.dataset.previewViewport!;
+    expect(Number.parseFloat(wrapper.style.left)).toBeLessThan(0);
+    let release: (() => void) | undefined;
+    await act(() => {
+      release = prepare?.(runtimeTabId);
+    });
+    expect(release).toBeTypeOf("function");
+    expect(Number.parseFloat(wrapper.style.left)).toBe(0);
+    expect(Number.parseFloat(wrapper.style.top)).toBe(0);
+    await act(() => release?.());
+    expect(Number.parseFloat(wrapper.style.left)).toBeLessThan(0);
+    expect(prepare?.("closed-tab")).toBeUndefined();
+  });
+
   it("never moves a tab's webview when the server reorders tabs by last update", async () => {
     using _state = setup();
     reconcilePreviewServerSessions(threadRef, {

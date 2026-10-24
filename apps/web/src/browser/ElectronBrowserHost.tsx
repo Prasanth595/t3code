@@ -4,6 +4,7 @@ import {
   type DesktopPreviewOpenLinkEvent,
   FILL_PREVIEW_VIEWPORT,
 } from "@t3tools/contracts";
+import { flushSync } from "react-dom";
 import { useAtomValue } from "@effect/atom-react";
 import { type ComponentProps, useEffect, useEffectEvent, useState } from "react";
 
@@ -17,6 +18,7 @@ import { previewEnvironment } from "~/state/preview";
 import { useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { acquireBrowserSurfaceActivity } from "./browserSurfaceStore";
 import { readPreviewAnnotationTheme } from "./annotationTheme";
 import { useBrowserDefaults } from "./browserDefaults";
 import { useBrowserPointerStore } from "./browserPointerStore";
@@ -92,6 +94,25 @@ export function ElectronBrowserHost() {
     if (!preview) return;
     return preview.onPointerEvent((event) => {
       useBrowserPointerStore.getState().apply(event);
+    });
+  }, []);
+
+  useEffect(() => {
+    const preview = window.desktopBridge?.preview;
+    if (!preview?.onPrepareCapture) return;
+    return preview.onPrepareCapture((tabId) => {
+      if (
+        ![...document.querySelectorAll("[data-preview-viewport]")].some(
+          (node) => node.getAttribute("data-preview-viewport") === tabId,
+        )
+      )
+        return undefined;
+      // Commit the guest's in-window position before the main process asks for a frame.
+      let release: (() => void) | undefined;
+      flushSync(() => {
+        release = acquireBrowserSurfaceActivity(tabId);
+      });
+      return release;
     });
   }, []);
 

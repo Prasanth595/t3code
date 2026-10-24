@@ -409,6 +409,28 @@ contextBridge.exposeInMainWorld("desktopBridge", {
           ipcRenderer.removeListener(IpcChannels.PREVIEW_RECORDING_FRAME_CHANNEL, wrappedListener);
       },
     },
+    onPrepareCapture: (listener) => {
+      const pending = new Set<() => void>();
+      const wrappedListener = (event: Electron.IpcRendererEvent, tabId: unknown) => {
+        const port = event.ports[0];
+        if (!port || typeof tabId !== "string") return;
+        const release = listener(tabId);
+        const close = () => {
+          pending.delete(close);
+          release?.();
+          port.close();
+        };
+        pending.add(close);
+        port.addEventListener("message", close, { once: true });
+        port.start();
+        port.postMessage(release ? "ready" : "missing");
+      };
+      ipcRenderer.on(IpcChannels.PREVIEW_PREPARE_CAPTURE_CHANNEL, wrappedListener);
+      return () => {
+        ipcRenderer.removeListener(IpcChannels.PREVIEW_PREPARE_CAPTURE_CHANNEL, wrappedListener);
+        for (const close of pending) close();
+      };
+    },
     onStateChange: (listener) => {
       const wrappedListener = (
         _event: Electron.IpcRendererEvent,

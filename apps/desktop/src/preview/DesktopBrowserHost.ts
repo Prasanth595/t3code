@@ -35,6 +35,7 @@ export interface DesktopBrowserTabKey {
 export interface DesktopBrowserTabDebugger {
   readonly webContents: Electron.WebContents;
   readonly debugger: Electron.Debugger;
+  readonly prepareScreenshot?: () => Promise<() => void>;
 }
 
 const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000${tabId}`;
@@ -112,7 +113,20 @@ export const make = Effect.gen(function* () {
         }
         const turn = {};
         tab.screenshotTurn = turn;
-        capture()
+        const prepare = tab.debuggee.prepareScreenshot;
+        const capturing = prepare
+          ? prepare().then(async (release) => {
+              try {
+                if (tab.screenshotTurn !== turn || tab.relay !== relay) {
+                  throw new Error("The preview changed while preparing its screenshot.");
+                }
+                return await capture();
+              } finally {
+                release();
+              }
+            })
+          : capture();
+        capturing
           .finally(() => {
             if (tab.screenshotTurn === turn) nextScreenshot(tab);
           })

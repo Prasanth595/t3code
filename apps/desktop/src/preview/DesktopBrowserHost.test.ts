@@ -30,20 +30,24 @@ const command = (
     }),
   );
 
-const makeDebuggee = () => {
+const makeDebuggee = (captureFails = false) => {
   const emitter = new NodeEvents.EventEmitter();
   const pending: Array<() => void> = [];
   const sent: Array<unknown> = [];
   const sendWaiters: Array<() => void> = [];
   const debuggee = Object.assign(emitter, {
     sendCommand: (method: string, params?: { id?: number }) =>
-      new Promise((resolve) => {
+      new Promise((resolve, reject) => {
         if (method === "Target.getTargetInfo") {
           resolve({ targetInfo: { targetId: "GUEST" } });
           return;
         }
         sent.push(params?.id);
-        pending.push(() => resolve({ method }));
+        pending.push(() => {
+          if (captureFails && method === "Page.captureScreenshot")
+            reject(new Error("Capture failed"));
+          else resolve({ method });
+        });
         sendWaiters.shift()?.();
       }),
   });
@@ -128,6 +132,95 @@ describe("DesktopBrowserHost", () => {
 
       expect(reply).toMatchObject({ type: "cdp" });
       expect(decodeCdpReply((reply as { message: string }).message).id).toBe(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("waits for a paintable guest before capturing and releases it afterwards", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      let ready: (() => void) | undefined;
+      let released = 0;
+      const prepared = new Promise<() => void>((resolve) => {
+        ready = () =>
+          resolve(() => {
+            released += 1;
+          });
+      });
+      host.attach(key, { ...debuggee.tab, prepareScreenshot: () => prepared });
+      const replies = yield* watchReplies(host);
+
+      yield* command(host, 1, "Page.captureScreenshot");
+      expect(debuggee.sent).toEqual([]);
+      const sent = debuggee.nextSend();
+      ready?.();
+      yield* Effect.promise(() => sent);
+      expect(debuggee.sent).toEqual([1]);
+      expect(released).toBe(0);
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(1);
+      expect(released).toBe(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("releases a paintable guest when capture fails and continues the queue", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee(true);
+      let released = 0;
+      host.attach(key, {
+        ...debuggee.tab,
+        prepareScreenshot: async () => () => {
+          released += 1;
+        },
+      });
+      const replies = yield* watchReplies(host);
+      const firstSent = debuggee.nextSend();
+      yield* command(host, 1, "Page.captureScreenshot");
+      yield* command(host, 2, "Page.captureScreenshot");
+      yield* Effect.promise(() => firstSent);
+      expect(debuggee.sent).toEqual([1]);
+      const secondSent = debuggee.nextSend();
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(1);
+      yield* Effect.promise(() => secondSent);
+      expect(released).toBe(1);
+      expect(debuggee.sent).toEqual([1, 2]);
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(2);
+      expect(released).toBe(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not start a stale capture after navigation finishes its preparation", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee();
+      let ready: (() => void) | undefined;
+      let preparations = 0;
+      let released = 0;
+      const release = () => {
+        released += 1;
+      };
+      const prepared = new Promise<() => void>((resolve) => {
+        ready = () => resolve(release);
+      });
+      host.attach(key, {
+        ...debuggee.tab,
+        prepareScreenshot: () => (++preparations === 1 ? prepared : Promise.resolve(release)),
+      });
+      const replies = yield* watchReplies(host);
+      yield* command(host, 1, "Page.captureScreenshot");
+      yield* command(host, 2, "Page.captureScreenshot");
+      const sent = debuggee.nextSend();
+      debuggee.navigate();
+      yield* Effect.promise(() => sent);
+      ready?.();
+      expect(yield* Queue.take(replies)).toBe(1);
+      expect(debuggee.sent).toEqual([2]);
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(2);
+      expect(released).toBe(2);
     }).pipe(Effect.scoped),
   );
 
