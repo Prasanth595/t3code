@@ -222,11 +222,21 @@ describe("CloudManagedEndpointRuntime", () => {
 
   it.effect("logs a connection unregistration at info with the connector token redacted", () => {
     const logs: Array<{ readonly level: string; readonly message: unknown }> = [];
+    const unregistrationLogged = Deferred.makeUnsafe<void>();
     const logger = Logger.make(({ logLevel, message }) => {
       logs.push({ level: logLevel, message });
+      if (Array.isArray(message) && message[0] === "Relay client tunnel connection unregistered") {
+        Deferred.doneUnsafe(unregistrationLogged, Effect.void);
+      }
     });
 
     return Effect.gen(function* () {
+      const config = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "secret-connector-token",
+        tunnelId: "tunnel-1",
+      };
+      const encoder = new TextEncoder();
       const output = yield* Queue.unbounded<Uint8Array>();
       const spawner = ChildProcessSpawner.make(() =>
         Effect.gen(function* () {
@@ -240,16 +250,23 @@ describe("CloudManagedEndpointRuntime", () => {
         }),
       );
       const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
-      yield* runtime.applyConfig({
-        providerKind: "cloudflare_tunnel",
-        connectorToken: "secret-connector-token",
-        tunnelId: "tunnel-1",
-      });
+      yield* runtime.applyConfig(config);
       yield* Queue.offer(
         output,
-        new TextEncoder().encode(
-          "2026-10-06T00:00:00Z INF Starting metrics server on 127.0.0.1:20241/metrics\n" +
-            "2026-10-06T00:00:00Z INF Unregistered tunnel connection connIndex=0 token=secret-connector-token\n" +
+        encoder.encode(
+          "2026-10-06T00:00:00Z INF Unregistered tunnel connection connIndex=0 token=secret-connector-token\n",
+        ),
+      );
+      yield* Deferred.await(unregistrationLogged);
+
+      // An unregistration is not a registration, so the registration timeout still recovers.
+      yield* TestClock.adjust(Duration.minutes(3));
+      expect(Option.getOrNull(yield* Stream.runHead(runtime.recoveryRequests))).toEqual(config);
+
+      yield* Queue.offer(
+        output,
+        encoder.encode(
+          "2026-10-06T00:00:01Z INF Starting metrics server on 127.0.0.1:20241/metrics\n" +
             "2026-10-06T00:00:01Z INF Registered tunnel connection connIndex=0\n",
         ),
       );
