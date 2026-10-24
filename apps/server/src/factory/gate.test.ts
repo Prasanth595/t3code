@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import { describe } from "vite-plus/test";
 
 import {
   FactoryGate,
@@ -987,6 +988,12 @@ it.live(
           assert.include(fetch, flag);
         }
         assert.notInclude(fetch, "origin");
+        // HTTP/1.1, after the credential settings: HTTP/2 framing errors are what a flaky link gives.
+        assert.include(fetch, "-c http.version=HTTP/1.1");
+        assert.isAbove(
+          fetch.indexOf("-c http.version=HTTP/1.1"),
+          fetch.indexOf("credential.helper"),
+        );
         assert.include(heads[at("init")]!, "--template=");
         const checkoutCall = heads[at("checkout")]!;
         for (const flag of ["--detach", "--no-recurse-submodules", SOME_SHA]) {
@@ -2004,6 +2011,58 @@ it.live("a failed git call carries its stderr and not its stdout", () =>
       }),
   ),
 );
+
+/** A fake `git` whose first `failures` fetches print `stderr` and exit 128; every call is logged. */
+const failingFetch = (failures: number, stderr: string) =>
+  `d="$(dirname "$0")"
+case "$*" in *fetch*)
+  n=$(cat "$d/count" 2>/dev/null || echo 0); n=$((n + 1)); echo $n > "$d/count"
+  if [ $n -le ${failures} ]; then echo "${stderr}" >&2; exit 128; fi;;
+esac
+${LOGGING_GIT}`;
+
+const HTTP2_FRAMING = "error: RPC failed; curl 16 Error in the HTTP2 framing layer";
+
+describe("retrying a fetch the network dropped", () => {
+  // The waits are the test's to set: a TestClock would race the real process the fetch runs.
+  const options = (fake: FakeGit) =>
+    fake.options({ remoteBase: "https://example.test", fetchRetryDelaysMs: [0, 0] });
+
+  it.live("a fetch that fails once on HTTP/2 framing is tried again and the checkout goes on", () =>
+    usingFakeGit("co-fetch-flaky", failingFetch(1, HTTP2_FRAMING), (fake) =>
+      Effect.gen(function* () {
+        const made = yield* checkoutWithFake(fake, options(fake));
+        assert.strictEqual(made.head, SOME_SHA);
+        assert.strictEqual(fake.file("count").trim(), "2");
+      }),
+    ),
+  );
+
+  it.live("a fetch that fails for another reason is not tried again", () =>
+    usingFakeGit(
+      "co-fetch-ref",
+      failingFetch(9, "fatal: remote error: upload-pack: not our ref abc123"),
+      (fake) =>
+        Effect.gen(function* () {
+          const error = yield* checkoutWithFake(fake, options(fake)).pipe(Effect.flip);
+          assert.include(expectFailed(error).stderr, "not our ref");
+          assert.strictEqual(fake.file("count").trim(), "1");
+        }),
+    ),
+  );
+
+  it.live("three transient failures return the last error after three fetches", () =>
+    usingFakeGit("co-fetch-down", failingFetch(9, HTTP2_FRAMING), (fake) =>
+      Effect.gen(function* () {
+        const error = yield* checkoutWithFake(fake, options(fake)).pipe(Effect.flip);
+        const failed = expectFailed(error);
+        assert.strictEqual(failed.status, 128);
+        assert.include(failed.stderr, "Error in the HTTP2 framing layer");
+        assert.strictEqual(fake.file("count").trim(), "3");
+      }),
+    ),
+  );
+});
 
 it.live("a git call whose output is parsed and passes the cap fails the checkout", () =>
   usingFakeGit("co-too-much", `case "$*" in *rev-parse*) printf '%0200d\\n' 0;; esac`, (fake) =>
