@@ -3935,6 +3935,84 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("keeps a visit when a deferred mark-unread lands after a newer run completed", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-superseded-mark-unread-thread");
+      const runMessage = (id: string) =>
+        Effect.gen(function* () {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(id),
+            threadId,
+            messageId: MessageId.make(id),
+            text: id,
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "start_immediately" },
+          });
+          const run = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1);
+          if (run === undefined) return yield* Effect.die(new Error("Run missing."));
+          yield* TestClock.adjust("1 second");
+          const now = yield* DateTime.now;
+          yield* eventSink.write({
+            commandId: CommandId.make(`${id}-completed`),
+            events: [
+              {
+                id: EventId.make(`${id}-completed`),
+                type: "run.updated",
+                threadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+              },
+            ],
+          });
+          return { run, completedAt: now };
+        });
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-superseded-mark-unread-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-superseded-mark-unread-project"),
+        title: "Superseded mark unread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/runtime-layer-superseded-mark-unread",
+      });
+      const older = yield* runMessage("runtime-layer-superseded-mark-unread-older");
+      const visitedAt = DateTime.add(older.completedAt, { milliseconds: 500 });
+      yield* orchestrator.dispatch({
+        type: "thread.visit",
+        commandId: CommandId.make("runtime-layer-superseded-mark-unread-visit"),
+        threadId,
+        visitedAt: DateTime.formatIso(visitedAt),
+      });
+      // The newer run completes after the visit, so only the runId guard keeps
+      // the older run's deferred mark from marking it unread.
+      yield* runMessage("runtime-layer-superseded-mark-unread-newer");
+
+      yield* orchestrator.dispatch({
+        type: "thread.mark-unread",
+        commandId: CommandId.make("runtime-layer-superseded-mark-unread-deferred"),
+        threadId,
+        runId: older.run.id,
+      });
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.lastVisitedAt,
+        visitedAt,
+      );
+    }),
+  );
+
   it.effect("settles past held automatic runs but not held user messages", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
