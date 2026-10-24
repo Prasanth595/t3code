@@ -780,6 +780,8 @@ const make = Effect.gen(function* () {
       const activityAt = Math.max(...group.map(storageCleanupActivityAt));
       const deleted = "workspaceRoot" in thread;
       const members = deleted ? [thread, ...group] : group;
+      // Without one owner, each thread using the worktree has to pass the rules.
+      const owner = worktreeOwner(members);
       const project = deleted
         ? { workspaceRoot: thread.workspaceRoot }
         : snapshot.projects.find((entry) => entry.id === thread.projectId);
@@ -798,8 +800,11 @@ const make = Effect.gen(function* () {
       yield* Effect.gen(function* () {
         if (!(yield* fs.exists(worktreePath))) return;
         if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
-        if (members.length > 1 && worktreeOwner(members) === undefined)
-          return keep(`shared by ${members.length} threads`);
+        // Rules and settings resolve from one project and branch.
+        if (owner === undefined && members.some((member) => member.projectId !== thread.projectId))
+          return keep("shared by threads in different projects");
+        if (owner === undefined && members.some((member) => member.branch !== thread.branch))
+          return keep("shared by threads on different branches");
         if (project === undefined) return keep("project is unavailable");
         if (
           thread.branch === null ||
@@ -839,10 +844,14 @@ const make = Effect.gen(function* () {
           !deleted &&
           settings.worktreeAfterDays !== null &&
           activityAt < now - settings.worktreeAfterDays * DAY_MS;
+        const mustSettle = owner === undefined ? members : [thread];
+        const settledAts = mustSettle.flatMap((member) =>
+          member.settledAt === null ? [] : [DateTime.toEpochMillis(member.settledAt)],
+        );
         const settledFor =
-          deleted || thread.settledAt === null
+          deleted || settledAts.length < mustSettle.length
             ? null
-            : now - Math.max(DateTime.toEpochMillis(thread.settledAt), activityAt);
+            : now - Math.max(...settledAts, activityAt);
         const settledDays = settledFor === null ? null : Math.floor(settledFor / DAY_MS);
         const settled =
           settledFor !== null &&
@@ -965,8 +974,7 @@ const make = Effect.gen(function* () {
           const latestOwner = worktreeOwner(deleted ? [thread, ...latestGroup] : latestGroup);
           if (
             latestGroup.length !== group.length ||
-            latestOwner?.id !== thread.id ||
-            latestOwner?.branch !== thread.branch ||
+            latestOwner?.id !== owner?.id ||
             latestGroup.some((shell) => {
               const previous = group.find((member) => member.id === shell.id);
               return (

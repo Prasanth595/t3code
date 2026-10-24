@@ -785,17 +785,15 @@ describe("subagent worktree ownership", () => {
           ? "Settled for 20 days"
           : scenario === "running" || scenario === "pending"
             ? "Thread is running or has pending work"
-            : shared
-              ? "Shared by 2 threads"
-              : scenario === "null-branch" || scenario === "stale-branch"
-                ? "A subagent thread's branch differs from this worktree's branch"
-                : scenario === "recent-activity"
-                  ? "Settled for 2 of 8 days"
-                  : scenario === "recent-inactive"
-                    ? "Inactive for 2 of 8 days"
-                    : ["recent-grace", "recent-settle", "child-settled-now"].includes(scenario)
-                      ? "Settled moments ago"
-                      : "Not settled",
+            : scenario === "null-branch" || scenario === "stale-branch"
+              ? "A subagent thread's branch differs from this worktree's branch"
+              : scenario === "recent-activity"
+                ? "Settled for 2 of 8 days"
+                : scenario === "recent-inactive"
+                  ? "Inactive for 2 of 8 days"
+                  : ["recent-grace", "recent-settle", "child-settled-now"].includes(scenario)
+                    ? "Settled moments ago"
+                    : "Not settled",
       });
     }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
   );
@@ -846,6 +844,87 @@ describe("subagent worktree ownership", () => {
           },
           ...(change === "unrelated" ? [shell({ ...root, id: ThreadId.make("other") })] : []),
         ]);
+        yield* Deferred.succeed(fixture.resume, undefined);
+        expect((yield* Fiber.join(run)).entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Thread activity or shared worktree changed since check",
+        });
+        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+      }),
+    ),
+  );
+});
+
+describe("worktrees shared by top-level threads", () => {
+  it.effect.each([
+    { scenario: "both-settled", reason: "Settled for 20 days" },
+    { scenario: "both-inactive", reason: "Inactive for 30 days" },
+    { scenario: "one-unsettled", reason: "Not settled" },
+    { scenario: "one-recent", reason: "Inactive for 2 of 8 days" },
+    { scenario: "one-running", reason: "Thread is running or has pending work" },
+    { scenario: "other-branch", reason: "Shared by threads on different branches" },
+    { scenario: "other-project", reason: "Shared by threads in different projects" },
+  ] as const)("removes it only when every thread is eligible ($scenario)", ({ scenario, reason }) =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixture = yield* cleanupFixture();
+      const inactive = scenario === "both-inactive" || scenario === "one-recent";
+      fixture.setSettings({
+        storageCleanup: {
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeSettledAfterDays: inactive ? null : 8,
+          worktreeAfterDays: inactive ? 8 : null,
+        },
+      });
+      const first = shell({
+        branch: "feature",
+        worktreePath: fixture.worktree,
+        settledAt: at(-20 * DAY_MS),
+      });
+      // "New thread on <branch>" starts a second top-level thread on the same checkout.
+      const second = shell({
+        ...first,
+        id: ThreadId.make("second"),
+        lineage: {
+          rootThreadId: ThreadId.make("second"),
+          parentThreadId: null,
+          relationshipToParent: null,
+        },
+        settledAt: scenario === "one-unsettled" ? null : first.settledAt,
+        latestRunCompletedAt: scenario === "one-recent" ? at(-2 * DAY_MS) : null,
+        status: scenario === "one-running" ? "running" : "idle",
+        branch: scenario === "other-branch" ? "other" : first.branch,
+        projectId: scenario === "other-project" ? ProjectId.make("project-2") : first.projectId,
+      });
+      fixture.setThreads([first, second]);
+      const removed = scenario === "both-settled" || scenario === "both-inactive";
+      expect((yield* fixture.service.runNow).entries[0]).toMatchObject({
+        threadId: first.id,
+        outcome: removed ? "removed" : "kept",
+        reason,
+      });
+      expect(yield* fixture.fs.exists(fixture.worktree)).toBe(!removed);
+    }).pipe(Effect.provide(cleanupTestLayer), Effect.scoped),
+  );
+
+  it.live("cancels removal when another thread starts during measurement", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* pausedMeasurementFixture();
+        const first = shell({ branch: "feature", worktreePath: fixture.worktree });
+        const second = {
+          ...first,
+          id: ThreadId.make("second"),
+          lineage: {
+            rootThreadId: ThreadId.make("second"),
+            parentThreadId: null,
+            relationshipToParent: null,
+          },
+        };
+        fixture.setThreads([first, second]);
+        const run = yield* fixture.service.runNow.pipe(Effect.forkChild);
+        yield* Deferred.await(fixture.measuring);
+        fixture.setThreads([first, { ...second, status: "running" }]);
         yield* Deferred.succeed(fixture.resume, undefined);
         expect((yield* Fiber.join(run)).entries[0]).toMatchObject({
           outcome: "kept",
