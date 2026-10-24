@@ -452,11 +452,27 @@ type OpenLinkListener = (event: DesktopPreviewOpenLinkEvent) => Effect.Effect<vo
  */
 const POPUP_PROTOCOLS = new Set(["http:", "https:"]);
 
-const isPopupUrl = (rawUrl: string): boolean => {
+/**
+ * The in-place path runs `loadURL`, a browser-initiated navigation, which Chromium lets reach
+ * local and inline documents a page cannot open as a top-level page itself. Any frame in the
+ * guest can call `window.open`, so `javascript:` would also run in the top page's origin.
+ */
+const IN_PLACE_DENIED_PROTOCOLS = new Set([
+  "about:",
+  "chrome:",
+  "data:",
+  "devtools:",
+  "file:",
+  "filesystem:",
+  "javascript:",
+  "view-source:",
+]);
+
+const urlProtocol = (rawUrl: string): string | undefined => {
   try {
-    return POPUP_PROTOCOLS.has(new URL(rawUrl).protocol);
+    return new URL(rawUrl).protocol;
   } catch {
-    return false;
+    return undefined;
   }
 };
 
@@ -477,17 +493,18 @@ const POPUP_WINDOW_OPTIONS = {
 /**
  * `"popup"` opens a real window, which scripted popups need: denying them makes `window.open()`
  * return `null` (OAuth SDKs report that as a blocked popup), and navigating the preview tab
- * instead destroys the opener the popup has to `postMessage` its result back to. Schemes a
- * popup cannot be hardened for keep loading in place, and so does a form POST with a body,
- * which a new tab could only reopen as a GET.
+ * instead destroys the opener the popup has to `postMessage` its result back to. `blob:` and app
+ * links keep loading in place, where the session's `openExternal` prompt guards app links, and
+ * so does a form POST with a body, which a new tab could only reopen as a GET.
  */
 export const previewWindowOpenAction = (details: {
   readonly url: string;
   readonly disposition: Electron.HandlerDetails["disposition"];
   readonly postBody?: Electron.PostBody;
 }): "popup" | "new-tab" | "navigate" | "deny" => {
-  if (details.url === "" || details.url === "about:blank") return "deny";
-  if (!isPopupUrl(details.url)) return "navigate";
+  const protocol = urlProtocol(details.url);
+  if (protocol === undefined || IN_PLACE_DENIED_PROTOCOLS.has(protocol)) return "deny";
+  if (!POPUP_PROTOCOLS.has(protocol)) return "navigate";
   if (details.disposition === "new-window") return "popup";
   return !details.postBody &&
     (details.disposition === "foreground-tab" || details.disposition === "background-tab")

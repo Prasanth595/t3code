@@ -104,12 +104,27 @@ describe("previewWindowOpenAction", () => {
     // when its preferences can be overridden. Chromium copies the guest's
     // preferences for `about:blank` and forbids overriding them.
     for (const url of [
-      "javascript:alert(1)",
-      "file:///etc/passwd",
       "vscode://vscode-remote/ssh-remote+box/tmp",
-      "not a url",
+      "blob:https://example.com/0b6c6a5e-55d4-4b4c-9d47-8f1b0c1d2e3f",
     ]) {
       expect(PreviewManager.previewWindowOpenAction(details({ url }))).toBe("navigate");
+    }
+  });
+
+  it("denies local and inline schemes that no page could open in place itself", () => {
+    // `loadURL` is a browser-initiated navigation, which Chromium lets reach these
+    // even though it blocks a page from opening them as a top-level document.
+    for (const url of [
+      "file:///etc/passwd",
+      "data:text/html,<h1>hi</h1>",
+      "javascript:alert(1)",
+      "view-source:https://example.com",
+      "chrome://gpu",
+      "not a url",
+    ]) {
+      for (const disposition of ["new-window", "foreground-tab"] as const) {
+        expect(PreviewManager.previewWindowOpenAction(details({ url, disposition }))).toBe("deny");
+      }
     }
   });
 
