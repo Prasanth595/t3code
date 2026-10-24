@@ -32,7 +32,6 @@ import {
 } from "@t3tools/contracts";
 import { CursorSettings } from "../settings.ts";
 import * as DateTime from "effect/DateTime";
-import type * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -827,11 +826,11 @@ interface CursorProjectionTarget {
 // ever shows a bounded tail, so keep a little more than that.
 const MAX_CURSOR_STREAMED_OUTPUT_CHARS = 256 * 1024;
 
-// A text segment's first delta and its close emit at once. Later deltas share one
-// full-text snapshot this long after them, instead of each re-emitting the whole
-// reply, which grew with the square of the reply length. The flush is scheduled,
-// not a deadline, so it can land later under host load.
-const CURSOR_TEXT_FLUSH_INTERVAL: Duration.Input = "50 millis";
+// Full-text snapshots of a streaming segment are at least this far apart, instead
+// of one per delta, which grew with the square of the reply length. A delta after
+// a quiet interval and the segment's close still emit at once. The flush is
+// scheduled, not a deadline, so it can land later under host load.
+const CURSOR_TEXT_FLUSH_INTERVAL_MS = 50;
 
 interface ActiveCursorToolCall {
   readonly callId: string;
@@ -858,8 +857,9 @@ interface ActiveCursorTextSegment {
   readonly nativeItemId: string;
   readonly startedAt: DateTime.Utc;
   text: string;
-  // The running node and first text have been emitted.
-  emitted: boolean;
+  // When the last snapshot was emitted, or null before the running node and
+  // first text.
+  emittedAtMs: number | null;
   // Text changed since the last emission; a delayed flush is scheduled.
   dirty: boolean;
 }
@@ -986,14 +986,15 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           stream: ActiveCursorTextStream,
           completed: boolean,
           flushOf: ActiveCursorTextSegment | undefined,
+          now: DateTime.Utc,
         ) => {
           const segment = stream.current;
           if (segment === null || segment.text.length === 0) return null;
           if (flushOf !== undefined && (segment !== flushOf || !segment.dirty)) return null;
           // The node carries no text, so it changes only when the segment opens
           // and when it completes.
-          const emitsNode = completed || !segment.emitted;
-          segment.emitted = true;
+          const emitsNode = completed || segment.emittedAtMs === null;
+          segment.emittedAtMs = DateTime.toEpochMillis(now);
           segment.dirty = false;
           // Read the text in the same step that clears `dirty`. Deltas appended
           // while this emission yields mark the segment dirty again and reach the
@@ -1006,12 +1007,12 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           completed: boolean,
           flushOf?: ActiveCursorTextSegment,
         ) {
-          const snapshot = takeTextSnapshot(context.assistant, completed, flushOf);
+          const now = yield* DateTime.now;
+          const snapshot = takeTextSnapshot(context.assistant, completed, flushOf, now);
           if (snapshot === null) {
             return;
           }
           const { segment, text } = snapshot;
-          const now = yield* DateTime.now;
           const ordinal = yield* resolveItemOrdinal(context, segment.nativeItemId);
           const nodeId = idAllocator.derive.nodeFromProviderItem({
             driver: CursorAgentSdk.CURSOR_PROVIDER,
@@ -1102,12 +1103,12 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           completed: boolean,
           flushOf?: ActiveCursorTextSegment,
         ) {
-          const snapshot = takeTextSnapshot(context.reasoning, completed, flushOf);
+          const now = yield* DateTime.now;
+          const snapshot = takeTextSnapshot(context.reasoning, completed, flushOf, now);
           if (snapshot === null) {
             return;
           }
           const { segment, text } = snapshot;
-          const now = yield* DateTime.now;
           const ordinal = yield* resolveItemOrdinal(context, segment.nativeItemId);
           const nodeId = idAllocator.derive.nodeFromProviderItem({
             driver: CursorAgentSdk.CURSOR_PROVIDER,
@@ -1182,7 +1183,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               nativeItemId: `${input.kind}:${input.context.run.runId}:${input.stream.nextSegment}`,
               startedAt: yield* DateTime.now,
               text: "",
-              emitted: false,
+              emittedAtMs: null,
               dirty: false,
             };
           }
@@ -1206,10 +1207,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         });
 
         /**
-         * Publishes a text change. A segment's first text emits at once so live
-         * output starts immediately; later changes coalesce into one snapshot per
-         * CURSOR_TEXT_FLUSH_INTERVAL. Completing the segment emits its final text
-         * and makes a pending flush a no-op.
+         * Publishes a text change. It emits at once when the segment's last
+         * snapshot is at least CURSOR_TEXT_FLUSH_INTERVAL_MS old, so live output
+         * starts immediately and a slow stream is never delayed. Faster changes
+         * share one flush at the end of that interval. Completing the segment
+         * emits its final text and makes a pending flush a no-op.
          */
         const publishTextSegment = Effect.fnUntraced(function* (
           context: ActiveCursorTurn,
@@ -1217,12 +1219,16 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         ) {
           const emit = kind === "assistant" ? emitAssistant : emitReasoning;
           const segment = context[kind].current;
-          if (segment === null) return;
-          if (!segment.emitted) return yield* emit(context, false);
-          if (segment.dirty) return;
+          if (segment === null || segment.dirty) return;
+          // Clamped so a wall clock that steps back cannot stretch the flush delay.
+          const sinceLastMs =
+            segment.emittedAtMs === null
+              ? CURSOR_TEXT_FLUSH_INTERVAL_MS
+              : Math.max(0, DateTime.toEpochMillis(yield* DateTime.now) - segment.emittedAtMs);
+          if (sinceLastMs >= CURSOR_TEXT_FLUSH_INTERVAL_MS) return yield* emit(context, false);
           segment.dirty = true;
           yield* emit(context, false, segment).pipe(
-            Effect.delay(CURSOR_TEXT_FLUSH_INTERVAL),
+            Effect.delay(CURSOR_TEXT_FLUSH_INTERVAL_MS - sinceLastMs),
             Effect.forkIn(sessionScope),
           );
         });

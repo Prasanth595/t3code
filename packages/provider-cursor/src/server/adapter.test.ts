@@ -385,7 +385,7 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
-  it.effect("coalesces streamed text into bounded snapshots without delaying its start", () =>
+  it.effect("coalesces streamed text into bounded snapshots without delaying a slow stream", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-text-" });
@@ -492,7 +492,10 @@ describe("CursorAdapterV2", () => {
         yield* sendUpdate!({ type: "text-delta", text: chunk });
       }
       yield* TestClock.adjust("50 millis");
+      // The window has passed since the last snapshot, so this delta emits at once.
+      yield* TestClock.adjust("50 millis");
       yield* sendUpdate!({ type: "text-delta", text: "end" });
+      yield* sendUpdate!({ type: "text-delta", text: "!" });
       // Reasoning closes the assistant segment while its next flush is pending.
       yield* sendUpdate!({ type: "thinking-delta", text: "next" });
       yield* TestClock.adjust("50 millis");
@@ -512,7 +515,8 @@ describe("CursorAdapterV2", () => {
         [
           ["running", chunk],
           ["running", reply],
-          ["completed", `${reply}end`],
+          ["running", `${reply}end`],
+          ["completed", `${reply}end!`],
         ],
       );
       assert.deepEqual(
@@ -522,7 +526,8 @@ describe("CursorAdapterV2", () => {
         [
           [true, chunk],
           [true, reply],
-          [false, `${reply}end`],
+          [true, `${reply}end`],
+          [false, `${reply}end!`],
         ],
       );
       assert.deepEqual(
