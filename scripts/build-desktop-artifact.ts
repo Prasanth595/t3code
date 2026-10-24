@@ -4151,6 +4151,9 @@ export const copyDesktopBuildArtifacts = Effect.fn("copyDesktopBuildArtifacts")(
       continue;
 
     const to = path.join(outputDir, entry);
+    if (stat.type === "Directory") {
+      yield* fs.remove(to, { recursive: true, force: true });
+    }
     yield* Effect.tryPromise(() =>
       NodeFSP.cp(from, to, {
         recursive: true,

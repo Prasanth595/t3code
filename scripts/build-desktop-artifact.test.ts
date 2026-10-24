@@ -1690,6 +1690,14 @@ it.effect("preserves packaged app directories from the dir target", () =>
     assert.equal(yield* fs.readFileString(path.join(output, app, "Info.plist")), "built-app");
     assert.equal(yield* fs.readLink(path.join(output, app, "Current")), "Info.plist");
     assert.equal(yield* fs.readFileString(path.join(stage, app, "Info.plist")), "built-app");
+    yield* fs.remove(path.join(stage, app, "Info.plist"));
+    yield* fs.remove(path.join(stage, app, "Current"));
+    yield* fs.writeFileString(path.join(stage, app, "New.plist"), "rebuilt-app");
+    yield* fs.symlink("New.plist", path.join(stage, app, "Current"));
+    yield* copyDesktopBuildArtifacts(stage, output, true);
+    assert.isFalse(yield* fs.exists(path.join(output, app, "Info.plist")));
+    assert.equal(yield* fs.readFileString(path.join(output, app, "New.plist")), "rebuilt-app");
+    assert.equal(yield* fs.readLink(path.join(output, app, "Current")), "New.plist");
     const filesOnly = yield* copyDesktopBuildArtifacts(stage, path.join(root, "files-only"));
     assert.deepEqual(filesOnly, [path.join(root, "files-only", "builder-debug.yml")]);
     assert.isFalse(yield* fs.exists(path.join(root, "files-only", "mac-arm64")));
