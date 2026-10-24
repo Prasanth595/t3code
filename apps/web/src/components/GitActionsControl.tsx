@@ -126,7 +126,6 @@ import {
   useDiffPanelSessionStore,
   useDiffPanelStore,
 } from "~/diffPanelStore";
-import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import { reviewEnvironment } from "~/state/review";
@@ -965,6 +964,9 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   );
 }
 
+// Outlives the row so a remount refreshes a comparison the workspace changed under.
+const changesPreviewKeys = new WeakMap<object, string>();
+
 function ThreadChangesControl({
   gitCwd,
   activeThreadRef,
@@ -983,33 +985,37 @@ function ThreadChangesControl({
     useDiffPanelSessionStore((state) => state.ignoreWhitespace) ?? ignoreWhitespaceSetting;
   const { canReadFiles } = useFilesystemReadAccess(activeThreadRef?.environmentId ?? null);
   // Same input as the Changes panel, so the row shares its cached comparison.
-  const changesDiffPreview = useEnvironmentQuery(
+  const previewAtom =
     canReadFiles && activeThreadRef && gitCwd
       ? reviewEnvironment.diffPreview({
           environmentId: activeThreadRef.environmentId,
           input: { cwd: gitCwd, ...(baseRef ? { baseRef } : {}), ignoreWhitespace },
         })
-      : null,
-  );
+      : null;
+  const changesDiffPreview = useEnvironmentQuery(previewAtom);
   // Status totals catch edits made outside a turn; the mutation id catches edits that
-  // leave them unchanged but differ against a custom base.
+  // leave them unchanged but differ against a custom base or with whitespace hidden.
   const statusTotals = gitStatus?.branchChanges ?? gitStatus?.workingTree;
-  useWorkspaceMutationRefresh({
-    enabled: canReadFiles && gitCwd !== null,
-    mutationId: JSON.stringify([
-      workspaceMutationId,
-      gitStatus?.refName,
-      statusTotals?.insertions,
-      statusTotals?.deletions,
-    ]),
-    // The first load is already current; refreshing it would only restart the request.
-    refresh: () => {
-      if (changesDiffPreview.data !== null || !changesDiffPreview.isPending) {
-        changesDiffPreview.refresh();
-      }
-    },
-    resourceKey: `${activeThreadRef?.environmentId}:${activeThreadRef?.threadId}:${gitCwd}`,
-  });
+  const changeKey = JSON.stringify([
+    workspaceMutationId,
+    gitStatus?.refName,
+    statusTotals?.insertions,
+    statusTotals?.deletions,
+  ]);
+  const { refresh, isPending } = changesDiffPreview;
+  useEffect(() => {
+    if (previewAtom === null) return;
+    const previous = changesPreviewKeys.get(previewAtom);
+    // The query revalidates on mount, so a first look needs no extra request.
+    if (previous === undefined) {
+      changesPreviewKeys.set(previewAtom, changeKey);
+      return;
+    }
+    // A change during a fetch still needs a refresh after it settles.
+    if (previous === changeKey || isPending) return;
+    changesPreviewKeys.set(previewAtom, changeKey);
+    refresh();
+  }, [previewAtom, changeKey, isPending, refresh]);
   const changesTotals = resolveChangesTotals({
     gitStatus,
     diffPreview: canReadFiles ? changesDiffPreview.data : null,

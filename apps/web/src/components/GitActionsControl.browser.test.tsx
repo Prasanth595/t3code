@@ -3,9 +3,13 @@ import {
   AuthSourceControlWriteScope,
   EnvironmentId,
   ThreadId,
+  type ReviewDiffPreviewResult,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/reactivity";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import { Atom, AsyncResult } from "effect/reactivity";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { memo } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -37,6 +41,8 @@ const state = vi.hoisted(() => ({
     | undefined,
   // Totals the Changes panel reports for a comparison, keyed by `${baseRef}:${ignoreWhitespace}`.
   previewTotals: {} as Record<string, { additions: number; deletions: number }>,
+  previewRequests: [] as string[],
+  nextPreview: undefined as { promise: Promise<ReviewDiffPreviewResult> } | undefined,
 }));
 
 vi.mock(import("~/state/session"), async (original) => {
@@ -57,16 +63,30 @@ vi.mock(import("~/state/entities"), async (original) => ({
       ? null
       : { projection: { thread: state.detail } }) as never,
 }));
-type PreviewQuery = { previewInput: { baseRef?: string; ignoreWhitespace?: boolean } };
+type PreviewInput = { baseRef?: string; ignoreWhitespace?: boolean };
+// Real SWR query atoms, one per comparison like the query family, with requests the test can defer.
+const previewAtoms = vi.hoisted(() => new Map<string, unknown>());
 vi.mock(import("~/state/review"), async (original) => {
   const actual = await original();
   return {
     ...actual,
     reviewEnvironment: {
       ...actual.reviewEnvironment,
-      diffPreview: (({ input }: { input: PreviewQuery["previewInput"] }) => ({
-        previewInput: input,
-      })) as never,
+      diffPreview: (({ input }: { input: PreviewInput }) => {
+        const key = `${input.baseRef ?? "auto"}:${input.ignoreWhitespace}`;
+        if (!previewAtoms.has(key)) {
+          previewAtoms.set(
+            key,
+            Atom.make(
+              Effect.promise(() => {
+                state.previewRequests.push(key);
+                return state.nextPreview?.promise ?? Promise.resolve(previewData(input));
+              }),
+            ).pipe(Atom.swr({ staleTime: 5_000, revalidateOnMount: true })),
+          );
+        }
+        return previewAtoms.get(key);
+      }) as never,
     },
   };
 });
@@ -74,17 +94,17 @@ vi.mock(import("~/state/filesystem"), async (original) => ({
   ...(await original()),
   useFilesystemReadAccess: (() => ({ canReadFiles: true, isPending: false, error: null })) as never,
 }));
-function previewData({ previewInput }: PreviewQuery) {
+function previewData(previewInput: PreviewInput): ReviewDiffPreviewResult {
   const totals =
     state.previewTotals[`${previewInput.baseRef ?? "auto"}:${previewInput.ignoreWhitespace}`];
   if (totals === undefined) throw new Error(`Unexpected preview ${JSON.stringify(previewInput)}`);
   return {
     cwd: "/repo",
-    generatedAt: new Date(0),
+    generatedAt: DateTime.makeUnsafe(0),
     sources: [
       {
         id: "branch",
-        kind: "branch-range",
+        kind: "branch-range" as const,
         title: "Branch",
         baseRef: previewInput.baseRef ?? "main",
         headRef: "feature",
@@ -96,41 +116,42 @@ function previewData({ previewInput }: PreviewQuery) {
     ],
   };
 }
-vi.mock(import("~/state/query"), async (original) => ({
-  ...(await original()),
-  // Serves the VCS status, source-control discovery, and review diff preview queries.
-  useEnvironmentQuery: ((query: unknown) =>
-    query !== null && typeof query === "object" && "previewInput" in query
-      ? {
-          data: previewData(query as PreviewQuery),
-          error: null,
-          isPending: false,
-          isSuccess: true,
-          refresh: () => {},
-        }
-      : {
-          data: {
-            ...(state.branchChanges === undefined ? {} : { branchChanges: state.branchChanges }),
-            sourceControlProviders: [],
-            isRepo: true,
-            refName: state.branch,
-            isDefaultRef: state.isDefaultRef,
-            hasPrimaryRemote: true,
-            hasWorkingTreeChanges: true,
-            workingTree: {
-              ...(state.workingTreeRoot === undefined ? {} : { rootPath: state.workingTreeRoot }),
-              files: state.files,
-              insertions: 1,
-              deletions: 0,
+vi.mock(import("~/state/query"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    // Preview reads use the real query subscription; VCS status and source-control
+    // discovery share canned data.
+    useEnvironmentQuery: ((atom: unknown) => {
+      const isPreview = [...previewAtoms.values()].includes(atom);
+      const preview = actual.useEnvironmentQuery((isPreview ? atom : null) as never);
+      return isPreview
+        ? preview
+        : {
+            data: {
+              ...(state.branchChanges === undefined ? {} : { branchChanges: state.branchChanges }),
+              sourceControlProviders: [],
+              isRepo: true,
+              refName: state.branch,
+              isDefaultRef: state.isDefaultRef,
+              hasPrimaryRemote: true,
+              hasWorkingTreeChanges: true,
+              workingTree: {
+                ...(state.workingTreeRoot === undefined ? {} : { rootPath: state.workingTreeRoot }),
+                files: state.files,
+                insertions: 1,
+                deletions: 0,
+              },
+              hasUpstream: true,
+              aheadCount: 0,
+              behindCount: 0,
+              pr: null,
             },
-            hasUpstream: true,
-            aheadCount: 0,
-            behindCount: 0,
-            pr: null,
-          },
-          error: null,
-        }) as never,
-}));
+            error: null,
+          };
+    }) as never,
+  };
+});
 vi.mock(import("~/state/use-atom-command"), async (original) => {
   const { shellEnvironment } = await import("~/state/shell");
   return {
@@ -218,15 +239,22 @@ vi.mock(import("~/components/ui/toast"), async (original) => {
 
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useDiffPanelSessionStore, useDiffPanelStore } from "~/diffPanelStore";
+import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import GitActionsControl from "./GitActionsControl";
 
 // ThreadDetailsPanel keeps this component mounted behind React.memo when threads change.
 const MemoGitActionsControl = memo(GitActionsControl);
 
-function control(thread = "thread", cwd = "/repo", displayMode?: "panel") {
+function control(
+  thread = "thread",
+  cwd = "/repo",
+  displayMode?: "panel",
+  workspaceMutationId = "initial",
+) {
   return (
     <MemoGitActionsControl
       gitCwd={cwd}
+      workspaceMutationId={workspaceMutationId}
       {...(displayMode ? { displayMode, onOpenChanges: () => {} } : {})}
       activeThreadRef={{
         environmentId: EnvironmentId.make("environment"),
@@ -257,6 +285,10 @@ function setup() {
   state.editorOpens = [];
   state.branchChanges = undefined;
   state.previewTotals = {};
+  state.previewRequests = [];
+  state.nextPreview = undefined;
+  previewAtoms.clear();
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffIgnoreWhitespace: true });
   useDiffPanelStore.setState({ byThreadKey: {}, branchBaseRefByThreadKey: {} });
   useDiffPanelSessionStore.setState({ ignoreWhitespace: null });
   useComposerDraftStore.setState({
@@ -333,5 +365,57 @@ describe("thread details Changes row", () => {
     await act(async () => useDiffPanelSessionStore.getState().setIgnoreWhitespace(false));
 
     await expect.element(changesRow()).toHaveTextContent("Changes+2-1");
+  });
+
+  it("refreshes after a turn edit that leaves the status totals unchanged", async () => {
+    setup();
+    featureBranch();
+    const screen = await render(control("thread", "/repo", "panel", "initial"));
+    await using _ = screen;
+    await expect.element(changesRow()).toHaveTextContent("Changes+1-0");
+    expect(state.previewRequests).toEqual(["auto:true"]);
+
+    state.previewTotals["auto:true"] = { additions: 2, deletions: 1 };
+    await screen.rerender(control("thread", "/repo", "panel", "edit"));
+
+    await expect.element(changesRow()).toHaveTextContent("Changes+2-1");
+    expect(state.previewRequests).toEqual(["auto:true", "auto:true"]);
+  });
+
+  it("refreshes on remount only when the workspace changed while unmounted", async () => {
+    setup();
+    featureBranch();
+    const screen = await render(control("thread", "/repo", "panel", "initial"));
+    await using _ = screen;
+    await expect.element(changesRow()).toHaveTextContent("Changes+1-0");
+    await screen.rerender(null);
+    await screen.rerender(control("thread", "/repo", "panel", "initial"));
+    await expect.element(changesRow()).toHaveTextContent("Changes+1-0");
+    expect(state.previewRequests).toEqual(["auto:true"]);
+
+    await screen.rerender(null);
+    state.previewTotals["auto:true"] = { additions: 2, deletions: 1 };
+    await screen.rerender(control("thread", "/repo", "panel", "edit"));
+
+    await expect.element(changesRow()).toHaveTextContent("Changes+2-1");
+    expect(state.previewRequests).toEqual(["auto:true", "auto:true"]);
+  });
+
+  it("refreshes after a turn edit that lands while the first comparison loads", async () => {
+    setup();
+    featureBranch();
+    let resolveFirst!: (value: ReviewDiffPreviewResult) => void;
+    state.nextPreview = { promise: new Promise((resolve) => (resolveFirst = resolve)) };
+    const screen = await render(control("thread", "/repo", "panel", "initial"));
+    await using _ = screen;
+    await screen.rerender(control("thread", "/repo", "panel", "edit"));
+
+    state.nextPreview = undefined;
+    const stale = previewData({ ignoreWhitespace: true });
+    state.previewTotals["auto:true"] = { additions: 2, deletions: 1 };
+    await act(async () => resolveFirst(stale));
+
+    await expect.element(changesRow()).toHaveTextContent("Changes+2-1");
+    expect(state.previewRequests).toEqual(["auto:true", "auto:true"]);
   });
 });
