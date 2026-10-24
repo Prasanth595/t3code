@@ -58,6 +58,8 @@ import {
   NativePrimaryColumnContext,
   NativeWorkspaceInspectorContext,
   NativeWorkspaceModeContext,
+  WorkspaceSlotOptionsContext,
+  slotScreenOptions,
 } from "../../native/v5-workspace-context";
 
 type ViewProps = ComponentProps<typeof NativeStackView>;
@@ -93,10 +95,14 @@ function ColumnScreen(props: {
   readonly navigation: ViewProps["navigation"];
 }) {
   const { descriptor } = props;
+  // Options a screen set inside this workspace tab slot, over its route's.
+  const options = slotScreenOptions(
+    use(WorkspaceSlotOptionsContext),
+    descriptor.route.key,
+    descriptor.options,
+  );
   const Header =
-    props.sidebarToggle && !descriptor.options.unstable_headerLeftItems
-      ? SidebarToggleHeader
-      : V5StackHeader;
+    props.sidebarToggle && !options.unstable_headerLeftItems ? SidebarToggleHeader : V5StackHeader;
   const [presented, setPresented] = useState(false);
   const primaryColumn = useMemo(
     () =>
@@ -138,7 +144,7 @@ function ColumnScreen(props: {
       <NavigationContext value={descriptor.navigation}>
         <NavigationRouteContext value={descriptor.route}>
           <Header
-            options={descriptor.options}
+            options={options}
             canGoBack={!props.primary}
             column={props.primary ? "primary" : "detail"}
             onCompose={
@@ -152,7 +158,7 @@ function ColumnScreen(props: {
           <ColumnContent
             primary={props.primary}
             insetHorizontally={
-              (descriptor.options as AppNativeStackNavigationOptions).nativeContentInsetHorizontally
+              (options as AppNativeStackNavigationOptions).nativeContentInsetHorizontally
             }
           >
             <NativePrimaryColumnContext value={primaryColumn}>

@@ -20,7 +20,8 @@ import {
   type NativeStackNavigatorProps,
   type NativeStackTypeBag,
 } from "@react-navigation/native-stack";
-import { useCallback, useRef, useState, type ComponentProps } from "react";
+import { use, useCallback, useRef, useState, type ComponentProps } from "react";
+import { WorkspaceSlotOptionsContext, slotScreenOptions } from "./v5-workspace-context";
 import { StyleSheet, View } from "react-native";
 import { FormSheet, Stack } from "react-native-screens";
 import { NativeScrollEdgeEffectsContext } from "./NativeScrollViewMarker";
@@ -56,6 +57,8 @@ export function V5CardStackView(
   props: V5StackViewProps & { readonly onRootVisibilityChange?: (visible: boolean) => void },
 ) {
   const { preventedRoutes } = usePreventRemoveContext();
+  // Options a screen set inside this workspace tab slot, over its route's.
+  const slot = use(WorkspaceSlotOptionsContext);
   const nativePopSource = useRef<string | null>(null);
   const [screens, setScreens] = useState({
     completedNativeDismissals: new Set<string>(),
@@ -148,6 +151,7 @@ export function V5CardStackView(
         {screens.routes.map((route, index) => {
           const descriptor = props.descriptors[route.key] ?? screens.descriptors[route.key];
           if (!descriptor) return null;
+          const options = slotScreenOptions(slot, route.key, descriptor.options);
           const attached = props.state.routes.some((current) => current.key === route.key);
           return (
             <Stack.Screen
@@ -157,8 +161,7 @@ export function V5CardStackView(
                 attached || screens.nativeCompletingPops.has(route.key) ? "attached" : "detached"
               }
               preventNativeDismiss={
-                preventedRoutes[route.key]?.preventRemove ||
-                descriptor.options.gestureEnabled === false
+                preventedRoutes[route.key]?.preventRemove || options.gestureEnabled === false
               }
               onDismiss={removeDismissed}
               onNativeDismiss={nativeDismiss}
@@ -229,7 +232,7 @@ export function V5CardStackView(
               <NavigationContext value={descriptor.navigation}>
                 <NavigationRouteContext value={descriptor.route}>
                   <V5StackHeader
-                    options={descriptor.options}
+                    options={options}
                     canGoBack={
                       attached
                         ? props.state.routes.findIndex((current) => current.key === route.key) > 0
@@ -237,15 +240,12 @@ export function V5CardStackView(
                     }
                   />
                   <NativeColumnContent
-                    backgroundColor={
-                      StyleSheet.flatten(descriptor.options.contentStyle)?.backgroundColor
-                    }
+                    backgroundColor={StyleSheet.flatten(options.contentStyle)?.backgroundColor}
                     insetHorizontally={
-                      (descriptor.options as AppNativeStackNavigationOptions)
-                        .nativeContentInsetHorizontally
+                      (options as AppNativeStackNavigationOptions).nativeContentInsetHorizontally
                     }
                   >
-                    <NativeScrollEdgeEffectsContext value={descriptor.options.scrollEdgeEffects}>
+                    <NativeScrollEdgeEffectsContext value={options.scrollEdgeEffects}>
                       {descriptor.render()}
                     </NativeScrollEdgeEffectsContext>
                   </NativeColumnContent>
