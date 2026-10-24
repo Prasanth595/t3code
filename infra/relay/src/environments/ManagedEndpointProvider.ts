@@ -195,7 +195,7 @@ export class ManagedEndpointProvider extends Context.Service<
       readonly expectedTunnelId?: string;
       readonly expectedInactiveBefore?: string;
       readonly expectedRecoveryEnabled?: boolean;
-      readonly expectedRecoveryEnabledAt?: string | null;
+      readonly expectedGeneration?: number;
       readonly expectedStatus?: "inactive" | "down";
       readonly markReleased?: boolean;
     }) => Effect.Effect<boolean, ManagedEndpointDeprovisioningFailed>;
@@ -995,20 +995,23 @@ export const make = Effect.gen(function* () {
       if (input.expectedTunnelId !== undefined && input.expectedTunnelId !== tunnelId) {
         return false;
       }
+      // The caller judged the allocation as it was when listed. Any write since
+      // then, such as a recovery registration or a relink, may have changed
+      // that judgment, so the next sweep decides with fresh data.
+      if (
+        input.expectedGeneration !== undefined &&
+        input.expectedGeneration !== allocation.generation
+      ) {
+        return false;
+      }
       // A starting host registers recovery while cloudflared is still
       // connecting, so Cloudflare keeps reporting the tunnel's old inactivity.
       // A registration after the cutoff means the host is coming back to it.
       // A relink that replaced the environment key keeps the old timestamp,
-      // but that registration can no longer recover the tunnel. A newer
-      // registration since the caller's listing can, so the guard still
-      // applies to it.
-      const recoveryUnusable =
-        input.expectedRecoveryEnabled === false &&
-        input.expectedRecoveryEnabledAt !== undefined &&
-        input.expectedRecoveryEnabledAt === allocation.recoveryEnabledAt;
+      // but that registration can no longer recover the tunnel.
       if (
         input.expectedInactiveBefore !== undefined &&
-        !recoveryUnusable &&
+        input.expectedRecoveryEnabled !== false &&
         allocation.recoveryEnabledAt !== null
       ) {
         const registeredAt = DateTime.make(allocation.recoveryEnabledAt);

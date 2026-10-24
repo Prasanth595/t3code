@@ -1287,7 +1287,10 @@ describe("ManagedEndpointProvider", () => {
   it.effect.each<{
     readonly when: string;
     readonly inactiveBefore: string;
-    readonly listedRecovery?: { readonly enabled: boolean; readonly enabledAt: string | null };
+    readonly listed?: {
+      readonly recoveryEnabled: boolean;
+      readonly at: "before-registration" | "after-registration";
+    };
     readonly released: boolean;
   }>([
     { when: "after", inactiveBefore: "2026-06-01T00:05:00.000Z", released: false },
@@ -1295,18 +1298,18 @@ describe("ManagedEndpointProvider", () => {
     {
       when: "after, with a replaced environment key",
       inactiveBefore: "2026-06-01T00:05:00.000Z",
-      listedRecovery: { enabled: false, enabledAt: "2026-06-02T00:00:00.000Z" },
+      listed: { recoveryEnabled: false, at: "after-registration" },
       released: true,
     },
     {
       when: "after, registered again since a replaced-key listing",
       inactiveBefore: "2026-06-01T00:05:00.000Z",
-      listedRecovery: { enabled: false, enabledAt: "2026-05-01T00:00:00.000Z" },
+      listed: { recoveryEnabled: false, at: "before-registration" },
       released: false,
     },
   ])(
     "releases a down tunnel unless a usable recovery registration came after the cutoff ($when)",
-    ({ inactiveBefore, listedRecovery, released }) => {
+    ({ inactiveBefore, listed, released }) => {
       const tunnelCalls: TunnelCall[] = [];
       const allocations = makeAllocations();
       const layer = layerProvider(
@@ -1320,12 +1323,16 @@ describe("ManagedEndpointProvider", () => {
         const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
         const origin = { localHttpHost: "127.0.0.1", localHttpPort: 3773 } as const;
         yield* provider.provision({ ...key, origin });
+        const beforeRegistration = yield* allocations.get(key);
         yield* allocations.enableRecovery({
           ...key,
           tunnelId: "tunnel-id",
           environmentPublicKey: "environment-public-key",
           origin,
         });
+        const listing =
+          listed?.at === "before-registration" ? beforeRegistration : yield* allocations.get(key);
+        expect(listing).not.toBeNull();
 
         expect(
           yield* provider.release({
@@ -1333,11 +1340,11 @@ describe("ManagedEndpointProvider", () => {
             expectedTunnelId: "tunnel-id",
             expectedStatus: "down",
             expectedInactiveBefore: inactiveBefore,
-            ...(listedRecovery === undefined
+            ...(listed === undefined || listing === null
               ? {}
               : {
-                  expectedRecoveryEnabled: listedRecovery.enabled,
-                  expectedRecoveryEnabledAt: listedRecovery.enabledAt,
+                  expectedRecoveryEnabled: listed.recoveryEnabled,
+                  expectedGeneration: listing.generation,
                 }),
           }),
         ).toBe(released);
