@@ -90,6 +90,8 @@ export class AgentFileSyncError extends Schema.TaggedError<AgentFileSyncError>()
       "subscription-limit",
       "linked-destination",
       "changed",
+      "changed-backup",
+      "recovery",
       "invalid-block",
       "io",
       "overlap",
@@ -111,6 +113,10 @@ export class AgentFileSyncError extends Schema.TaggedError<AgentFileSyncError>()
         return `Destination contains a link or special file. Manage it on that host before syncing${at}.`;
       case "changed":
         return `Files changed since the preview or sync. Review them again${at}.`;
+      case "changed-backup":
+        return `Sync stopped with a preserved skill backup${at}. Review it alongside the destination before resuming.`;
+      case "recovery":
+        return `Sync setup failed and could not restore every file. An undo receipt is retained${at}; use its ID to retry undo after reviewing the destination.`;
       case "invalid-block":
         return `Instruction sync markers are incomplete or duplicated${at}.`;
       case "overlap":
@@ -151,6 +157,7 @@ export const AgentFileSyncRefreshInput = Schema.Struct({
 export type AgentFileSyncRefreshInput = typeof AgentFileSyncRefreshInput.Type;
 export const AgentFileSyncManageInput = Schema.Struct({
   id: SyncId,
+  generation: Schema.optionalKey(Schema.Int),
   action: Schema.Literals(["pause", "resume", "remove"]),
   error: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(2000))),
 });

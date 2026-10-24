@@ -170,7 +170,11 @@ it.layer(NodeServices.layer)("sync subscriptions", (it) => {
         generation: resumed.generation,
         bundle: bundle("Changed"),
       });
-      expect(f.writes.slice(writesBeforeChange)).toHaveLength(2);
+      expect(
+        f.writes
+          .slice(writesBeforeChange)
+          .filter((key) => !key.startsWith("agent-file-sync-pending-")),
+      ).toHaveLength(2);
       expect(baselineKeys()).toHaveLength(2);
       expect(baselineKeys().filter((key) => original.includes(key))).toHaveLength(1);
       expect(baselineKeys()).not.toEqual(original);
@@ -266,6 +270,13 @@ it.layer(NodeServices.layer)("sync subscriptions", (it) => {
       expect(yield* f.fs.readFileString(f.path.join(f.directory, "AGENTS.md"))).toContain("New");
       const current = (yield* f.links.list)[0]!;
       expect(current.generation).toBe(1);
+      yield* f.links.manage({
+        id: link.id,
+        generation: 0,
+        action: "pause",
+        error: "Delayed source error",
+      });
+      expect(yield* f.links.list).toEqual([current]);
       yield* f.links.refresh({ id: link.id, generation: 1, bundle: null });
       expect((yield* f.links.list)[0]!.generation).toBe(1);
     }),
@@ -381,6 +392,185 @@ it.layer(NodeServices.layer)("sync subscriptions", (it) => {
       yield* f.subscribe();
       expect((yield* f.subscribe().pipe(Effect.flip)).reason).toBe("overlap");
       expect(yield* f.links.list).toHaveLength(1);
+    }),
+  );
+  it.effect("rejects overlapping files across different scope roots", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const cwd = f.path.join(f.directory, ".claude");
+      yield* f.fs.makeDirectory(cwd);
+      const personal: AgentFileSyncBundle = [
+        {
+          kind: "instructions",
+          path: ".claude/CLAUDE.md",
+          sections: [{ id: "Shared:0", title: "Shared", contents: "Shared rules" }],
+        },
+      ];
+      yield* f.links.subscribe({
+        sourceEnvironmentId: EnvironmentId.make("source"),
+        selection: {
+          skills: [],
+          instructions: [{ path: ".claude/CLAUDE.md", sectionIds: ["Shared:0"] }],
+        },
+        label: "Personal",
+        bundle: personal,
+        expected: yield* f.files.preview({ bundle: personal }),
+      });
+      const project: AgentFileSyncBundle = [{ ...personal[0]!, path: "CLAUDE.md" }];
+      const error = yield* f.links
+        .subscribe({
+          cwd,
+          sourceEnvironmentId: EnvironmentId.make("source"),
+          selection: {
+            skills: [],
+            instructions: [{ path: "CLAUDE.md", sectionIds: ["Shared:0"] }],
+          },
+          label: "Project",
+          bundle: project,
+          expected: yield* f.files.preview({ cwd, bundle: project }),
+        })
+        .pipe(Effect.flip);
+      expect(error.reason).toBe("overlap");
+      expect(yield* f.links.list).toHaveLength(1);
+    }),
+  );
+  it.effect("recovers a pending baseline after failed publication when the source advances", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const link = yield* f.subscribe();
+      f.failWrites.add("agent-file-sync-links");
+      expect(
+        (yield* f.links
+          .refresh({ id: link.id, generation: 0, bundle: bundle("B") })
+          .pipe(Effect.flip)).reason,
+      ).toBe("io");
+      f.failWrites.clear();
+      const restarted = yield* f.load;
+      yield* restarted.refresh({ id: link.id, generation: 0, bundle: bundle("C") });
+      const recovered = (yield* restarted.list)[0]!;
+      expect(recovered.paused).toBe(false);
+      yield* restarted.refresh({
+        id: link.id,
+        generation: recovered.generation,
+        bundle: bundle("C"),
+      });
+      expect((yield* restarted.list)[0]?.paused).toBe(false);
+      expect(yield* f.fs.readFileString(f.path.join(f.directory, "AGENTS.md"))).toContain("C");
+      expect([...f.storage.keys()].some((key) => key.startsWith("agent-file-sync-pending-"))).toBe(
+        false,
+      );
+    }),
+  );
+  it.effect.each(["write", "metadata"] as const)(
+    "rolls back initial destination writes after a %s failure",
+    (failure) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        let failInstall = failure === "write";
+        const intercepted = FileSystem.FileSystem.of({
+          ...fs,
+          rename: (from, to) =>
+            Effect.suspend(() => {
+              if (failInstall && to.endsWith("/AGENTS.md")) {
+                failInstall = false;
+                return fs.rename(from, `${to}/missing-parent/file`);
+              }
+              return fs.rename(from, to);
+            }),
+        });
+        const f = yield* fixture.pipe(Effect.provideService(FileSystem.FileSystem, intercepted));
+        const skill = ".agents/skills/setup";
+        const absolute = f.path.join(f.directory, skill);
+        yield* f.fs.makeDirectory(absolute, { recursive: true });
+        yield* f.fs.writeFileString(f.path.join(absolute, "SKILL.md"), "Original local skill");
+        const initial: AgentFileSyncBundle = [
+          {
+            kind: "skill",
+            path: skill,
+            files: [
+              {
+                path: "SKILL.md",
+                data: Buffer.from("Source skill").toString("base64"),
+                mode: 0o600,
+              },
+            ],
+          },
+          ...bundle("Shared"),
+        ];
+        const expected = yield* f.files.preview({ bundle: initial });
+        if (failure === "metadata") f.failWrites.add("agent-file-sync-links");
+        const error = yield* f.links
+          .subscribe({
+            sourceEnvironmentId: EnvironmentId.make("source"),
+            selection: {
+              skills: [skill],
+              instructions: [{ path: "AGENTS.md", sectionIds: ["Shared:0"] }],
+            },
+            label: "Source",
+            bundle: initial,
+            expected,
+          })
+          .pipe(Effect.flip);
+        expect(error.reason).toBe("io");
+        expect(yield* f.links.list).toEqual([]);
+        expect(yield* f.fs.readFileString(f.path.join(absolute, "SKILL.md"))).toBe(
+          "Original local skill",
+        );
+      }),
+  );
+  it.effect("retains an undo receipt when concurrent edits prevent setup rollback", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      let skillPath = "";
+      const intercepted = FileSystem.FileSystem.of({
+        ...fs,
+        rename: (from, to) =>
+          to.endsWith(`${path.sep}AGENTS.md`)
+            ? fs
+                .writeFileString(path.join(skillPath, "SKILL.md"), "Local edit during setup")
+                .pipe(Effect.andThen(fs.rename(from, path.join(to, "missing-parent", "file"))))
+            : fs.rename(from, to),
+      });
+      const f = yield* fixture.pipe(Effect.provideService(FileSystem.FileSystem, intercepted));
+      const skill = ".agents/skills/recovery";
+      skillPath = path.join(f.directory, skill);
+      yield* fs.makeDirectory(skillPath, { recursive: true });
+      yield* fs.writeFileString(path.join(skillPath, "SKILL.md"), "Original local skill");
+      const initial: AgentFileSyncBundle = [
+        {
+          kind: "skill",
+          path: skill,
+          files: [
+            { path: "SKILL.md", data: Buffer.from("Source skill").toString("base64"), mode: 0o600 },
+          ],
+        },
+        ...bundle("Shared"),
+      ];
+      const error = yield* f.links
+        .subscribe({
+          sourceEnvironmentId: EnvironmentId.make("source"),
+          selection: {
+            skills: [skill],
+            instructions: [{ path: "AGENTS.md", sectionIds: ["Shared:0"] }],
+          },
+          label: "Source",
+          bundle: initial,
+          expected: yield* f.files.preview({ bundle: initial }),
+        })
+        .pipe(Effect.flip);
+      expect(error.reason).toBe("recovery");
+      expect(error.message).toContain(error.path);
+      expect(yield* fs.readFileString(path.join(skillPath, "SKILL.md"))).toBe(
+        "Local edit during setup",
+      );
+      yield* fs.writeFileString(path.join(skillPath, "SKILL.md"), "Source skill");
+      yield* fs.chmod(path.join(skillPath, "SKILL.md"), 0o600);
+      expect((yield* f.files.undo({ undoId: error.path! })).failures).toEqual([]);
+      expect(yield* fs.readFileString(path.join(skillPath, "SKILL.md"))).toBe(
+        "Original local skill",
+      );
+      expect(yield* f.links.list).toEqual([]);
     }),
   );
 });

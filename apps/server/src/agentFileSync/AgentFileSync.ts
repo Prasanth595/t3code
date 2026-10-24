@@ -219,7 +219,7 @@ const make = Effect.gen(function* () {
       relative: string,
       depth: number,
     ): Effect.fn.Return<void, AgentFileSyncError> {
-      if (depth > MAX_SKILL_DEPTH || files.length >= 256)
+      if (depth > MAX_SKILL_DEPTH)
         return yield* new AgentFileSyncError({ reason: "limit", path: at });
       const real = yield* io(fs.realPath(entry), at);
       if (path.relative(entry, real) !== "")
@@ -233,7 +233,7 @@ const make = Effect.gen(function* () {
           yield* visit(path.join(entry, name), relative ? `${relative}/${name}` : name, depth + 1);
         }
       } else if (info.type === "File" && (kind === "instructions" || relative)) {
-        if (Number(info.size) > MAX_FILE_BYTES)
+        if (files.length >= 256 || Number(info.size) > MAX_FILE_BYTES)
           return yield* new AgentFileSyncError({ reason: "limit", path: at });
         const data = yield* io(fs.readFile(entry), at);
         bytes += data.byteLength;
@@ -429,12 +429,11 @@ const make = Effect.gen(function* () {
     at: string,
     kind: "skill" | "instructions",
     files: Snapshot,
+    expected: string | null,
   ) {
     yield* assertUnlinked(base, at);
     const absolute = path.join(base, at);
-    if (files === null)
-      return yield* io(fs.remove(absolute, { recursive: kind === "skill", force: true }), at);
-    yield* io(fs.makeDirectory(path.dirname(absolute), { recursive: true }), at);
+    yield* io(fs.makeDirectory(path.dirname(absolute), { recursive: true, mode: 0o700 }), at);
     return yield* Effect.uninterruptible(
       Effect.scoped(
         Effect.gen(function* () {
@@ -443,31 +442,64 @@ const make = Effect.gen(function* () {
             at,
           );
           const staged = path.join(temporary, "new");
-          if (kind === "skill") yield* io(fs.makeDirectory(staged), at);
-          for (const file of files) {
-            const target = kind === "skill" ? path.join(staged, file.path) : staged;
-            yield* io(fs.makeDirectory(path.dirname(target), { recursive: true }), at);
-            yield* io(fs.writeFile(target, Buffer.from(file.data, "base64")), at);
-            yield* io(fs.chmod(target, file.mode), at);
+          if (files !== null) {
+            if (kind === "skill") yield* io(fs.makeDirectory(staged, { mode: 0o700 }), at);
+            for (const file of files) {
+              const target = kind === "skill" ? path.join(staged, file.path) : staged;
+              yield* io(
+                fs.makeDirectory(path.dirname(target), { recursive: true, mode: 0o700 }),
+                at,
+              );
+              yield* io(fs.writeFile(target, Buffer.from(file.data, "base64")), at);
+              yield* io(fs.chmod(target, file.mode), at);
+            }
           }
-          const exists = yield* io(fs.exists(absolute), at);
+          // Staging can take time. The earlier preview check cannot protect edits made during it.
+          if (revision(yield* readSnapshot(base, at, kind, true)) !== expected)
+            return yield* new AgentFileSyncError({ reason: "changed", path: at });
+          const hasBackup = expected !== null && kind === "skill";
           // Keep the backup outside the staging scope so a failed rollback cannot erase it.
           const backup = `${absolute}.t3-sync-backup-${NodeCrypto.randomUUID()}`;
-          if (exists && kind === "skill") yield* io(fs.rename(absolute, backup), at);
-          yield* io(fs.rename(staged, absolute), at).pipe(
-            Effect.catch((error) =>
-              exists && kind === "skill"
-                ? io(fs.rename(backup, absolute), at).pipe(Effect.andThen(Effect.fail(error)))
-                : Effect.fail(error),
-            ),
-          );
-          if (exists && kind === "skill")
+          if (hasBackup) yield* io(fs.rename(absolute, backup), at);
+          const installed = yield* Effect.gen(function* () {
+            if (
+              hasBackup &&
+              revision(yield* readSnapshot(base, path.relative(base, backup), kind, true)) !==
+                expected
+            )
+              return yield* new AgentFileSyncError({ reason: "changed", path: at });
+            if (files !== null) yield* io(fs.rename(staged, absolute), at);
+            else if (!hasBackup) yield* io(fs.remove(absolute, { force: true }), at);
+          }).pipe(Effect.result);
+          if (installed._tag === "Failure") {
+            if (hasBackup) {
+              const restored = yield* Effect.gen(function* () {
+                if (yield* io(fs.exists(absolute), at))
+                  return yield* new AgentFileSyncError({ reason: "changed", path: at });
+                yield* io(fs.rename(backup, absolute), at);
+              }).pipe(Effect.result);
+              if (restored._tag === "Failure")
+                return yield* new AgentFileSyncError({
+                  reason: "changed-backup",
+                  path: backup,
+                  cause: restored.failure,
+                });
+            }
+            return yield* installed.failure;
+          }
+          if (hasBackup) {
+            const checked = yield* readSnapshot(base, path.relative(base, backup), kind, true).pipe(
+              Effect.result,
+            );
+            if (checked._tag === "Failure" || revision(checked.success) !== expected)
+              return yield* new AgentFileSyncError({ reason: "changed-backup", path: backup });
             yield* fs.remove(backup, { recursive: true }).pipe(
               Effect.tapError(() =>
                 Effect.logWarning("Could not remove a skill sync backup", { path: backup }),
               ),
               Effect.ignore,
             );
+          }
         }),
       ),
     );
@@ -518,11 +550,18 @@ const make = Effect.gen(function* () {
         const current = yield* readSnapshot(base, change.resource.path, change.resource.kind, true);
         if (revision(current) !== change.revision)
           return yield* new AgentFileSyncError({ reason: "changed", path: change.resource.path });
-        yield* writeSnapshot(base, change.resource.path, change.resource.kind, change.after);
+        yield* writeSnapshot(
+          base,
+          change.resource.path,
+          change.resource.kind,
+          change.after,
+          change.revision,
+        );
       }).pipe(Effect.result);
-      if (result._tag === "Failure")
+      if (result._tag === "Failure") {
+        if (!history) return yield* result.failure;
         failures.push({ path: change.resource.path, message: result.failure.message });
-      else paths.push(change.resource.path);
+      } else paths.push(change.resource.path);
     }
     return { undoId, paths, failures };
   });
@@ -609,7 +648,7 @@ const make = Effect.gen(function* () {
             if (revision(current) === revision(entry.before)) return;
             if (revision(current) !== entry.after)
               return yield* new AgentFileSyncError({ reason: "changed", path: entry.path });
-            yield* writeSnapshot(base, entry.path, entry.kind, entry.before);
+            yield* writeSnapshot(base, entry.path, entry.kind, entry.before, entry.after);
             paths.push(entry.path);
           }).pipe(Effect.result);
           if (result._tag === "Failure")

@@ -378,6 +378,139 @@ it.layer(NodeServices.layer)("agent file sync", (it) => {
       ).toBe("limit");
     }),
   );
+  it.effect(
+    "allows 256 skill files with trailing empty directories and rejects the 257th file",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const skill = ".agents/skills/boundary";
+        yield* f.write(f.source, `${skill}/SKILL.md`, "Boundary skill");
+        for (let index = 0; index < 255; index++) {
+          yield* f.write(f.source, `${skill}/f${String(index).padStart(3, "0")}.txt`, "text");
+        }
+        yield* f.fs.makeDirectory(f.path.join(f.source, skill, "zz-empty"));
+        const selection = { cwd: f.source, skills: [skill], instructions: [] };
+        const bundle = yield* f.sync.export(selection);
+        expect(bundle[0]?.kind === "skill" && bundle[0].files.length).toBe(256);
+        expect((yield* f.run(bundle)).failures).toEqual([]);
+        yield* f.fs.makeDirectory(f.path.join(f.target, skill, "zz-empty"));
+        expect((yield* f.sync.preview({ cwd: f.target, bundle }))[0]?.changed).toBe(false);
+        yield* f.write(f.source, `${skill}/extra.txt`, "Too many");
+        expect((yield* f.sync.export(selection).pipe(Effect.flip)).reason).toBe("limit");
+      }),
+  );
+  it.effect("keeps skill directories private when applying and undoing a replacement", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const skill = ".agents/skills/private";
+      yield* f.write(f.target, `${skill}/SKILL.md`, "Original");
+      yield* f.write(f.target, `${skill}/scripts/check.sh`, "Original script");
+      for (const at of [skill, `${skill}/scripts`])
+        yield* f.fs.chmod(f.path.join(f.target, at), 0o700);
+      const applied = yield* f.run([
+        {
+          kind: "skill",
+          path: skill,
+          files: ["SKILL.md", "scripts/check.sh"].map((path) => ({
+            path,
+            data: Buffer.from("Updated").toString("base64"),
+            mode: 0o600,
+          })),
+        },
+      ]);
+      expect(applied.failures).toEqual([]);
+      for (const at of [skill, `${skill}/scripts`])
+        expect((yield* f.fs.stat(f.path.join(f.target, at))).mode & 0o777).toBe(0o700);
+      expect((yield* f.sync.undo({ undoId: applied.undoId! })).failures).toEqual([]);
+      for (const at of [skill, `${skill}/scripts`])
+        expect((yield* f.fs.stat(f.path.join(f.target, at))).mode & 0o777).toBe(0o700);
+      expect(yield* f.fs.readFileString(f.path.join(f.target, skill, "SKILL.md"))).toBe("Original");
+    }),
+  );
+  it.effect.each(["staging", "backup", "install"] as const)(
+    "preserves a local skill edit made during %s and stops automatic reconciliation",
+    (phase) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        let armed = false;
+        let absolute = "";
+        let backup = "";
+        const localEdit = (at: string) => {
+          armed = false;
+          return fs.writeFileString(path.join(at, "SKILL.md"), "Concurrent local edit");
+        };
+        const intercepted = FileSystem.FileSystem.of({
+          ...fs,
+          writeFile: (at, data, options) =>
+            fs
+              .writeFile(at, data, options)
+              .pipe(
+                Effect.andThen(
+                  Effect.suspend(() =>
+                    armed && phase === "staging" && at.includes(`${path.sep}new${path.sep}`)
+                      ? localEdit(absolute)
+                      : Effect.void,
+                  ),
+                ),
+              ),
+          rename: (from, to) =>
+            fs.rename(from, to).pipe(
+              Effect.andThen(
+                Effect.suspend(() => {
+                  if (to.includes(".t3-sync-backup-")) {
+                    backup = to;
+                    if (armed && phase === "backup") return localEdit(backup);
+                  }
+                  if (
+                    armed &&
+                    phase === "install" &&
+                    from.endsWith(`${path.sep}new`) &&
+                    to === absolute
+                  )
+                    return localEdit(backup);
+                  return Effect.void;
+                }),
+              ),
+            ),
+        });
+        const f = yield* fixture.pipe(Effect.provideService(FileSystem.FileSystem, intercepted));
+        const skill = ".agents/skills/concurrent";
+        absolute = path.join(f.target, skill);
+        const previous: AgentFileSyncBundle = [
+          {
+            kind: "skill",
+            path: skill,
+            files: [
+              { path: "SKILL.md", data: Buffer.from("Original").toString("base64"), mode: 0o600 },
+            ],
+          },
+        ];
+        yield* f.run(previous);
+        const bundle: AgentFileSyncBundle = [
+          {
+            kind: "skill",
+            path: skill,
+            files: [
+              { path: "SKILL.md", data: Buffer.from("Updated").toString("base64"), mode: 0o600 },
+            ],
+          },
+        ];
+        armed = true;
+        const error = yield* f.sync
+          .reconcile({ cwd: f.target, previous, bundle })
+          .pipe(Effect.flip);
+        expect(error.reason).toBe(phase === "install" ? "changed-backup" : "changed");
+        const preserved = phase === "install" ? backup : absolute;
+        expect(yield* fs.readFileString(path.join(preserved, "SKILL.md"))).toBe(
+          "Concurrent local edit",
+        );
+        if (phase === "install") expect(error.message).toContain(backup);
+        expect(
+          yield* fs.readDirectory(path.join(f.directory, "state/userdata/agent-file-sync")),
+        ).toHaveLength(1);
+      }),
+  );
   it.effect("personal sync uses the environment's home and never scans provider credentials", () =>
     Effect.gen(function* () {
       const f = yield* fixture;

@@ -1,13 +1,17 @@
-import { EnvironmentId, type AgentFileSyncLink } from "@t3tools/contracts";
+import { AgentFileSyncError, EnvironmentId, type AgentFileSyncLink } from "@t3tools/contracts";
 import * as Layer from "effect/Layer";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it } from "vite-plus/test";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createAgentFileSyncAtoms, startAgentFileSyncRelay } from "./agentFileSync.ts";
 
-it.each([false, true])(
-  "relays only to destinations with write permission (granted: %s)",
-  async (allowed) => {
+it.each([
+  { allowed: false, sourceFailure: false },
+  { allowed: true, sourceFailure: false },
+  { allowed: true, sourceFailure: true },
+])(
+  "relays with permission=$allowed and source failure=$sourceFailure",
+  async ({ allowed, sourceFailure }) => {
     const source = EnvironmentId.make("source");
     const destination = EnvironmentId.make("destination");
     const last = EnvironmentId.make("last");
@@ -25,7 +29,7 @@ it.each([false, true])(
       label: "Source",
       paused: false,
       error: null,
-      generation: 0,
+      generation: 7,
       revision: "revision",
       lastSyncedAt: 0,
     };
@@ -35,6 +39,7 @@ it.each([false, true])(
     const requested: EnvironmentId[] = [];
     let checks = 0;
     let refreshes = 0;
+    const pauses: unknown[] = [];
     const finished = Promise.withResolvers<void>();
     const atoms: typeof base = {
       ...base,
@@ -45,7 +50,18 @@ it.each([false, true])(
       },
       check: () => {
         checks++;
-        return Atom.make(AsyncResult.success({ bundle: null }));
+        return Atom.make(
+          sourceFailure
+            ? AsyncResult.fail(new AgentFileSyncError({ reason: "changed" }))
+            : AsyncResult.success({ bundle: null }),
+        );
+      },
+      manage: {
+        ...base.manage,
+        run: async (_registry, request) => {
+          pauses.push(request.input);
+          return AsyncResult.success(undefined);
+        },
       },
       refresh: {
         ...base.refresh,
@@ -62,6 +78,18 @@ it.each([false, true])(
     await finished.promise;
     expect(requested).toEqual(allowed ? [destination, last] : [last]);
     expect(checks).toBe(allowed ? 1 : 0);
-    expect(refreshes).toBe(allowed ? 1 : 0);
+    expect(refreshes).toBe(allowed && !sourceFailure ? 1 : 0);
+    expect(pauses).toEqual(
+      sourceFailure
+        ? [
+            {
+              id: link.id,
+              generation: 7,
+              action: "pause",
+              error: new AgentFileSyncError({ reason: "changed" }).message,
+            },
+          ]
+        : [],
+    );
   },
 );

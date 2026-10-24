@@ -110,7 +110,12 @@ export function startAgentFileSyncRelay<R, E>(
                 atoms.manage,
                 {
                   environmentId,
-                  input: { id: link.id, action: "pause", error: error.message.slice(0, 2000) },
+                  input: {
+                    id: link.id,
+                    generation: link.generation,
+                    action: "pause",
+                    error: error.message.slice(0, 2000),
+                  },
                 },
                 { reportFailure: false },
               );

@@ -15,6 +15,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -28,6 +29,10 @@ const encodeBundle = Schema.encodeSync(Schema.fromJsonString(AgentFileSyncBundle
 const decodeBundle = Schema.decodeUnknownEffect(Schema.fromJsonString(AgentFileSyncBundle));
 const bundleRevision = (bundle: typeof AgentFileSyncBundle.Type) =>
   NodeCrypto.createHash("sha256").update(encodeBundle(bundle)).digest("hex");
+const Pending = Schema.Struct({ revision: Schema.String, bundle: AgentFileSyncBundle });
+const encodePending = Schema.encodeSync(Schema.fromJsonString(Pending));
+const decodePending = Schema.decodeUnknownEffect(Schema.fromJsonString(Pending));
+const pendingKey = (id: string) => `agent-file-sync-pending-${id}`;
 const SECRET = "agent-file-sync-links";
 const baselineKey = (link: AgentFileSyncLink) =>
   `agent-file-sync-baseline-${NodeCrypto.createHash("sha256").update(`${link.id}\0${link.revision}`).digest("hex")}`;
@@ -53,6 +58,7 @@ const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const fs = yield* FileSystem.FileSystem;
   const home = yield* HostProcess.HomeDirectory;
+  const path = yield* Path.Path;
   const stored = yield* secrets.get(SECRET);
   const metadata = Option.isSome(stored)
     ? yield* decode(Buffer.from(stored.value).toString("utf8")).pipe(
@@ -119,39 +125,85 @@ const make = Effect.gen(function* () {
         const destination = yield* fs
           .realPath(input.cwd ?? home)
           .pipe(Effect.mapError((cause) => new AgentFileSyncError({ reason: "io", cause })));
+        const destinations = new Set(input.bundle.map((item) => path.join(destination, item.path)));
         for (const job of state) {
           const existing = yield* fs
             .realPath(job.scope.cwd ?? home)
             .pipe(Effect.orElseSucceed(() => null));
           if (
-            existing === destination &&
-            job.previous.some((resource) =>
-              input.bundle.some((item) => item.path === resource.path),
-            )
+            existing !== null &&
+            job.previous.some((resource) => destinations.has(path.join(existing, resource.path)))
           )
             return yield* new AgentFileSyncError({ reason: "overlap" });
         }
-        const result = yield* files.apply(input, false, beforeWrite);
-        if (result.failures.length)
-          return yield* new AgentFileSyncError({ reason: "io", path: result.failures[0]!.path });
-        yield* persist([
-          ...state,
-          {
-            id: NodeCrypto.randomUUID(),
-            scope: input.cwd ? { cwd: input.cwd } : {},
-            sourceEnvironmentId: input.sourceEnvironmentId,
-            selection: input.selection,
-            label: input.label,
-            previous: input.bundle,
-            paused: false,
-            error: null,
-            lastSyncedAt: yield* Clock.currentTimeMillis,
-            generation: 0,
-            revision: bundleRevision(input.bundle),
-          },
-        ]);
+        // Initial setup can replace several unrelated files. Keep recovery data until it commits.
+        const result = yield* files.apply(input, true, beforeWrite);
+        const published = yield* Effect.gen(function* () {
+          if (result.failures.length)
+            return yield* new AgentFileSyncError({ reason: "io", path: result.failures[0]!.path });
+          yield* persist([
+            ...state,
+            {
+              id: NodeCrypto.randomUUID(),
+              scope: input.cwd ? { cwd: input.cwd } : {},
+              sourceEnvironmentId: input.sourceEnvironmentId,
+              selection: input.selection,
+              label: input.label,
+              previous: input.bundle,
+              paused: false,
+              error: null,
+              lastSyncedAt: yield* Clock.currentTimeMillis,
+              generation: 0,
+              revision: bundleRevision(input.bundle),
+            },
+          ]);
+        }).pipe(Effect.result);
+        if (published._tag === "Failure") {
+          if (result.undoId) {
+            const restored = yield* files.undo({ undoId: result.undoId }).pipe(Effect.result);
+            if (restored._tag === "Failure" || restored.success.failures.length)
+              return yield* new AgentFileSyncError({
+                reason: "recovery",
+                path: result.undoId,
+                cause: published.failure,
+              });
+          }
+          return yield* published.failure;
+        }
       }),
     );
+  });
+  const removePending = Effect.fn("AgentFileSyncLinks.removePending")(function* (id: string) {
+    yield* secrets
+      .remove(pendingKey(id))
+      .pipe(
+        Effect.catch(() =>
+          Effect.logWarning("Could not remove a completed agent file sync update"),
+        ),
+      );
+  });
+  const commitRefresh = Effect.fn("AgentFileSyncLinks.commitRefresh")(function* (
+    job: State[number],
+    bundle: AgentFileSyncBundle | null,
+  ) {
+    const result = yield* files
+      .reconcile({ ...job.scope, previous: job.previous, bundle: bundle ?? job.previous })
+      .pipe(Effect.result);
+    if (result._tag === "Success" && bundle === null && job.error === null) return;
+    const next =
+      result._tag === "Success"
+        ? {
+            ...job,
+            previous: bundle ?? job.previous,
+            revision: bundle ? bundleRevision(bundle) : job.revision,
+            error: null,
+            lastSyncedAt: yield* Clock.currentTimeMillis,
+            generation: job.generation + 1,
+          }
+        : { ...job, error: result.failure.message, paused: true, generation: job.generation + 1 };
+    yield* persist(state.map((entry) => (entry.id === job.id ? next : entry)));
+    if (result._tag === "Failure") return yield* result.failure;
+    if (bundle !== null) yield* removePending(job.id);
   });
   const refresh: AgentFileSyncLinks["Service"]["refresh"] = Effect.fn("AgentFileSyncLinks.refresh")(
     function* (input) {
@@ -160,32 +212,31 @@ const make = Effect.gen(function* () {
           const job = state.find((entry) => entry.id === input.id);
           // Several clients may relay the same subscription. A stale client must re-read it.
           if (!job || job.paused || job.generation !== input.generation) return;
-          const result = yield* files
-            .reconcile({
-              ...job.scope,
-              previous: job.previous,
-              bundle: input.bundle ?? job.previous,
-            })
-            .pipe(Effect.result);
-          if (result._tag === "Success" && input.bundle === null && job.error === null) return;
-          const next =
-            result._tag === "Success"
-              ? {
-                  ...job,
-                  previous: input.bundle ?? job.previous,
-                  revision: input.bundle ? bundleRevision(input.bundle) : job.revision,
-                  error: null,
-                  lastSyncedAt: yield* Clock.currentTimeMillis,
-                  generation: job.generation + 1,
-                }
-              : {
-                  ...job,
-                  error: result.failure.message,
-                  paused: true,
-                  generation: job.generation + 1,
-                };
-          yield* persist(state.map((entry) => (entry.id === job.id ? next : entry)));
-          if (result._tag === "Failure") return yield* result.failure;
+          const pending = yield* secrets.get(pendingKey(job.id)).pipe(
+            Effect.flatMap((saved) =>
+              Option.isSome(saved)
+                ? decodePending(Buffer.from(saved.value).toString("utf8"))
+                : Effect.succeed(null),
+            ),
+            Effect.mapError((cause) => new AgentFileSyncError({ reason: "io", cause })),
+          );
+          // A published baseline may lag the filesystem after a failed save or a server restart.
+          // Finish that update before accepting a newer source snapshot.
+          if (pending !== null && pending.revision === job.revision) {
+            yield* commitRefresh(job, pending.bundle);
+            return;
+          }
+          if (pending !== null) yield* removePending(job.id);
+          if (input.bundle !== null) {
+            yield* files.preview({ ...job.scope, bundle: input.bundle });
+            yield* secrets
+              .set(
+                pendingKey(job.id),
+                Buffer.from(encodePending({ revision: job.revision, bundle: input.bundle })),
+              )
+              .pipe(Effect.mapError((cause) => new AgentFileSyncError({ reason: "io", cause })));
+          }
+          yield* commitRefresh(job, input.bundle);
         }),
       );
     },
@@ -196,25 +247,27 @@ const make = Effect.gen(function* () {
       beforeWrite?: Effect.Effect<unknown, E, R>,
     ) {
       return yield* lock.withPermit(
-        Effect.andThen(
-          beforeWrite ?? Effect.void,
-          Effect.suspend(() =>
-            persist(
-              input.action === "remove"
-                ? state.filter((job) => job.id !== input.id)
-                : state.map((job) =>
-                    job.id === input.id
-                      ? {
-                          ...job,
-                          paused: input.action === "pause",
-                          error: input.action === "pause" ? (input.error ?? null) : null,
-                          generation: job.generation + 1,
-                        }
-                      : job,
-                  ),
-            ),
-          ),
-        ),
+        Effect.gen(function* () {
+          const job = state.find((entry) => entry.id === input.id);
+          if (!job || (input.generation !== undefined && input.generation !== job.generation))
+            return;
+          if (beforeWrite) yield* beforeWrite;
+          yield* persist(
+            input.action === "remove"
+              ? state.filter((entry) => entry.id !== input.id)
+              : state.map((entry) =>
+                  entry.id === input.id
+                    ? {
+                        ...entry,
+                        paused: input.action === "pause",
+                        error: input.action === "pause" ? (input.error ?? null) : null,
+                        generation: entry.generation + 1,
+                      }
+                    : entry,
+                ),
+          );
+          if (input.action === "remove") yield* removePending(job.id);
+        }),
       );
     },
   );
