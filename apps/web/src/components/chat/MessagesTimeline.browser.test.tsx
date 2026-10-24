@@ -7,7 +7,7 @@ import "~/index.css";
 
 import { act, render } from "../../../test/render";
 import { MessagesTimeline } from "./MessagesTimeline";
-import { remarkThoughtPreview } from "./TimelineWorkEntryRow.logic";
+import { remarkThoughtPreview, thoughtPreviewSource } from "./TimelineWorkEntryRow.logic";
 import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
 import { collectThreadFindRanges } from "./threadFindHighlights";
 
@@ -365,6 +365,47 @@ describe("MessagesTimeline agent messages", () => {
     expect(range.getBoundingClientRect().bottom).toBeLessThanOrEqual(
       body.getBoundingClientRect().bottom,
     );
+  });
+});
+
+describe("MessagesTimeline live reasoning", () => {
+  it("never cuts the label source inside an emoji", () => {
+    const source = thoughtPreviewSource(`${"a".repeat(1_499)}🙂 and more`);
+    expect(source).toBe("a".repeat(1_499));
+  });
+
+  it("labels an expanded live thought from its opening instead of the whole trace", async () => {
+    const runId = RunId.make("thinking-run");
+    const trace = `Checking the **parser** first. ${"Then the next file. ".repeat(1_000)}`;
+    await using screen = await renderTimeline(
+      [
+        {
+          kind: "work",
+          id: "thought",
+          createdAt: CREATED_AT,
+          entry: {
+            id: "thought",
+            runId,
+            createdAt: CREATED_AT,
+            label: "Thinking",
+            tone: "thinking",
+            itemType: "reasoning",
+            detail: trace,
+            toolLifecycleStatus: "inProgress",
+          },
+        },
+      ],
+      { isWorking: true, activeTurnInProgress: true, runningRunId: runId },
+    );
+    const row = () => screen.container.querySelector<HTMLElement>("button[aria-expanded]")!;
+    await click(row());
+    await vi.waitFor(() => {
+      expect(row().getAttribute("aria-expanded")).toBe("true");
+      const label = row().textContent ?? "";
+      expect(label.startsWith("Checking the parser first. Then the next file.")).toBe(true);
+      // The label is one truncated line, so streaming a long trace must not flatten all of it.
+      expect(label.length).toBeLessThan(trace.length / 4);
+    });
   });
 });
 
