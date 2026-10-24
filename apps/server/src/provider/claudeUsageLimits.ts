@@ -181,7 +181,6 @@ export function claudeRateLimitEventToUpdate(
       windows.push(makeWindow(id, used * 100, isoFromEpochSeconds(reset)));
     }
   }
-  const available = windows.length > 0;
   const type: string | undefined = info.rateLimitType;
   if (
     type &&
@@ -201,7 +200,7 @@ export function claudeRateLimitEventToUpdate(
       windows.push(scopedWindow(names.overageIncluded, usedPercent, resetsAt));
     }
   }
-  return windows.length > 0 ? { windows, ...(available ? { available: true } : {}) } : undefined;
+  return windows.length > 0 ? { windows, available: true } : undefined;
 }
 
 /**

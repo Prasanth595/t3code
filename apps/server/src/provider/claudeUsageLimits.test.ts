@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { applyUsageLimitsUpdate } from "@t3tools/provider-core/server/usageLimits";
 
 import { claudeRateLimitEventToUpdate, claudeUsageResponseToLimits } from "./claudeUsageLimits.ts";
 
@@ -226,6 +227,32 @@ describe("claudeUsageResponseToLimits", () => {
 });
 
 describe("claudeRateLimitEventToUpdate", () => {
+  it.each([undefined, {}, { five_hour: { utilization: "unknown" } }])(
+    "recovers an unavailable OAuth account from a valid top-level window: %j",
+    (unifiedWindows) => {
+      const previous = claudeUsageResponseToLimits({
+        checkedAt,
+        allowStreamedLimits: true,
+        response: { rate_limits_available: false, rate_limits: null },
+      }).limits;
+      const update = claudeRateLimitEventToUpdate(
+        {
+          status: "allowed",
+          rateLimitType: "five_hour",
+          utilization: 0.2,
+          ...(unifiedWindows === undefined ? {} : { unifiedWindows }),
+        },
+        noNames,
+      );
+      expect(update).toBeDefined();
+      const recovered = applyUsageLimitsUpdate({ previous, checkedAt, update: update! });
+      expect(recovered?.unavailable).toBeUndefined();
+      expect(recovered?.windows).toEqual([
+        expect.objectContaining({ id: "five_hour", usedPercent: 20 }),
+      ]);
+    },
+  );
+
   it.each([undefined, 1_792_760_400])(
     "retains a unified reset unless the current event supplies one: %s",
     (resetsAt) => {
@@ -324,6 +351,7 @@ describe("claudeRateLimitEventToUpdate", () => {
         noNames,
       ),
     ).toEqual({
+      available: true,
       windows: [
         {
           id: "seven_day",
@@ -345,6 +373,7 @@ describe("claudeRateLimitEventToUpdate", () => {
     } as const;
     expect(claudeRateLimitEventToUpdate(event, noNames)).toBeUndefined();
     expect(claudeRateLimitEventToUpdate(event, { overageIncluded: "Fable" })).toEqual({
+      available: true,
       windows: [
         {
           id: "seven_day_fable",
