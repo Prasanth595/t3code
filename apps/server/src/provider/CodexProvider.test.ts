@@ -35,14 +35,18 @@ it.effect("keeps account authentication when optional model discovery never answ
     const output = yield* Queue.unbounded<Uint8Array>();
     const modelRequested = yield* Deferred.make<void>();
     const stopped = yield* Deferred.make<void>();
+    const killed = yield* Deferred.make<void>();
     const spawner = ChildProcessSpawner.make(() =>
       Effect.gen(function* () {
-        yield* Effect.addFinalizer(() => Deferred.succeed(stopped, undefined));
-        return ChildProcessSpawner.makeHandle({
+        const handle = ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),
           exitCode: Deferred.await(stopped).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
           isRunning: Deferred.isDone(stopped).pipe(Effect.map((done) => !done)),
-          kill: () => Deferred.succeed(stopped, undefined).pipe(Effect.asVoid),
+          kill: () =>
+            Deferred.succeed(killed, undefined).pipe(
+              Effect.andThen(Deferred.succeed(stopped, undefined)),
+              Effect.asVoid,
+            ),
           unref: Effect.succeed(Effect.void),
           stdin: Sink.forEach((bytes: Uint8Array) =>
             Effect.forEach(
@@ -85,6 +89,8 @@ it.effect("keeps account authentication when optional model discovery never answ
           getInputFd: () => Sink.drain,
           getOutputFd: () => Stream.empty,
         });
+        yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.orDie));
+        return handle;
       }),
     );
     const probe = yield* checkCodexProviderStatus(
@@ -103,7 +109,7 @@ it.effect("keeps account authentication when optional model discovery never answ
       provider.models.map((model) => model.slug),
       ["custom-model"],
     );
-    assert.isTrue(yield* Deferred.isDone(stopped));
+    assert.isTrue(yield* Deferred.isDone(killed));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
