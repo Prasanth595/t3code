@@ -132,7 +132,6 @@ export const isPeerSelector = (
 ): environmentId is EnvironmentId =>
   environmentId !== undefined && environmentId !== scope.environmentId;
 
-const WAIT_POLL_INTERVAL_MS = 2_000;
 // Reading a catalog transfers the target's whole project list through the
 // carrying client, so a batch of launches validates against one read.
 const LAUNCH_CATALOG_TTL_MS = 30_000;

@@ -257,7 +257,9 @@ const servePeerRequests = (hostEnvironmentId: EnvironmentId, clientId: string) =
                               event.type === "request"
                                 ? answer(session, event.connectionId, event.request)
                                 : Effect.void,
-                            { concurrency: 8, unordered: true },
+                            // A thread wait must not queue discovery behind it: the
+                            // broker's deadline starts when it sends the request.
+                            { concurrency: "unbounded", unordered: true },
                           ),
                         )
                       : Stream.empty,

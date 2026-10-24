@@ -1,9 +1,17 @@
-import { EnvironmentId, WS_METHODS } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ThreadId,
+  WS_METHODS,
+  type PeerEnvironmentStreamEvent,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import * as EnvironmentSupervisor from "./supervisor.ts";
@@ -155,4 +163,101 @@ it.effect("re-registers a peer carrier after a failed stream without a registry 
     expect(attempts).toBe(2);
     yield* Fiber.interrupt(running);
   }),
+);
+
+it.effect(
+  "answers discovery while eight remote thread waits are pending and cancels them on disconnect",
+  () =>
+    Effect.gen(function* () {
+      const requests = yield* Queue.unbounded<PeerEnvironmentStreamEvent>();
+      const allWaiting = yield* Deferred.make<void>();
+      const listed = yield* Deferred.make<unknown>();
+      const activeWaits = yield* Ref.make(0);
+      const session = {
+        initialConfig: Effect.succeed({
+          environment: { capabilities: { peerEnvironments: true } },
+        }),
+        client: {
+          [WS_METHODS.peerEnvironmentsConnect]: () => Stream.fromQueue(requests),
+          [WS_METHODS.peerEnvironmentsRespond]: (response: {
+            requestId: string;
+            outcome: unknown;
+          }) =>
+            response.requestId === "list"
+              ? Deferred.succeed(listed, response.outcome)
+              : Effect.void,
+        },
+      } as unknown as RpcSession;
+      const sessions = yield* SubscriptionRef.make(Option.some(session));
+      const entries = yield* SubscriptionRef.make(
+        new Map([
+          [macbook, entry(macbook, "MacBook")],
+          [r2d2, entry(r2d2, "r2d2")],
+        ]),
+      );
+      const registry = {
+        entries,
+        state: () => Effect.succeed(connected),
+        run: () =>
+          Effect.gen(function* () {
+            const count = yield* Ref.updateAndGet(activeWaits, (n) => n + 1);
+            if (count === 8) yield* Deferred.succeed(allWaiting, undefined);
+            return yield* Effect.never;
+          }).pipe(Effect.ensuring(Ref.update(activeWaits, (n) => n - 1))),
+        followStream: (
+          id: EnvironmentId,
+          stream: Stream.Stream<unknown, unknown, EnvironmentSupervisor.EnvironmentSupervisor>,
+        ) =>
+          id === macbook
+            ? stream.pipe(
+                Stream.provideService(EnvironmentSupervisor.EnvironmentSupervisor, {
+                  session: sessions,
+                } as never),
+              )
+            : Stream.never,
+      } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"];
+      const running = yield* runPeerEnvironmentHost().pipe(
+        Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
+        Effect.forkChild,
+      );
+      for (let i = 0; i < 8; i++) {
+        yield* Queue.offer(requests, {
+          type: "request",
+          connectionId: "connection",
+          request: {
+            requestId: `wait-${i}`,
+            timeoutMs: 300_000,
+            operation: {
+              operation: "thread_wait",
+              environmentId: r2d2,
+              input: {
+                projectId: ProjectId.make("project"),
+                threadId: ThreadId.make(`thread-${i}`),
+                timeoutMs: 300_000,
+              },
+            },
+          },
+        });
+      }
+      yield* Deferred.await(allWaiting);
+      yield* Queue.offer(requests, {
+        type: "request",
+        connectionId: "connection",
+        request: {
+          requestId: "list",
+          timeoutMs: 5_000,
+          operation: { operation: "list" },
+        },
+      });
+      expect(yield* Deferred.await(listed)).toEqual({
+        ok: true,
+        result: {
+          operation: "list",
+          environments: [{ environmentId: r2d2, label: "r2d2", status: "connected" }],
+        },
+      });
+      expect(yield* Ref.get(activeWaits)).toBe(8);
+      yield* Fiber.interrupt(running);
+      expect(yield* Ref.get(activeWaits)).toBe(0);
+    }),
 );

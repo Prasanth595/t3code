@@ -1,4 +1,3 @@
-import * as PeerEnvironmentService from "../../PeerEnvironmentService.ts";
 import { expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,

@@ -413,7 +413,7 @@ export function providerCapability(
       label: model.name ?? null,
       ...(model.capabilities?.optionDescriptors === undefined
         ? {}
-        : { options: model.capabilities.optionDescriptors }),
+        : { options: model.capabilities.optionDescriptors.map(capabilityModelOption) }),
     })),
     canRunChildTask: constraints.length === 0,
     canRunCrossProviderChildTask: constraints.length === 0,
