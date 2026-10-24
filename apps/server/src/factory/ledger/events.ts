@@ -102,6 +102,7 @@ export type RunEvent =
   | { readonly event: "stop_requested"; readonly data: { by: string } }
   | { readonly event: "step_changed"; readonly data: { step: string } }
   | { readonly event: "pr_opened"; readonly data: { pr: number; url: string } }
+  | { readonly event: "pr_left"; readonly data: { pr: number; url: string } }
   | {
       readonly event: "pr_adopted";
       readonly data: { pr: number; branch: string; run: string };
@@ -184,7 +185,7 @@ export type RunEventName = RunEvent["event"];
 type RunDataKeys<N extends RunEventName> = keyof Extract<RunEvent, { event: N }>["data"];
 
 /**
- * The 30 event types a run file can hold, each with the names of its `data` fields in the order
+ * The 31 event types a run file can hold, each with the names of its `data` fields in the order
  * they are written.
  */
 export const RUN_EVENT_FIELDS = {
@@ -215,6 +216,7 @@ export const RUN_EVENT_FIELDS = {
   stop_requested: ["by"],
   step_changed: ["step"],
   pr_opened: ["pr", "url"],
+  pr_left: ["pr", "url"],
   pr_adopted: ["pr", "branch", "run"],
   branch_bound: ["pr", "branch"],
   pr_set_draft: ["pr"],

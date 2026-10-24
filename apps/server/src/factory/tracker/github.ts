@@ -53,6 +53,50 @@ export const READY_BY_QUERY =
 export const CLOSED_BY_QUERY =
   "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { issue(number: $number) { timelineItems(itemTypes: [CLOSED_EVENT], last: 1) { nodes { ... on ClosedEvent { actor { login } } } } } } }";
 
+/**
+ * The pull requests whose text says they close the issue (`Closes #n`), as GitHub links them:
+ * only a pull request onto the repo's default branch gets such a link. `includeClosedPrs: false`
+ * still returns merged ones, so `state` is read and only `OPEN` is kept.
+ */
+export const CLOSING_PRS_QUERY =
+  "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { issue(number: $number) { closedByPullRequestsReferences(first: 50, includeClosedPrs: false) { nodes { number url state headRefName baseRefName isCrossRepository author { login } } } } } }";
+
+/** One pull request as GitHub lists it, in the GraphQL answer and in `gh pr list --json`. */
+const ListedPullRequest = Schema.Struct({
+  number: Schema.Number,
+  url: Schema.String,
+  headRefName: Schema.String,
+  baseRefName: Schema.String,
+  isCrossRepository: Schema.Boolean,
+  author: Schema.optional(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
+});
+
+const ClosingAnswer = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.Struct({
+      issue: Schema.Struct({
+        closedByPullRequestsReferences: Schema.Struct({
+          nodes: Schema.Array(Schema.Struct({ ...ListedPullRequest.fields, state: Schema.String })),
+        }),
+      }),
+    }),
+  }),
+});
+
+const PullRequestList = Schema.Array(ListedPullRequest);
+
+/** The fields `openPullRequestsOnHead` asks `gh pr list` for, in the order of `ListedPullRequest`. */
+const PR_LIST_FIELDS = "number,url,headRefName,baseRefName,isCrossRepository,author";
+
+const listedPullRequest = (node: typeof ListedPullRequest.Type): OpenPullRequest => ({
+  number: node.number,
+  url: node.url,
+  headRef: node.headRefName,
+  baseRef: node.baseRefName,
+  crossRepository: node.isCrossRepository,
+  author: node.author?.login ? node.author.login : null,
+});
+
 const ReadyByAnswer = Schema.Struct({
   data: Schema.Struct({
     repository: Schema.Struct({
@@ -748,6 +792,23 @@ export interface PullRequest {
 }
 
 /**
+ * An open pull request as `openPullRequestsClosing` and `openPullRequestsOnHead` list it. Forks
+ * and other bases are listed too: the caller decides which is the factory's own.
+ */
+export interface OpenPullRequest {
+  readonly number: number;
+  readonly url: string;
+  /** The branch the pull request comes from. */
+  readonly headRef: string;
+  /** The branch the pull request merges into. */
+  readonly baseRef: string;
+  /** The head is in a fork, not in this repo. */
+  readonly crossRepository: boolean;
+  /** The login that opened it; null when GitHub names none (a deleted account, or a blank login). */
+  readonly author: string | null;
+}
+
+/**
  * How one ref stands against another, in GitHub's words: `ahead` when the second
  * holds everything of the first and more, `behind` when the second is inside the
  * first one's history, `identical`, or `diverged` when each has commits the other lacks.
@@ -873,6 +934,18 @@ const decodeUtf8 = (bytes: Uint8Array): string | null => {
  */
 export const isBranchPath = (branch: string): boolean =>
   !branch.split("/").some((part) => part === "" || part === "." || part === "..");
+
+/** Whether `name` can go into a ref the factory passes to git: not empty, not an option, no whitespace or control character, no `..`. */
+export const isPlainRefName = (name: string): boolean =>
+  name !== "" && !name.startsWith("-") && !name.includes("..") && !/[\s\p{Cc}]/u.test(name);
+
+/**
+ * Whether `branch` can be written into a command a session runs (`git push origin HEAD:<branch>`
+ * in a launch message): only the characters of an ordinary branch name, not an option, no `..`.
+ * Stricter than `isPlainRefName`, which only keeps a name safe as one argument to git.
+ */
+export const isSafeBranchName = (branch: string): boolean =>
+  /^[A-Za-z0-9/._-]+$/.test(branch) && !branch.startsWith("-") && !branch.includes("..");
 
 /** A branch name as a path under `refs/heads/` in the API; null for a name that could leave it. */
 const encodeBranch = (branch: string): string | null => {
@@ -1386,6 +1459,55 @@ export const makeGitHub = (options: GitHubOptions) => {
     );
     const last = answer.data.repository.issue.timelineItems.nodes.at(-1);
     return last?.actor?.login ?? null;
+  });
+
+  /**
+   * The open pull requests whose text says they close the issue, as GitHub links them
+   * (`closedByPullRequestsReferences`), in GitHub's order. Forks and other bases are listed too,
+   * whoever opened them: the caller decides which is the factory's own. GitHub makes the link
+   * only for a pull request onto the repo's default branch, so one onto another base is never
+   * here; `openPullRequestsOnHead` finds that one by its branch.
+   */
+  const openPullRequestsClosing = Effect.fn("GitHub.openPullRequestsClosing")(function* (
+    issue: number,
+  ): GitHubGen<ReadonlyArray<OpenPullRequest>> {
+    const args = yield* issueQueryArgs(CLOSING_PRS_QUERY, issue);
+    const answer = yield* ghJson(
+      args,
+      ClosingAnswer,
+      "a GraphQL response with the issue's closing pull requests",
+    );
+    return answer.data.repository.issue.closedByPullRequestsReferences.nodes
+      .filter((node) => node.state === "OPEN")
+      .map(listedPullRequest);
+  });
+
+  /**
+   * The open pull requests from a branch named `head` (`gh pr list --head`), forks included,
+   * whatever their base and whoever opened them: the caller decides which is the factory's own.
+   * A name that is not a plain ref name (`isPlainRefName`) is refused before the call.
+   */
+  const openPullRequestsOnHead = Effect.fn("GitHub.openPullRequestsOnHead")(function* (
+    head: string,
+  ): GitHubGen<ReadonlyArray<OpenPullRequest>> {
+    if (!isPlainRefName(head)) {
+      return yield* new GitHubInvalidArgument({
+        argument: head,
+        expected: "a plain branch name",
+      });
+    }
+    const args = repoArgs(["pr", "list"]).concat([
+      "--state",
+      "open",
+      "--head",
+      head,
+      "--limit",
+      "100",
+      "--json",
+      PR_LIST_FIELDS,
+    ]);
+    const rows = yield* ghJson(args, PullRequestList, "a JSON array of pull requests");
+    return rows.map(listedPullRequest);
   });
 
   /**
@@ -2210,6 +2332,8 @@ export const makeGitHub = (options: GitHubOptions) => {
     commentOnPr,
     readyBy,
     closedBy,
+    openPullRequestsClosing,
+    openPullRequestsOnHead,
     compare,
     checks,
     openBlockers,

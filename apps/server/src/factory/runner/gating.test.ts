@@ -394,6 +394,7 @@ class FakeGh {
         ? Effect.fail(ghFailure())
         : Effect.succeed(this.closedByAnswer);
     },
+    openPullRequestsOnHead: () => Effect.succeed([]),
     pullRequest: (n) =>
       this.run(`pullRequest ${n}`, () => {}).pipe(
         Effect.map(() => {
@@ -1498,6 +1499,32 @@ describe("gate: the session's PR becomes ready, or it does not", () => {
       clearCalls(rig);
       assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
     }),
+  );
+
+  it.effect(
+    "binds a pull request on the branch an earlier attempt worked on at gate time too",
+    () =>
+      Effect.gen(function* () {
+        // Attempt 1 worked on t3code/old; attempt 2's session reports the pull request from there.
+        const rig = rigFor(
+          STARTED.map((event) =>
+            event.event === "session_launched"
+              ? {
+                  event: "session_launched" as const,
+                  data: { ...event.data, branch: "t3code/old" },
+                }
+              : event,
+          ),
+        );
+        const run10n2: RunId = { ...run10, attempt: 2 };
+        seed(rig.dataDir, run10n2, STARTED);
+        const second: Rig = { ...rig, run: run10n2 };
+        second.gh.pr = { ...defaultPr(), headRef: "t3code/old" };
+        setRun(second, "completed", 1);
+        assert.strictEqual((yield* advanceIn(second)).kind, "ready-for-gate");
+        clearCalls(second);
+        assert.deepStrictEqual(yield* gateIn(second), { kind: "passed", pr: 12 });
+      }),
   );
 
   it.effect("the PR is checked again at gate time and a changed one sends the issue to stuck", () =>

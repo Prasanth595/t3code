@@ -56,6 +56,28 @@ describe("readProgress: the pull request", () => {
     assert.strictEqual(seen.prReported, false);
   });
 
+  it("keeps a pull request a stopping session left apart from the ones the run reported", () => {
+    // A `pr_left` line is written by a stuck exit, for the next attempt to continue: the session
+    // did not report it for the gate, so the run still holds its slot and its time limit.
+    const url = "https://github.com/rawphp/softfac/pull/12";
+    const seen = readProgress([line(1, "pr_left", { pr: 12, url })]);
+    assert.deepStrictEqual(seen.left, [{ pr: 12, url }]);
+    assert.deepStrictEqual(seen.opened, []);
+    assert.strictEqual(seen.lastPr, null);
+    assert.strictEqual(seen.prReported, false);
+  });
+
+  it("reports a pull request the session reports after a stuck exit recorded it as left", () => {
+    const url = "https://github.com/rawphp/softfac/pull/12";
+    const seen = readProgress([
+      line(1, "pr_left", { pr: 12, url }),
+      line(2, "pr_opened", { pr: 12, url }),
+    ]);
+    assert.deepStrictEqual(seen.opened, [12]);
+    assert.deepStrictEqual(seen.lastPr, { pr: 12, url });
+    assert.strictEqual(seen.prReported, true);
+  });
+
   it("is reported from pr_opened until the run is building again", () => {
     const opened = line(1, "pr_opened", {
       pr: 12,
@@ -500,6 +522,46 @@ describe("readProgress: the branch a launch resumed from", () => {
     assert.strictEqual(seen.resumedFrom, null);
     assert.strictEqual(seen.resumedFromRun, null);
     assert.strictEqual(regateBranch(seen, RUN), null);
+  });
+});
+
+describe("readProgress: the launch-sending step of a resume", () => {
+  it("reads the branch of a resume from an earlier run's branch, with no pull request", () => {
+    const seen = readProgress([step(1, "launch-sending resumed-from t3code/abc")]);
+    assert.isTrue(seen.launchSent);
+    assert.strictEqual(seen.launchResumedFrom, "t3code/abc");
+    assert.strictEqual(seen.launchResumedPr, null);
+  });
+
+  it("reads the pull request of a resume onto an open pull request from the step before", () => {
+    const seen = readProgress([
+      step(1, "launch-pull-request t3code/abc https://github.com/rawphp/softfac/pull/12"),
+      step(2, "launch-sending resumed-from t3code/abc"),
+    ]);
+    assert.strictEqual(seen.launchResumedFrom, "t3code/abc");
+    assert.strictEqual(seen.launchResumedPr, "https://github.com/rawphp/softfac/pull/12");
+  });
+
+  it("takes no pull request decided for another branch, or with no launch-sending step after it", () => {
+    // A decision a crash cut short before its `launch-sending` step, then another decision.
+    const other = readProgress([
+      step(1, "launch-pull-request t3code/abc https://github.com/rawphp/softfac/pull/12"),
+      step(2, "launch-sending resumed-from t3code/def"),
+    ]);
+    assert.strictEqual(other.launchResumedFrom, "t3code/def");
+    assert.strictEqual(other.launchResumedPr, null);
+    const unsent = readProgress([
+      step(1, "launch-pull-request t3code/abc https://github.com/rawphp/softfac/pull/12"),
+    ]);
+    assert.isFalse(unsent.launchSent);
+    assert.strictEqual(unsent.launchResumedPr, null);
+  });
+
+  it("is none for a plain launch", () => {
+    const seen = readProgress([step(1, "launch-sending")]);
+    assert.isTrue(seen.launchSent);
+    assert.strictEqual(seen.launchResumedFrom, null);
+    assert.strictEqual(seen.launchResumedPr, null);
   });
 });
 

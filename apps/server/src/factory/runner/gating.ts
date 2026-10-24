@@ -43,6 +43,7 @@ import {
   WrongRepoError,
   append,
   checkBinding,
+  earlierAttempts,
   sessionBusy,
   stopOf,
   textStop,
@@ -672,6 +673,8 @@ const buildingMode = (
       if (ordinal === null) return NOT_READY;
       const message = status.lastAssistantMessage;
       const branch = status.branch;
+      // What `advance` bound the pull request with: the gate binds it the same way.
+      const earlier = yield* earlierAttempts(ctx, run);
       return {
         attempt,
         bind: (pull, mustBeDraft) => {
@@ -683,6 +686,7 @@ const buildingMode = (
             mustBeDraft,
             seen.resumedFrom,
             status.worktreePath,
+            earlier,
           );
           if (unbound !== null || pull === null) {
             return stuckUnbound(

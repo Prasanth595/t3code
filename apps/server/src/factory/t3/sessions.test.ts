@@ -346,6 +346,26 @@ const layerSessions = (
     NodeServices.layer,
   );
 
+describe("launchBranchOf", () => {
+  it("reads the temporary branch T3 named the worktree folder after", () => {
+    assert.strictEqual(Sessions.launchBranchOf("/x/t3-2e8db933"), "t3/2e8db933");
+    assert.strictEqual(Sessions.launchBranchOf("C:\\x\\t3-2e8db933"), "t3/2e8db933");
+  });
+
+  it("is null for no folder, or one not named after a temporary branch", () => {
+    for (const path of [
+      null,
+      "/t3/wt",
+      "/x/t3-zz",
+      "/x/t3-2e8db93",
+      "/x/t3-2e8db933x",
+      "/x/2e8db933",
+    ]) {
+      assert.strictEqual(Sessions.launchBranchOf(path), null, String(path));
+    }
+  });
+});
+
 describe("FactorySessions.worktreesDirectory", () => {
   const withSetting = (worktreesDirectory: string) =>
     layerSessions(

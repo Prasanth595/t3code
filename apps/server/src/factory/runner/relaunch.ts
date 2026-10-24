@@ -16,7 +16,7 @@ import type { Ledger } from "../ledger/ledger.ts";
 import { ledgerCall as ledger } from "../ledger/errors.ts";
 import { makeCause } from "../ledger/events.ts";
 import { runIdToString, type RunId } from "../ledger/runId.ts";
-import type { IssueDetail } from "../tracker/github.ts";
+import { isSafeBranchName, type IssueDetail } from "../tracker/github.ts";
 import type { FactorySessions } from "../t3/sessions.ts";
 import {
   END_WITH_DONE,
@@ -61,7 +61,7 @@ export type Relaunched =
  * anything but the characters of an ordinary branch is not passed on.
  */
 export const branchRefused = (branch: string): Stop | null =>
-  /^[A-Za-z0-9/._-]+$/.test(branch) && !branch.startsWith("-") && !branch.includes("..")
+  isSafeBranchName(branch)
     ? null
     : { reason: LAUNCH_FAILED, detail: "the pull request's branch is not a plain branch name" };
 

@@ -123,6 +123,12 @@ export interface Seen {
    */
   readonly launchResumedFrom: string | null;
   /**
+   * The pull request of a `launch-pull-request <branch> <url>` step written just before that
+   * `launch-sending resumed-from <branch>` step: the decision to continue an earlier attempt's
+   * open pull request on that branch. Null for a resume from a branch alone, or none.
+   */
+  readonly launchResumedPr: string | null;
+  /**
    * The branch in a `launch-base <branch>` step: the base the first launch call was decided on,
    * when it is not the repo's. A launch sent again reads it and never the issue again.
    */
@@ -142,6 +148,12 @@ export interface Seen {
   readonly opened: ReadonlyArray<number>;
   /** The newest `pr_opened`: the number and the URL as the session wrote it. */
   readonly lastPr: { readonly pr: number; readonly url: string } | null;
+  /**
+   * Every `pr_left` line, in order: a pull request the session left open on its branch when the
+   * run ended short of the gate, for the next attempt to continue. The session did not report it,
+   * so it is in none of `opened`, `lastPr` and `prReported`.
+   */
+  readonly left: ReadonlyArray<{ readonly pr: number; readonly url: string }>;
   /** A `questions_posted` since the run last entered `building`: this stop's questions are on the issue. */
   readonly questionsPosted: boolean;
   /** A `pr_opened` since the run last entered `building` or had a gate sent back: the session's pull request waits for the gate. */
@@ -237,9 +249,10 @@ export interface Seen {
   /** A `session_launched` line follows the newest `gate-sending` step or relaunch decision. */
   readonly launchedSinceSending: boolean;
   /**
-   * The branch the newest `session_launched` line says its worktree was made from (a relaunch
-   * for a failed re-gate); null for a first launch. That session works on a branch of T3's own
-   * and pushes to this one, so a pull request from it is the session's.
+   * The branch the newest `session_launched` line says its worktree was made from (a relaunch for
+   * a failed re-gate or feedback, or an attempt resumed onto an earlier one's work); null for a
+   * first launch. That session works on a branch of T3's own and is told to push to this one, so
+   * a pull request from it is the session's.
    */
   readonly resumedFrom: string | null;
   /** The ids named by any `feedback_relaunching` or `feedback_forwarding` line: each is acted on at most once. */
@@ -256,16 +269,22 @@ export interface Seen {
    * move it, so feedback written while those ran is not lost.
    */
   readonly prOpenSince: number | null;
-  /** The run on that `resumed_from`: this run's own id for a re-gate's session, the earlier attempt's for a resume from its branch. */
+  /**
+   * The run on that `resumed_from`: this run's own id for a session that pushes to a pull
+   * request's branch (a re-gate's or feedback's, or one resumed onto an earlier attempt's open
+   * pull request), the earlier attempt's for a resume from its branch.
+   */
   readonly resumedFromRun: string | null;
 }
 
 /**
- * The pull request's branch when the run's session was launched to fix a failed re-gate of this
- * same run (its `session_launched` line's `resumed_from` names the run itself): that session works
- * on a branch of T3's own and pushes to the pull request's, so that is where its work is. Null for
- * a first launch, and for a session resumed from an earlier attempt's branch, whose work is on
- * T3's branch.
+ * The pull request's branch when the run's session was launched to push there: to fix a failed
+ * re-gate of this same run, for feedback, or to continue an earlier attempt's open pull request
+ * (its `session_launched` line's `resumed_from` names the run itself). That session works on a
+ * branch of T3's own and pushes to the pull request's, so that is where its work is. Null for a
+ * first launch, and for a session resumed from an earlier attempt's branch: a version before the
+ * push words left that work on T3's branch, so the next launch tries T3's branch first and falls
+ * back to this one only when origin lacks it (`start`'s `continuation`).
  */
 export const regateBranch = (seen: Seen, run: RunId): string | null =>
   seen.resumedFromRun === runIdToString(run) ? seen.resumedFrom : null;
@@ -290,6 +309,12 @@ export const committingFeedback = (seen: Seen): Relaunch | null =>
 export const LAUNCH_SENDING = "launch-sending";
 /** The start of the `launch-sending` step of a launch that resumes from an earlier run's branch: `launch-sending resumed-from <branch>`. */
 export const LAUNCH_SENDING_RESUMED = `${LAUNCH_SENDING} resumed-from `;
+/**
+ * The step written just before `launch-sending resumed-from <branch>` when the launch continues
+ * an earlier attempt's open pull request: `launch-pull-request <branch> <url>`. A step of its own,
+ * so a version that does not know it reads the `launch-sending` step as a resume from the branch.
+ */
+export const LAUNCH_PULL_REQUEST = "launch-pull-request ";
 /** The step written before `launch-sending` when the run's base is not the repo's: `launch-base <branch>`. */
 export const LAUNCH_BASE = "launch-base ";
 /** The ledger step that says the issue text was checked again after the launch. */
@@ -381,6 +406,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let threadId: string | null = null;
   let launchSent = false;
   let launchResumedFrom: string | null = null;
+  let launchResumedPr: string | null = null;
+  let launchPullRequest: { branch: string; url: string } | null = null;
   let launchBase: string | null = null;
   let rechecked = false;
   let worktree: string | null = null;
@@ -390,6 +417,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let finished = false;
   const opened: Array<number> = [];
   let lastPr: Seen["lastPr"] = null;
+  const left: Array<{ pr: number; url: string }> = [];
   let questionsPosted = false;
   let prReported = false;
   let reminding: number | null = null;
@@ -430,11 +458,11 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let relaunch: Relaunch | null = null;
   let launchedSinceSending = false;
   let resumedFrom: string | null = null;
+  let resumedFromRun: string | null = null;
   const feedbackSent = new Set<string>();
   let feedbackRelaunches = 0;
   let feedbackLastItems = 0;
   let prOpenSince: number | null = null;
-  let resumedFromRun: string | null = null;
   // A wait marker names run `k`: the awaited ordinal never goes down.
   const awaitRun = (k: number, forward: boolean) => {
     if (waitingAfter === null || k >= waitingAfter) {
@@ -524,9 +552,22 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         if (step === LAUNCH_SENDING) {
           launchSent = true;
           launchResumedFrom = null;
+          launchResumedPr = null;
+          launchPullRequest = null;
         } else if (step.startsWith(LAUNCH_SENDING_RESUMED)) {
           launchSent = true;
           launchResumedFrom = step.slice(LAUNCH_SENDING_RESUMED.length);
+          // Only the pull request decided with this branch: one from a decision a crash cut short
+          // before its `launch-sending` step is not this one's.
+          launchResumedPr =
+            launchPullRequest?.branch === launchResumedFrom ? launchPullRequest.url : null;
+          launchPullRequest = null;
+        } else if (step.startsWith(LAUNCH_PULL_REQUEST)) {
+          // A branch name has no whitespace, so the first space splits the branch from the URL.
+          const rest = step.slice(LAUNCH_PULL_REQUEST.length);
+          const at = rest.indexOf(" ");
+          launchPullRequest =
+            at < 0 ? null : { branch: rest.slice(0, at), url: rest.slice(at + 1) };
         } else if (step.startsWith(LAUNCH_BASE)) {
           launchBase = step.slice(LAUNCH_BASE.length);
         }
@@ -647,6 +688,12 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
           lastPr = { pr, url };
           prReported = true;
         }
+        break;
+      }
+      case "pr_left": {
+        const pr = dataField(entry.data, "pr");
+        const url = dataField(entry.data, "url");
+        if (typeof pr === "number" && typeof url === "string") left.push({ pr, url });
         break;
       }
       case "pr_ready_outside":
@@ -811,6 +858,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     threadId,
     launchSent,
     launchResumedFrom,
+    launchResumedPr,
     launchBase,
     rechecked,
     worktree,
@@ -820,6 +868,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     finished,
     opened,
     lastPr,
+    left,
     questionsPosted,
     prReported,
     reminding,
@@ -855,11 +904,11 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     relaunch,
     launchedSinceSending,
     resumedFrom,
+    resumedFromRun,
     feedbackSent,
     feedbackRelaunches,
     feedbackLastItems,
     prOpenSince,
-    resumedFromRun,
   };
 };
 

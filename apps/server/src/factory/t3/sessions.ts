@@ -145,6 +145,17 @@ export const isLaunchBranch = (branch: string, worktreePath: string | null): boo
   isTemporaryWorktreeBranch(branch) &&
   branch.replaceAll("/", "-") === worktreePath.split(/[\\/]/).pop();
 
+/**
+ * The temporary `t3/<hex>` branch T3 made the worktree at `worktreePath` on, read back from the
+ * folder name (the inverse of `isLaunchBranch`); null when the folder is not named after one.
+ */
+export const launchBranchOf = (worktreePath: string | null): string | null => {
+  const folder = worktreePath?.split(/[\\/]/).pop();
+  if (folder === undefined) return null;
+  const branch = folder.replace(/^t3-/, "t3/");
+  return isLaunchBranch(branch, worktreePath) ? branch : null;
+};
+
 export class ThreadNotFoundError extends Schema.TaggedError<ThreadNotFoundError>()(
   "FactoryThreadNotFoundError",
   { threadId: Schema.String },

@@ -50,7 +50,7 @@ stateDiagram-v2
 
 ## The session's launch message
 
-The factory starts a T3 thread on the project's default model, full access, in a new worktree from `base`. Its first message is:
+The factory starts a T3 thread on the project's default model, full access, in a new worktree from `base`, or from the branch of the earlier work it continues: the issue's open pull request, or the branch of a run that passed its time limit or lost its session. Its first message is:
 
 ```text
 /factory <owner/repo>#<n>
@@ -59,20 +59,20 @@ The factory daemon launched this session unattended, ...
 You act on GitHub as <login>. ...
 ```
 
-The session must check `gh api user --jq .login` first and must not change `GH_CONFIG_DIR`, `GH_TOKEN` or `GH_HOST`.
+The session must check `gh api user --jq .login` first and must not change `GH_CONFIG_DIR`, `GH_TOKEN` or `GH_HOST`. A launch that continues earlier work adds a paragraph that says what it continues, tells the session to push with `git push origin HEAD:<branch>`, and says not to open another pull request.
 
 ## Result line
 
 The whole last non-empty line of the session's last message:
 
-| Last line                                                                            | Requires                                                                            | Result                                                    |
-| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| `FACTORY-DONE: https://github.com/<owner>/<repo>/pull/<n>`                           | Exactly that URL form; repo matches (case-insensitive); PR on the session's branch. | PR set to draft if needed; gate runs.                     |
-| `FACTORY-STOP: needs-info`                                                           | Non-empty text above it: the numbered questions.                                    | Questions posted; `needs-info`. Empty text: `stuck`.      |
-| `FACTORY-STOP: stuck`                                                                | Text above it explains why.                                                         | `stuck`, with the text quoted as unverified session text. |
-| `FACTORY-STOP: stuck` with first line `the session's gh account is <x>, not <login>` |                                                                                     | `stuck`: wrong GitHub account.                            |
-| `FACTORY-DONE:` with a malformed URL, or a PR on another repo                        |                                                                                     | `stuck` at once, no reminder.                             |
-| no result line, or no message                                                        |                                                                                     | One reminder message; then `stuck`.                       |
+| Last line                                                                            | Requires                                                                                                                                                                                                                                         | Result                                                    |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
+| `FACTORY-DONE: https://github.com/<owner>/<repo>/pull/<n>`                           | Exactly that URL form; repo matches (case-insensitive); not a fork; onto the run's base; on the session's branch, its launch or resumed-from branch, or a branch an earlier attempt of the issue worked on, or a PR an earlier attempt recorded. | PR set to draft if needed; gate runs.                     |
+| `FACTORY-STOP: needs-info`                                                           | Non-empty text above it: the numbered questions.                                                                                                                                                                                                 | Questions posted; `needs-info`. Empty text: `stuck`.      |
+| `FACTORY-STOP: stuck`                                                                | Text above it explains why.                                                                                                                                                                                                                      | `stuck`, with the text quoted as unverified session text. |
+| `FACTORY-STOP: stuck` with first line `the session's gh account is <x>, not <login>` |                                                                                                                                                                                                                                                  | `stuck`: wrong GitHub account.                            |
+| `FACTORY-DONE:` with a malformed URL, or a PR on another repo                        |                                                                                                                                                                                                                                                  | `stuck` at once, no reminder.                             |
+| no result line, or no message                                                        |                                                                                                                                                                                                                                                  | One reminder message; then `stuck`.                       |
 
 ```mermaid
 sequenceDiagram
