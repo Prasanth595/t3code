@@ -20,15 +20,17 @@ import * as Semaphore from "effect/Semaphore";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as AgentFileSync from "./AgentFileSync.ts";
 
-const SavedLink = Schema.Struct({ ...AgentFileSyncLink.fields, previous: AgentFileSyncBundle });
-const State = Schema.Array(SavedLink);
-type State = typeof State.Type;
-const encode = Schema.encodeSync(Schema.fromJsonString(State));
-const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(State));
+type State = readonly (AgentFileSyncLink & { readonly previous: AgentFileSyncBundle })[];
+const SavedLinks = Schema.Array(AgentFileSyncLink);
+const encode = Schema.encodeSync(Schema.fromJsonString(SavedLinks));
+const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(SavedLinks));
 const encodeBundle = Schema.encodeSync(Schema.fromJsonString(AgentFileSyncBundle));
+const decodeBundle = Schema.decodeUnknownEffect(Schema.fromJsonString(AgentFileSyncBundle));
 const bundleRevision = (bundle: typeof AgentFileSyncBundle.Type) =>
   NodeCrypto.createHash("sha256").update(encodeBundle(bundle)).digest("hex");
 const SECRET = "agent-file-sync-links";
+const baselineKey = (link: AgentFileSyncLink) =>
+  `agent-file-sync-baseline-${NodeCrypto.createHash("sha256").update(`${link.id}\0${link.revision}`).digest("hex")}`;
 
 export class AgentFileSyncLinks extends Context.Service<
   AgentFileSyncLinks,
@@ -52,15 +54,55 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const home = yield* HostProcess.HomeDirectory;
   const stored = yield* secrets.get(SECRET);
-  let state: State = Option.isSome(stored)
-    ? yield* decode(Buffer.from(stored.value).toString("utf8"))
+  const metadata = Option.isSome(stored)
+    ? yield* decode(Buffer.from(stored.value).toString("utf8")).pipe(
+        Effect.tapError(() =>
+          Effect.logWarning("Ignoring unreadable agent file sync subscriptions"),
+        ),
+        Effect.orElseSucceed(() => []),
+      )
     : [];
+  const loadBaseline = Effect.fn("AgentFileSyncLinks.loadBaseline")(
+    function* (link: AgentFileSyncLink) {
+      const baseline = yield* secrets.get(baselineKey(link));
+      if (Option.isNone(baseline)) return yield* new AgentFileSyncError({ reason: "io" });
+      const previous = yield* decodeBundle(Buffer.from(baseline.value).toString("utf8"));
+      if (bundleRevision(previous) !== link.revision)
+        return yield* new AgentFileSyncError({ reason: "changed" });
+      return { ...link, previous };
+    },
+    Effect.catch(() =>
+      Effect.logWarning("Ignoring an unreadable agent file sync baseline").pipe(Effect.as(null)),
+    ),
+  );
+  let state: State = (yield* Effect.forEach(metadata, loadBaseline)).filter(
+    (link) => link !== null,
+  );
   const lock = yield* Semaphore.make(1);
   const persist = Effect.fn("AgentFileSyncLinks.persist")(function* (next: State) {
+    const oldKeys = new Set(state.map(baselineKey));
+    const nextKeys = new Set(next.map(baselineKey));
+    // Publish immutable baselines before the catalog so interrupted writes leave the prior state readable.
+    for (const link of next) {
+      if (oldKeys.has(baselineKey(link))) continue;
+      yield* secrets
+        .set(baselineKey(link), Buffer.from(encodeBundle(link.previous)))
+        .pipe(Effect.mapError((cause) => new AgentFileSyncError({ reason: "io", cause })));
+    }
     yield* secrets
-      .set(SECRET, Buffer.from(encode(next)))
+      .set(SECRET, Buffer.from(encode(next.map(({ previous: _previous, ...link }) => link))))
       .pipe(Effect.mapError((cause) => new AgentFileSyncError({ reason: "io", cause })));
     state = next;
+    for (const key of oldKeys) {
+      if (nextKeys.has(key)) continue;
+      yield* secrets
+        .remove(key)
+        .pipe(
+          Effect.catch(() =>
+            Effect.logWarning("Could not remove an obsolete agent file sync baseline"),
+          ),
+        );
+    }
   });
   // File contents stay on the destination. Clients only need the selection and generation.
   const list = Effect.sync(() => state.map(({ previous: _previous, ...link }) => link));
@@ -72,7 +114,8 @@ const make = Effect.gen(function* () {
   ) {
     return yield* lock.withPermit(
       Effect.gen(function* () {
-        if (state.length >= 20) return yield* new AgentFileSyncError({ reason: "limit" });
+        if (state.length >= 20)
+          return yield* new AgentFileSyncError({ reason: "subscription-limit" });
         const destination = yield* fs
           .realPath(input.cwd ?? home)
           .pipe(Effect.mapError((cause) => new AgentFileSyncError({ reason: "io", cause })));

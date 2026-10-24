@@ -83,6 +83,7 @@ export function startAgentFileSyncRelay<R, E>(
     try {
       for (const environmentId of environmentIds) {
         if (controller.signal.aborted) return;
+        if (!registry.get(atoms.refresh.permissionAtom(environmentId))) continue;
         const links = await executeAtomQuery(
           registry,
           atoms.links({ environmentId, input: {} }),

@@ -87,6 +87,7 @@ export class AgentFileSyncError extends Schema.TaggedError<AgentFileSyncError>()
     reason: Schema.Literals([
       "invalid-path",
       "limit",
+      "subscription-limit",
       "linked-destination",
       "changed",
       "invalid-block",
@@ -104,6 +105,8 @@ export class AgentFileSyncError extends Schema.TaggedError<AgentFileSyncError>()
         return `This path is not a supported skill or instruction file${at}.`;
       case "limit":
         return `Selection exceeds the sync limit: 4 MB, 256 files per skill, 1 MB per file${at}.`;
+      case "subscription-limit":
+        return "This destination already has 20 sync subscriptions. Stop one before starting another.";
       case "linked-destination":
         return `Destination contains a link or special file. Manage it on that host before syncing${at}.`;
       case "changed":

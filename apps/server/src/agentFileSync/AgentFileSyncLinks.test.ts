@@ -7,6 +7,7 @@ import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -28,14 +29,26 @@ const fixture = Effect.gen(function* () {
   const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sync-links-" });
   const config = Config.layerTest(directory, path.join(directory, "data"));
   const storage = new Map<string, Uint8Array>();
+  const writes: string[] = [];
+  const failWrites = new Set<string>();
   const secrets = Layer.succeed(
     ServerSecretStore.ServerSecretStore,
     ServerSecretStore.ServerSecretStore.of({
       get: (name) => Effect.sync(() => Option.fromNullishOr(storage.get(name))),
       set: (name, data) =>
-        Effect.sync(() => {
-          storage.set(name, Uint8Array.from(data));
-        }),
+        Effect.suspend(() =>
+          failWrites.has(name)
+            ? Effect.fail(
+                new ServerSecretStore.SecretStorePersistError({
+                  resource: name,
+                  cause: "test write failure",
+                }),
+              )
+            : Effect.sync(() => {
+                storage.set(name, Uint8Array.from(data));
+                writes.push(name);
+              }),
+        ),
       create: () => Effect.void,
       remove: (name) =>
         Effect.sync(() => {
@@ -73,10 +86,157 @@ const fixture = Effect.gen(function* () {
     });
     return (yield* links.list)[0]!;
   });
-  return { fs, path, directory, files, links, load, subscribe };
+  return { fs, path, directory, files, links, load, subscribe, storage, writes, failWrites };
 });
 
 it.layer(NodeServices.layer)("sync subscriptions", (it) => {
+  it.effect(
+    "starts with no subscriptions when saved metadata is malformed, without logging its contents",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const logs: unknown[] = [];
+        const logger = Logger.make(({ message }) => logs.push(message));
+        for (const corrupt of [
+          "PRIVATE FILE CONTENTS",
+          JSON.stringify([{ previous: "PRIVATE FILE CONTENTS" }]),
+        ]) {
+          f.storage.set("agent-file-sync-links", Buffer.from(corrupt));
+          const recovered = yield* f.load.pipe(
+            Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+          );
+          expect(yield* recovered.list).toEqual([]);
+          expect(Buffer.from(f.storage.get("agent-file-sync-links")!).toString()).toBe(corrupt);
+        }
+        expect(logs).toHaveLength(2);
+        expect(JSON.stringify(logs)).not.toContain("PRIVATE FILE CONTENTS");
+      }),
+  );
+  it.effect("reports the subscription count limit before changing any destination file", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      for (let index = 0; index < 20; index++) {
+        const cwd = f.path.join(f.directory, String(index));
+        yield* f.fs.makeDirectory(cwd);
+        yield* f.links.subscribe({
+          cwd,
+          sourceEnvironmentId: EnvironmentId.make("source"),
+          selection: {
+            skills: [],
+            instructions: [{ path: "AGENTS.md", sectionIds: ["Shared:0"] }],
+          },
+          label: "Source",
+          bundle: bundle("Initial"),
+          expected: yield* f.files.preview({ cwd, bundle: bundle("Initial") }),
+        });
+      }
+      const rejected = yield* f.subscribe().pipe(Effect.flip);
+      expect(rejected.reason).toBe("subscription-limit");
+      expect(rejected.message).toContain("20 sync subscriptions");
+      expect(yield* f.fs.exists(f.path.join(f.directory, "AGENTS.md"))).toBe(false);
+    }),
+  );
+  it.effect("persists only changed baselines and removes obsolete baseline files", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const link = yield* f.subscribe();
+      const cwd = f.path.join(f.directory, "other");
+      yield* f.fs.makeDirectory(cwd);
+      yield* f.links.subscribe({
+        cwd,
+        sourceEnvironmentId: EnvironmentId.make("other-source"),
+        selection: { skills: [], instructions: [{ path: "AGENTS.md", sectionIds: ["Shared:0"] }] },
+        label: "Other",
+        bundle: bundle("Other rules"),
+        expected: yield* f.files.preview({ cwd, bundle: bundle("Other rules") }),
+      });
+      const other = (yield* f.links.list)[1]!;
+      expect(Buffer.from(f.storage.get("agent-file-sync-links")!).toString()).not.toContain(
+        "Initial",
+      );
+      const baselineKeys = () =>
+        [...f.storage.keys()].filter((key) => key !== "agent-file-sync-links");
+      const original = baselineKeys();
+      expect(original).toHaveLength(2);
+      const writesBeforePause = f.writes.length;
+      yield* f.links.manage({ id: link.id, action: "pause" });
+      expect(f.writes.slice(writesBeforePause)).toEqual(["agent-file-sync-links"]);
+      expect(baselineKeys()).toEqual(original);
+      yield* f.links.manage({ id: link.id, action: "resume" });
+      const resumed = (yield* f.links.list)[0]!;
+      const writesBeforeChange = f.writes.length;
+      yield* f.links.refresh({
+        id: link.id,
+        generation: resumed.generation,
+        bundle: bundle("Changed"),
+      });
+      expect(f.writes.slice(writesBeforeChange)).toHaveLength(2);
+      expect(baselineKeys()).toHaveLength(2);
+      expect(baselineKeys().filter((key) => original.includes(key))).toHaveLength(1);
+      expect(baselineKeys()).not.toEqual(original);
+      const current = (yield* f.links.list)[0]!;
+      const writesBeforeCheck = f.writes.length;
+      yield* f.links.refresh({ id: link.id, generation: current.generation, bundle: null });
+      expect(f.writes).toHaveLength(writesBeforeCheck);
+      expect(yield* (yield* f.load).list).toEqual([current, other]);
+      yield* f.links.manage({ id: link.id, action: "remove" });
+      expect(baselineKeys()).toHaveLength(1);
+      yield* f.links.manage({ id: other.id, action: "remove" });
+      expect(baselineKeys()).toEqual([]);
+      expect(yield* (yield* f.load).list).toEqual([]);
+    }),
+  );
+  it.effect("keeps the prior baseline readable when publishing updated metadata fails", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const original = yield* f.subscribe();
+      const saved = f.storage.get("agent-file-sync-links");
+      f.failWrites.add("agent-file-sync-links");
+      expect(
+        (yield* f.links
+          .refresh({ id: original.id, generation: 0, bundle: bundle("Changed") })
+          .pipe(Effect.flip)).reason,
+      ).toBe("io");
+      expect(f.storage.get("agent-file-sync-links")).toEqual(saved);
+      const restarted = yield* f.load;
+      expect(yield* restarted.list).toEqual([original]);
+      f.failWrites.clear();
+      yield* restarted.refresh({ id: original.id, generation: 0, bundle: bundle("Changed") });
+      expect((yield* restarted.list)[0]?.generation).toBe(1);
+      expect([...f.storage.keys()].filter((key) => key !== "agent-file-sync-links")).toHaveLength(
+        1,
+      );
+      expect(yield* f.fs.readFileString(f.path.join(f.directory, "AGENTS.md"))).toContain(
+        "Changed",
+      );
+    }),
+  );
+  it.effect("ignores missing, malformed or mismatched baselines without logging contents", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      yield* f.subscribe();
+      const key = [...f.storage.keys()].find((key) => key !== "agent-file-sync-links")!;
+      const original = f.storage.get(key)!;
+      const logs: unknown[] = [];
+      const logger = Logger.make(({ message }) => logs.push(message));
+      for (const contents of [
+        undefined,
+        Buffer.from("PRIVATE FILE CONTENTS"),
+        Buffer.from(JSON.stringify(bundle("PRIVATE FILE CONTENTS"))),
+      ]) {
+        if (contents) f.storage.set(key, contents);
+        else f.storage.delete(key);
+        const recovered = yield* f.load.pipe(
+          Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+        );
+        expect(yield* recovered.list).toEqual([]);
+      }
+      expect(logs).toHaveLength(3);
+      expect(JSON.stringify(logs)).not.toContain("PRIVATE FILE CONTENTS");
+      f.storage.set(key, original);
+      expect(yield* (yield* f.load).list).toHaveLength(1);
+    }),
+  );
   it.effect("survives restarts and never exposes baseline file contents in its catalog", () =>
     Effect.gen(function* () {
       const f = yield* fixture;
