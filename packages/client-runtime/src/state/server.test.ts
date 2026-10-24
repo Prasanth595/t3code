@@ -1,5 +1,9 @@
 import {
   EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ProviderInstallState,
+  type ProviderSetupInput,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
@@ -12,11 +16,13 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { RpcClientError } from "effect/rpc";
 import * as Socket from "effect/socket/Socket";
 
@@ -25,12 +31,14 @@ import {
   PrimaryConnectionTarget,
   type PreparedConnection,
 } from "../connection/model.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
   applyServerWelcomeEvent,
+  createServerEnvironmentAtoms,
   makeEnvironmentServerWelcomeState,
   makeEnvironmentServerConfigState,
   isLegacyUpdateHandoffLoss,
@@ -811,5 +819,83 @@ describe("server state projection", () => {
       // Cached, it would read as a fresh freeze on the next launch.
       expect(yield* Queue.take(savedConfigs)).not.toHaveProperty("lastEventLoopStall");
     }),
+  );
+});
+
+describe("provider setup commands", () => {
+  it.effect("starts installs for two instances in one environment separately", () =>
+    Effect.gen(function* () {
+      const requested = yield* Queue.unbounded<ProviderInstanceId>();
+      const release = yield* Deferred.make<void>();
+      const installState = (driver: string): ProviderInstallState => ({
+        driver: ProviderDriverKind.make(driver),
+        operationId: null,
+        phase: "downloading",
+        downloadedBytes: 0,
+        totalBytes: null,
+        version: null,
+        installedVersion: null,
+        canRemove: false,
+        message: null,
+      });
+      const client = {
+        [WS_METHODS.providerInstallStart]: ({ instanceId }: ProviderSetupInput) =>
+          Queue.offer(requested, instanceId).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.as(installState(instanceId)),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.some(session(client))),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const runtime = Atom.runtime(
+        Layer.merge(
+          Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, {
+            run: (_environmentId, effect) =>
+              Effect.provideService(
+                effect,
+                EnvironmentSupervisor.EnvironmentSupervisor,
+                supervisor,
+              ),
+          } as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+          Layer.succeed(
+            Persistence.EnvironmentCacheStore,
+            {} as Persistence.EnvironmentCacheStore["Service"],
+          ),
+        ),
+      );
+      const atoms = createServerEnvironmentAtoms(runtime, {
+        initialConfigValueAtom: () => Atom.make(CONFIG),
+      });
+      const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+        Effect.sync(() => registry.dispose()),
+      );
+      const install = (instanceId: string) =>
+        atoms.startProviderInstall.run(registry, {
+          environmentId: TARGET.environmentId,
+          input: { instanceId: ProviderInstanceId.make(instanceId) },
+        });
+
+      const codex = install("codex");
+      expect(yield* Queue.take(requested)).toBe("codex");
+      const antigravity = install("antigravity");
+      yield* Deferred.succeed(release, undefined);
+
+      expect(yield* Effect.promise(() => codex)).toMatchObject({
+        _tag: "Success",
+        value: { driver: "codex" },
+      });
+      expect(yield* Effect.promise(() => antigravity)).toMatchObject({
+        _tag: "Success",
+        value: { driver: "antigravity" },
+      });
+      expect(yield* Queue.takeAll(requested)).toEqual(["antigravity"]);
+    }).pipe(Effect.scoped),
   );
 });
