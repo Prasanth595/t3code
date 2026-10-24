@@ -101,7 +101,7 @@ import {
 } from "~/lib/sourceControlActions";
 import { useThreadProjection, useQuietThreadShell } from "~/state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
-import { useEnvironmentQuery } from "~/state/query";
+import { useEnvironmentQuery, useEnvironmentQueryRefresh } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { sourceControlEnvironment } from "~/state/sourceControl";
 import { threadEnvironment } from "~/state/threads";
@@ -1003,19 +1003,24 @@ function ThreadChangesControl({
     statusTotals?.deletions,
   ]);
   const { refresh, isPending } = changesDiffPreview;
+  const hasPreview = changesDiffPreview.data !== null;
+  const previewRequest = useEnvironmentQueryRefresh(previewAtom);
   useEffect(() => {
     if (previewAtom === null) return;
     const previous = changesPreviewKeys.get(previewAtom);
-    // The query revalidates on mount, so a first look needs no extra request.
     if (previous === undefined) {
       changesPreviewKeys.set(previewAtom, changeKey);
+      // A request from this mount covers the current workspace, but a result the
+      // Changes panel cached may predate it. Pending is read live because the
+      // mount's own revalidation starts after this render.
+      if (hasPreview && !previewRequest.isPending()) refresh();
       return;
     }
     // A change during a fetch still needs a refresh after it settles.
     if (previous === changeKey || isPending) return;
     changesPreviewKeys.set(previewAtom, changeKey);
     refresh();
-  }, [previewAtom, changeKey, isPending, refresh]);
+  }, [previewAtom, changeKey, isPending, refresh, hasPreview, previewRequest]);
   const changesTotals = resolveChangesTotals({
     gitStatus,
     diffPreview: canReadFiles ? changesDiffPreview.data : null,

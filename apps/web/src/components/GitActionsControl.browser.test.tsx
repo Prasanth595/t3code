@@ -240,6 +240,8 @@ vi.mock(import("~/components/ui/toast"), async (original) => {
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useDiffPanelSessionStore, useDiffPanelStore } from "~/diffPanelStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import { useEnvironmentQuery } from "~/state/query";
+import { reviewEnvironment } from "~/state/review";
 import GitActionsControl from "./GitActionsControl";
 
 // ThreadDetailsPanel keeps this component mounted behind React.memo when threads change.
@@ -394,6 +396,30 @@ describe("thread details Changes row", () => {
     expect(state.previewRequests).toEqual(["auto:true"]);
 
     await screen.rerender(null);
+    state.previewTotals["auto:true"] = { additions: 2, deletions: 1 };
+    await screen.rerender(control("thread", "/repo", "panel", "edit"));
+
+    await expect.element(changesRow()).toHaveTextContent("Changes+2-1");
+    expect(state.previewRequests).toEqual(["auto:true", "auto:true"]);
+  });
+
+  it("refreshes a comparison the Changes panel cached before the workspace changed", async () => {
+    setup();
+    featureBranch();
+    function ChangesPanelPreview() {
+      useEnvironmentQuery(
+        reviewEnvironment.diffPreview({
+          environmentId: threadRef.environmentId,
+          input: { cwd: "/repo", ignoreWhitespace: true },
+        }),
+      );
+      return null;
+    }
+    const screen = await render(<ChangesPanelPreview />);
+    await using _ = screen;
+    await vi.waitFor(() => expect(state.previewRequests).toEqual(["auto:true"]));
+    await screen.rerender(null);
+
     state.previewTotals["auto:true"] = { additions: 2, deletions: 1 };
     await screen.rerender(control("thread", "/repo", "panel", "edit"));
 
