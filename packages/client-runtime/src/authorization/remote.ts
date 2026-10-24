@@ -198,9 +198,10 @@ const issueWebSocketTicketWithFallback = <E, R>(
   issue: (
     use: AuthWebSocketTicketUse | undefined,
   ) => Effect.Effect<AuthWebSocketTicketResult, E, R>,
+  canFallBack = true,
 ) =>
-  use === undefined
-    ? issue(undefined)
+  use === undefined || !canFallBack
+    ? issue(use)
     : issue(use).pipe(
         Effect.catchIf(
           (error) =>
@@ -244,7 +245,7 @@ export const issueRemoteDpopWebSocketTicket = Effect.fn(
   const client = yield* makeEnvironmentHttpApiGroupClient(input.httpBaseUrl, "auth");
   const fallbackProof = input.fallbackProof;
   return yield* issueWebSocketTicketWithFallback(
-    fallbackProof === undefined ? undefined : input.use,
+    input.use,
     (use) =>
       Effect.gen(function* () {
         // The proof names the path it signs, so the fallback request needs its own.
@@ -259,6 +260,7 @@ export const issueRemoteDpopWebSocketTicket = Effect.fn(
             : client.webSocketTicketFor({ headers, params: { use } }),
         );
       }),
+    fallbackProof !== undefined,
   );
 });
 

@@ -251,6 +251,25 @@ describe("remote environment authorization", () => {
     }),
   );
 
+  it.effect("requests the audience route even without a fallback proof", () =>
+    Effect.gen(function* () {
+      const fetch = recordedFetch(
+        Response.json({ ticket: "media-ticket", expiresAt: "2026-05-01T12:05:00.000Z" }),
+      );
+      yield* issueRemoteDpopWebSocketTicket({
+        httpBaseUrl: "https://remote.example.com/",
+        accessToken: "dpop-access-token",
+        dpopProof: "media-proof",
+        use: "media",
+      }).pipe(provideRemoteHttp(fetch.fetchFn));
+      expectFetchCall(fetch.calls, 1, {
+        url: "https://remote.example.com/api/auth/websocket-ticket/media",
+        method: "POST",
+        headers: { dpop: "media-proof" },
+      });
+    }),
+  );
+
   it.effect("falls back to the bare ticket path on a server without the audience route", () =>
     Effect.gen(function* () {
       const fetch = recordedFetch(
