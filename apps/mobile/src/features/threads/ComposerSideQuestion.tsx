@@ -43,11 +43,8 @@ export function ComposerSideQuestion({
   return (
     <View className="overflow-hidden rounded-[20px] border-continuous bg-card">
       <View className="flex-row items-center gap-2 px-4 pt-3 pb-1">
-        <Text className="font-medium text-foreground" numberOfLines={1}>
+        <Text className="min-w-0 flex-1 font-medium text-foreground" numberOfLines={1}>
           Side question
-        </Text>
-        <Text className="min-w-0 flex-1 text-xs text-muted-foreground" numberOfLines={1}>
-          Not added to the thread
         </Text>
         <Pressable
           accessibilityLabel="Close side question"

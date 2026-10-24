@@ -59,10 +59,7 @@ export function ComposerSideQuestion({
     >
       <div className="flex items-center gap-2 px-3 py-2">
         <MessageCircleQuestionMarkIcon aria-hidden className="size-4 text-muted-foreground" />
-        <h2 className="text-sm font-medium">Side question</h2>
-        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-          Not added to the thread
-        </span>
+        <h2 className="min-w-0 flex-1 text-sm font-medium">Side question</h2>
         <Button
           type="button"
           size="icon-xs"
