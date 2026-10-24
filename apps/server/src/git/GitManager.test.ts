@@ -285,6 +285,12 @@ function createTextGeneration(
         title: "Update workflow",
       }),
     generateReviewGuide: () => Effect.succeed({ stops: [] }),
+    explainProviderFailure: () =>
+      Effect.succeed({
+        summary: "The provider failed.",
+        likelyFix: "Try again.",
+        matchingIssueNumber: null,
+      }),
     ...overrides,
   };
 
@@ -334,6 +340,17 @@ function createTextGeneration(
         ),
       ),
     generateReviewGuide: (input) => implementation.generateReviewGuide(input),
+    explainProviderFailure: (input) =>
+      implementation.explainProviderFailure(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation: "explainProviderFailure",
+              detail: "fake text generation failed",
+              ...(cause !== undefined ? { cause } : {}),
+            }),
+        ),
+      ),
   };
 }
 
