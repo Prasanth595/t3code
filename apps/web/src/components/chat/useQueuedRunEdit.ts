@@ -16,6 +16,7 @@ import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContex
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { useAssetUrls } from "../../assets/assetUrls";
 import {
+  composerDraftHasUserContent,
   DraftId,
   useComposerDraftStore,
   type ComposerFileAttachment,
@@ -221,9 +222,17 @@ export function useQueuedRunEdit(input: {
     if (activeThreadId === null) return;
     const target = queuedEditDraftTarget(routeThreadRef, request.runId);
     const store = useComposerDraftStore.getState();
-    const savedEdit = store.getComposerDraft(target)?.queuedMessageEdit;
+    const savedDraft = store.getComposerDraft(target);
+    const savedEdit = savedDraft?.queuedMessageEdit;
+    // An untouched draft reseeds, so it never restores text another client replaced.
+    const savedEditIsDirty =
+      savedDraft !== null &&
+      savedEdit !== undefined &&
+      (savedDraft.prompt !== savedEdit.originalText ||
+        savedEdit.removedAttachmentIds.length > 0 ||
+        composerDraftHasUserContent({ ...savedDraft, prompt: "" }));
     const edit =
-      savedEdit?.messageId === request.messageId
+      savedEdit?.messageId === request.messageId && savedEditIsDirty
         ? savedEdit
         : { messageId: request.messageId, originalText: request.text, removedAttachmentIds: [] };
     if (edit !== savedEdit) {

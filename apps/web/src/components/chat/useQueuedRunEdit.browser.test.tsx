@@ -18,7 +18,7 @@ vi.mock(import("../../state/use-atom-command"), () => ({
 }));
 vi.mock(import("../../assets/assetUrls"), () => ({ useAssetUrls: () => [] }));
 
-function Editor() {
+function Editor({ text = "Original message" }: { readonly text?: string }) {
   const environmentId = EnvironmentId.make("environment:queue-edit");
   const threadId = ThreadId.make("thread:queue-edit");
   const threadRef = scopeThreadRef(environmentId, threadId);
@@ -40,7 +40,7 @@ function Editor() {
           edit.beginEdit({
             runId: RunId.make("run:queued"),
             messageId: MessageId.make("message:queued"),
-            text: "Original message",
+            text,
             attachments: [
               {
                 type: "file",
@@ -124,3 +124,15 @@ it.each(["Updated message", ""])(
     await expect.element(screen.getByRole("button", { name: "Remove report.pdf" })).toBeVisible();
   },
 );
+
+it("reopens an untouched edit with the queued message saved by another client", async () => {
+  useComposerDraftStore.setState({ draftsByThreadKey: {}, draftThreadsByThreadKey: {} });
+  await using screen = await render(<Editor />, { router: false });
+  await screen.getByRole("button", { name: "Edit queued message" }).click();
+  await screen.rerender(<div>Another thread</div>);
+  await screen.rerender(<Editor text="Updated message" />);
+  await screen.getByRole("button", { name: "Edit queued message" }).click();
+  await expect
+    .element(screen.getByRole("textbox", { name: "Message" }))
+    .toHaveValue("Updated message");
+});
