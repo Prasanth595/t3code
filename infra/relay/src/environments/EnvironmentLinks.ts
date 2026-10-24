@@ -204,23 +204,12 @@ const make = Effect.gen(function* () {
       // The reaper may have listed this allocation while its recovery key did
       // not match the link, and then releases it without the recent
       // registration guard. A link proven by that key makes recovery usable
-      // again, so it moves the generation the release was pinned to. The
-      // update runs first to take the allocation row lock, which a claimed
-      // release holds while it deletes the tunnel.
+      // again, so it moves the generation the release was pinned to. Both
+      // writes commit together, and the bump waits on the allocation row lock
+      // a claimed release holds while it deletes the tunnel. The link is
+      // written first to keep enableRecovery's order: its EXISTS locks the
+      // link row before its UPDATE locks the allocation row.
       const writeLink = Effect.gen(function* () {
-        yield* db
-          .update(relayManagedEndpointAllocations)
-          .set({ generation: sql`${relayManagedEndpointAllocations.generation} + 1` })
-          .where(
-            and(
-              eq(relayManagedEndpointAllocations.userId, input.userId),
-              eq(relayManagedEndpointAllocations.environmentId, environmentId),
-              eq(
-                relayManagedEndpointAllocations.recoveryEnvironmentPublicKey,
-                proof.environmentPublicKey,
-              ),
-            ),
-          );
         yield* db
           .insert(relayEnvironmentLinks)
           .values({
@@ -257,6 +246,19 @@ const make = Effect.gen(function* () {
               holdWebhooksWhileOffline: inheritedHoldWebhooks,
             },
           });
+        yield* db
+          .update(relayManagedEndpointAllocations)
+          .set({ generation: sql`${relayManagedEndpointAllocations.generation} + 1` })
+          .where(
+            and(
+              eq(relayManagedEndpointAllocations.userId, input.userId),
+              eq(relayManagedEndpointAllocations.environmentId, environmentId),
+              eq(
+                relayManagedEndpointAllocations.recoveryEnvironmentPublicKey,
+                proof.environmentPublicKey,
+              ),
+            ),
+          );
       });
       yield* db.$client.withTransaction(writeLink).pipe(Effect.mapError(upsertError));
     }),

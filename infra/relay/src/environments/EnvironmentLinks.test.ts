@@ -50,8 +50,9 @@ describe("EnvironmentLinks", () => {
   // The reaper can list an allocation while its recovery key differs from the
   // link and release it later at that generation. A link that restores the key
   // must move the generation before it commits, or the release deletes the
-  // tunnel the relink just provisioned.
-  it.effect("moves the allocation generation before a link restores its recovery key", () => {
+  // tunnel the relink just provisioned. The link write comes first, matching
+  // enableRecovery's link-then-allocation lock order so the two cannot deadlock.
+  it.effect("moves the allocation generation when a link restores its recovery key", () => {
     const events: Array<string> = [];
     const allocationUpdates: Array<{
       readonly set: Record<string, unknown>;
@@ -104,7 +105,7 @@ describe("EnvironmentLinks", () => {
         endpoint: { httpBaseUrl: "https://a.example", wsBaseUrl: "wss://a.example" } as never,
       });
 
-      expect(events).toEqual(["begin", "allocation", "link", "commit"]);
+      expect(events).toEqual(["begin", "link", "allocation", "commit"]);
       const dialect = new PgDialect();
       const where = dialect.sqlToQuery(allocationUpdates[0]?.where as never);
       expect(where.sql).toContain('"recovery_environment_public_key" = $3');
