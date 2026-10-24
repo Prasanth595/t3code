@@ -103,4 +103,14 @@ describe("watchManagedTunnelOrigin", () => {
       expect(result.registeredAtMinute).toEqual([1, 3, 7, 15]);
     }),
   );
+
+  it.effect("keeps the backoff when one check cannot read the ingress", () =>
+    Effect.gen(function* () {
+      const result = yield* watch({
+        ingress: ["http://127.0.0.1:46169", null, "http://127.0.0.1:46169"],
+        minutes: 10,
+      });
+      expect(result.registeredAtMinute).toEqual([1, 5, 9]);
+    }),
+  );
 });

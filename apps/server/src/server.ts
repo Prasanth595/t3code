@@ -899,7 +899,15 @@ const layerMakeServer = Layer.unwrap(
               readIngressOrigin: endpointRuntime.inspectConnector.pipe(
                 Effect.map((connector) => connector?.origin ?? null),
               ),
-              register: cloudLink.registerManagedTunnelRecovery(localOrigin),
+              register: cloudLink
+                .registerManagedTunnelRecovery(localOrigin)
+                .pipe(
+                  Effect.flatMap((registration) =>
+                    registration.status === "recovery_required"
+                      ? endpointRuntime.requestRecovery(registration.config)
+                      : Effect.void,
+                  ),
+                ),
             }).pipe(Effect.forkScoped);
             const wantsCliLink = hasCloudPublicConfig
               ? yield* CloudCliState.readCliDesiredCloudLink.pipe(

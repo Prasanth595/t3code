@@ -220,11 +220,11 @@ export const makeManagedTunnelRecovery = Effect.fn("ManagedTunnelRecovery.make")
 
 const MANAGED_TUNNEL_ORIGIN_CHECK_INTERVAL = Duration.minutes(1);
 
-const sameOrigin = (left: string, right: string) => {
+const urlOrigin = (url: string) => {
   try {
-    return new URL(left).origin === new URL(right).origin;
+    return new URL(url).origin;
   } catch {
-    return false;
+    return null;
   }
 };
 
@@ -247,17 +247,21 @@ export const watchManagedTunnelOrigin = Effect.fn("ManagedTunnelOrigin.watch")(f
   readonly readIngressOrigin: Effect.Effect<string | null>;
   readonly register: Effect.Effect<unknown, E, R>;
 }) {
+  const localOrigin = urlOrigin(options.localOrigin);
   let wait = MANAGED_TUNNEL_ORIGIN_CHECK_INTERVAL;
   while (true) {
     yield* Effect.sleep(wait);
-    const ingressOrigin = yield* options.readIngressOrigin;
-    if (ingressOrigin === null || sameOrigin(ingressOrigin, options.localOrigin)) {
+    const ingress = yield* options.readIngressOrigin;
+    // An unreadable ingress says nothing, so it keeps whatever backoff is running.
+    if (ingress === null) continue;
+    const ingressOrigin = urlOrigin(ingress);
+    if (ingressOrigin !== null && ingressOrigin === localOrigin) {
       wait = MANAGED_TUNNEL_ORIGIN_CHECK_INTERVAL;
       continue;
     }
     yield* Effect.logWarning(
       "T3 Connect routes this server's tunnel to another origin; registering this server again",
-      { ingressOrigin, localOrigin: options.localOrigin },
+      { ingressOrigin: ingressOrigin ?? "unparseable", localOrigin },
     );
     yield* options.register.pipe(
       Effect.catchCause((cause) =>
