@@ -12,7 +12,7 @@ Pod::Spec.new do |s|
   s.author = { 'T3 Tools' => 'hello@t3tools.com' }
   s.platforms = { :ios => '16.1' }
   s.source = { :path => '.' }
-  s.source_files = 'ios/**/*.swift', 'cpp/*.{c,h}', 'cpp/generated/*.{c,h,inc}', 'cpp/wasm2c/*.{c,h,inc}', 'cpp/simde/**/*.h'
+  s.source_files = 'ios/**/*.swift', 'cpp/**/*.{c,h,inc}', 'Vendor/**/*.{c,h,inc}'
   # Swift sees only the wrapper; the generated and runtime headers stay private.
   s.public_header_files = 'cpp/t3_highlights.h'
   # Debug builds compile at -O0 by default, which makes the lexers several times
@@ -23,7 +23,7 @@ Pod::Spec.new do |s|
     # Plain malloc memory with explicit bounds checks: no guard-page signal
     # handlers competing with the app's crash reporting.
     'GCC_PREPROCESSOR_DEFINITIONS' => '$(inherited) WASM_RT_USE_MMAP=0 WASM_RT_MEMCHECK_BOUNDS_CHECK=1 WASM_RT_SKIP_SIGNAL_RECOVERY=1',
-    'HEADER_SEARCH_PATHS' => '$(inherited) "${PODS_TARGET_SRCROOT}/cpp" "${PODS_TARGET_SRCROOT}/cpp/wasm2c"',
+    'HEADER_SEARCH_PATHS' => '$(inherited) "${PODS_TARGET_SRCROOT}/Vendor" "${PODS_TARGET_SRCROOT}/Vendor/highlights" "${PODS_TARGET_SRCROOT}/Vendor/wasm2c"',
   }
   s.swift_version = '5.9'
   s.dependency 'ExpoModulesCore'

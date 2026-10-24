@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <string.h>
 
-#include "generated/highlights.h"
+#include "highlights.h"
 #include "wasm-rt-impl.h"
 
 // The control block and buffer layout mirror the JavaScript glue in

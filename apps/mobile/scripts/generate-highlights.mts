@@ -21,7 +21,7 @@ const WASM2C_VERSION = "1.0.42";
 const THEMES = { light: "pierre-light", dark: "pierre-dark" } as const;
 
 const mobileRoot = NodePath.resolve(import.meta.dirname, "..");
-const moduleCppRoot = NodePath.join(mobileRoot, "modules/t3-highlights/cpp");
+const moduleRoot = NodePath.join(mobileRoot, "modules/t3-highlights");
 const generatedDataPath = NodePath.join(mobileRoot, "src/lib/highlights.generated.ts");
 
 interface ThemeStyle {
@@ -161,7 +161,7 @@ async function generate() {
     const banner = `/* ${generatedBanner(source)} */\n`;
     for (const file of ["highlights.c", "highlights.h"]) {
       const contents = NodeFS.readFileSync(NodePath.join(scratch, file), "utf8");
-      NodeFS.writeFileSync(NodePath.join(moduleCppRoot, "generated", file), banner + contents);
+      NodeFS.writeFileSync(NodePath.join(moduleRoot, "Vendor/highlights", file), banner + contents);
     }
   } finally {
     NodeFS.rmSync(scratch, { recursive: true, force: true });
@@ -179,11 +179,11 @@ async function generate() {
   for (const [from, to] of runtime) {
     NodeFS.copyFileSync(
       NodePath.join(wasm2c.prefix, from),
-      NodePath.join(moduleCppRoot, "wasm2c", to),
+      NodePath.join(moduleRoot, "Vendor/wasm2c", to),
     );
   }
 
-  NodeFS.writeFileSync(NodePath.join(moduleCppRoot, "generated/id_ranges.inc"), renderIdRanges());
+  NodeFS.writeFileSync(NodePath.join(moduleRoot, "cpp/generated/id_ranges.inc"), renderIdRanges());
   NodeFS.writeFileSync(generatedDataPath, renderHighlightsData(await computeHighlightsData()));
   NodeChildProcess.execFileSync("vp", ["fmt", generatedDataPath], { stdio: "inherit" });
 }

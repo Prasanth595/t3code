@@ -11,7 +11,10 @@ describe("generate highlights", () => {
   it("matches the installed @pierre/highlights", async () => {
     const data = await computeHighlightsData();
     const nativeSource = NodeFS.readFileSync(
-      NodePath.resolve(import.meta.dirname, "../modules/t3-highlights/cpp/generated/highlights.c"),
+      NodePath.resolve(
+        import.meta.dirname,
+        "../modules/t3-highlights/Vendor/highlights/highlights.c",
+      ),
       "utf8",
     );
 
