@@ -6,8 +6,10 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 import { buildSshChildEnvironment, isSshAuthFailure } from "./auth.ts";
 
@@ -71,8 +73,12 @@ describe("ssh auth", () => {
       assert.notEqual(recreated, first);
       assert.equal(yield* fs.exists(recreated), true);
 
+      const cachedOwner = yield* fs.stat(runtimeDirectoryOf(recreated));
       const otherUser = yield* askpassPath().pipe(
-        Effect.provideService(HostProcess.UserId, (process.getuid?.() ?? 0) + 1),
+        Effect.provideService(
+          HostProcess.UserId,
+          (Option.getOrUndefined(cachedOwner.uid) ?? 0) + 1,
+        ),
       );
       assert.notEqual(otherUser, recreated);
 
@@ -83,31 +89,35 @@ describe("ssh auth", () => {
     ),
   );
 
-  it.effect("does not reuse a symlink left at the default askpass directory path", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const askpassPath = () =>
-        buildSshChildEnvironment({ interactiveAuth: true, authSecret: "pw" }).pipe(
-          Effect.map((env) => env.SSH_ASKPASS ?? ""),
-        );
-      const runtimeDirectoryOf = (askpass: string) => path.dirname(path.dirname(askpass));
+  it.effect.skipIf(!symlinksSupported)(
+    "does not reuse a symlink left at the default askpass directory path",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const askpassPath = () =>
+          buildSshChildEnvironment({ interactiveAuth: true, authSecret: "pw" }).pipe(
+            Effect.map((env) => env.SSH_ASKPASS ?? ""),
+          );
+        const runtimeDirectoryOf = (askpass: string) => path.dirname(path.dirname(askpass));
 
-      const first = yield* askpassPath();
-      const ownedTarget = yield* fs.makeTempDirectory({ prefix: "t3code-ssh-symlink-target-" });
-      yield* fs.remove(runtimeDirectoryOf(first), { recursive: true });
-      yield* fs.symlink(ownedTarget, runtimeDirectoryOf(first));
+        const first = yield* askpassPath();
+        const ownedTarget = yield* fs.makeTempDirectory({ prefix: "t3code-ssh-symlink-target-" });
+        yield* fs.remove(runtimeDirectoryOf(first), { recursive: true });
+        yield* fs.symlink(ownedTarget, runtimeDirectoryOf(first));
 
-      const next = yield* askpassPath();
-      assert.notEqual(next, first);
-      assert.equal(yield* fs.exists(path.join(ownedTarget, "t3code-ssh-askpass")), false);
+        const next = yield* askpassPath();
+        assert.notEqual(next, first);
+        assert.equal(yield* fs.exists(path.join(ownedTarget, "t3code-ssh-askpass")), false);
 
-      yield* fs.remove(runtimeDirectoryOf(first));
-      yield* fs.remove(ownedTarget, { recursive: true });
-      yield* fs.remove(runtimeDirectoryOf(next), { recursive: true });
-    }).pipe(
-      Effect.provide(Layer.merge(NodeServices.layer, Layer.succeed(HostProcess.Platform, "linux"))),
-    ),
+        yield* fs.remove(runtimeDirectoryOf(first));
+        yield* fs.remove(ownedTarget, { recursive: true });
+        yield* fs.remove(runtimeDirectoryOf(next), { recursive: true });
+      }).pipe(
+        Effect.provide(
+          Layer.merge(NodeServices.layer, Layer.succeed(HostProcess.Platform, "linux")),
+        ),
+      ),
   );
 
   it.effect("writes the default askpass helper once when interactive commands overlap", () =>
