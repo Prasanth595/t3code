@@ -1287,9 +1287,15 @@ describe("ManagedEndpointProvider", () => {
   it.effect.each([
     { when: "after", inactiveBefore: "2026-06-01T00:05:00.000Z", released: false },
     { when: "before", inactiveBefore: "2026-06-02T00:05:00.000Z", released: true },
+    {
+      when: "after, with a replaced environment key",
+      inactiveBefore: "2026-06-01T00:05:00.000Z",
+      recoveryEnabled: false,
+      released: true,
+    },
   ] as const)(
     "releases a down tunnel only if its host registered recovery before the cutoff ($when)",
-    ({ inactiveBefore, released }) => {
+    ({ inactiveBefore, released, ...rest }) => {
       const tunnelCalls: TunnelCall[] = [];
       const allocations = makeAllocations();
       const layer = layerProvider(
@@ -1316,6 +1322,7 @@ describe("ManagedEndpointProvider", () => {
             expectedTunnelId: "tunnel-id",
             expectedStatus: "down",
             expectedInactiveBefore: inactiveBefore,
+            ...("recoveryEnabled" in rest ? { expectedRecoveryEnabled: rest.recoveryEnabled } : {}),
           }),
         ).toBe(released);
         expect(tunnelCalls.some((call) => call.operation === "delete")).toBe(released);

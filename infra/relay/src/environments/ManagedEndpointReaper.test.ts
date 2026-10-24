@@ -488,6 +488,7 @@ describe("ManagedEndpointReaper", () => {
         expect(state.releases.every((release) => release.markReleased === true)).toBe(true);
         for (const release of state.releases) {
           expect(release.expectedInactiveBefore).toBe("2026-08-18T12:00:00.000Z");
+          expect(release.expectedRecoveryEnabled).toBe(false);
         }
       }).pipe(Effect.provide(state.layer));
     });
