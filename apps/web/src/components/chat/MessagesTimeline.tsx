@@ -34,11 +34,14 @@ const EMPTY_PENDING_APPROVALS: ReadonlyArray<PendingApproval> = [];
 const EMPTY_RESPONDING_REQUEST_IDS: TimelineRowSharedState["respondingRequestIds"] = [];
 
 const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
+const NO_APP_WORKFLOWS: ReadonlySet<string> = new Set();
+// Keyed by appWorkflowLookupThreadKey; the empty key reads nothing.
 const appWorkflowIdsAtom = Atom.family((key: string) => {
-  const ref = parseScopedThreadKey(key);
-  let ids: ReadonlySet<string> = new Set();
+  const ref = key === "" ? null : parseScopedThreadKey(key);
+  if (ref === null) return Atom.make(NO_APP_WORKFLOWS);
+  let ids: ReadonlySet<string> = NO_APP_WORKFLOWS;
   return Atom.make((get) => {
-    const thread = ref === null ? null : get(environmentThreadDetails.threadAtom(ref));
+    const thread = get(environmentThreadDetails.threadAtom(ref));
     const next = (thread?.projection.subagents ?? [])
       .filter(isAppWorkflow)
       .map((agent) => agent.id);
@@ -87,6 +90,7 @@ import { useAssistantCitationTarget } from "./useAssistantCitationTarget";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveCitationPhase, type CitedHistory } from "./citationProcedure";
 import {
+  appWorkflowLookupThreadKey,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapCurrentIndex,
@@ -410,7 +414,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   historyControls,
 }: MessagesTimelineProps) {
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
-  const appWorkflowIds = useAtomValue(appWorkflowIdsAtom(listIdentityKey));
+  const appWorkflowIds = useAtomValue(
+    appWorkflowIdsAtom(appWorkflowLookupThreadKey(listIdentityKey, timelineEntries) ?? ""),
+  );
   // Snapshot restore positions on identity changes; ongoing scroll writes must not move them.
   // Find open at the opening is part of the snapshot: opening find later
   // announces its own navigation (threadFindStore's announceOpening).
