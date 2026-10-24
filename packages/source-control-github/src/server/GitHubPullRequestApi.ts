@@ -712,6 +712,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly cwd: string;
       readonly repository: string;
       readonly host: string;
+      readonly number: number;
       readonly threadId: string;
       readonly body: string;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
@@ -720,6 +721,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly cwd: string;
       readonly repository: string;
       readonly host: string;
+      readonly number: number;
       readonly threadId: string;
       readonly resolved: boolean;
     }) => Effect.Effect<void, GitHubPullRequestApiError>;
@@ -1197,6 +1199,32 @@ export const make = Effect.gen(function* () {
       .PullRequestSubject({ owner, name, number: input.number, subjectId: input.subjectId })
       .pipe(graphql({ ...input, allowReserve: true }), Effect.map(isSubjectOfPullRequest));
   };
+
+  /** Fails unless the review thread named hangs off the pull request named. */
+  const requireThreadOfPullRequest = (
+    input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+      readonly threadId: string;
+    },
+    operation: string,
+  ) =>
+    subjectBelongsToPullRequest({
+      cwd: input.cwd,
+      repository: input.repository,
+      host: input.host,
+      number: input.number,
+      subjectId: input.threadId,
+      operation,
+    }).pipe(
+      Effect.flatMap((belongs) =>
+        belongs
+          ? Effect.void
+          : Effect.fail(new GitHubSubjectScopeError({ cwd: input.cwd, operation })),
+      ),
+    );
 
   /** Decodes an answer, reporting a failure against the read that made it. */
   const decodeWith = <A>(
@@ -2695,9 +2723,13 @@ export const make = Effect.gen(function* () {
     },
 
     replyToReviewThread: (input) =>
-      client
-        .AddReviewThreadReply({ threadId: input.threadId, body: input.body })
-        .pipe(graphql({ ...input, operation: "replyToReviewThread" }), Effect.asVoid),
+      requireThreadOfPullRequest(input, "replyToReviewThread").pipe(
+        Effect.andThen(
+          client
+            .AddReviewThreadReply({ threadId: input.threadId, body: input.body })
+            .pipe(graphql({ ...input, operation: "replyToReviewThread" }), Effect.asVoid),
+        ),
+      ),
 
     getPullRequestFilesViewed: (input) => {
       const { owner, name } = parseRepositorySelector(input.repository);
@@ -2777,10 +2809,14 @@ export const make = Effect.gen(function* () {
     },
 
     setReviewThreadResolution: (input) =>
-      (input.resolved
-        ? client.ResolveReviewThread({ threadId: input.threadId }).pipe(Effect.asVoid)
-        : client.UnresolveReviewThread({ threadId: input.threadId }).pipe(Effect.asVoid)
-      ).pipe(graphql({ ...input, operation: "setReviewThreadResolution" })),
+      requireThreadOfPullRequest(input, "setReviewThreadResolution").pipe(
+        Effect.andThen(
+          (input.resolved
+            ? client.ResolveReviewThread({ threadId: input.threadId }).pipe(Effect.asVoid)
+            : client.UnresolveReviewThread({ threadId: input.threadId }).pipe(Effect.asVoid)
+          ).pipe(graphql({ ...input, operation: "setReviewThreadResolution" })),
+        ),
+      ),
 
     setReaction: (input) => {
       const givenSubjectId = input.subjectId;
