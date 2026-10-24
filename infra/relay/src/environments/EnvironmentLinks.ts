@@ -12,7 +12,7 @@ import * as Schema from "effect/Schema";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
-import { relayEnvironmentLinks } from "../persistence/schema.ts";
+import { relayEnvironmentLinks, relayManagedEndpointAllocations } from "../persistence/schema.ts";
 
 export interface RelayLinkedEnvironmentRecord extends RelayClientEnvironmentRecord {
   readonly environmentPublicKey: string;
@@ -194,30 +194,41 @@ const make = Effect.gen(function* () {
           AND other.hold_webhooks_while_offline
       )`;
       const { endpoint } = input;
-      yield* db
-        .insert(relayEnvironmentLinks)
-        .values({
+      const upsertError = (cause: unknown) =>
+        new EnvironmentLinkUpsertPersistenceError({
           userId: input.userId,
           environmentId,
-          holdWebhooksWhileOffline: inheritedHoldWebhooks,
-          environmentLabel: proof.descriptor.label,
-          environmentPublicKey: proof.environmentPublicKey,
-          endpointHttpBaseUrl: endpoint.httpBaseUrl,
-          endpointWsBaseUrl: endpoint.wsBaseUrl,
-          endpointProviderKind: endpoint.providerKind,
-          notificationsEnabled: request.notificationsEnabled,
-          liveActivitiesEnabled: request.liveActivitiesEnabled,
-          managedTunnelsEnabled: request.managedTunnelsEnabled,
-          createdByDeviceId: request.deviceId ?? null,
-          revokedAt: null,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .onConflictDoUpdate({
-          target: [relayEnvironmentLinks.userId, relayEnvironmentLinks.environmentId],
-          set: {
-            environmentPublicKey: proof.environmentPublicKey,
+          ...(request.deviceId === undefined ? {} : { deviceId: request.deviceId }),
+          cause,
+        });
+      // The reaper may have listed this allocation while its recovery key did
+      // not match the link, and then releases it without the recent
+      // registration guard. A link proven by that key makes recovery usable
+      // again, so it moves the generation the release was pinned to. The
+      // update runs first to take the allocation row lock, which a claimed
+      // release holds while it deletes the tunnel.
+      const writeLink = Effect.gen(function* () {
+        yield* db
+          .update(relayManagedEndpointAllocations)
+          .set({ generation: sql`${relayManagedEndpointAllocations.generation} + 1` })
+          .where(
+            and(
+              eq(relayManagedEndpointAllocations.userId, input.userId),
+              eq(relayManagedEndpointAllocations.environmentId, environmentId),
+              eq(
+                relayManagedEndpointAllocations.recoveryEnvironmentPublicKey,
+                proof.environmentPublicKey,
+              ),
+            ),
+          );
+        yield* db
+          .insert(relayEnvironmentLinks)
+          .values({
+            userId: input.userId,
+            environmentId,
+            holdWebhooksWhileOffline: inheritedHoldWebhooks,
             environmentLabel: proof.descriptor.label,
+            environmentPublicKey: proof.environmentPublicKey,
             endpointHttpBaseUrl: endpoint.httpBaseUrl,
             endpointWsBaseUrl: endpoint.wsBaseUrl,
             endpointProviderKind: endpoint.providerKind,
@@ -226,21 +237,28 @@ const make = Effect.gen(function* () {
             managedTunnelsEnabled: request.managedTunnelsEnabled,
             createdByDeviceId: request.deviceId ?? null,
             revokedAt: null,
+            createdAt: now,
             updatedAt: now,
-            holdWebhooksWhileOffline: inheritedHoldWebhooks,
-          },
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new EnvironmentLinkUpsertPersistenceError({
-                userId: input.userId,
-                environmentId,
-                ...(request.deviceId === undefined ? {} : { deviceId: request.deviceId }),
-                cause,
-              }),
-          ),
-        );
+          })
+          .onConflictDoUpdate({
+            target: [relayEnvironmentLinks.userId, relayEnvironmentLinks.environmentId],
+            set: {
+              environmentPublicKey: proof.environmentPublicKey,
+              environmentLabel: proof.descriptor.label,
+              endpointHttpBaseUrl: endpoint.httpBaseUrl,
+              endpointWsBaseUrl: endpoint.wsBaseUrl,
+              endpointProviderKind: endpoint.providerKind,
+              notificationsEnabled: request.notificationsEnabled,
+              liveActivitiesEnabled: request.liveActivitiesEnabled,
+              managedTunnelsEnabled: request.managedTunnelsEnabled,
+              createdByDeviceId: request.deviceId ?? null,
+              revokedAt: null,
+              updatedAt: now,
+              holdWebhooksWhileOffline: inheritedHoldWebhooks,
+            },
+          });
+      });
+      yield* db.$client.withTransaction(writeLink).pipe(Effect.mapError(upsertError));
     }),
 
     listDeliveryUsersForEnvironment: Effect.fn(
