@@ -4,12 +4,15 @@ import type {
   RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
+import type * as Cloudflare from "alchemy/Cloudflare";
 import { describe, expect, it } from "@effect/vitest";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync.
 import * as NodeCrypto from "node:crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
 import {
   FetchHttpClient,
   HttpClient,
@@ -29,6 +32,7 @@ import * as RelayConfiguration from "../Config.ts";
 import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
 import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
+import * as ApnsDeliveryQueueConsumer from "./ApnsDeliveryQueueConsumer.ts";
 import * as ApnsClient from "./ApnsClient.ts";
 import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
 
@@ -1276,6 +1280,90 @@ describe("ApnsDeliveries", () => {
       ]);
     }).pipe(
       Effect.provide(layerFor({ attempts, invalidatedTokens, config: signingConfig, execute })),
+    );
+  });
+});
+
+describe("APNs queue message isolation", () => {
+  it.effect("retries only the message APNs throttled and delivers the rest of its batch", () => {
+    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+    const outcomes = new Map<string, "ack" | "retry">();
+    const requestedTokens: Array<string> = [];
+    const signedPush = (deviceId: string, token: string) =>
+      signApnsDeliveryJob({
+        secret: config.apnsDeliveryJobSigningSecret,
+        payload: makeApnsDeliveryJobPayload({
+          kind: "push_notification",
+          userId: target.user_id,
+          deviceId,
+          token,
+          aggregate: null,
+          notification: {
+            title: "Thread",
+            body: "Completed: Project",
+            environmentId: "env",
+            threadId: "thread",
+            deepLink: "/",
+          },
+          createdAt: "1970-01-01T00:00:00.000Z",
+          expiresAt: "1970-01-01T00:10:00.000Z",
+          jobId: `job-${deviceId}`,
+        }),
+      });
+    const message = (id: string, body: unknown): Cloudflare.Queues.Message<unknown> => ({
+      id,
+      body,
+      timestamp: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
+      attempts: 1,
+      ack: () => {
+        if (!outcomes.has(id)) outcomes.set(id, "ack");
+      },
+      retry: () => {
+        if (!outcomes.has(id)) outcomes.set(id, "retry");
+      },
+    });
+    const batch = [
+      message("throttled", signedPush("device-1", "throttled-token")),
+      message("healthy", signedPush("device-2", "healthy-token")),
+    ];
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() => {
+        const token = request.url.split("/").at(-1) ?? "";
+        requestedTokens.push(token);
+        return HttpClientResponse.fromWeb(
+          request,
+          token === "throttled-token"
+            ? Response.json({ reason: "TooManyRequests" }, { status: 429 })
+            : new Response("", { status: 200 }),
+        );
+      });
+
+    return Effect.gen(function* () {
+      yield* Stream.fromIterable(batch).pipe(
+        Stream.runForEach(ApnsDeliveryQueueConsumer.processMessage),
+      );
+      // Alchemy acknowledges the batch after a successful stream. Cloudflare
+      // ignores those acknowledgements for messages explicitly retried earlier.
+      for (const item of batch) item.ack();
+
+      expect([...outcomes]).toEqual([
+        ["throttled", "retry"],
+        ["healthy", "ack"],
+      ]);
+      expect(requestedTokens).toEqual(["throttled-token", "healthy-token"]);
+      expect(attempts).toMatchObject([{ sourceJobId: "job-device-2", apnsStatus: 200 }]);
+    }).pipe(
+      Effect.provide(
+        layerFor({
+          attempts,
+          currentTargets: [
+            { ...target, device_id: "device-1", push_token: "throttled-token" },
+            { ...target, device_id: "device-2", push_token: "healthy-token" },
+          ],
+          config: signingConfig,
+          execute,
+        }),
+      ),
     );
   });
 });
