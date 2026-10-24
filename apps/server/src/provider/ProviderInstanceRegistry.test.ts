@@ -665,13 +665,24 @@ describe("ProviderInstanceRegistry — reconcile", () => {
     },
     displayName,
     enabled: true,
-    snapshot: {} as ProviderInstance["snapshot"],
+    // Real effects, so the registry can wrap the snapshot when it builds an entry.
+    snapshot: {
+      getSnapshot: Effect.never,
+      refresh: Effect.never,
+      streamChanges: Stream.empty,
+    } as Partial<ProviderInstance["snapshot"]> as ProviderInstance["snapshot"],
     orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
     textGeneration: {} as ProviderInstance["textGeneration"],
   });
 
+  // Change runtime config, not only the display name, so the edit always
+  // replaces the instance rather than counting as cosmetic.
   const configWithName = (displayName: string): ProviderInstanceConfigMap => ({
-    [reconcileInstanceId]: { driver: reconcileDriverKind, displayName, config: {} },
+    [reconcileInstanceId]: {
+      driver: reconcileDriverKind,
+      displayName,
+      config: { revision: displayName },
+    },
   });
 
   it.effect("stops returning a replaced instance before closing its scope", () =>
@@ -684,8 +695,8 @@ describe("ProviderInstanceRegistry — reconcile", () => {
         const driver: AnyProviderDriver = {
           driverKind: reconcileDriverKind,
           metadata: { displayName: "Reconcile test" },
-          configSchema: Schema.Struct({}),
-          defaultConfig: () => ({}),
+          configSchema: Schema.Struct({ revision: Schema.String }),
+          defaultConfig: () => ({ revision: "" }),
           create: ({ displayName }) =>
             Effect.gen(function* () {
               yield* Effect.addFinalizer(() =>
