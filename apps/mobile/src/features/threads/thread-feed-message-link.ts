@@ -1,3 +1,4 @@
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { ThreadFeedMessage } from "../../lib/threadActivity";
@@ -21,6 +22,8 @@ export function resolveLinkedMessageStep(input: {
   /** The thread has caught up with the server, so a message it lacks is older history. */
   readonly synced?: boolean;
   readonly syncStatus?: EnvironmentThreadStatus;
+  readonly connectionPhase: EnvironmentConnectionPhase;
+  readonly syncError: string | null;
   readonly historyLoading: boolean;
   /** Why the last history load failed, when it did. */
   readonly historyError: string | null;
@@ -30,8 +33,20 @@ export function resolveLinkedMessageStep(input: {
 }): "scroll" | "expand" | "wait" | "load" | "missing" | "failed" {
   // A sync snapshot or history page can replace a cached row before scrolling.
   if (input.syncStatus === "deleted") return "missing";
-  if (input.historyLoading || input.syncStatus === "synchronizing") return "wait";
-  if (input.syncStatus === "empty" || input.syncStatus === "cached") return "failed";
+  if (input.historyLoading) return "wait";
+  if (
+    input.syncStatus === "empty" ||
+    input.syncStatus === "cached" ||
+    input.syncStatus === "synchronizing"
+  ) {
+    // Empty and cached data also precede the connection's first sync attempt.
+    return input.connectionPhase === "offline" ||
+      input.connectionPhase === "error" ||
+      input.connectionPhase === "unsupported" ||
+      (input.connectionPhase === "connected" && input.syncError !== null)
+      ? "failed"
+      : "wait";
+  }
   // An omitted status retains the standalone feed's previous ready default.
   if (input.synced === false) return "wait";
   if (input.presented) return "scroll";

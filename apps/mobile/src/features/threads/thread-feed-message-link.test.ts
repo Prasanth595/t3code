@@ -7,6 +7,8 @@ const absent = {
   inFeed: false,
   foldedRunId: null,
   synced: true,
+  connectionPhase: "connected" as const,
+  syncError: null,
   historyLoading: false,
   historyError: null,
   hasMoreHistory: true,
@@ -64,10 +66,53 @@ it("retains unknown sync readiness and waits only for active synchronization", (
   expect(resolveLinkedMessageStep({ ...unknown, syncStatus: "live" })).toBe("load");
 });
 it.each(["empty", "cached"] as const)(
-  "reports unavailable %s messages instead of waiting forever",
+  "keeps the link pending while %s messages can still synchronize",
   (syncStatus) => {
-    expect(resolveLinkedMessageStep({ ...absent, syncStatus })).toBe("failed");
-    expect(resolveLinkedMessageStep({ ...absent, syncStatus, historyLoading: true })).toBe("wait");
+    for (const connectionPhase of [
+      "available",
+      "connecting",
+      "reconnecting",
+      "connected",
+    ] as const) {
+      expect(resolveLinkedMessageStep({ ...absent, syncStatus, connectionPhase })).toBe("wait");
+      expect(
+        resolveLinkedMessageStep({ ...absent, syncStatus, connectionPhase, presented: true }),
+      ).toBe("wait");
+      if (connectionPhase !== "connected") {
+        expect(
+          resolveLinkedMessageStep({
+            ...absent,
+            syncStatus,
+            connectionPhase,
+            syncError: "Previous connection failed",
+          }),
+        ).toBe("wait");
+      }
+    }
+    expect(resolveLinkedMessageStep({ ...absent, syncStatus: "synchronizing" })).toBe("wait");
+    expect(resolveLinkedMessageStep({ ...absent, syncStatus: "live" })).toBe("load");
+    expect(resolveLinkedMessageStep({ ...absent, syncStatus: "live", presented: true })).toBe(
+      "scroll",
+    );
+  },
+);
+it.each(["empty", "cached", "synchronizing"] as const)(
+  "reports unavailable %s messages when the connection cannot synchronize",
+  (syncStatus) => {
+    for (const connectionPhase of ["offline", "error", "unsupported"] as const) {
+      expect(resolveLinkedMessageStep({ ...absent, syncStatus, connectionPhase })).toBe("failed");
+      expect(
+        resolveLinkedMessageStep({ ...absent, syncStatus, connectionPhase, historyLoading: true }),
+      ).toBe("wait");
+    }
+  },
+);
+it.each(["empty", "cached"] as const)(
+  "reports a %s synchronization failure even while the connection stays connected",
+  (syncStatus) => {
+    expect(
+      resolveLinkedMessageStep({ ...absent, syncStatus, syncError: "Could not synchronize" }),
+    ).toBe("failed");
   },
 );
 it("reports a deleted thread's target missing", () => {

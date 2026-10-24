@@ -1,3 +1,4 @@
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
@@ -370,6 +371,8 @@ export interface ThreadFeedProps {
   readonly onLinkedMessageHandled?: () => void;
   /** The thread has caught up with the server. A linked message it lacks is older history. */
   readonly threadSyncStatus?: EnvironmentThreadStatus;
+  readonly threadSyncError?: string | null;
+  readonly connectionPhase: EnvironmentConnectionPhase;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
 }
@@ -2786,6 +2789,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       inFeed,
       foldedRunId: runId,
       syncStatus: props.threadSyncStatus,
+      syncError: props.threadSyncError ?? null,
+      connectionPhase: props.connectionPhase,
       historyLoading: props.historyControls?.loading === true || ownLoad?.inFlight === true,
       // An error from before this link's own load is not about the linked message.
       historyError: ownLoad === null ? null : (props.historyControls?.error ?? null),
@@ -2819,7 +2824,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (step === "failed") {
       Dialog.alert(
         "Could not open the linked message",
-        props.historyControls?.error ??
+        props.threadSyncError ??
+          props.historyControls?.error ??
           (props.threadSyncStatus === "cached" || props.threadSyncStatus === "empty"
             ? "Thread messages are unavailable. Reconnect and try the link again."
             : "Earlier history did not load. Try the link again."),
@@ -2851,11 +2857,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     finishLinkedMessage,
     presentedFeed,
     props.activeWorkStartedAt,
+    props.connectionPhase,
     props.feed,
     props.historyControls,
     props.latestRun,
     props.listRef,
     props.runlessWorkActive,
+    props.threadSyncError,
     props.threadSyncStatus,
     setEndFollow,
   ]);

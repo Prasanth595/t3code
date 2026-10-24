@@ -985,6 +985,7 @@ function ThreadRouteContent(
           respondingUserInputId={requests.respondingUserInputId}
           connectionStateLabel={routeConnectionState}
           threadSyncStatus={selectedThreadDetailState.status}
+          threadSyncError={Option.getOrNull(selectedThreadDetailState.error)}
           historyControls={historyControls}
           linkedMessageId={linkedMessageId}
           onLinkedMessageHandled={handleLinkedMessageHandled}
