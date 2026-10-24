@@ -3296,6 +3296,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   it.effect("rejects archiving a thread while a run is active", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
       const threadId = ThreadId.make("runtime-layer-active-archive-thread");
 
       yield* orchestrator.dispatch({
@@ -3339,8 +3340,41 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         `Thread ${threadId} is still running. Archive it after the turn ends.`,
       );
       const projection = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(projection.runs[0]?.status, "starting");
+      const run = projection.runs[0]!;
+      assert.equal(run.status, "starting");
       assert.isNull(projection.thread.archivedAt);
+
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        commandId: CommandId.make("runtime-layer-active-archive-running"),
+        events: [
+          {
+            id: EventId.make("runtime-layer-active-archive-running-event"),
+            type: "run.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...run, status: "running", startedAt: now },
+          },
+        ],
+      });
+
+      const runningError = yield* orchestrator
+        .dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("runtime-layer-active-archive-running-attempt"),
+          threadId,
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(runningError._tag, "OrchestratorDispatchError");
+      assert.equal(
+        runningError.cause,
+        `Thread ${threadId} is still running. Archive it after the turn ends.`,
+      );
+      const runningProjection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(runningProjection.runs[0]?.status, "running");
+      assert.isNull(runningProjection.thread.archivedAt);
     }),
   );
 
