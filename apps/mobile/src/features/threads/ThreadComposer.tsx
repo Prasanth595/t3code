@@ -31,6 +31,7 @@ import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/n
 import type { ReactNode } from "react";
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Keyboard, Platform, View, type ViewStyle } from "react-native";
+import { useKeyboardState } from "react-native-keyboard-controller";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { filePreviewGallery } from "../../lib/filePreviewGallery";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -147,10 +148,12 @@ export function useCompactComposerEditor(
   yieldsModelLabel: boolean,
 ) {
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
-  const [compactWidth, setCompactWidth] = useState(0);
+  const [compactSlot, setCompactSlot] = useState({ width: 0, labelYielded: false });
   const [labelYielded, setLabelYielded] = useState(false);
   const [measuredRowWidth, setMeasuredRowWidth] = useState(0);
   if (labelYielded && value.length === 0) setLabelYielded(false);
+  const compactWidth =
+    !yieldsModelLabel || compactSlot.labelYielded === labelYielded ? compactSlot.width : 0;
   const contentHeight = contentSize.height;
   const rowWidth = useSharedValue(0);
   const editorX = useSharedValue(0);
@@ -225,7 +228,7 @@ export function useCompactComposerEditor(
       rowWidth.set(width);
       if (width !== measuredRowWidth) {
         setMeasuredRowWidth(width);
-        setCompactWidth(0);
+        setCompactSlot({ width: 0, labelYielded });
       }
     },
     onEditorLayout: (event: { nativeEvent: { layout: { x: number; width: number } } }) => {
@@ -234,7 +237,7 @@ export function useCompactComposerEditor(
       if (!isExpanded) {
         editorX.set(event.nativeEvent.layout.x);
         editorWidth.set(event.nativeEvent.layout.width);
-        setCompactWidth(Math.max(0, event.nativeEvent.layout.width - 8));
+        setCompactSlot({ width: Math.max(0, event.nativeEvent.layout.width - 8), labelYielded });
       }
     },
     editorProps: {
@@ -472,6 +475,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
+  const keyboardVisible = useKeyboardState((state) => state.isVisible);
   const pendingPastedTextAttachmentCountRef = useRef(0);
   const pendingNativeImagePasteCountRef = useRef(0);
   const [pendingPastedTextAttachmentCount, setPendingPastedTextAttachmentCount] = useState(0);
@@ -622,10 +626,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const [compactRowWidth, setCompactRowWidth] = useState(0);
   const isWideRow = compactRowWidth >= 500;
   const compactAttachmentLimit = isWideRow ? 3 : 1;
+  const opensCard =
+    (isFocused && (Platform.OS !== "android" || keyboardVisible)) ||
+    settingsSheetPresentation.keepsComposerExpanded;
   const compactEditor = useCompactComposerEditor(
     bodyText,
     draftMessage,
-    isExpanded && compactRowWidth > 0 && !isWideRow,
+    opensCard && compactRowWidth > 0 && !isWideRow,
     isWideRow,
   );
   const showsCompactDictation = isVoiceInputPresented;
