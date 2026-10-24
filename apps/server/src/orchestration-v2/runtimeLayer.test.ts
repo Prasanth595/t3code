@@ -6157,6 +6157,81 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         const resumed = yield* orchestrator.getThreadProjection(threadId);
         assert.lengthOf(resumed.runs, 2);
         assert.equal(resumed.runs[1]?.status, "starting");
+
+        // The reading can omit the limit that stopped the run, such as a
+        // per-model weekly limit. The early run then fails on the same limit.
+        const earlyRun = resumed.runs[1]!;
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make("recovery:run:early-reset:again"),
+              type: "run.updated",
+              threadId,
+              occurredAt: checkedNow,
+              payload: { ...earlyRun, status: "failed", completedAt: checkedNow },
+            },
+            {
+              id: EventId.make("recovery:error:early-reset:again"),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: checkedNow,
+              payload: {
+                id: TurnItemId.make("recovery:error:early-reset:again"),
+                type: "error",
+                threadId,
+                runId: earlyRun.id,
+                nodeId: earlyRun.rootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed",
+                title: "Usage limit reached",
+                startedAt: checkedNow,
+                completedAt: checkedNow,
+                updatedAt: checkedNow,
+                failure: {
+                  class: "usage_limit",
+                  message: "Plan limit reached.",
+                  code: "usageLimitExceeded",
+                  retryable: null,
+                  resetAt,
+                },
+              },
+            },
+          ],
+        });
+        const failedAgain = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        const rearm = limitRecoveryCommand(failedAgain, true, nowMs);
+        assert(rearm?.type === "thread.metadata.update" && rearm.limitRecovery != null);
+        yield* orchestrator.autoArmLimitRecovery({
+          commandId: rearm.commandId,
+          threadId,
+          limitRecovery: rearm.limitRecovery,
+        });
+        yield* TestClock.adjust("1 minute");
+        const laterNow = yield* DateTime.now;
+        const rearmed = (yield* projections.getLimitRecoveryCandidates({
+          now: laterNow,
+          autoResume: true,
+          snooze: false,
+        })).find((row) => row.id === threadId)!;
+        assert.equal(rearmed.limitRecovery?.waitForReset, true);
+        assert.isNull(
+          limitRecoveryCommand(
+            rearmed,
+            true,
+            DateTime.toEpochMillis(laterNow),
+            false,
+            reading(laterNow, 0),
+          ),
+        );
+        const onTime = limitRecoveryCommand(rearmed, true, Date.parse(resetAt));
+        assert(onTime?.type === "message.dispatch");
+        assert.isUndefined(onTime.usageLimitClearedAt);
       }),
   );
 

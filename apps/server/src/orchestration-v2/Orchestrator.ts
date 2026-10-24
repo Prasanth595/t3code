@@ -27,6 +27,7 @@ import {
   type ModelSelection,
   OrchestrationV2Command,
   type OrchestrationV2InternalCommand,
+  type OrchestrationV2LimitRecovery,
   type OrchestrationV2LimitRecoveryUpdate,
   type OrchestrationV2ServerCommand,
   type ThreadPullRequestLink,
@@ -727,6 +728,20 @@ function usageLimitHoldsQueue(
     usageLimitBlockedRun(projection.runs, projection.turnItems, latestSession?.lastError ?? null)
       ?.providerInstanceId === providerInstanceId
   );
+}
+
+// A run that hit the limit again before the previous reset outlasted what the
+// usage reading showed, so its recovery waits for the reset instead of resuming
+// early on that reading once more.
+function limitRecoveryWaitsForReset(
+  previous: OrchestrationV2LimitRecovery | null | undefined,
+  runId: RunId,
+  now: DateTime.Utc,
+): boolean {
+  if (previous == null) return false;
+  return previous.runId === runId
+    ? previous.waitForReset === true
+    : Date.parse(previous.resetAt) > DateTime.toEpochMillis(now);
 }
 
 function latestStableRun(
@@ -3218,6 +3233,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       command.limitRecovery.autoResume ?? previousRecovery?.autoResume ?? false,
                     snooze: command.limitRecovery.snooze ?? previousRecovery?.snooze ?? false,
                     requestId: command.commandId,
+                    ...(limitRecoveryWaitsForReset(
+                      thread.limitRecovery,
+                      command.limitRecovery.runId,
+                      now,
+                    )
+                      ? { waitForReset: true }
+                      : {}),
                   };
           return {
             ...thread,
@@ -4880,7 +4902,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         recovery.runId !== run.id ||
         recovery.resetAt !== failure.resetAt ||
         (Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now) &&
-          (command.usageLimitClearedAt === undefined ||
+          (recovery.waitForReset === true ||
+            command.usageLimitClearedAt === undefined ||
             Date.parse(command.usageLimitClearedAt) <=
               DateTime.toEpochMillis(run.completedAt ?? run.requestedAt))) ||
         projection.thread.archivedAt !== null ||
@@ -9308,6 +9331,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           resetAt: failure.resetAt,
           autoResume: false,
           snooze: false,
+          ...(limitRecoveryWaitsForReset(recovery, latest.id, input.now)
+            ? { waitForReset: true }
+            : {}),
         };
       }
     }

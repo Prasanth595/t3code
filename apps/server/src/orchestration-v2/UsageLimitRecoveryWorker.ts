@@ -52,10 +52,12 @@ export function limitRecoveryCommand(
     };
   }
   // A reset credit or provider refresh can restore the allowance before the
-  // reported reset. Only a reading taken after the failure counts, so a resumed
-  // run that fails again waits for the next reading instead of looping.
+  // reported reset. Only a reading taken after the failure counts. A reading can
+  // omit the limit that stopped the run, so once an early run hits the limit
+  // again the server sets waitForReset and the thread waits for the reset.
   const clearedAt =
     resetMs > nowMs &&
+    recovery.waitForReset !== true &&
     usageLimits !== undefined &&
     usageLimits.unavailable === undefined &&
     usageLimits.windows.length > 0 &&
