@@ -84,14 +84,22 @@ readiness or the launcher's commit boundary. Graceful shutdown captures intent b
 closing providers, then reconciles after ingestion has stopped so a late completion
 cannot be overwritten by a stale cancellation.
 
+The outbox reserves one recovery slot through the resulting run: limiting only dispatch
+would still recreate the launch burst. Pending child recoveries precede their parent
+so a parent cannot occupy the slot while waiting for a child. Explicit starts and
+control effects bypass waiting recovery.
+
 The [continuation handler](../../apps/server/src/orchestration-v2/RestartContinuation.ts)
 rechecks the preference, provider selection, newer user work, a stop the user requested,
 and maintenance turns such as `/compact` before dispatching. Intent and delivery both
 refuse a thread that is archived, settled, or still snoozed, a cut turn whose provider
 turn already ended, and a run waiting on the user: an approval, question, or secret that was pending,
 or that recovery closed on the cut turn. Message-capable questions stay answerable, so
-they do not block. Delivery also stops after three consecutive continuations in one
-`restartContinuationOfRunId` chain, so a turn that crashes the server cannot loop. Stable
+they do not block. Delivery stops before the fourth consecutive process-loss recovery;
+elapsed time does not reset the count. Planned shutdowns and completed turns reset it
+so normal upgrades cannot exhaust an unfinished turn's allowance. A live continuation
+retains its preceding intent past outbox retention to preserve that budget. Legacy
+intents keep their five-minute chain guard. Stable
 command and message IDs prevent duplicate submissions after an outbox retry. Codex
 resumes without adding provider prompt text unless the turn lost background work;
 other adapters receive the continuation message through their normal turn path.
@@ -103,3 +111,6 @@ listener ignores reconciliation's cancellations. A cancelled child whose restart
 continuation is still pending in the outbox is not a result yet; the continuation's run
 settles it, or the handler settles it when it declines to continue. Schedulers wait for
 activation so they cannot start runs that reconciliation would then cancel.
+An unrecovered cancelled parent keeps those completion deliveries durable without
+offering a wake. A continuation or a user message re-offers them; dispatch also checks
+the hold because a wake can already have been queued before reconciliation.

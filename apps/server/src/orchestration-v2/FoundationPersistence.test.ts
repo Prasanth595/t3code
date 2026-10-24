@@ -1858,6 +1858,142 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
+  it.effect("admits one restart recovery across threads until its run settles", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:recovery-slot:a");
+      const sourceRunId = RunId.make("run:recovery-slot:source");
+      yield* outbox.enqueue(
+        [0, 1].map((index) => ({
+          id: `effect:recovery-slot:${index}`,
+          commandId: CommandId.make(`command:recovery-slot:${index}`),
+          threadId: index === 0 ? threadId : ThreadId.make("thread:recovery-slot:b"),
+          request: { type: "provider-runtime.continue" as const, sourceRunId },
+        })),
+      );
+      const claims = yield* Effect.all(
+        ["a", "b"].map((workerId) => outbox.claimNext({ workerId, leaseDurationMs: 30_000 })),
+        { concurrency: "unbounded" },
+      );
+      assert.equal(claims.filter(Option.isSome).length, 1);
+      const claim = claims.find(Option.isSome)!;
+      const workerId = claim.value.leaseOwner!;
+      const run: OrchestrationV2Run = {
+        id: RunId.make("run:recovery-slot:continued"),
+        threadId,
+        ordinal: 1,
+        providerInstanceId,
+        modelSelection,
+        providerThreadId: null,
+        userMessageId: MessageId.make("message:recovery-slot"),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status: "starting",
+        requestedAt: now,
+        startedAt: null,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+        restartContinuationOfRunId: sourceRunId,
+      };
+      yield* sink.write({
+        events: [
+          threadCreatedEvent({
+            id: "event:recovery-slot:thread",
+            thread: makeThread(threadId, now),
+            now,
+          }),
+          {
+            id: EventId.make("event:recovery-slot:run"),
+            type: "run.created",
+            threadId,
+            occurredAt: now,
+            payload: run,
+          },
+        ],
+      });
+      yield* outbox.succeed({ effectId: claim.value.id, workerId });
+      assert.isTrue(
+        Option.isNone(yield* outbox.claimNext({ workerId: "waiting", leaseDurationMs: 30_000 })),
+      );
+      assert.isTrue(Option.isNone(yield* outbox.nextClaimableAt));
+      const pending = yield* outbox.get("effect:recovery-slot:1");
+      assert.isTrue(Option.isSome(pending));
+      if (Option.isSome(pending)) assert.equal(pending.value.attemptCount, 0);
+      yield* outbox.enqueue([
+        {
+          id: "effect:recovery-slot:manual",
+          commandId: CommandId.make("command:recovery-slot:manual"),
+          threadId: ThreadId.make("thread:recovery-slot:b"),
+          request: { type: "provider-turn.start", runId: RunId.make("run:recovery-slot:manual") },
+        },
+      ]);
+      const manual = yield* outbox.claimNext({ workerId: "manual", leaseDurationMs: 30_000 });
+      assert.isTrue(Option.isSome(manual));
+      if (Option.isSome(manual)) {
+        assert.equal(manual.value.id, "effect:recovery-slot:manual");
+        yield* outbox.succeed({ effectId: manual.value.id, workerId: "manual" });
+      }
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("event:recovery-slot:done"),
+            type: "run.updated",
+            threadId,
+            occurredAt: now,
+            payload: { ...run, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      const next = yield* outbox.claimNext({ workerId: "next", leaseDurationMs: 30_000 });
+      assert.isTrue(Option.isSome(next));
+      if (Option.isSome(next)) yield* outbox.succeed({ effectId: next.value.id, workerId: "next" });
+    }),
+  );
+
+  it.effect("recovers a waiting parent's child first without occupying a worker", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const sql = yield* SqlClient.SqlClient;
+      const parent = ThreadId.make("thread:recovery-order:parent");
+      const child = ThreadId.make("thread:recovery-order:child");
+      const timestamp = DateTime.formatIso(yield* DateTime.now);
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_subagents
+          (subagent_id, thread_id, parent_node_id, provider, child_thread_id, origin, status, updated_at, payload_json)
+        VALUES ('subagent:recovery-order', ${parent}, 'node:recovery-order', 'codex', ${child}, 'app_owned', 'running', ${timestamp}, '{}')
+      `;
+      yield* outbox.enqueue(
+        [parent, child].map((threadId, index) => ({
+          id: `effect:recovery-order:${index}`,
+          commandId: CommandId.make(`command:recovery-order:${index}`),
+          threadId,
+          request: {
+            type: "provider-runtime.continue" as const,
+            sourceRunId: RunId.make(`run:recovery-order:${index}`),
+          },
+        })),
+      );
+      const first = yield* outbox.claimNext({ workerId: "child", leaseDurationMs: 30_000 });
+      assert.isTrue(Option.isSome(first));
+      if (Option.isNone(first)) return;
+      assert.equal(first.value.threadId, child);
+      assert.isTrue(
+        Option.isNone(yield* outbox.claimNext({ workerId: "parent", leaseDurationMs: 30_000 })),
+      );
+      yield* outbox.succeed({ effectId: first.value.id, workerId: "child" });
+      const next = yield* outbox.claimNext({ workerId: "parent", leaseDurationMs: 30_000 });
+      assert.isTrue(Option.isSome(next));
+      if (Option.isSome(next)) {
+        assert.equal(next.value.threadId, parent);
+        yield* outbox.succeed({ effectId: next.value.id, workerId: "parent" });
+      }
+      yield* sql`DELETE FROM orchestration_v2_projection_subagents WHERE subagent_id = 'subagent:recovery-order'`;
+    }),
+  );
+
   it.effect("wakes a settle waiter when its effect finishes", () =>
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
@@ -2113,6 +2249,40 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         ["failed-old:1", "pending:1", "running:1", "succeeded-recent:1"],
       );
       assert.equal(yield* outbox.pruneSettled, 0);
+    }).pipe(Effect.provide(layerIsolatedOutbox)),
+  );
+
+  it.effect("keeps a live continuation's crash budget past outbox retention", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const old = DateTime.formatIso(DateTime.subtractDuration(now, Duration.days(8)));
+      const timestamp = DateTime.formatIso(now);
+      yield* sql`
+        INSERT INTO orchestration_v2_effect_outbox
+          (effect_id, command_id, thread_id, effect_type, payload_json, status, available_at, created_at, updated_at, completed_at)
+        VALUES ('effect:retained-recovery', 'command:retained-recovery', 'thread:retained-recovery',
+          'provider-runtime.continue', '{"type":"provider-runtime.continue","sourceRunId":"run:retained-source","processLossCount":3}',
+          'succeeded', ${old}, ${old}, ${old}, ${old})
+      `;
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_runs
+          (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+        VALUES ('run:retained-recovery', 'thread:retained-recovery', 1, 'codex', 'running', ${timestamp},
+          '{"restartContinuationOfRunId":"run:retained-source"}')
+      `;
+      assert.equal(yield* outbox.pruneSettled, 0);
+      const kept = yield* outbox.get("effect:retained-recovery");
+      assert.isTrue(Option.isSome(kept));
+      if (Option.isSome(kept))
+        assert.deepEqual(kept.value.request, {
+          type: "provider-runtime.continue",
+          sourceRunId: RunId.make("run:retained-source"),
+          processLossCount: 3,
+        });
+      yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'completed' WHERE run_id = 'run:retained-recovery'`;
+      assert.equal(yield* outbox.pruneSettled, 1);
     }).pipe(Effect.provide(layerIsolatedOutbox)),
   );
 
@@ -2473,6 +2643,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         assert.deepEqual(effects[0]?.request, {
           type: "provider-runtime.continue",
           sourceRunId: runId,
+          processLossCount: 0,
         });
         yield* outbox.cancelUnsettled({
           threadId,
@@ -2534,7 +2705,11 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
 
   it.effect.each([
     { type: "terminal.cleanup" },
-    { type: "provider-runtime.continue", sourceRunId: RunId.make("run:restart-replay") },
+    {
+      type: "provider-runtime.continue",
+      sourceRunId: RunId.make("run:restart-replay"),
+      processLossCount: 3,
+    },
   ] as const)(
     "retires live provider effects and requeues $type after process loss",
     (replayRequest) =>

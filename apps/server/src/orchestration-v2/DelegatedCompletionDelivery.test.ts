@@ -1712,6 +1712,126 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   },
 );
 
+it.effect.each(["manual", "mcp", "stop"] as const)(
+  "holds a recovered child's parent wake until %s without losing the result",
+  (action) => {
+    return Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+      using offered = vi.spyOn(requests, "offer");
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make(`thread:recovery-wake:${action}`);
+      const projectId = ProjectId.make(`project:recovery-wake:${action}`);
+      const runId = RunId.make(`run:recovery-wake:${action}`);
+      const rootNodeId = NodeId.make(`node:recovery-wake:${action}`);
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId,
+        runId,
+        rootNodeId,
+        taskId: NodeId.make(`node:recovery-wake:seed:${action}`),
+        deliveryState: "acknowledged",
+        now,
+      });
+      const parent = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      yield* sink.write({
+        commandId: reconcileCommandId(`recovery-wake:${action}`),
+        events: [
+          {
+            id: EventId.make(`event:recovery-wake:cut:${action}`),
+            type: "run.updated",
+            threadId,
+            occurredAt: now,
+            payload: { ...parent, status: "cancelled", completedAt: now },
+          },
+        ],
+      });
+      const child = yield* seedRestartCancelledChild({
+        parentThreadId: threadId,
+        projectId,
+        parentRunId: runId,
+        rootNodeId,
+        name: `recovery-wake-child:${action}`,
+        completionWake: "always",
+        continuationPending: true,
+        now,
+      });
+      yield* continueRestartedRun({
+        threadId: child.childThreadId,
+        sourceRunId: child.childRunId,
+      }).pipe(
+        Effect.provide(ServerSettings.layerTest({ continueThreadsAfterServerUpdate: false })),
+      );
+      yield* orchestrator.recoverDelegatedTasks;
+      const recovered = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(
+        recovered.subagents.find((task) => task.id === child.taskId)?.status,
+        "cancelled",
+      );
+      assert.isNotNull(recovered.runs[0]?.delegatedCompletion?.delivery);
+      const delivery = recovered.runs[0]!.delegatedCompletion!.delivery!;
+      const wakeCommand = {
+        type: "message.dispatch" as const,
+        threadId,
+        commandId: CommandId.make(`command:recovery-wake:delivery:${action}`),
+        messageId: delivery.messageId,
+        text: "Child cancelled",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" as const },
+        createdBy: "agent" as const,
+        creationSource: "server" as const,
+        delegatedCompletion: {
+          parentRunId: runId,
+          generation: delivery.generation,
+          taskIds: delivery.taskIds,
+        },
+      };
+      yield* orchestrator.dispatch(wakeCommand);
+      yield* orchestrator.dispatch({
+        ...wakeCommand,
+        commandId: CommandId.make(`command:recovery-wake:repeated:${action}`),
+      });
+      assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+      assert.equal(offered.mock.calls.length, 0);
+      if (action !== "stop") {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          threadId,
+          commandId: CommandId.make("command:recovery-wake:manual"),
+          messageId: MessageId.make("message:recovery-wake:manual"),
+          text: "Continue",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: action === "mcp" ? "agent" : "user",
+          creationSource: action === "mcp" ? "mcp" : "web",
+        });
+        assert.equal(offered.mock.calls.length, 1);
+        const request = yield* requests.take;
+        assert.equal(request.delegatedCompletion?.messageId, delivery.messageId);
+        yield* orchestrator.dispatch({
+          ...wakeCommand,
+          commandId: CommandId.make("command:recovery-wake:retry"),
+        });
+        const resumed = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(resumed.runs, 3);
+        assert.equal(
+          resumed.runs.find((run) => run.userMessageId === delivery.messageId)?.status,
+          "queued",
+        );
+      } else {
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          threadId,
+          commandId: CommandId.make("command:recovery-wake:stop"),
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+      }
+    }).pipe(Effect.provide(Layer.merge(layerTest, ProviderContinuationRequests.layer)));
+  },
+);
+
 it.layer(layerTest)("delegated tasks across a server restart", (it) => {
   it.effect("queues a child result without creating a provider history handoff", () =>
     Effect.gen(function* () {

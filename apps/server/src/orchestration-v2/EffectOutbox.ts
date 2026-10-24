@@ -33,6 +33,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("provider-runtime.continue"),
     sourceRunId: RunId,
+    processLossCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-session.detach"),
@@ -321,6 +322,8 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
       ).pipe(Effect.asVoid);
     // An earlier effect waiting out a retry backoff still blocks later ones, so
     // a turn cannot start while a failed rollback is about to restore files.
+    // Dispatch finishes before the turn does. Keep admission through that run,
+    // and recover children first so a waiting parent cannot keep them out.
     const claimableCandidatePredicate = (
       availableBefore?: string,
       excludeRestartContinuations = false,
@@ -332,6 +335,31 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             : sql`candidate.available_at <= ${availableBefore}`
         }
         AND candidate.status = 'pending'
+        AND (
+          candidate.effect_type != 'provider-runtime.continue'
+          OR (
+            NOT EXISTS (
+              SELECT 1 FROM orchestration_v2_effect_outbox AS recovery
+              WHERE recovery.effect_type = 'provider-runtime.continue'
+                AND recovery.status = 'running'
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM orchestration_v2_projection_runs AS recovery_run
+              WHERE recovery_run.status IN ('starting', 'running', 'waiting')
+                AND json_extract(recovery_run.payload_json, '$.restartContinuationOfRunId') IS NOT NULL
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM orchestration_v2_projection_subagents AS child
+              JOIN orchestration_v2_effect_outbox AS child_recovery
+                ON child_recovery.thread_id = child.child_thread_id
+              WHERE child.thread_id = candidate.thread_id
+                AND child.origin = 'app_owned'
+                AND child.status IN ('pending', 'running', 'waiting')
+                AND child_recovery.effect_type = 'provider-runtime.continue'
+                AND child_recovery.status IN ('pending', 'running')
+            )
+          )
+        )
         AND NOT EXISTS (
           SELECT 1
           FROM orchestration_v2_effect_outbox AS active
@@ -344,7 +372,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
                 AND ${
                   excludeRestartContinuations
                     ? sql`active.effect_type != 'provider-runtime.continue'`
-                    : sql`1 = 1`
+                    : sql`(active.effect_type != 'provider-runtime.continue' OR candidate.effect_type = 'provider-runtime.continue')`
                 }
               )
             )
@@ -693,6 +721,8 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         const cutoff = DateTime.formatIso(
           DateTime.subtractDuration(yield* DateTime.now, SETTLED_EFFECT_RETENTION),
         );
+        // A live continuation still needs its intent's crash budget on its next
+        // restart, even if that turn runs longer than the normal retention.
         // Each batch is its own statement, so a large backlog never holds the
         // write lock for long and writers can commit between batches.
         const deleteBatch = sql<{ readonly effect_id: string }>`
@@ -702,6 +732,16 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             FROM orchestration_v2_effect_outbox
             WHERE status IN ('succeeded', 'cancelled')
               AND completed_at < ${cutoff}
+              AND NOT (
+                effect_type = 'provider-runtime.continue'
+                AND EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_runs AS recovery_run
+                  WHERE recovery_run.status IN ('starting', 'running', 'waiting')
+                    AND json_extract(recovery_run.payload_json, '$.restartContinuationOfRunId') IS NOT NULL
+                    AND json_extract(recovery_run.payload_json, '$.restartContinuationOfRunId') =
+                      json_extract(orchestration_v2_effect_outbox.payload_json, '$.sourceRunId')
+                )
+              )
             LIMIT ${PRUNE_BATCH_SIZE}
           )
           RETURNING effect_id

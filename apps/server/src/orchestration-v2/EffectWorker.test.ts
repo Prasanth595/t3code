@@ -4,6 +4,8 @@ import {
   CheckpointScopeId,
   CommandId,
   NodeId,
+  ProjectId,
+  ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -11,6 +13,7 @@ import {
   RunId,
   ThreadId,
   VcsProcessExitError,
+  type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -473,6 +476,62 @@ it.effect("terminalizes a process-bound claim when success settlement fails", ()
     assert.include(terminalError, "after execution started");
     assert.include(terminalError, "simulated success settlement failure");
   }),
+);
+
+it.effect.each([0, 3, 4])(
+  "enforces process-loss count %s after 22 minutes through the executor",
+  (processLossCount) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const instanceId = ProviderInstanceId.make("codex");
+      const events = yield* Ref.make<ReadonlyArray<string>>([]);
+      const layer = layerExecutorFor({
+        events,
+        continueAfterRestart: true,
+        threads: {
+          getThreadRecords: () =>
+            Effect.succeed({
+              thread: {
+                id: threadId,
+                projectId: ProjectId.make("project:executor-recovery"),
+                providerInstanceId: instanceId,
+                archivedAt: null,
+                deletedAt: null,
+              },
+              runs: [
+                {
+                  id: runId,
+                  providerInstanceId: instanceId,
+                  status: "cancelled",
+                  requestedAt: DateTime.subtract(now, { minutes: 22 }),
+                  completedAt: now,
+                  ordinal: 1,
+                },
+              ],
+              messages: [],
+              providerTurns: [],
+              runtimeRequests: [],
+              turnItems: [],
+              attempts: [],
+            } as unknown as OrchestrationV2ThreadProjection),
+          dispatch: () =>
+            Ref.update(events, (entries) => [...entries, "dispatch"]).pipe(Effect.as({} as never)),
+          recoverDelegatedTask: () =>
+            Ref.update(events, (entries) => [...entries, "recover-child"]),
+        },
+      });
+      yield* Effect.gen(function* () {
+        const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+        yield* executor.execute({
+          ...restartEffect(now, { type: "detach" }),
+          request: { type: "provider-runtime.continue", sourceRunId: runId, processLossCount },
+        });
+      }).pipe(Effect.provide(layer));
+      assert.deepEqual(
+        yield* Ref.get(events),
+        processLossCount > 3 ? ["recover-child"] : ["dispatch", "recover-child"],
+      );
+    }),
 );
 
 it.effect("settles a delegated child once its restart continuation fails for good", () =>

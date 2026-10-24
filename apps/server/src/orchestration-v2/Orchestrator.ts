@@ -1168,6 +1168,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ? undefined
       : projection.messages.find((candidate) => candidate.id === delivery.messageId);
 
+  const restartCancelledRunNeedsResume = (
+    projection: Pick<OrchestrationV2ThreadProjection, "runs">,
+    source: OrchestrationV2Run,
+  ) =>
+    source.status === "cancelled" &&
+    !projection.runs.some(
+      (run) =>
+        run.id !== source.id &&
+        run.status !== "queued" &&
+        !cancelledBeforeStart(run) &&
+        runRanAfter(run, source),
+    );
+
   const offerDelegatedCompletionDelivery =
     /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
     Effect.fnUntraced(function* (threadId: ThreadId, parentRunId: RunId) {
@@ -1201,6 +1214,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (providerThread === undefined) {
         return;
       }
+      // Recovery cancellation is not permission to start another parent turn.
+      // Keep the delivery durable until a continuation or a user message resumes it.
+      if (restartCancelledRunNeedsResume(projection, parentRun)) return;
       yield* continuationRequests.offer({
         threadId,
         providerThreadId: providerThread.id,
@@ -5128,6 +5144,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         generation: delivery.generation,
         taskIds: delivery.taskIds,
       };
+      // A queued wake can predate recovery; enforce the hold at execution too.
+      if (restartCancelledRunNeedsResume(projection, parentRun!)) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          occurredAt: yield* DateTime.now,
+          payload: projection.thread,
+        });
+        return;
+      }
     }
     // Route durable mailbox deliveries under the thread lock, using the live
     // session's capabilities. Never interrupt/restart a turn for a notification.
@@ -11897,7 +11926,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
     }
-    if (command.type === "notification.delivery.accept") {
+    if (
+      command.type === "notification.delivery.accept" ||
+      (command.type === "message.dispatch" &&
+        (command.createdBy === "user" ||
+          command.creationSource === "mcp" ||
+          command.restartContinuationOfRunId !== undefined))
+    ) {
       yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.threadId));
     }
     if (command.type === "delegated_task.wake-policy") {
