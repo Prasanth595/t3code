@@ -100,16 +100,43 @@ const make = Effect.gen(function* () {
   const persist = Effect.fn("AgentFileSyncLinks.persist")(function* (next: State) {
     const oldKeys = new Set(state.map(baselineKey));
     const nextKeys = new Set(next.map(baselineKey));
-    // Publish immutable baselines before the catalog so interrupted writes leave the prior state readable.
-    for (const link of next) {
-      if (oldKeys.has(baselineKey(link))) continue;
+    yield* Effect.gen(function* () {
+      // Publish immutable baselines before the catalog so interrupted writes leave the prior state readable.
+      for (const link of next) {
+        if (oldKeys.has(baselineKey(link))) continue;
+        yield* secrets
+          .set(baselineKey(link), Buffer.from(encodeBundle(link.previous)))
+          .pipe(Effect.mapError((cause) => new AgentFileSyncError({ reason: "io", cause })));
+      }
       yield* secrets
-        .set(baselineKey(link), Buffer.from(encodeBundle(link.previous)))
+        .set(SECRET, Buffer.from(encode(next.map(({ previous: _previous, ...link }) => link))))
         .pipe(Effect.mapError((cause) => new AgentFileSyncError({ reason: "io", cause })));
-    }
-    yield* secrets
-      .set(SECRET, Buffer.from(encode(next.map(({ previous: _previous, ...link }) => link))))
-      .pipe(Effect.mapError((cause) => new AgentFileSyncError({ reason: "io", cause })));
+    }).pipe(
+      Effect.tapError(() =>
+        Effect.gen(function* () {
+          // A write may report failure after publishing. Preserve every baseline the saved catalog references.
+          const stored = yield* secrets.get(SECRET);
+          const published = Option.isSome(stored)
+            ? yield* decode(Buffer.from(stored.value).toString("utf8"))
+            : [];
+          const protectedKeys = new Set(published.map(baselineKey));
+          for (const key of nextKeys) {
+            if (oldKeys.has(key) || protectedKeys.has(key)) continue;
+            yield* secrets
+              .remove(key)
+              .pipe(
+                Effect.catch(() =>
+                  Effect.logWarning("Could not remove an unpublished agent file sync baseline"),
+                ),
+              );
+          }
+        }).pipe(
+          Effect.catch(() =>
+            Effect.logWarning("Could not verify unpublished agent file sync baselines"),
+          ),
+        ),
+      ),
+    );
     state = next;
     for (const key of oldKeys) {
       if (nextKeys.has(key)) continue;

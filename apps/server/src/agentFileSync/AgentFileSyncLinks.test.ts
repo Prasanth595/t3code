@@ -31,6 +31,7 @@ const fixture = Effect.gen(function* () {
   const storage = new Map<string, Uint8Array>();
   const writes: string[] = [];
   const failWrites = new Set<string>();
+  const failAfterWrites = new Set<string>();
   const failReads = new Set<string>();
   const secrets = Layer.succeed(
     ServerSecretStore.ServerSecretStore,
@@ -55,9 +56,14 @@ const fixture = Effect.gen(function* () {
                   cause: "test write failure",
                 }),
               )
-            : Effect.sync(() => {
+            : Effect.gen(function* () {
                 storage.set(name, Uint8Array.from(data));
                 writes.push(name);
+                if (failAfterWrites.has(name))
+                  return yield* new ServerSecretStore.SecretStorePersistError({
+                    resource: name,
+                    cause: "test failure after publication",
+                  });
               }),
         ),
       create: () => Effect.void,
@@ -108,6 +114,7 @@ const fixture = Effect.gen(function* () {
     storage,
     writes,
     failWrites,
+    failAfterWrites,
     failReads,
   };
 });
@@ -236,6 +243,52 @@ it.layer(NodeServices.layer)("sync subscriptions", (it) => {
       expect(yield* f.fs.readFileString(f.path.join(f.directory, "AGENTS.md"))).toContain(
         "Changed",
       );
+    }),
+  );
+  it.effect("removes unpublished setup baselines while preserving existing subscriptions", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const original = yield* f.subscribe();
+      const saved = new Map(f.storage);
+      const cwd = f.path.join(f.directory, "new");
+      yield* f.fs.makeDirectory(cwd);
+      f.failWrites.add("agent-file-sync-links");
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const result = yield* f.links
+          .subscribe({
+            cwd,
+            sourceEnvironmentId: EnvironmentId.make("new-source"),
+            selection: {
+              skills: [],
+              instructions: [{ path: "AGENTS.md", sectionIds: ["Shared:0"] }],
+            },
+            label: "New source",
+            bundle: bundle("New rules"),
+            expected: yield* f.files.preview({ cwd, bundle: bundle("New rules") }),
+          })
+          .pipe(Effect.result);
+        expect(result).toMatchObject({ _tag: "Failure", failure: { reason: "io" } });
+        expect(f.storage).toEqual(saved);
+        expect(yield* f.fs.exists(f.path.join(cwd, "AGENTS.md"))).toBe(false);
+        expect(yield* (yield* f.load).list).toEqual([original]);
+      }
+    }),
+  );
+  it.effect("preserves baselines referenced by a catalog published before a write error", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const original = yield* f.subscribe();
+      f.failAfterWrites.add("agent-file-sync-links");
+      const result = yield* f.links
+        .refresh({ id: original.id, generation: 0, bundle: bundle("Published") })
+        .pipe(Effect.result);
+      expect(result).toMatchObject({ _tag: "Failure", failure: { reason: "io" } });
+      const restarted = yield* f.load;
+      expect(yield* restarted.list).toMatchObject([{ id: original.id, generation: 1 }]);
+      f.failAfterWrites.clear();
+      yield* restarted.refresh({ id: original.id, generation: 1, bundle: bundle("Next") });
+      expect((yield* restarted.list)[0]?.paused).toBe(false);
+      expect(yield* f.fs.readFileString(f.path.join(f.directory, "AGENTS.md"))).toContain("Next");
     }),
   );
   it.effect("ignores missing, malformed or mismatched baselines without logging contents", () =>
