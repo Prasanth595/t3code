@@ -164,6 +164,32 @@ describe("V2 storage cleanup eligibility", () => {
     ).toBe(false);
   });
 
+  it.each([
+    { autoResume: false, snooze: true, resetIn: DAY_MS, idle: false },
+    { autoResume: true, snooze: false, resetIn: DAY_MS, idle: false },
+    { autoResume: false, snooze: false, resetIn: DAY_MS, idle: true },
+    { autoResume: true, snooze: true, resetIn: -1_000, idle: true },
+  ])(
+    "holds a usage-limited worktree only until its reset (autoResume $autoResume, snooze $snooze, reset in $resetIn ms)",
+    ({ resetIn, idle, ...recovery }) => {
+      const runId = RunId.make("run-1");
+      expect(
+        storageCleanupThreadIdle(
+          {
+            ...candidateWithStatus("failed"),
+            latestRunId: runId,
+            limitRecovery: {
+              runId,
+              resetAt: DateTime.formatIso(at(resetIn)),
+              ...recovery,
+            },
+          },
+          NOW_MS,
+        ),
+      ).toBe(idle);
+    },
+  );
+
   it("uses V2 run activity instead of metadata refreshes for retention", () => {
     const thread = candidate();
     const runTime = at(-3 * DAY_MS);

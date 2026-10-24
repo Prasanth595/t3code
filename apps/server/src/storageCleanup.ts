@@ -128,7 +128,21 @@ export function storageCleanupThreadIdle(thread: OrchestrationV2ThreadShell, now
       thread.status === "rolled_back") &&
     (thread.pendingBackgroundTasks?.length ?? 0) === 0 &&
     thread.pendingRuntimeRequest === null &&
-    !threadHasQueuedTurnStart(thread, now)
+    !threadHasQueuedTurnStart(thread, now) &&
+    !awaitingLimitReset(thread, now)
+  );
+}
+
+// A run held for its usage-limit reset has its work still ahead of it, and a
+// fresh worktree would otherwise look unchanged and be removed before it runs.
+function awaitingLimitReset(thread: OrchestrationV2ThreadShell, now: number): boolean {
+  const recovery = thread.limitRecovery;
+  return (
+    thread.status === "failed" &&
+    recovery != null &&
+    recovery.runId === thread.latestRunId &&
+    (recovery.autoResume || recovery.snooze === true) &&
+    Date.parse(recovery.resetAt) > now
   );
 }
 
