@@ -32,18 +32,21 @@ export function ComposerModelControl(props: {
     selections: props.selection?.options,
   });
   const promptTraits = getPromptControlledTraits(descriptors, props.prompt);
-  const summary = props.provider
-    ? buildTraitsTriggerDisplay({
-        provider: props.provider,
-        descriptors: descriptors.filter(
-          (descriptor) => !SUFFIX_EXCLUDED_DESCRIPTOR_IDS.has(descriptor.id),
-        ),
-        primarySelectDescriptorId: promptTraits.primarySelectDescriptor?.id ?? null,
-        ultrathinkPromptControlled: promptTraits.ultrathinkPromptControlled,
-        modelSelection: props.selection,
-        reportedModelSelection: props.reportedSelection,
-      }).label
-    : "";
+  const traitsSummary = (visibleDescriptors: typeof descriptors) =>
+    props.provider
+      ? buildTraitsTriggerDisplay({
+          provider: props.provider,
+          descriptors: visibleDescriptors,
+          primarySelectDescriptorId: promptTraits.primarySelectDescriptor?.id ?? null,
+          ultrathinkPromptControlled: promptTraits.ultrathinkPromptControlled,
+          modelSelection: props.selection,
+          reportedModelSelection: props.reportedSelection,
+        }).label
+      : "";
+  const summary = traitsSummary(
+    descriptors.filter((descriptor) => !SUFFIX_EXCLUDED_DESCRIPTOR_IDS.has(descriptor.id)),
+  );
+  const fullSummary = traitsSummary(descriptors);
   const badge = props.modelOption?.providerBadge;
   const label = props.modelOption?.label ?? props.selection?.model ?? "Choose model";
   const displayLabel = props.modelOption
@@ -109,7 +112,7 @@ export function ComposerModelControl(props: {
           "Model and reasoning settings",
           label,
           badge?.showBadge ? badge.displayName : null,
-          summary,
+          fullSummary,
         ]
           .filter(Boolean)
           .join(", ")}
