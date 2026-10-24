@@ -1732,29 +1732,55 @@ export const layerWithOptions = (
           event: ProviderAdapter.ProviderAdapterV2Event,
           skipProviderThreadSnapshot = false,
         ) {
-          const current = (yield* Ref.get(sessions)).get(
-            sessionKey(entry.runtime.providerSessionId),
-          );
-          if (current?.runtime !== entry.runtime) return;
-          yield* providerEventIngestor
-            .ingestNormalized({
-              providerSessionId: entry.runtime.providerSessionId,
-              providerInstanceId: entry.runtime.instanceId,
-              threadId,
-              event,
-              ...(skipProviderThreadSnapshot ? { skipProviderThreadSnapshot: true } : {}),
-            })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterEventStreamError({
-                    driver: entry.runtime.driver,
-                    providerSessionId: entry.runtime.providerSessionId,
-                    cause,
-                  }),
-              ),
+          const input = {
+            providerSessionId: entry.runtime.providerSessionId,
+            providerInstanceId: entry.runtime.instanceId,
+            threadId,
+            event,
+            ...(skipProviderThreadSnapshot ? { skipProviderThreadSnapshot: true } : {}),
+          };
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const current = (yield* Ref.get(sessions)).get(
+              sessionKey(entry.runtime.providerSessionId),
             );
+            if (current?.runtime !== entry.runtime) return true;
+            if (event.type !== "provider_thread.updated") {
+              yield* providerEventIngestor.ingestNormalized(input);
+              return true;
+            }
+            const projection = yield* projectionStore.getThreadRecords(threadId, [
+              "providerThreads",
+            ]);
+            const owner = projection.providerThreads.find(
+              (thread) => thread.id === event.providerThread.id,
+            );
+            // A pooled old runtime can outlive a selection restart. Its unread snapshot
+            // must not reclaim a thread that has moved to the replacement session.
+            if (owner !== undefined && owner.providerSessionId !== entry.runtime.providerSessionId)
+              return true;
+            const events = yield* providerEventIngestor.normalize(input);
+            if (events.length === 0) return true;
+            const written = yield* eventSink.writeIfProviderThreadUnchanged({
+              ...(owner === undefined
+                ? { expected: null, providerThreadId: event.providerThread.id }
+                : { expected: owner }),
+              events,
+            });
+            if (written.committed) return true;
+          }
+          return false;
         },
+        (effect, entry) =>
+          effect.pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterEventStreamError({
+                  driver: entry.runtime.driver,
+                  providerSessionId: entry.runtime.providerSessionId,
+                  cause,
+                }),
+            ),
+          ),
       );
 
       const ingestRunlessEvent = (
@@ -1782,9 +1808,13 @@ export const layerWithOptions = (
             const threadId = update.event.providerThread.appThreadId;
             if (threadId === null) continue;
             const latest = entry.latestThreadUpdates.get(update.event.providerThread.id);
-            yield* ingestRunlessEventHeld(entry, threadId, update.event, latest !== update);
-            update.received = true;
-            entry.pendingRewinds.delete(update.event);
+            update.received = yield* ingestRunlessEventHeld(
+              entry,
+              threadId,
+              update.event,
+              latest !== update,
+            );
+            if (update.received) entry.pendingRewinds.delete(update.event);
           }
         },
         Effect.catchCause((cause) =>
@@ -2210,10 +2240,14 @@ export const layerWithOptions = (
                       event.type === "provider_thread.updated" &&
                       event.providerThread.appThreadId !== null
                     ) {
-                      yield* ingestRunlessEventHeld(entry, event.providerThread.appThreadId, event);
+                      const received = yield* ingestRunlessEventHeld(
+                        entry,
+                        event.providerThread.appThreadId,
+                        event,
+                      );
                       const update = entry.latestThreadUpdates.get(event.providerThread.id);
-                      if (update !== undefined) update.received = true;
-                      entry.pendingRewinds.delete(event);
+                      if (update !== undefined) update.received = received;
+                      if (received) entry.pendingRewinds.delete(event);
                     }
                   }).pipe(entry.requestEventPermit.withPermits(1));
                   yield* releaseLiveOutput;

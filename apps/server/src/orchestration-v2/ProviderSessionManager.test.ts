@@ -3132,9 +3132,14 @@ it.effect.each([
   "coalesced updates",
   "rejected write",
   "released rewind",
+  "replacement owner",
+  "concurrent owner switch",
+  "replacement insert",
+  "same-owner write",
 ] as const)("ProviderSessionManagerV2 preserves unread thread updates with %s", (scenario) =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
+    const beforeUnchangedWrite = yield* Ref.make<Effect.Effect<void>>(Effect.void);
     yield* Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -3171,6 +3176,23 @@ it.effect.each([
           : undefined;
       const adapterEvents = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!;
       const sessionUpdates = yield* Queue.unbounded<void>();
+      if (
+        scenario === "replacement owner" ||
+        scenario === "concurrent owner switch" ||
+        scenario === "same-owner write"
+      ) {
+        yield* eventSink.write({
+          events: [
+            {
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "provider-thread.updated",
+              threadId,
+              occurredAt: now,
+              payload: providerThread,
+            },
+          ],
+        });
+      }
       const afterSequence = yield* eventSink.latestSequence({ threadId });
       yield* eventSink.stream({ threadId, afterSequence }).pipe(
         Stream.filter((stored) => stored.event.type === "provider-session.updated"),
@@ -3296,6 +3318,43 @@ it.effect.each([
           "cleared-session",
         );
         yield* Fiber.interrupt(reader);
+      } else if (
+        scenario === "replacement owner" ||
+        scenario === "concurrent owner switch" ||
+        scenario === "replacement insert" ||
+        scenario === "same-owner write"
+      ) {
+        const replacement = {
+          ...update("newer-session").providerThread,
+          providerSessionId:
+            scenario === "same-owner write"
+              ? providerSessionId
+              : yield* idAllocator.allocate.providerSession({
+                  providerInstanceId: modelSelection.instanceId,
+                  threadId,
+                }),
+        };
+        const switchOwner = eventSink
+          .write({
+            events: [
+              {
+                id: yield* idAllocator.allocate.event({ threadId }),
+                type: "provider-thread.updated",
+                threadId,
+                occurredAt: now,
+                payload: replacement,
+              },
+            ],
+          })
+          .pipe(Effect.asVoid, Effect.orDie);
+        if (scenario !== "replacement owner") yield* Ref.set(beforeUnchangedWrite, switchOwner);
+        else yield* switchOwner;
+        yield* first.close;
+        assert.equal(
+          (yield* projectionStore.getThreadProjection(threadId)).providerThreads[0]
+            ?.providerSessionId,
+          replacement.providerSessionId,
+        );
       } else if (scenario === "rejected write") {
         yield* first.events.pipe(
           Stream.mapEffect((event) => first.persistEvent!(event, () => Effect.succeed([]))),
@@ -3314,17 +3373,21 @@ it.effect.each([
       const persistedUpdates = yield* eventStore
         .read({ threadId, afterSequence, eventType: "provider-thread.updated" })
         .pipe(Stream.runCollect);
-      assert.lengthOf(persistedUpdates, 1);
+      assert.lengthOf(persistedUpdates, scenario === "same-owner write" ? 2 : 1);
       const projection = yield* projectionStore.getThreadProjection(threadId);
       assert.deepEqual(
         projection.providerThreads.map((thread) => thread.nativeThreadRef?.nativeId),
         [
-          scenario === "newer received update" || scenario === "coalesced updates"
+          scenario === "newer received update" ||
+          scenario === "coalesced updates" ||
+          scenario === "replacement owner" ||
+          scenario === "concurrent owner switch" ||
+          scenario === "replacement insert"
             ? "newer-session"
             : "cleared-session",
         ],
       );
-    }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+    }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, beforeUnchangedWrite })));
   }),
 );
 
