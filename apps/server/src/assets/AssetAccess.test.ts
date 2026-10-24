@@ -4,7 +4,9 @@ import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeFSP from "node:fs/promises";
 import {
   AssetAccessError,
+  AssetCreateUrlInput,
   AssetPreviewTypeValidationError,
+  SOURCE_CONTROL_MEDIA_ASSET,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -15,12 +17,11 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Redacted from "effect/Redacted";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse, HttpServerResponse } from "effect/http";
+import { HttpClientRequest, HttpClientResponse, HttpServerResponse } from "effect/http";
 import { vi } from "vite-plus/test";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -33,10 +34,10 @@ import { assetFileResponse } from "../http.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, readMcpAppHtml, resolveAsset } from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
-import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
-import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
-import * as GitHubRequestPolicy from "@t3tools/source-control-github/server/GitHubRequestPolicy";
-import { githubMediaResponse } from "./GitHubMediaFetch.ts";
+import { fakeSourceControlDriverInstance } from "@t3tools/source-control-testing/fakeSourceControlDriver";
+import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import { sourceControlMediaResponse } from "./sourceControlMediaResponse.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -177,200 +178,6 @@ describe("AssetAccess", () => {
         expect(error._tag).toBe("PlatformError");
         expect(error.reason._tag).toBe("NotFound");
       }).pipe(Effect.provide(NodeServices.layer)),
-    );
-  });
-
-  it.effect("loads private media immediately after login with the GitHub credential", () => {
-    let lookups = 0;
-    const authorizations: Array<string | undefined> = [];
-    return Effect.gen(function* () {
-      const asset = {
-        url: "https://raw.githubusercontent.com/owner/repo/main/shot.png",
-        cwd: "/repo",
-        expiresAt: Number.MAX_SAFE_INTEGER,
-      };
-      expect((yield* githubMediaResponse(asset, {})).status).toBe(404);
-      expect((yield* githubMediaResponse(asset, {})).status).toBe(200);
-      expect((yield* githubMediaResponse(asset, {})).status).toBe(200);
-      expect(lookups).toBe(3);
-      expect(authorizations).toEqual([undefined, "Bearer signed-in", "Bearer signed-in"]);
-    }).pipe(
-      Effect.provide([
-        Layer.mock(GitHubRest.GitHubRest)({
-          rest: () => Effect.die("Raw media must not look up a release"),
-        }),
-        Layer.mock(GitHubCredentials.GitHubCredentials)({
-          get: (host) =>
-            ++lookups === 1
-              ? Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host }))
-              : Effect.succeed({
-                  host,
-                  token: Redacted.make("signed-in"),
-                  source: "gh" as const,
-                  fingerprint: "fingerprint",
-                }),
-        }),
-      ]),
-      Effect.provideService(
-        HttpClient.HttpClient,
-        HttpClient.make((request) => {
-          authorizations.push(request.headers.authorization);
-          return Effect.succeed(
-            HttpClientResponse.fromWeb(
-              request,
-              new Response(null, {
-                status: request.headers.authorization ? 200 : 404,
-                headers: { "content-type": "image/png" },
-              }),
-            ),
-          );
-        }),
-      ),
-      Effect.scoped,
-    );
-  });
-
-  describe("GitHub release media", () => {
-    const asset = {
-      url: "https://github.com/owner/private/releases/download/v1%2Btest/shot%20%231%25.png",
-      cwd: "/repo",
-      expiresAt: 60_000,
-    };
-    const credential = {
-      host: "github.com",
-      token: Redacted.make("release-test-token"),
-      source: "gh" as const,
-      fingerprint: "release-test",
-    };
-    const objectUrl = "https://release-assets.githubusercontent.com/shot.png?signature=test";
-
-    it.effect(
-      "downloads the exact release image for a tag with a slash through the API without leaking auth on redirect",
-      () => {
-        const tag = "release%2Fv1";
-        const releaseAsset = { ...asset, url: asset.url.replace("v1%2Btest", tag) };
-        const requests: Array<{ url: string; authorization: string | undefined }> = [];
-        const lookup = vi.fn((input: GitHubRest.GitHubRestInput) => {
-          expect(input).toMatchObject({
-            host: "github.com",
-            operation: "getReleaseByTag",
-            path: `repos/owner/private/releases/tags/${tag}`,
-          });
-          return Effect.succeed({
-            status: 200,
-            headers: {},
-            truncated: false,
-            invalidUtf8: false,
-            body: JSON.stringify({
-              assets: [
-                { id: 41, name: "shot #1%.png.bak" },
-                { id: 42, name: "shot #1%.png", url: "https://untrusted.invalid/ignored" },
-              ],
-            }),
-          });
-        });
-        const downloadUrl = "https://api.github.com/repos/owner/private/releases/assets/42";
-        return Effect.gen(function* () {
-          const response = HttpServerResponse.toWeb(yield* githubMediaResponse(releaseAsset, {}));
-          expect(response.status).toBe(200);
-          expect(response.headers.get("content-type")).toBe("image/png");
-          expect(new Uint8Array(yield* Effect.promise(() => response.arrayBuffer()))).toEqual(
-            screenshotPng,
-          );
-          expect(lookup).toHaveBeenCalledTimes(1);
-          expect(requests).toEqual([
-            { url: downloadUrl, authorization: "Bearer release-test-token" },
-            { url: objectUrl, authorization: undefined },
-          ]);
-        }).pipe(
-          Effect.provide([
-            Layer.mock(GitHubCredentials.GitHubCredentials)({
-              get: () => Effect.succeed(credential),
-            }),
-            Layer.mock(GitHubRest.GitHubRest)({ rest: lookup }),
-          ]),
-          Effect.provideService(
-            HttpClient.HttpClient,
-            HttpClient.make((request) => {
-              requests.push({ url: request.url, authorization: request.headers.authorization });
-              if (request.url === downloadUrl) {
-                expect(request.headers.accept).toBe("application/octet-stream");
-                return Effect.succeed(
-                  HttpClientResponse.fromWeb(
-                    request,
-                    new Response(null, { status: 302, headers: { location: objectUrl } }),
-                  ),
-                );
-              }
-              return Effect.succeed(
-                HttpClientResponse.fromWeb(
-                  request,
-                  request.url === objectUrl
-                    ? new Response(screenshotPng, {
-                        headers: { "content-type": "application/octet-stream" },
-                      })
-                    : new Response(null, { status: 404 }),
-                ),
-              );
-            }),
-          ),
-          Effect.scoped,
-        );
-      },
-    );
-
-    it.effect.each(["no credential", "lookup fails"])(
-      "loads public release bytes anonymously when %s",
-      (mode) => {
-        const requests: Array<{ url: string; authorization: string | undefined }> = [];
-        const lookup = vi.fn(() =>
-          Effect.fail(
-            new GitHubRequestPolicy.GitHubApiAuthenticationError({
-              host: "github.com",
-              operation: "getReleaseByTag",
-            }),
-          ),
-        );
-        return Effect.gen(function* () {
-          const response = HttpServerResponse.toWeb(yield* githubMediaResponse(asset, {}));
-          expect(response.status).toBe(200);
-          expect(new Uint8Array(yield* Effect.promise(() => response.arrayBuffer()))).toEqual(
-            screenshotPng,
-          );
-          expect(requests).toEqual([
-            { url: asset.url, authorization: undefined },
-            { url: objectUrl, authorization: undefined },
-          ]);
-          expect(lookup).toHaveBeenCalledTimes(mode === "no credential" ? 0 : 1);
-        }).pipe(
-          Effect.provide([
-            Layer.mock(GitHubCredentials.GitHubCredentials)({
-              get: (host) =>
-                mode === "no credential"
-                  ? Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host }))
-                  : Effect.succeed(credential),
-            }),
-            Layer.mock(GitHubRest.GitHubRest)({ rest: lookup }),
-          ]),
-          Effect.provideService(
-            HttpClient.HttpClient,
-            HttpClient.make((request) => {
-              requests.push({ url: request.url, authorization: request.headers.authorization });
-              return Effect.succeed(
-                HttpClientResponse.fromWeb(
-                  request,
-                  request.url === asset.url
-                    ? new Response(null, { status: 302, headers: { location: objectUrl } })
-                    : request.url === objectUrl
-                      ? new Response(screenshotPng, { headers: { "content-type": "image/png" } })
-                      : new Response(null, { status: 404 }),
-                ),
-              );
-            }),
-          ),
-          Effect.scoped,
-        );
-      },
     );
   });
 
@@ -1143,69 +950,64 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("serves GitHub-hosted pull request media through the repository's credential", () =>
+  it.effect("serves a host's credentialed media through that host's driver", () => {
+    const fetched: Array<{ url: string; headers: Readonly<Record<string, string>> }> = [];
+    const url = "https://github.com/owner/repo/blob/main/docs/shot.png";
+    const media = sourceControlDefinitions.mediaUrl(url)!;
+    const layerDrivers = Layer.succeed(BuiltInDrivers.SourceControlDrivers, [
+      {
+        driver: { kind: media.definition.kind, definition: media.definition },
+        instance: fakeSourceControlDriverInstance(media.definition.kind, {
+          pullRequests: null,
+          fetchMedia: (request) =>
+            Effect.sync(() => {
+              fetched.push(request);
+              return HttpClientResponse.fromWeb(
+                HttpClientRequest.get(request.url),
+                new Response("bytes", { status: 206, headers: { "content-length": "5" } }),
+              );
+            }),
+        }),
+      },
+    ]);
+    return Effect.gen(function* () {
+      // Every client and server release spells the resource this way on the wire.
+      const { resource } = yield* Schema.decodeUnknownEffect(AssetCreateUrlInput)({
+        resource: { _tag: "github-media", cwd: "/repo", url },
+      });
+      const issued = yield* issueAssetUrl({ resource });
+      const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      const asset = yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
+      expect(asset).toEqual({
+        kind: "source-control-media",
+        url: media.fetchUrl,
+        cwd: "/repo",
+        expiresAt: issued.expiresAt,
+      });
+      if (asset?.kind !== "source-control-media") return;
+
+      const response = yield* sourceControlMediaResponse(asset, {
+        range: "bytes=0-4",
+        cookie: "session",
+      });
+      expect(fetched).toEqual([{ url: media.fetchUrl, headers: { range: "bytes=0-4" } }]);
+      expect(response.status).toBe(206);
+      // The upstream sent no type, so it comes from the file name the host gave the media.
+      expect(response.headers["content-type"]).toBe("image/png");
+      expect(response.headers["content-length"]).toBe("5");
+    }).pipe(Effect.provide(Layer.merge(layerTest, layerDrivers)), Effect.scoped);
+  });
+
+  it.effect("refuses media no host keeps behind a credential, without echoing the URL", () =>
     Effect.gen(function* () {
-      const resolve = (relativeUrl: string) => {
-        const suffix = relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
-        const separator = suffix.indexOf("/");
-        return resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
-      };
-      const issue = (url: string) =>
-        issueAssetUrl({ resource: { _tag: "github-media", cwd: "/repo", url } });
-
-      const attachment = yield* issue(
-        "https://github.com/user-attachments/assets/1a1842fb-6383-492f-873c-57aa0033fa6c",
-      );
-      expect(attachment.relativeUrl.endsWith("/1a1842fb-6383-492f-873c-57aa0033fa6c")).toBe(true);
-      expect(yield* resolve(attachment.relativeUrl)).toEqual({
-        kind: "github-media",
-        url: "https://github.com/user-attachments/assets/1a1842fb-6383-492f-873c-57aa0033fa6c",
-        cwd: "/repo",
-        expiresAt: attachment.expiresAt,
-      });
-
-      const committed = yield* issue("https://github.com/owner/repo/blob/main/docs/shot.png");
-      expect(yield* resolve(committed.relativeUrl)).toMatchObject({
-        url: "https://raw.githubusercontent.com/owner/repo/main/docs/shot.png",
-      });
-
-      const legacy = yield* issue("https://github.com/owner/repo/assets/45952064/1a1842fb");
-      expect(yield* resolve(legacy.relativeUrl)).toMatchObject({
-        url: "https://github.com/owner/repo/assets/45952064/1a1842fb",
-      });
-      const lfs = yield* issue("https://media.githubusercontent.com/media/owner/repo/main/a.mp4");
-      expect(yield* resolve(lfs.relativeUrl)).toMatchObject({
-        url: "https://media.githubusercontent.com/media/owner/repo/main/a.mp4",
-      });
-      const releaseUrl =
-        "https://github.com/owner/repo/releases/download/v1%2Btest/shot%20%231%25.png";
-      const release = yield* issue(`${releaseUrl}?download=1#preview`);
-      expect(release.relativeUrl.endsWith("/shot%20%231%25.png")).toBe(true);
-      expect(yield* resolve(release.relativeUrl)).toEqual({
-        kind: "github-media",
-        url: releaseUrl,
-        cwd: "/repo",
-        expiresAt: release.expiresAt,
-      });
-      const awkward = yield* issue("https://raw.githubusercontent.com/o/r/main/100%.png");
-      expect(awkward.relativeUrl.endsWith("/100%25.png")).toBe(true);
-      const normalized = yield* issue(
-        "https://www.github.com/owner/repo/releases/download/release%2Fv1/shot.png",
-      );
-      expect(yield* resolve(normalized.relativeUrl)).toMatchObject({
-        url: "https://github.com/owner/repo/releases/download/release%2Fv1/shot.png",
-      });
-
       for (const url of [
         "https://example.com/shot.png",
         "https://example.com/shot.png?token=private-media-token",
-        "http://github.com/user-attachments/assets/1a1842fb",
-        "https://github.com/owner/repo/pull/1",
-        "https://github.com/owner/repo/blob/main/",
-        "https://user:password@github.com/owner/repo/releases/download/v1/shot.png",
-        "https://github.com/owner/repo/releases/download/v1/shot%2Fprivate.png",
       ]) {
-        const error = yield* issue(url).pipe(Effect.flip);
+        const error = yield* issueAssetUrl({
+          resource: { _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd: "/repo", url },
+        }).pipe(Effect.flip);
         expect(error._tag).toBe("AssetGitHubMediaUrlValidationError");
         const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(AssetAccessError))(error);
         expect(encoded).not.toContain(url);
