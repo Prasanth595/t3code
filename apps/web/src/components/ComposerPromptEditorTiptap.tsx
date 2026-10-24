@@ -1500,6 +1500,8 @@ function ComposerPromptEditorTiptapInner(
               (transaction) =>
                 transaction.docChanged &&
                 !isHistoryTransaction(transaction) &&
+                // The flush that commits a composition runs after `composing` clears.
+                transaction.getMeta("composition") == null &&
                 transaction.getMeta("addToHistory") !== false,
             )
           ) {

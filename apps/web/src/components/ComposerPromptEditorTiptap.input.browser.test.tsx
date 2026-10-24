@@ -221,12 +221,27 @@ it("leaves a composing skill as text until the next edit", async () => {
     editor.view.dispatch(editor.state.tr.insertText(" ", 9));
   });
   expect(editor.state.doc.textContent).toBe("$babysit ");
+  let commits = 0;
+  editor.on("transaction", ({ transaction }) => {
+    if (transaction.docChanged && transaction.getMeta("composition") != null) commits++;
+  });
+  // ProseMirror ends composing before it flushes the committed DOM text.
   await act(async () => {
-    editor.view.dom.dispatchEvent(new CompositionEvent("compositionend", { data: "$babysit " }));
-    editor.view.dispatch(editor.state.tr.insertText("x", 10));
+    const node = editor.view.dom.querySelector("p")?.firstChild;
+    if (!(node instanceof Text)) throw new Error("Composition text is missing");
+    node.data = "$babysit a";
+    window.getSelection()?.collapse(node, node.data.length);
+    editor.view.dom.dispatchEvent(new CompositionEvent("compositionend", { data: "$babysit a" }));
+  });
+  expect(commits).toBe(1);
+  expect(editor.view.composing).toBe(false);
+  expect(editor.state.doc.firstChild?.firstChild?.isText).toBe(true);
+  expect(editor.state.doc.textContent).toBe("$babysit a");
+  await act(async () => {
+    editor.view.dispatch(editor.state.tr.insertText("x", 11));
   });
   expect(editor.state.doc.firstChild?.firstChild?.type.name).toBe("composer-skill");
-  expect(serializeEditorDoc(editor.state.doc).value).toBe("$babysit x");
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("$babysit ax");
 });
 
 it("keeps unknown dollar names editable when restoring and pasting a draft", async () => {
