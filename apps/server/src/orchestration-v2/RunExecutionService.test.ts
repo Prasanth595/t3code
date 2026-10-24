@@ -2349,6 +2349,23 @@ it.effect(
     }),
 );
 
+it.effect.each([undefined, "native-session-before-clear"])(
+  "records the reported native session when finalizing an attempt initialized with %s",
+  (nativeThreadId) =>
+    Effect.gen(function* () {
+      const { finalEvents } = yield* captureRootRunTermination({
+        key: "finalize-reported-native-session",
+        shouldFinalizeRun: () => Effect.succeed(true),
+        ...(nativeThreadId === undefined ? {} : { nativeThreadId }),
+        reportedNativeThreadId: "native-session-after-clear",
+      });
+      const attempt = finalEvents.find((event) => event.type === "run-attempt.updated");
+      assert.isDefined(attempt);
+      assert.equal(attempt.payload.nativeThreadId, "native-session-after-clear");
+      assert.equal(attempt.payload.status, "interrupted");
+    }),
+);
+
 it.effect("omits interrupt results and subagent cascade for a superseded attempt", () =>
   Effect.gen(function* () {
     const { written, observed } = yield* captureRootRunTermination({
@@ -2712,6 +2729,8 @@ function captureRootRunTermination(input: {
   readonly startTurn?: ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"];
   readonly interruptTurn?: ProviderAdapter.ProviderAdapterV2SessionRuntime["interruptTurn"];
   readonly initialProviderTurnId?: ProviderTurnId | null;
+  readonly nativeThreadId?: string;
+  readonly reportedNativeThreadId?: string;
   readonly onStartFailure?: (
     error: RunExecutionService.RunExecutionServiceV2Error,
   ) => Effect.Effect<void>;
@@ -2870,9 +2889,15 @@ function captureRootRunTermination(input: {
         providerThread: {
           id: ids.providerThreadId,
           driver,
+          nativeThreadRef:
+            input.reportedNativeThreadId === undefined
+              ? null
+              : { driver, nativeId: input.reportedNativeThreadId, strength: "strong" },
         } as OrchestrationV2ProviderThread,
         attempt: {
           id: ids.attemptId,
+          providerThreadId: ids.providerThreadId,
+          ...(input.nativeThreadId === undefined ? {} : { nativeThreadId: input.nativeThreadId }),
           providerTurnId:
             input.initialProviderTurnId === undefined
               ? ids.rootProviderTurnId

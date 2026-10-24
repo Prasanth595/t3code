@@ -3123,6 +3123,211 @@ it.effect(
     }),
 );
 
+it.effect.each([
+  "late subscriber",
+  "last recipient",
+  "runtime failure",
+  "newer received update",
+  "unrelated reader",
+  "coalesced updates",
+  "rejected write",
+  "released rewind",
+] as const)("ProviderSessionManagerV2 preserves unread thread updates with %s", (scenario) =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = yield* idAllocator.allocate.thread({
+        fixtureName: `unread-update-${scenario}`,
+        projectId: yield* idAllocator.allocate.project({ fixtureName: "unread-updates" }),
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const providerThread = makeProviderThread({
+        idAllocator,
+        threadId,
+        providerSessionId,
+        now,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const first = yield* runtime.subscribeEvents!;
+      const secondBefore =
+        scenario === "last recipient" || scenario === "unrelated reader"
+          ? yield* runtime.subscribeEvents!
+          : undefined;
+      const adapterEvents = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!;
+      const sessionUpdates = yield* Queue.unbounded<void>();
+      const afterSequence = yield* eventSink.latestSequence({ threadId });
+      yield* eventSink.stream({ threadId, afterSequence }).pipe(
+        Stream.filter((stored) => stored.event.type === "provider-session.updated"),
+        Stream.runForEach(() => Queue.offer(sessionUpdates, undefined)),
+        Effect.forkScoped,
+      );
+      const update = (nativeId: string) => ({
+        type: "provider_thread.updated" as const,
+        driver: CODEX_DRIVER,
+        providerThread: {
+          ...providerThread,
+          nativeThreadRef: { driver: CODEX_DRIVER, nativeId, strength: "strong" as const },
+        },
+      });
+      const routed = Effect.gen(function* () {
+        yield* Queue.offer(adapterEvents, {
+          type: "provider_session.updated",
+          driver: CODEX_DRIVER,
+          providerSession: runtime.providerSession,
+        });
+        yield* Queue.take(sessionUpdates);
+      });
+      const persist =
+        (event: ProviderAdapter.ProviderAdapterV2Event) => (snapshotCurrent: boolean) =>
+          !snapshotCurrent || event.type !== "provider_thread.updated"
+            ? Effect.succeed([])
+            : eventSink.write({
+                events: [
+                  {
+                    id: yieldEventId,
+                    type: "provider-thread.updated",
+                    threadId,
+                    occurredAt: now,
+                    payload: event.providerThread,
+                  },
+                ],
+              });
+      const yieldEventId = yield* idAllocator.allocate.event({ threadId });
+      if (scenario === "runtime failure") {
+        yield* Queue.offer(adapterEvents, update("old-session"));
+        yield* Queue.offer(adapterEvents, {
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId: providerThread.id,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "release-terminal",
+          }),
+          runOrdinal: 1,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+      }
+      if (scenario === "released rewind")
+        yield* Queue.offer(adapterEvents, {
+          ...update("rewound-session"),
+          retainedNativeTurnIds: [],
+        });
+      yield* Queue.offer(adapterEvents, update("cleared-session"));
+      if (scenario === "coalesced updates")
+        yield* Queue.offer(adapterEvents, update("newer-session"));
+      yield* routed;
+      if (scenario === "runtime failure" || scenario === "released rewind") {
+        const released = yield* eventSink.stream({ threadId, afterSequence }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "provider-session.updated" &&
+              stored.event.payload.status === "error",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* Queue.end(adapterEvents);
+        yield* Fiber.join(released);
+        assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+        yield* first.events.pipe(
+          Stream.mapEffect((event) =>
+            first.persistEvent!(event, (snapshotCurrent) => {
+              assert.isFalse(
+                event.type === "provider_thread.updated" &&
+                  event.retainedNativeTurnIds !== undefined,
+                "A committed rewind must not run again after release",
+              );
+              return persist(event)(snapshotCurrent);
+            }),
+          ),
+          Stream.take(2),
+          Stream.runDrain,
+        );
+      } else if (scenario === "newer received update") {
+        const second = yield* runtime.subscribeEvents!;
+        const newer = update("newer-session");
+        yield* Queue.offer(adapterEvents, newer);
+        yield* routed;
+        yield* second.events.pipe(
+          Stream.mapEffect((event) => second.persistEvent!(event, persist(event))),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        yield* first.close;
+      } else if (scenario === "unrelated reader") {
+        const discarded = yield* Deferred.make<void>();
+        const reader = yield* secondBefore!.events.pipe(
+          Stream.tap((event) =>
+            secondBefore!.discardEvent!(event).pipe(
+              Effect.andThen(
+                event.type === "provider_thread.updated"
+                  ? Deferred.succeed(discarded, undefined)
+                  : Effect.void,
+              ),
+            ),
+          ),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(discarded);
+        yield* first.close;
+        assert.equal(
+          (yield* projectionStore.getThreadProjection(threadId)).providerThreads[0]?.nativeThreadRef
+            ?.nativeId,
+          "cleared-session",
+        );
+        yield* Fiber.interrupt(reader);
+      } else if (scenario === "rejected write") {
+        yield* first.events.pipe(
+          Stream.mapEffect((event) => first.persistEvent!(event, () => Effect.succeed([]))),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+      } else {
+        const second = secondBefore ?? (yield* runtime.subscribeEvents!);
+        yield* first.close;
+        if (scenario === "last recipient") {
+          assert.isEmpty((yield* projectionStore.getThreadProjection(threadId)).providerThreads);
+        }
+        yield* second.close;
+      }
+      const eventStore = yield* EventStore.EventStoreV2;
+      const persistedUpdates = yield* eventStore
+        .read({ threadId, afterSequence, eventType: "provider-thread.updated" })
+        .pipe(Stream.runCollect);
+      assert.lengthOf(persistedUpdates, 1);
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      assert.deepEqual(
+        projection.providerThreads.map((thread) => thread.nativeThreadRef?.nativeId),
+        [
+          scenario === "newer received update" || scenario === "coalesced updates"
+            ? "newer-session"
+            : "cleared-session",
+        ],
+      );
+    }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+  }),
+);
+
 it.effect(
   "ProviderSessionManagerV2 opens one shared runtime, broadcasts events, and detaches threads independently",
   () =>

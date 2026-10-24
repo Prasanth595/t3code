@@ -792,6 +792,23 @@ describe("orchestration V2 thread fork", () => {
         metadataString(transcript, "forkedNativeSessionId"),
       );
       assert.equal(targetProjection.contextTransfers[0]?.resolution?.strategy, "native_fork");
+      const targetAssistantText = targetProjection.turnItems
+        .filter((item) => item.type === "assistant_message")
+        .map((item) => item.text)
+        .join("\n");
+      assert.include(targetAssistantText, "**Assistant:** fork boundary beta");
+      assert.notInclude(
+        targetAssistantText,
+        "fork boundary alpha",
+        "the cleared native session must not recover pre-clear conversation context",
+      );
+      const visibleText = targetProjection.visibleTurnItems
+        .map((row) => row.item)
+        .filter((item) => item.type === "user_message" || item.type === "assistant_message")
+        .map((item) => item.text)
+        .join("\n");
+      assert.include(visibleText, "fork boundary alpha");
+      assert.include(visibleText, "fork boundary beta");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

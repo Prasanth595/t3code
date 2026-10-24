@@ -643,9 +643,7 @@ export const layer: Layer.Layer<
             : undefined;
         const finalizedAttempt: OrchestrationV2RunAttempt | null = {
           ...input.attempt,
-          ...(input.attempt.nativeThreadId === undefined || reportedNativeThreadId == null
-            ? {}
-            : { nativeThreadId: reportedNativeThreadId }),
+          ...(reportedNativeThreadId == null ? {} : { nativeThreadId: reportedNativeThreadId }),
           status: input.terminal.status,
           completedAt,
         };
@@ -1009,7 +1007,7 @@ export const layer: Layer.Layer<
           attemptId: input.attempt.id,
           providerThreadId: input.providerThread.id,
         };
-        const eventSubscription =
+        const eventSubscription: ProviderAdapter.ProviderAdapterV2EventSubscription =
           input.session.subscribeEvents === undefined
             ? { events: input.session.events, close: Effect.void }
             : yield* input.session.subscribeEvents;
@@ -1361,7 +1359,11 @@ export const layer: Layer.Layer<
           ),
           Stream.tap(({ event, accepted }) =>
             Effect.gen(function* () {
-              if (!accepted) return;
+              if (!accepted) {
+                if (eventSubscription.discardEvent !== undefined)
+                  yield* eventSubscription.discardEvent(event);
+                return;
+              }
               if (
                 event.type === "provider_turn.updated" &&
                 event.providerTurn.runAttemptId === input.attempt.id &&
@@ -1379,37 +1381,42 @@ export const layer: Layer.Layer<
                 const isRootProviderThreadUpdate =
                   event.type === "provider_thread.updated" &&
                   event.providerThread.id === input.providerThread.id;
-                const storedEvents = yield* providerEventIngestor.ingestNormalized({
-                  analyticsContext: {
-                    modelSelection: input.modelSelection,
-                    runtimeMode: input.runtimePolicy.runtimeMode,
-                    interactionMode: input.runtimePolicy.interactionMode,
-                  },
-                  providerSessionId: input.providerSessionId,
-                  providerInstanceId: input.run.providerInstanceId,
-                  threadId: input.run.threadId,
-                  runId: input.run.id,
-                  nodeId: input.rootNode.id,
-                  event: deliveredEvent,
-                  ...(isRootProviderThreadUpdate
-                    ? rootTerminalAlreadySeen
-                      ? {
-                          writeIfProviderThreadOwner: {
-                            providerThreadId: input.providerThread.id,
-                            runId: input.run.id,
-                            activeAttemptId: input.attempt.id,
-                            expectedLastRunOrdinal: input.run.ordinal,
-                          },
-                        }
-                      : {
-                          writeIfRunCurrent: {
-                            runId: input.run.id,
-                            activeAttemptId: input.attempt.id,
-                            expectedStatus: "running" as const,
-                          },
-                        }
-                    : {}),
-                });
+                const persist = (snapshotCurrent: boolean) =>
+                  providerEventIngestor.ingestNormalized({
+                    ...(!snapshotCurrent ? { skipProviderThreadSnapshot: true } : {}),
+                    analyticsContext: {
+                      modelSelection: input.modelSelection,
+                      runtimeMode: input.runtimePolicy.runtimeMode,
+                      interactionMode: input.runtimePolicy.interactionMode,
+                    },
+                    providerSessionId: input.providerSessionId,
+                    providerInstanceId: input.run.providerInstanceId,
+                    threadId: input.run.threadId,
+                    runId: input.run.id,
+                    nodeId: input.rootNode.id,
+                    event: deliveredEvent,
+                    ...(isRootProviderThreadUpdate
+                      ? rootTerminalAlreadySeen
+                        ? {
+                            writeIfProviderThreadOwner: {
+                              providerThreadId: input.providerThread.id,
+                              runId: input.run.id,
+                              activeAttemptId: input.attempt.id,
+                              expectedLastRunOrdinal: input.run.ordinal,
+                            },
+                          }
+                        : {
+                            writeIfRunCurrent: {
+                              runId: input.run.id,
+                              activeAttemptId: input.attempt.id,
+                              expectedStatus: "running" as const,
+                            },
+                          }
+                      : {}),
+                  });
+                const storedEvents = yield* eventSubscription.persistEvent === undefined
+                  ? persist(true)
+                  : eventSubscription.persistEvent(event, persist);
                 storedEventCount = storedEvents.length;
                 if (
                   isRootProviderThreadUpdate &&
