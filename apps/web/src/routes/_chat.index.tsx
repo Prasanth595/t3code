@@ -61,7 +61,7 @@ function IndexDraftLanding() {
     void handleNewThread(projectRef, { replace: true })
       .then((opened) => {
         if (opened === null) {
-          setStartState((state) => ({ ...state, retryRequest: state.retryRequest + 1 }));
+          setStartState((state) => ({ ...state, failed: true }));
         }
       })
       .catch(() => {
