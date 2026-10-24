@@ -26,6 +26,32 @@ const v2TableCount = Effect.gen(function* () {
 });
 
 describe("runMigrations", () => {
+  it.effect("upgrades pending-item lookups without changing stored history", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 68 });
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_turn_items
+          (turn_item_id, thread_id, ordinal, type, status, updated_at, payload_json)
+        VALUES ('item:upgrade', 'thread:upgrade', 1, 'command_execution', 'completed',
+          '2026-01-01T00:00:00.000Z', '{"history":"preserved"}')
+      `;
+      const before = yield* sql`SELECT * FROM orchestration_v2_projection_turn_items`;
+      yield* runMigrations();
+      assert.deepEqual(yield* sql`SELECT * FROM orchestration_v2_projection_turn_items`, before);
+      assert.deepEqual(yield* runMigrations(), []);
+      const columns = yield* sql<{ readonly name: string }>`
+        PRAGMA index_info('orchestration_v2_projection_turn_items_thread_ordinal_idx')
+      `;
+      assert.deepEqual(
+        columns.map((row) => row.name),
+        ["thread_id", "ordinal", "turn_item_id", "status"],
+      );
+      const check = yield* sql`PRAGMA quick_check`;
+      assert.deepEqual(check, [{ quick_check: "ok" }]);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect("refuses to start when another migration took a V2 id", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

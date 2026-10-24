@@ -2404,6 +2404,83 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("filters pending turn items from the ordering index before reading payloads", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = yield* addRolledBackRecoveryCandidate("pending-status-index");
+      const initial = (yield* store.getThreadProjection(threadId)).turnItems[0]!;
+      const statuses = [
+        "completed",
+        "waiting",
+        "pending",
+        "failed",
+        "running",
+        "cancelled",
+      ] as const;
+      for (const [index, status] of statuses.entries()) {
+        yield* store.apply({
+          id: EventId.make(`event:pending-status-index:${index}`),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: initial.updatedAt,
+          payload: {
+            ...initial,
+            id: TurnItemId.make(`item:pending-status-index:${index}`),
+            ordinal: 2 + Math.floor(index / 2),
+            status,
+          },
+        });
+      }
+      const all = (yield* store.getThreadRecords(threadId, ["turnItems"])).turnItems;
+      const { statements, tracer } = traceSqlStatements();
+      const filtered = yield* store
+        .getThreadRecords(threadId, ["turnItems"], {
+          turnItemStatuses: ["pending", "running", "waiting"],
+        })
+        .pipe(Effect.withTracer(tracer));
+      assert.deepEqual(
+        filtered.turnItems,
+        all.filter((item) => ["pending", "running", "waiting"].includes(item.status)),
+      );
+      assert.lengthOf(filtered.turnItems, 4);
+      assert.deepEqual(
+        (yield* store.getThreadRecords(threadId, ["turnItems"], { turnItemStatuses: [] }))
+          .turnItems,
+        [],
+      );
+      const query = statements.find(
+        (statement) =>
+          statement.includes("FROM orchestration_v2_projection_turn_items") &&
+          statement.includes("status IN (SELECT value FROM json_each("),
+      );
+      assert.isDefined(query);
+      const plan = yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${query}`);
+      assert.isTrue(
+        plan.some((row) =>
+          row.detail.includes("orchestration_v2_projection_turn_items_thread_ordinal_idx"),
+        ),
+      );
+      const [index] = yield* sql<{ readonly rootpage: number }>`
+        SELECT rootpage FROM sqlite_schema
+        WHERE name = 'orchestration_v2_projection_turn_items_thread_ordinal_idx'
+      `;
+      const instructions = yield* sql.unsafe<{
+        readonly opcode: string;
+        readonly p1: number;
+        readonly p2: number;
+      }>(`EXPLAIN ${query}`);
+      const cursor = instructions.find(
+        (row) => row.opcode === "OpenRead" && row.p2 === index!.rootpage,
+      )?.p1;
+      assert.isDefined(cursor);
+      // Status must be tested from the index, before the deferred payload lookup.
+      assert.isTrue(
+        instructions.some((row) => row.opcode === "Column" && row.p1 === cursor && row.p2 === 3),
+      );
+    }),
+  );
+
   it.effect("looks up shell stop requests through the interrupt request index", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
