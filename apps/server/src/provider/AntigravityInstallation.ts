@@ -44,6 +44,7 @@ const VALIDATION_TIMEOUT = "90 seconds";
 const FREE_SPACE_MARGIN = 256 * 1024 * 1024;
 const RECORD_MAX_BYTES = 8 * 1024;
 const RELEASE_RECORD = ".install-complete.json";
+const LAUNCHER_TARGET = /"([^"\r\n]*agy_acp_server\.exe)"|([^\s"&|<>()@]*agy_acp_server\.exe)/giu;
 
 const ReleaseId = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
 const ActiveRelease = Schema.Struct({ releaseId: ReleaseId });
@@ -245,13 +246,35 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     } satisfies AntigravityExecutable;
   });
 
+  // A Windows launcher script runs the ACP executable from elsewhere, so the
+  // helper that matches it sits beside that executable, not the script. Only a
+  // script naming exactly one literal or `%~dp0`-relative path is followed.
+  const launcherTarget = Effect.fn("AntigravityInstallation.launcherTarget")(function* (
+    launcher: string,
+  ) {
+    if (platform !== "win32" || !/\.(?:bat|cmd)$/iu.test(launcher)) return null;
+    const contents = yield* fs.readFileString(launcher);
+    const targets = new Set<string>();
+    for (const match of contents.matchAll(LAUNCHER_TARGET)) {
+      const target = (match[1] ?? match[2] ?? "").replace(
+        /%~dp0/giu,
+        `${path.dirname(launcher)}${path.sep}`,
+      );
+      if (target.includes("%") || !path.isAbsolute(target)) return null;
+      targets.add(path.resolve(target));
+    }
+    const [target] = targets;
+    if (targets.size !== 1 || !target || !(yield* executableFile(target))) return null;
+    return yield* fs.realPath(target);
+  });
+
   const fromExternal = Effect.fn("AntigravityInstallation.fromExternal")(function* (
     candidate: string,
     source: "override" | "path",
   ) {
     if (!(yield* executableFile(candidate))) return null;
     const executablePath = yield* fs.realPath(candidate);
-    const directory = path.dirname(executablePath);
+    const directory = path.dirname((yield* launcherTarget(executablePath)) ?? executablePath);
     const harnessPath = path.join(directory, names.harness);
     if (!(yield* executableFile(harnessPath))) return null;
     const realVersions = yield* fs.realPath(versionsDirectory).pipe(Effect.option);
