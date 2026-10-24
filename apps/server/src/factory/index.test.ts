@@ -1301,7 +1301,7 @@ describe("liveWorld", () => {
   };
 
   /** The project config of `REPO` at `root`, and what the settings page was told about it. */
-  const readProject = (process: FactoryProcess["Service"], root: string) => {
+  const readProject = (process: FactoryProcess["Service"], root: string, withLastGood = false) => {
     const readings: Array<RepoConfigReading> = [];
     const world = liveWorld(
       machine,
@@ -1319,6 +1319,16 @@ describe("liveWorld", () => {
       },
       undefined,
       (_repo, reading) => readings.push(reading),
+      {
+        gating: new Set(),
+        claimMemo: new ClaimMemo(),
+        stuckReads: new Map(),
+        brokenThreads: { notFactory: new Set(), unsettled: new Map() },
+        configSkips: new Map(),
+        lastGood: new Map(
+          withLastGood ? [[REPO.toLowerCase(), { project: timeLimitOnlyProjectConfig() }]] : [],
+        ),
+      },
     );
     return Effect.result(world.project({ repo: REPO, path: root })).pipe(
       Effect.map((result) => ({ result, readings })),
@@ -1461,7 +1471,22 @@ describe("liveWorld", () => {
           } satisfies RunResult),
       });
 
-    it.effect("a config read that GitHub never received is transient and leaves the reading", () =>
+    it.effect("a transient config read with a last good copy leaves the reading", () =>
+      Effect.gen(function* () {
+        const { process } = baseConfigGh({ stderr: TLS });
+        const fiber = yield* Effect.forkChild(readProject(process, checkout("main").root, true), {
+          startImmediately: true,
+        });
+        yield* TestClock.adjust(PAST_RETRIES);
+        const { result, readings } = yield* Fiber.join(fiber);
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) assert.strictEqual(result.failure.transient, true);
+        // The pass runs on the copy, so the settings page is not told the config failed.
+        assert.deepStrictEqual(readings, []);
+      }),
+    );
+
+    it.effect("a transient config read with no last good copy reports the errors", () =>
       Effect.gen(function* () {
         const { process } = baseConfigGh({ stderr: TLS });
         const fiber = yield* Effect.forkChild(readProject(process, checkout("main").root), {
@@ -1471,8 +1496,8 @@ describe("liveWorld", () => {
         const { result, readings } = yield* Fiber.join(fiber);
         assert.isTrue(Result.isFailure(result));
         if (Result.isFailure(result)) assert.strictEqual(result.failure.transient, true);
-        // The last reading stands: the settings page is not told the config failed.
-        assert.deepStrictEqual(readings, []);
+        // The repo is skipped, and the reading says why.
+        assert.strictEqual(readings[0]?.kind, "errors");
       }),
     );
 
