@@ -97,9 +97,9 @@ function parseDiscoveredModels(
       new PiRpcError({ operation: "get_available_models", detail: "Invalid model inventory" }),
     );
   }
-  const activeModel = recordField(state, "model");
-  const activeProvider = recordString(activeModel, "provider");
-  const activeModelId = recordString(activeModel, "id");
+  // Switching models in Pi falls back to the session level when no per-model or global
+  // default is set; RPC exposes neither, so the session level is the closest default.
+  const sessionThinkingLevel = recordString(state, "thinkingLevel");
   const seen = new Set<string>();
   const parsed: Array<ServerProviderModel> = [];
   for (const model of models) {
@@ -118,12 +118,7 @@ function parseDiscoveredModels(
       name: recordString(model, "name") ?? slug,
       subProvider: provider,
       isCustom: false,
-      capabilities: thinkingCapabilitiesForPiModel(
-        model,
-        provider === activeProvider && id === activeModelId
-          ? recordString(state, "thinkingLevel")
-          : undefined,
-      ),
+      capabilities: thinkingCapabilitiesForPiModel(model, sessionThinkingLevel),
     });
   }
   return Result.succeed(parsed);

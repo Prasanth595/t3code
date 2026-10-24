@@ -52,7 +52,7 @@ function piProbeSpawner(version: string) {
   });
 }
 
-const piDiscoverySpawner = (inventory: unknown) =>
+const piDiscoverySpawner = (inventory: unknown, state: unknown = {}) =>
   Effect.gen(function* () {
     const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
     let stdinBuffer = "";
@@ -69,9 +69,11 @@ const piDiscoverySpawner = (inventory: unknown) =>
           const data =
             request.type === "get_available_models"
               ? inventory
-              : request.type === "get_commands"
-                ? { commands: [] }
-                : {};
+              : request.type === "get_state"
+                ? state
+                : request.type === "get_commands"
+                  ? { commands: [] }
+                  : {};
           yield* Queue.offer(
             stdout,
             encoder.encode(
@@ -143,6 +145,38 @@ describe("PiProvider", () => {
         snapshot.models.map((model) => model.slug),
         ["default"],
       );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("defaults every reasoning model to the session thinking level, clamped", () =>
+    Effect.gen(function* () {
+      const spawner = yield* piDiscoverySpawner(
+        {
+          models: [
+            { provider: "openai", id: "gpt-6", reasoning: true },
+            {
+              provider: "openai",
+              id: "gpt-6-luna",
+              reasoning: true,
+              thinkingLevelMap: { minimal: null, xhigh: "xhigh" },
+            },
+          ],
+        },
+        { model: { provider: "openai", id: "gpt-6" }, thinkingLevel: "minimal" },
+      );
+      const snapshot = yield* checkPiProviderStatus(settings).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const defaultThinking = (slug: string) => {
+        const descriptor = snapshot.models
+          .find((model) => model.slug === slug)
+          ?.capabilities?.optionDescriptors?.find((candidate) => candidate.id === "thinking");
+        return descriptor?.type === "select"
+          ? descriptor.options.find((option) => option.isDefault)?.id
+          : undefined;
+      };
+      assert.equal(defaultThinking("openai/gpt-6"), "minimal");
+      assert.equal(defaultThinking("openai/gpt-6-luna"), "low");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
