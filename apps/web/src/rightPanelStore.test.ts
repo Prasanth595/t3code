@@ -39,6 +39,22 @@ async function reloadRightPanelStore() {
 }
 
 describe("rightPanelStore", () => {
+  it("reuses an open issue tab when the same issue is reopened without its host", () => {
+    const store = useRightPanelStore.getState();
+    const issue = {
+      environmentId: "env-1",
+      projectId: "project-a",
+      tracker: "github",
+      scope: "xgooz3x/tolarian-academy",
+      key: "53",
+    };
+    store.openIssue(refA, { ...issue, host: "github.com", url: "https://github.com/x/53" });
+    store.openIssue(refA, issue);
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.filter((surface) => surface.kind === "issue")).toHaveLength(1);
+    expect(state.activeSurfaceId).toBe(state.surfaces[0]!.id);
+  });
+
   it("records single and bulk tab closes, newest first", () => {
     const store = useRightPanelStore.getState();
     const pr = pullRequestSurface({

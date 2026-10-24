@@ -703,7 +703,9 @@ function IssuesRoute() {
                   options={INVOLVEMENT_TABS}
                   onChange={(who) => updateSearch({ who })}
                 />
-                {hostOptions.length > 2 ? (
+                {/* The server filters by host, so a filtered page only knows its own tracker; keep
+                    the menu while filtered so "All trackers" stays reachable. */}
+                {hostOptions.length > 2 || search.host ? (
                   <FilterMenu
                     label="Filter by tracker"
                     value={search.host ?? ""}
