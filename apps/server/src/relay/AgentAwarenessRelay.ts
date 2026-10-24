@@ -404,7 +404,9 @@ export const make = Effect.gen(function* () {
   const startedAt = (yield* DateTime.now).epochMilliseconds;
   const activeSnapshotPublishedRef = yield* Ref.make(false);
   const catchUpRequests = yield* Queue.dropping<void>(1);
-  const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
+  const publishedStateByThreadRef = yield* Ref.make(
+    new Map<ThreadId, { readonly identity: string; readonly updatedAt: string }>(),
+  );
   const subagentRequests = new Map<ThreadId, SubagentRequest>();
   // Environments that never publish skip the extra shell read while paused.
   // Set by the first publish or by a startup snapshot, even an empty one.
@@ -581,13 +583,14 @@ export const make = Effect.gen(function* () {
     });
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
+    const previousPublication = publishedStateByThread.get(threadId);
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
       !publishedStateByThread.has(threadId)
     ) {
       if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) return;
     }
-    if (publishedStateByThread.get(threadId) === publishIdentity) {
+    if (previousPublication?.identity === publishIdentity) {
       // The projection is back at (or never left) the last published state, so
       // any pending deferred confirmation is moot. Leaving the deadline in
       // place would let a much later transient null find it already expired
@@ -608,7 +611,7 @@ export const make = Effect.gen(function* () {
     //   instant and sends a spurious Done notification at thread birth.
     const requiresConfirmation =
       (snapshot.state === null &&
-        publishedStateByThread.get(threadId) !== agentAwarenessPublishIdentity(null)) ||
+        previousPublication?.identity !== agentAwarenessPublishIdentity(null)) ||
       (snapshot.state?.phase === "completed" && !publishedStateByThread.has(threadId));
     if (requiresConfirmation) {
       const nowMs = (yield* DateTime.now).epochMilliseconds;
@@ -652,19 +655,39 @@ export const make = Effect.gen(function* () {
       });
     }
 
+    // Android keys alerts by phase and time. A newer parent can mask several
+    // child requests, so advance their alert time from the last publication.
+    // Deriving it from the successful publication keeps retries identical.
+    const state =
+      snapshot.state !== null && snapshot.subagentWait !== null && previousPublication !== undefined
+        ? {
+            ...snapshot.state,
+            updatedAt: DateTime.formatIso(
+              DateTime.max(
+                DateTime.makeUnsafe(snapshot.state.updatedAt),
+                DateTime.add(DateTime.makeUnsafe(previousPublication.updatedAt), {
+                  milliseconds: 1,
+                }),
+              ),
+            ),
+          }
+        : snapshot.state;
     yield* publishState({
       projectId: snapshot.projectId,
-      state: snapshot.state,
+      state,
       reason: snapshot.reason,
     }).pipe(withRelayClientTracing);
     hasPublished = true;
     publishConfirmDeadlines.delete(threadId);
     yield* Ref.update(publishedStateByThreadRef, (publishedStates) => {
       const nextPublishedStates = new Map(publishedStates);
-      if (snapshot.state === null) {
+      if (state === null) {
         nextPublishedStates.delete(threadId);
       } else {
-        nextPublishedStates.set(threadId, publishIdentity);
+        nextPublishedStates.set(threadId, {
+          identity: publishIdentity,
+          updatedAt: state.updatedAt,
+        });
       }
       return nextPublishedStates;
     });
