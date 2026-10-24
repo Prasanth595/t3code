@@ -88,7 +88,6 @@ it.each([
     composerContextRecords: new Map(),
     composerImages: [],
     composerFilesRef: { current: [] },
-    pendingImageCompressionsRef: { current: new Map() },
     pendingThreadImportsRef: { current: new Map() },
     promptRef,
     addComposerFilesToDraft: (files: Parameters<typeof store.addFiles>[1]) =>
