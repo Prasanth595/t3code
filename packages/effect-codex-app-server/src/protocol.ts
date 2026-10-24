@@ -176,7 +176,9 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
     const terminationFailure = yield* Ref.make(Option.none<CodexError.CodexAppServerError>());
     const terminationSignal = yield* Deferred.make<void>();
     const activeRequestHandlers = yield* Ref.make(0);
-    const requestHandlers = yield* FiberMap.make<string>().pipe(Scope.provide(requestHandlerScope));
+    const requestHandlers = yield* FiberMap.make<string | number>().pipe(
+      Scope.provide(requestHandlerScope),
+    );
 
     const logProtocol = (event: CodexAppServerProtocolLogEvent) => {
       if (event.direction === "incoming" && !options.logIncoming) {
@@ -344,7 +346,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
                     Effect.asVoid,
                   ),
                 ),
-                FiberMap.run(requestHandlers, String(request.id)),
+                FiberMap.run(requestHandlers, request.id),
                 Effect.asVoid,
               );
             }),
@@ -358,7 +360,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
       notification.method === "serverRequest/resolved" &&
       isObject(notification.params) &&
       isJsonRpcId(notification.params.requestId)
-        ? FiberMap.remove(requestHandlers, String(notification.params.requestId))
+        ? FiberMap.remove(requestHandlers, notification.params.requestId)
         : Effect.void;
 
     const handleNotification = (notification: CodexAppServerIncomingNotification) =>

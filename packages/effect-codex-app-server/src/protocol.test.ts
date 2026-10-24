@@ -457,6 +457,35 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
     }),
   );
 
+  it.effect("keeps numeric and string request ids apart when Codex resolves one", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const interrupted: Array<string | number> = [];
+      yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        onRequest: (request) =>
+          request.id === 2
+            ? Effect.sync(() => ({ interrupted }))
+            : Effect.never.pipe(
+                Effect.onInterrupt(() => Effect.sync(() => interrupted.push(request.id))),
+              ),
+      });
+
+      const messages = [
+        { id: 1, method: "item/commandExecution/requestApproval", params: {} },
+        { id: "1", method: "item/commandExecution/requestApproval", params: {} },
+        { method: "serverRequest/resolved", params: { threadId: "thread-1", requestId: "1" } },
+        { id: 2, method: "item/commandExecution/requestApproval", params: {} },
+      ].map((message) => encodeUnknownJsonString(message));
+      yield* Queue.offer(input, encoder.encode(`${messages.join("\n")}\n`));
+
+      assert.deepEqual(yield* decodeJson(yield* Queue.take(output)), {
+        id: 2,
+        result: { interrupted: ["1"] },
+      });
+    }),
+  );
+
   it.effect("interrupts pending request handlers when the protocol terminates", () =>
     Effect.gen(function* () {
       const { stdio, input } = yield* makeInMemoryStdio();
