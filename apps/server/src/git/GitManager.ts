@@ -2815,6 +2815,7 @@ export const make = Effect.gen(function* () {
       const reuseExistingWorktree = Effect.fn("reuseExistingWorktree")(function* (
         worktreePath: string,
         checkedOutBranch: string,
+        isNewWorktree = false,
       ) {
         if (checkedOutBranch !== localPullRequestBranch) {
           // findLocalHeadBranch also accepts a branch that merely shares the head's bare name —
@@ -2889,7 +2890,7 @@ export const make = Effect.gen(function* () {
 
         // Only when the checkout actually moved: another thread may be running in this worktree,
         // and re-running the setup script under it buys nothing when the code did not change.
-        if (refreshed.moved) {
+        if (refreshed.moved || isNewWorktree) {
           yield* maybeRunSetupScript(worktreePath);
         }
 
@@ -2935,6 +2936,23 @@ export const make = Effect.gen(function* () {
         return null;
       });
 
+      const createPullRequestWorktree = Effect.fn("createPullRequestWorktree")(function* () {
+        return yield* gitCore.createWorktree(
+          {
+            cwd: input.cwd,
+            refName: localPullRequestBranch,
+            path: null,
+          },
+          {
+            worktreesDirectory: yield* readWorktreesDirectory,
+            submodules: yield* projectSettingsFor(input).pipe(
+              Effect.map(({ settings }) => settings.worktreeSubmodules),
+              Effect.orElseSucceed(() => null),
+            ),
+          },
+        );
+      });
+
       const existingBranchBeforeFetch = yield* findLocalHeadBranch(input.cwd);
       const existingBranchBeforeFetchPath = existingBranchBeforeFetch?.worktreePath
         ? yield* canonicalizeExistingPath(existingBranchBeforeFetch.worktreePath)
@@ -2955,6 +2973,17 @@ export const make = Effect.gen(function* () {
           detail:
             "This PR branch is already checked out in the main repo. Use Local, or switch the main repo off that branch before creating a worktree thread.",
         });
+      }
+      // A branch no worktree has checked out can still carry commits nothing else holds, and
+      // materializing would force it onto the head. Check it out as it is, and let the reused
+      // worktree refresh move it only where that loses nothing.
+      if (existingBranchBeforeFetch !== null) {
+        const worktree = yield* createPullRequestWorktree();
+        return yield* reuseExistingWorktree(
+          worktree.worktree.path,
+          existingBranchBeforeFetch.name,
+          true,
+        );
       }
 
       yield* materializePullRequestHeadBranch(
@@ -2985,20 +3014,7 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const worktree = yield* gitCore.createWorktree(
-        {
-          cwd: input.cwd,
-          refName: localPullRequestBranch,
-          path: null,
-        },
-        {
-          worktreesDirectory: yield* readWorktreesDirectory,
-          submodules: yield* projectSettingsFor(input).pipe(
-            Effect.map(({ settings }) => settings.worktreeSubmodules),
-            Effect.orElseSucceed(() => null),
-          ),
-        },
-      );
+      const worktree = yield* createPullRequestWorktree();
       yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
       yield* maybeRunSetupScript(worktree.worktree.path);
 

@@ -4337,6 +4337,80 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect.each([
+    { localBranch: "ahead", expectedHead: "local", isOnPullRequestHead: false },
+    { localBranch: "behind", expectedHead: "pull request", isOnPullRequestHead: true },
+  ] as const)(
+    "moves an existing PR branch into a new worktree only when nothing is lost ($localBranch)",
+    ({ localBranch, expectedHead, isOnPullRequestHead }) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/pr-existing"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "existing.txt"), "pushed\n");
+        yield* runGit(repoDir, ["add", "existing.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Pushed PR commit"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-existing"]);
+        if (localBranch === "ahead") {
+          NodeFS.writeFileSync(NodePath.join(repoDir, "mine.txt"), "mine\n");
+          yield* runGit(repoDir, ["add", "mine.txt"]);
+          yield* runGit(repoDir, ["commit", "-m", "My unpublished commit"]);
+        } else {
+          yield* runGit(repoDir, ["checkout", "-b", "author-push"]);
+          NodeFS.writeFileSync(NodePath.join(repoDir, "authored.txt"), "authored\n");
+          yield* runGit(repoDir, ["add", "authored.txt"]);
+          yield* runGit(repoDir, ["commit", "-m", "New PR head commit"]);
+          yield* runGit(repoDir, ["push", "origin", "author-push:feature/pr-existing"]);
+        }
+        const localHead = (yield* runGit(repoDir, [
+          "rev-parse",
+          "feature/pr-existing",
+        ])).stdout.trim();
+        const pullHead = (yield* runGit(repoDir, [
+          "rev-parse",
+          "origin/feature/pr-existing",
+        ])).stdout.trim();
+        yield* runGit(repoDir, ["checkout", "main"]);
+
+        const { manager } = yield* makeManager({
+          providerScenario: {
+            pullRequest: {
+              number: 88,
+              title: "Existing branch PR",
+              url: "https://github.com/pingdotgg/codething-mvp/pull/88",
+              baseRefName: "main",
+              headRefName: "feature/pr-existing",
+              state: "open",
+              isCrossRepository: false,
+              headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
+              headRepositoryOwnerLogin: "pingdotgg",
+            },
+            repositoryCloneUrls: {
+              "pingdotgg/codething-mvp": { url: remoteDir, sshUrl: remoteDir },
+            },
+          },
+        });
+
+        const result = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "88",
+          mode: "worktree",
+        });
+
+        const head = expectedHead === "local" ? localHead : pullHead;
+        expect((yield* runGit(repoDir, ["rev-parse", "feature/pr-existing"])).stdout.trim()).toBe(
+          head,
+        );
+        expect(
+          (yield* runGit(result.worktreePath as string, ["rev-parse", "HEAD"])).stdout.trim(),
+        ).toBe(head);
+        expect(result).toMatchObject({ branch: "feature/pr-existing", isOnPullRequestHead });
+      }),
+  );
+
   it.effect("refreshes a reused PR worktree onto the updated pull request head", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
