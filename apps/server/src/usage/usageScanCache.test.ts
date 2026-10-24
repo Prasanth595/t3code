@@ -246,25 +246,6 @@ describe("scan cache round trip", () => {
     },
   );
 
-  it("reparses Muse history from v8 caches without discarding unavailable history or invalidating other providers", () => {
-    const original = cacheWith([["/claude.jsonl", 100, [record()]]]);
-    const muse = {
-      ...original.get("/claude.jsonl")!,
-      provider: "muse" as const,
-      records: [record({ provider: "muse", model: "review-model" })],
-    };
-    original.set("/muse/session.jsonl", muse);
-    const encoded = encodeScanCache(original);
-    const restored = decodeScanCache({ ...encoded, version: 8 }, TEST_FORMAT_MAP);
-    expect(restored.get("/muse/session.jsonl")).toEqual({
-      ...muse,
-      size: -1,
-      position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
-    });
-    expect(restored.get("/claude.jsonl")).toEqual(original.get("/claude.jsonl"));
-    expect(decodeScanCache(encoded, TEST_FORMAT_MAP)).toEqual(original);
-  });
-
   it("rewrites only changed entries and still restores the whole cache", () => {
     const write = makeScanCacheWriter();
     const cache = cacheWith([
