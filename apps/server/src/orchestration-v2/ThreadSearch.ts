@@ -158,7 +158,9 @@ export function buildSearchSnippet(text: string, matchStart: number): string {
 // 69) or for two-character CJK words, the same query scans the newest
 // messages migration 69 would index. That scan is weaker than the index: it
 // ignores case for ASCII only and does not fold accents ("cafe" misses
-// "café"). Exported so a test can check the query plan.
+// "café"). Hits read a message's search_text where it has one, so a quote
+// matches its readable text and comment. Exported so a test can check the
+// query plan.
 export const messageHitsQuery = (
   sql: SqlClient.SqlClient,
   { match, substrings, projectId, excludedThreadIds }: typeof SearchRequest.Encoded,
@@ -185,7 +187,7 @@ export const messageHitsQuery = (
             messages.thread_id AS "threadId",
             eligible.project_id AS "projectId",
             messages.role AS source,
-            json_extract(messages.payload_json, '$.text') AS text,
+            COALESCE(messages.search_text, json_extract(messages.payload_json, '$.text')) AS text,
             messages.created_at AS "messageCreatedAt"
           FROM orchestration_v2_projection_messages AS messages
           INNER JOIN eligible ON eligible.thread_id = messages.thread_id
@@ -202,7 +204,7 @@ export const messageHitsQuery = (
             messages.thread_id AS "threadId",
             eligible.project_id AS "projectId",
             messages.role AS source,
-            json_extract(messages.payload_json, '$.text') AS text,
+            COALESCE(messages.search_text, json_extract(messages.payload_json, '$.text')) AS text,
             messages.created_at AS "messageCreatedAt"
           FROM orchestration_v2_message_search
           INNER JOIN orchestration_v2_projection_messages AS messages
@@ -222,7 +224,10 @@ export const messageHitsQuery = (
       AND messages.message_id NOT LIKE 'async-answer:%'
       AND NOT EXISTS (
         SELECT 1 FROM json_each(${substrings}) AS token
-        WHERE instr(lower(json_extract(messages.payload_json, '$.text')), token.value) = 0
+        WHERE instr(
+          lower(COALESCE(messages.search_text, json_extract(messages.payload_json, '$.text'))),
+          token.value
+        ) = 0
       )
     -- The index's own rowid, so FTS5 returns hits newest first and stops at
     -- the limit; ordering by the messages table's rowid sorts every hit.
