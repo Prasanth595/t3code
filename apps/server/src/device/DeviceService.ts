@@ -503,18 +503,18 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 
   // Checked under the lock configure publishes under, so a failure that ends
   // after device support was turned off cannot mark the setting back on.
-  const publishStartFailure = (hostId: DeviceHostId, error: DeviceError) =>
-    lifecycleLock
-      .withPermit(
-        Effect.gen(function* () {
-          if (!(yield* readDeviceSettings).enabled) return;
-          yield* setHostStatus(hostId, {
-            status: "failed",
-            detail: error._tag === "DeviceHostUnavailableError" ? error.reason : error.message,
-          });
-        }),
-      )
-      .pipe(Effect.ignore);
+  const publishStartFailure = Effect.fn("DeviceService.publishStartFailure")(
+    function* (hostId: DeviceHostId, error: DeviceError) {
+      if (!(yield* readDeviceSettings).enabled) return;
+      yield* setHostStatus(hostId, {
+        status: "failed",
+        detail: error._tag === "DeviceHostUnavailableError" ? error.reason : error.message,
+      });
+    },
+    lifecycleLock.withPermit,
+    // Effect.fn also passes the call's arguments, which Effect.ignore would read as options.
+    (effect) => Effect.ignore(effect),
+  );
 
   const list: DeviceService["Service"]["list"] = Effect.gen(function* () {
     if (!(yield* readDeviceSettings).enabled) return (yield* SynchronizedRef.get(stateRef)).state;
