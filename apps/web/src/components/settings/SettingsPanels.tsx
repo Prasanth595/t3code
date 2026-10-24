@@ -1911,6 +1911,22 @@ export function GeneralSettingsPanel() {
           }
         />
         <ThreadTitleInstructionsSettings />
+        <SettingsRow
+          serverScoped
+          settingKeys={["nextMessageSuggestionsEnabled"]}
+          {...searchableSetting("next-message-suggestions")}
+          description="After the agent replies, the text generation model suggests your next message in the empty composer. Press Tab to use it."
+          control={
+            <ScopedSwitch
+              settingKeys={["nextMessageSuggestionsEnabled"]}
+              checked={settings.nextMessageSuggestionsEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ nextMessageSuggestionsEnabled: Boolean(checked) })
+              }
+              aria-label="Next message suggestions"
+            />
+          }
+        />
       </SettingsSection>
 
       <SettingsSection id="about" title="About">
