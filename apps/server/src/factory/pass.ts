@@ -1017,7 +1017,13 @@ const loadRepos = Effect.fn("Pass.loadRepos")(function* (
       } else {
         // A fresh config clears the count whatever became of the login, as it always has.
         if (staleMessage === null) yield* clearMiss(key);
-        else yield* countMiss(key, watched, staleMessage, true);
+        else
+          yield* countMiss(
+            key,
+            watched,
+            `cannot read the tracker's login: ${failure.message}`,
+            false,
+          );
         yield* pass.fail(
           null,
           passError(
