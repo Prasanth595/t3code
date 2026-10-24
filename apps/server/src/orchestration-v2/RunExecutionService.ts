@@ -991,7 +991,7 @@ export const layer: Layer.Layer<
         const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
         const latestTurnItemOrdinal = yield* Ref.make(input.providerTurnOrdinal * 100);
         const latestProviderThread = yield* Ref.make(input.providerThread);
-        let latestRootProviderTurn: OrchestrationV2ProviderTurn | null = null;
+        const latestRootProviderTurn = yield* Ref.make<OrchestrationV2ProviderTurn | null>(null);
         // A planned detach closes ingestion before the adapter can end its open root items.
         const openRootTurnItems = new Map<TurnItemId, OrchestrationV2TurnItem>();
         const routeIdentity: ProviderEventRouteIdentity = {
@@ -1304,7 +1304,7 @@ export const layer: Layer.Layer<
                       "Run interrupted because the workspace changed",
                     );
                     const routing = yield* Ref.get(eventRouting);
-                    const providerTurn = latestRootProviderTurn;
+                    const providerTurn = yield* Ref.get(latestRootProviderTurn);
                     const completedAt = yield* DateTime.now;
                     const terminal = {
                       type: "turn.terminal",
@@ -1524,14 +1524,6 @@ export const layer: Layer.Layer<
                   yield* Ref.set(latestProviderThread, event.providerThread);
                 }
               }
-              if (
-                event.type === "provider_turn.updated" &&
-                (event.providerTurn.runAttemptId === input.attempt.id ||
-                  event.providerTurn.id === (yield* Ref.get(eventRouting)).rootProviderTurnId)
-              ) {
-                latestRootProviderTurn = event.providerTurn;
-              }
-
               if (
                 event.type === "turn_item.updated" &&
                 event.turnItem.providerTurnId === (yield* Ref.get(eventRouting)).rootProviderTurnId
