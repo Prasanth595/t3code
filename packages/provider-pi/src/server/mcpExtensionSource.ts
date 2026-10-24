@@ -455,8 +455,12 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     if (ctx.model?.api === "openai-completions") {
       gatewayTools = catalog.map((tool) => "mcp__t3-code__" + tool.name);
       if (!eagerGatewayTools) {
+        // A restored loadout can drop the orchestration tools, so re-add
+        // them whether or not this branch has called them.
         const called = calledToolNames(ctx);
-        gatewayTools = gatewayTools.filter((name) => called.has(name));
+        gatewayTools = gatewayTools.filter(
+          (name) => called.has(name) || directTools.has(name.slice("mcp__t3-code__".length)),
+        );
       }
     }
     const required = [...(hasToolSearch ? ["tool_search"] : []), ...gatewayTools];

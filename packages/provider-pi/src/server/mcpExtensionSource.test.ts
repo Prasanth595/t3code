@@ -200,7 +200,7 @@ describe("Pi MCP tool exposure", () => {
     assert.include(bridge.getActiveTools(), "mcp__t3-code__preview_snapshot");
   });
 
-  it("declares only called T3 tools for gateways that opt out of eager schemas", async () => {
+  it("declares orchestration and called T3 tools for gateways that opt out of eager schemas", async () => {
     const bridge = await loadMcpBridge({
       modern: true,
       toolSearchAvailable: true,
@@ -218,7 +218,14 @@ describe("Pi MCP tool exposure", () => {
     };
     await bridge.handlers.get("session_start")!(event, gatewayContext);
     await bridge.handlers.get("before_agent_start")!(event, gatewayContext);
-    assert.deepEqual(bridge.getActiveTools(), ["read", "tool_search"]);
+    const orchestrationLoadout = [
+      "read",
+      "tool_search",
+      "mcp__t3-code__orchestrator_capabilities",
+      "mcp__t3-code__delegate_task",
+      "mcp__t3-code__task_status",
+    ];
+    assert.deepEqual(bridge.getActiveTools(), orchestrationLoadout);
 
     messages.push(
       { role: "user", content: [{ type: "text" }] },
@@ -233,15 +240,14 @@ describe("Pi MCP tool exposure", () => {
     );
     await bridge.handlers.get("model_select")!(event, gatewayContext);
     assert.deepEqual(bridge.getActiveTools(), [
-      "read",
-      "tool_search",
+      ...orchestrationLoadout,
       "mcp__t3-code__preview_snapshot",
     ]);
+    // A tree restore can bring back a loadout without the orchestration tools.
     bridge.restoreActiveTools(["read"]);
     await bridge.handlers.get("session_tree")!(event, gatewayContext);
     assert.deepEqual(bridge.getActiveTools(), [
-      "read",
-      "tool_search",
+      ...orchestrationLoadout,
       "mcp__t3-code__preview_snapshot",
     ]);
   });
