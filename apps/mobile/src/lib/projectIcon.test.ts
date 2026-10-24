@@ -1,11 +1,7 @@
 import type { ProjectIconOverride } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  projectAutoMonogram,
-  resolveProjectChipIcon,
-  resolveProjectIconSymbol,
-} from "./projectIcon";
+import { projectAutoMonogram, resolveProjectChipIcon } from "./projectIcon";
 
 const project = (title: string, projectIcon?: ProjectIconOverride) => ({
   title,
@@ -81,19 +77,5 @@ describe("projectAutoMonogram", () => {
   it("leaves untitled projects to the folder icon, like desktop", () => {
     expect(projectAutoMonogram("")).toBeNull();
     expect(projectAutoMonogram("   ")).toBeNull();
-  });
-});
-
-describe("resolveProjectIconSymbol", () => {
-  it("shows the no-project chat bubble as a native symbol in its color", () => {
-    expect(
-      resolveProjectIconSymbol({ kind: "lucide", name: "message-square-dashed", color: "gray" }),
-    ).toEqual({ name: "text.bubble", color: "gray" });
-  });
-
-  it("leaves other icons to the glyph and favicon paths", () => {
-    expect(resolveProjectIconSymbol({ kind: "lucide", name: "rocket", color: "blue" })).toBeNull();
-    expect(resolveProjectIconSymbol({ kind: "emoji", emoji: "🚀" })).toBeNull();
-    expect(resolveProjectIconSymbol(null)).toBeNull();
   });
 });
