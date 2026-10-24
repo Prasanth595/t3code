@@ -1,3 +1,4 @@
+import { ThreadWidthControl } from "./ThreadWidthControl";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -406,6 +407,9 @@ export const ChatHeader = memo(function ChatHeader({
           )}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      <div className="shrink-0">
+        <ThreadWidthControl />
+      </div>
     </div>
   );
 });

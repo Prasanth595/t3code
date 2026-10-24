@@ -172,7 +172,7 @@ export function useLocalStorage<T, E>(
 
   const subscribe = (onStoreChange: () => void) => {
     const handleStorageChange = (event: StorageEvent) => {
-      if (event.key === key) {
+      if (event.key === key || event.key === null) {
         onStoreChange();
       }
     };

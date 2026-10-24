@@ -1,3 +1,4 @@
+import { threadWidthStyle, useThreadWidth } from "~/hooks/useThreadWidth";
 import { ScrollToEndButton, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
 import { announcedRun, isDetailBehindShell } from "./chat/threadActivityAnnouncement";
@@ -399,6 +400,7 @@ const noopHeldRevert = (_targetTurnCount: number) => {};
 const noopHeldAttachment = (_attachment: ChatFileAttachment) => {};
 
 export default function ChatView(props: ChatViewProps) {
+  const [threadWidthExpansion] = useThreadWidth();
   const {
     environmentId,
     threadId,
@@ -3171,6 +3173,7 @@ export default function ChatView(props: ChatViewProps) {
           rightPanelMaximized ? "w-0 flex-none" : "flex-1",
         )}
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
+        style={threadWidthStyle(threadWidthExpansion)}
         data-chat-column
       >
         <header
@@ -3452,9 +3455,10 @@ export default function ChatView(props: ChatViewProps) {
                       </div>
                     </div>
                   ) : null}
+                  {/* The stack already applies the width; nested composer surfaces fill it. */}
                   <div
                     ref={draftHeroComposerAnchorRef}
-                    className="relative z-10"
+                    className="relative z-10 [--chat-content-max-width:100%]"
                     style={
                       forceExpandedMobileComposer
                         ? { viewTransitionName: MOBILE_COMPOSER_VIEW_TRANSITION_NAME }
