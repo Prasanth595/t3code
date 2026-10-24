@@ -147,6 +147,8 @@ export class ForgejoCli extends Context.Service<
     readonly api: (
       input: ForgejoApiInput,
     ) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, ForgejoCliError>;
+    /** The token fj stores for the server at `host`, which may carry a port. Null when none. */
+    readonly fjToken: (host: string) => Effect.Effect<string | null>;
   }
 >()("@t3tools/source-control-forgejo/server/ForgejoCli") {}
 
@@ -719,7 +721,15 @@ export const make = Effect.gen(function* () {
       });
     return result;
   });
-  return ForgejoCli.of({ execute, listLogins, getAccount, resolveRepository, api });
+  const fjToken = Effect.fn("ForgejoCli.fjToken")(function* (host: string) {
+    // A media request has no checkout to name, and a store it cannot read only means no token.
+    const keys = yield* readKeys("").pipe(Effect.orElseSucceed(() => null));
+    const entry = Object.entries(keys?.hosts ?? {}).find(
+      ([name]) => name.toLowerCase() === host.toLowerCase(),
+    );
+    return entry?.[1].token ?? null;
+  });
+  return ForgejoCli.of({ execute, listLogins, getAccount, resolveRepository, api, fjToken });
 });
 
 export const layer = Layer.effect(ForgejoCli, make);

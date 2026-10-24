@@ -129,3 +129,56 @@ describe("Forgejo change request host", () => {
     ).toBe("forge.example");
   });
 });
+
+describe("Forgejo uploads", () => {
+  const uuid = "8e603325-bb2b-4e32-a9bc-f1fa20b6c40b";
+  const media = (url: string) => definition.mediaUrl(new URL(url));
+  const resolve = (markdown: string, changeRequestUrl: string) =>
+    definition.resolveRelativeLinks(markdown, changeRequestUrl);
+
+  it("fetches an upload from the server that serves it, under its mount or a repository", () => {
+    expect(media(`https://git.example.test:3000/attachments/${uuid}?download=1#top`)).toEqual({
+      fetchUrl: `https://git.example.test:3000/attachments/${uuid}`,
+      fileName: uuid,
+    });
+    for (const path of [`/git/attachments/${uuid}`, `/team/repo/attachments/${uuid}`]) {
+      expect(media(`https://git.example.test${path}`)?.fetchUrl).toBe(
+        `https://git.example.test${path}`,
+      );
+    }
+  });
+
+  it("claims no upload another host owns or a token could not reach", () => {
+    for (const url of [
+      `http://git.example.test/attachments/${uuid}`,
+      "https://git.example.test/attachments/not-an-upload",
+      `https://git.example.test/attachments/${uuid}/extra`,
+      `https://dev.azure.com/org/_apis/wit/attachments/${uuid}`,
+    ]) {
+      expect(media(url), url).toBeNull();
+    }
+  });
+
+  it("links a pasted upload on the server of its change request, below the server's mount", () => {
+    const body = [
+      `![shot](/attachments/${uuid})`,
+      `<img width="300" alt="shot" src="/attachments/${uuid}">`,
+      `![shot](</attachments/${uuid}> "title")`,
+      `![kept](https://cdn.example.test/attachments/${uuid})`,
+    ].join("\n");
+    expect(resolve(body, "https://git.example.test/git/team/repo/pulls/7")).toBe(
+      [
+        `![shot](https://git.example.test/git/attachments/${uuid})`,
+        `<img width="300" alt="shot" src="https://git.example.test/git/attachments/${uuid}">`,
+        `![shot](<https://git.example.test/git/attachments/${uuid}> "title")`,
+        `![kept](https://cdn.example.test/attachments/${uuid})`,
+      ].join("\n"),
+    );
+    expect(resolve(`![shot](attachments/${uuid})`, "https://codeberg.org/team/repo/pulls/7")).toBe(
+      `![shot](https://codeberg.org/attachments/${uuid})`,
+    );
+    expect(resolve(`![shot](/attachments/${uuid})`, "not a url")).toBe(
+      `![shot](/attachments/${uuid})`,
+    );
+  });
+});

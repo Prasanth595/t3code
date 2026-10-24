@@ -133,6 +133,18 @@ export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBod
 }
 
 /**
+ * Makes absolute the links the change request's host writes relative to its server, so its
+ * uploads load here. Null when the host writes none.
+ */
+export function changeRequestLinkResolver(
+  changeRequest: { readonly provider: string; readonly url: string } | null | undefined,
+): ((text: string) => string) | null {
+  if (!changeRequest) return null;
+  const resolve = sourceControlClients.get(changeRequest.provider).resolveRelativeLinks;
+  return resolve === undefined ? null : (text) => resolve(text, changeRequest.url);
+}
+
+/**
  * Finds the references the change request's host links in plain text, resolved against the change
  * request's repository. Null when the host links none.
  */
