@@ -48,11 +48,19 @@ const make = Effect.gen(function* () {
     input: OrchestrationV2SuggestNextMessageInput,
   ) {
     const projection = yield* threads
-      .getThreadRecords(input.threadId, ["messages"], { messageRoles: ["user", "assistant"] })
+      .getThreadRecords(input.threadId, ["messages", "runs"], {
+        messageRoles: ["user", "assistant"],
+      })
       .pipe(Effect.mapError(unavailable(input)));
-    // Once the thread has moved past the reply, or the agent is still writing, wait for the next one.
+    // Only the thread's last message, once its turn is over. A provider can finish a message
+    // mid-run, so the latest run must have completed too.
     const latest = projection.messages.at(-1);
-    if (latest?.id !== input.afterMessageId || latest.role !== "assistant" || latest.streaming) {
+    if (
+      latest?.id !== input.afterMessageId ||
+      latest.role !== "assistant" ||
+      latest.streaming ||
+      ThreadManagementService.latestRun(projection)?.status !== "completed"
+    ) {
       return NO_SUGGESTION;
     }
 
@@ -85,8 +93,8 @@ const make = Effect.gen(function* () {
   });
 
   // Keyed by reply, so every client that shows it, including after a reload, shares one model
-  // call. Only model answers are kept: a failure, or a request that came before the reply
-  // settled, must not stop a later request from asking.
+  // call. Only model answers are kept: a failure, or a request that came before the run
+  // completed, must not stop a later request from asking.
   const suggestions = yield* Cache.makeWith(generate, {
     capacity: 256,
     timeToLive: (exit) => (Exit.isSuccess(exit) && exit.value !== NO_SUGGESTION ? "1 hour" : 0),
