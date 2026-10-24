@@ -6809,7 +6809,6 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 }
                 return (
                   thread.limitRecovery.autoResume &&
-                  resetMs <= nowMs &&
                   (thread.snoozedUntil == null ||
                     DateTime.toEpochMillis(thread.snoozedUntil) <= nowMs)
                 );

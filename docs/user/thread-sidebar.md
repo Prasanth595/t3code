@@ -216,6 +216,9 @@ When the provider reports a reset time, choose **Resume at reset** to schedule a
 continuation. You can cancel it from the thread. Enable **Auto-resume limited
 threads** in **Settings → General** on web and desktop, or **Settings → Thread
 behavior** on mobile, to schedule limit stops by default.
+If the provider's usage shows the allowance back before the reset, for example
+after you redeem a reset credit, the continuation starts then. A thread that hits
+the limit again before the reset waits for the reset.
 The environment must be running when the reset arrives; it resumes overdue
 continuations after a restart. Stopping the thread, sending a new message,
 archiving, or settling it prevents a pending continuation from starting.

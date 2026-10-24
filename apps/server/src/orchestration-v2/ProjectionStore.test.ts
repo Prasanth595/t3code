@@ -911,6 +911,82 @@ it.effect("SQL projection keeps background thread updates out of updatedAt", () 
   backgroundThreadUpdatesKeepTimestamp.pipe(Effect.provide(layerTest)),
 );
 
+it.effect.each([
+  ["memory", ProjectionStore.layerMemory],
+  ["SQL", layerTest],
+] as const)("%s limit recovery loads armed threads before their reset", ([, layer]) =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* addRolledBackRecoveryCandidate("armed-before-reset");
+    const projection = yield* store.getThreadProjection(threadId);
+    const run = projection.runs[0]!;
+    const now = yield* DateTime.now;
+    const resetAt = "2099-01-01T00:00:00.000Z";
+    yield* store.apply({
+      id: EventId.make("event:armed-before-reset:error"),
+      type: "turn-item.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make("armed-before-reset:error"),
+        threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 2,
+        status: "failed",
+        title: "Usage limit reached",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "error",
+        failure: {
+          class: "usage_limit",
+          message: "Plan limit reached.",
+          resetAt,
+          code: "usageLimitExceeded",
+          retryable: null,
+        },
+      },
+    });
+    yield* store.apply({
+      id: EventId.make("event:armed-before-reset:failed"),
+      type: "run.updated",
+      threadId,
+      occurredAt: now,
+      payload: { ...run, status: "failed" },
+    });
+    const recovery = {
+      runId: run.id,
+      resetAt,
+      autoResume: true,
+      requestId: CommandId.make("recovery:armed-before-reset"),
+    };
+    const updateThread = (suffix: string, patch: Partial<typeof projection.thread>) =>
+      store.apply({
+        id: EventId.make(`event:armed-before-reset:${suffix}`),
+        type: "thread.metadata-updated",
+        threadId,
+        occurredAt: now,
+        payload: { ...projection.thread, limitRecovery: recovery, ...patch },
+      });
+    const candidate = Effect.map(
+      store.getLimitRecoveryCandidates({ now, autoResume: false, snooze: false }),
+      (rows) => rows.find((row) => row.id === threadId),
+    );
+
+    yield* updateThread("armed", {});
+    assert.deepEqual((yield* candidate)?.limitRecovery, recovery);
+    yield* updateThread("snoozed", { snoozedUntil: DateTime.makeUnsafe(resetAt) });
+    assert.isUndefined(yield* candidate);
+    yield* updateThread("cancelled", { limitRecovery: { ...recovery, autoResume: false } });
+    assert.isUndefined(yield* candidate);
+  }).pipe(Effect.provide(layer)),
+);
+
 it.effect("memory recovery selection includes unfinished items from missing runs", () =>
   Effect.gen(function* () {
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
