@@ -17,7 +17,7 @@ import {
 import { ThreadContextDivider } from "./thread-context-divider";
 import { ThreadHandoffDivider, ThreadHandoffRow } from "./thread-handoff-row";
 import { GuestBubbleTint, GuestMessageName } from "./guestMessageStyle";
-import { ThreadGuestPendingMessages, useHasPendingGuestMessages } from "./ThreadGuestShareBar";
+import { ThreadGuestPendingMessage, useThreadGuestShare } from "./ThreadGuestShareBar";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import {
@@ -231,9 +231,11 @@ import {
   WORK_GROUP_TOGGLE_HEIGHT,
 } from "./thread-work-log";
 import {
+  appendGuestPendingMessages,
   appendPendingThreadMessages,
   isCompactionCommandFeedEntry,
   type PendingThreadFeedEntry,
+  type ThreadFeedRow,
 } from "./pending-thread-feed";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
@@ -1237,7 +1239,7 @@ function compactionLabel(label: string, title: string | undefined) {
 }
 
 function renderFeedEntry(
-  info: { item: PendingThreadFeedEntry; index: number },
+  info: { item: ThreadFeedRow; index: number },
   props: Pick<
     ThreadFeedProps,
     | "environmentId"
@@ -1284,6 +1286,25 @@ function renderFeedEntry(
 ) {
   const entry = info.item;
   const { markdownStyles, iconSubtleColor, userBubbleColor } = props;
+
+  if (entry.type === "guest-pending") {
+    return (
+      <ThreadGuestPendingMessage
+        threadRef={scopeThreadRef(props.environmentId, props.threadId)}
+        guestName={entry.guestName}
+        message={entry.message}
+        bubbleMaxWidth={props.duoColumns ? "85%" : props.userBubbleMaxWidth}
+        renderAttachments={(attachments) => (
+          <MessageAttachmentList
+            attachments={attachments}
+            environmentId={props.environmentId}
+            onPressPreview={props.onPressPreview}
+            onPressVideo={props.onPressVideo}
+          />
+        )}
+      />
+    );
+  }
 
   if (entry.type === "run-fold") {
     return (
@@ -2092,7 +2113,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     () => scopeThreadRef(props.environmentId, props.threadId),
     [props.environmentId, props.threadId],
   );
-  const hasPendingGuestMessages = useHasPendingGuestMessages(guestThreadRef);
+  const guestShare = useThreadGuestShare(guestThreadRef);
   const deviceType = useDeviceType();
   const duoColumns = useNativeWorkspaceColumnsSupported() && isDuoDevice(deviceType);
   const openPullRequest = useOpenPullRequest();
@@ -2688,7 +2709,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     reportHeaderMaterialVisibility(false);
   }, [feedThreadKey, reportHeaderMaterialVisibility]);
 
-  const presentedFeed = useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups);
+  const presentedFeed = appendGuestPendingMessages(
+    useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups),
+    guestShare,
+  );
   const setupAnchorIndex = presentedFeed.findIndex(
     (entry) => entry.type === "message" && entry.message.role === "user",
   );
@@ -2906,7 +2930,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
   };
 
-  const shouldRestoreVisibleContentPosition = (entry: ThreadFeedEntry) => {
+  const shouldRestoreVisibleContentPosition = (entry: ThreadFeedRow) => {
     const disclosureAnchorKey = disclosureAnchorKeyRef.current;
     return disclosureAnchorKey === null || entry.id === disclosureAnchorKey;
   };
@@ -2990,7 +3014,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // Without this, every row above the viewport is assumed to be
   // estimatedItemSize tall, and scrolling up through unmeasured content
   // corrects each row's height as it mounts — the feed visibly jumps.
-  const getFixedItemSize = (entry: ThreadFeedEntry) => {
+  const getFixedItemSize = (entry: ThreadFeedRow) => {
+    if (entry.type === "guest-pending") return undefined;
     if (entry.type === "html-render") {
       return htmlRenderRowHeight(htmlRenderFrameHeight(entry.render, contentWidth));
     }
@@ -3036,7 +3061,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (hasHtmlRenders) listRef.current?.clearCaches({ mode: "sizes" });
   }, [beginReflow, contentWidth, hasHtmlRenders, listRef]);
 
-  const renderItem = (info: { item: PendingThreadFeedEntry; index: number }) => (
+  const renderItem = (info: { item: ThreadFeedRow; index: number }) => (
     <Animated.View
       key={info.item.id}
       entering={disclosureToggleSettling ? THREAD_FEED_DISCLOSURE_ENTER_TRANSITION : undefined}
@@ -3179,8 +3204,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
                     animated: false,
                     on: {
                       dataChange: true,
-                      // Pending guest messages arrive in the footer, not as rows.
-                      footerLayout: true,
                       itemLayout: true,
                       layout: true,
                     },
@@ -3257,29 +3280,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               </>
             }
             ListFooterComponent={
-              <>
-                <ThreadGuestPendingMessages
-                  threadRef={guestThreadRef}
-                  bubbleMaxWidth={duoColumns ? "85%" : userBubbleMaxWidth}
-                  renderAttachments={(attachments) => (
-                    <MessageAttachmentList
-                      attachments={attachments}
-                      environmentId={props.environmentId}
-                      onPressPreview={onPressPreview}
-                      onPressVideo={onPressVideo}
-                    />
-                  )}
+              props.pendingHandoff ? (
+                <ThreadHandoffDivider
+                  environmentId={props.environmentId}
+                  endpoints={props.pendingHandoff}
+                  iconColor={iconSubtleColor}
+                  surfaceColor={screenColor}
+                  label="Context handoff pending"
                 />
-                {props.pendingHandoff ? (
-                  <ThreadHandoffDivider
-                    environmentId={props.environmentId}
-                    endpoints={props.pendingHandoff}
-                    iconColor={iconSubtleColor}
-                    surfaceColor={screenColor}
-                    label="Context handoff pending"
-                  />
-                ) : null}
-              </>
+              ) : null
             }
             contentContainerStyle={{
               paddingTop: FEED_PADDING_TOP,
@@ -3289,7 +3298,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           />
         </View>
         {presentedFeed.length === 0 &&
-        !hasPendingGuestMessages &&
         !props.worktreeSetup &&
         props.activeWorkStartedAt === null &&
         props.contentPresentation.kind === "ready" ? (
@@ -3344,7 +3352,7 @@ function ThreadFeedLoadEarlierControl(props: ThreadFeedHistoryControls) {
 }
 
 function MessageImageGalleryScope(props: {
-  entry: PendingThreadFeedEntry;
+  entry: ThreadFeedRow;
   environmentId: EnvironmentId;
   threadId: ThreadId;
   workspaceRoot: string | null | undefined;

@@ -110,6 +110,7 @@ import {
 import { EventSinkV2 } from "./EventSink.ts";
 import {
   decideGuestMessageSend,
+  guestShareAfterCancelledSend,
   releasedGuestAttachmentIds,
   withoutGuestAttribution,
   decideGuestShareCommand,
@@ -2676,7 +2677,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
-  // Deleted after the share change commits; a waiting message's files are pending uploads.
+  // Deleted after the share change commits: the files of waiting messages it dismissed or dropped.
   const releaseGuestAttachments = (
     command: { readonly commandId: CommandId; readonly threadId: ThreadId },
     before: OrchestrationV2AppThread["guestShare"],
@@ -2750,7 +2751,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     guestMessageId: GuestMessageId,
     thread: OrchestrationV2AppThread,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
     const now = yield* DateTime.now;
     const decided = decideGuestMessageSend({ thread, guestMessageId, now });
@@ -2771,13 +2771,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: decided.success.thread,
     });
-    // Intake copied the files into the thread before this command; the uploads can go.
-    yield* releaseGuestAttachments(
-      command,
-      thread.guestShare,
-      decided.success.thread.guestShare,
-      effects,
-    );
     return decided.success;
   });
 
@@ -3724,6 +3717,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: updatedThread,
     });
+    // Archiving ends the guest share, so its waiting files go too.
+    yield* releaseGuestAttachments(command, thread.guestShare, updatedThread.guestShare, effects);
 
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
       yield* Ref.update(effects, (existing) => [
@@ -8547,6 +8542,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         },
       });
     }
+    const guest = queuedMessage?.context?.guest;
+    if (guest !== undefined) {
+      const thread = guestShareAfterCancelledSend(projection.thread, guest, now);
+      if (thread !== projection.thread) {
+        yield* emitEvent({
+          type: "thread.guest-share-updated",
+          threadId: command.threadId,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: now,
+          payload: thread,
+        });
+      }
+    }
   });
 
   const dispatchQueuedRunEdit = Effect.fn("Orchestrator.dispatchQueuedRunEdit")(function* (
@@ -11744,7 +11752,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const guestSend =
           command.guestMessageId === undefined
             ? undefined
-            : yield* emitGuestMessageSent(command, command.guestMessageId, thread, events, effects);
+            : yield* emitGuestMessageSent(command, command.guestMessageId, thread, events);
         const dispatched =
           guestSend === undefined
             ? withoutGuestAttribution(command)
