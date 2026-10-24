@@ -642,24 +642,36 @@ function checkStatus(check: (typeof GitCafeChecks.Type.items)[number]): PullRequ
 
 type GitCafeCheck = (typeof GitCafeChecks.Type.items)[number];
 
-// GitCafe's ids are the host's check run ids, which grow with each run.
-function isNewerRun(candidate: GitCafeCheck, kept: GitCafeCheck): boolean {
-  const [a, b] = [candidate.id, kept.id];
-  return a != null && b != null && /^\d+$/u.test(a) && /^\d+$/u.test(b) && BigInt(a) > BigInt(b);
+/** A check run's id, which grows with each run. Commit statuses (`status:…`) carry no such order. */
+function runOrder(check: GitCafeCheck): bigint | null {
+  return check.id != null && /^\d+$/u.test(check.id) ? BigInt(check.id) : null;
 }
 
 /**
  * GitCafe lists every run of a commit's checks, so a re-run arrives beside the run it replaced.
- * The newest run is the check's state; an older failure is history, not a failing check.
+ * The newest run is the check's state; an older failure is history, not a failing check. Runs whose
+ * order cannot be told apart are all kept, so no failure is hidden.
  */
 export function toChecks(checks: typeof GitCafeChecks.Type): ReadonlyArray<PullRequestCheck> {
-  const newestByName = new Map<string, GitCafeCheck>();
+  const kept: Array<GitCafeCheck> = [];
+  const newestByName = new Map<string, { index: number; order: bigint }>();
   for (const check of checks.items) {
-    const kept = newestByName.get(check.name);
-    if (kept === undefined || isNewerRun(check, kept)) newestByName.set(check.name, check);
+    const order = runOrder(check);
+    if (order === null) {
+      kept.push(check);
+      continue;
+    }
+    const newest = newestByName.get(check.name);
+    if (newest === undefined) {
+      newestByName.set(check.name, { index: kept.length, order });
+      kept.push(check);
+    } else if (order > newest.order) {
+      kept[newest.index] = check;
+      newest.order = order;
+    }
   }
   return sortChecks(
-    [...newestByName.values()].map((check) => ({
+    kept.map((check) => ({
       name: check.name,
       status: checkStatus(check),
       description: check.summary,
@@ -671,8 +683,8 @@ export function toChecks(checks: typeof GitCafeChecks.Type): ReadonlyArray<PullR
 export function checksStateOf(
   checks: ReadonlyArray<PullRequestCheck>,
 ): PullRequestChecksState | null {
-  const statuses = checks.map((check) => check.status);
-  if (statuses.includes("failure") || statuses.includes("cancelled")) return "failing";
-  if (statuses.includes("pending") || statuses.includes("action-required")) return "pending";
-  return statuses.includes("success") ? "passing" : null;
+  const statuses = new Set(checks.map((check) => check.status));
+  if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
+  if (statuses.has("pending") || statuses.has("action-required")) return "pending";
+  return statuses.has("success") ? "passing" : null;
 }
