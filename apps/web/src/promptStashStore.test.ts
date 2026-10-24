@@ -126,6 +126,24 @@ describe("promptStashStore", () => {
     expect(entries[0]?.id).toBe("overflow");
   });
 
+  it("keeps an entry another tab stashed after this tab loaded", () => {
+    writePromptStashStorageForTest(
+      JSON.stringify({
+        version: 2,
+        state: { entries: [makeEntry({ id: "other-tab" })] },
+      }),
+    );
+    // This tab loaded before the other tab's write, so its list is still empty.
+    usePromptStashStore.setState({ entries: [] });
+
+    usePromptStashStore.getState().stashEntry(makeEntry({ id: "this-tab" }));
+
+    expect(usePromptStashStore.getState().entries.map((entry) => entry.id)).toEqual([
+      "this-tab",
+      "other-tab",
+    ]);
+  });
+
   // regression: #4787 stashed prompts were lost when switching providers
   it("distinguishes a memory-only write (written, not durable) from a failed one", () => {
     const store = usePromptStashStore.getState();
@@ -225,6 +243,9 @@ describe("promptStashStore", () => {
     const entry = usePromptStashStore.getState().entries[0];
     expect(entry?.pendingImageCount).toBe(0);
     expect(entry?.unreadableImageNames).toHaveLength(2);
+
+    usePromptStashStore.getState().stashEntry(makeEntry({ id: "later" }));
+    expect(usePromptStashStore.getState().entries[1]).toEqual(entry);
   });
 
   it("ignores an unreadable v1 payload seeded under the current key", () => {

@@ -42,10 +42,11 @@ const decodePersistedPromptStashState = Schema.decodeUnknownSync(PersistedPrompt
 
 /**
  * `pendingImageCount` only has meaning within the session that wrote it: the
- * encode loop that would clear it does not survive a reload. Any entry that
- * comes back from storage still pending was orphaned by a closed tab or a
- * crash mid-encode, so the count is settled here — otherwise the entry would
- * be stuck showing "saving…" and refuse to restore forever.
+ * encode loop that would clear it does not survive a reload. An entry still
+ * pending when a tab loads was orphaned by a closed tab or a crash mid-encode,
+ * so the count is settled then — otherwise the entry would be stuck showing
+ * "saving…" and refuse to restore forever. If another tab is in fact still
+ * encoding it, that tab's finalize overwrites the settled fields.
  */
 function clearOrphanedPendingImages(
   entries: ReadonlyArray<PromptStashEntry>,
@@ -135,10 +136,28 @@ function readPersistedEntries(): ReadonlyArray<PromptStashEntry> | null {
     const parsed: unknown = JSON.parse(raw);
     const state = (parsed as { state?: unknown } | null)?.state;
     if (!state) return null;
-    return clearOrphanedPendingImages(decodePersistedPromptStashState(state).entries);
+    return decodePersistedPromptStashState(state).entries;
   } catch {
     return null;
   }
+}
+
+/**
+ * Every tab of the origin shares one stash. A change starts from what storage
+ * holds now rather than this tab's copy, so writing it back cannot erase an
+ * entry another tab stashed since this tab last read.
+ */
+function latestEntries(current: ReadonlyArray<PromptStashEntry>): ReadonlyArray<PromptStashEntry> {
+  return readPersistedEntries() ?? current;
+}
+
+function loadPersistedEntries(): ReadonlyArray<PromptStashEntry> | null {
+  const persisted = readPersistedEntries();
+  if (!persisted?.some((entry) => entry.pendingImageCount)) return persisted;
+  const settled = clearOrphanedPendingImages(persisted);
+  // Later changes start from storage, so the settled counts must land there too.
+  persistEntries(settled);
+  return settled;
 }
 
 interface PromptStashStoreState {
@@ -176,7 +195,7 @@ interface PromptStashStoreState {
 export const usePromptStashStore = create<PromptStashStoreState>()((set, get) => ({
   entries: [],
   stashEntry: (entry) => {
-    const nextEntries = [entry, ...get().entries];
+    const nextEntries = [entry, ...latestEntries(get().entries)];
     const evicted = nextEntries.length > MAX_STASH_ENTRIES ? (nextEntries.pop() ?? null) : null;
     const { written, durable } = persistEntries(nextEntries);
     // A rejected write must not leave the entry visible either: the caller
@@ -189,7 +208,7 @@ export const usePromptStashStore = create<PromptStashStoreState>()((set, get) =>
     return { evicted, written: true, durable };
   },
   takeEntry: (entryId) => {
-    const entries = get().entries;
+    const entries = latestEntries(get().entries);
     const entry = entries.find((candidate) => candidate.id === entryId) ?? null;
     if (!entry) return { entry: null, durable: true };
     const nextEntries = entries.filter((candidate) => candidate.id !== entryId);
@@ -198,7 +217,7 @@ export const usePromptStashStore = create<PromptStashStoreState>()((set, get) =>
     return { entry, durable };
   },
   finalizeEntryImages: (entryId, images) => {
-    const entries = get().entries;
+    const entries = latestEntries(get().entries);
     const index = entries.findIndex((candidate) => candidate.id === entryId);
     const existing = index === -1 ? undefined : entries[index];
     if (!existing) return { attached: false, durable: true };
@@ -220,13 +239,20 @@ export const usePromptStashStore = create<PromptStashStoreState>()((set, get) =>
   try {
     baseStashStorage.removeItem(LEGACY_PROMPT_STASH_STORAGE_KEY);
   } catch {}
-  const persisted = readPersistedEntries();
+  const persisted = loadPersistedEntries();
   if (persisted) {
     usePromptStashStore.setState({ entries: persisted });
+  }
+  // Fires only for writes from other tabs, keeping this tab's list current.
+  if (storageIsDurable && typeof window !== "undefined") {
+    window.addEventListener("storage", (event) => {
+      if (event.key !== PROMPT_STASH_STORAGE_KEY && event.key !== null) return;
+      usePromptStashStore.setState({ entries: readPersistedEntries() ?? [] });
+    });
   }
 }
 
 export function writePromptStashStorageForTest(raw: string): void {
   baseStashStorage.setItem(PROMPT_STASH_STORAGE_KEY, raw);
-  usePromptStashStore.setState({ entries: readPersistedEntries() ?? [] });
+  usePromptStashStore.setState({ entries: loadPersistedEntries() ?? [] });
 }
