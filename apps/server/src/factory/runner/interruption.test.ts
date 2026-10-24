@@ -273,12 +273,16 @@ interface World {
   pr: PullRequest | null;
   /** The open pull requests GitHub lists from each branch. */
   onHead: Record<string, Array<OpenPullRequest>>;
+  /** GitHub fails every `gh pr list --head`. */
+  onHeadFails: boolean;
   /** Read at each call, so a test can move the session on between two calls. */
   status: () => ThreadStatus | ThreadNotFoundError | SessionsError;
   thread: Thread | ThreadNotFoundError | SessionsError;
   textCheck: TextCheck;
   editedSince: boolean;
   branchTip: "found" | "missing";
+  /** Branches origin lacks whatever `branchTip` says. */
+  missingBranches: Array<string>;
   /** The comments the instructors made, for `forward`. */
   comments: Array<Comment>;
   /** The next send fails with this, once. */
@@ -374,11 +378,13 @@ const rigFor = (
     issue: issueDetail("building", ["rawphp"]),
     pr: null,
     onHead: {},
+    onHeadFails: false,
     status: () => statusOf("completed", DONE_MESSAGE),
     thread: { worktreePath: "/t3/wt", branch: "t3code/abc", archived: false },
     textCheck: "unchanged",
     editedSince: false,
     branchTip: "found",
+    missingBranches: [],
     comments: [],
     sendFailure: null,
     sendNotFound: false,
@@ -400,7 +406,9 @@ const rigFor = (
     closedBy: () => Effect.succeed(null),
     openPullRequestsOnHead: (branch) => {
       reads.push(`openPullRequestsOnHead ${branch}`);
-      return Effect.succeed(world.onHead[branch] ?? []);
+      return world.onHeadFails
+        ? Effect.fail(ghFailure())
+        : Effect.succeed(world.onHead[branch] ?? []);
     },
     openPullRequestsClosing: () => Effect.succeed([]),
     pullRequest: (n) => {
@@ -450,7 +458,7 @@ const rigFor = (
     },
     branchTip: (branch) => {
       reads.push(`branchTip ${branch}`);
-      return world.branchTip === "found"
+      return world.branchTip === "found" && !world.missingBranches.includes(branch)
         ? Effect.succeed("a".repeat(40))
         : Effect.fail(
             new GitHubFailed({
@@ -862,6 +870,24 @@ describe("interrupted: a resume", () => {
         stuckEvents([], reason, [{ event: "pr_left", data: { pr: 12, url: URL12 } }]),
       );
     }),
+  );
+
+  it.effect(
+    "ends a session that ended badly as stuck even when GitHub cannot list its pull requests",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor();
+        rig.world.onHeadFails = true;
+        yield* failedAndSaid(rig);
+        clearCalls(rig);
+        const outcome = yield* decide(rig, lone());
+        const reason = joined("the session run ended as failed", "it crashed");
+        assert.deepStrictEqual(outcome, { kind: "stuck", reason });
+        assert.deepStrictEqual(rig.gh, stuckCalls("the session run ended as failed", "it crashed"));
+        const events = linesOf(rig).map((line) => line.event);
+        assert.ok(!events.includes("pr_left"), events.join(" "));
+        assert.ok(events.indexOf("error") < events.indexOf("stuck"), events.join(" "));
+      }),
   );
 
   it.effect("sends a cancelled session with T3 healthy to stuck as cancelled", () =>
@@ -1940,10 +1966,10 @@ describe("a relaunch finds the branch", () => {
     }),
   );
 
-  it.effect("takes the earlier attempt's branch a resumed session was told to push to", () =>
+  it.effect("takes T3's own branch for a session that resumed from an earlier attempt's", () =>
     Effect.gen(function* () {
-      // Attempt 2 was launched from attempt 1's branch on origin and told to push there, so its
-      // work is there, not on T3's own branch, which may never have reached origin.
+      // Attempt 2 was launched from attempt 1's branch on origin; a version before the push
+      // words left its work on T3's branch, which is on origin.
       const rig = rigFor();
       seed(
         rig.dataDir,
@@ -1953,8 +1979,32 @@ describe("a relaunch finds the branch", () => {
       threadGone(rig);
       assert.deepStrictEqual(yield* advanceIn(rig, run10b), endedBadly("thread-gone"));
       assert.strictEqual((yield* decide(rig, afterOutage(), run10b)).kind, "relaunched");
-      assert.strictEqual(relaunchBranchIn(rig, run10b), "t3code/old");
-      assert.strictEqual(rig.launches.at(-1)!.baseRef, "t3code/old");
+      assert.strictEqual(relaunchBranchIn(rig, run10b), "t3code/own");
+      assert.strictEqual(rig.launches.at(-1)!.baseRef, "t3code/own");
+    }),
+  );
+
+  it.effect("falls back to the branch it resumed from when origin lacks T3's own", () =>
+    Effect.gen(function* () {
+      // The session was told to push to attempt 1's branch, so T3's own never reached origin.
+      const rig = rigFor();
+      seed(
+        rig.dataDir,
+        run10b,
+        startedResumedFrom("t3code/own", { run: "rawphp__softfac__10__1", branch: "t3code/old" }),
+      );
+      threadGone(rig);
+      rig.world.missingBranches = ["t3code/own"];
+      assert.deepStrictEqual(yield* advanceIn(rig, run10b), endedBadly("thread-gone"));
+      assert.strictEqual((yield* decide(rig, afterOutage(), run10b)).kind, "relaunched");
+      assert.strictEqual(relaunchBranchIn(rig, run10b), "t3code/own");
+      const request = rig.launches.at(-1)!;
+      assert.strictEqual(request.baseRef, "t3code/old");
+      assert.ok(request.message.includes("git push origin HEAD:t3code/old"), request.message);
+      assert.deepStrictEqual(
+        rig.reads.filter((read) => read.startsWith("branchTip ")),
+        ["branchTip t3code/own", "branchTip t3code/old"],
+      );
     }),
   );
 

@@ -3386,56 +3386,60 @@ describe("advance: the pull request a session leaves when it stops or asks", () 
     }),
   );
 
-  it.effect("stops the session but writes nothing on GitHub when GitHub cannot list them", () =>
+  /** The lines a stop ends with when GitHub could not list the pull requests: an error, no record. */
+  const lookupFailed = (rig: Rig, step: string) => {
+    const lines = readRun(rig.dataDir, rig.run).entries;
+    const error = lines.find((e) => e.event === "error");
+    assert.ok(error !== undefined, lines.map((e) => e.event).join(" "));
+    assert.deepStrictEqual(error.cause, { step, reason: "step-failed" });
+    assert.strictEqual((error.data as { kind: string }).kind, "github");
+    assert.deepStrictEqual(leftLines(rig), []);
+    // Written once the session is stopped, and before anything is written on the issue.
+    const kinds = lines.map((e) => e.event);
+    assert.ok(kinds.indexOf("worktree_removed") < kinds.indexOf("error"), kinds.join(" "));
+    assert.ok(kinds.indexOf("error") < kinds.indexOf("stuck"), kinds.join(" "));
+  };
+
+  it.effect("finishes the stop without the record when GitHub cannot list them", () =>
     Effect.gen(function* () {
+      // After the archive T3 reads the thread as gone, so the stop cannot wait for a retry.
       const rig = rigFor();
       rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
       rig.world.failNext.openPullRequestsOnHead = ghFailure();
       setStatus(rig, "completed", "FACTORY-STOP: stuck");
-      const error = yield* Effect.flip(advanceIn(rig));
-      assert.strictEqual(error._tag, "GitHubFailed");
-      // An outage never keeps the session working: it is stopped before the lookup.
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "stuck", reason: SAID_STUCK });
       assert.deepStrictEqual(rig.t3, STOP_CALLS);
-      assert.deepStrictEqual(rig.gh, []);
-      assert.deepStrictEqual(linesOf(rig), [...STARTED, worktreeRemoved]);
-      // The next pass takes the same exit and finishes the stop.
-      assert.strictEqual((yield* advanceIn(rig)).kind, "stuck");
-      assert.deepStrictEqual(linesOf(rig), stuckEvents([], SAID_STUCK, [PR_LEFT]));
+      assert.deepStrictEqual(rig.gh, stuckCalls(SAID_STUCK));
+      lookupFailed(rig, "advance");
     }),
   );
 
-  it.effect("at the time limit, stops the session even when GitHub cannot list them", () =>
+  it.effect("at the time limit, stops the run even when GitHub cannot list them", () =>
     Effect.gen(function* () {
       const rig = limitedRig();
       rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
       rig.world.failNext.openPullRequestsOnHead = ghFailure();
       rig.clock.now = T0 + LIMIT_MS + 1;
-      const error = yield* Effect.flip(timeLimit(rig.ctx, rig.run));
-      assert.strictEqual(error._tag, "GitHubFailed");
-      assert.deepStrictEqual(rig.t3, ["thread thread-1", ...ARCHIVE_CALLS]);
-      assert.deepStrictEqual(rig.gh, []);
-      assert.deepStrictEqual(linesOf(rig), [...STARTED, worktreeRemoved]);
       assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), {
         kind: "stopped",
         reason: TIME_LIMIT,
       });
-      assert.deepStrictEqual(leftLines(rig), [PR_LEFT]);
+      assert.deepStrictEqual(rig.t3, ["thread thread-1", ...ARCHIVE_CALLS]);
+      assert.strictEqual(rig.world.issue.state, "stuck");
+      lookupFailed(rig, "pass");
     }),
   );
 
-  it.effect("in the watch, stops the session even when GitHub cannot list them", () =>
+  it.effect("in the watch, stops the run even when GitHub cannot list them", () =>
     Effect.gen(function* () {
       const rig = rigFor();
       rig.world.textCheck = "changed";
       rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
       rig.world.failNext.openPullRequestsOnHead = ghFailure();
-      const error = yield* Effect.flip(watch(rig.ctx, rig.run));
-      assert.strictEqual(error._tag, "GitHubFailed");
-      assert.deepStrictEqual(rig.t3, ["thread thread-1", ...ARCHIVE_CALLS]);
-      assert.deepStrictEqual(rig.gh, [TEXT_READ]);
-      assert.deepStrictEqual(linesOf(rig), [...STARTED, worktreeRemoved]);
       assert.strictEqual((yield* watch(rig.ctx, rig.run)).kind, "stopped");
-      assert.deepStrictEqual(leftLines(rig), [PR_LEFT]);
+      assert.deepStrictEqual(rig.t3, ["thread thread-1", ...ARCHIVE_CALLS]);
+      assert.strictEqual(rig.world.issue.state, "stuck");
+      lookupFailed(rig, "watch");
     }),
   );
 });

@@ -112,6 +112,8 @@ const fakeTracker = (script: {
   closedBy?: string | null | GitHubError;
   /** What the tip of a branch reads as: found (the default), a 404, or a failed read. Read at each call. */
   branchTip?: "found" | "missing" | GitHubError;
+  /** Branches origin lacks whatever `branchTip` says. */
+  missingBranches?: ReadonlyArray<string>;
   /** Whether the issue text was edited since the approval (false by default), or a failed read. Read at each call. */
   editedSince?: boolean | GitHubError;
   /** The open pull requests GitHub says would close the issue (none by default), or a failed read. */
@@ -184,7 +186,9 @@ const fakeTracker = (script: {
     },
     branchTip: (branch) => {
       calls.push(`branchTip ${branch}`);
-      const tip = script.branchTip ?? "found";
+      const tip = script.missingBranches?.includes(branch)
+        ? "missing"
+        : (script.branchTip ?? "found");
       if (tip === "missing") {
         return Effect.fail(
           new GitHubFailed({ args: ["api", "ref"], status: 1, stderr: "gh: Not Found (HTTP 404)" }),
@@ -1871,7 +1875,53 @@ const assertPlainStart = (dataDir: string, t3: ReturnType<typeof fakeSessions>) 
 };
 
 describe("start: the resume after a time limit", () => {
-  it.effect("of a resumed run continues from the branch its session was told to push to", () =>
+  it.effect("starts from base after a run whose interruption was resumed in its own thread", () =>
+    Effect.gen(function* () {
+      // Attempt 1 resumed from an earlier branch, was interrupted and resumed in place, then
+      // ended badly: only a relaunch or a time limit leaves work to continue from.
+      const dataDir = tempDir();
+      const ledger = Ledger.create(dataDir, run7, { clock: () => T0 - 1000 });
+      try {
+        for (const { line, cause: why } of startedLinesOn("t3code/abc")) {
+          ledger.append(
+            line.event === "session_launched"
+              ? {
+                  ...line,
+                  data: { ...line.data, resumed_from: { run: "x", branch: "t3code/old" } },
+                }
+              : line,
+            why,
+          );
+        }
+        const why = makeCause("advance", "session-ended-badly");
+        ledger.append(
+          {
+            event: "session_interrupted",
+            data: {
+              resumes: 1,
+              relaunch: false,
+              run_ordinal: 1,
+              branch: "t3code/abc",
+              t3_error: null,
+              ended_in_pass: 2,
+            },
+          },
+          makeCause("advance", "session-interrupted"),
+        );
+        ledger.append({ event: "state_changed", data: { from: "building", to: "stuck" } }, why);
+        ledger.finish("stuck", null, null, why);
+      } finally {
+        ledger.close();
+      }
+      const { tracker, calls } = fakeTracker({});
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assertPlainStart(dataDir, t3);
+      assert.deepStrictEqual(lookups(calls), []);
+    }),
+  );
+
+  it.effect("of a resumed run falls back to the branch its session was told to push to", () =>
     Effect.gen(function* () {
       // Attempt 2 resumed from attempt 1's `t3code/abc` and pushed there; T3 named its own
       // branch, which the stuck line recorded and which never reached origin.
@@ -1883,7 +1933,7 @@ describe("start: the resume after a time limit", () => {
         { launched: null, recorded: "t3code/own" },
         { attempt: 2, resumedFrom: { run: "rawphp__softfac__7__1", branch: "t3code/abc" } },
       );
-      const { tracker, calls } = fakeTracker({});
+      const { tracker, calls } = fakeTracker({ missingBranches: ["t3code/own"] });
       const t3 = fakeSessions(dataDir, {});
       yield* startIn(dataDir, tracker, t3.sessions);
       const request = t3.launchRequests[0]!;
@@ -1892,7 +1942,30 @@ describe("start: the resume after a time limit", () => {
       assert.ok(request.message.includes("git push origin HEAD:t3code/abc"), request.message);
       assert.deepStrictEqual(lookups(calls), [
         `textEditedSince 7 ${LABELED}`,
+        "branchTip t3code/own",
         "branchTip t3code/abc",
+      ]);
+    }),
+  );
+
+  it.effect("of a resumed run continues from T3's own branch when origin has it", () =>
+    Effect.gen(function* () {
+      // A version before the push words launched attempt 2, whose session pushed T3's branch.
+      const dataDir = tempDir();
+      seedStuckRun(dataDir, "time-limit", { launched: "t3code/abc", recorded: "t3code/abc" });
+      seedStuckRun(
+        dataDir,
+        "time-limit",
+        { launched: null, recorded: "t3code/own" },
+        { attempt: 2, resumedFrom: { run: "rawphp__softfac__7__1", branch: "t3code/abc" } },
+      );
+      const { tracker, calls } = fakeTracker({});
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assert.strictEqual(t3.launchRequests[0]!.baseRef, "t3code/own");
+      assert.deepStrictEqual(lookups(calls), [
+        `textEditedSince 7 ${LABELED}`,
+        "branchTip t3code/own",
       ]);
     }),
   );

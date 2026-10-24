@@ -84,6 +84,7 @@ import {
   RESULT_LINE_REMINDED,
   RESULT_LINE_REMINDING,
   readProgress,
+  regateBranch,
   type Seen,
 } from "./progress.ts";
 import {
@@ -999,8 +1000,11 @@ const threadPlace = (ctx: BuildingContext, seen: Seen): Effect.Effect<ThreadPlac
  * when T3 renamed the thread's, and the branch a resumed session was told to push to
  * (`Seen.resumedFrom`). Only the factory's own, in this repo, onto the run's base, on a branch a
  * session can be told to push to. Written once per pull request. A stop runs it once the session
- * is stopped (`goStuck`'s `afterStop`), so a GitHub outage never keeps a session working: a read
- * that fails leaves the run unfinished, and the next pass, which takes the same exit, reads again.
+ * is stopped (`goStuck`'s `afterStop`), so a GitHub outage never keeps a session working. A read
+ * that fails is written as an `error` line and the stop goes on without the record: after the
+ * archive the next pass would not take the same exit (an archived thread reads as gone), so it
+ * cannot be asked again. The next attempt still finds a pull request onto the default branch by
+ * its closing reference (`start`'s `existingPullRequest`).
  */
 const recordLeftPullRequest = Effect.fn("RunnerBuilding.recordLeftPullRequest")(function* (
   ctx: BuildingContext,
@@ -1014,8 +1018,17 @@ const recordLeftPullRequest = Effect.fn("RunnerBuilding.recordLeftPullRequest")(
     if (head !== null && isSafeBranchName(head)) heads.add(head);
   }
   for (const head of heads) {
-    const pulls = yield* ctx.tracker.openPullRequestsOnHead(head);
-    const left = pulls.find(
+    const listed = yield* Effect.result(ctx.tracker.openPullRequestsOnHead(head));
+    if (listed._tag === "Failure") {
+      yield* append(
+        out,
+        { event: "error", data: { step, kind: "github", message: describe(listed.failure) } },
+        step,
+        "step-failed",
+      );
+      return;
+    }
+    const left = listed.success.find(
       (pull) => isOwnPull(pull, ctx.trackerUser) && isResumablePull(pull, ctx.project.base),
     );
     if (left === undefined) continue;
@@ -1745,7 +1758,7 @@ export const interrupted = Effect.fn("RunnerBuilding.interrupted")(function* (
   const goneStuck = (from: Seen) =>
     stuckEnded(ctx, run, from, "thread-gone", stopOf(THREAD_GONE, null));
   const relaunch = Effect.fn("RunnerBuilding.relaunch")(function* (from: Seen, resumes: number) {
-    const branch = yield* relaunchBranchOf(ctx, from);
+    const branch = yield* relaunchBranchOf(ctx, run, from);
     yield* withLedger(ctx, run, (out) =>
       append(
         out,
@@ -1844,9 +1857,8 @@ export const interrupted = Effect.fn("RunnerBuilding.interrupted")(function* (
 
 /**
  * The branch the work of a run whose thread is lost is on, for the relaunch to continue from, read
- * before the decision is written. In order: the branch a resumed session was told to push to, not
- * T3's own (`Seen.resumedFrom`: a re-gate's or feedback's pull request, or an earlier attempt's
- * work); the newest branch the ledger names (a launch line usually has none, as it is written
+ * before the decision is written. In order: the pull request's branch for a session that pushes
+ * there and not to T3's own branch (`regateBranch`); the newest branch the ledger names (a launch line usually has none, as it is written
  * before the worktree exists); the branch the thread itself reports, which T3 keeps for an
  * archived thread (one it does not know gives nothing); the head branch of the run's own pull
  * request, when that is a plain ref name and not a fork's. `null` starts the next attempt from
@@ -1855,9 +1867,11 @@ export const interrupted = Effect.fn("RunnerBuilding.interrupted")(function* (
  */
 const relaunchBranchOf = Effect.fn("RunnerBuilding.relaunchBranchOf")(function* (
   ctx: BuildingContext,
+  run: RunId,
   seen: Seen,
 ) {
-  if (seen.resumedFrom !== null) return seen.resumedFrom;
+  const regate = regateBranch(seen, run);
+  if (regate !== null) return regate;
   if (seen.lastBranch !== null) return seen.lastBranch;
   if (seen.threadId !== null) {
     const thread = yield* ctx.sessions

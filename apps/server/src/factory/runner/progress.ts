@@ -252,7 +252,7 @@ export interface Seen {
    * The branch the newest `session_launched` line says its worktree was made from (a relaunch for
    * a failed re-gate or feedback, or an attempt resumed onto an earlier one's work); null for a
    * first launch. That session works on a branch of T3's own and is told to push to this one, so
-   * this is where its work is, and a pull request from it is the session's.
+   * a pull request from it is the session's.
    */
   readonly resumedFrom: string | null;
   /** The ids named by any `feedback_relaunching` or `feedback_forwarding` line: each is acted on at most once. */
@@ -269,7 +269,25 @@ export interface Seen {
    * move it, so feedback written while those ran is not lost.
    */
   readonly prOpenSince: number | null;
+  /**
+   * The run on that `resumed_from`: this run's own id for a session that pushes to a pull
+   * request's branch (a re-gate's or feedback's, or one resumed onto an earlier attempt's open
+   * pull request), the earlier attempt's for a resume from its branch.
+   */
+  readonly resumedFromRun: string | null;
 }
+
+/**
+ * The pull request's branch when the run's session was launched to push there: to fix a failed
+ * re-gate of this same run, for feedback, or to continue an earlier attempt's open pull request
+ * (its `session_launched` line's `resumed_from` names the run itself). That session works on a
+ * branch of T3's own and pushes to the pull request's, so that is where its work is. Null for a
+ * first launch, and for a session resumed from an earlier attempt's branch: a version before the
+ * push words left that work on T3's branch, so the next launch tries T3's branch first and falls
+ * back to this one only when origin lacks it (`start`'s `continuation`).
+ */
+export const regateBranch = (seen: Seen, run: RunId): string | null =>
+  seen.resumedFromRun === runIdToString(run) ? seen.resumedFrom : null;
 
 /** A relaunch that was decided and whose session the ledger does not name: the launch may have reached T3. */
 export const pendingRelaunch = (seen: Seen): Relaunch | null =>
@@ -440,6 +458,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let relaunch: Relaunch | null = null;
   let launchedSinceSending = false;
   let resumedFrom: string | null = null;
+  let resumedFromRun: string | null = null;
   const feedbackSent = new Set<string>();
   let feedbackRelaunches = 0;
   let feedbackLastItems = 0;
@@ -621,6 +640,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         const from = dataField(entry.data, "resumed_from");
         const fromBranch = dataField(from, "branch");
         resumedFrom = typeof fromBranch === "string" ? fromBranch : null;
+        const fromRun = dataField(from, "run");
+        resumedFromRun = typeof fromRun === "string" ? fromRun : null;
         const launchedBranch = dataField(entry.data, "branch");
         if (typeof launchedBranch === "string") lastBranch = launchedBranch;
         const launchedBase = dataField(entry.data, "base");
@@ -883,6 +904,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     relaunch,
     launchedSinceSending,
     resumedFrom,
+    resumedFromRun,
     feedbackSent,
     feedbackRelaunches,
     feedbackLastItems,

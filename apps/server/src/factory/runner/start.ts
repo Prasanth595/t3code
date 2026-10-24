@@ -899,14 +899,17 @@ const resumeFrom = Effect.fn("RunnerStart.resumeFrom")(function* (
   const found = continuation(previous.entries);
   // The branch goes to GitHub's ref path, to T3's git as a ref, and into the `git push` the
   // launch message tells the session to run: only a plain branch name is resumed from.
-  if (found === null || !isSafeBranchName(found.branch)) return null;
+  const branches = found === null ? [] : found.branches.filter(isSafeBranchName);
+  if (found === null || branches.length === 0) return null;
   const approvedAt = readProgress(previous.entries).approvedAt;
   if (approvedAt === null) return null;
   if (yield* ctx.tracker.textEditedSince(issue, approvedAt)) return null;
-  const tip = yield* Effect.result(ctx.tracker.branchTip(found.branch));
-  if (tip._tag === "Success") return { run: previous.id, ...found };
-  if (isNotFound(tip.failure)) return null;
-  return yield* tip.failure;
+  for (const branch of branches) {
+    const tip = yield* Effect.result(ctx.tracker.branchTip(branch));
+    if (tip._tag === "Success") return { run: previous.id, branch, after: found.after };
+    if (!isNotFound(tip.failure)) return yield* tip.failure;
+  }
+  return null;
 });
 
 /**
@@ -982,19 +985,29 @@ const runBase = Effect.fn("RunnerStart.runBase")(function* (
  * again reads it too, so the words of both sends are the same.
  *
  * A time-limit stop (its `stuck` line has the reason `time-limit`) wins over a relaunch. Its
- * branch is the one a resumed session was told to push to (`Seen.resumedFrom`), else the one on
- * the `session_launched` line, or, as that line is written when T3 answers the launch and usually
- * before the worktree exists, the one the `stuck` line recorded from the thread. A relaunch's
- * branch is the one on its newest `session_interrupted` line, when that is a relaunch
- * (`Seen.interruption`). An attempt that finished as `needs-info` left nothing to continue from,
+ * branch is the one on the `session_launched` line, or, as that line is written when T3 answers
+ * the launch and usually before the worktree exists, the one the `stuck` line recorded from the
+ * thread. A relaunch's branch is the one on its newest `session_interrupted` line, when that is a
+ * relaunch (`Seen.interruption`). After either comes the branch the attempt itself resumed from
+ * (`Seen.resumedFrom`), for the caller to take when origin lacks the first: a resumed session is
+ * told to push there, so T3's own branch may never reach origin, while one a version before the
+ * push words launched pushed T3's branch. An attempt that finished as `needs-info` left nothing to continue from,
  * whatever it did before: its questions end it, and the next attempt starts from base.
  */
 const continuation = (
   entries: ReadonlyArray<Entry>,
-): { readonly branch: string; readonly after: "time-limit" | "interrupted" } | null => {
+): {
+  readonly branches: ReadonlyArray<string>;
+  readonly after: "time-limit" | "interrupted";
+} | null => {
   if (entries.some((e) => e.event === "finished" && field(e.data, "outcome") === "needs-info")) {
     return null;
   }
+  const seen = readProgress(entries);
+  const withResumed = (branch: string | null, after: "time-limit" | "interrupted") => {
+    const branches = [branch, seen.resumedFrom].filter((b): b is string => b !== null);
+    return branches.length === 0 ? null : { branches: [...new Set(branches)], after };
+  };
   const branchOn = (event: string, entry: Entry): string | null => {
     const branch = entry.event === event ? field(entry.data, "branch") : undefined;
     return typeof branch === "string" ? branch : null;
@@ -1002,12 +1015,11 @@ const continuation = (
   if (entries.some((e) => e.event === "stuck" && e.cause?.reason === "time-limit")) {
     const launched = entries.map((e) => branchOn("session_launched", e)).find((b) => b !== null);
     const recorded = entries.map((e) => branchOn("stuck", e)).findLast((b) => b !== null);
-    const branch = readProgress(entries).resumedFrom ?? launched ?? recorded ?? null;
-    return branch === null ? null : { branch, after: "time-limit" };
+    return withResumed(launched ?? recorded ?? null, "time-limit");
   }
-  const relaunch = readProgress(entries).interruption;
-  const branch = relaunch !== null && relaunch.relaunch ? relaunch.branch : null;
-  return branch === null ? null : { branch, after: "interrupted" };
+  const relaunch = seen.interruption;
+  if (relaunch === null || !relaunch.relaunch) return null;
+  return withResumed(relaunch.branch, "interrupted");
 };
 
 /**
