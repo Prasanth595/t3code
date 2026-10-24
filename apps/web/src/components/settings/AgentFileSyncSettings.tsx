@@ -4,7 +4,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { AgentFileLibrary } from "./AgentFileLibrary";
-import type { AgentFileLocation as Location } from "./agentFileLibrary";
+import { locationLabel, type AgentFileLocation as Location } from "./agentFileLibrary";
 
 export function AgentFileSyncSettings() {
   const { scope } = useSettingsScope();
@@ -82,9 +82,7 @@ function AgentFileSyncSettingsContent() {
               }}
               items={sourceLocations.map((item) => ({
                 value: item.id,
-                label: item.cwd
-                  ? `${item.label} · ${item.cwd.split(/[\\/]/).slice(-2).join("/")}`
-                  : item.label,
+                label: locationLabel(item),
               }))}
             >
               <SelectTrigger id="agent-sync-source" aria-label="Environment">
@@ -93,8 +91,7 @@ function AgentFileSyncSettingsContent() {
               <SelectPopup>
                 {sourceLocations.map((item) => (
                   <SelectItem key={item.id} value={item.id}>
-                    {item.label}
-                    {item.cwd ? ` · ${item.cwd.split(/[\\/]/).slice(-2).join("/")}` : ""}
+                    {locationLabel(item)}
                   </SelectItem>
                 ))}
               </SelectPopup>

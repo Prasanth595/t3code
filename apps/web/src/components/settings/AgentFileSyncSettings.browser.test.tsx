@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
   linkStopped: false,
   serverGeneration: 0,
   environmentScope: false,
+  projectPath: "/project",
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/runtime"), async (importOriginal) => {
@@ -162,7 +163,7 @@ vi.mock(import("./SettingsScopeContext"), () => ({
               {
                 environmentId: "source",
                 physicalProjectKey: "source-project",
-                workspaceRoot: "/project",
+                workspaceRoot: state.projectPath,
               },
             ],
           },
@@ -191,6 +192,7 @@ function setup(reason = "") {
   state.linkStopped = false;
   state.serverGeneration = 0;
   state.environmentScope = reason === "environment";
+  state.projectPath = "/project";
   const key = "t3:agent-file-sync:source:home";
   localStorage.setItem(`${key}:targets`, JSON.stringify(["available", "unavailable"]));
   return key;
@@ -248,6 +250,25 @@ it("browses project and global files and reads the complete instruction file acr
   await userEvent.click(screen.getByRole("button", { name: /^CLAUDE.md.*Global/ }));
   await expect.element(screen.getByText("Global instructions.", { exact: true })).toBeVisible();
 });
+
+it.each(["/work/proj/", "C:\\work\\proj\\"])(
+  "uses the full compact project label for a trailing separator in %s",
+  async (cwd) => {
+    setup("project");
+    state.projectPath = cwd;
+    await using screen = await render(
+      <RegistryProvider>
+        <AgentFileSyncSettings />
+      </RegistryProvider>,
+    );
+    const selector = screen.getByRole("combobox", { name: "Environment", exact: true });
+    await expect.element(selector).toHaveTextContent("source · work/proj");
+    await userEvent.click(selector);
+    await expect
+      .element(screen.getByRole("option", { name: "source · work/proj", exact: true }))
+      .toBeVisible();
+  },
+);
 
 it("shows sharing on the global skill without attributing it to the project copy", async () => {
   setup("project");
