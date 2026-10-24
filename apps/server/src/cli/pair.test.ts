@@ -11,6 +11,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as NetAddress from "effect/net/NetAddress";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient } from "effect/http";
@@ -160,7 +161,10 @@ describe("t3 pair", () => {
             path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
             state: yield* makePersistedServerRuntimeState({
               config: { host: "::1", devUrl: undefined },
-              port: Number(new URL(origin).port),
+              address: NetAddress.inetAddressFromIpStringUnsafe(
+                "::1",
+                Number(new URL(origin).port),
+              ),
             }),
           });
           const output = yield* captureStdout(
@@ -197,7 +201,7 @@ describe("t3 pair", () => {
           path: statePath,
           state: yield* makePersistedServerRuntimeState({
             config: { host: "127.0.0.1", devUrl: undefined },
-            port,
+            address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", port),
           }),
         });
 
@@ -250,7 +254,7 @@ describe("t3 pair", () => {
           path: statePath,
           state: yield* makePersistedServerRuntimeState({
             config: { host: undefined, devUrl: new URL("http://localhost:5733") },
-            port,
+            address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", port),
           }),
         });
 
@@ -268,7 +272,10 @@ describe("t3 pair", () => {
         const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
         const state = yield* makePersistedServerRuntimeState({
           config: { host: "127.0.0.1", devUrl: undefined },
-          port: Number(new URL(origin).port),
+          address: NetAddress.inetAddressFromIpStringUnsafe(
+            "127.0.0.1",
+            Number(new URL(origin).port),
+          ),
         });
         yield* persistServerRuntimeState({
           path: statePath,
@@ -297,7 +304,10 @@ describe("t3 pair", () => {
           path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
           state: yield* makePersistedServerRuntimeState({
             config: { host: "127.0.0.1", devUrl: undefined },
-            port: Number(new URL(origin).port),
+            address: NetAddress.inetAddressFromIpStringUnsafe(
+              "127.0.0.1",
+              Number(new URL(origin).port),
+            ),
           }),
         });
         const tailscaleCalls: Array<ReadonlyArray<string>> = [];
