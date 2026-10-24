@@ -62,6 +62,14 @@ function expand<A>(value: A, resolve: (text: string) => string): A {
   return value;
 }
 
+function someString(value: unknown, test: (text: string) => boolean): boolean {
+  if (typeof value === "string") return test(value);
+  if (typeof value === "object" && value !== null) {
+    return Object.values(value).some((item) => someString(item, test));
+  }
+  return false;
+}
+
 /** Cursor's project slug, as `~/.cursor/projects/<slug>` names it. */
 function cursorProjectSlug(projectRoot: string): string {
   return projectRoot
@@ -82,9 +90,11 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
       Effect.orElseSucceed(() => undefined),
     );
 
-  // The SDK takes the project root from `git rev-parse --show-toplevel`.
+  // The SDK takes the project root from `git rev-parse --show-toplevel`, which
+  // resolves symlinks, and falls back to the cwd as given.
   let projectRoot = cwd;
-  for (let directory = cwd; ; directory = path.dirname(directory)) {
+  const start = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
+  for (let directory = start; ; directory = path.dirname(directory)) {
     if (
       yield* fileSystem.exists(path.join(directory, ".git")).pipe(Effect.orElseSucceed(() => false))
     ) {
@@ -132,19 +142,24 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
     path.join(projectRoot, ".cursor", "mcp.json"),
     path.join(userHome, ".cursor", "mcp.json"),
   ]) {
-    const config = decodeCursorMcpFile(yield* readJsonc(file));
+    const contents = yield* readJsonc(file);
+    // Like the SDK, expand before validating, so `"type": "${env:TYPE}"` is valid.
+    const config = decodeCursorMcpFile(expand(contents, resolve));
     if (Option.isNone(config)) continue;
+    const rawServers = (contents as { readonly mcpServers: Record<string, unknown> }).mcpServers;
     for (const [name, server] of Object.entries(config.value.mcpServers)) {
       if (seen.has(name)) continue;
       seen.add(name);
       if (disabled.has(name)) continue;
-      let usesWorkspaceVariable = false;
-      const resolved = expand(server, (text) => {
-        usesWorkspaceVariable ||= WORKSPACE_VARIABLE_PATTERN.test(text);
-        return resolve(text);
-      });
-      // The SDK already resolves every other server the same way.
-      if (usesWorkspaceVariable) servers[name] = resolved as McpServerConfig;
+      // The SDK already resolves every other server the same way. It names plugin
+      // servers `plugin-<plugin>-<name>` and prefers them over file servers, so a
+      // file server with such a name stays with the SDK, which can see plugins.
+      if (
+        !name.startsWith("plugin-") &&
+        someString(rawServers[name], (text) => WORKSPACE_VARIABLE_PATTERN.test(text))
+      ) {
+        servers[name] = server as McpServerConfig;
+      }
     }
   }
   return servers;
