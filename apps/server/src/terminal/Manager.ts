@@ -1580,7 +1580,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const baseEnv = options.env ?? process.env;
   const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
   const processRunner = yield* ProcessRunner.ProcessRunner;
-  const detectedShellProfiles = yield* Effect.cached(
+  // Bound discovery work across terminal launches without hiding host changes indefinitely.
+  const detectedShellProfiles = yield* Effect.cachedWithTTL(
     options.shellProfiles ??
       Effect.gen(function* () {
         const etcShells =
@@ -1604,6 +1605,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           etcShells,
         });
       }),
+    "5 seconds",
   );
   const listShells: TerminalManager["Service"]["listShells"] = () =>
     detectedShellProfiles.pipe(Effect.map((shells) => ({ shells })));
@@ -2378,6 +2380,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const startingAt = yield* nowIso;
     yield* modifyManagerState((state) => {
       session.status = "starting";
+      session.shellLabel = null;
+      session.shellFallbackFrom = null;
       session.cwd = input.cwd;
       session.worktreePath = input.worktreePath ?? null;
       session.cols = input.cols;

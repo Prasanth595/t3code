@@ -48,7 +48,7 @@ async function setup() {
 }
 
 describe("terminal shell discovery", () => {
-  it("does not discover or expose cached shells without a terminal grant", async () => {
+  it("does not discover or expose loaded shells without a terminal grant", async () => {
     const { consumer, shells } = await setup();
     state.listShells.mockResolvedValue({ _tag: "Success", value: { shells } });
     const menu = consumer();
@@ -71,7 +71,7 @@ describe("terminal shell discovery", () => {
     expect(state.listShells).toHaveBeenCalledTimes(2);
   });
 
-  it("updates an existing consumer when another consumer populated the cache", async () => {
+  it("loads for a consumer that rendered before another consumer finished discovery", async () => {
     const { consumer, shells } = await setup();
     state.listShells.mockResolvedValue({ _tag: "Success", value: { shells } });
     const first = consumer();
@@ -81,10 +81,24 @@ describe("terminal shell discovery", () => {
     await stale.load();
     expect(second.entry.updates).toBeGreaterThan(0);
     expect(second.read().shells).toEqual(shells);
-    const updates = second.entry.updates;
     await second.read().load();
-    expect(second.entry.updates).toBe(updates);
-    expect(state.listShells).toHaveBeenCalledTimes(1);
+    expect(state.listShells).toHaveBeenCalledTimes(3);
+  });
+
+  it("refreshes installed and removed shells on subsequent loads", async () => {
+    const { consumer, shells } = await setup();
+    const addedShell = { id: "zsh", label: "zsh", command: "/bin/zsh", args: [] };
+    state.listShells
+      .mockResolvedValueOnce({ _tag: "Success", value: { shells } })
+      .mockResolvedValueOnce({ _tag: "Success", value: { shells: [...shells, addedShell] } })
+      .mockResolvedValueOnce({ _tag: "Success", value: { shells: [addedShell] } });
+    const menu = consumer();
+    await menu.read().load();
+    expect(menu.read().shells).toEqual(shells);
+    await menu.read().load();
+    expect(menu.read().shells).toEqual([...shells, addedShell]);
+    await menu.read().load();
+    expect(menu.read().shells).toEqual([addedShell]);
   });
 
   it("shares an in-flight request and keeps results scoped to their environment", async () => {

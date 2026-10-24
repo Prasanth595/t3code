@@ -32,6 +32,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { expect, vi } from "vite-plus/test";
 
@@ -915,6 +916,63 @@ it.layer(
   const fish: TerminalShellProfile = { id: "fish", label: "fish", command: "/bin/fish", args: [] };
   const shellProfiles = [zsh, fish];
   const configured = (setting: TerminalShellSetting) => () => Effect.succeed(setting);
+
+  it.effect("refreshes discovered shells after the cache expires", () =>
+    Effect.gen(function* () {
+      const { logsDir, ptyAdapter } = yield* createManager();
+      let profiles = [zsh];
+      let discoveries = 0;
+      const manager = yield* TerminalManager.makeWithOptions({
+        logsDir,
+        historyLineLimit: 5,
+        ptyAdapter,
+        shellProfiles: Effect.sync(() => {
+          discoveries++;
+          return profiles;
+        }),
+      });
+      expect((yield* manager.listShells()).shells).toEqual([zsh]);
+      profiles = [zsh, fish];
+      expect((yield* manager.listShells()).shells).toEqual([zsh]);
+      expect(discoveries).toBe(1);
+      yield* TestClock.adjust("5 seconds");
+      expect((yield* manager.listShells()).shells).toEqual([zsh, fish]);
+      profiles = [fish];
+      yield* TestClock.adjust("5 seconds");
+      expect((yield* manager.listShells()).shells).toEqual([fish]);
+      expect(discoveries).toBe(3);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("clears previous shell metadata when a restart fails", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellProfiles,
+        shellResolver: () => "/bin/sh",
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      ptyAdapter.spawnFailures.push(new Error("spawn /bin/fish ENOENT"));
+      yield* manager.open(openInput({ shell: "fish" }));
+      let terminals: ReadonlyArray<TerminalSummary> = [];
+      const unsubscribe = yield* manager.subscribeMetadata((event) =>
+        Effect.sync(() => {
+          if (event.type === "snapshot") terminals = event.terminals;
+        }),
+      );
+      unsubscribe();
+      expect(terminals[0]).toMatchObject({ shell: "sh", shellFallbackFrom: "fish" });
+      ptyAdapter.spawnFailures.push(new Error("spawn EACCES"));
+      yield* manager.restart(restartInput());
+      const unsubscribeAfter = yield* manager.subscribeMetadata((event) =>
+        Effect.sync(() => {
+          if (event.type === "snapshot") terminals = event.terminals;
+        }),
+      );
+      unsubscribeAfter();
+      expect(terminals[0]?.status).toBe("error");
+      expect(terminals[0]?.shell).toBeUndefined();
+      expect(terminals[0]?.shellFallbackFrom).toBeUndefined();
+    }),
+  );
 
   it.effect("prefers the explicit shell over the configured one", () =>
     Effect.gen(function* () {
