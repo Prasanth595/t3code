@@ -2966,8 +2966,9 @@ const FIRST_ATTEMPT: ReadonlyArray<RunEvent> = [
 
 describe("advance: an earlier attempt's pull request", () => {
   const run10n2: RunId = { ...run10, attempt: 2 };
-  const secondAttempt = () => {
-    const rig = rigFor();
+  /** Attempt 2 of issue 10, started, after attempt 1 left the lines `first`. */
+  const secondAttempt = (first: ReadonlyArray<RunEvent> = FIRST_ATTEMPT) => {
+    const rig = rigFor(first);
     seed(rig.dataDir, run10n2, STARTED);
     const second: Rig = { ...rig, run: run10n2 };
     return second;
@@ -2976,7 +2977,6 @@ describe("advance: an earlier attempt's pull request", () => {
   it.effect("is bound by the branch attempt 1 worked on, and recorded", () =>
     Effect.gen(function* () {
       const rig = secondAttempt();
-      seed(rig.dataDir, run10, FIRST_ATTEMPT);
       rig.world.pr = { ...defaultPr(), number: 14, headRef: "t3code/old" };
       setStatus(rig, "completed", `Built it.\nFACTORY-DONE: ${URL14}`);
       assert.deepStrictEqual(yield* advanceIn(rig), {
@@ -2994,7 +2994,6 @@ describe("advance: an earlier attempt's pull request", () => {
   it.effect("is bound by the number attempt 1 recorded, whatever its branch is now", () =>
     Effect.gen(function* () {
       const rig = secondAttempt();
-      seed(rig.dataDir, run10, FIRST_ATTEMPT);
       rig.world.pr = { ...defaultPr(), headRef: "t3code/renamed" };
       assert.deepStrictEqual(yield* advanceIn(rig), {
         kind: "ready-for-gate",
@@ -3007,8 +3006,7 @@ describe("advance: an earlier attempt's pull request", () => {
 
   it.effect("is bound by the branch attempt 1's stuck line recorded", () =>
     Effect.gen(function* () {
-      const rig = secondAttempt();
-      seed(rig.dataDir, run10, [
+      const rig = secondAttempt([
         ...STARTED,
         {
           event: "stuck",
@@ -3025,7 +3023,6 @@ describe("advance: an earlier attempt's pull request", () => {
   it.effect("is still refused on a branch no attempt of the issue worked on", () =>
     Effect.gen(function* () {
       const rig = secondAttempt();
-      seed(rig.dataDir, run10, FIRST_ATTEMPT);
       rig.world.pr = { ...defaultPr(), number: 14, headRef: "someone/else" };
       setStatus(rig, "completed", `Built it.\nFACTORY-DONE: ${URL14}`);
       const outcome = yield* advanceIn(rig);
@@ -3056,7 +3053,8 @@ describe("advance: the pull request a session leaves when it stops or asks", () 
       rig.world.closing = [closingDraft("t3code/abc")];
       setStatus(rig, "completed", "FACTORY-STOP: stuck");
       assertStuck(rig, yield* advanceIn(rig), { publicReason: SAID_STUCK, extra: [PR_OPENED] });
-      assert.deepStrictEqual(rig.reads, ["openPullRequestsClosing 10"]);
+      // The issue is read first, as for every building run; the lookup is the only other read.
+      assert.deepStrictEqual(rig.reads, ["issue 10", "openPullRequestsClosing 10"]);
       assert.deepStrictEqual(
         readRun(rig.dataDir, rig.run).entries.find((e) => e.event === "pr_opened")?.cause,
         { step: "advance", reason: "pr-opened" },

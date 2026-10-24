@@ -447,6 +447,8 @@ describe("start: a fresh ready issue", () => {
         "issue 7",
         "approval 7 tomkaczocha",
         "claim 7 rawphp ready->triage",
+        // The launch is decided on: an open pull request of the issue would be resumed.
+        "openPullRequestsClosing 7",
         `textCheck 7 ${LABELED} tomkaczocha`,
         "setState 7 building",
         `status 7 rawphp ${BUILDING}`,
@@ -1064,7 +1066,7 @@ describe("start: the launch", () => {
       const outcome = yield* startIn(dataDir, tracker, t3.sessions);
       assert.deepStrictEqual(outcome, { kind: "stuck", run: run7, reason: detailText });
       // The public comment never carries T3's words.
-      assert.deepStrictEqual(calls.slice(3), stuckCalls(LAUNCH_FAILED, null));
+      assert.deepStrictEqual(calls.slice(4), stuckCalls(LAUNCH_FAILED, null));
       assert.deepStrictEqual(t3.calls, ["findProject /work/softfac", `launch ${LAUNCH_ID}`]);
       assert.deepStrictEqual(entriesOf(dataDir), [
         ...startedEvents().slice(0, 4),
@@ -1103,6 +1105,7 @@ describe("start: the launch", () => {
           "issue 7",
           "approval 7 tomkaczocha",
           "claim 7 rawphp ready->triage",
+          "openPullRequestsClosing 7",
           `textCheck 7 ${LABELED} tomkaczocha`,
           ...stuckCalls(TEXT_CHANGED, "thread-1"),
         ]);
@@ -1175,7 +1178,7 @@ describe("start: the launch", () => {
       const error = yield* Effect.flip(startIn(dataDir, tracker, t3.sessions));
       assert.strictEqual(error._tag, "GitHubFailed");
       assert.deepStrictEqual(entriesOf(dataDir), startedEvents().slice(0, 6));
-      assert.strictEqual(calls.length, 5);
+      assert.strictEqual(calls.length, 6);
       assert.strictEqual(
         t3.calls.some((c) => c.startsWith("archive")),
         false,
@@ -1258,6 +1261,7 @@ describe("start: a resume", () => {
       assert.deepStrictEqual(t3.calls, ["findProject /work/softfac", `launch ${LAUNCH_ID}`]);
       assert.deepStrictEqual(calls, [
         "issue 7",
+        "openPullRequestsClosing 7",
         textCheckCall,
         "setState 7 building",
         `status 7 rawphp ${BUILDING}`,
@@ -1331,7 +1335,7 @@ describe("start: stopping a session that goes stuck", () => {
       });
       const outcome = yield* startIn(dataDir, tracker, t3.sessions);
       assert.deepStrictEqual(outcome, { kind: "stuck", run: run7, reason: TEXT_CHANGED });
-      assert.deepStrictEqual(calls.slice(4), stuckCalls(TEXT_CHANGED, "thread-1"));
+      assert.deepStrictEqual(calls.slice(5), stuckCalls(TEXT_CHANGED, "thread-1"));
       assert.deepStrictEqual(entriesOf(dataDir), [
         ...startedEvents().slice(0, 5),
         {

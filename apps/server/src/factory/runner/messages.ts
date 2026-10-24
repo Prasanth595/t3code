@@ -149,17 +149,27 @@ export const WRONG_ACCOUNT_PREFIX = "the session's gh account is ";
 
 /**
  * What a launch continues from, and why. The worktree is made from `branch`. `time-limit` and
- * `interrupted` continue an earlier run of this issue (`run`); `failed-regate` and `feedback`
- * continue the run's own pull request at `prUrl`, which passed the gate and failed it when it ran
- * again, or passed it and an instructor left feedback.
+ * `interrupted` continue an earlier run of this issue (`run`); `existing-pr` continues the open
+ * pull request at `prUrl` that an earlier attempt (on this machine or another) opened for the
+ * issue; `failed-regate` and `feedback` continue the run's own pull request at `prUrl`, which
+ * passed the gate and failed it when it ran again, or passed it and an instructor left feedback.
+ * Every resume names the branch to push to and says not to open another pull request: a session
+ * that opens one beside the work it was given is the duplicate this is here to prevent.
  */
-export type ResumeFrom = EarlierRunResume | RegateResume;
+export type ResumeFrom = EarlierRunResume | ExistingPrResume | RegateResume;
 
 /** A launch that continues an earlier run's branch. */
 export interface EarlierRunResume {
   readonly after: "time-limit" | "interrupted";
   readonly run: RunId;
   readonly branch: string;
+}
+
+/** A launch that continues the open pull request an earlier attempt of the issue left. */
+export interface ExistingPrResume {
+  readonly after: "existing-pr";
+  readonly branch: string;
+  readonly prUrl: string;
 }
 
 /** A launch that continues the run's own pull request, whose re-gate failed or that has instructor feedback. */
@@ -170,15 +180,25 @@ export interface RegateResume {
 }
 
 /**
+ * Where a session resumed from an earlier run's branch pushes: that branch, so a pull request
+ * already open on it is updated. T3 makes the worktree on a branch of its own, so without this
+ * the session pushes that one and opens a second pull request.
+ */
+const pushWords = (branch: string): string =>
+  `Push your commits to that branch with \`git push origin HEAD:${branch}\`. If a pull request for this issue is already open on it, that pull request is updated. Do not open another pull request.`;
+
+/**
  * The paragraph of a resumed launch, in the factory's fixed words. The worktree holds the earlier
  * commits and the session is to go on from them.
  */
 const resumeParagraph = (resumed: ResumeFrom): string => {
   switch (resumed.after) {
     case "time-limit":
-      return `A previous attempt of this issue (${runIdToString(resumed.run)}) stopped at its time limit. The worktree already holds its commits: continue from them, do not start over.`;
+      return `A previous attempt of this issue (${runIdToString(resumed.run)}) stopped at its time limit. The worktree already holds its commits: continue from them, do not start over. ${pushWords(resumed.branch)}`;
     case "interrupted":
-      return `A previous attempt of this issue (${runIdToString(resumed.run)}) was interrupted when T3 Code lost its session. The worktree already holds its commits: continue from them, do not start over.`;
+      return `A previous attempt of this issue (${runIdToString(resumed.run)}) was interrupted when T3 Code lost its session. The worktree already holds its commits: continue from them, do not start over. ${pushWords(resumed.branch)}`;
+    case "existing-pr":
+      return `An earlier attempt of this issue opened the pull request ${resumed.prUrl}, which is still open. The worktree holds that pull request's branch at its tip on origin: continue from its commits, do not start over, and push your commits to the same branch with \`git push origin HEAD:${resumed.branch}\`, so the same pull request is updated. Do not open another pull request.`;
     case "feedback":
       return `The pull request ${resumed.prUrl} of this issue passed the gate and waits for review, and an instructor left feedback on it or on the issue, below. The worktree holds that pull request's branch at its tip on origin. Address the feedback from there and push your commits to the same branch with \`git push origin HEAD:${resumed.branch}\`, so the same pull request is updated. Do not open another pull request.`;
     case "failed-regate":

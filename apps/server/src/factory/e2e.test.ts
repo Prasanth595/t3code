@@ -36,6 +36,7 @@ import { APPROVAL_QUERY } from "./tracker/approvalHistory.ts";
 import {
   ACTIVITY_QUERY,
   CLOSED_BY_QUERY,
+  CLOSING_PRS_QUERY,
   PR_FEEDBACK_QUERY,
   MARKER,
   READY_BY_QUERY,
@@ -233,6 +234,14 @@ const makeGitHub = (input: {
     }
     if (query === CLOSED_BY_QUERY) {
       return ok(json({ data: { repository: { issue: { timelineItems: { nodes: [] } } } } }));
+    }
+    if (query === CLOSING_PRS_QUERY) {
+      // No earlier attempt left a pull request in these runs.
+      return ok(
+        json({
+          data: { repository: { issue: { closedByPullRequestsReferences: { nodes: [] } } } },
+        }),
+      );
     }
     return undefined;
   };

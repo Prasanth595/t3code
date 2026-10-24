@@ -53,6 +53,37 @@ export const READY_BY_QUERY =
 export const CLOSED_BY_QUERY =
   "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { issue(number: $number) { timelineItems(itemTypes: [CLOSED_EVENT], last: 1) { nodes { ... on ClosedEvent { actor { login } } } } } } }";
 
+/**
+ * The pull requests whose text says they close the issue (`Closes #n`), open ones first by
+ * GitHub's own filter. `includeClosedPrs: false` still returns merged ones, so `state` is read
+ * and only `OPEN` is kept.
+ */
+export const CLOSING_PRS_QUERY =
+  "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { issue(number: $number) { closedByPullRequestsReferences(first: 50, includeClosedPrs: false) { nodes { number url isDraft state headRefName baseRefName isCrossRepository author { login } } } } } }";
+
+const ClosingAnswer = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.Struct({
+      issue: Schema.Struct({
+        closedByPullRequestsReferences: Schema.Struct({
+          nodes: Schema.Array(
+            Schema.Struct({
+              number: Schema.Number,
+              url: Schema.String,
+              isDraft: Schema.Boolean,
+              state: Schema.String,
+              headRefName: Schema.String,
+              baseRefName: Schema.String,
+              isCrossRepository: Schema.Boolean,
+              author: Schema.optional(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
+            }),
+          ),
+        }),
+      }),
+    }),
+  }),
+});
+
 const ReadyByAnswer = Schema.Struct({
   data: Schema.Struct({
     repository: Schema.Struct({
@@ -747,6 +778,21 @@ export interface PullRequest {
   readonly mergeable: Mergeable;
 }
 
+/** An open pull request that would close an issue, as `openPullRequestsClosing` lists it. */
+export interface ClosingPullRequest {
+  readonly number: number;
+  readonly url: string;
+  readonly isDraft: boolean;
+  /** The branch the pull request comes from. */
+  readonly headRef: string;
+  /** The branch the pull request merges into. */
+  readonly baseRef: string;
+  /** The head is in a fork, not in this repo. */
+  readonly crossRepository: boolean;
+  /** The login that opened it; null when GitHub names none (a deleted account). */
+  readonly author: string | null;
+}
+
 /**
  * How one ref stands against another, in GitHub's words: `ahead` when the second
  * holds everything of the first and more, `behind` when the second is inside the
@@ -1386,6 +1432,33 @@ export const makeGitHub = (options: GitHubOptions) => {
     );
     const last = answer.data.repository.issue.timelineItems.nodes.at(-1);
     return last?.actor?.login ?? null;
+  });
+
+  /**
+   * The open pull requests of this repo whose text says they close the issue, as GitHub links
+   * them (`closedByPullRequestsReferences`), in GitHub's order. Every one is listed, whoever
+   * opened it and whatever its base: the caller decides which is the factory's own.
+   */
+  const openPullRequestsClosing = Effect.fn("GitHub.openPullRequestsClosing")(function* (
+    issue: number,
+  ): GitHubGen<ReadonlyArray<ClosingPullRequest>> {
+    const args = yield* issueQueryArgs(CLOSING_PRS_QUERY, issue);
+    const answer = yield* ghJson(
+      args,
+      ClosingAnswer,
+      "a GraphQL response with the issue's closing pull requests",
+    );
+    return answer.data.repository.issue.closedByPullRequestsReferences.nodes
+      .filter((node) => node.state === "OPEN")
+      .map((node) => ({
+        number: node.number,
+        url: node.url,
+        isDraft: node.isDraft,
+        headRef: node.headRefName,
+        baseRef: node.baseRefName,
+        crossRepository: node.isCrossRepository,
+        author: node.author?.login ?? null,
+      }));
   });
 
   /**
@@ -2210,6 +2283,7 @@ export const makeGitHub = (options: GitHubOptions) => {
     commentOnPr,
     readyBy,
     closedBy,
+    openPullRequestsClosing,
     compare,
     checks,
     openBlockers,

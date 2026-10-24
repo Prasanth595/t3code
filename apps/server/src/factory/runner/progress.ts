@@ -123,6 +123,12 @@ export interface Seen {
    */
   readonly launchResumedFrom: string | null;
   /**
+   * The pull request in a `launch-sending resumed-from <branch> pull-request <url>` step: the
+   * decision to continue an earlier attempt's open pull request on that branch. Null for a
+   * resume from a branch alone, or none.
+   */
+  readonly launchResumedPr: string | null;
+  /**
    * The branch in a `launch-base <branch>` step: the base the first launch call was decided on,
    * when it is not the repo's. A launch sent again reads it and never the issue again.
    */
@@ -290,6 +296,12 @@ export const committingFeedback = (seen: Seen): Relaunch | null =>
 export const LAUNCH_SENDING = "launch-sending";
 /** The start of the `launch-sending` step of a launch that resumes from an earlier run's branch: `launch-sending resumed-from <branch>`. */
 export const LAUNCH_SENDING_RESUMED = `${LAUNCH_SENDING} resumed-from `;
+/**
+ * What follows the branch in that step when the launch continues an earlier attempt's open pull
+ * request: `launch-sending resumed-from <branch> pull-request <url>`. A branch name has no
+ * whitespace, so the first occurrence splits the two.
+ */
+export const LAUNCH_SENDING_PULL_REQUEST = " pull-request ";
 /** The step written before `launch-sending` when the run's base is not the repo's: `launch-base <branch>`. */
 export const LAUNCH_BASE = "launch-base ";
 /** The ledger step that says the issue text was checked again after the launch. */
@@ -381,6 +393,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let threadId: string | null = null;
   let launchSent = false;
   let launchResumedFrom: string | null = null;
+  let launchResumedPr: string | null = null;
   let launchBase: string | null = null;
   let rechecked = false;
   let worktree: string | null = null;
@@ -524,9 +537,13 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         if (step === LAUNCH_SENDING) {
           launchSent = true;
           launchResumedFrom = null;
+          launchResumedPr = null;
         } else if (step.startsWith(LAUNCH_SENDING_RESUMED)) {
           launchSent = true;
-          launchResumedFrom = step.slice(LAUNCH_SENDING_RESUMED.length);
+          const rest = step.slice(LAUNCH_SENDING_RESUMED.length);
+          const at = rest.indexOf(LAUNCH_SENDING_PULL_REQUEST);
+          launchResumedFrom = at < 0 ? rest : rest.slice(0, at);
+          launchResumedPr = at < 0 ? null : rest.slice(at + LAUNCH_SENDING_PULL_REQUEST.length);
         } else if (step.startsWith(LAUNCH_BASE)) {
           launchBase = step.slice(LAUNCH_BASE.length);
         }
@@ -811,6 +828,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     threadId,
     launchSent,
     launchResumedFrom,
+    launchResumedPr,
     launchBase,
     rechecked,
     worktree,

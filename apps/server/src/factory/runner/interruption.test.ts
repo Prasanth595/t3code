@@ -78,8 +78,10 @@ const RESUME_MESSAGE =
   "The session was interrupted: your last turn was cut off, probably because T3 Code was unreachable or restarting, so the factory is not treating it as your decision. Continue from where you were. End your reply with a result line as before: FACTORY-DONE: <PR URL>, FACTORY-STOP: needs-info (after your numbered questions) or FACTORY-STOP: stuck.";
 
 /** The paragraph a relaunch adds to the first message of the next attempt. */
-const INTERRUPTED_WORDS =
-  "A previous attempt of this issue (rawphp__softfac__10__1) was interrupted when T3 Code lost its session. The worktree already holds its commits: continue from them, do not start over.";
+/** The interruption paragraph of a relaunch from `branch`, in the factory's fixed words. */
+const interruptedWords = (branch: string) =>
+  `A previous attempt of this issue (rawphp__softfac__10__1) was interrupted when T3 Code lost its session. The worktree already holds its commits: continue from them, do not start over. Push your commits to that branch with \`git push origin HEAD:${branch}\`. If a pull request for this issue is already open on it, that pull request is updated. Do not open another pull request.`;
+const INTERRUPTED_WORDS = interruptedWords("t3code/abc");
 
 const evidence = (
   t3Error: string | null,
@@ -387,6 +389,7 @@ const rigFor = (
       return Effect.succeed(world.issue);
     },
     closedBy: () => Effect.succeed(null),
+    openPullRequestsClosing: () => Effect.succeed([]),
     pullRequest: (n) => {
       gh.push(`pullRequest ${n}`);
       return Effect.succeed(world.pr);
@@ -1826,7 +1829,7 @@ describe("a relaunch finds the branch", () => {
       const request = rig.launches.at(-1)!;
       assert.strictEqual(request.baseRef, "t3code/from-thread");
       assert.strictEqual(request.startFromOrigin, true);
-      assert.ok(request.message.includes(INTERRUPTED_WORDS), request.message);
+      assert.ok(request.message.includes(interruptedWords("t3code/from-thread")), request.message);
     }),
   );
 
