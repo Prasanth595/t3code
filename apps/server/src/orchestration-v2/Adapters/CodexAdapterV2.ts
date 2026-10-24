@@ -2891,9 +2891,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               parentNodeId: subagentNodeId,
               activeProviderThreadId: providerThread.id,
               providerInstanceId: input.context.input.modelSelection.instanceId,
-              modelSelection: {
+              // A child's effort can differ from the parent's. Until Codex reports it, show none.
+              modelSelection: task.modelSelection ?? {
                 ...input.context.input.modelSelection,
                 model: task.model ?? input.context.input.modelSelection.model,
+                options: (input.context.input.modelSelection.options ?? []).filter(
+                  ({ id }) => id !== "reasoningEffort",
+                ),
               },
               title: subagentThreadTitle({
                 parentTitle: input.context.projectionAppThread.title,

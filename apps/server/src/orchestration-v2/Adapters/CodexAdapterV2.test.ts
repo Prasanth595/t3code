@@ -523,6 +523,7 @@ function codexReplayPreamble(input: {
   readonly nativeTurnId: string;
   readonly prompt: string;
   readonly sentPrompt?: string;
+  readonly effort?: string;
 }): Array<CodexReplay.CodexAppServerReplayEntry> {
   return [
     {
@@ -620,6 +621,7 @@ function codexReplayPreamble(input: {
           approvalsReviewer: "user",
           sandboxPolicy: { type: "dangerFullAccess" },
           summary: "detailed",
+          ...(input.effort === undefined ? {} : { effort: input.effort }),
         },
       },
     },
@@ -5321,6 +5323,92 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ),
         ),
       ),
+  );
+
+  it.effect.each([
+    [
+      "an activity start",
+      {
+        type: "subAgentActivity",
+        id: "call-codex-resume-spawn",
+        kind: "started",
+        agentThreadId: RESUME_CHILD_THREAD,
+        agentPath: "/root/resume_agent",
+      },
+      undefined,
+    ],
+    [
+      "a spawn call with its own effort",
+      {
+        type: "collabAgentToolCall",
+        id: "call-codex-resume-spawn",
+        tool: "spawnAgent",
+        status: "completed",
+        senderThreadId: RESUME_NATIVE_THREAD,
+        receiverThreadIds: [RESUME_CHILD_THREAD],
+        model: "gpt-5.4",
+        reasoningEffort: "high",
+        agentsStates: {},
+      },
+      "high",
+    ],
+  ] as const)("creates a child from %s without the parent's effort", ([, item, expected]) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const created = yield* Deferred.make<OrchestrationV2AppThread>();
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: RESUME_SCENARIO,
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId: RESUME_NATIVE_THREAD,
+                nativeTurnId: RESUME_NATIVE_TURN,
+                prompt: RESUME_PROMPT,
+                effort: "low",
+              }),
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    item,
+                    threadId: RESUME_NATIVE_THREAD,
+                    turnId: RESUME_NATIVE_TURN,
+                    completedAtMs: 1782622441000,
+                  },
+                },
+              },
+            ],
+          }),
+          (event) =>
+            event.type === "app_thread.created"
+              ? Deferred.succeed(created, event.appThread)
+              : Effect.void,
+        );
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-child-effort"),
+            text: RESUME_PROMPT,
+          }),
+          modelSelection: {
+            ...CODEX_TEST_MODEL_SELECTION,
+            options: [{ id: "reasoningEffort", value: "low" }],
+          },
+        });
+        const child = yield* Deferred.await(created);
+        assert.equal(
+          child.modelSelection.options?.find(({ id }) => id === "reasoningEffort")?.value,
+          expected,
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
   );
 
   it.effect("preserves a subagent result across a trailing empty final and resume", () =>
