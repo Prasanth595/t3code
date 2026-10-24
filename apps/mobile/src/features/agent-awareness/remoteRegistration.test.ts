@@ -41,19 +41,16 @@ import {
   saveAgentAwarenessRegistrationRecord,
 } from "../../persistence/imperative";
 import type { Preferences } from "../../persistence/mobile-preferences";
-import { makeRelayDeviceRegistrationRequest, resolveApsEnvironment } from "./registrationPayload";
+import { makeRelayDeviceRegistrationRequest } from "./registrationPayload";
 import {
-  AgentAwarenessOperationError,
   __resetAgentAwarenessRemoteRegistrationForTest,
   armAgentAwarenessLiveActivityForLocalWork,
   getAgentAwarenessRegistrationStatus,
-  mergeAgentAwarenessRegistrationPreferences,
   refreshActiveLiveActivityRemoteRegistration,
   refreshAgentAwarenessRegistration,
   registerLiveActivityPushToken,
   releaseAgentAwarenessRelayTokenProvider,
   setAgentAwarenessRelayTokenProvider,
-  shouldRegisterAgentAwarenessDeviceForProvider,
   unregisterAgentAwarenessConnection,
   updateAgentAwarenessRegistrationPreferences,
 } from "./remoteRegistration";
@@ -65,10 +62,7 @@ import {
 } from "../../widgets/agentActivityTimeline";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
-import {
-  configureAndroidAgentNotifications,
-  clearAndroidAgentNotifications,
-} from "./androidNotifications";
+import { configureAndroidAgentNotifications } from "./androidNotifications";
 
 import {
   agentWidgetToken,
@@ -352,13 +346,14 @@ function setTestAtom<A>(atom: Atom.Atom<A>, value: A): void {
 }
 
 const liveEnvironmentId = EnvironmentId.make("env-1");
+const liveShellUpdatedAt = "2026-10-02T12:00:00.000Z";
 const liveProjectId = ProjectId.make("project-1");
 
 function setLiveShell(
   phase: "starting" | "running" | "ready" | null,
   status: EnvironmentShellState["status"] = "live",
 ): void {
-  const now = new Date().toISOString();
+  const now = liveShellUpdatedAt;
   const project: OrchestrationProjectShell = {
     id: liveProjectId,
     title: "Live project",
@@ -440,6 +435,8 @@ const runBackgroundOperations = Effect.fn("TestRemoteRegistration.runBackgroundO
 describe("makeRelayDeviceRegistrationRequest", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    // Freshness windows compare against fixture timestamps, not the runner clock.
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse(liveShellUpdatedAt));
     vi.mocked(Notifications.getDevicePushTokenAsync).mockResolvedValue({
       type: "ios",
       data: "apns-token",
@@ -1921,7 +1918,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       addLiveEnvironment();
       setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"), "user-a");
       backgroundRuntime.pending.length = 0;
-      const earlier = new Date(Date.now() - 1_000).toISOString();
+      const earlier = new Date(Date.parse(liveShellUpdatedAt) - 1_000).toISOString();
       const relaySnapshot: RelayAgentActivitySnapshotResponse = {
         aggregate: {
           ...activeAgentActivitySnapshot.aggregate,
@@ -2511,14 +2508,15 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         Effect.forkChild,
       );
       yield* Deferred.await(started);
-      clock.mockReturnValue(now + AGENT_ACTIVITY_FRESHNESS_MS + 1);
+      const arrivedAt = now + AGENT_ACTIVITY_FRESHNESS_MS + 1;
+      clock.mockReturnValue(arrivedAt);
       yield* Deferred.succeed(finish, undefined);
       yield* Fiber.join(refresh);
       const publication = vi.mocked(publishAgentActivityWidget).mock.lastCall![0];
       expect(publication.expiresAt).toBe(now + AGENT_ACTIVITY_FRESHNESS_MS);
-      expect(agentActivityTimeline(publication, Date.now())).toEqual([
+      expect(agentActivityTimeline(publication, arrivedAt)).toEqual([
         {
-          date: new Date(Date.now()),
+          date: new Date(arrivedAt),
           props: expect.objectContaining({ isExpired: true, activeCount: -1 }),
         },
       ]);
@@ -2548,14 +2546,15 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       );
       expect(renewed.expiresAt).toBe(now + 60_000 + AGENT_ACTIVITY_FRESHNESS_MS);
 
-      clock.mockReturnValue(now + 120_000);
+      const backgroundedAt = now + 120_000;
+      clock.mockReturnValue(backgroundedAt);
       appStateMock.currentState = "background";
       for (const listener of appStateMock.listeners) listener("background");
       expect(vi.mocked(publishAgentActivityWidget).mock.lastCall![0]).toMatchObject({
         isStale: false,
         expiresAt: renewed.expiresAt,
       });
-      const timeline = agentActivityTimeline(renewed, Date.now());
+      const timeline = agentActivityTimeline(renewed, backgroundedAt);
       expect(timeline[0]?.props.isExpired).toBeUndefined();
       expect(timeline[1]?.date.getTime()).toBe(renewed.expiresAt);
       expect(timeline[1]?.props.activities[0]).toMatchObject({

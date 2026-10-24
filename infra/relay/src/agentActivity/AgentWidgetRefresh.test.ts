@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- a synchronous sha256 fixture mirrors the stored token hash.
 import * as NodeCrypto from "node:crypto";
 import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -50,7 +51,7 @@ const state: RelayAgentActivityState = {
 };
 
 function fixture(
-  response = { ok: true, status: 200, apnsId: "apns-id", reason: undefined as string | undefined },
+  response: ApnsClient.ApnsDeliveryResult = { ok: true, status: 200, apnsId: "apns-id" },
 ) {
   let present = true;
   let activity = state;

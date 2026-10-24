@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import { and, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- the widget token hash feeds synchronous insert values.
 import * as NodeCrypto from "node:crypto";
 import * as RelayDb from "../db.ts";
 import { relayLiveActivities, relayMobileDevices } from "../persistence/schema.ts";

@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect.Crypto has no synchronous sha256 for token lookups.
 import * as NodeCrypto from "node:crypto";
 import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import * as Context from "effect/Context";
