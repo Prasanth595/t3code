@@ -1527,9 +1527,9 @@ const branchOf = (ctx: BuildingContext, threadId: string): Effect.Effect<string 
  * that wait is not the build's time. So is a run whose launch was sent with no session recorded
  * (`launch-unrecorded`): the session may be running, and only `resume` can name it, so the call
  * after `resume` stops it with its thread. A run of another repo is an error. The pull request
- * the session leaves is recorded before the stop (`recordLeftPullRequest`), so a GitHub read that
- * or write that fails leaves the run working one pass longer, and the next call stops it. There is no loop or
- * timer: the caller decides how often to call it, and it should call it first for a run in
+ * the session leaves is recorded before the stop (`recordLeftPullRequest`), so a GitHub read or
+ * write that fails leaves the run working one pass longer, and the next call stops it. There is
+ * no loop or timer: the caller decides how often to call it, and it should call it first for a run in
  * `triage` or `building`, and skip the run's other steps when it stops.
  */
 export const timeLimit = Effect.fn("RunnerBuilding.timeLimit")(function* (
