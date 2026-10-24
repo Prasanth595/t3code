@@ -1129,7 +1129,7 @@ it.effect.each([false, true])(
             projection.turnItems.find((item) => item.type === "error")?.failure.message,
           );
           assert.isTrue(yield* fs.exists(projection.thread.worktreePath!));
-          const base = yield* git(["config", `branch.${projection.thread.branch}.gh-merge-base`]);
+          const base = yield* git(["config", `branch.${projection.thread.branch}.t3-merge-base`]);
           assert.equal(base.stdout.trim(), "main");
           const head = yield* driver.execute({
             operation: "ThreadLaunchService.test",
