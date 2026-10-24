@@ -2816,12 +2816,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       }));
       return;
     }
-    finishLinkedMessage();
     if (step === "missing") {
+      finishLinkedMessage();
       Dialog.alert("Message not found", "It may have been deleted from this thread.");
       return;
     }
     if (step === "failed") {
+      finishLinkedMessage();
       Dialog.alert(
         "Could not open the linked message",
         props.threadSyncError ??
@@ -2836,7 +2837,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
     const listRef = props.listRef;
     const viewOffset = anchorTopInset + CHAT_LIST_ANCHOR_OFFSET;
-    requestAnimationFrame(() => {
+    const frame = requestAnimationFrame(() => {
       // A drag that began before this frame keeps the user's position.
       if (userScrollSessionRef.current) return;
       // Rows can change before the frame, so find the message again.
@@ -2844,13 +2845,17 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         (entry) => entry.type === "message" && entry.id === linkedMessageId,
       );
       if (latestIndex < 0) return;
-      void listRef.current?.scrollToIndex({
+      const list = listRef.current;
+      if (!list) return;
+      void list.scrollToIndex({
         index: latestIndex,
         viewPosition: 0,
         viewOffset,
         animated: false,
       });
+      finishLinkedMessage();
     });
+    return () => cancelAnimationFrame(frame);
   }, [
     anchorTopInset,
     expandedTurnIds,
