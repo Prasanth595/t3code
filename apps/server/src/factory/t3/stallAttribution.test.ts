@@ -6,6 +6,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -166,42 +167,53 @@ describe("withStallAttribution", () => {
       Effect.gen(function* () {
         const logsDir = tempDir();
         const base = yield* Effect.service(Tracer.Tracer);
+        const sql = yield* SqlClient.SqlClient;
+        // Enough rows to hold a thread past the stall threshold on any machine.
+        const count = (rows: number) => sql<{ readonly n: number }>`
+          WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ${rows})
+          SELECT COUNT(*) AS n FROM c
+        `;
+        // The reader worker refuses a database that is not in WAL mode, which the server's
+        // persistence layer sets, and the first read brings the worker up. Both can stall under
+        // load, so they run before the detector starts.
+        yield* sql`PRAGMA journal_mode = WAL`;
+        yield* count(1).pipe(NodeSqliteClient.readOnly);
+
+        // Resolves once the client has put a statement on the reader, so the writer's statement
+        // blocks the loop while the reader's is in flight on its worker.
+        const readerAcquired = yield* Deferred.make<void>();
+        const observing: Tracer.Tracer = {
+          span(options) {
+            const span = base.span(options);
+            const attribute = span.attribute;
+            span.attribute = function (key, value) {
+              if (key === "db.connection" && value === "reader")
+                Deferred.doneUnsafe(readerAcquired, Effect.void);
+              return attribute.call(this, key, value);
+            };
+            return span;
+          },
+          context: base.context,
+        };
         const decorated = makeWithStallAttribution({ intervalMs: 10, thresholdMs: 100 })(
-          Layer.succeed(Tracer.Tracer, base),
+          Layer.succeed(Tracer.Tracer, observing),
         );
         const warned = yield* Deferred.make<string>();
         const capture = Logger.make<unknown, void>(({ message }) => {
           const text = String(Array.isArray(message) ? message[0] : message);
-          if (text.startsWith("factory event loop stalled") && text.includes("sqlite"))
+          if (text.startsWith("factory event loop stalled"))
             Deferred.doneUnsafe(warned, Effect.succeed(text));
         });
         const warning = yield* Effect.gen(function* () {
-          const sql = yield* SqlClient.SqlClient;
-          // Enough rows to hold a thread past the stall threshold on any machine.
-          const count = (rows: number) => sql<{ readonly n: number }>`
-            WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ${rows})
-            SELECT COUNT(*) AS n FROM c
-          `;
-          yield* count(1).pipe(NodeSqliteClient.readOnly);
-          // The reader's statement is posted to its worker before the writer's starts, so it
-          // is in flight off the loop while the writer's blocks the loop.
-          yield* Effect.all([count(8_000_000).pipe(NodeSqliteClient.readOnly), count(8_000_000)], {
-            concurrency: "unbounded",
-          });
+          const reader = yield* Effect.forkChild(count(8_000_000).pipe(NodeSqliteClient.readOnly));
+          yield* Deferred.await(readerAcquired);
+          yield* count(8_000_000);
+          yield* Fiber.join(reader);
           return yield* Deferred.await(warned);
         }).pipe(
-          // The server's Observability layer keeps a statement's span current while it runs, which
-          // is what lets the client annotate the connection on it.
-          Effect.provideService(Statement.SpanPropagationEnabled, true),
           Effect.provide(
-            Layer.mergeAll(
-              decorated.pipe(
-                Layer.provide(Layer.merge(Logger.layer([capture]), serverConfig(logsDir))),
-              ),
-              NodeSqliteClient.layer({
-                filename: NodePath.join(tempDir(), "state.sqlite"),
-                readerWorker: true,
-              }),
+            decorated.pipe(
+              Layer.provide(Layer.merge(Logger.layer([capture]), serverConfig(logsDir))),
             ),
           ),
           Effect.scoped,
@@ -209,13 +221,27 @@ describe("withStallAttribution", () => {
         assert.include(warning, "sqlite[writer] (");
         assert.include(warning, "sqlite[reader] (");
 
-        const connections = stallRecords(logsDir)
-          .flatMap((record) => record.spans as Array<{ name: string; connection?: string }>)
+        const [record] = stallRecords(logsDir);
+        const connections = (record.spans as Array<{ name: string; connection?: string }>)
           .filter((span) => span.name === "sqlite")
           .map((span) => span.connection);
         assert.include(connections, "writer");
         assert.include(connections, "reader");
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(
+        // The server's Observability layer keeps a statement's span current while it runs, which
+        // is what lets the client annotate the connection on it.
+        Effect.provideService(Statement.SpanPropagationEnabled, true),
+        Effect.provide(
+          Layer.merge(
+            NodeServices.layer,
+            NodeSqliteClient.layer({
+              filename: NodePath.join(tempDir(), "state.sqlite"),
+              readerWorker: true,
+            }),
+          ),
+        ),
+        Effect.scoped,
+      ),
   );
 
   it.effect("profiles the process into stall-profiles/ after a long stall when opted in", () =>

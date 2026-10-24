@@ -17,11 +17,17 @@ import { makeStallProfiler } from "../observability/stallProfiler.ts";
 const STALL_LOG_MAX_BYTES = 256 * 1024;
 const REPORTED_SPANS = 5;
 
+// A statement reads as `sqlite[reader] (32574 ms) SELECT ...`. The connection matters: a reader
+// statement's span stays open until the blocked main thread handles the worker's reply, so it
+// ages by the length of a stall it did not cause, while only a writer statement can be the cause.
 const listed = (label: string, spans: ReadonlyArray<TrackedSpanReport>) =>
   spans.length === 0
     ? ""
     : `; ${label}: ${spans
-        .map((s) => `${s.name} (${s.ageMs} ms)${s.query === undefined ? "" : ` ${s.query}`}`)
+        .map(
+          (s) =>
+            `${s.name}${s.connection === undefined ? "" : `[${s.connection}]`} (${s.ageMs} ms)${s.query === undefined ? "" : ` ${s.query}`}`,
+        )
         .join(", ")}`;
 
 export interface StallAttributionOptions {
