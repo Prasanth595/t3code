@@ -124,6 +124,8 @@ class Fake implements PassWorld {
   trackerUsers: Record<string, string | { error: string }> = {};
   /** Repos whose project config or tracker login failure is one GitHub never received. */
   transient = new Set<string>();
+  /** A login failure is never transient, whatever `transient` says for the config. */
+  loginHard = false;
   runs: Array<RunInfo> = [];
   runsError = false;
   ready: Answers<Array<number>> = {};
@@ -282,7 +284,7 @@ class Fake implements PassWorld {
       return Effect.fail<PassError>({
         kind: "tracker",
         message: found.error,
-        transient: this.transient.has(watched.repo),
+        transient: this.transient.has(watched.repo) && !this.loginHard,
       });
     }
     return Effect.succeed(found ?? "rawphp");
@@ -972,7 +974,7 @@ describe("claiming new issues", () => {
       }),
     );
 
-    it.effect("a failure that is not transient skips the repo, and drops the last good copy", () =>
+    it.effect("a failure that is not transient skips the repo", () =>
       Effect.gen(function* () {
         const fake = new Fake();
         yield* pass(fake, [REPO], 3);
@@ -980,12 +982,88 @@ describe("claiming new issues", () => {
         yield* pass(fake, [REPO], 3);
         assert.deepEqual(stale(fake), []);
         assert.equal(skipped(fake).length, 1);
-        // The thing changed, so a later transient failure has nothing to fall back on.
-        fake.transient.add(REPO);
-        fake.projects[REPO] = TLS;
+      }),
+    );
+
+    it.effect(
+      "a failure that is not transient keeps the last good config for a later stale pass",
+      () =>
+        Effect.gen(function* () {
+          const fake = new Fake();
+          yield* pass(fake, [REPO], 3);
+          fake.projects[REPO] = "HTTP 502: Bad Gateway";
+          yield* pass(fake, [REPO], 3);
+          assert.equal(skipped(fake).length, 1);
+          assert.equal(skipped(fake)[0]!.data.reason, "config-not-loaded");
+          fake.transient.add(REPO);
+          fake.projects[REPO] = TLS;
+          yield* pass(fake, [REPO], 3);
+          assert.equal(skipped(fake).length, 1);
+          assert.deepEqual(
+            stale(fake).map((e) => e.data),
+            [{ repo: REPO, what: "config", message: TLS }],
+          );
+        }),
+    );
+
+    it.effect("a login that fails for real keeps the last good login for a later stale pass", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
         yield* pass(fake, [REPO], 3);
-        assert.deepEqual(stale(fake), []);
-        assert.equal(skipped(fake).length, 2);
+        fake.trackerUsers[REPO] = { error: "HTTP 502: Bad Gateway" };
+        const second = yield* pass(fake, [REPO], 3);
+        assert.equal(second.report.errors, 1);
+        assert.equal(errorEvents(fake).length, 1);
+        fake.transient.add(REPO);
+        fake.trackerUsers[REPO] = { error: TLS };
+        const third = yield* pass(fake, [REPO], 3);
+        assert.equal(third.report.errors, 0);
+        assert.equal(errorEvents(fake).length, 1);
+        assert.deepEqual(
+          stale(fake).map((e) => e.data),
+          [{ repo: REPO, what: "login", message: TLS }],
+        );
+      }),
+    );
+
+    it.effect(
+      "a stale config followed by a login that fails for real still counts toward the attention item",
+      () =>
+        Effect.gen(function* () {
+          const fake = new Fake();
+          yield* pass(fake, [REPO], 3);
+          fake.projects[REPO] = TLS;
+          fake.trackerUsers[REPO] = { error: "HTTP 401: Bad credentials" };
+          fake.transient.add(REPO);
+          fake.loginHard = true;
+          for (let i = 0; i < 3; i += 1) {
+            const { report } = yield* pass(fake, [REPO], 3);
+            assert.equal(report.errors, 1);
+          }
+          assert.equal(stale(fake).length, 3);
+          assert.equal(errorEvents(fake).length, 3);
+          assert.equal(items(fake).length, 1);
+          assert.equal(
+            items(fake)[0]!.message,
+            `${REPO}: project config or tracker login could not be re-read for 3 passes in a row, running on the last good copy; last error: ${TLS}`,
+          );
+        }),
+    );
+
+    it.effect("a fresh config with a login that fails for real clears the item", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        fake.projects[REPO] = TLS;
+        fake.transient.add(REPO);
+        for (let i = 0; i < 3; i += 1) yield* pass(fake, [REPO], 3);
+        assert.equal(items(fake).length, 1);
+        delete fake.projects[REPO];
+        fake.transient.delete(REPO);
+        fake.trackerUsers[REPO] = { error: "HTTP 401: Bad credentials" };
+        const { report } = yield* pass(fake, [REPO], 3);
+        assert.equal(report.errors, 1);
+        assert.deepEqual(items(fake), []);
       }),
     );
 
