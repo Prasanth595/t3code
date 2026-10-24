@@ -36,14 +36,21 @@ function AgentFileSyncSettingsContent() {
         environmentId: env.environmentId,
         label: env.label,
       }));
+  const sourceLocations = locations.filter(
+    (location) =>
+      ((scope.kind !== "environment" && scope.kind !== "project" && scope.kind !== "checkout") ||
+        !scope.environmentId ||
+        location.environmentId === scope.environmentId) &&
+      (scope.kind !== "checkout" || location.id === scope.checkout.physicalProjectKey),
+  );
   const [sourceOverride, setSource] = useState<string | null>(null);
   const source =
-    locations.find((item) => item.id === sourceOverride) ??
-    locations.find(
+    sourceLocations.find((item) => item.id === sourceOverride) ??
+    sourceLocations.find(
       (item) => scope.kind === "checkout" && item.id === scope.checkout.physicalProjectKey,
     ) ??
-    locations.find((item) => item.environmentId === environment?.environmentId) ??
-    locations[0];
+    sourceLocations.find((item) => item.environmentId === environment?.environmentId) ??
+    sourceLocations[0];
   if (source && source.id !== sourceOverride) setSource(source.id);
   if (scope.kind === "unavailable")
     return (
@@ -73,7 +80,7 @@ function AgentFileSyncSettingsContent() {
               onValueChange={(id) => {
                 if (id) setSource(id);
               }}
-              items={locations.map((item) => ({
+              items={sourceLocations.map((item) => ({
                 value: item.id,
                 label: item.cwd
                   ? `${item.label} · ${item.cwd.split(/[\\/]/).slice(-2).join("/")}`
@@ -84,7 +91,7 @@ function AgentFileSyncSettingsContent() {
                 <SelectValue />
               </SelectTrigger>
               <SelectPopup>
-                {locations.map((item) => (
+                {sourceLocations.map((item) => (
                   <SelectItem key={item.id} value={item.id}>
                     {item.label}
                     {item.cwd ? ` · ${item.cwd.split(/[\\/]/).slice(-2).join("/")}` : ""}

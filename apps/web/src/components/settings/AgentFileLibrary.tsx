@@ -643,7 +643,7 @@ function ShareStatus({
         agentFileSync.manage,
         {
           environmentId: share.environmentId,
-          input: { id: link.id, generation: link.generation, action },
+          input: { id: link.id, action },
         },
         { reportFailure: false },
       );

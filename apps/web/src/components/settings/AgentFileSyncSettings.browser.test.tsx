@@ -1,4 +1,5 @@
-import { RegistryProvider } from "@effect/atom-react";
+import { RegistryContext, RegistryProvider } from "@effect/atom-react";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import type { PropsWithChildren } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -11,7 +12,30 @@ const state = vi.hoisted(() => ({
   missing: false,
   skillText: "# Review\nCheck changes.\n",
   extraFile: false,
+  linkPaused: false,
+  linkStopped: false,
+  serverGeneration: 0,
+  environmentScope: false,
 }));
+
+vi.mock(import("@t3tools/client-runtime/state/runtime"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    runAtomCommand: async (
+      _registry: unknown,
+      _command: unknown,
+      params: { input: { action: string; generation?: number } },
+    ) => {
+      const { input } = params;
+      if (input.generation === undefined || input.generation === state.serverGeneration) {
+        state.linkPaused = input.action === "pause";
+        state.linkStopped = input.action === "remove";
+      }
+      return { _tag: "Success", value: undefined };
+    },
+  } as typeof actual;
+});
 
 vi.mock(import("../../state/agentFileSync"), async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
@@ -68,21 +92,25 @@ vi.mock(import("../../state/agentFileSync"), async () => {
       },
     ]),
   );
-  const destinationLinks = Atom.make(
-    AsyncResult.success([
-      {
-        id: "shared-review",
-        scope: {},
-        sourceEnvironmentId: "source",
-        selection: { skills: [".agents/skills/review"], instructions: [] },
-        label: "source",
-        paused: false,
-        error: null,
-        lastSyncedAt: 0,
-        generation: 0,
-        revision: "initial",
-      },
-    ]),
+  const destinationLinks = Atom.make(() =>
+    AsyncResult.success(
+      state.linkStopped
+        ? []
+        : [
+            {
+              id: "shared-review",
+              scope: {},
+              sourceEnvironmentId: "source",
+              selection: { skills: [".agents/skills/review"], instructions: [] },
+              label: "source",
+              paused: state.linkPaused,
+              error: null,
+              lastSyncedAt: 0,
+              generation: 0,
+              revision: "initial",
+            },
+          ],
+    ),
   );
   const exported = Atom.make(() =>
     AsyncResult.success([
@@ -139,7 +167,9 @@ vi.mock(import("./SettingsScopeContext"), () => ({
             ],
           },
         }
-      : { kind: "all", label: "All projects" },
+      : state.environmentScope
+        ? { kind: "environment", environmentId: "source", label: "source" }
+        : { kind: "all", label: "All projects" },
     environment: { environmentId: "source" },
   })) as never,
 }));
@@ -157,6 +187,10 @@ function setup(reason = "") {
   state.missing = reason === "missing";
   state.skillText = "# Review\nCheck changes.\n";
   state.extraFile = false;
+  state.linkPaused = false;
+  state.linkStopped = false;
+  state.serverGeneration = 0;
+  state.environmentScope = reason === "environment";
   const key = "t3:agent-file-sync:source:home";
   localStorage.setItem(`${key}:targets`, JSON.stringify(["available", "unavailable"]));
   return key;
@@ -268,4 +302,41 @@ it("refreshes the selected skill text and its supporting-file list", async () =>
   await expect.element(screen.getByText("Updated review.", { exact: true })).toBeVisible();
   await userEvent.click(screen.getByRole("combobox", { name: "Skill file" }));
   await expect.element(screen.getByRole("option", { name: "notes.txt" })).toBeVisible();
+});
+
+it("applies explicit pause and stop after automatic sync advances the displayed generation", async () => {
+  setup();
+  await using screen = await render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <AgentFileSyncSettings />
+    </RegistryContext.Provider>,
+  );
+  await expect.element(screen.getByText("Shared with available", { exact: true })).toBeVisible();
+  state.serverGeneration = 1;
+  await userEvent.click(screen.getByRole("button", { name: "Pause", exact: true }));
+  await expect.element(screen.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
+  state.serverGeneration = 2;
+  await userEvent.click(screen.getByRole("button", { name: "Stop sharing", exact: true }));
+  await expect
+    .element(screen.getByText("Shared with available", { exact: true }))
+    .not.toBeInTheDocument();
+});
+
+it("keeps browsing within the header’s environment scope while allowing sharing to other environments", async () => {
+  setup("environment");
+  await using screen = await render(
+    <RegistryProvider>
+      <AgentFileSyncSettings />
+    </RegistryProvider>,
+  );
+  await userEvent.click(screen.getByRole("combobox", { name: "Environment", exact: true }));
+  await expect.element(screen.getByRole("option", { name: "source", exact: true })).toBeVisible();
+  await expect
+    .element(screen.getByRole("option", { name: "available", exact: true }))
+    .not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("option", { name: "source", exact: true }));
+  await userEvent.click(screen.getByText("Share this skill…", { exact: true }));
+  await expect
+    .element(screen.getByRole("checkbox", { name: "available", exact: true }))
+    .toBeVisible();
 });
