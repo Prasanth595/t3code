@@ -405,9 +405,11 @@ export const recordPinnedRuntimeLauncher = Effect.fn("cloud.pinned_runtime.recor
       PINNED_RUNTIME_DIR,
       PINNED_RUNTIME_LAUNCHERS_FILE,
     );
+    // Prune may run in another process, such as the service, whose working directory differs.
+    const launcher = path.resolve(input.launcher);
     const recorded = yield* fs.readFileString(launchersFile).pipe(Effect.orElseSucceed(() => ""));
-    if (recorded.split(/\r?\n/).includes(input.launcher)) return;
-    yield* fs.writeFileString(launchersFile, `${input.launcher}\n`, { flag: "a" });
+    if (recorded.split(/\r?\n/).includes(launcher)) return;
+    yield* fs.writeFileString(launchersFile, `${launcher}\n`, { flag: "a" });
   },
 );
 

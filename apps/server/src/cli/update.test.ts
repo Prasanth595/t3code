@@ -133,6 +133,22 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
     return { root, oldExe, newExe, launcher, launchersFile: path.join(root, "runtime/launchers") };
   });
 
+  it.effect("records a relative launcher path as absolute", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root, newExe, launcher, launchersFile } = yield* launcherFixture();
+
+      yield* repointLauncher({
+        launchedAs: path.relative(path.resolve("."), launcher),
+        baseDir: root,
+        targetEntryPath: newExe,
+      });
+
+      assert.equal(yield* fs.readFileString(launchersFile), `${launcher}\n`);
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+  );
+
   it.effect("fails instead of repointing a launcher it cannot record", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
