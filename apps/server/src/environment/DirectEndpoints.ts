@@ -65,6 +65,8 @@ export function resolveBoundEndpoints(input: {
   readonly host: string | undefined;
   readonly port: number;
   readonly interfaces: NetworkInterfacesMap;
+  /** A cloud VM's private network is its provider's, which no client shares. */
+  readonly onCloudVm?: boolean;
 }): ReadonlyArray<ServerDirectEndpoint> {
   if (isLoopbackHost(input.host)) return [];
   const tailscaleAddresses = new Set(
@@ -81,17 +83,53 @@ export function resolveBoundEndpoints(input: {
         )
         .map((entry) => entry.address)
     : [input.host!].filter(isAdvertisableAddress);
-  return [...new Set(addresses)].map((address) => ({
-    kind: tailscaleAddresses.has(address) ? "tailnet" : "lan",
-    httpBaseUrl: `http://${formatHostForUrl(address)}:${input.port}/`,
-  }));
+  return [...new Set(addresses)]
+    .filter((address) => !input.onCloudVm || tailscaleAddresses.has(address))
+    .map((address) => ({
+      kind: tailscaleAddresses.has(address) ? "tailnet" : "lan",
+      httpBaseUrl: `http://${formatHostForUrl(address)}:${input.port}/`,
+    }));
 }
+
+/**
+ * AWS, GCP, Azure, DigitalOcean, Hetzner, Linode, Vultr, and Oracle all serve
+ * instance metadata at this address. A plain TCP connect skips HTTP proxies,
+ * which would otherwise answer for a machine that is not in a cloud.
+ */
+const CLOUD_METADATA_ADDRESS = "169.254.169.254";
+const CLOUD_METADATA_TIMEOUT_MS = 300;
+
+const probeCloudMetadata = Effect.callback<boolean>((resume) => {
+  const socket = NodeNet.connect({
+    host: CLOUD_METADATA_ADDRESS,
+    port: 80,
+    timeout: CLOUD_METADATA_TIMEOUT_MS,
+  });
+  let settled = false;
+  const settle = (found: boolean) => {
+    if (settled) return;
+    settled = true;
+    socket.destroy();
+    resume(Effect.succeed(found));
+  };
+  socket.once("connect", () => settle(true));
+  socket.once("timeout", () => settle(false));
+  socket.once("error", () => settle(false));
+  return Effect.sync(() => socket.destroy());
+});
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
+  // Only the service default listens on every interface without being asked,
+  // so only it checks once whether it runs in a cloud. The check starts now so
+  // the first client does not wait for its timeout.
+  const onCloudVm = config.privateNetworkOnly
+    ? yield* Effect.cached(probeCloudMetadata)
+    : Effect.succeed(false);
+  yield* Effect.forkDetach(onCloudVm);
 
   const resolve = Effect.gen(function* () {
     const endpoints = [
@@ -99,6 +137,7 @@ export const make = Effect.gen(function* () {
         host: config.host,
         port: config.port,
         interfaces: NodeOS.networkInterfaces(),
+        onCloudVm: yield* onCloudVm,
       }),
     ];
     // Tailscale Serve terminates HTTPS on the tailnet name and forwards to
