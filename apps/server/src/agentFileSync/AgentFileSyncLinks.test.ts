@@ -32,6 +32,7 @@ const fixture = Effect.gen(function* () {
   const writes: string[] = [];
   const failWrites = new Set<string>();
   const failAfterWrites = new Set<string>();
+  const afterWrites = new Map<string, Effect.Effect<unknown>>();
   const failReads = new Set<string>();
   const secrets = Layer.succeed(
     ServerSecretStore.ServerSecretStore,
@@ -59,6 +60,8 @@ const fixture = Effect.gen(function* () {
             : Effect.gen(function* () {
                 storage.set(name, Uint8Array.from(data));
                 writes.push(name);
+                const afterWrite = afterWrites.get(name);
+                if (afterWrite) yield* afterWrite;
                 if (failAfterWrites.has(name))
                   return yield* new ServerSecretStore.SecretStorePersistError({
                     resource: name,
@@ -115,6 +118,7 @@ const fixture = Effect.gen(function* () {
     writes,
     failWrites,
     failAfterWrites,
+    afterWrites,
     failReads,
   };
 });
@@ -273,6 +277,51 @@ it.layer(NodeServices.layer)("sync subscriptions", (it) => {
         expect(yield* (yield* f.load).list).toEqual([original]);
       }
     }),
+  );
+  it.effect.each(["subscribe", "remove", "refresh"] as const)(
+    "finishes %s publication when its request is interrupted after the catalog write",
+    (action) =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const original = action === "subscribe" ? null : yield* f.subscribe();
+        const published = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        f.afterWrites.set(
+          "agent-file-sync-links",
+          Deferred.succeed(published, undefined).pipe(Effect.andThen(Deferred.await(release))),
+        );
+        const operation =
+          action === "subscribe"
+            ? f.subscribe().pipe(Effect.asVoid)
+            : action === "remove"
+              ? f.links.manage({ id: original!.id, action: "remove" })
+              : f.links.refresh({ id: original!.id, generation: 0, bundle: bundle("Updated") });
+        const request = yield* operation.pipe(Effect.forkChild);
+        yield* Deferred.await(published);
+        const interrupted = yield* Fiber.interrupt(request).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(interrupted);
+        const current = yield* f.links.list;
+        expect(current).toEqual(yield* (yield* f.load).list);
+        expect(current).toHaveLength(action === "remove" ? 0 : 1);
+        if (action === "subscribe") {
+          expect((yield* f.subscribe().pipe(Effect.flip)).reason).toBe("overlap");
+          expect(
+            yield* f.fs.readDirectory(f.path.join(f.directory, "data/userdata/agent-file-sync")),
+          ).toEqual([]);
+        } else if (action === "remove") {
+          expect((yield* f.subscribe()).id).not.toBe(original!.id);
+        } else {
+          expect(current[0]?.generation).toBe(1);
+          yield* f.links.manage({ id: original!.id, action: "pause" });
+          expect(yield* f.links.list).toEqual(yield* (yield* f.load).list);
+          expect(yield* f.fs.readFileString(f.path.join(f.directory, "AGENTS.md"))).toContain(
+            "Updated",
+          );
+        }
+      }),
   );
   it.effect(
     "keeps committed setup after a post-publication error and rejects overlapping retries",

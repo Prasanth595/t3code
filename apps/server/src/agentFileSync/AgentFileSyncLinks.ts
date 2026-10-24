@@ -92,6 +92,7 @@ const make = Effect.gen(function* () {
   let state: State = (yield* Effect.forEach(metadata, loadBaseline)).filter(
     (link) => link !== null,
   );
+  // Lock acquisition stays cancellable; an admitted mutation must settle files, catalog, and recovery data together.
   const lock = yield* Semaphore.make(1);
   // A recovered subset cannot replace the durable catalog without dropping unreadable subscriptions.
   const assertWritable = Effect.suspend(() =>
@@ -254,7 +255,7 @@ const make = Effect.gen(function* () {
                 Effect.logWarning("Could not remove a completed sync setup receipt"),
               ),
             );
-      }),
+      }).pipe(Effect.uninterruptible),
     );
   });
   const removePending = Effect.fn("AgentFileSyncLinks.removePending")(function* (id: string) {
@@ -336,7 +337,7 @@ const make = Effect.gen(function* () {
               .pipe(Effect.mapError((cause) => new AgentFileSyncError({ reason: "io", cause })));
           }
           yield* commitRefresh(job, input.bundle);
-        }),
+        }).pipe(Effect.uninterruptible),
       );
     },
   );
@@ -367,7 +368,7 @@ const make = Effect.gen(function* () {
                 ),
           );
           if (input.action === "remove") yield* removePending(job.id);
-        }),
+        }).pipe(Effect.uninterruptible),
       );
     },
   );
