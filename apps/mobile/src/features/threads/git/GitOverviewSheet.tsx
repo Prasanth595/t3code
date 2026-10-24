@@ -1,3 +1,5 @@
+import { useAtomValue } from "@effect/atom-react";
+import { serverEnvironment } from "../../../state/server";
 import * as Dialog from "../../../components/ui/Dialog";
 import { SheetHeader } from "../../../components/ui/SheetHeader";
 import { useOpenPullRequest } from "../../../native/useOpenPullRequest";
@@ -8,6 +10,7 @@ import {
   requiresDefaultBranchConfirmation,
 } from "@t3tools/client-runtime/state/vcs";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommonActions,
   StackActions,
@@ -93,6 +96,11 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     project: selectedThreadProject,
     runtime: selectedEnvironmentRuntime,
   });
+  const settings = useAtomValue(serverEnvironment.lastKnownSettingsValueAtom(environmentId));
+  const pullRequestCreationEnabled = settings
+    ? resolveProjectSettings(settings, selectedThread?.projectId ?? null).settings
+        .pullRequestCreationEnabled === true
+    : false;
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const { canWriteSourceControl, canChangeThreadBranch } = gitActions;
@@ -115,7 +123,9 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const hasPrimaryRemote = gitStatus.data?.hasPrimaryRemote ?? false;
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
 
-  const menuItems = isRepo ? buildMenuItems(gitStatus.data, busy, hasPrimaryRemote) : [];
+  const menuItems = isRepo
+    ? buildMenuItems(gitStatus.data, busy, hasPrimaryRemote, pullRequestCreationEnabled)
+    : [];
 
   const sheetMenuItems = menuItems.map((item) => ({
     item: {

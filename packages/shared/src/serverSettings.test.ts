@@ -7,6 +7,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
+import { clearProjectSettingsOverrides, resolveProjectSettings } from "./projectSettings.ts";
 import { describe, expect, it } from "vite-plus/test";
 import { resolveServerBackgroundActivitySettings } from "./backgroundActivitySettings.ts";
 import { createModelSelection } from "./model.ts";
@@ -52,6 +53,37 @@ describe("fallbackTextGenerationModelSelection", () => {
 });
 
 describe("serverSettings helpers", () => {
+  it.each([true, false])(
+    "preserves a project's PR creation choice (%s) when an older client edits another setting",
+    (pullRequestCreationEnabled) => {
+      const projectId = ProjectId.make("project-a");
+      const current = {
+        ...DEFAULT_SERVER_SETTINGS,
+        pullRequestCreationEnabled: !pullRequestCreationEnabled,
+        projectSettingsOverrides: {
+          [projectId]: { pullRequestCreationEnabled, defaultAutoPull: true },
+        },
+      };
+      const patched = applyServerSettingsPatch(current, {
+        projectSettingsOverrides: { [projectId]: { defaultAutoPull: false } },
+      });
+      expect(patched.projectSettingsOverrides[projectId]).toEqual({
+        pullRequestCreationEnabled,
+        defaultAutoPull: false,
+      });
+      const reset = applyServerSettingsPatch(patched, {
+        projectSettingsOverrides: {
+          [projectId]: clearProjectSettingsOverrides(patched, projectId, [
+            "pullRequestCreationEnabled",
+          ]),
+        },
+      });
+      expect(reset.projectSettingsOverrides[projectId]).toEqual({ defaultAutoPull: false });
+      expect(resolveProjectSettings(reset, projectId).settings.pullRequestCreationEnabled).toBe(
+        !pullRequestCreationEnabled,
+      );
+    },
+  );
   it("translates a shipped client's idle compaction switch into a mode", () => {
     const off = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { idleCompaction: "off" });
     expect([off.idleCompaction, off.compactIdleThreads]).toEqual(["off", false]);

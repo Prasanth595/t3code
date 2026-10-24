@@ -27,6 +27,29 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("Pull request creation settings", () => {
+  it("accepts an explicit project reset in a patch but never stores null as the preference", () => {
+    const input = { projectSettingsOverrides: { project: { pullRequestCreationEnabled: null } } };
+    expect(decodeServerSettingsPatch(input)).toEqual(input);
+    expect(() => decodeServerSettings(input)).toThrow();
+  });
+  it("keeps PR creation enabled for existing installations", () => {
+    expect(decodeServerSettings({}).pullRequestCreationEnabled).toBe(true);
+  });
+
+  it.each([true, false])(
+    "round-trips %s globally and per project",
+    (pullRequestCreationEnabled) => {
+      const input = {
+        pullRequestCreationEnabled,
+        projectSettingsOverrides: { project: { pullRequestCreationEnabled } },
+      };
+      expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+      expect(decodeServerSettingsPatch(input)).toEqual(input);
+    },
+  );
+});
+
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();

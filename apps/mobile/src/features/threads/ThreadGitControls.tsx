@@ -17,6 +17,10 @@ import {
   resolveQuickAction,
 } from "@t3tools/client-runtime/state/vcs";
 import { useNavigation } from "@react-navigation/native";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { useThreadShell } from "../../state/entities";
+import { useAtomValue } from "@effect/atom-react";
+import { serverEnvironment } from "../../state/server";
 
 import { useEnvironmentScope } from "../../state/session";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
@@ -122,6 +126,17 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     AuthSourceControlWriteScope,
   );
   const threadId = props.threadId;
+  const settings = useAtomValue(
+    serverEnvironment.lastKnownSettingsValueAtom(EnvironmentId.make(String(environmentId))),
+  );
+  const thread = useThreadShell({
+    environmentId: EnvironmentId.make(String(environmentId)),
+    threadId: ThreadId.make(String(threadId)),
+  });
+  const pullRequestCreationEnabled = settings
+    ? resolveProjectSettings(settings, thread?.projectId ?? null).settings
+        .pullRequestCreationEnabled === true
+    : false;
   const { gitStatus, gitOperationLabel, onPull, onRunAction } = props;
 
   const currentBranchLabel = gitStatus?.refName ?? props.currentBranch ?? "Detached HEAD";
@@ -139,7 +154,13 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
         hint: "This workspace is not a git repository.",
       };
     }
-    const action = resolveQuickAction(gitStatus, busy, isDefaultRef, hasPrimaryRemote);
+    const action = resolveQuickAction(
+      gitStatus,
+      busy,
+      isDefaultRef,
+      hasPrimaryRemote,
+      pullRequestCreationEnabled,
+    );
     return !canWriteSourceControl && (action.kind === "run_pull" || action.kind === "run_action")
       ? {
           ...action,

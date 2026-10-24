@@ -5,6 +5,7 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import type { SettingsTarget } from "./settings-environment-filter";
 import {
@@ -66,6 +67,23 @@ function environment(environmentId: EnvironmentId, settings: ServerSettings): Se
 }
 
 describe("mobile project settings scope", () => {
+  it("resets PR creation explicitly while retaining the project's other overrides", () => {
+    const settings: ServerSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [firstProject]: { defaultAutoPull: true, pullRequestCreationEnabled: false },
+      },
+    };
+    const targets = resolveMobileSettingsTargets(
+      [environment(firstId, settings)],
+      [{ environmentId: firstId, id: firstProject }],
+    );
+    const writes = planMobileScopedSettingsClear(targets, ["pullRequestCreationEnabled"]);
+    const saved = applyServerSettingsPatch(settings, writes[0]!.patch);
+    expect(saved.projectSettingsOverrides[firstProject]).toEqual({ defaultAutoPull: true });
+    expect(saved.pullRequestCreationEnabled).toBe(true);
+  });
+
   it("edits each checkout's own override without changing either environment default", () => {
     const firstSettings: ServerSettings = {
       ...DEFAULT_SERVER_SETTINGS,

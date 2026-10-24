@@ -987,6 +987,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "reviewGuideModelSelection",
   "reviewGuideInstructions",
   "sourceControlWritingStyle",
+  "pullRequestCreationEnabled",
   "removeAgentCreditsOnMerge",
   "branchNamingMode",
   "branchNamePrefix",
@@ -1031,6 +1032,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   reviewGuideModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   reviewGuideInstructions: Schema.optionalKey(TrimmedString),
   sourceControlWritingStyle: Schema.optionalKey(SourceControlWritingStyleSetting),
+  pullRequestCreationEnabled: Schema.optionalKey(Schema.Boolean),
   removeAgentCreditsOnMerge: Schema.optionalKey(Schema.Boolean),
   branchNamingMode: Schema.optionalKey(BranchNamingMode),
   branchNamePrefix: Schema.optionalKey(TrimmedString),
@@ -1046,6 +1048,13 @@ export const ProjectSettingsOverrides = Schema.Struct({
   ),
 } satisfies Record<ProjectScopedServerSettingKey | "providerInstances", unknown>);
 export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
+
+const ProjectSettingsOverridesPatch = Schema.Struct({
+  ...ProjectSettingsOverrides.fields,
+  sourceControlWritingStyle: Schema.optionalKey(SourceControlWritingStyleSettings),
+  pullRequestCreationEnabled: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
+});
+export type ProjectSettingsOverridesPatch = typeof ProjectSettingsOverridesPatch.Type;
 
 /**
  * Whether `null` is a stored override value for this key rather than "unset".
@@ -1276,6 +1285,7 @@ export const ServerSettings = Schema.Struct({
   ),
   branchNamePrefix: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed("t3"))),
   branchNameInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  pullRequestCreationEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   removeAgentCreditsOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sourceControlWritingStyle: SourceControlWritingStyleSetting.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -1549,20 +1559,12 @@ export const ServerSettingsPatch = Schema.Struct({
    * Per-project entry replacement: each entry replaces that project's whole
    * override set and `null` removes it.
    *
-   * `providerInstances` is the one exception: an entry that omits the key keeps
-   * the stored value instead of clearing it, so a client built before that
-   * field existed cannot wipe it by editing another key.
+   * Omitted `providerInstances` and `pullRequestCreationEnabled` keep their stored
+   * values so older clients cannot wipe them by editing another key. An empty
+   * map clears provider overrides; null clears the PR creation override.
    */
   projectSettingsOverrides: Schema.optionalKey(
-    Schema.Record(
-      ProjectId,
-      Schema.NullOr(
-        Schema.Struct({
-          ...ProjectSettingsOverrides.fields,
-          sourceControlWritingStyle: Schema.optionalKey(SourceControlWritingStyleSettings),
-        }),
-      ),
-    ),
+    Schema.Record(ProjectId, Schema.NullOr(ProjectSettingsOverridesPatch)),
   ),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
@@ -1597,6 +1599,7 @@ export const ServerSettingsPatch = Schema.Struct({
   branchNamingMode: Schema.optionalKey(BranchNamingMode),
   branchNamePrefix: Schema.optionalKey(TrimmedString),
   branchNameInstructions: Schema.optionalKey(TrimmedString),
+  pullRequestCreationEnabled: Schema.optionalKey(Schema.Boolean),
   removeAgentCreditsOnMerge: Schema.optionalKey(Schema.Boolean),
   sourceControlWritingStyle: Schema.optionalKey(
     Schema.Struct({

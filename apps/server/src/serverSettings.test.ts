@@ -8,6 +8,7 @@ import {
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
   ServerSettings,
+  ServerSettingsPatch,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -32,6 +33,7 @@ import * as ServerSettingsModule from "./serverSettings.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
 
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
+const decodeServerSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
 
 const layerServerSettings = () =>
@@ -176,6 +178,43 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }),
     ).pipe(Effect.provide(layerServerSettings())),
   );
+  it.effect("persists project PR preferences through older-client edits and explicit resets", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const projectId = ProjectId.make("project-a");
+      yield* service.updateSettings({
+        projectSettingsOverrides: {
+          [projectId]: { pullRequestCreationEnabled: false, defaultAutoPull: true },
+        },
+      });
+      const edited = yield* service.updateSettings(
+        yield* decodeServerSettingsPatch({
+          projectSettingsOverrides: { [projectId]: { defaultAutoPull: false } },
+        }),
+      );
+      assert.deepEqual(edited.projectSettingsOverrides[projectId], {
+        pullRequestCreationEnabled: false,
+        defaultAutoPull: false,
+      });
+      const persisted = yield* decodeServerSettingsJson(
+        yield* fs.readFileString(config.settingsPath),
+      );
+      assert.deepEqual(persisted.projectSettingsOverrides, edited.projectSettingsOverrides);
+      const reset = yield* service.updateSettings(
+        yield* decodeServerSettingsPatch({
+          projectSettingsOverrides: {
+            [projectId]: { defaultAutoPull: false, pullRequestCreationEnabled: null },
+          },
+        }),
+      );
+      assert.deepEqual(reset.projectSettingsOverrides[projectId], { defaultAutoPull: false });
+      const saved = yield* decodeServerSettingsJson(yield* fs.readFileString(config.settingsPath));
+      assert.deepEqual(saved.projectSettingsOverrides, reset.projectSettingsOverrides);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("migrates saved token delivery to paragraph buffering without resetting settings", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

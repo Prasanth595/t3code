@@ -473,6 +473,25 @@ describe("scoped settings writes", () => {
     ).toMatchObject({ serverWrites: [], unavailableReason: expect.stringContaining("update") });
   });
 
+  it("resets PR creation explicitly while retaining the project's other overrides", () => {
+    const withOverrides = environment("Server", {
+      settings: {
+        projectSettingsOverrides: {
+          [projectId]: { defaultAutoPull: true, pullRequestCreationEnabled: false },
+        },
+      },
+    });
+    const plan = planScopedSettingsClear(
+      checkout,
+      [laptop, withOverrides],
+      ["pullRequestCreationEnabled"],
+    );
+    const write = plan.serverWrites[0]!;
+    const saved = applyServerSettingsPatch(write.previous, write.patch);
+    expect(saved.projectSettingsOverrides[projectId]).toEqual({ defaultAutoPull: true });
+    expect(saved.pullRequestCreationEnabled).toBe(true);
+  });
+
   it("clears overrides per member and removes an emptied entry", () => {
     const withOverrides = environment("Server", {
       settings: {

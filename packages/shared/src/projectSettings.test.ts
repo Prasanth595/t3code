@@ -34,6 +34,32 @@ describe("resolveSendEnvMode", () => {
 });
 
 describe("resolveProjectSettings", () => {
+  it("inherits PR creation and restores it when a project override is cleared", () => {
+    const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      pullRequestCreationEnabled: false,
+      projectSettingsOverrides: { [projectId]: { pullRequestCreationEnabled: true } },
+    });
+    expect(resolveProjectSettings(settings, projectId).settings.pullRequestCreationEnabled).toBe(
+      true,
+    );
+    expect(
+      resolveProjectSettings(settings, otherProjectId).settings.pullRequestCreationEnabled,
+    ).toBe(false);
+    const cleared = applyServerSettingsPatch(settings, {
+      projectSettingsOverrides: {
+        [projectId]: clearProjectSettingsOverrides(settings, projectId, [
+          "pullRequestCreationEnabled",
+        ]),
+      },
+    });
+    expect(resolveProjectSettings(cleared, projectId).settings.pullRequestCreationEnabled).toBe(
+      false,
+    );
+    expect(resolveProjectSettings(cleared, projectId).sources.pullRequestCreationEnabled).toBe(
+      "environment",
+    );
+  });
+
   it("ignores an override left undefined by a forward-compatible decode", () => {
     const resolved = resolveProjectSettings(
       {
