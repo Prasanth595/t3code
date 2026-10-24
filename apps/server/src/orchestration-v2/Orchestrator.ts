@@ -71,6 +71,7 @@ import {
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -78,6 +79,7 @@ import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -12000,27 +12002,52 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // below. Replaying the full event table on every server start delays live
   // queue promotion in proportion to the lifetime size of the database.
   const terminalEventsAfterSequence = yield* eventSink.latestSequence().pipe(Effect.orDie);
+  // The reactors below run for the life of the server. Subscribing reads the
+  // event table, and a failed read would end a reactor for good, so each one
+  // resubscribes after the last event it received.
+  const reactorEvents = (eventType: OrchestrationV2DomainEvent["type"]) => {
+    let afterSequence = terminalEventsAfterSequence;
+    return Stream.suspend(() => eventSink.stream({ afterSequence, eventType })).pipe(
+      Stream.tap((stored) =>
+        Effect.sync(() => {
+          afterSequence = stored.sequence;
+        }),
+      ),
+      Stream.tapError((cause) =>
+        Effect.logWarning("Resubscribing to V2 events after a failed read", {
+          eventType,
+          afterSequence,
+          cause,
+        }),
+      ),
+      Stream.retry(
+        Schedule.exponential("1 second").pipe(
+          Schedule.modifyDelay(({ duration }) =>
+            Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+          ),
+        ),
+      ),
+    );
+  };
   // Queue promotion can wait on a provider or a thread lock. Subscribe to run
   // updates before buffering so that wait never retains unrelated tool bodies.
-  yield* eventSink
-    .stream({ afterSequence: terminalEventsAfterSequence, eventType: "run.updated" })
-    .pipe(
-      Stream.filter(
-        (stored) =>
-          stored.event.type === "run.updated" &&
-          !String(stored.commandId).startsWith("command:runtime-reconcile:") &&
-          ((stored.event.payload.delegatedTaskId !== undefined &&
-            (stored.event.payload.status === "queued" ||
-              stored.event.payload.status === "starting")) ||
-            stored.event.payload.status === "completed" ||
-            stored.event.payload.status === "interrupted" ||
-            stored.event.payload.status === "failed" ||
-            stored.event.payload.status === "cancelled" ||
-            stored.event.payload.status === "rolled_back"),
-      ),
-      Stream.runForEach(handleRunUpdate),
-      Effect.forkDetach,
-    );
+  yield* reactorEvents("run.updated").pipe(
+    Stream.filter(
+      (stored) =>
+        stored.event.type === "run.updated" &&
+        !String(stored.commandId).startsWith("command:runtime-reconcile:") &&
+        ((stored.event.payload.delegatedTaskId !== undefined &&
+          (stored.event.payload.status === "queued" ||
+            stored.event.payload.status === "starting")) ||
+          stored.event.payload.status === "completed" ||
+          stored.event.payload.status === "interrupted" ||
+          stored.event.payload.status === "failed" ||
+          stored.event.payload.status === "cancelled" ||
+          stored.event.payload.status === "rolled_back"),
+    ),
+    Stream.runForEach(handleRunUpdate),
+    Effect.forkDetach,
+  );
 
   // A child whose run ends while its background tasks or its own subagents still run has no
   // result yet. When that work settles there is no run update to finalize it, so these events
@@ -12038,11 +12065,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return providerThreadsWithBackgroundWork.delete(event.payload.id);
   };
   yield* Stream.merge(
-    eventSink.stream({
-      afterSequence: terminalEventsAfterSequence,
-      eventType: "provider-thread.updated",
-    }),
-    eventSink.stream({ afterSequence: terminalEventsAfterSequence, eventType: "subagent.updated" }),
+    reactorEvents("provider-thread.updated"),
+    reactorEvents("subagent.updated"),
   ).pipe(
     Stream.filter(settlesChildWork),
     Stream.runForEach((stored) =>
