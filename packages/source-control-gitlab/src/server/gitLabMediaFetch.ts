@@ -13,6 +13,7 @@ import { gitLabUploadApiUrl, parseGitLabUpload } from "../shared/gitLabMedia.ts"
 
 import * as GitLabCredentials from "./GitLabCredentials.ts";
 
+const PUBLIC_HOST = "gitlab.com";
 const MAX_REDIRECTS = 3;
 const MANUAL_REDIRECT: RequestInit = { redirect: "manual" };
 
@@ -54,14 +55,17 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * Reads the upload through the API with the `glab` login for its host. Without a login, or
-   * where the API refuses it (GitLab before 17.4), the upload itself still serves a public project.
+   * Reads the upload through the API with the `glab` login for its host. Where the API refuses it
+   * (GitLab before 17.4), or gitlab.com without a login, the upload itself serves a public project.
    */
   return Effect.fn("GitLabMediaFetch.fetchMedia")(function* (request: SourceControlMediaRequest) {
     const url = new URL(request.url);
     const upload = parseGitLabUpload(url);
     if (upload === null) return null;
     const token = yield* credentials.get(url.host);
+    // Anyone can write the URL into a body, so only a host `glab` is signed in to, or the public
+    // GitLab, is ever asked.
+    if (Option.isNone(token) && url.host !== PUBLIC_HOST) return null;
     if (Option.isSome(token)) {
       const response = yield* fetchFollowingRedirects(gitLabUploadApiUrl(upload), request.headers, {
         origin: upload.origin,

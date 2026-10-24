@@ -16,6 +16,7 @@ const API = `https://gitlab.example.com/api/v4/projects/group%2Fapp/uploads/${SE
 function fetchWith(
   token: string | null,
   respond: (url: string, authorization: string | undefined) => Response,
+  url = UPLOAD,
 ) {
   const requests: Array<[string, string | undefined]> = [];
   const invalidated: Array<string> = [];
@@ -36,7 +37,7 @@ function fetchWith(
   );
   const status = Effect.gen(function* () {
     const fetchMedia = yield* GitLabMediaFetch.make;
-    return (yield* fetchMedia({ url: UPLOAD, headers: {} }))?.status;
+    return (yield* fetchMedia({ url, headers: {} }))?.status;
   }).pipe(Effect.provide(layer), Effect.scoped);
   return { status, requests, invalidated };
 }
@@ -65,11 +66,20 @@ describe("GitLabMediaFetch", () => {
     });
   });
 
-  it.effect("loads the upload itself without a login, as a public project serves it", () => {
-    const { status, requests } = fetchWith(null, () => new Response(null, { status: 200 }));
+  it.effect("loads a gitlab.com upload without a login, as a public project serves it", () => {
+    const upload = `https://gitlab.com/group/app/uploads/${SECRET}/shot.png`;
+    const { status, requests } = fetchWith(null, () => new Response(null, { status: 200 }), upload);
     return Effect.gen(function* () {
       expect(yield* status).toBe(200);
-      expect(requests).toEqual([[UPLOAD, undefined]]);
+      expect(requests).toEqual([[upload, undefined]]);
+    });
+  });
+
+  it.effect("asks no host that glab is not signed in to", () => {
+    const { status, requests } = fetchWith(null, () => new Response(null, { status: 200 }));
+    return Effect.gen(function* () {
+      expect(yield* status).toBeUndefined();
+      expect(requests).toEqual([]);
     });
   });
 
