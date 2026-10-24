@@ -30,9 +30,11 @@ import {
   type IssueTrackerSummary,
   type IssueUpdateInput,
   type OrchestrationProjectShell,
+  type ProjectId,
 } from "@t3tools/contracts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
+import { parseIssueUrl } from "@t3tools/shared/issueUrl";
 import {
   IssueTrackerError,
   type IssueTrackerApi,
@@ -164,6 +166,18 @@ export class IssueService extends Context.Service<
     readonly update: (input: IssueUpdateInput) => Effect.Effect<void, IssueError>;
     readonly setState: (input: IssueSetStateInput) => Effect.Effect<void, IssueError>;
     readonly react: (input: IssueReactionInput) => Effect.Effect<void, IssueError>;
+    /**
+     * The reference behind an issue URL: served by the project whose binding is that host and
+     * scope, else read-only through any project on the same tracker and host. `preferredProjectId`
+     * wins among equals, so a thread's own project serves its own issues.
+     */
+    readonly resolveUrl: (
+      url: string,
+      preferredProjectId?: ProjectId,
+    ) => Effect.Effect<
+      IssueRef & { readonly host: string; readonly writable: boolean },
+      IssueError
+    >;
   }
 >()("t3/issue/IssueService") {}
 
@@ -573,6 +587,38 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const resolveUrl: IssueService["Service"]["resolveUrl"] = Effect.fn("IssueService.resolveUrl")(
+    function* (url, preferredProjectId) {
+      const parsed = parseIssueUrl(url);
+      if (parsed === null) {
+        return yield* new IssueOperationError({
+          operation: "resolveUrl",
+          reason: "not-found",
+          detail: "This is not a recognised issue URL.",
+        });
+      }
+      const { supported } = yield* listProjects({ host: parsed.host });
+      const onTracker = supported.filter((project) => project.tracker === parsed.tracker);
+      const preferFirst = (projects: ReadonlyArray<SupportedProject>) =>
+        projects.find((project) => project.project.id === preferredProjectId) ?? projects[0];
+      const own = preferFirst(
+        onTracker.filter((project) => project.scope.toLowerCase() === parsed.scope),
+      );
+      const lender = own ?? preferFirst(onTracker);
+      if (lender === undefined) {
+        return yield* new IssueUnavailableError({ reason: "tracker-unsupported" });
+      }
+      return {
+        projectId: lender.project.id,
+        tracker: lender.tracker,
+        host: lender.host,
+        scope: own === undefined ? parsed.scope : lender.scope,
+        key: parsed.key,
+        writable: own !== undefined,
+      };
+    },
+  );
+
   return IssueService.of({
     list,
     detail: traced("detail", detail),
@@ -584,6 +630,7 @@ const make = Effect.gen(function* () {
     update: interactive(traced("update", update)),
     setState: interactive(traced("setState", setState)),
     react: interactive(traced("react", react)),
+    resolveUrl,
   });
 });
 
