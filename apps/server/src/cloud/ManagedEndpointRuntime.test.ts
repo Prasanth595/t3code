@@ -1,13 +1,17 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -17,6 +21,7 @@ import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay
 import * as RelayClient from "@t3tools/shared/relayClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../config.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 
 const layerRelayClientAvailable = Layer.succeed(
@@ -36,6 +41,15 @@ const layerRelayClientAvailable = Layer.succeed(
 
 const unusedHttpClient = HttpClient.make(() => Effect.die("unused"));
 
+const decodeLogEntry = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      level: Schema.String,
+      message: Schema.Tuple([Schema.String, Schema.Unknown]),
+    }),
+  ),
+);
+
 const runtimeDependencies = (
   spawner: ReturnType<typeof ChildProcessSpawner.make>,
   relayClientLayer = layerRelayClientAvailable,
@@ -48,7 +62,8 @@ const runtimeDependencies = (
     Layer.mock(ServerSecretStore.ServerSecretStore)({
       get: () => Effect.succeedNone,
     }),
-  );
+    ServerConfig.layerTest(process.cwd(), { prefix: "t3-managed-endpoint-" }),
+  ).pipe(Layer.provideMerge(NodeServices.layer));
 
 const buildCloudManagedEndpointRuntime = (
   spawner: ReturnType<typeof ChildProcessSpawner.make>,
@@ -319,6 +334,48 @@ describe("CloudManagedEndpointRuntime", () => {
       yield* fixture.observe(runtime, 2);
       expect(fixture.spawned[2]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
     }),
+  );
+
+  it.effect("keeps the connector's log lines in a file with the token redacted", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-relay-client-log-" });
+      const fixture = yield* makeTransportSpawner();
+      yield* Effect.gen(function* () {
+        const context = yield* Layer.build(
+          ManagedEndpointRuntime.layer.pipe(
+            Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+            Layer.provide(runtimeDependencies(fixture.spawner)),
+          ),
+        );
+        const runtime = yield* Effect.service(
+          ManagedEndpointRuntime.CloudManagedEndpointRuntime,
+        ).pipe(Effect.provide(context));
+        yield* runtime.applyConfig({ ...tunnelConfig, connectorToken: "connector-secret" });
+        yield* fixture.observe(
+          runtime,
+          0,
+          '2026-10-16T20:29:40Z ERR Failed to serve tunnel connection error="rejected connector-secret" connIndex=0\n',
+        );
+      }).pipe(Effect.scoped);
+
+      const log = yield* fs.readFileString(
+        path.join(baseDir, "userdata", "logs", "relay-client.ndjson"),
+      );
+      const entries = log
+        .trim()
+        .split("\n")
+        .map((line) => decodeLogEntry(line));
+      expect(entries.map((entry) => [entry.level, entry.message[0]])).toEqual([
+        ["INFO", "Relay client process started; waiting for tunnel connection"],
+        ["WARN", "Relay client reported a transport warning"],
+        ["INFO", "Relay client tunnel connection registered"],
+        ["INFO", "Relay client stopped"],
+      ]);
+      expect(log).toContain("rejected <redacted>");
+      expect(log).not.toContain("connector-secret");
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("discards a pending fallback when its connector is replaced or removed", () =>

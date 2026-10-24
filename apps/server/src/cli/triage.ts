@@ -17,6 +17,7 @@ import { Command, Flag } from "effect/cli";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
+import * as ManagedEndpointRuntime from "../cloud/ManagedEndpointRuntime.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
@@ -185,6 +186,10 @@ export const triageCommand = Command.make("triage", {
             logsDir: paths.logsDir,
             serviceLogPath: path.join(paths.logsDir, BootService.BOOT_SERVICE_LOG_FILE),
             desktopBackendLogGlob: path.join(paths.logsDir, "server-child*.log*"),
+            relayClientLogPath: path.join(
+              paths.logsDir,
+              ManagedEndpointRuntime.RELAY_CLIENT_LOG_FILE,
+            ),
             serverTracePath: paths.serverTracePath,
             providerEventLogPath: paths.providerEventLogPath,
             terminalLogsDir: paths.terminalLogsDir,

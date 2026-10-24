@@ -1,4 +1,5 @@
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
+import { RotatingFileSink } from "@t3tools/shared/logging";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -7,7 +8,9 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -18,6 +21,8 @@ import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+
+import * as ServerConfig from "../config.ts";
 
 export type CloudManagedEndpointRuntimeStatus =
   | {
@@ -119,6 +124,12 @@ const QUIC_STALL_WINDOW_MS = 5 * 60_000;
 // than this, so a crash-looping connector or an offline host does not redownload
 // on every reconcile.
 const RELAY_CLIENT_INSTALL_RETRY_INTERVAL_MS = 10 * 60_000;
+// The connector's fibers outlive the span that started them, so the trace file
+// misses their messages, and a desktop backend's stdout reaches disk only after
+// a crash. This file keeps what the runtime logs, connector output included.
+export const RELAY_CLIENT_LOG_FILE = "relay-client.ndjson";
+const RELAY_CLIENT_LOG_MAX_BYTES = 1024 * 1024;
+const RELAY_CLIENT_LOG_MAX_FILES = 2;
 
 /**
  * A PATH binary or an explicit override is the user's choice, and the CLI asks
@@ -213,6 +224,40 @@ export const make = Effect.gen(function* () {
   const http2Ref = yield* Ref.make(false);
   const quicStallsRef = yield* Ref.make<ReadonlyArray<number>>([]);
   let reconcileConfig: CloudManagedEndpointRuntime["Service"]["applyConfig"];
+
+  const { logsDir } = yield* ServerConfig.ServerConfig;
+  const path = yield* Path.Path;
+  const relayClientLogPath = path.join(logsDir, RELAY_CLIENT_LOG_FILE);
+  // A synchronous append per line keeps a timer off an idle server; the
+  // connector logs a few lines a minute.
+  const relayClientLog = yield* Effect.try(
+    () =>
+      new RotatingFileSink({
+        filePath: relayClientLogPath,
+        maxBytes: RELAY_CLIENT_LOG_MAX_BYTES,
+        maxFiles: RELAY_CLIENT_LOG_MAX_FILES,
+      }),
+  ).pipe(
+    Effect.map((sink) =>
+      Logger.make((options) => {
+        try {
+          sink.write(`${Logger.formatJson.log(options)}\n`);
+        } catch {
+          // A log file that stops taking writes must not fail the connector fibers.
+        }
+      }),
+    ),
+    Effect.catch((error) =>
+      Effect.logWarning("Relay client log unavailable", {
+        filePath: relayClientLogPath,
+        cause: error,
+      }).pipe(Effect.as(undefined)),
+    ),
+  );
+  // Fibers inherit their loggers, so the connector fibers forked under
+  // applyConfig write here too.
+  const withRelayClientLog = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    relayClientLog ? Effect.withLogger(effect, relayClientLog) : effect;
 
   const stopActive = Effect.gen(function* () {
     const active = yield* Ref.getAndSet(activeRef, null);
@@ -747,6 +792,7 @@ export const make = Effect.gen(function* () {
           return yield* reconcileConfig(config);
         }),
       ),
+    withRelayClientLog,
   );
 
   const readMetrics = <S extends Schema.Decoder<unknown>>(url: string, schema: S) =>
