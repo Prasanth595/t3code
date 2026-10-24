@@ -34,9 +34,10 @@ function changedHandles(beforeText, afterText) {
 }
 
 // `pulls` comes most recently updated first, so the cap keeps the newest PRs.
+// The REST API types a pull's `user` as nullable, so skip PRs without one.
 function selectTargets(pulls, handles) {
   const matching = pulls
-    .filter((pull) => handles.has(pull.user.login.toLowerCase()))
+    .filter((pull) => pull.user !== null && handles.has(pull.user.login.toLowerCase()))
     .map((pull) => ({ number: pull.number, user: pull.user.login }));
   return {
     targets: matching.slice(0, MAX_MATRIX_JOBS),

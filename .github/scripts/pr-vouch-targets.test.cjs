@@ -69,3 +69,14 @@ test("matching PRs beyond the matrix limit are reported, not dropped silently", 
     [257, 258, 259, 260],
   );
 });
+
+test("a PR without an author does not stop the other PRs from being relabeled", () => {
+  const pulls = [pull(1, "alice"), { number: 2, user: null }, pull(3, "alice")];
+
+  const { targets } = selectTargets(pulls, new Set(["alice"]));
+
+  assert.deepEqual(
+    targets.map((target) => target.number),
+    [1, 3],
+  );
+});
