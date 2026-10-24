@@ -1,7 +1,9 @@
 import type { DesktopWslState } from "@t3tools/contracts";
+import { createAdvertisedEndpoint } from "@t3tools/shared/advertisedEndpoint";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  missingTailscaleEndpointDescription,
   selectQrEndpointOption,
   togglePairingScopeSelection,
 } from "./ConnectionsSettings.logic";
@@ -120,6 +122,30 @@ describe("selectQrEndpointOption", () => {
   it("skips non-QR-shareable options in the fallback so the panel never opens on loopback", () => {
     expect(selectQrEndpointOption(options, "tailscale-ip:gone", "nope")?.id).toBe(
       "tailscale-ip:http://100.84.12.7:4780",
+    );
+  });
+});
+
+describe("missingTailscaleEndpointDescription", () => {
+  const networkAccessible = { mode: "network-accessible", tailscaleServeEnabled: false } as const;
+  const tailscaleIp = createAdvertisedEndpoint({
+    id: "tailscale-ip:http://100.84.12.7:4780",
+    label: "Tailscale IP",
+    provider: { id: "tailscale", label: "Tailscale", kind: "private-network", isAddon: true },
+    httpBaseUrl: "http://100.84.12.7:4780",
+    reachability: "private-network",
+    source: "desktop-addon",
+  });
+
+  it("does not ask to start Tailscale when its adapter is up but MagicDNS could not be read", () => {
+    expect(missingTailscaleEndpointDescription(networkAccessible, [tailscaleIp])).toBe(
+      "Tailscale is running, but its MagicDNS name could not be read. Make sure the tailscale command is installed and MagicDNS is on.",
+    );
+  });
+
+  it("asks to start Tailscale when no Tailscale address is present", () => {
+    expect(missingTailscaleEndpointDescription(networkAccessible, [])).toBe(
+      "Start Tailscale to set up HTTPS access through MagicDNS.",
     );
   });
 });
