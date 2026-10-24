@@ -58,6 +58,10 @@ import {
   pendingRestartCancelledBackgroundWork,
   restartCancelledBackgroundWorkNote,
 } from "./RestartBackgroundNote.ts";
+import {
+  resolveThreadMessageSender,
+  withThreadMessageProvenance,
+} from "./ThreadMessageProvenance.ts";
 
 export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStartError>()(
   "ProviderTurnStartError",
@@ -1032,10 +1036,31 @@ export const layer: Layer.Layer<
       const routableSubagents = projection.subagents.filter((subagent) =>
         RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
-      const userText = projectComposerContextForProvider({
-        text: message.text,
-        records: message.context?.records ?? [],
+      const sender = yield* resolveThreadMessageSender({
+        loadThread: (threadId) =>
+          projectionStore.getThreadProjection(threadId).pipe(
+            Effect.map((senderProjection) => ({ thread: senderProjection.thread })),
+            Effect.catchCause(() => Effect.succeed(undefined)),
+          ),
+        receiverThreadId: projection.thread.id,
+        receiverChildThreadIds: projection.subagents.flatMap((subagent) =>
+          subagent.childThreadId === null ? [] : [subagent.childThreadId],
+        ),
+        message,
       });
+      const userText = withThreadMessageProvenance(
+        projectComposerContextForProvider({
+          text: message.text,
+          records: message.context?.records ?? [],
+        }),
+        {
+          createdBy: message.createdBy,
+          ...(message.senderThreadId === undefined
+            ? {}
+            : { senderThreadId: message.senderThreadId }),
+          ...sender,
+        },
+      );
       // Delivered once: this run's provider turn marks the work as told. A
       // restart continuation is prompted by its own text or resumes natively.
       const noteContinuation = isRestartNoteContinuation(

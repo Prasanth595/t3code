@@ -19,6 +19,10 @@ import * as Schema from "effect/Schema";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import {
+  resolveThreadMessageSender,
+  withThreadMessageProvenance,
+} from "./ThreadMessageProvenance.ts";
 
 const yieldToRuntime = Effect.yieldNow.pipe(
   Effect.andThen(
@@ -353,6 +357,25 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
+          const sender = yield* resolveThreadMessageSender({
+            loadThread: (threadId) =>
+              projections.getThreadProjection(threadId).pipe(
+                Effect.map((senderProjection) => ({ thread: senderProjection.thread })),
+                Effect.catchCause(() => Effect.succeed(undefined)),
+              ),
+            receiverThreadId: input.threadId,
+            receiverChildThreadIds: yield* projections
+              .getThreadRecords(input.threadId, ["subagents"])
+              .pipe(
+                Effect.map((records) =>
+                  records.subagents.flatMap((subagent) =>
+                    subagent.childThreadId === null ? [] : [subagent.childThreadId],
+                  ),
+                ),
+                Effect.catchCause(() => Effect.succeed([] as ReadonlyArray<ThreadId>)),
+              ),
+            message,
+          });
           yield* loaded.session.value
             .steerTurn({
               threadId: input.threadId,
@@ -361,10 +384,19 @@ export const layer: Layer.Layer<
               providerTurnId: loaded.providerTurn.id,
               message: {
                 messageId: message.id,
-                text: projectComposerContextForProvider({
-                  text: message.text,
-                  records: message.context?.records ?? [],
-                }),
+                text: withThreadMessageProvenance(
+                  projectComposerContextForProvider({
+                    text: message.text,
+                    records: message.context?.records ?? [],
+                  }),
+                  {
+                    createdBy: message.createdBy,
+                    ...(message.senderThreadId === undefined
+                      ? {}
+                      : { senderThreadId: message.senderThreadId }),
+                    ...sender,
+                  },
+                ),
                 attachments: message.attachments,
                 createdBy: message.createdBy,
                 creationSource: message.creationSource,
