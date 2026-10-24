@@ -227,6 +227,18 @@ describe("observability", () => {
     );
   });
 
+  it("caps shared references that would expand exponentially", () => {
+    let graph: Record<string, unknown> = { cwd: "/repo" };
+    for (let depth = 0; depth < 20; depth++) {
+      graph = { left: graph, right: graph };
+    }
+
+    const serialized = JSON.stringify(compactTraceAttributes({ graph }));
+
+    assert.include(serialized, '"[Truncated]"');
+    assert.isBelow(serialized.length, 1_000_000);
+  });
+
   nodeServicesIt("node services", (it) => {
     it.effect(
       "keeps trace producers responsive during a slow write, bounds the backlog, and drains on close",
