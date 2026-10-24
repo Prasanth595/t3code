@@ -742,6 +742,7 @@ function preparePullRequestThread(
 
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
+  linkedPullRequests?: ReadonlyArray<ProjectionStore.ProjectionThreadPullRequests>;
   sourceControlProvider?: SourceControlProvider["Service"];
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
@@ -875,7 +876,15 @@ function makeManager(input?: {
     if (input?.seed !== undefined) {
       yield* input.seed.pipe(Effect.provideContext(stores), Effect.orDie);
     }
+    const projections = Context.get(stores, ProjectionStore.ProjectionStoreV2);
     const manager = yield* GitManager.make.pipe(
+      Effect.provideService(ProjectionStore.ProjectionStoreV2, {
+        ...projections,
+        getThreadsWithPullRequests:
+          input?.linkedPullRequests === undefined
+            ? projections.getThreadsWithPullRequests
+            : () => Effect.succeed(input.linkedPullRequests!),
+      }),
       Effect.provideService(HostProcess.Environment, input?.environment ?? {}),
       Effect.provide(layerManager),
       Effect.provideContext(stores),
@@ -893,6 +902,100 @@ const layerGitManagerTest = GitVcsDriver.layer.pipe(
 );
 
 it.layer(layerGitManagerTest)("GitManager", (it) => {
+  it.effect("linked PR lookup verifies the head and prevents duplicate creation", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/linked"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/linked"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/team/repo.git",
+        remoteDir,
+      );
+      const threadId = ThreadId.make("thread:linked-pr");
+      const pullRequest: FakePullRequest = {
+        number: 42,
+        title: "Existing PR",
+        url: "https://github.com/upstream/repo/pull/42",
+        baseRefName: "main",
+        headRefName: "feature/linked",
+        state: "open",
+        headRepositoryNameWithOwner: "team/repo",
+        isCrossRepository: true,
+      };
+      const link = {
+        host: "github.com",
+        repository: "upstream/repo",
+        number: 42,
+        url: pullRequest.url,
+        source: "manual" as const,
+        linkedAt: "2026-10-01T00:00:00.000Z",
+        stack: null,
+        snapshot: {
+          state: "open" as const,
+          title: "Existing PR",
+          headBranch: "feature/linked",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: null,
+          syncedAt: "2026-10-01T00:00:00.000Z",
+        },
+      };
+      const linkedThread: ProjectionStore.ProjectionThreadPullRequests = {
+        id: threadId,
+        projectId: ProjectId.make("project:linked-pr"),
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        settledOverride: null,
+        settledAt: null,
+        pullRequests: [link],
+      };
+      const ghScenario: FakeGhScenario = { prListSequence: ["[]"], pullRequest };
+      const linkedPullRequests: Array<ProjectionStore.ProjectionThreadPullRequests> = [];
+      const { manager, ghCalls } = yield* makeManager({ ghScenario, linkedPullRequests });
+      expect((yield* manager.status({ cwd: repoDir })).pr).toBeNull();
+      linkedPullRequests.push(linkedThread);
+      const refreshed = yield* manager.remoteStatus(
+        { cwd: repoDir },
+        {
+          refreshUpstream: false,
+          refreshMissingPullRequest: true,
+        },
+      );
+      expect(refreshed?.pr?.number).toBe(42);
+      const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
+      expect(result.pr.status).toBe("opened_existing");
+      expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
+
+      // The stored snapshot stays open while the provider's current head or state changes.
+      for (const change of [
+        { headRepositoryNameWithOwner: "someone-else/repo" },
+        { url: "https://other.example/upstream/repo/pull/42" },
+        { headRepositoryNameWithOwner: null },
+        { headRefName: "another-branch" },
+        { state: "closed" as const },
+        { state: "merged" as const },
+      ]) {
+        ghScenario.pullRequest = { ...pullRequest, ...change };
+        yield* manager.invalidateStatus(repoDir);
+        expect((yield* manager.status({ cwd: repoDir })).pr).toBeNull();
+      }
+      ghScenario.pullRequest = pullRequest;
+      for (const links of [
+        [{ ...link, source: "stack-dismissed" as const }],
+        [{ ...link, url: "https://other.example/upstream/repo/pull/42" }],
+        [],
+      ]) {
+        linkedPullRequests[0] = { ...linkedThread, pullRequests: links };
+        yield* manager.invalidateStatus(repoDir);
+        expect((yield* manager.status({ cwd: repoDir })).pr).toBeNull();
+      }
+    }),
+  );
+
   it.effect("status ignores invalid gh pr list entries and keeps valid ones", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

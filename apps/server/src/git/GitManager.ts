@@ -1856,11 +1856,58 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.orElseSucceed(() => false));
   });
 
+  // A linked PR can be known before branch discovery finds it. Treat the link as a
+  // lookup hint, and verify its current head rather than promoting a cached snapshot.
+  const findLinkedPr = Effect.fn("findLinkedPr")(function* (
+    cwd: string,
+    headContext: Pick<BranchHeadContext, "headBranch" | "headRemoteUrlKey">,
+  ) {
+    if (headContext.headRemoteUrlKey === null) return null;
+    const repositoryKey = canonicalRepositoryKey(headContext.headRemoteUrlKey);
+    const linkedThreads = yield* threads
+      .getThreadsWithPullRequests()
+      .pipe(Effect.orElseSucceed(() => []));
+    const references = new Set(
+      linkedThreads.flatMap((thread) =>
+        (thread.pullRequests ?? []).flatMap((link) =>
+          link.source !== "stack-dismissed" &&
+          link.snapshot?.state === "open" &&
+          link.snapshot.headBranch === headContext.headBranch
+            ? [link.url]
+            : [],
+        ),
+      ),
+    );
+    if (references.size === 0) return null;
+    const provider = yield* sourceControlProvider(cwd);
+    for (const reference of references) {
+      const url = URL.parse(reference);
+      if (!url || !repositoryKey.startsWith(`${url.host.toLowerCase()}/`)) continue;
+      const pr = yield* provider.getChangeRequest({ cwd, reference }).pipe(
+        Effect.map(toPullRequestInfo),
+        Effect.orElseSucceed(() => null),
+      );
+      if (pr?.state !== "open" || pr.headRefName !== headContext.headBranch) continue;
+      const resolvedUrl = URL.parse(pr.url);
+      if (!resolvedUrl) continue;
+      const headKey = pr.headRepositoryNameWithOwner
+        ? canonicalRepositoryKey(
+            `${resolvedUrl.host}/${pr.headRepositoryNameWithOwner}`.toLowerCase(),
+          )
+        : pr.isCrossRepository === false
+          ? pullRequestRepositoryKey(pr.url)
+          : null;
+      if (headKey === repositoryKey) return pr;
+    }
+    return null;
+  });
+
   const findOpenPr = Effect.fn("findOpenPr")(function* (
     cwd: string,
     headContext: Pick<
       BranchHeadContext,
       | "headBranch"
+      | "headRemoteUrlKey"
       | "headSelectors"
       | "headRepositoryNameWithOwner"
       | "headRepositoryOwnerLogin"
@@ -1890,7 +1937,7 @@ export const make = Effect.gen(function* () {
       }
     }
 
-    return null;
+    return yield* findLinkedPr(cwd, headContext);
   });
 
   const findLatestPrForHeadContext = Effect.fn("findLatestPrForHeadContext")(function* (
@@ -1923,7 +1970,7 @@ export const make = Effect.gen(function* () {
     if (latestOpenPr) {
       return latestOpenPr;
     }
-    return parsed[0] ?? null;
+    return parsed[0] ?? (yield* findLinkedPr(cwd, headContext));
   });
   const buildCompletionToast = Effect.fn("buildCompletionToast")(function* (
     cwd: string,
