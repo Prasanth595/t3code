@@ -304,6 +304,7 @@ interface SubagentRequest {
   readonly topLevelThreadId: ThreadId;
   readonly request: PendingSubagentRequest;
   readonly requestId: RuntimeRequestId;
+  readonly changeOrder: number;
 }
 
 function resolveAgentAwarenessRelayPublishSnapshot(input: {
@@ -408,6 +409,7 @@ export const make = Effect.gen(function* () {
     new Map<ThreadId, { readonly identity: string; readonly updatedAt: string }>(),
   );
   const subagentRequests = new Map<ThreadId, SubagentRequest>();
+  let subagentRequestChangeOrder = 0;
   // Environments that never publish skip the extra shell read while paused.
   // Set by the first publish or by a startup snapshot, even an empty one.
   let hasPublished = false;
@@ -727,7 +729,12 @@ export const make = Effect.gen(function* () {
     const topLevelThreadId =
       previous?.topLevelThreadId ?? (yield* findTopLevelThreadId(threadShell));
     if (topLevelThreadId === null) return;
-    subagentRequests.set(threadId, { topLevelThreadId, request, requestId });
+    subagentRequests.set(threadId, {
+      topLevelThreadId,
+      request,
+      requestId,
+      changeOrder: ++subagentRequestChangeOrder,
+    });
     yield* enqueueTopLevelPublish(topLevelThreadId);
   });
 
@@ -742,6 +749,7 @@ export const make = Effect.gen(function* () {
   // unlinked, so each waiting child is re-read before its parent is published.
   const currentSubagentRequestFor = Effect.fnUntraced(function* (topLevelThreadId: ThreadId) {
     let pending: SubagentRequestAwareness | null = null;
+    let pendingChangeOrder = 0;
     for (const [childId, entry] of [...subagentRequests]) {
       if (entry.topLevelThreadId !== topLevelThreadId) continue;
       const child = yield* threads.getThreadShell(childId);
@@ -752,19 +760,29 @@ export const make = Effect.gen(function* () {
         subagentRequests.delete(childId);
         continue;
       }
+      let changeOrder = entry.changeOrder;
       if (request !== entry.request || pendingRequest.id !== entry.requestId) {
-        subagentRequests.set(childId, { ...entry, request, requestId: pendingRequest.id });
+        changeOrder = ++subagentRequestChangeOrder;
+        subagentRequests.set(childId, {
+          ...entry,
+          request,
+          requestId: pendingRequest.id,
+          changeOrder,
+        });
       }
       const current = { kind: request, requestId: pendingRequest.id, updatedAt: child.updatedAt };
       // Approval outranks input; within a kind the newest wait is the one to
-      // announce, so a second child asking still reaches the phone.
+      // announce. Request-change order breaks ties within one millisecond.
       if (
         pending === null ||
         (current.kind === "approval" && pending.kind !== "approval") ||
         (current.kind === pending.kind &&
-          DateTime.isGreaterThan(current.updatedAt, pending.updatedAt))
+          (DateTime.isGreaterThan(current.updatedAt, pending.updatedAt) ||
+            (current.updatedAt.epochMilliseconds === pending.updatedAt.epochMilliseconds &&
+              changeOrder > pendingChangeOrder)))
       ) {
         pending = current;
+        pendingChangeOrder = changeOrder;
       }
     }
     return pending;

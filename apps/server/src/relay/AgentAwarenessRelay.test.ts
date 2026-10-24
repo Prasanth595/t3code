@@ -443,6 +443,56 @@ describe("AgentAwarenessRelay", () => {
       }),
   );
 
+  it.effect("announces equal-timestamp child requests in request-change order", () =>
+    Effect.gen(function* () {
+      const secondChildId = ThreadId.make("relay-second-child-thread");
+      const shells = yield* Ref.make(
+        new Map<ThreadId, OrchestrationV2ThreadShell>([
+          [THREAD_ID, shell()],
+          [CHILD_THREAD_ID, waitingChild()],
+          [secondChildId, waitingChild({ id: secondChildId, pendingRuntimeRequest: null })],
+        ]),
+      );
+      const setRequest = (childId: ThreadId, requestId: string, updatedAt = NOW) =>
+        Ref.update(shells, (current) =>
+          new Map(current).set(
+            childId,
+            waitingChild({
+              id: childId,
+              updatedAt: DateTime.makeUnsafe(updatedAt),
+              pendingRuntimeRequest: {
+                id: RuntimeRequestId.make(requestId),
+                kind: "command",
+                createdAt: DateTime.makeUnsafe(updatedAt),
+              },
+            }),
+          ),
+        );
+      const { relay, publications } = yield* makeTestRelay({
+        readShell: (threadId) =>
+          Ref.get(shells).pipe(Effect.map((current) => current.get(threadId) ?? null)),
+      });
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      yield* setRequest(secondChildId, "second-child-request");
+      yield* relay.publishThread(secondChildId);
+      assert.equal(publications.length, 2);
+
+      yield* setRequest(CHILD_THREAD_ID, "first-child-replacement");
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      assert.equal(publications.length, 3);
+
+      yield* setRequest(secondChildId, "second-child-replacement");
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 4);
+      assert.equal(new Set(publications.map(({ state }) => state?.updatedAt)).size, 4);
+
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      yield* setRequest(CHILD_THREAD_ID, "older-request", "2026-09-04T11:59:00.000Z");
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      assert.equal(publications.length, 4);
+    }),
+  );
+
   it.effect(
     "does not republish a parent waiting on its own request when a child's comes and goes",
     () =>
