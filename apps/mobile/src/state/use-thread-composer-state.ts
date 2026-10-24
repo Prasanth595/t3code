@@ -728,7 +728,7 @@ export function useThreadComposerState() {
         // at the send limit, which would silently drop this message's images if
         // the user attached new ones while the write was in flight.
         void mergeComposerDraftContent(threadKey, {
-          text,
+          text: draft.text,
           context: draft.context,
           attachments: [],
         });
