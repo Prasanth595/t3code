@@ -695,6 +695,52 @@ it.effect("keeps scanning after the caller is interrupted and shares that scan",
   );
 });
 
+it.effect.each(["Zed Nightly", "Zed Preview"])(
+  "launches stable Zed on Windows when %s comes first on PATH",
+  (channel) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-zed-channels-" });
+      const prereleaseBin = path.join(root, "Programs", channel, "bin");
+      // "preview" outside the install's own folder name does not mark a channel.
+      const stableBin = path.join(root, "Users", "preview", "Programs", "Zed", "bin");
+      for (const dir of [prereleaseBin, stableBin]) {
+        yield* fs.makeDirectory(dir, { recursive: true });
+        yield* fs.writeFileString(path.join(dir, "zed.EXE"), "");
+      }
+      const env = { PATH: `${prereleaseBin};${stableBin}`, PATHEXT: ".COM;.EXE;.BAT;.CMD" };
+
+      const launchZed = Effect.gen(function* () {
+        let spawned: ChildProcess.StandardCommand | undefined;
+        yield* Effect.gen(function* () {
+          const launcher = yield* ExternalLauncher.ExternalLauncher;
+          yield* launcher.launchEditor({ editor: "zed", cwd: "C:\\workspace" });
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              platform: "win32",
+              env,
+              onSpawn: (command) => {
+                spawned = command;
+              },
+            }),
+          ),
+        );
+        assert.ok(spawned);
+        return spawned;
+      });
+
+      const stable = yield* launchZed;
+      assert.equal(stable.command, path.join(stableBin, "zed.EXE"));
+      assert.deepEqual(stable.args, ["C:\\workspace"]);
+
+      // With only the prerelease install left, it still opens by name.
+      yield* fs.remove(path.join(stableBin, "zed.EXE"));
+      assert.equal((yield* launchZed).command, "zed");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 const launchWindowsShimEditor = (cwd: string) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;

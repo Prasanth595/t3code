@@ -5,9 +5,20 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import * as HostProcess from "./HostProcess.ts";
-import { isCommandAvailable } from "./shell.ts";
+import { isCommandAvailable, resolveCommandPaths } from "./shell.ts";
 
 type Editor = (typeof EDITORS)[number];
+
+// On Windows, Zed's stable, Preview and Nightly channels each install a `zed`
+// CLI in their own folder, so PATH order alone can open a prerelease build
+// when the user picked "Zed". A prerelease install is one path component
+// naming both Zed and the channel (`Zed Nightly`, `Zed Preview`); a folder
+// called "preview" elsewhere in the path does not count.
+const isPrereleaseZedPath = (filePath: string) =>
+  filePath.split(/[\\/]/).some((component) => {
+    const name = component.toLowerCase();
+    return name.includes("zed") && (name.includes("nightly") || name.includes("preview"));
+  });
 
 const installNames: Partial<Record<Editor["id"], ReadonlyArray<string>>> = {
   vscode: ["Visual Studio Code"],
@@ -37,7 +48,22 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   // OpenZFS also installs a `zed` executable. Prefer the macOS editor bundle
   // so a PATH entry for the ZFS Event Daemon cannot take over editor opens.
   const preferBundle = platform === "darwin" && editor.id === "zed";
-  if (!preferBundle) {
+  if (platform === "win32" && editor.id === "zed") {
+    const installs: Array<{ readonly command: string; readonly resolved: string }> = [];
+    for (const command of editor.commands) {
+      for (const resolved of yield* resolveCommandPaths(command, { env })) {
+        installs.push({ command, resolved });
+      }
+    }
+    const [first] = installs;
+    const preferred = installs.find((install) => !isPrereleaseZedPath(install.resolved)) ?? first;
+    // The first match still launches by name; a later stable install launches
+    // by absolute path.
+    if (preferred) {
+      const command = preferred === first ? preferred.command : preferred.resolved;
+      return Option.some({ command, baseArgs });
+    }
+  } else if (!preferBundle) {
     for (const command of editor.commands) {
       if (yield* isCommandAvailable(command, { env })) return Option.some({ command, baseArgs });
     }
