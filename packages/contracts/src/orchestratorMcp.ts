@@ -125,6 +125,12 @@ export const OrchestratorMcpTarget = Schema.Struct({
         "With `environmentId`: its project to run in. Default: the one with this project's repository.",
     }),
   ),
+  inheritOptions: Schema.optional(
+    Schema.Literal(false).annotate({
+      description:
+        "false: use exactly these options, without inheriting the caller's. Targets T3 resolves for review and restart carry it, so caller changes cannot alter an approved assignment.",
+    }),
+  ),
 });
 export type OrchestratorMcpTarget = typeof OrchestratorMcpTarget.Type;
 
