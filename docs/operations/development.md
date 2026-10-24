@@ -69,6 +69,7 @@ Add `--browser` to open a browser automatically.
 
 Linked worktrees default to their own `.t3/userdata`, even when `T3CODE_HOME` is set.
 The main checkout defaults to `~/.t3/dev`. An explicit `--home-dir` wins in both cases.
+`dev:desktop` keeps its Electron profile, including renderer storage, in that directory's `electron` folder.
 The first start in a worktree seeds its empty database from a read-only copy of
 `~/.t3/userdata`; `--no-seed` or `T3CODE_DEV_SEED=0` skips that.
 Never run a development server against the live `~/.t3/userdata`.
