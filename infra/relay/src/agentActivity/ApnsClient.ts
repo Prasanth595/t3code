@@ -8,6 +8,7 @@ import * as Headers from "effect/http/Headers";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { ApnsEnvironment, type ApnsCredentials } from "../Config.ts";
+import { MAX_SUMMARY_TEXT_LENGTH, truncateText } from "./agentActivityPayloads.ts";
 import type { ApnsLiveActivityAlert, ApnsNotificationPayload } from "./apnsDeliveryJobs.ts";
 import type { ApnsJwtEncodingError, ApnsJwtSigningError } from "./apnsJwt.ts";
 import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
@@ -25,6 +26,8 @@ const DISMISS_AFTER_SECONDS = 5 * 60;
 // frozen on the lock screen until dismissal — get it off quickly instead of
 // parading stale state for the full window.
 const CONTENTLESS_DISMISS_AFTER_SECONDS = 15;
+const MAX_LIVE_ACTIVITY_PAYLOAD_BYTES = 4096;
+const MIN_FITTED_TITLE_LENGTH = 8;
 
 const ApnsLiveActivityEventSchema = Schema.Literals(["start", "update", "end"]);
 export type ApnsLiveActivityEvent = typeof ApnsLiveActivityEventSchema.Type;
@@ -116,7 +119,40 @@ function liveActivityAlertPayload(alert: ApnsLiveActivityAlert) {
   };
 }
 
+// The sanitizer caps titles by characters, so five rows of multibyte titles
+// still overflow APNs' 4 KB limit and every update is rejected. Like
+// fitFcmData on Android, shorten titles until the encoded payload fits; the
+// card clips each title to one line anyway.
 function makeLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLiveActivityRequest {
+  let request = buildLiveActivityRequest(input);
+  const state = input.state;
+  let maxTitleLength = MAX_SUMMARY_TEXT_LENGTH;
+  while (
+    state !== null &&
+    maxTitleLength > MIN_FITTED_TITLE_LENGTH &&
+    payloadByteLength(request.payload) > MAX_LIVE_ACTIVITY_PAYLOAD_BYTES
+  ) {
+    maxTitleLength = Math.floor(maxTitleLength * 0.8);
+    request = buildLiveActivityRequest({
+      ...input,
+      state: {
+        ...state,
+        activities: state.activities.map((row) => ({
+          ...row,
+          projectTitle: truncateText(row.projectTitle, maxTitleLength),
+          threadTitle: truncateText(row.threadTitle, maxTitleLength),
+        })),
+      },
+    });
+  }
+  return request;
+}
+
+function payloadByteLength(payload: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(payload)).byteLength;
+}
+
+function buildLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLiveActivityRequest {
   const timestamp = input.nowEpochSeconds;
   if (input.event === "end") {
     return {
