@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveLinkedMessageStep } from "./thread-feed-message-link";
+import { ScheduledTaskId } from "@t3tools/contracts";
+import {
+  linkedMessageFoldRowId,
+  resolveLinkedMessageStep,
+  resolveMessageCopyContent,
+} from "./thread-feed-message-link";
 
 const absent = {
   presented: false,
   inFeed: false,
   foldedRunId: null,
+  foldedRowId: null,
   synced: true,
   connectionPhase: "connected" as const,
   syncError: null,
@@ -117,4 +123,58 @@ it.each(["empty", "cached"] as const)(
 );
 it("reports a deleted thread's target missing", () => {
   expect(resolveLinkedMessageStep({ ...absent, syncStatus: "deleted" })).toBe("missing");
+});
+
+it.each(["agent", "automation"] as const)(
+  "reveals a collapsed %s message before scrolling to its body",
+  (attribution) => {
+    const message = {
+      id: "message-1",
+      role: "user",
+      text: "Full message body",
+      createdBy: "agent" as const,
+      ...(attribution === "automation" ? { scheduledTaskId: ScheduledTaskId.make("task-1") } : {}),
+    };
+    const foldedRowId = linkedMessageFoldRowId(message, {});
+    expect(foldedRowId).toBe(`${attribution}:message-1`);
+    const target = { ...absent, presented: true, inFeed: true, foldedRowId };
+    expect(resolveLinkedMessageStep(target)).toBe("expand-row");
+    expect(resolveLinkedMessageStep({ ...target, syncStatus: "cached" })).toBe("wait");
+    expect(
+      resolveLinkedMessageStep({
+        ...target,
+        foldedRowId: linkedMessageFoldRowId(message, { [`${attribution}:message-1`]: true }),
+      }),
+    ).toBe("scroll");
+  },
+);
+
+it("keeps ordinary user, server, and assistant messages unfolded", () => {
+  const message = { id: "message-1", role: "user", text: "Full message body" };
+  expect(linkedMessageFoldRowId(message, {})).toBeNull();
+  expect(
+    linkedMessageFoldRowId({ ...message, createdBy: "agent", creationSource: "server" }, {}),
+  ).toBeNull();
+  expect(
+    linkedMessageFoldRowId({ ...message, role: "assistant", createdBy: "agent" }, {}),
+  ).toBeNull();
+});
+
+it("copies an attachment-only message's URL instead of empty text", () => {
+  const messageLink = {
+    environmentId: "environment-1",
+    threadId: "thread-1",
+    messageId: "message-1",
+  };
+  for (const text of ["", " \n "]) {
+    expect(resolveMessageCopyContent(text, messageLink)).toEqual({
+      kind: "message-link",
+      text: "https://app.t3.codes/environment-1/thread-1?message=message-1",
+    });
+  }
+  expect(resolveMessageCopyContent("", null)).toBeNull();
+  expect(resolveMessageCopyContent("  Message body  ", messageLink)).toEqual({
+    kind: "text",
+    text: "  Message body  ",
+  });
 });

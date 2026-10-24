@@ -229,7 +229,12 @@ import {
   WORK_GROUP_TOGGLE_HEIGHT,
 } from "./thread-work-log";
 import { appendPendingThreadMessages, type PendingThreadFeedEntry } from "./pending-thread-feed";
-import { persistedMessageLink, resolveLinkedMessageStep } from "./thread-feed-message-link";
+import {
+  linkedMessageFoldRowId,
+  persistedMessageLink,
+  resolveLinkedMessageStep,
+  resolveMessageCopyContent,
+} from "./thread-feed-message-link";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
 import { htmlRenderFrameHeight } from "@t3tools/shared/htmlRender";
@@ -405,19 +410,22 @@ function MessageCopyButton(props: {
   readonly isPrompt: boolean;
   readonly messageLink: Parameters<typeof copyMessageLink>[0] | null;
 }) {
+  const content = resolveMessageCopyContent(props.text, props.messageLink);
+  if (content === null) return null;
   const button = (
     <CopyTextButton
-      accessibilityLabel="Copy message"
-      text={props.text}
-      onCopy={props.onCopy}
+      accessibilityLabel={content.kind === "message-link" ? "Copy message link" : "Copy message"}
+      text={content.text}
+      onCopy={content.kind === "text" ? props.onCopy : undefined}
       tintColor={props.tintColor}
       buttonSize={28}
       iconSize={13}
     />
   );
-  const promptLinkText = props.isPrompt
-    ? replaceComposerContextReferences(props.text, (reference) => reference.label)
-    : null;
+  const promptLinkText =
+    props.isPrompt && content.kind === "text"
+      ? replaceComposerContextReferences(props.text, (reference) => reference.label)
+      : null;
   const actions = [
     ...(props.messageLink ? [COPY_MESSAGE_LINK_ACTION] : []),
     ...(promptLinkText !== null && promptLinkText.length <= PROMPT_LINK_MAX_PROMPT_LENGTH
@@ -1660,27 +1668,25 @@ function renderFeedEntry(
                   <SymbolView name="pencil" size={14} tintColor={iconSubtleColor} />
                 </Pressable>
               ) : null}
-              {presentation.text.trim().length > 0 ? (
-                <MessageCopyButton
-                  isPrompt
-                  messageLink={persistedMessageLink(
-                    { environmentId: props.environmentId, threadId: props.threadId },
-                    message,
-                  )}
-                  text={presentation.text}
-                  onCopy={
-                    message.context
-                      ? () =>
-                          writeComposerContextClipboard(message.text, {
-                            version: 1,
-                            source: { environmentId: props.environmentId, messageId: message.id },
-                            records: message.context!.records,
-                          })
-                      : undefined
-                  }
-                  tintColor={iconSubtleColor}
-                />
-              ) : null}
+              <MessageCopyButton
+                isPrompt
+                messageLink={persistedMessageLink(
+                  { environmentId: props.environmentId, threadId: props.threadId },
+                  message,
+                )}
+                text={presentation.text}
+                onCopy={
+                  message.context
+                    ? () =>
+                        writeComposerContextClipboard(message.text, {
+                          version: 1,
+                          source: { environmentId: props.environmentId, messageId: message.id },
+                          records: message.context!.records,
+                        })
+                    : undefined
+                }
+                tintColor={iconSubtleColor}
+              />
             </View>
           ) : null}
         </Animated.View>
@@ -2783,11 +2789,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           )
         : null;
     const runId = foldRunId !== null && !expandedTurnIds.has(foldRunId) ? foldRunId : null;
+    const target = presentedFeed[index];
+    const foldedRowId =
+      target?.type === "message" ? linkedMessageFoldRowId(target.message, expandedWorkRows) : null;
     const ownLoad = linkedMessageLoad?.messageId === linkedMessageId ? linkedMessageLoad : null;
     const step = resolveLinkedMessageStep({
       presented: index >= 0,
       inFeed,
       foldedRunId: runId,
+      foldedRowId,
       syncStatus: props.threadSyncStatus,
       syncError: props.threadSyncError ?? null,
       connectionPhase: props.connectionPhase,
@@ -2813,6 +2823,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       setInteractionState((current) => ({
         ...current,
         expandedTurnIds: new Set(current.expandedTurnIds).add(runId),
+      }));
+      return;
+    }
+    if (step === "expand-row" && foldedRowId !== null) {
+      setInteractionState((current) => ({
+        ...current,
+        expandedWorkRows: { ...current.expandedWorkRows, [foldedRowId]: true },
       }));
       return;
     }
@@ -2859,6 +2876,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   }, [
     anchorTopInset,
     expandedTurnIds,
+    expandedWorkRows,
     linkedMessageId,
     linkedMessageLoad,
     finishLinkedMessage,

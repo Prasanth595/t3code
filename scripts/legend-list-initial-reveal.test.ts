@@ -38,6 +38,8 @@ function createList(bundle: string) {
     didFinishInitialScroll: true,
     didLoad: false,
     didUserDrag: false,
+    insetEndSettleWatchdogActive: false,
+    insetEndRevealHold: false,
     scrollLength: 800,
     scroll: 400,
     lastNativeScroll: 200 as number | undefined,
@@ -185,7 +187,11 @@ describe.each(["react-native.js", "react-native.mjs"])(
           expect(list.state.initialScroll).toBeUndefined();
         }
 
-        await list.scrollToMessage();
+        const scroll = list.scrollToMessage();
+        expect(list.state.insetEndSettleWatchdogActive).toBe(false);
+        expect(list.state.insetEndRevealHold).toBe(false);
+        expect(list.ready()).toBe(true);
+        await scroll;
         list.advance(150);
 
         expect(list.ready()).toBe(true);

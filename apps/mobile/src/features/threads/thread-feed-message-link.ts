@@ -1,11 +1,33 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import { buildThreadMessageLink } from "@t3tools/shared/promptLinks";
 import type { ThreadFeedMessage } from "../../lib/threadActivity";
 
 /** Local feedback and anchored creation prompts have no persisted server turn item. */
 export function persistedMessageLink(threadRef: ScopedThreadRef, message: ThreadFeedMessage) {
   return message.projectedItem === undefined ? null : { ...threadRef, messageId: message.id };
+}
+
+export function resolveMessageCopyContent(
+  text: string,
+  messageLink: Parameters<typeof buildThreadMessageLink>[0] | null,
+) {
+  if (text.trim().length > 0) return { kind: "text" as const, text };
+  return messageLink === null
+    ? null
+    : { kind: "message-link" as const, text: buildThreadMessageLink(messageLink) };
+}
+
+export function linkedMessageFoldRowId(
+  message: Parameters<typeof resolveUserMessagePresentation>[0] & { readonly id: string },
+  expandedRows: Readonly<Record<string, boolean>>,
+) {
+  const { attribution } = resolveUserMessagePresentation(message);
+  if (attribution !== "agent" && attribution !== "automation") return null;
+  const rowId = `${attribution}:${message.id}`;
+  return expandedRows[rowId] ? null : rowId;
 }
 
 /**
@@ -19,6 +41,7 @@ export function resolveLinkedMessageStep(input: {
   readonly inFeed: boolean;
   /** The collapsed turn that hides the message, when one does. */
   readonly foldedRunId: string | null;
+  readonly foldedRowId: string | null;
   /** The thread has caught up with the server, so a message it lacks is older history. */
   readonly synced?: boolean;
   readonly syncStatus?: EnvironmentThreadStatus;
@@ -30,7 +53,7 @@ export function resolveLinkedMessageStep(input: {
   readonly hasMoreHistory: boolean;
   /** The last load through the message finished without changing the feed. */
   readonly lastLoadChangedNothing: boolean;
-}): "scroll" | "expand" | "wait" | "load" | "missing" | "failed" {
+}): "scroll" | "expand" | "expand-row" | "wait" | "load" | "missing" | "failed" {
   // A sync snapshot or history page can replace a cached row before scrolling.
   if (input.syncStatus === "deleted") return "missing";
   if (input.historyLoading) return "wait";
@@ -49,6 +72,7 @@ export function resolveLinkedMessageStep(input: {
   }
   // An omitted status retains the standalone feed's previous ready default.
   if (input.synced === false) return "wait";
+  if (input.foldedRowId !== null) return "expand-row";
   if (input.presented) return "scroll";
   if (input.foldedRunId !== null) return "expand";
   // Loaded but hidden by something other than a fold: more history cannot reveal it.
