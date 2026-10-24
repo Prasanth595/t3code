@@ -47,6 +47,7 @@ import {
   MessageRejectedError,
   ThreadNotFoundError,
   isLaunchBranch,
+  launchBranchOf,
   type FactorySessions,
   type RunStatus,
   type ThreadStatus,
@@ -662,7 +663,12 @@ export const advance = (
         return { kind: "ended" } as const;
       }
       const at = progressFrom("advance", seen, "triage");
+      // The thread's status once it is read below: where the session's pull request would be.
+      let where:
+        | { readonly branch: string | null; readonly worktreePath: string | null }
+        | undefined;
       const stuck = Effect.fn("RunnerBuilding.stuck")(function* (code: string, stop: Stop) {
+        yield* recordLeftPullRequest(ctx, out, issue, seen, where);
         const opened = yield* out.open;
         yield* goStuck(ctx, issue, opened, at, code, stop);
         return stuckOutcome(stop);
@@ -670,7 +676,10 @@ export const advance = (
       // A stuck decision an older version recorded for a run it left in `needs-info` is not
       // carried out: that run is ended below and the issue stays `needs-info`.
       if (seen.stuck !== null && at.state !== "needs-info") {
-        return yield* stuck("stuck-resumed", { reason: seen.stuck });
+        // Carried out, not decided again: nothing is looked up for it.
+        const stop: Stop = { reason: seen.stuck };
+        yield* goStuck(ctx, issue, yield* out.open, at, "stuck-resumed", stop);
+        return stuckOutcome(stop);
       }
       // `stop-run.sh` ended the run on purpose. The thread is archived, or found gone, by the
       // stuck path and its status is never read: whatever the session is doing, the run goes
@@ -732,6 +741,7 @@ export const advance = (
       // A thread T3 no longer has is not stuck by itself: the pass decides (see `interrupted`).
       const status = yield* threadStatus(ctx, threadId);
       if (status === null) return { kind: "ended-badly", what: "thread-gone" } as const;
+      where = status;
       const message = status.lastAssistantMessage;
       const result = parseSessionResult(ctx.repo, message ?? undefined);
       // A `session_interrupted` line with no `interruption-sent <n>` after it is a resume cut short
@@ -762,7 +772,6 @@ export const advance = (
         const sent = yield* sendReminder(ctx, out, run, threadId, k);
         if (sent === "gone") return yield* stuck("thread-gone", stopOf(THREAD_GONE, null));
         if (sent !== "sent") {
-          yield* recordLeftPullRequest(ctx, out, issue, seen, status);
           return yield* stuck("session-stuck", refusedStop(result, message, sent));
         }
         return { kind: "reminded" } as const;
@@ -882,7 +891,7 @@ export const advance = (
           return { kind: "ready-for-gate", pr, prUrl } as const;
         }
         case "needs-info": {
-          yield* recordLeftPullRequest(ctx, out, issue, seen, status);
+          yield* recordLeftPullRequest(ctx, out, issue, seen, where);
           const prepared = prepareSessionText(result.questions);
           const raised = yield* Effect.fromResult(
             transition(at.state, { kind: "questions-raised", questions: prepared }),
@@ -902,7 +911,6 @@ export const advance = (
           if (result.reason === SAID_STUCK && saysWrongAccount(result.sessionText)) {
             return yield* stuck("session-wrong-account", stopOf(WRONG_ACCOUNT, result.sessionText));
           }
-          yield* recordLeftPullRequest(ctx, out, issue, seen, status);
           return yield* stuck("session-stuck", stopOf(result.reason, result.sessionText));
         }
       }
@@ -947,29 +955,32 @@ export const earlierAttempts = Effect.fn("RunnerBuilding.earlierAttempts")(funct
 });
 
 /**
- * Records the pull request a session leaves open on its branch when it stops or asks questions,
- * as `pr_opened`, so the next attempt continues it instead of opening another (`start`'s
- * `resumeFrom`). GitHub is asked by branch (`openPullRequestsOnHead`), never by the pull request's
- * text, so a run on any base is found: the session's branch, and the `t3/<hex>` branch T3 made
- * its worktree on, which the session may have pushed when T3 renamed the thread's. Only the
- * factory's own, in this repo, onto the run's base, on a branch a session can be told to push
- * to. Written once per pull request, before anything else the exit writes, so a read that fails
- * leaves nothing written and the next pass reads again.
+ * Records the pull request a session leaves open on its branch when its run ends short of the
+ * gate (it stops, asks questions, ends badly, loses its thread, is stopped by hand or by the
+ * watch, or passes its time limit), as `pr_opened`, so the next attempt continues it instead of
+ * opening another (`start`'s `resumeFrom`). GitHub is asked by branch (`openPullRequestsOnHead`),
+ * never by the pull request's text, so a run on any base is found: the session's branch, and the
+ * `t3/<hex>` branch T3 made its worktree on, which the session may have pushed when T3 renamed
+ * the thread's. `where` is the thread's status when it was read, else what the ledger last
+ * recorded (`Seen.lastBranch`, `Seen.worktree`). Only the factory's own, in this repo, onto the
+ * run's base, on a branch a session can be told to push to. Written once per pull request,
+ * before anything else the exit writes, so a read that fails leaves nothing written and the next
+ * pass, which takes the same exit again, reads again.
  */
 const recordLeftPullRequest = Effect.fn("RunnerBuilding.recordLeftPullRequest")(function* (
   ctx: BuildingContext,
   out: Out,
   issue: number,
   seen: Seen,
-  where: { readonly branch: string | null; readonly worktreePath: string | null },
+  where: { readonly branch: string | null; readonly worktreePath: string | null } = {
+    branch: seen.lastBranch,
+    worktreePath: seen.worktree,
+  },
 ) {
   const heads: Array<string> = [];
   if (where.branch !== null) heads.push(where.branch);
-  const folder = where.worktreePath?.split(/[\\/]/).pop();
-  if (folder !== undefined && folder.startsWith("t3-")) {
-    const launch = `t3/${folder.slice("t3-".length)}`;
-    if (launch !== where.branch && isLaunchBranch(launch, where.worktreePath)) heads.push(launch);
-  }
+  const launch = launchBranchOf(where.worktreePath);
+  if (launch !== null && launch !== where.branch) heads.push(launch);
   for (const head of heads) {
     if (!isSafeBranchName(head)) continue;
     const pulls = yield* ctx.tracker.openPullRequestsOnHead(head);
@@ -1147,7 +1158,10 @@ export const watch = Effect.fn("RunnerBuilding.watch")(function* (
   const at = progressFrom("watch", seen, "building");
   const stop: Stop = { reason: why.reason };
   yield* withLedger(ctx, run, (out) =>
-    Effect.flatMap(out.open, (opened) => goStuck(ctx, issue, opened, at, why.code, stop)),
+    Effect.gen(function* () {
+      yield* recordLeftPullRequest(ctx, out, issue, seen);
+      yield* goStuck(ctx, issue, yield* out.open, at, why.code, stop);
+    }),
   );
   return { kind: "stopped", reason: recordedReason(stop) } as const;
 });
@@ -1509,7 +1523,9 @@ const branchOf = (ctx: BuildingContext, threadId: string): Effect.Effect<string 
  * last entered `building` (`pr-reported`): the session's work is done and waits for the gate, and
  * that wait is not the build's time. So is a run whose launch was sent with no session recorded
  * (`launch-unrecorded`): the session may be running, and only `resume` can name it, so the call
- * after `resume` stops it with its thread. A run of another repo is an error. There is no loop or
+ * after `resume` stops it with its thread. A run of another repo is an error. The pull request
+ * the session leaves is recorded before the stop (`recordLeftPullRequest`), so a GitHub read that
+ * fails leaves the run working one pass longer, and the next call stops it. There is no loop or
  * timer: the caller decides how often to call it, and it should call it first for a run in
  * `triage` or `building`, and skip the run's other steps when it stops.
  */
@@ -1555,8 +1571,8 @@ export const timeLimit = Effect.fn("RunnerBuilding.timeLimit")(function* (
     Effect.gen(function* () {
       // The pull request the session leaves on its branch, for the next attempt to continue.
       yield* recordLeftPullRequest(ctx, out, issueOf(run), seen, {
-        branch: branch ?? null,
-        worktreePath: null,
+        branch: branch ?? seen.lastBranch,
+        worktreePath: seen.worktree,
       });
       yield* goStuck(ctx, issueOf(run), yield* out.open, at, "time-limit", stop);
     }),
@@ -1589,9 +1605,11 @@ const stuckEnded = (
   seen: Seen,
   code: string,
   stop: Stop,
+  where?: { readonly branch: string | null; readonly worktreePath: string | null },
 ): Effect.Effect<InterruptOutcome, BuildingError> =>
   withLedger(ctx, run, (out) =>
     Effect.gen(function* () {
+      yield* recordLeftPullRequest(ctx, out, issueOf(run), seen, where);
       const opened = yield* out.open;
       yield* goStuck(
         ctx,
@@ -1731,6 +1749,7 @@ export const interrupted = Effect.fn("RunnerBuilding.interrupted")(function* (
       seen,
       "session-ended-badly",
       stopOf(`the session run ended as ${ended.name}`, message),
+      status,
     );
   }
   const n = used + 1;

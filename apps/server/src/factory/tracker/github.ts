@@ -1471,8 +1471,8 @@ export const makeGitHub = (options: GitHubOptions) => {
   });
 
   /**
-   * The open pull requests from the branch `head` of this repo (`gh pr list --head`), whatever
-   * their base and whoever opened them. A name that is not a plain ref name (see `isPlainRefName`
+   * The open pull requests from a branch named `head` (`gh pr list --head`), forks included,
+   * whatever their base and whoever opened them: the caller decides which is the factory's own. A name that is not a plain ref name (see `isPlainRefName`
    * in the runner: not empty, not an option, no whitespace or `..`) is refused before the call.
    */
   const openPullRequestsOnHead = Effect.fn("GitHub.openPullRequestsOnHead")(function* (

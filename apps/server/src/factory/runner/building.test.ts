@@ -2878,7 +2878,8 @@ describe("watch and timeLimit: the end of a run", () => {
       rig.world.textCheck = "changed";
       closeIssue(rig);
       assert.strictEqual((yield* watch(rig.ctx, rig.run)).kind, "stopped");
-      assert.deepStrictEqual(rig.reads, []);
+      // The stop looks for a pull request on the branch; the issue itself is not read.
+      assert.deepStrictEqual(rig.reads, ["openPullRequestsOnHead t3code/abc"]);
     }),
   );
 
