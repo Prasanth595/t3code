@@ -64,7 +64,27 @@ export class EventSinkStreamError extends Schema.TaggedError<EventSinkStreamErro
   }
 }
 
-export const EventSinkV2Error = Schema.Union([EventSinkWriteError, EventSinkStreamError]);
+// A respond command plans from a pending read outside the provider ingestor's
+// writes, so terminal normalization can cancel the request before it commits.
+export class EventSinkRuntimeRequestNotPendingError extends Schema.TaggedError<EventSinkRuntimeRequestNotPendingError>()(
+  "EventSinkRuntimeRequestNotPendingError",
+  {
+    requestId: RuntimeRequestId,
+    status: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Runtime request ${this.requestId} is ${this.status}.`;
+  }
+}
+
+const isRuntimeRequestNotPending = Schema.is(EventSinkRuntimeRequestNotPendingError);
+
+export const EventSinkV2Error = Schema.Union([
+  EventSinkWriteError,
+  EventSinkStreamError,
+  EventSinkRuntimeRequestNotPendingError,
+]);
 export type EventSinkV2Error = typeof EventSinkV2Error.Type;
 
 export interface EventSinkV2Shape {
@@ -658,6 +678,24 @@ const layerBase: Layer.Layer<
             const existing = yield* existingCommandResult(input.commandId);
             return { ...existing, committed: false as const, cancelledEffectIds: [] };
           }
+          for (const event of input.events) {
+            if (event.type !== "runtime-request.updated" || event.payload.status !== "resolved")
+              continue;
+            const current = yield* projectionStore.getRuntimeRequest(
+              event.threadId,
+              event.payload.id,
+            );
+            if (
+              current?.status !== "pending" ||
+              current.kind !== event.payload.kind ||
+              current.providerTurnId !== event.payload.providerTurnId
+            ) {
+              return yield* new EventSinkRuntimeRequestNotPendingError({
+                requestId: event.payload.id,
+                status: current?.status ?? "missing",
+              });
+            }
+          }
 
           const normalized = yield* normalizeEvents(input.events);
           const storedEvents = yield* eventStore.append({
@@ -928,13 +966,14 @@ const layerBase: Layer.Layer<
         ),
       commitCommand: (input) =>
         commitCommandEffect(input).pipe(
-          Effect.mapError(
-            (cause) =>
-              new EventSinkWriteError({
-                commandId: input.commandId,
-                eventCount: input.events.length,
-                cause,
-              }),
+          Effect.mapError((cause) =>
+            isRuntimeRequestNotPending(cause)
+              ? cause
+              : new EventSinkWriteError({
+                  commandId: input.commandId,
+                  eventCount: input.events.length,
+                  cause,
+                }),
           ),
         ),
       commitRejectedCommand: (input) =>

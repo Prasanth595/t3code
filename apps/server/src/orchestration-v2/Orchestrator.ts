@@ -11745,7 +11745,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             new OrchestratorDispatchError({
               commandId: command.commandId,
               commandType: command.type,
-              cause,
+              cause:
+                cause._tag === "EventSinkRuntimeRequestNotPendingError" ? cause.message : cause,
             }),
         ),
       );
