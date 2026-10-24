@@ -14,14 +14,19 @@ vi.mock(import("../state/assets"), () => ({
   },
 }));
 
-it("only activates the favicon resource after removing a custom icon", async () => {
-  const registry = AtomRegistry.make();
+function setup() {
   const activeResources = new Set<string>();
   state.favicon = Atom.make((get) => {
     activeResources.add("favicon");
     get.addFinalizer(() => activeResources.delete("favicon"));
     return null;
   });
+  return { activeResources };
+}
+
+it("only activates the favicon resource after removing a custom icon", async () => {
+  const { activeResources } = setup();
+  const registry = AtomRegistry.make();
   const project: ProjectFaviconProject = {
     environmentId: EnvironmentId.make("test"),
     workspaceRoot: "/project",
