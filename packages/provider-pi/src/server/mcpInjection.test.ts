@@ -33,13 +33,14 @@ describe("pi T3 MCP injection", () => {
       environment: { PATH: "/usr/bin" },
       mcpSession,
       extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+      lifecycleExtensionPath: "/tmp/cache/pi-t3-lifecycle-extension.ts",
       runtimeMode: "approval-required",
     });
     assert.deepEqual(launch.args, [
       "--mode",
       "rpc",
       "--extension",
-      "/tmp/cache/pi-t3-mcp-extension.ts",
+      "/tmp/cache/pi-t3-lifecycle-extension.ts",
       "--extension",
       "/home/user/.pi/agent/extensions/demo.ts",
       "--session-dir",
@@ -53,6 +54,8 @@ describe("pi T3 MCP injection", () => {
       "--name",
       "-review",
       "--extension-flag=kept",
+      "--extension",
+      "/tmp/cache/pi-t3-mcp-extension.ts",
     ]);
     assert.notInclude(launch.args, "--no-extensions");
     assert.equal(launch.env[T3_MCP_URL_ENV], "http://127.0.0.1:43123/mcp");
@@ -69,11 +72,14 @@ describe("pi T3 MCP injection", () => {
       },
       mcpSession: undefined,
       extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+      lifecycleExtensionPath: "/tmp/cache/pi-t3-lifecycle-extension.ts",
       runtimeMode: "auto-accept-edits",
     });
     assert.deepEqual(permissionOnly.args, [
       "--mode",
       "rpc",
+      "--extension",
+      "/tmp/cache/pi-t3-lifecycle-extension.ts",
       "--extension",
       "/tmp/cache/pi-t3-mcp-extension.ts",
     ]);
@@ -87,18 +93,24 @@ describe("pi T3 MCP injection", () => {
     );
   });
 
-  it("loads the lifecycle bridge first when it is also in user launch args", () => {
+  it("loads only the lifecycle markers ahead of user extensions", () => {
     const bridge = "/tmp/cache/pi-t3-mcp-extension.ts";
+    const lifecycle = "/tmp/cache/pi-t3-lifecycle-extension.ts";
     const launch = buildPiRpcLaunch({
-      launchArgs: ["-e", "/user/extension.ts", "--extension", bridge],
+      launchArgs: ["-e", bridge, "-e", "/user/extension.ts"],
       environment: {},
       mcpSession: undefined,
       extensionPath: bridge,
+      lifecycleExtensionPath: lifecycle,
     });
+    // The bridge keeps the user's chosen position, so tool and permission
+    // registration order is unchanged by the lifecycle sentinel.
     assert.deepEqual(launch.args, [
       "--mode",
       "rpc",
       "--extension",
+      lifecycle,
+      "-e",
       bridge,
       "-e",
       "/user/extension.ts",

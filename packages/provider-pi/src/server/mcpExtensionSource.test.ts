@@ -6,7 +6,12 @@ import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
 import { assert, describe, it } from "@effect/vitest";
 
-import { PI_T3_MCP_EXTENSION_SOURCE, PI_T3_SESSION_END_STATUS_KEY } from "./mcpExtensionSource.ts";
+import {
+  PI_T3_LIFECYCLE_EXTENSION_SOURCE,
+  PI_T3_MCP_EXTENSION_SOURCE,
+  PI_T3_SESSION_END_STATUS_KEY,
+  PI_T3_SESSION_START_STATUS_KEY,
+} from "./mcpExtensionSource.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 
 type RequestHook = (
@@ -78,33 +83,62 @@ describe("Pi orchestration prompt section", () => {
 });
 
 describe("Pi session teardown", () => {
-  it.each(["MCP", "permission-only"])(
-    "marks shutdown and replacement start with %s",
-    async (mode) => {
-      const handlers = mode === "MCP" ? (await loadMcpBridge()).handlers : await loadHooks();
-      const statuses: Array<readonly [string, string | undefined]> = [];
-      const ui = {
-        notify: () => undefined,
-        setStatus: (key: string, text: string | undefined) => statuses.push([key, text]),
-      };
-      type LifecycleHook = (
-        event: { systemPrompt: string; reason?: string },
-        ctx: { ui: typeof ui },
-      ) => unknown;
-      const shutdown = handlers.get("session_shutdown") as LifecycleHook;
-      const start = handlers.get("session_start") as LifecycleHook;
-      for (const reason of ["reload", "new"]) {
-        await shutdown(Object.assign({ systemPrompt: "" }, { reason }), { ui });
-        await start({ systemPrompt: "" }, { ui });
-      }
-      assert.deepStrictEqual(statuses, [
-        [PI_T3_SESSION_END_STATUS_KEY, "reload"],
-        ["t3:session-start", "started"],
-        [PI_T3_SESSION_END_STATUS_KEY, "new"],
-        ["t3:session-start", "started"],
-      ]);
-    },
-  );
+  type LifecycleHook = (
+    event: { systemPrompt: string; reason?: string },
+    ctx: { ui: { notify: () => void; setStatus: (key: string, text?: string) => void } },
+  ) => unknown;
+
+  async function loadLifecycleHooks() {
+    const handlers = new Map<string, LifecycleHook>();
+    const source = NodeModule.stripTypeScriptTypes(
+      PI_T3_LIFECYCLE_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
+        "export default function",
+        "function",
+      ),
+    );
+    NodeVM.runInNewContext(`${source}\nt3LifecycleExtension(pi)`, {
+      pi: { on: (name: string, handler: LifecycleHook) => handlers.set(name, handler) },
+    });
+    return handlers;
+  }
+
+  it("marks shutdown and replacement start from the lifecycle sentinel only", async () => {
+    const statuses: Array<readonly [string, string | undefined]> = [];
+    const ui = {
+      notify: () => undefined,
+      setStatus: (key: string, text: string | undefined) => statuses.push([key, text]),
+    };
+    const sentinel = await loadLifecycleHooks();
+    for (const reason of ["reload", "new"]) {
+      await sentinel.get("session_shutdown")!(Object.assign({ systemPrompt: "" }, { reason }), {
+        ui,
+      });
+      await sentinel.get("session_start")!({ systemPrompt: "" }, { ui });
+    }
+    assert.deepStrictEqual(statuses, [
+      [PI_T3_SESSION_END_STATUS_KEY, "reload"],
+      [PI_T3_SESSION_START_STATUS_KEY, "started"],
+      [PI_T3_SESSION_END_STATUS_KEY, "new"],
+      [PI_T3_SESSION_START_STATUS_KEY, "started"],
+    ]);
+
+    // The bridge loads after user extensions; a marker from it would arrive
+    // after their new background work.
+    statuses.length = 0;
+    for (const handlers of [(await loadMcpBridge()).handlers, await loadHooks()]) {
+      await (handlers.get("session_shutdown") as LifecycleHook | undefined)?.(
+        Object.assign({ systemPrompt: "" }, { reason: "new" }),
+        { ui },
+      );
+      await (handlers.get("session_start") as LifecycleHook | undefined)?.(
+        { systemPrompt: "" },
+        {
+          ui,
+        },
+      );
+    }
+    assert.deepStrictEqual(statuses, []);
+  });
 });
 
 describe("Pi MCP tool results", () => {

@@ -472,7 +472,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       // The extension owns both the optional MCP bridge and Pi's permission
       // hook. Materialize it even when this session has no MCP credential so
       // Supervised never silently degrades to unrestricted tool execution.
-      const extensionPath = yield* provideCacheFs(
+      const { extensionPath, lifecycleExtensionPath } = yield* provideCacheFs(
         materializePiT3McpExtension(host.paths.providerStatusCacheDir),
       );
       const resolvedLaunchArgs = resolvePiLaunchArgs(options.settings.launchArgs);
@@ -484,6 +484,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         environment: options.environment,
         mcpSession,
         extensionPath,
+        lifecycleExtensionPath,
         runtimeMode: input.runtimePolicy.runtimeMode,
       });
       const scopedLaunch = yield* agentScope.wrap({

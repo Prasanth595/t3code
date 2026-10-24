@@ -5,6 +5,7 @@
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
 
 export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
+export const PI_T3_LIFECYCLE_EXTENSION_FILENAME = "pi-t3-lifecycle-extension.ts";
 
 export const T3_MCP_URL_ENV = "T3_MCP_URL";
 export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
@@ -24,6 +25,24 @@ export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 export const PI_T3_SESSION_END_STATUS_KEY = "t3:session-end";
 export const PI_T3_SESSION_START_STATUS_KEY = "t3:session-start";
 
+/**
+ * Pi runs lifecycle hooks in extension order, so this loads before user
+ * extensions: the start marker must precede their new background work, while
+ * the MCP and permission bridge keeps its later registration position.
+ */
+export const PI_T3_LIFECYCLE_EXTENSION_SOURCE = `\
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+export default function t3LifecycleExtension(pi: ExtensionAPI) {
+  pi.on("session_shutdown", (event, ctx) => {
+    ctx.ui.setStatus(${JSON.stringify(PI_T3_SESSION_END_STATUS_KEY)}, event.reason ?? "ended");
+  });
+  pi.on("session_start", (_event, ctx) => {
+    ctx.ui.setStatus(${JSON.stringify(PI_T3_SESSION_START_STATUS_KEY)}, "started");
+  });
+}
+`;
+
 export const PI_T3_MCP_EXTENSION_SOURCE = `\
 import { stripFrontmatter, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import * as NodeFSP from "node:fs/promises";
@@ -38,8 +57,6 @@ const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRU
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
-const SESSION_END_STATUS_KEY = ${JSON.stringify(PI_T3_SESSION_END_STATUS_KEY)};
-const SESSION_START_STATUS_KEY = ${JSON.stringify(PI_T3_SESSION_START_STATUS_KEY)};
 
 type RuntimeMode = "approval-required" | "auto-accept-edits" | "auto" | "full-access";
 
@@ -348,17 +365,10 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     }
   });
 
-  // Later shutdown handlers can await cleanup while their contexts still work.
-  // The adapter ignores their progress until the next session_start marker.
-  pi.on("session_shutdown", (event, ctx) => {
-    ctx.ui.setStatus(SESSION_END_STATUS_KEY, event.reason ?? "ended");
-  });
-
   const endpoint = env(URL_ENV);
   const token = env(TOKEN_ENV);
   if (endpoint === undefined || token === undefined) {
     pi.on("session_start", async (_event, ctx) => {
-      ctx.ui.setStatus(SESSION_START_STATUS_KEY, "started");
       ctx.ui.notify(
         "t3-code MCP unavailable: T3_MCP_URL or T3_MCP_BEARER_TOKEN is missing.",
         "warning",
@@ -461,7 +471,6 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   pi.on("session_tree", (_event, ctx) => reconcileDiscovery(ctx));
   pi.on("model_select", (_event, ctx) => reconcileDiscovery(ctx));
   pi.on("session_start", async (_event, ctx) => {
-    ctx.ui.setStatus(SESSION_START_STATUS_KEY, "started");
     reconcileDiscovery(ctx);
     try {
       await ensureStarted();
