@@ -51,7 +51,7 @@ const responses = {
     serverVersion: "0.0.0-test",
     capabilities: { repositoryIdentity: true },
   },
-  "/api/auth/websocket-ticket/rpc": { ticket: "test-ticket", expiresAt: timestamp },
+  "/api/auth/websocket-ticket": { ticket: "test-ticket", expiresAt: timestamp },
   "/api/orchestration/threads/thread-v2": { snapshotSequence: 1, projection: thread },
 };
 const httpClient = HttpClient.make((request) =>
