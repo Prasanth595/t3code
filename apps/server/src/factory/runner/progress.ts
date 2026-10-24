@@ -262,16 +262,21 @@ export interface Seen {
    * move it, so feedback written while those ran is not lost.
    */
   readonly prOpenSince: number | null;
-  /** The run on that `resumed_from`: this run's own id for a re-gate's session, the earlier attempt's for a resume from its branch. */
+  /**
+   * The run on that `resumed_from`: this run's own id for a session that pushes to a pull
+   * request's branch (a re-gate's, or one resumed onto an earlier attempt's open pull request),
+   * the earlier attempt's for a resume from its branch.
+   */
   readonly resumedFromRun: string | null;
 }
 
 /**
- * The pull request's branch when the run's session was launched to fix a failed re-gate of this
- * same run (its `session_launched` line's `resumed_from` names the run itself): that session works
- * on a branch of T3's own and pushes to the pull request's, so that is where its work is. Null for
- * a first launch, and for a session resumed from an earlier attempt's branch, whose work is on
- * T3's branch.
+ * The pull request's branch when the run's session was launched to push there: to fix a failed
+ * re-gate of this same run, or to continue an earlier attempt's open pull request (either way its
+ * `session_launched` line's `resumed_from` names the run itself). That session works on a branch
+ * of T3's own and pushes to the pull request's, so that is where its work is. Null for a first
+ * launch, and for a session resumed from an earlier attempt's branch, whose work is on T3's
+ * branch.
  */
 export const regateBranch = (seen: Seen, run: RunId): string | null =>
   seen.resumedFromRun === runIdToString(run) ? seen.resumedFrom : null;

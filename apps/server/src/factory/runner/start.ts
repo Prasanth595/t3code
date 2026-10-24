@@ -48,14 +48,14 @@ import {
 import { Ledger } from "../ledger/ledger.ts";
 import { MachineLog } from "../ledger/machineLog.ts";
 import { field, readRun, type Entry } from "../ledger/read.ts";
-import { newRunId, nextAttempt, runIdToString, type RunId } from "../ledger/runId.ts";
+import { asciiLower, newRunId, nextAttempt, runIdToString, type RunId } from "../ledger/runId.ts";
 import { formatTs } from "../ledger/time.ts";
 import { isUtcSecond } from "../tracker/approvalHistory.ts";
 import {
   isBranchPath,
   isNotFound,
   type BoundGitHub,
-  type ClosingPullRequest,
+  type OpenPullRequest,
   type GitHubError,
   type IssueDetail,
 } from "../tracker/github.ts";
@@ -79,6 +79,7 @@ import {
   type ExistingPrResume,
 } from "./messages.ts";
 import { launchable } from "./launchTarget.ts";
+import { isSafeBranchName } from "./relaunch.ts";
 import {
   APPROVAL_RECHECKED,
   LAUNCH_BASE,
@@ -123,6 +124,39 @@ export type Tracker = Pick<
   | "textEditedSince"
   | "openPullRequestsClosing"
 >;
+
+/** The runs of an issue before `run` that have a ledger, oldest first, with their lines. */
+export const earlierRuns = Effect.fn("RunnerStart.earlierRuns")(function* (
+  dataDir: string,
+  run: RunId,
+): Effect.fn.Return<
+  Array<{ readonly id: RunId; readonly entries: ReadonlyArray<Entry> }>,
+  LedgerError
+> {
+  const runs: Array<{ id: RunId; entries: ReadonlyArray<Entry> }> = [];
+  for (let attempt = 1; attempt < run.attempt; attempt += 1) {
+    const id = newRunId(run.repo, run.issue, attempt);
+    const record = yield* ledger(() => readRun(dataDir, id)).pipe(
+      Effect.catchTags({ LedgerNotFoundError: () => Effect.succeed(null) }),
+    );
+    if (record !== null) runs.push({ id, entries: record.entries });
+  }
+  return runs;
+});
+
+/** Whether the factory's own login (`user`, matched without case) opened `pull`. */
+export const isOwnPull = (pull: { readonly author: string | null }, user: string): boolean =>
+  pull.author !== null && asciiLower(pull.author) === asciiLower(user);
+
+/**
+ * Whether a session can be launched onto `pull` and told to push to its branch: it is in this
+ * repo, merges into `base`, and its head is a name a command can be handed (`isSafeBranchName`:
+ * the head goes into the launch message's `git push`).
+ */
+export const isResumablePull = (
+  pull: { readonly crossRepository: boolean; readonly baseRef: string; readonly headRef: string },
+  base: string,
+): boolean => !pull.crossRepository && pull.baseRef === base && isSafeBranchName(pull.headRef);
 
 /** The subset of `FactorySessions` the claim calls. */
 export type Sessions = Pick<
@@ -792,9 +826,10 @@ export const previousRun = Effect.fn("RunnerStart.previousRun")(function* (
 
 /**
  * What a launch continues from, with the run its `session_launched` line names as `resumed_from`:
- * the earlier attempt whose branch it continues, or, for an open pull request, the attempt before
- * this one when it has a ledger and else this run itself (the pull request came from GitHub alone,
- * as another machine's attempt left it).
+ * the earlier attempt whose branch it continues, or, for an open pull request, this run itself,
+ * as a re-gate's session names it: the session pushes to the pull request's branch, not to T3's
+ * own (`regateBranch`), and the line reads the same on every machine, whether or not the
+ * attempt that opened the pull request left a ledger here.
  */
 type Resumed = EarlierRunResume | (ExistingPrResume & { readonly run: RunId });
 
@@ -815,10 +850,8 @@ const recordedResume = Effect.fn("RunnerStart.recordedResume")(function* (
   branch: string,
   prUrl: string | null,
 ): Effect.fn.Return<Resumed, LedgerError> {
+  if (prUrl !== null) return { after: "existing-pr", branch, prUrl, run };
   const previous = yield* previousRun(ctx, run);
-  if (prUrl !== null) {
-    return { after: "existing-pr", branch, prUrl, run: previous?.id ?? run };
-  }
   return {
     run: previous?.id ?? newRunId(run.repo, run.issue, Math.max(1, run.attempt - 1)),
     branch,
@@ -849,16 +882,15 @@ const resumeFrom = Effect.fn("RunnerStart.resumeFrom")(function* (
   issue: number,
   base: string,
 ): Effect.fn.Return<Resumed | null, StartError> {
-  const previous = yield* previousRun(ctx, run);
-  const pull = yield* existingPullRequest(ctx, run, issue, base);
-  if (pull !== null) {
-    return { after: "existing-pr", branch: pull.branch, prUrl: pull.url, run: previous?.id ?? run };
-  }
-  if (previous === null) return null;
+  const earlier = yield* earlierRuns(ctx.dataDir, run);
+  const pull = yield* existingPullRequest(ctx, earlier, issue, base);
+  if (pull !== null) return { after: "existing-pr", branch: pull.branch, prUrl: pull.url, run };
+  const previous = earlier.find((found) => found.id.attempt === run.attempt - 1);
+  if (previous === undefined) return null;
   const found = continuation(previous.entries);
-  // The branch goes to GitHub's ref path and to T3's git as a ref: only a name that can be one
-  // argument and not an option is resumed from.
-  if (found === null || !isPlainRefName(found.branch)) return null;
+  // The branch goes to GitHub's ref path, to T3's git as a ref, and into the `git push` the
+  // launch message tells the session to run: only a plain branch name is resumed from.
+  if (found === null || !isSafeBranchName(found.branch)) return null;
   const approvedAt = readProgress(previous.entries).approvedAt;
   if (approvedAt === null) return null;
   if (yield* ctx.tracker.textEditedSince(issue, approvedAt)) return null;
@@ -868,61 +900,35 @@ const resumeFrom = Effect.fn("RunnerStart.resumeFrom")(function* (
   return yield* tip.failure;
 });
 
-/** Whether `pull` is one the factory itself opened in this repo onto `base`, on a branch git can be handed. */
-const isOwnOpenPull = (
-  ctx: StartContext,
-  pull: {
-    readonly author: string | null;
-    readonly crossRepository: boolean;
-    readonly baseRef: string;
-    readonly headRef: string;
-  },
-  base: string,
-): boolean =>
-  pull.author !== null &&
-  pull.author.toLowerCase() === ctx.trackerUser.toLowerCase() &&
-  !pull.crossRepository &&
-  pull.baseRef === base &&
-  isPlainRefName(pull.headRef);
-
 /**
  * The open pull request an earlier attempt of the issue left, if any, and its branch. The ledger
- * first: the newest `pr_opened` of each attempt before `run`, newest attempt first, when GitHub
- * still has that pull request open in this repo onto `base` (a pull request the ledger names was
- * bound to its session when it was written, so nothing asks who opened it). Then GitHub, for an
- * attempt on another machine or a ledger that never recorded one: the newest open pull request
- * that says it closes the issue (the receipt starts with `Closes #n`) by the factory's own login,
- * in this repo, onto `base`. A head that is not a plain ref name is passed over: it goes to git
- * as a ref. Null when there is none.
+ * first: the newest `pr_opened` of each of the `earlier` runs, newest attempt first, when GitHub
+ * still has that pull request open in this repo onto `base` on a branch a session can be told to
+ * push to (`isResumablePull`; a pull request the ledger names was bound to its session when it
+ * was written, so nothing asks who opened it). Then GitHub, for an attempt on another machine or
+ * a ledger that never recorded one: the newest open pull request that says it closes the issue
+ * (the receipt starts with `Closes #n`) by the factory's own login, resumable the same way. GitHub
+ * links that only for a pull request onto its default branch, so a run on another base is found
+ * through the ledger alone. Null when there is none.
  */
 const existingPullRequest = Effect.fn("RunnerStart.existingPullRequest")(function* (
   ctx: StartContext,
-  run: RunId,
+  earlier: ReadonlyArray<{ readonly entries: ReadonlyArray<Entry> }>,
   issue: number,
   base: string,
 ): Effect.fn.Return<{ readonly branch: string; readonly url: string } | null, StartError> {
-  for (let attempt = run.attempt - 1; attempt >= 1; attempt -= 1) {
-    const id = newRunId(run.repo, run.issue, attempt);
-    const record = yield* ledger(() => readRun(ctx.dataDir, id)).pipe(
-      Effect.catchTags({ LedgerNotFoundError: () => Effect.succeed(null) }),
-    );
-    const last = record === null ? null : readProgress(record.entries).lastPr;
+  for (const { entries } of [...earlier].reverse()) {
+    const last = readProgress(entries).lastPr;
     if (last === null) continue;
     const pull = yield* ctx.tracker.pullRequest(last.pr);
-    if (
-      pull !== null &&
-      pull.open &&
-      !pull.crossRepository &&
-      pull.baseRef === base &&
-      isPlainRefName(pull.headRef)
-    ) {
+    if (pull !== null && pull.open && isResumablePull(pull, base)) {
       return { branch: pull.headRef, url: last.url };
     }
   }
-  const own = (yield* ctx.tracker.openPullRequestsClosing(issue)).filter((pull) =>
-    isOwnOpenPull(ctx, pull, base),
+  const own = (yield* ctx.tracker.openPullRequestsClosing(issue)).filter(
+    (pull) => isOwnPull(pull, ctx.trackerUser) && isResumablePull(pull, base),
   );
-  const newest = own.reduce<ClosingPullRequest | null>(
+  const newest = own.reduce<OpenPullRequest | null>(
     (best, pull) => (best === null || pull.number > best.number ? pull : best),
     null,
   );
@@ -1007,13 +1013,9 @@ const unfinishedRuns = Effect.fn("RunnerStart.unfinishedRuns")(function* (
   wanted: (seen: Seen) => boolean,
 ) {
   const runs: Array<{ id: RunId; seen: Seen }> = [];
-  for (let attempt = 1; attempt < below; attempt += 1) {
-    const id = newRunId(ctx.repo, String(issue), attempt);
-    const record = yield* ledger(() => readRun(ctx.dataDir, id)).pipe(
-      Effect.catchTags({ LedgerNotFoundError: () => Effect.succeed(null) }),
-    );
-    if (record === null) continue;
-    const seen = readProgress(record.entries);
+  const earlier = yield* earlierRuns(ctx.dataDir, newRunId(ctx.repo, String(issue), below));
+  for (const { id, entries } of earlier) {
+    const seen = readProgress(entries);
     if (seen.finished || !wanted(seen)) continue;
     if (NodeFS.existsSync(gateLockFile(ctx.dataDir, id))) {
       return yield* new GateRunningError({ run: id });

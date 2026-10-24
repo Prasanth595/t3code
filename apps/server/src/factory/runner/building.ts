@@ -101,8 +101,12 @@ import {
   type RunError,
   type Stop,
 } from "./run.ts";
+import { isSafeBranchName } from "./relaunch.ts";
 import {
+  earlierRuns,
+  isOwnPull,
   isPlainRefName,
+  isResumablePull,
   previousRun,
   recordApproval,
   resume,
@@ -132,7 +136,7 @@ export interface BuildingContext extends RunContext {
     | "activitySince"
     | "issue"
     | "closedBy"
-    | "openPullRequestsClosing"
+    | "openPullRequestsOnHead"
   >;
   readonly sessions: Pick<
     FactorySessions["Service"],
@@ -758,6 +762,7 @@ export const advance = (
         const sent = yield* sendReminder(ctx, out, run, threadId, k);
         if (sent === "gone") return yield* stuck("thread-gone", stopOf(THREAD_GONE, null));
         if (sent !== "sent") {
+          yield* recordLeftPullRequest(ctx, out, issue, seen, status);
           return yield* stuck("session-stuck", refusedStop(result, message, sent));
         }
         return { kind: "reminded" } as const;
@@ -907,22 +912,19 @@ export const advance = (
 const remindedStep: RunEvent = { event: "step_changed", data: { step: RESULT_LINE_REMINDED } };
 
 /**
- * What the attempts before `run` left, from their ledgers (`EarlierAttempts`). Nothing is read
- * for a first attempt, and an attempt with no ledger is passed over.
+ * What the attempts before `run` left, from their ledgers (`EarlierAttempts`): every branch their
+ * lines name and every pull request they recorded. Nothing is read for a first attempt, and an
+ * attempt with no ledger is passed over. The gate reads it too, so a pull request `advance` bound
+ * through it is bound the same way at gate time.
  */
-const earlierAttempts = Effect.fn("RunnerBuilding.earlierAttempts")(function* (
+export const earlierAttempts = Effect.fn("RunnerBuilding.earlierAttempts")(function* (
   ctx: BuildingContext,
   run: RunId,
 ): Effect.fn.Return<EarlierAttempts, LedgerError> {
   const branches = new Set<string>();
   const prs = new Set<number>();
-  for (let attempt = 1; attempt < run.attempt; attempt += 1) {
-    const id = { ...run, attempt };
-    const record = yield* ledger(() => readRun(ctx.dataDir, id)).pipe(
-      Effect.catchTags({ LedgerNotFoundError: () => Effect.succeed(null) }),
-    );
-    if (record === null) continue;
-    for (const entry of record.entries) {
+  for (const { entries } of yield* earlierRuns(ctx.dataDir, run)) {
+    for (const entry of entries) {
       if (
         entry.event === "session_launched" ||
         entry.event === "stuck" ||
@@ -945,36 +947,46 @@ const earlierAttempts = Effect.fn("RunnerBuilding.earlierAttempts")(function* (
 });
 
 /**
- * Records the pull request a session that stops or asks questions leaves open on its branch, as
- * `pr_opened`, so the next attempt continues it instead of opening another (`start`'s
- * `resumeFrom`). GitHub's closing references are read, as the receipt starts with `Closes #n`:
- * the factory's own open pull request in this repo onto the run's base, on the session's branch
- * or the branch T3 made its worktree on. Written once per pull request, before anything else the
- * exit writes, so a read that fails leaves nothing written and the next pass reads again.
+ * Records the pull request a session leaves open on its branch when it stops or asks questions,
+ * as `pr_opened`, so the next attempt continues it instead of opening another (`start`'s
+ * `resumeFrom`). GitHub is asked by branch (`openPullRequestsOnHead`), never by the pull request's
+ * text, so a run on any base is found: the session's branch, and the `t3/<hex>` branch T3 made
+ * its worktree on, which the session may have pushed when T3 renamed the thread's. Only the
+ * factory's own, in this repo, onto the run's base, on a branch a session can be told to push
+ * to. Written once per pull request, before anything else the exit writes, so a read that fails
+ * leaves nothing written and the next pass reads again.
  */
 const recordLeftPullRequest = Effect.fn("RunnerBuilding.recordLeftPullRequest")(function* (
   ctx: BuildingContext,
   out: Out,
   issue: number,
   seen: Seen,
-  status: ThreadStatus,
+  where: { readonly branch: string | null; readonly worktreePath: string | null },
 ) {
-  const pulls = yield* ctx.tracker.openPullRequestsClosing(issue);
-  const left = pulls.find(
-    (pull) =>
-      pull.author !== null &&
-      asciiLower(pull.author) === asciiLower(ctx.trackerUser) &&
-      !pull.crossRepository &&
-      pull.baseRef === ctx.project.base &&
-      (pull.headRef === status.branch || isLaunchBranch(pull.headRef, status.worktreePath)),
-  );
-  if (left === undefined || seen.opened.includes(left.number)) return;
-  yield* append(
-    out,
-    { event: "pr_opened", data: { pr: left.number, url: left.url } },
-    "advance",
-    "pr-opened",
-  );
+  const heads: Array<string> = [];
+  if (where.branch !== null) heads.push(where.branch);
+  const folder = where.worktreePath?.split(/[\\/]/).pop();
+  if (folder !== undefined && folder.startsWith("t3-")) {
+    const launch = `t3/${folder.slice("t3-".length)}`;
+    if (launch !== where.branch && isLaunchBranch(launch, where.worktreePath)) heads.push(launch);
+  }
+  for (const head of heads) {
+    if (!isSafeBranchName(head)) continue;
+    const pulls = yield* ctx.tracker.openPullRequestsOnHead(head);
+    const left = pulls.find(
+      (pull) => isOwnPull(pull, ctx.trackerUser) && isResumablePull(pull, ctx.project.base),
+    );
+    if (left === undefined) continue;
+    if (!seen.opened.includes(left.number)) {
+      yield* append(
+        out,
+        { event: "pr_opened", data: { pr: left.number, url: left.url } },
+        "advance",
+        "pr-opened",
+      );
+    }
+    return;
+  }
 });
 
 /**
@@ -1540,9 +1552,14 @@ export const timeLimit = Effect.fn("RunnerBuilding.timeLimit")(function* (
   // Called by the pass before any step, so the pass is what decided.
   const at = progressFrom("pass", seen, "triage");
   yield* withLedger(ctx, run, (out) =>
-    Effect.flatMap(out.open, (opened) =>
-      goStuck(ctx, issueOf(run), opened, at, "time-limit", stop),
-    ),
+    Effect.gen(function* () {
+      // The pull request the session leaves on its branch, for the next attempt to continue.
+      yield* recordLeftPullRequest(ctx, out, issueOf(run), seen, {
+        branch: branch ?? null,
+        worktreePath: null,
+      });
+      yield* goStuck(ctx, issueOf(run), yield* out.open, at, "time-limit", stop);
+    }),
   );
   return { kind: "stopped", reason: recordedReason(stop) } as const;
 });

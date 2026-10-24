@@ -61,9 +61,17 @@ export type Relaunched =
  * anything but the characters of an ordinary branch is not passed on.
  */
 export const branchRefused = (branch: string): Stop | null =>
-  /^[A-Za-z0-9/._-]+$/.test(branch) && !branch.startsWith("-") && !branch.includes("..")
+  isSafeBranchName(branch)
     ? null
     : { reason: LAUNCH_FAILED, detail: "the pull request's branch is not a plain branch name" };
+
+/**
+ * Whether `branch` can be written into a command a session runs (`git push origin HEAD:<branch>`
+ * in a launch message): only the characters of an ordinary branch name, not an option, no `..`.
+ * Stricter than `isPlainRefName`, which only keeps a name safe as one argument to git.
+ */
+export const isSafeBranchName = (branch: string): boolean =>
+  /^[A-Za-z0-9/._-]+$/.test(branch) && !branch.startsWith("-") && !branch.includes("..");
 
 /**
  * Launches the session of a decided relaunch and writes its `session_launched` line, with

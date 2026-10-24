@@ -2940,6 +2940,14 @@ describe("watch and timeLimit: the end of a run", () => {
   );
 });
 
+/** T3's refusal of the reminder, as the reminder tests build it. */
+const reminderRefusal = () =>
+  new MessageRejectedError({
+    threadId: "thread-1",
+    commandId: "softfac:rawphp__softfac__10__1:remind:1",
+    cause: "no",
+  });
+
 /** An open draft by the factory on `head` into `main`, as GitHub lists it from the branch. */
 const draftOn = (head: string, over: Partial<OpenPullRequest> = {}): OpenPullRequest => ({
   number: 12,
@@ -3182,7 +3190,7 @@ describe("advance: the pull request a session leaves when it stops or asks", () 
       const rig = rigFor();
       rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
       setEnded(rig, 1, WORKING_MESSAGE);
-      rig.world.sendFailure = { error: refusal(), delivered: false };
+      rig.world.sendFailure = { error: reminderRefusal(), delivered: false };
       const outcome = yield* advanceIn(rig);
       assert.strictEqual(outcome.kind, "stuck");
       assert.ok(linesOf(rig).some((line) => line.event === "pr_opened"));
