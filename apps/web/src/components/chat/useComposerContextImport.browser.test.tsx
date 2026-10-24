@@ -66,15 +66,6 @@ it.each([
   const downloaded = deferred<Response>();
   const requested = deferred<void>();
   const settled = deferred<void>();
-  const end = pendingDraftWork.end.bind(pendingDraftWork);
-  using _settled = vi.spyOn(pendingDraftWork, "end").mockImplementation((key) => {
-    end(key);
-    settled.resolve();
-  });
-  using _fetch = stubGlobal("fetch", () => {
-    requested.resolve();
-    return downloaded.promise;
-  });
   const input = {
     environmentId: EnvironmentId.make("clipboard-target"),
     activeThread: undefined,
@@ -102,6 +93,15 @@ it.each([
       }}
     />,
   );
+  const end = pendingDraftWork.end.bind(pendingDraftWork);
+  using _settled = vi.spyOn(pendingDraftWork, "end").mockImplementation((key) => {
+    end(key);
+    settled.resolve();
+  });
+  using _fetch = stubGlobal("fetch", () => {
+    requested.resolve();
+    return downloaded.promise;
+  });
   const contextId = ComposerContextId.make(`${kind}_source`);
   const attachmentFields = {
     version: 1 as const,
