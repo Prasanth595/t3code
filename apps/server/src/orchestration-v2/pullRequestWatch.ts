@@ -145,12 +145,13 @@ export function evaluatePullRequestWatch(
     detail.mergeability === "unknown" ? watch.conflicting : detail.mergeability === "conflicting";
 
   // The queue's checks run on a commit of its own, so its head can stay green after the queue
-  // drops it. A removal from before the watch started is old news.
+  // drops it. A removal from before the watch started is old news. Hosts stamp removals to the
+  // second, so one in the watch's first second still counts.
   const removal = detail.mergeQueueRemoval;
   if (
     removal !== undefined &&
     removal.id !== watch.mergeQueueRemovalId &&
-    Date.parse(removal.removedAt) >= Date.parse(watch.startedAt)
+    Date.parse(removal.removedAt) >= Math.floor(Date.parse(watch.startedAt) / 1000) * 1000
   ) {
     changes.push({ kind: "merge-queue-removed", reason: removal.reason });
   }
