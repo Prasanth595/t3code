@@ -935,6 +935,18 @@ const decodeUtf8 = (bytes: Uint8Array): string | null => {
 export const isBranchPath = (branch: string): boolean =>
   !branch.split("/").some((part) => part === "" || part === "." || part === "..");
 
+/** Whether `name` can go into a ref the factory passes to git: not empty, not an option, no whitespace or control character, no `..`. */
+export const isPlainRefName = (name: string): boolean =>
+  name !== "" && !name.startsWith("-") && !name.includes("..") && !/[\s\p{Cc}]/u.test(name);
+
+/**
+ * Whether `branch` can be written into a command a session runs (`git push origin HEAD:<branch>`
+ * in a launch message): only the characters of an ordinary branch name, not an option, no `..`.
+ * Stricter than `isPlainRefName`, which only keeps a name safe as one argument to git.
+ */
+export const isSafeBranchName = (branch: string): boolean =>
+  /^[A-Za-z0-9/._-]+$/.test(branch) && !branch.startsWith("-") && !branch.includes("..");
+
 /** A branch name as a path under `refs/heads/` in the API; null for a name that could leave it. */
 const encodeBranch = (branch: string): string | null => {
   if (!isBranchPath(branch)) return null;
@@ -1472,13 +1484,13 @@ export const makeGitHub = (options: GitHubOptions) => {
 
   /**
    * The open pull requests from a branch named `head` (`gh pr list --head`), forks included,
-   * whatever their base and whoever opened them: the caller decides which is the factory's own. A name that is not a plain ref name (see `isPlainRefName`
-   * in the runner: not empty, not an option, no whitespace or `..`) is refused before the call.
+   * whatever their base and whoever opened them: the caller decides which is the factory's own.
+   * A name that is not a plain ref name (`isPlainRefName`) is refused before the call.
    */
   const openPullRequestsOnHead = Effect.fn("GitHub.openPullRequestsOnHead")(function* (
     head: string,
   ): GitHubGen<ReadonlyArray<OpenPullRequest>> {
-    if (head === "" || head.startsWith("-") || head.includes("..") || /[\s\p{Cc}]/u.test(head)) {
+    if (!isPlainRefName(head)) {
       return yield* new GitHubInvalidArgument({
         argument: head,
         expected: "a plain branch name",

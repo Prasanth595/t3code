@@ -174,10 +174,15 @@ const STOP_REQUESTED: RunEvent = { event: "stop_requested", data: { by: "operato
 const joined = (publicReason: string, text?: string) =>
   text === undefined ? publicReason : `${publicReason}\n\n${text}`;
 
-const stuckEvents = (extra: ReadonlyArray<Line>, recorded: string): Array<Line> => [
+const stuckEvents = (
+  extra: ReadonlyArray<Line>,
+  recorded: string,
+  left: ReadonlyArray<Line> = [],
+): Array<Line> => [
   ...STARTED,
   ...extra,
   worktreeRemoved("/t3/wt"),
+  ...left,
   { event: "stuck", data: { reason: recorded } },
   moved("building", "stuck"),
   FINISHED,
@@ -854,7 +859,7 @@ describe("interrupted: a resume", () => {
       assert.deepStrictEqual(outcome, { kind: "stuck", reason });
       assert.deepStrictEqual(
         linesOf(rig),
-        stuckEvents([{ event: "pr_opened", data: { pr: 12, url: URL12 } }], reason),
+        stuckEvents([], reason, [{ event: "pr_left", data: { pr: 12, url: URL12 } }]),
       );
     }),
   );
@@ -1045,7 +1050,7 @@ describe("interrupted: the cap", () => {
         reason: THREAD_GONE,
       });
       assert.ok(rig.reads.includes("openPullRequestsOnHead t3code/left"), rig.reads.join("\n"));
-      assert.ok(linesOf(rig).some((line) => line.event === "pr_opened"));
+      assert.ok(linesOf(rig).some((line) => line.event === "pr_left"));
     }),
   );
 });
@@ -1935,9 +1940,10 @@ describe("a relaunch finds the branch", () => {
     }),
   );
 
-  it.effect("takes T3's own branch for a session that resumed from an earlier attempt's", () =>
+  it.effect("takes the earlier attempt's branch a resumed session was told to push to", () =>
     Effect.gen(function* () {
-      // Attempt 2 was launched from attempt 1's branch on origin; its work is on T3's branch.
+      // Attempt 2 was launched from attempt 1's branch on origin and told to push there, so its
+      // work is there, not on T3's own branch, which may never have reached origin.
       const rig = rigFor();
       seed(
         rig.dataDir,
@@ -1947,8 +1953,8 @@ describe("a relaunch finds the branch", () => {
       threadGone(rig);
       assert.deepStrictEqual(yield* advanceIn(rig, run10b), endedBadly("thread-gone"));
       assert.strictEqual((yield* decide(rig, afterOutage(), run10b)).kind, "relaunched");
-      assert.strictEqual(relaunchBranchIn(rig, run10b), "t3code/own");
-      assert.strictEqual(rig.launches.at(-1)!.baseRef, "t3code/own");
+      assert.strictEqual(relaunchBranchIn(rig, run10b), "t3code/old");
+      assert.strictEqual(rig.launches.at(-1)!.baseRef, "t3code/old");
     }),
   );
 

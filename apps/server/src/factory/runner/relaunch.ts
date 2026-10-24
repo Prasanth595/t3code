@@ -16,7 +16,7 @@ import type { Ledger } from "../ledger/ledger.ts";
 import { ledgerCall as ledger } from "../ledger/errors.ts";
 import { makeCause } from "../ledger/events.ts";
 import { runIdToString, type RunId } from "../ledger/runId.ts";
-import type { IssueDetail } from "../tracker/github.ts";
+import { isSafeBranchName, type IssueDetail } from "../tracker/github.ts";
 import type { FactorySessions } from "../t3/sessions.ts";
 import {
   END_WITH_DONE,
@@ -64,14 +64,6 @@ export const branchRefused = (branch: string): Stop | null =>
   isSafeBranchName(branch)
     ? null
     : { reason: LAUNCH_FAILED, detail: "the pull request's branch is not a plain branch name" };
-
-/**
- * Whether `branch` can be written into a command a session runs (`git push origin HEAD:<branch>`
- * in a launch message): only the characters of an ordinary branch name, not an option, no `..`.
- * Stricter than `isPlainRefName`, which only keeps a name safe as one argument to git.
- */
-export const isSafeBranchName = (branch: string): boolean =>
-  /^[A-Za-z0-9/._-]+$/.test(branch) && !branch.startsWith("-") && !branch.includes("..");
 
 /**
  * Launches the session of a decided relaunch and writes its `session_launched` line, with

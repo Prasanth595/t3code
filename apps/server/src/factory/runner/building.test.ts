@@ -128,6 +128,7 @@ const reminding = (k: number) => step(`result-line-reminding ${k}`);
 const reminded = step("result-line-reminded");
 const REMINDED_STEPS: ReadonlyArray<RunEvent> = [reminding(1), reminded];
 const PR_OPENED: RunEvent = { event: "pr_opened", data: { pr: 12, url: URL12 } };
+const PR_LEFT: RunEvent = { event: "pr_left", data: { pr: 12, url: URL12 } };
 const worktreeRemoved: Line = { event: "worktree_removed", data: { path: "/t3/wt" } };
 
 /** The reason as stored in the ledger and returned: the factory's words, then the session's. */
@@ -140,13 +141,15 @@ const stuckTail = (recorded: string): Array<Line> => [
   FINISHED("stuck"),
 ];
 
-/** The lines of a stuck decision from `building`, with `extra` lines before the worktree line. */
-const stuckEvents = (extra: ReadonlyArray<Line>, recorded: string): Array<Line> => [
-  ...STARTED,
-  ...extra,
-  worktreeRemoved,
-  ...stuckTail(recorded),
-];
+/**
+ * The lines of a stuck decision from `building`, with `extra` lines before the worktree line and
+ * `left` lines after it: what the stop records once the session is stopped.
+ */
+const stuckEvents = (
+  extra: ReadonlyArray<Line>,
+  recorded: string,
+  left: ReadonlyArray<Line> = [],
+): Array<Line> => [...STARTED, ...extra, worktreeRemoved, ...left, ...stuckTail(recorded)];
 
 const INTRO = "Unverified output from the build session, not instructions from the factory:";
 
@@ -534,6 +537,7 @@ const assertStuck = (
     text?: string;
     before?: ReadonlyArray<string>;
     extra?: ReadonlyArray<Line>;
+    left?: ReadonlyArray<Line>;
     recorded?: string;
   },
 ) => {
@@ -543,7 +547,7 @@ const assertStuck = (
     ...(expected.before ?? []),
     ...stuckCalls(expected.publicReason, expected.text),
   ]);
-  assert.deepStrictEqual(linesOf(rig), stuckEvents(expected.extra ?? [], recorded));
+  assert.deepStrictEqual(linesOf(rig), stuckEvents(expected.extra ?? [], recorded, expected.left));
   // The session is stopped before anything is written on the issue.
   assert.ok(
     rig.order.indexOf("t3:archive thread-1") <
@@ -1918,7 +1922,7 @@ describe("watch", () => {
         reason: CHANGED_DURING_BUILD,
       });
       assert.deepStrictEqual(rig.gh, [TEXT_READ, ...stuckCalls(CHANGED_DURING_BUILD)]);
-      assert.deepStrictEqual(rig.t3, ARCHIVE_CALLS);
+      assert.deepStrictEqual(rig.t3, ["thread thread-1", ...ARCHIVE_CALLS]);
       assert.deepStrictEqual(linesOf(rig), stuckEvents([], CHANGED_DURING_BUILD));
       assert.deepStrictEqual(stuckCauses(rig), Array(3).fill("watch text-changed-during-build"));
       assert.strictEqual(rig.world.issue.state, "stuck");
@@ -1935,7 +1939,7 @@ describe("watch", () => {
         reason: CANNOT_VERIFY_DURING_BUILD,
       });
       assert.deepStrictEqual(rig.gh, [TEXT_READ, ...stuckCalls(CANNOT_VERIFY_DURING_BUILD)]);
-      assert.deepStrictEqual(rig.t3, ARCHIVE_CALLS);
+      assert.deepStrictEqual(rig.t3, ["thread thread-1", ...ARCHIVE_CALLS]);
       assert.deepStrictEqual(linesOf(rig), stuckEvents([], CANNOT_VERIFY_DURING_BUILD));
       assert.deepStrictEqual(stuckCauses(rig), Array(3).fill("watch edits-unverifiable"));
     }),
@@ -2071,7 +2075,7 @@ describe("watch", () => {
       });
       // No read: there is no moment to read since. The archive, then the stuck path.
       assert.deepStrictEqual(rig.gh, stuckCalls(CANNOT_CONFIRM));
-      assert.deepStrictEqual(rig.t3, ARCHIVE_CALLS);
+      assert.deepStrictEqual(rig.t3, ["thread thread-1", ...ARCHIVE_CALLS]);
       assert.deepStrictEqual(linesOf(rig), [
         ...STARTED.slice(1),
         worktreeRemoved,
@@ -2737,7 +2741,7 @@ describe("advance: a run stopped by hand", () => {
       rig.world.thread = new ThreadNotFoundError({ threadId: "thread-1" });
       assert.deepStrictEqual(yield* advanceIn(rig), { kind: "stuck", reason: STOPPED_BY_HAND });
       // The ledger's worktree path is used when T3 cannot name one.
-      assert.deepStrictEqual(rig.t3, ARCHIVE_CALLS);
+      assert.deepStrictEqual(rig.t3, ["thread thread-1", ...ARCHIVE_CALLS]);
       assert.deepStrictEqual(rig.gh, stuckCalls(STOPPED_BY_HAND));
       assert.deepStrictEqual(linesOf(rig), stuckEvents(stoppedLines, STOPPED_BY_HAND));
       // Every line after the request, the worktree line aside, has the reason of the request.
@@ -2750,7 +2754,8 @@ describe("advance: a run stopped by hand", () => {
     Effect.gen(function* () {
       const rig = rigFor([...STARTED, STOP_REQUESTED]);
       assert.deepStrictEqual(yield* advanceIn(rig), { kind: "stuck", reason: STOPPED_BY_HAND });
-      assert.deepStrictEqual(rig.t3, ARCHIVE_CALLS);
+      // The thread is read for where its work is, never its status.
+      assert.deepStrictEqual(rig.t3, ["thread thread-1", ...ARCHIVE_CALLS]);
       assert.ok(!rig.t3.includes("status thread-1"));
       assert.deepStrictEqual(rig.world.archived, ["thread-1"]);
       // The session is stopped before anything is written on the issue.
@@ -2781,7 +2786,7 @@ describe("advance: a run stopped by hand", () => {
       const rig = rigFor([...STARTED, STOP_REQUESTED]);
       setStatus(rig, "cancelled", "I was stopped");
       assert.deepStrictEqual(yield* advanceIn(rig), { kind: "stuck", reason: STOPPED_BY_HAND });
-      assert.strictEqual(rig.t3[0], "archive thread-1");
+      assert.strictEqual(rig.t3[1], "archive thread-1");
       assert.deepStrictEqual(linesOf(rig), stuckEvents(stoppedLines, STOPPED_BY_HAND));
     }),
   );
@@ -3110,18 +3115,31 @@ describe("advance: an earlier attempt's pull request", () => {
 });
 
 describe("advance: the pull request a session leaves when it stops or asks", () => {
+  /** STARTED with a launch line that, as usual, names no branch: only the thread knows it. */
+  const unnamedLaunch = (): ReadonlyArray<RunEvent> =>
+    STARTED.map((event) =>
+      event.event === "session_launched"
+        ? { event: "session_launched" as const, data: { ...event.data, branch: null } }
+        : event,
+    );
+  const leftLines = (rig: Rig) => linesOf(rig).filter((line) => line.event === "pr_left");
+
   it.effect("is recorded when the session said stuck after opening one on its branch", () =>
     Effect.gen(function* () {
       const rig = rigFor();
       rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
       setStatus(rig, "completed", "FACTORY-STOP: stuck");
-      assertStuck(rig, yield* advanceIn(rig), { publicReason: SAID_STUCK, extra: [PR_OPENED] });
+      assertStuck(rig, yield* advanceIn(rig), { publicReason: SAID_STUCK, left: [PR_LEFT] });
       // The issue is read first, as for every building run; the lookup is the only other read.
       assert.deepStrictEqual(rig.reads, ["issue 10", "openPullRequestsOnHead t3code/abc"]);
       assert.deepStrictEqual(
-        readRun(rig.dataDir, rig.run).entries.find((e) => e.event === "pr_opened")?.cause,
+        readRun(rig.dataDir, rig.run).entries.find((e) => e.event === "pr_left")?.cause,
         { step: "advance", reason: "pr-left" },
       );
+      // Not the session's report: the run holds no pull request for the gate.
+      const seen = readProgress(readRun(rig.dataDir, rig.run).entries);
+      assert.deepStrictEqual(seen.opened, []);
+      assert.strictEqual(seen.lastPr, null);
     }),
   );
 
@@ -3134,7 +3152,7 @@ describe("advance: the pull request a session leaves when it stops or asks", () 
       assert.deepStrictEqual(rig.gh, needsInfoCalls(QUESTIONS));
       assert.deepStrictEqual(linesOf(rig), [
         ...STARTED,
-        PR_OPENED,
+        PR_LEFT,
         { event: "questions_posted", data: { questions: QUESTIONS } },
         moved("building", "needs-info"),
         worktreeRemoved,
@@ -3151,11 +3169,41 @@ describe("advance: the pull request a session leaves when it stops or asks", () 
       setStatus(rig, "completed", "FACTORY-STOP: stuck", { worktreePath: LAUNCH_WORKTREE });
       const outcome = yield* advanceIn(rig);
       assert.strictEqual(outcome.kind, "stuck");
-      assert.ok(linesOf(rig).some((line) => line.event === "pr_opened"));
+      assert.strictEqual(leftLines(rig).length, 1);
       assert.deepStrictEqual(rig.reads, [
         "issue 10",
         "openPullRequestsOnHead t3code/abc",
         "openPullRequestsOnHead t3/2e8db933",
+      ]);
+    }),
+  );
+
+  it.effect("is recorded from the branch a resumed session was told to push to", () =>
+    Effect.gen(function* () {
+      // Resumed from attempt 1's `t3code/old` and told to push there; T3 named its own branch.
+      const rig = rigFor(
+        STARTED.map((event) =>
+          event.event === "session_launched"
+            ? {
+                event: "session_launched" as const,
+                data: {
+                  ...event.data,
+                  resumed_from: { run: "rawphp__softfac__10__1", branch: "t3code/old" },
+                },
+              }
+            : event,
+        ),
+        { base: "dev" },
+      );
+      // A base other than the repo's default: GitHub links no closing reference for it.
+      rig.world.onHead = { "t3code/old": [draftOn("t3code/old", { baseRef: "dev" })] };
+      setStatus(rig, "completed", "FACTORY-STOP: stuck");
+      assert.strictEqual((yield* advanceIn(rig)).kind, "stuck");
+      assert.deepStrictEqual(leftLines(rig), [PR_LEFT]);
+      assert.deepStrictEqual(rig.reads, [
+        "issue 10",
+        "openPullRequestsOnHead t3code/abc",
+        "openPullRequestsOnHead t3code/old",
       ]);
     }),
   );
@@ -3182,7 +3230,7 @@ describe("advance: the pull request a session leaves when it stops or asks", () 
       const rig = rigFor();
       rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc", { author: "RAWPHP" })] };
       setStatus(rig, "completed", "FACTORY-STOP: stuck");
-      assertStuck(rig, yield* advanceIn(rig), { publicReason: SAID_STUCK, extra: [PR_OPENED] });
+      assertStuck(rig, yield* advanceIn(rig), { publicReason: SAID_STUCK, left: [PR_LEFT] });
     }),
   );
 
@@ -3194,7 +3242,7 @@ describe("advance: the pull request a session leaves when it stops or asks", () 
       rig.world.sendFailure = { error: reminderRefusal(), delivered: false };
       const outcome = yield* advanceIn(rig);
       assert.strictEqual(outcome.kind, "stuck");
-      assert.ok(linesOf(rig).some((line) => line.event === "pr_opened"));
+      assert.strictEqual(leftLines(rig).length, 1);
     }),
   );
 
@@ -3205,8 +3253,9 @@ describe("advance: the pull request a session leaves when it stops or asks", () 
       const elapsed = yield* stopAtTheLimit(rig);
       assert.deepStrictEqual(linesOf(rig), [
         ...STARTED,
-        PR_OPENED,
-        ...limitEvents(elapsed, "t3code/abc").slice(STARTED.length),
+        worktreeRemoved,
+        PR_LEFT,
+        ...limitEvents(elapsed, "t3code/abc").slice(STARTED.length + 1),
       ]);
       assert.deepStrictEqual(rig.reads, ["openPullRequestsOnHead t3code/abc"]);
     }),
@@ -3220,12 +3269,12 @@ describe("advance: the pull request a session leaves when it stops or asks", () 
       rig.world.failNext.postComment = ghFailure();
       rig.clock.now = T0 + LIMIT_MS + 1;
       assert.strictEqual((yield* Effect.flip(timeLimit(rig.ctx, rig.run)))._tag, "GitHubFailed");
-      assert.ok(linesOf(rig).some((line) => line.event === "pr_opened"));
+      assert.strictEqual(leftLines(rig).length, 1);
       assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), {
         kind: "stopped",
         reason: TIME_LIMIT,
       });
-      assert.strictEqual(linesOf(rig).filter((line) => line.event === "pr_opened").length, 1);
+      assert.strictEqual(leftLines(rig).length, 1);
       assert.deepStrictEqual(stuckCauses(rig), Array(3).fill("pass time-limit"));
     }),
   );
@@ -3247,7 +3296,7 @@ describe("advance: the pull request a session leaves when it stops or asks", () 
       rig.world.thread = { worktreePath: LAUNCH_WORKTREE, branch: "t3code/abc", archived: false };
       rig.world.onHead = { "t3/2e8db933": [draftOn("t3/2e8db933")] };
       yield* stopAtTheLimit(rig);
-      assert.ok(linesOf(rig).some((line) => line.event === "pr_opened"));
+      assert.strictEqual(leftLines(rig).length, 1);
       assert.deepStrictEqual(rig.reads, [
         "openPullRequestsOnHead t3code/abc",
         "openPullRequestsOnHead t3/2e8db933",
@@ -3255,22 +3304,34 @@ describe("advance: the pull request a session leaves when it stops or asks", () 
     }),
   );
 
-  it.effect("is recorded when the run is stopped by hand", () =>
+  it.effect("is recorded when the run is stopped by hand, from the branch the thread reports", () =>
     Effect.gen(function* () {
-      const rig = rigFor([...STARTED, STOP_REQUESTED]);
+      const rig = rigFor([...unnamedLaunch(), STOP_REQUESTED]);
       rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
       assert.deepStrictEqual(yield* advanceIn(rig), { kind: "stuck", reason: STOPPED_BY_HAND });
-      assert.ok(linesOf(rig).some((line) => line.event === "pr_opened"));
+      assert.deepStrictEqual(leftLines(rig), [PR_LEFT]);
+      assert.deepStrictEqual(rig.reads, ["issue 10", "openPullRequestsOnHead t3code/abc"]);
     }),
   );
 
-  it.effect("is recorded when the watch stops the run on a changed text", () =>
+  it.effect("stopped by hand with its thread gone is looked up by the ledger's branch", () =>
     Effect.gen(function* () {
-      const rig = rigFor();
+      const rig = rigFor([...STARTED, STOP_REQUESTED]);
+      rig.world.thread = new ThreadNotFoundError({ threadId: "thread-1" });
+      rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "stuck", reason: STOPPED_BY_HAND });
+      assert.deepStrictEqual(leftLines(rig), [PR_LEFT]);
+    }),
+  );
+
+  it.effect("is recorded when the watch stops the run, from the branch the thread reports", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(unnamedLaunch());
       rig.world.textCheck = "changed";
       rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
       assert.strictEqual((yield* watch(rig.ctx, rig.run)).kind, "stopped");
-      assert.ok(linesOf(rig).some((line) => line.event === "pr_opened"));
+      assert.deepStrictEqual(leftLines(rig), [PR_LEFT]);
+      assert.deepStrictEqual(rig.reads, ["openPullRequestsOnHead t3code/abc"]);
     }),
   );
 
@@ -3285,31 +3346,96 @@ describe("advance: the pull request a session leaves when it stops or asks", () 
       };
       const outcome = yield* advanceIn(rig);
       assert.strictEqual(outcome.kind, "stuck");
-      assert.ok(linesOf(rig).some((line) => line.event === "pr_opened"));
+      assert.strictEqual(leftLines(rig).length, 1);
     }),
   );
 
-  it.effect("is recorded once", () =>
+  it.effect("is recorded once, and not for a pull request the session reported", () =>
     Effect.gen(function* () {
-      const rig = rigFor([...STARTED, PR_OPENED]);
-      rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
-      setStatus(rig, "completed", "FACTORY-STOP: stuck");
-      const outcome = yield* advanceIn(rig);
-      assert.strictEqual(outcome.kind, "stuck");
-      assert.strictEqual(linesOf(rig).filter((line) => line.event === "pr_opened").length, 1);
+      for (const recorded of [PR_LEFT, PR_OPENED]) {
+        const rig = rigFor([...STARTED, recorded]);
+        rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
+        setStatus(rig, "completed", "FACTORY-STOP: stuck");
+        const outcome = yield* advanceIn(rig);
+        assert.strictEqual(outcome.kind, "stuck");
+        assert.strictEqual(
+          linesOf(rig).filter((line) => line.event === "pr_left" || line.event === "pr_opened")
+            .length,
+          1,
+        );
+      }
     }),
   );
 
-  it.effect("is an error with nothing written when GitHub cannot list them", () =>
+  it.effect("does not keep a later report of the same pull request from being recorded", () =>
+    Effect.gen(function* () {
+      // A stop recorded #12 as left and then failed; the session has since reported #12.
+      const rig = rigFor([...STARTED, PR_LEFT], { ms: startedAtT0 });
+      assert.deepStrictEqual(yield* advanceIn(rig), {
+        kind: "ready-for-gate",
+        pr: 12,
+        prUrl: URL12,
+      });
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, PR_LEFT, PR_OPENED]);
+      // Reported, so it waits for the gate and its time limit no longer runs.
+      rig.clock.now = T0 + LIMIT_MS + 1;
+      assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), {
+        kind: "skipped",
+        why: "pr-reported",
+      });
+    }),
+  );
+
+  it.effect("stops the session but writes nothing on GitHub when GitHub cannot list them", () =>
     Effect.gen(function* () {
       const rig = rigFor();
+      rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
       rig.world.failNext.openPullRequestsOnHead = ghFailure();
       setStatus(rig, "completed", "FACTORY-STOP: stuck");
-      const before = bytesOf(rig);
       const error = yield* Effect.flip(advanceIn(rig));
       assert.strictEqual(error._tag, "GitHubFailed");
-      assert.strictEqual(bytesOf(rig), before);
+      // An outage never keeps the session working: it is stopped before the lookup.
+      assert.deepStrictEqual(rig.t3, STOP_CALLS);
       assert.deepStrictEqual(rig.gh, []);
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, worktreeRemoved]);
+      // The next pass takes the same exit and finishes the stop.
+      assert.strictEqual((yield* advanceIn(rig)).kind, "stuck");
+      assert.deepStrictEqual(linesOf(rig), stuckEvents([], SAID_STUCK, [PR_LEFT]));
+    }),
+  );
+
+  it.effect("at the time limit, stops the session even when GitHub cannot list them", () =>
+    Effect.gen(function* () {
+      const rig = limitedRig();
+      rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
+      rig.world.failNext.openPullRequestsOnHead = ghFailure();
+      rig.clock.now = T0 + LIMIT_MS + 1;
+      const error = yield* Effect.flip(timeLimit(rig.ctx, rig.run));
+      assert.strictEqual(error._tag, "GitHubFailed");
+      assert.deepStrictEqual(rig.t3, ["thread thread-1", ...ARCHIVE_CALLS]);
+      assert.deepStrictEqual(rig.gh, []);
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, worktreeRemoved]);
+      assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), {
+        kind: "stopped",
+        reason: TIME_LIMIT,
+      });
+      assert.deepStrictEqual(leftLines(rig), [PR_LEFT]);
+    }),
+  );
+
+  it.effect("in the watch, stops the session even when GitHub cannot list them", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.textCheck = "changed";
+      rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
+      rig.world.failNext.openPullRequestsOnHead = ghFailure();
+      const error = yield* Effect.flip(watch(rig.ctx, rig.run));
+      assert.strictEqual(error._tag, "GitHubFailed");
+      assert.deepStrictEqual(rig.t3, ["thread thread-1", ...ARCHIVE_CALLS]);
+      assert.deepStrictEqual(rig.gh, [TEXT_READ]);
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, worktreeRemoved]);
+      assert.strictEqual((yield* watch(rig.ctx, rig.run)).kind, "stopped");
+      assert.deepStrictEqual(leftLines(rig), [PR_LEFT]);
     }),
   );
 });

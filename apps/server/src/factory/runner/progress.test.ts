@@ -10,7 +10,6 @@ import {
   pendingRelaunch,
   readProgress,
   regateAttempt,
-  regateBranch,
   relaunchCommandId,
 } from "./progress.ts";
 
@@ -56,20 +55,26 @@ describe("readProgress: the pull request", () => {
     assert.strictEqual(seen.prReported, false);
   });
 
-  it("is kept but not reported when the line records a pull request a stopping session left", () => {
-    // A `pr-left` line is written by a stuck exit, for the next attempt to continue: the session
+  it("keeps a pull request a stopping session left apart from the ones the run reported", () => {
+    // A `pr_left` line is written by a stuck exit, for the next attempt to continue: the session
     // did not report it for the gate, so the run still holds its slot and its time limit.
-    const left: Entry = {
-      ...line(1, "pr_opened", { pr: 12, url: "https://github.com/rawphp/softfac/pull/12" }),
-      cause: { step: "pass", reason: "pr-left" },
-    };
-    const seen = readProgress([left]);
-    assert.deepStrictEqual(seen.opened, [12]);
-    assert.deepStrictEqual(seen.lastPr, {
-      pr: 12,
-      url: "https://github.com/rawphp/softfac/pull/12",
-    });
+    const url = "https://github.com/rawphp/softfac/pull/12";
+    const seen = readProgress([line(1, "pr_left", { pr: 12, url })]);
+    assert.deepStrictEqual(seen.left, [{ pr: 12, url }]);
+    assert.deepStrictEqual(seen.opened, []);
+    assert.strictEqual(seen.lastPr, null);
     assert.strictEqual(seen.prReported, false);
+  });
+
+  it("reports a pull request the session reports after a stuck exit recorded it as left", () => {
+    const url = "https://github.com/rawphp/softfac/pull/12";
+    const seen = readProgress([
+      line(1, "pr_left", { pr: 12, url }),
+      line(2, "pr_opened", { pr: 12, url }),
+    ]);
+    assert.deepStrictEqual(seen.opened, [12]);
+    assert.deepStrictEqual(seen.lastPr, { pr: 12, url });
+    assert.strictEqual(seen.prReported, true);
   });
 
   it("is reported from pr_opened until the run is building again", () => {
@@ -474,7 +479,6 @@ describe("readProgress: the approval", () => {
 });
 
 describe("readProgress: the branch a launch resumed from", () => {
-  const RUN = { repo: "rawphp/softfac", issue: "10", attempt: 2 };
   const resumedLaunch = (ms: number, run: string, branch: string) =>
     line(ms, "session_launched", {
       thread_id: "thread-2",
@@ -488,24 +492,14 @@ describe("readProgress: the branch a launch resumed from", () => {
   it("is none for a plain launch", () => {
     const seen = readProgress([launched(1)]);
     assert.strictEqual(seen.resumedFrom, null);
-    assert.strictEqual(seen.resumedFromRun, null);
-    assert.strictEqual(regateBranch(seen, RUN), null);
   });
 
-  it("names the run and the branch of the launch line's resumed_from", () => {
-    const seen = readProgress([resumedLaunch(1, "rawphp__softfac__10__1", "t3code/old")]);
-    assert.strictEqual(seen.resumedFrom, "t3code/old");
-    assert.strictEqual(seen.resumedFromRun, "rawphp__softfac__10__1");
-    assert.strictEqual(seen.lastBranch, "t3code/own");
-  });
-
-  it("is the pull request's branch only for a re-gate session, which resumed from the run itself", () => {
-    // A re-gate of run 2 launched a session from its pull request's branch: that is where it pushes.
-    const regate = readProgress([resumedLaunch(1, "rawphp__softfac__10__2", "feat/pr-12")]);
-    assert.strictEqual(regateBranch(regate, RUN), "feat/pr-12");
-    // A session resumed from attempt 1's branch works on T3's own branch.
+  it("names the branch of the launch line's resumed_from, for a re-gate or an earlier attempt", () => {
     const resumed = readProgress([resumedLaunch(1, "rawphp__softfac__10__1", "t3code/old")]);
-    assert.strictEqual(regateBranch(resumed, RUN), null);
+    assert.strictEqual(resumed.resumedFrom, "t3code/old");
+    assert.strictEqual(resumed.lastBranch, "t3code/own");
+    const regate = readProgress([resumedLaunch(1, "rawphp__softfac__10__2", "feat/pr-12")]);
+    assert.strictEqual(regate.resumedFrom, "feat/pr-12");
   });
 
   it("is the newest launch line's", () => {
@@ -514,8 +508,6 @@ describe("readProgress: the branch a launch resumed from", () => {
       launched(2),
     ]);
     assert.strictEqual(seen.resumedFrom, null);
-    assert.strictEqual(seen.resumedFromRun, null);
-    assert.strictEqual(regateBranch(seen, RUN), null);
   });
 });
 
@@ -527,15 +519,28 @@ describe("readProgress: the launch-sending step of a resume", () => {
     assert.strictEqual(seen.launchResumedPr, null);
   });
 
-  it("reads the branch and the pull request of a resume onto an open pull request", () => {
+  it("reads the pull request of a resume onto an open pull request from the step before", () => {
     const seen = readProgress([
-      step(
-        1,
-        "launch-sending resumed-from t3code/abc pull-request https://github.com/rawphp/softfac/pull/12",
-      ),
+      step(1, "launch-pull-request t3code/abc https://github.com/rawphp/softfac/pull/12"),
+      step(2, "launch-sending resumed-from t3code/abc"),
     ]);
     assert.strictEqual(seen.launchResumedFrom, "t3code/abc");
     assert.strictEqual(seen.launchResumedPr, "https://github.com/rawphp/softfac/pull/12");
+  });
+
+  it("takes no pull request decided for another branch, or with no launch-sending step after it", () => {
+    // A decision a crash cut short before its `launch-sending` step, then another decision.
+    const other = readProgress([
+      step(1, "launch-pull-request t3code/abc https://github.com/rawphp/softfac/pull/12"),
+      step(2, "launch-sending resumed-from t3code/def"),
+    ]);
+    assert.strictEqual(other.launchResumedFrom, "t3code/def");
+    assert.strictEqual(other.launchResumedPr, null);
+    const unsent = readProgress([
+      step(1, "launch-pull-request t3code/abc https://github.com/rawphp/softfac/pull/12"),
+    ]);
+    assert.isFalse(unsent.launchSent);
+    assert.strictEqual(unsent.launchResumedPr, null);
   });
 
   it("is none for a plain launch", () => {

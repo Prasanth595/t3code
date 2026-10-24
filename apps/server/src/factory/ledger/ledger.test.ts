@@ -182,6 +182,13 @@ const sampleEvents: ReadonlyArray<{ readonly event: RunEvent; readonly line: str
   },
   {
     event: {
+      event: "pr_left",
+      data: { pr: 12, url: "https://github.com/rawphp/softfac/pull/12" },
+    },
+    line: lineAtT0("pr_left", `{"pr":12,"url":"https://github.com/rawphp/softfac/pull/12"}`),
+  },
+  {
+    event: {
       event: "gate_command",
       data: { attempt: 1, command: "cargo test", exit_code: -1, duration_ms: 4200 },
     },
@@ -625,9 +632,9 @@ describe("append", () => {
       expect(readText(ledger.path), event.event).toBe(line);
       seen.add(event.event);
     });
-    // Every one of the 30 event types has at least one exact line.
+    // Every one of the 31 event types has at least one exact line.
     expect([...seen].sort()).toEqual(Object.keys(RUN_EVENT_FIELDS).sort());
-    expect(seen.size).toBe(30);
+    expect(seen.size).toBe(31);
   });
 
   it("event name is the snake case type, and data holds exactly the field list in order", () => {

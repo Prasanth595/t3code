@@ -378,7 +378,9 @@ export const recordedReason = (stop: Stop): string =>
 
 /**
  * The stuck path. The session is stopped first (see `stopSession`), so a failure of that leaves
- * the issue as it was and the next pass tries again. Then the actions `lifecycle.transition`
+ * the issue as it was and the next pass tries again. Then `afterStop`, what the caller records
+ * once the session can no longer work, so a read it makes never keeps a session working. Then
+ * the actions `lifecycle.transition`
  * asks for on a failure, in order, then the `state_changed` line and the summary line. The
  * comment says `stop.reason`, quotes `stop.sessionText` and names `stop.branch`; the ledger's
  * `stuck` line says `stop.detail` when there is one, then the session text, and the branch. A
@@ -393,6 +395,7 @@ export const goStuck = Effect.fn("RunnerRun.goStuck")(function* (
   at: Progress,
   code: string,
   stop: Stop,
+  afterStop: Effect.Effect<void, RunError> = Effect.void,
 ) {
   const cause = makeCause(at.step, code);
   if (at.state === "stuck") {
@@ -400,6 +403,7 @@ export const goStuck = Effect.fn("RunnerRun.goStuck")(function* (
     return;
   }
   yield* stopSession(ctx, out, at);
+  yield* afterStop;
   // A pull request that was ready for review is not left looking ready: the factory no longer
   // vouches for it. Safe to repeat.
   if (at.state === "pr-open" && at.pr !== null) yield* ctx.tracker.markPrDraft(at.pr);

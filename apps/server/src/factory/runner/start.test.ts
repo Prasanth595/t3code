@@ -1810,10 +1810,18 @@ const seedStuckRun = (
   dataDir: string,
   code: string,
   branches: { launched: string | null; recorded: string | null },
+  options: { attempt?: number; resumedFrom?: { run: string; branch: string } } = {},
 ) => {
-  const ledger = Ledger.create(dataDir, run7, { clock: () => T0 - 1000 });
+  const attempt = options.attempt ?? 1;
+  const ledger = Ledger.create(dataDir, run7n(attempt), { clock: () => T0 - 1000 + attempt });
   try {
-    for (const { line, cause: why } of startedLinesOn(branches.launched)) ledger.append(line, why);
+    for (const { line, cause: why } of startedLinesOn(branches.launched)) {
+      const resumed =
+        line.event === "session_launched" && options.resumedFrom !== undefined
+          ? { ...line, data: { ...line.data, resumed_from: options.resumedFrom } }
+          : line;
+      ledger.append(resumed, why);
+    }
     const why = makeCause("pass", code);
     ledger.append(
       {
@@ -1863,6 +1871,32 @@ const assertPlainStart = (dataDir: string, t3: ReturnType<typeof fakeSessions>) 
 };
 
 describe("start: the resume after a time limit", () => {
+  it.effect("of a resumed run continues from the branch its session was told to push to", () =>
+    Effect.gen(function* () {
+      // Attempt 2 resumed from attempt 1's `t3code/abc` and pushed there; T3 named its own
+      // branch, which the stuck line recorded and which never reached origin.
+      const dataDir = tempDir();
+      seedStuckRun(dataDir, "time-limit", { launched: "t3code/abc", recorded: "t3code/abc" });
+      seedStuckRun(
+        dataDir,
+        "time-limit",
+        { launched: null, recorded: "t3code/own" },
+        { attempt: 2, resumedFrom: { run: "rawphp__softfac__7__1", branch: "t3code/abc" } },
+      );
+      const { tracker, calls } = fakeTracker({});
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      const request = t3.launchRequests[0]!;
+      assert.strictEqual(request.commandId, "softfac:rawphp__softfac__7__3:launch");
+      assert.strictEqual(request.baseRef, "t3code/abc");
+      assert.ok(request.message.includes("git push origin HEAD:t3code/abc"), request.message);
+      assert.deepStrictEqual(lookups(calls), [
+        `textEditedSince 7 ${LABELED}`,
+        "branchTip t3code/abc",
+      ]);
+    }),
+  );
+
   it.effect("continues from the branch an earlier time-limited run left on origin", () =>
     Effect.gen(function* () {
       const dataDir = tempDir();
@@ -2255,19 +2289,27 @@ const closingDraft = (head: string, over: Partial<OpenPullRequest> = {}): OpenPu
 });
 
 /**
- * Run 1 of issue 7: started on `t3code/abc`, reported pull request #12 (`pr_opened`), then ended
- * with `outcome`: `needs-info`, or stuck for the reason code `code`.
+ * Run 1 of issue 7: started on `t3code/abc`, reported pull request #12 (`pr_opened`), or left it
+ * open when it stopped (`pr_left`), then ended with `outcome`: `needs-info`, or stuck for the
+ * reason code `code`.
  */
 const seedEndedWithPr = (
   dataDir: string,
   ending: { outcome: "needs-info" } | { outcome: "stuck"; code: string },
-  options: { attempt?: number; pr?: boolean } = {},
+  options: { attempt?: number; pr?: "opened" | "left" | false } = {},
 ) => {
   const ledger = Ledger.create(dataDir, run7n(options.attempt ?? 1), { clock: () => T0 - 1000 });
   try {
     for (const { line, cause: why } of startedLinesOn("t3code/abc")) ledger.append(line, why);
     const why = makeCause("advance", ending.outcome === "stuck" ? ending.code : "questions-asked");
-    if (options.pr !== false) ledger.append(PR_OPENED_12, makeCause("advance", "pr-opened"));
+    if (options.pr === "left") {
+      ledger.append(
+        { event: "pr_left", data: { pr: 12, url: URL12 } },
+        makeCause("advance", "pr-left"),
+      );
+    } else if (options.pr !== false) {
+      ledger.append(PR_OPENED_12, makeCause("advance", "pr-opened"));
+    }
     if (ending.outcome === "needs-info") {
       ledger.append({ event: "questions_posted", data: { questions: "1. Which?" } }, why);
       ledger.append({ event: "state_changed", data: { from: "building", to: "needs-info" } }, why);
@@ -2320,14 +2362,15 @@ const assertResumedOntoPr = (dataDir: string, t3: ReturnType<typeof fakeSessions
     branch: "t3code/abc",
   });
   assert.strictEqual(line.cause?.reason, "resumed-from-branch");
-  const sending = entriesOf(dataDir, run7n(2)).find(
-    (e) =>
-      e.event === "step_changed" &&
-      String((e.data as { step: string }).step).startsWith("launch-sending"),
-  );
-  assert.deepStrictEqual(sending?.data, {
-    step: `launch-sending resumed-from t3code/abc pull-request ${URL12}`,
-  });
+  // The pull request in a step of its own just before the one an older version also reads.
+  const steps = entriesOf(dataDir, run7n(2))
+    .filter((e) => e.event === "step_changed")
+    .map((e) => String((e.data as { step: string }).step))
+    .filter((step) => step.startsWith("launch-"));
+  assert.deepStrictEqual(steps, [
+    `launch-pull-request t3code/abc ${URL12}`,
+    "launch-sending resumed-from t3code/abc",
+  ]);
 };
 
 describe("start: the resume onto an open pull request of an earlier attempt", () => {
@@ -2355,6 +2398,35 @@ describe("start: the resume onto an open pull request of an earlier attempt", ()
       yield* startIn(dataDir, tracker, t3.sessions);
       assertResumedOntoPr(dataDir, t3);
     }),
+  );
+
+  it.effect("continues the pull request a stopping session left open", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedEndedWithPr(dataDir, { outcome: "stuck", code: "session-stuck" }, { pr: "left" });
+      const { tracker, calls } = fakeTracker({ pulls: { 12: openDraft("t3code/abc") } });
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assertResumedOntoPr(dataDir, t3);
+      assert.deepStrictEqual(prLookups(calls), ["pullRequest 12"]);
+    }),
+  );
+
+  it.effect(
+    "is an error that leaves the issue in triage when GitHub cannot read the ledger's pull request",
+    () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        seedEndedWithPr(dataDir, { outcome: "needs-info" });
+        const { tracker, calls } = fakeTracker({ pulls: { 12: ghFailure() } });
+        const t3 = fakeSessions(dataDir, {});
+        const error = yield* Effect.flip(startIn(dataDir, tracker, t3.sessions));
+        assert.strictEqual(error._tag, "GitHubFailed");
+        assert.deepStrictEqual(t3.launchRequests, []);
+        // Never a fall-through to a start from base beside the pull request.
+        assert.ok(!calls.includes("openPullRequestsClosing 7"), calls.join("\n"));
+        assert.ok(!calls.some((c) => c.startsWith("setState 7 building")), calls.join("\n"));
+      }),
   );
 
   it.effect("after a time limit, the pull request wins over the branch", () =>
@@ -2608,8 +2680,12 @@ describe("start: the resume onto an open pull request of an earlier attempt", ()
         {
           line: {
             event: "step_changed",
-            data: { step: `launch-sending resumed-from t3code/abc pull-request ${URL12}` },
+            data: { step: `launch-pull-request t3code/abc ${URL12}` },
           },
+          cause: cause("launch-sending"),
+        },
+        {
+          line: { event: "step_changed", data: { step: "launch-sending resumed-from t3code/abc" } },
           cause: cause("launch-sending"),
         },
       ]);

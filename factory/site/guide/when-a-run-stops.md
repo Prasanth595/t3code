@@ -26,7 +26,7 @@ The factory gave up. The comment gives the reason and, when the session had made
 | No model to launch with                                       | Set a default model on the T3 project or in T3's Settings.                                                                         |
 | Stopped by hand                                               | Nothing: someone stopped it.                                                                                                       |
 
-Fix the cause, then an instructor sets `factory:ready` to start a new run. A new run starts from the issue's base branch (its `## Base`, else the repo's), not from the old branch.
+Fix the cause, then an instructor sets `factory:ready` to start a new run. If an earlier run left the factory's pull request for the issue open, the new run continues that pull request on its branch, even when the issue text changed. To start over instead, close that pull request first. Otherwise a run that passed its time limit or lost its T3 session is continued from its branch, unless the issue text changed since. Any other new run starts from the issue's base branch (its `## Base`, else the repo's).
 
 ## The time limit
 
