@@ -13,7 +13,12 @@ vi.mock(import("~/state/session"), () => ({
 
 import { SessionPermissions } from "./SessionPermissions";
 
+function setup() {
+  state.session = null;
+}
+
 it("explains unavailable permission checks without showing stale grants", async () => {
+  setup();
   const data = {
     authenticated: true,
     scopes: ["environment:maintain"],
