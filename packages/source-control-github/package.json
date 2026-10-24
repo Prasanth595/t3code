@@ -70,6 +70,14 @@
     "./server/githubStackRebase": {
       "types": "./src/server/githubStackRebase.ts",
       "import": "./src/server/githubStackRebase.ts"
+    },
+    "./server/GitHubIssueTracker": {
+      "types": "./src/server/GitHubIssueTracker.ts",
+      "import": "./src/server/GitHubIssueTracker.ts"
+    },
+    "./server/issueTrackerDriver": {
+      "types": "./src/server/issueTrackerDriver.ts",
+      "import": "./src/server/issueTrackerDriver.ts"
     }
   },
   "scripts": {
@@ -79,10 +87,12 @@
   },
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/issue-tracker-core": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/source-control-core": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "yaml": "catalog:"
   },
   "devDependencies": {
     "@effect/graphql-generator": "catalog:",
