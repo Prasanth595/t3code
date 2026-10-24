@@ -40,6 +40,7 @@ import {
   regateWords,
   liveWorld,
   ownedThreads,
+  type LiveShared,
   serverStartedMs,
   wakeOn,
   type RuntimeOptions,
@@ -115,6 +116,27 @@ const noAttention: Pick<Attention["Service"], "list" | "raise" | "clear"> = {
   list: () => Effect.succeed([]),
   raise: () => Effect.void,
   clear: () => Effect.void,
+};
+
+/**
+ * Shared state whose `gating` offers each run it frees to `freed`: the milestone of a background
+ * gate that neither wakes the loop nor raises an item.
+ */
+const freeingShared = (freed: Queue.Queue<string>): LiveShared => {
+  class Gating extends Set<string> {
+    override delete(id: string): boolean {
+      const had = super.delete(id);
+      Queue.offerUnsafe(freed, id);
+      return had;
+    }
+  }
+  return {
+    gating: new Gating(),
+    claimMemo: new ClaimMemo(),
+    stuckReads: new Map(),
+    brokenThreads: { notFactory: new Set(), unsettled: new Map() },
+    configSkips: new Map(),
+  };
 };
 
 /** FactoryEvents that never says anything. */
@@ -1760,7 +1782,7 @@ describe("the gate in the background", () => {
         const dataDir = tempDir();
         const run = prOpenRun(dataDir);
         const other = prOpenRun(dataDir, "11");
-        const woken = yield* Deferred.make<void>();
+        const wakes = yield* Queue.unbounded<void>();
         const world = liveWorld(
           machine,
           dataDir,
@@ -1770,11 +1792,17 @@ describe("the gate in the background", () => {
           () => 1_000,
           "mac-mini",
           noAttention,
-          { ...liveGate(woken, yield* Scope.make()), readLoad },
+          {
+            gate: { run: () => Effect.die("no gate runs for a merged pull request") },
+            wake: Queue.offer(wakes, undefined).pipe(Effect.asVoid),
+            scope: yield* Scope.make(),
+            readLoad,
+          },
         );
         assert.deepStrictEqual(yield* world.gate(backgroundRepo, run), { kind: "started" });
         assert.deepStrictEqual(yield* world.gate(backgroundRepo, other), { kind: "started" });
-        while (world.gateRunning(run) || world.gateRunning(other)) yield* Effect.yieldNow;
+        yield* Queue.takeN(wakes, 2);
+        assert.isFalse(world.gateRunning(run) || world.gateRunning(other));
       }),
     );
 
@@ -1808,6 +1836,7 @@ describe("the gate in the background", () => {
         const run = prOpenRun(dataDir);
         const before = NodeFS.readFileSync(runPath(dataDir, run), "utf8");
         const woken = yield* Ref.make(0);
+        const freed = yield* Queue.unbounded<string>();
         const gh: FactoryProcess["Service"] = {
           run: (input) =>
             answered(
@@ -1830,9 +1859,13 @@ describe("the gate in the background", () => {
             wake: Ref.update(woken, (n) => n + 1),
             scope: yield* Scope.make(),
           },
+          undefined,
+          undefined,
+          freeingShared(freed),
         );
         assert.deepStrictEqual(yield* world.gate(backgroundRepo, run), { kind: "started" });
-        while (world.gateRunning(run)) yield* Effect.yieldNow;
+        yield* Queue.take(freed);
+        assert.isFalse(world.gateRunning(run));
         assert.strictEqual(yield* Ref.get(woken), 0);
         assert.strictEqual(NodeFS.readFileSync(runPath(dataDir, run), "utf8"), before);
       }),
@@ -1864,6 +1897,10 @@ describe("the gate in the background", () => {
           },
         };
         let gateRuns = 0;
+        const freed = yield* Queue.unbounded<string>();
+        const shared = freeingShared(freed);
+        // Another run's gate holds the only slot.
+        shared.gating.add(runIdToString(newRunId(REPO, "99", 1)));
         const world = liveWorld(
           background,
           dataDir,
@@ -1886,14 +1923,7 @@ describe("the gate in the background", () => {
           },
           undefined,
           undefined,
-          {
-            // Another run's gate holds the only slot.
-            gating: new Set([runIdToString(newRunId(REPO, "99", 1))]),
-            claimMemo: new ClaimMemo(),
-            stuckReads: new Map<string, number>(),
-            brokenThreads: { notFactory: new Set<string>(), unsettled: new Map<string, number>() },
-            configSkips: new Map<string, number>(),
-          },
+          shared,
         );
         const repo: Repo = {
           ...backgroundRepo,
@@ -1926,7 +1956,8 @@ describe("the gate in the background", () => {
         // gate run, so no lock.
         mergeable = "CONFLICTING";
         assert.deepStrictEqual(yield* world.gate(repo, run), { kind: "started" });
-        while (world.gateRunning(run)) yield* Effect.yieldNow;
+        yield* Queue.take(freed);
+        assert.isFalse(world.gateRunning(run));
         assert.strictEqual(gateRuns, 0);
         const conflictLines = readRun(dataDir, run).entries.filter(
           (e) =>
@@ -1993,14 +2024,12 @@ describe("the gate in the background", () => {
       Effect.gen(function* () {
         const dataDir = tempDir();
         const run = reportedRun(dataDir);
-        const done = yield* Deferred.make<void>();
+        const freed = yield* Queue.unbounded<string>();
         const woken = yield* Ref.make(0);
         const sessions = Sessions.FactorySessions.of({
           ...stubSessions,
           status: () =>
-            Effect.fail(new Sessions.SessionsError({ operation: "status", cause: "timeout" })).pipe(
-              Effect.ensuring(Deferred.succeed(done, undefined)),
-            ),
+            Effect.fail(new Sessions.SessionsError({ operation: "status", cause: "timeout" })),
         });
         const world = liveWorld(
           gateMachine,
@@ -2016,11 +2045,13 @@ describe("the gate in the background", () => {
             wake: Ref.update(woken, (n) => n + 1),
             scope: yield* Scope.make(),
           },
+          undefined,
+          undefined,
+          freeingShared(freed),
         );
         assert.deepStrictEqual(yield* world.gate(gateRepo, run), { kind: "started" });
-        yield* Deferred.await(done);
-        // The error line lands after the failed read: wait for the run to be freed.
-        while (world.gateRunning(run)) yield* Effect.yieldNow;
+        yield* Queue.take(freed);
+        assert.isFalse(world.gateRunning(run));
         const errors = readRun(dataDir, run).entries.filter((e) => e.event === "error");
         assert.strictEqual(errors.length, 1);
         assert.deepInclude(errors[0]!.data as object, { step: "gate", kind: "t3" });
@@ -2109,6 +2140,7 @@ describe("the gate in the background", () => {
       const dataDir = tempDir();
       const run = reportedRun(dataDir);
       const raised: Array<NewItem> = [];
+      const woken = yield* Deferred.make<void>();
       // The thread is gone, so the gate stops the run; GitHub holds the issue as building and
       // answers every write.
       const quietGh: FactoryProcess["Service"] = {
@@ -2145,12 +2177,13 @@ describe("the gate in the background", () => {
         },
         {
           gate: { run: () => Effect.die("no gate runs for a gone thread") },
-          wake: Effect.void,
+          wake: Deferred.succeed(woken, undefined).pipe(Effect.asVoid),
           scope: yield* Scope.make(),
         },
       );
       assert.deepStrictEqual(yield* world.gate(gateRepo, run), { kind: "started" });
-      while (world.gateRunning(run)) yield* Effect.yieldNow;
+      yield* Deferred.await(woken);
+      assert.isFalse(world.gateRunning(run));
       const id = runIdToString(run);
       assert.ok(readRun(dataDir, run).entries.some((e) => e.event === "finished"));
       assert.deepStrictEqual(raised, [
