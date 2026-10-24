@@ -82,6 +82,7 @@ export function ComposerModelControl(props: {
           style={{ width: NATURAL_WIDTH_PROBE_WIDTH }}
         >
           <View
+            key={naturalWidthKey}
             onLayout={(event) => {
               const width = event.nativeEvent.layout.width;
               setNaturalWidth((current) =>
