@@ -4435,6 +4435,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return true;
         });
 
+        const idleErrorFailure = (error: EffectAcpSchema.PromptResponse["error"]) =>
+          flavor.promptFailure?.(
+            new EffectAcpErrors.AcpRequestError({
+              code: error?.code ?? -32603,
+              errorMessage: error?.message ?? "Provider turn failed.",
+              ...(error?.data === undefined ? {} : { data: error.data }),
+            }),
+          ) ??
+          makeProviderFailure({
+            message: error?.message,
+            code: error == null ? null : String(error.code),
+            class: "provider_error",
+          });
+
         const settleIdleWork = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
         ): Effect.fn.Return<void> {
@@ -4451,16 +4465,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (work.stopReason === "cancelled" && pendingStopCloseTurn === context) {
             context.interrupted = true;
           }
-          const failure =
-            work.stopReason === "error"
-              ? (flavor.promptFailure?.(
-                  new EffectAcpErrors.AcpRequestError({
-                    code: work.error?.code ?? -32603,
-                    errorMessage: work.error?.message ?? "Provider turn failed.",
-                    ...(work.error?.data === undefined ? {} : { data: work.error.data }),
-                  }),
-                ) ?? makeProviderFailure({ message: work.error?.message, class: "provider_error" }))
-              : undefined;
+          const failure = work.stopReason === "error" ? idleErrorFailure(work.error) : undefined;
           yield* finalizeTurn(
             context,
             failure !== undefined
@@ -6924,11 +6929,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         const terminalizeOpenForegroundTools = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
+          status: "completed" | "failed" = "completed",
         ) {
           for (const tool of context.tools.values()) {
             if (!acpCompletedTurnShouldTerminalizeTool(tool, { ...flavor, extractSubagentUpdate }))
               continue;
-            yield* emitTool(context, tool, "completed");
+            yield* emitTool(context, tool, status);
           }
         });
 
@@ -7571,6 +7577,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   promptGeneration,
                   Effect.gen(function* () {
                     if (context.finalized || followsAgentWorkState) return;
+                    // ACP v2 reports a failed prompt as an idle `error`, not an RPC error.
+                    if (result.stopReason === "error" && !context.interrupted) {
+                      yield* terminalizeOpenForegroundTools(context, "failed");
+                      yield* finalizeTurn(context, "failed", idleErrorFailure(result.error));
+                      return;
+                    }
                     const status =
                       result.stopReason === "cancelled"
                         ? context.interrupted
