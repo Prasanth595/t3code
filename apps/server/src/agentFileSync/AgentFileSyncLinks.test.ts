@@ -668,6 +668,92 @@ it.layer(NodeServices.layer)("sync subscriptions", (it) => {
       expect(yield* (yield* f.load).list).toEqual([original]);
     }),
   );
+  it.effect.each(["read", "decode", "baseline"] as const)(
+    "preserves saved subscriptions after a %s recovery until a readable restart",
+    (failure) =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const original = yield* f.subscribe();
+        const catalog = f.storage.get("agent-file-sync-links")!;
+        if (failure === "decode") f.storage.set("agent-file-sync-links", Buffer.from("invalid"));
+        else
+          f.failReads.add(
+            failure === "read"
+              ? "agent-file-sync-links"
+              : [...f.storage.keys()].find((key) => key.startsWith("agent-file-sync-baseline-"))!,
+          );
+        const recovered = yield* f.load;
+        expect(yield* recovered.list).toEqual([]);
+        f.failReads.clear();
+        const saved = new Map(f.storage);
+        const cwd = f.path.join(f.directory, "new-destination");
+        yield* f.fs.makeDirectory(cwd);
+        const rejected = yield* recovered
+          .subscribe({
+            cwd,
+            sourceEnvironmentId: EnvironmentId.make("new-source"),
+            selection: {
+              skills: [],
+              instructions: [{ path: "AGENTS.md", sectionIds: ["Shared:0"] }],
+            },
+            label: "New source",
+            bundle: bundle("New rules"),
+            expected: yield* f.files.preview({ cwd, bundle: bundle("New rules") }),
+          })
+          .pipe(Effect.result);
+        expect(rejected).toMatchObject({
+          _tag: "Failure",
+          failure: { reason: "unreadable-state" },
+        });
+        expect(f.storage).toEqual(saved);
+        expect(yield* f.fs.exists(f.path.join(cwd, "AGENTS.md"))).toBe(false);
+        f.storage.set("agent-file-sync-links", catalog);
+        const restarted = yield* f.load;
+        expect(yield* restarted.list).toEqual([original]);
+        yield* restarted.manage({ id: original.id, action: "pause" });
+        expect((yield* restarted.list)[0]?.paused).toBe(true);
+      }),
+  );
+  it.effect("blocks management and refresh when only part of the catalog could be loaded", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const first = yield* f.subscribe();
+      const baseline = [...f.storage.keys()].find((key) =>
+        key.startsWith("agent-file-sync-baseline-"),
+      )!;
+      const cwd = f.path.join(f.directory, "other");
+      yield* f.fs.makeDirectory(cwd);
+      yield* f.links.subscribe({
+        cwd,
+        sourceEnvironmentId: EnvironmentId.make("other-source"),
+        selection: { skills: [], instructions: [{ path: "AGENTS.md", sectionIds: ["Shared:0"] }] },
+        label: "Other source",
+        bundle: bundle("Other rules"),
+        expected: yield* f.files.preview({ cwd, bundle: bundle("Other rules") }),
+      });
+      const other = (yield* f.links.list)[1]!;
+      const saved = new Map(f.storage);
+      const text = yield* f.fs.readFileString(f.path.join(cwd, "AGENTS.md"));
+      f.failReads.add(baseline);
+      const recovered = yield* f.load;
+      expect(yield* recovered.list).toEqual([other]);
+      f.failReads.clear();
+      expect(
+        yield* recovered.manage({ id: other.id, action: "pause" }).pipe(Effect.result),
+      ).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "unreadable-state" },
+      });
+      expect(
+        yield* recovered
+          .refresh({ id: other.id, generation: other.generation, bundle: bundle("Changed") })
+          .pipe(Effect.result),
+      ).toMatchObject({ _tag: "Failure", failure: { reason: "unreadable-state" } });
+      expect(f.storage).toEqual(saved);
+      expect(yield* f.fs.readFileString(f.path.join(cwd, "AGENTS.md"))).toBe(text);
+      expect(yield* (yield* f.load).list).toEqual([first, other]);
+    }),
+  );
   it.effect("persists preview failures as a visible paused subscription", () =>
     Effect.gen(function* () {
       const f = yield* fixture;

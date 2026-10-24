@@ -59,14 +59,19 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const home = yield* HostProcess.HomeDirectory;
   const path = yield* Path.Path;
+  let writable = true;
   const metadata = yield* secrets.get(SECRET).pipe(
     Effect.flatMap((stored) =>
       Option.isSome(stored)
         ? decode(Buffer.from(stored.value).toString("utf8"))
         : Effect.succeed([]),
     ),
-    Effect.tapError(() => Effect.logWarning("Ignoring unreadable agent file sync subscriptions")),
-    Effect.orElseSucceed(() => []),
+    Effect.catch(() => {
+      writable = false;
+      return Effect.logWarning("Ignoring unreadable agent file sync subscriptions").pipe(
+        Effect.as([]),
+      );
+    }),
   );
   const loadBaseline = Effect.fn("AgentFileSyncLinks.loadBaseline")(
     function* (link: AgentFileSyncLink) {
@@ -77,14 +82,21 @@ const make = Effect.gen(function* () {
         return yield* new AgentFileSyncError({ reason: "changed" });
       return { ...link, previous };
     },
-    Effect.catch(() =>
-      Effect.logWarning("Ignoring an unreadable agent file sync baseline").pipe(Effect.as(null)),
-    ),
+    Effect.catch(() => {
+      writable = false;
+      return Effect.logWarning("Ignoring an unreadable agent file sync baseline").pipe(
+        Effect.as(null),
+      );
+    }),
   );
   let state: State = (yield* Effect.forEach(metadata, loadBaseline)).filter(
     (link) => link !== null,
   );
   const lock = yield* Semaphore.make(1);
+  // A recovered subset cannot replace the durable catalog without dropping unreadable subscriptions.
+  const assertWritable = Effect.suspend(() =>
+    writable ? Effect.void : Effect.fail(new AgentFileSyncError({ reason: "unreadable-state" })),
+  );
   const persist = Effect.fn("AgentFileSyncLinks.persist")(function* (next: State) {
     const oldKeys = new Set(state.map(baselineKey));
     const nextKeys = new Set(next.map(baselineKey));
@@ -120,6 +132,7 @@ const make = Effect.gen(function* () {
   ) {
     return yield* lock.withPermit(
       Effect.gen(function* () {
+        yield* assertWritable;
         if (state.length >= 20)
           return yield* new AgentFileSyncError({ reason: "subscription-limit" });
         const destination = yield* fs
@@ -250,6 +263,7 @@ const make = Effect.gen(function* () {
     function* (input) {
       return yield* lock.withPermit(
         Effect.gen(function* () {
+          yield* assertWritable;
           const job = state.find((entry) => entry.id === input.id);
           // Several clients may relay the same subscription. A stale client must re-read it.
           if (!job || job.paused || job.generation !== input.generation) return;
@@ -291,6 +305,7 @@ const make = Effect.gen(function* () {
     ) {
       return yield* lock.withPermit(
         Effect.gen(function* () {
+          yield* assertWritable;
           const job = state.find((entry) => entry.id === input.id);
           if (!job || (input.generation !== undefined && input.generation !== job.generation))
             return;

@@ -88,6 +88,7 @@ export class AgentFileSyncError extends Schema.TaggedError<AgentFileSyncError>()
       "invalid-path",
       "limit",
       "subscription-limit",
+      "unreadable-state",
       "linked-destination",
       "changed",
       "changed-backup",
@@ -109,6 +110,8 @@ export class AgentFileSyncError extends Schema.TaggedError<AgentFileSyncError>()
         return `Selection exceeds the sync limit: 4 MB, 256 files per skill, 1 MB per file${at}.`;
       case "subscription-limit":
         return "This destination already has 20 sync subscriptions. Stop one before starting another.";
+      case "unreadable-state":
+        return "Saved sync subscriptions could not be read. Restore access and restart this environment before changing sync.";
       case "linked-destination":
         return `Destination contains a link or special file. Manage it on that host before syncing${at}.`;
       case "changed":
