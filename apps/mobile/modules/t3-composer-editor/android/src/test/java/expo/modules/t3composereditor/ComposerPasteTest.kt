@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
 import android.view.KeyEvent
+import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -105,6 +106,22 @@ class ComposerPasteTest {
     assertTrue(editor.onCreateInputConnection(EditorInfo())!!.commitText(pasted, 1))
     assertEquals(Triple(pasted, 7, 10), intercepted)
     assertEquals("before old after", editor.text.toString())
+  }
+
+  @Test
+  fun keyboardClipboardInsertWhileComposingReplacesTheComposingWord() {
+    val pasted = "é".repeat(16 * 1024)
+    editor.setText("before ")
+    editor.setSelection(editor.length())
+    var intercepted: Triple<String, Int, Int>? = null
+    editor.pasteTextListener = { text, start, end -> intercepted = Triple(text, start, end) }
+    val connection = editor.onCreateInputConnection(EditorInfo())!!
+
+    assertTrue(connection.setComposingText("wor", 1))
+    assertTrue(connection.commitText(pasted, 1))
+    assertEquals(Triple(pasted, 7, 10), intercepted)
+    assertEquals("before wor", editor.text.toString())
+    assertEquals(-1, BaseInputConnection.getComposingSpanStart(editor.text))
   }
 
   @Test

@@ -666,18 +666,31 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
       ): Boolean = deleteAdjacentChip(beforeLength, afterLength) ||
         super.deleteSurroundingTextInCodePoints(beforeLength, afterLength)
       override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean =
-        interceptKeyboardPaste(text) || super.commitText(text, newCursorPosition)
+        if (interceptKeyboardPaste(text)) {
+          // The keyboard now treats its composing text as replaced; a span left behind would
+          // let its next word overwrite text the paste did not remove.
+          finishComposingText()
+          true
+        } else {
+          super.commitText(text, newCursorPosition)
+        }
     }
   }
 
-  // Keyboards insert clipboard text, such as Gboard's clipboard strip, with one commitText.
-  // A composed word or a single key is typing, which stays native even at the input limit.
-  private fun interceptKeyboardPaste(text: CharSequence?): Boolean = !readOnly &&
-    textPasteThresholdBytes > 0 &&
-    !text.isNullOrEmpty() &&
-    BaseInputConnection.getComposingSpanStart(editableText) < 0 &&
-    Character.codePointCount(text, 0, text.length) > 1 &&
-    interceptPaste(text.toString())
+  // Keyboards insert clipboard text, such as Gboard's clipboard strip, with one commitText,
+  // which replaces any composing text. A single key or a commit that continues the composing
+  // word is typing, which stays native even at the input limit.
+  private fun interceptKeyboardPaste(text: CharSequence?): Boolean {
+    if (readOnly || textPasteThresholdBytes <= 0 || text == null) return false
+    val composingStart = BaseInputConnection.getComposingSpanStart(editableText)
+    val composingEnd = BaseInputConnection.getComposingSpanEnd(editableText)
+    return when {
+      Character.codePointCount(text, 0, text.length) < 2 -> false
+      composingStart < 0 -> interceptPaste(text.toString())
+      text.startsWith(editableText.subSequence(composingStart, composingEnd)) -> false
+      else -> interceptPaste(text.toString(), start = composingStart, end = composingEnd)
+    }
+  }
 
   override fun onSelectionChanged(selStart: Int, selEnd: Int) {
     super.onSelectionChanged(selStart, selEnd)
@@ -747,9 +760,12 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
     return interceptPaste(text, foldLargeText)
   }
 
-  private fun interceptPaste(text: String, foldLargeText: Boolean = true): Boolean {
-    val start = minOf(selectionStart, selectionEnd).coerceIn(0, length())
-    val end = maxOf(selectionStart, selectionEnd).coerceIn(start, length())
+  private fun interceptPaste(
+    text: String,
+    foldLargeText: Boolean = true,
+    start: Int = minOf(selectionStart, selectionEnd).coerceIn(0, length()),
+    end: Int = maxOf(selectionStart, selectionEnd).coerceIn(start, length())
+  ): Boolean {
     val exceedsInputLimit = length().toLong() - (end - start) + text.length > maxInputChars
     val shouldFold = foldLargeText && (
       text.length >= textPasteThresholdBytes ||
