@@ -76,7 +76,7 @@ describe("workEntryIndicatesToolFailure", () => {
       itemType: "command_execution",
       toolLifecycleStatus: "completed",
       command: 'rg -n "ENOENT|exit code" logs fixtures',
-      structuredPayload: commandItem({ output, exitCode: 0 }),
+      structuredPayload: commandItem({ output, exitCode: 0, outputIndicatesFailure: true }),
     };
     expect(workEntryIndicatesToolFailure(entry)).toBe(false);
     expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(false);
