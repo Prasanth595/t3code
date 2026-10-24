@@ -177,6 +177,11 @@ import {
   IssueScopeRef,
   IssueSetStateInput,
   IssueTemplateList,
+  IssueTrackerBindProjectInput,
+  IssueTrackerConnectInput,
+  IssueTrackerConnection,
+  IssueTrackerConnectionError,
+  IssueTrackerConnectionList,
   IssueUnavailableError,
   IssueUpdateInput,
 } from "./issue.ts";
@@ -591,6 +596,9 @@ export const WS_METHODS = {
   issuesUpdate: "issues.update",
   issuesSetState: "issues.setState",
   issuesReact: "issues.react",
+  issueTrackersList: "issueTrackers.list",
+  issueTrackersConnect: "issueTrackers.connect",
+  issueTrackersBindProject: "issueTrackers.bindProject",
 
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
@@ -1261,6 +1269,34 @@ const WsIssuesReactRpc = Rpc.make(WS_METHODS.issuesReact, {
   payload: IssueReactionInput,
   success: Schema.Void,
   error: IssueRpcError,
+});
+
+const IssueTrackerRpcError = Schema.Union([
+  IssueTrackerConnectionError,
+  EnvironmentAuthorizationError,
+]);
+
+/** Every standalone tracker this server ships, each with its connection probed afresh. */
+const WsIssueTrackersListRpc = Rpc.make(WS_METHODS.issueTrackersList, {
+  payload: Schema.Struct({}),
+  success: IssueTrackerConnectionList,
+  error: IssueTrackerRpcError,
+});
+
+/**
+ * Verifies the credential against the tracker before storing it; the result is the new status.
+ * A null token disconnects, which also unbinds every project that pointed at the tracker.
+ */
+const WsIssueTrackersConnectRpc = Rpc.make(WS_METHODS.issueTrackersConnect, {
+  payload: IssueTrackerConnectInput,
+  success: IssueTrackerConnection,
+  error: IssueTrackerRpcError,
+});
+
+const WsIssueTrackersBindProjectRpc = Rpc.make(WS_METHODS.issueTrackersBindProject, {
+  payload: IssueTrackerBindProjectInput,
+  success: Schema.Void,
+  error: IssueTrackerRpcError,
 });
 
 const WsSourceControlLookupRepositoryRpc = Rpc.make(WS_METHODS.sourceControlLookupRepository, {
@@ -2004,6 +2040,9 @@ export const WsIssuesRpcGroup = RpcGroup.make(
   WsIssuesUpdateRpc,
   WsIssuesSetStateRpc,
   WsIssuesReactRpc,
+  WsIssueTrackersListRpc,
+  WsIssueTrackersConnectRpc,
+  WsIssueTrackersBindProjectRpc,
 ).middleware(RpcScopeAuthorization);
 
 /** Every WebSocket RPC not in a domain group merged into `WsRpcGroup` below. */
