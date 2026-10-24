@@ -270,6 +270,7 @@ export function layerWithRegistry<Error>(
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
+    readonly eventSink?: (sink: EventSink.EventSinkV2Shape) => EventSink.EventSinkV2Shape;
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
@@ -311,9 +312,19 @@ export function layerWithRegistry<Error>(
     EffectOutbox.layer,
     TurnItemPositionStore.layer,
   ).pipe(Layer.provide(layerDatabase));
-  const layerEventSinkProvided = EventSink.layerFromStores.pipe(
+  const layerStoreEventSink = EventSink.layerFromStores.pipe(
     Layer.provide(Layer.mergeAll(layerStores, layerDatabase)),
   );
+  const wrapEventSink = options.eventSink;
+  const layerEventSinkProvided =
+    wrapEventSink === undefined
+      ? layerStoreEventSink
+      : Layer.effect(
+          EventSink.EventSinkV2,
+          Effect.gen(function* () {
+            return wrapEventSink(yield* EventSink.EventSinkV2);
+          }),
+        ).pipe(Layer.provide(layerStoreEventSink));
   const layerCommandReceiptStoreProvided = CommandReceiptStore.layer.pipe(
     Layer.provide(layerDatabase),
   );
