@@ -370,15 +370,14 @@ export const make = Effect.gen(function* () {
       ensureGitCommand("GitWorkflowService.pullCurrentBranch", cwd).pipe(
         Effect.andThen(git.pullCurrentBranch(cwd)),
       ),
+    // A switch between reading the branch and committing would move the commit to another branch.
     runStackedAction: (input, options) =>
       ensureGit("GitWorkflowService.runStackedAction", input.cwd).pipe(
         Effect.flatMap((handle) =>
-          input.featureBranch
-            ? withCheckoutLease(
-                handle.repository.rootPath,
-                gitManager.runStackedAction(input, options),
-              )
-            : gitManager.runStackedAction(input, options),
+          withCheckoutLease(
+            handle.repository.rootPath,
+            gitManager.runStackedAction(input, options),
+          ),
         ),
       ),
     resolvePullRequest: routeGitManager(
