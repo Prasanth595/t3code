@@ -79,6 +79,23 @@ describe("opening a workspace tab", () => {
     expect(next.routes.map((route) => route.key)).toEqual(["home", "thread"]);
   });
 
+  it("reopens a tab's page under the key it had, so its kept screen is reused", () => {
+    const columnsAvailable = { columns: true, check: available };
+    let selections = workspaceSelectionsIn([home, thread], {});
+    const away = workspaceTabNavigationState(
+      { routes: [home, thread] },
+      "pullRequests",
+      selections,
+      {
+        columns: false,
+        check: available,
+      },
+    );
+    selections = workspaceSelectionsIn(away.routes, selections);
+    const back = workspaceTabNavigationState(away, "threads", selections, columnsAvailable);
+    expect(back.routes.at(-1)).toMatchObject({ key: "thread", params: thread.params });
+  });
+
   it("falls back to the list for a chat that no longer exists, or an unknown Settings page", () => {
     const missing = { thread: () => false, pullRequest: () => true };
     expect(

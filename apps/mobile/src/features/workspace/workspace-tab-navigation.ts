@@ -40,7 +40,9 @@ function stringParam(params: object | undefined, key: string) {
   return typeof value === "string" ? value : undefined;
 }
 
-function pullRequestSelection(params: object | undefined): PullRequestSelection | undefined {
+function pullRequestSelection(
+  params: object | undefined,
+): Omit<PullRequestSelection, "key"> | undefined {
   const value = params as Record<string, unknown> | undefined;
   if (
     typeof value?.environmentId !== "string" ||
@@ -59,7 +61,10 @@ function pullRequestSelection(params: object | undefined): PullRequestSelection 
   };
 }
 
-function samePullRequest(left: PullRequestSelection | undefined, right: PullRequestSelection) {
+function samePullRequest(
+  left: PullRequestSelection | undefined,
+  right: Omit<PullRequestSelection, "key">,
+) {
   return (
     left?.environmentId === right.environmentId &&
     left.projectId === right.projectId &&
@@ -84,22 +89,35 @@ export function workspaceSelectionsIn(
   if (
     environmentId &&
     threadId &&
-    (next.threads?.environmentId !== environmentId || next.threads.threadId !== threadId)
+    (next.threads?.environmentId !== environmentId ||
+      next.threads.threadId !== threadId ||
+      next.threads.key !== thread?.key)
   ) {
-    next = { ...next, threads: { environmentId, threadId } };
+    next = { ...next, threads: { environmentId, threadId, key: thread?.key } };
   }
-  const pullRequest = pullRequestSelection(
-    routes.findLast((route) => route.name === "PullRequest")?.params,
-  );
-  if (pullRequest && !samePullRequest(next.pullRequests, pullRequest)) {
-    next = { ...next, pullRequests: pullRequest };
+  const pullRequestRoute = routes.findLast((route) => route.name === "PullRequest");
+  const pullRequest = pullRequestSelection(pullRequestRoute?.params);
+  if (
+    pullRequest &&
+    (!samePullRequest(next.pullRequests, pullRequest) ||
+      next.pullRequests?.key !== pullRequestRoute?.key)
+  ) {
+    next = { ...next, pullRequests: { ...pullRequest, key: pullRequestRoute?.key } };
   }
   const list = routes.findIndex((route) => route.name === "Settings");
-  const page = list < 0 ? undefined : routes[list + 1]?.name;
-  if (page && REMEMBERED_SETTINGS_PAGES.has(page) && page !== next.settings) {
-    next = { ...next, settings: page };
+  const page = list < 0 ? undefined : routes[list + 1];
+  if (
+    page &&
+    REMEMBERED_SETTINGS_PAGES.has(page.name) &&
+    (page.name !== next.settings || page.key !== next.settingsKey)
+  ) {
+    next = { ...next, settings: page.name, settingsKey: page.key };
   }
   return next;
+}
+
+function identityOf({ key: _key, ...identity }: PullRequestSelection) {
+  return identity;
 }
 
 let routeKeys = 0;
@@ -126,7 +144,11 @@ function detailRoute(
           route.name === "Thread" &&
           stringParam(route.params, "environmentId") === thread.environmentId &&
           stringParam(route.params, "threadId") === thread.threadId,
-      ) ?? { name: "Thread", params: thread }
+      ) ?? {
+        key: thread.key,
+        name: "Thread",
+        params: { environmentId: thread.environmentId, threadId: thread.threadId },
+      }
     );
   }
   const pullRequest = selections.pullRequests;
@@ -136,7 +158,7 @@ function detailRoute(
       (route) =>
         route.name === "PullRequest" &&
         samePullRequest(pullRequestSelection(route.params), pullRequest),
-    ) ?? { name: "PullRequest", params: pullRequest }
+    ) ?? { key: pullRequest.key, name: "PullRequest", params: identityOf(pullRequest) }
   );
 }
 
@@ -160,9 +182,12 @@ export function workspaceTabNavigationState<
 ) {
   const overlays = options.overlays ?? [];
   if (tab === "settings") {
+    const page = options.columns ? rememberedSettingsPage(selections) : undefined;
     const settings = settingsNavigationState(
       state,
-      options.columns ? rememberedSettingsPage(selections) : undefined,
+      page,
+      undefined,
+      page === selections.settings ? selections.settingsKey : undefined,
     );
     const routes = [...settings.routes.map(keyed), ...overlays];
     return { ...settings, index: routes.length - 1, routes };

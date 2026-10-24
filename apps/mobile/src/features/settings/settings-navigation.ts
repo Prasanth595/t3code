@@ -74,6 +74,7 @@ export function settingsNavigationState<State extends { readonly routes: readonl
   state: State,
   page: SettingsPageName | undefined,
   params?: object,
+  key?: string,
 ) {
   const home = state.routes.find((route) => route.name === "Home") ?? { name: "Home" };
   const list = state.routes.find((route) => route.name === "Settings") ?? { name: "Settings" };
@@ -82,7 +83,11 @@ export function settingsNavigationState<State extends { readonly routes: readonl
         (route) => route.name === page && JSON.stringify(route.params) === JSON.stringify(params),
       )
     : undefined;
-  const routes = [home, list, ...(page ? [current ?? { name: page, params }] : [])];
+  const routes = [
+    home,
+    list,
+    ...(page ? [current ?? (key ? { key, name: page, params } : { name: page, params })] : []),
+  ];
   return { ...state, index: routes.length - 1, routes };
 }
 

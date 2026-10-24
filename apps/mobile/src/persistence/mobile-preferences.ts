@@ -47,10 +47,17 @@ const PullRequestListPreferences = Schema.Struct({
 });
 export type PullRequestListPreferences = typeof PullRequestListPreferences.Type;
 
-/** The page each workspace tab last showed, reopened when the tab returns with columns. */
+/**
+ * The page each workspace tab last showed, reopened when the tab returns with columns. `key` is
+ * that page's route key: reopening under the same key reuses the screen a tab kept mounted.
+ */
 const WorkspaceSelections = Schema.Struct({
   threads: Schema.optional(
-    Schema.Struct({ environmentId: Schema.String, threadId: Schema.String }),
+    Schema.Struct({
+      environmentId: Schema.String,
+      threadId: Schema.String,
+      key: Schema.optional(Schema.String),
+    }),
   ),
   pullRequests: Schema.optional(
     Schema.Struct({
@@ -59,9 +66,11 @@ const WorkspaceSelections = Schema.Struct({
       repository: Schema.String,
       number: Schema.Number,
       host: Schema.optional(Schema.String),
+      key: Schema.optional(Schema.String),
     }),
   ),
   settings: Schema.optional(Schema.String),
+  settingsKey: Schema.optional(Schema.String),
 });
 export type WorkspaceSelections = typeof WorkspaceSelections.Type;
 
