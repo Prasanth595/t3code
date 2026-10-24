@@ -561,7 +561,9 @@ it.effect("logs the close code and reason when a client closes /ws", () => {
       writer: Effect.succeed({ write: () => Effect.void, writeAll: () => Effect.void }),
     });
     const webRequest = HttpServerRequest.fromWeb(
-      new Request("http://localhost/ws?orchestrationProtocol=2"),
+      new Request("http://localhost/ws?orchestrationProtocol=2&clientSurface=desktop", {
+        headers: { "x-forwarded-for": "203.0.113.7, 10.0.0.1" },
+      }),
     );
     const request = Object.create(webRequest, {
       upgrade: { value: Effect.succeed(closingSocket) },
@@ -597,9 +599,23 @@ it.effect("logs the close code and reason when a client closes /ws", () => {
       Effect.scoped,
     );
 
-    const logged = JSON.stringify(messages);
-    assert.include(logged, "4001");
-    assert.include(logged, "client heartbeat timeout");
+    assert.deepStrictEqual(
+      messages.filter((message) => Array.isArray(message) && message[0] === "WebSocket closed"),
+      [
+        [
+          "WebSocket closed",
+          {
+            endedBy: "close_frame",
+            closeCode: 4001,
+            closeReason: "client heartbeat timeout",
+            durationMs: 0,
+            sessionId: "close-test",
+            surface: "desktop",
+            forwardedFor: "203.0.113.7",
+          },
+        ],
+      ],
+    );
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
