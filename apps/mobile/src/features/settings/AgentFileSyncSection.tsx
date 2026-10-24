@@ -10,6 +10,9 @@ import { useEnvironmentQuery } from "../../state/query";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsSection } from "./components/SettingsSection";
 
+const syncErrorMessage = (cause: unknown) =>
+  cause instanceof Error ? cause.message : "Could not update sync.";
+
 export function AgentFileSyncSection({ environmentId }: { environmentId: EnvironmentId }) {
   const links = useEnvironmentQuery(agentFileSync.links({ environmentId, input: {} }));
   const allowed = useAtomValue(agentFileSync.manage.permissionAtom(environmentId));
@@ -30,13 +33,13 @@ export function AgentFileSyncSection({ environmentId }: { environmentId: Environ
         { reportFailure: false },
       );
       if (result._tag === "Failure") {
-        const cause = squashAtomCommandFailure(result);
-        setError(cause instanceof Error ? cause.message : "Could not update sync.");
+        setError(syncErrorMessage(squashAtomCommandFailure(result)));
       }
       links.refresh();
-    } finally {
-      setBusy(false);
+    } catch (cause) {
+      setError(syncErrorMessage(cause));
     }
+    setBusy(false);
   };
   return (
     <SettingsSection

@@ -204,6 +204,72 @@ it.layer(NodeServices.layer)("agent file sync", (it) => {
       expect((yield* f.sync.preview({ cwd: f.target, bundle }))[0]?.changed).toBe(false);
     }),
   );
+  it.effect("keeps nested skill revisions stable through preview, reconcile and undo", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const skill = ".agents/skills/nested";
+      yield* f.write(f.target, `${skill}/SKILL.md`, "Original");
+      const bundle: AgentFileSyncBundle = [
+        {
+          kind: "skill",
+          path: skill,
+          files: ["SKILL.md", "a/x.txt", "a.txt"].map((path) => ({
+            path,
+            data: Buffer.from(path).toString("base64"),
+            mode: 0o600,
+          })),
+        },
+      ];
+      const applied = yield* f.run(bundle);
+      expect(applied.failures).toEqual([]);
+      expect((yield* f.sync.preview({ cwd: f.target, bundle }))[0]?.changed).toBe(false);
+      const updated = bundle.map((resource) =>
+        resource.kind === "skill"
+          ? {
+              ...resource,
+              files: resource.files.map((file) => ({
+                ...file,
+                data: Buffer.from("Updated").toString("base64"),
+              })),
+            }
+          : resource,
+      );
+      yield* f.sync.reconcile({ cwd: f.target, previous: bundle, bundle: updated });
+      yield* f.sync.reconcile({ cwd: f.target, previous: updated, bundle });
+      expect((yield* f.sync.undo({ undoId: applied.undoId! })).failures).toEqual([]);
+      expect(yield* f.fs.readFileString(f.path.join(f.target, skill, "SKILL.md"))).toBe("Original");
+    }),
+  );
+  it.effect("rejects imported skill paths beyond the readable depth before any writes", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const skill = ".agents/skills/deep";
+      const deepFile = Array.from({ length: 11 }, () => "a").join("/") + "/file.txt";
+      const files = ["SKILL.md", deepFile].map((path) => ({
+        path,
+        data: Buffer.from(path).toString("base64"),
+        mode: 0o600,
+      }));
+      const bundle: AgentFileSyncBundle = [{ kind: "skill", path: skill, files }];
+      const applied = yield* f.run(bundle);
+      expect(applied.failures).toEqual([]);
+      expect((yield* f.sync.preview({ cwd: f.target, bundle }))[0]?.changed).toBe(false);
+      const tooDeep: AgentFileSyncBundle = [
+        ...sectionBundle("Must not be written"),
+        { kind: "skill", path: skill, files: [...files, { ...files[1]!, path: `a/${deepFile}` }] },
+      ];
+      expect(
+        (yield* f.sync.preview({ cwd: f.target, bundle: tooDeep }).pipe(Effect.flip)).reason,
+      ).toBe("limit");
+      expect(
+        (yield* f.sync.apply({ cwd: f.target, bundle: tooDeep, expected: [] }).pipe(Effect.flip))
+          .reason,
+      ).toBe("limit");
+      expect(yield* f.fs.exists(f.path.join(f.target, "AGENTS.md"))).toBe(false);
+      expect((yield* f.sync.undo({ undoId: applied.undoId! })).failures).toEqual([]);
+      expect(yield* f.fs.exists(f.path.join(f.target, skill))).toBe(false);
+    }),
+  );
   it.effect("refuses a stale preview before writing any selected item", () =>
     Effect.gen(function* () {
       const f = yield* fixture;

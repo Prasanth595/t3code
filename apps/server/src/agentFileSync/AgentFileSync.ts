@@ -49,6 +49,7 @@ const PERSONAL_INSTRUCTIONS = [
 ];
 const MAX_BYTES = 4 * 1024 * 1024;
 const MAX_FILE_BYTES = 1024 * 1024;
+const MAX_SKILL_DEPTH = 12;
 const Snapshot = Schema.NullOr(Schema.Array(AgentFileSyncFile));
 type Snapshot = typeof Snapshot.Type;
 const Receipt = Schema.Struct({
@@ -70,7 +71,12 @@ const hash = (text: string) => NodeCrypto.createHash("sha256").update(text).dige
 const revision = (files: Snapshot) =>
   files === null
     ? null
-    : hash(files.map((file) => `${file.path}\0${file.mode}\0${file.data}`).join("\0"));
+    : hash(
+        [...files]
+          .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+          .map((file) => `${file.path}\0${file.mode}\0${file.data}`)
+          .join("\0"),
+      );
 const validPart = (part: string) =>
   /^[a-zA-Z0-9._@][a-zA-Z0-9._@+ -]*$/.test(part) &&
   part !== "." &&
@@ -213,7 +219,7 @@ const make = Effect.gen(function* () {
       relative: string,
       depth: number,
     ): Effect.fn.Return<void, AgentFileSyncError> {
-      if (depth > 12 || files.length >= 256)
+      if (depth > MAX_SKILL_DEPTH || files.length >= 256)
         return yield* new AgentFileSyncError({ reason: "limit", path: at });
       const real = yield* io(fs.realPath(entry), at);
       if (path.relative(entry, real) !== "")
@@ -353,6 +359,8 @@ const make = Effect.gen(function* () {
           )
             return yield* new AgentFileSyncError({ reason: "invalid-path", path: file.path });
           names.add(file.path.toLowerCase());
+          if (file.path.split("/").length > MAX_SKILL_DEPTH)
+            return yield* new AgentFileSyncError({ reason: "limit", path: file.path });
           if (Buffer.from(file.data, "base64").toString("base64") !== file.data)
             return yield* new AgentFileSyncError({ reason: "invalid-path", path: file.path });
           if (Buffer.from(file.data, "base64").byteLength > MAX_FILE_BYTES)

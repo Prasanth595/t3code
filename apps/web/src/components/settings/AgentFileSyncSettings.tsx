@@ -260,6 +260,7 @@ function SyncSelection({
       );
       if (exported._tag === "Failure") {
         setError(message(exported));
+        setBusy(false);
         return;
       }
       const reviewed: ReviewedTarget[] = [];
@@ -280,9 +281,10 @@ function SyncSelection({
         });
       }
       setReview({ bundle: exported.value, targets: reviewed });
-    } finally {
-      setBusy(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not preview sync.");
     }
+    setBusy(false);
   };
   const apply = async () => {
     if (!review || busy) return;
@@ -331,9 +333,10 @@ function SyncSelection({
       setStatus(
         `${count} ${count === 1 ? "item syncing" : "items syncing"}.${failed ? " Some changes failed; review the details." : ""}`,
       );
-    } finally {
-      setBusy(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not enable sync.");
     }
+    setBusy(false);
   };
   const matches = (text: string) => text.toLowerCase().includes(filter.toLowerCase());
   return (
@@ -447,7 +450,7 @@ function SyncSelection({
             >
               <Checkbox
                 checked={targets.has(target.id)}
-                disabled={!writable(target)}
+                disabled={!writable(target) && !targets.has(target.id)}
                 onCheckedChange={(checked) => toggle(target.id, checked, true)}
               />
               <span className="min-w-0 break-words">
@@ -601,9 +604,10 @@ function SyncSubscriptions({ location, source }: { location: Location; source?: 
       );
       if (result._tag === "Failure") setError(message(result));
       links.refresh();
-    } finally {
-      setBusy(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update sync.");
     }
+    setBusy(false);
   };
   return (
     <div className="flex flex-col gap-2">
