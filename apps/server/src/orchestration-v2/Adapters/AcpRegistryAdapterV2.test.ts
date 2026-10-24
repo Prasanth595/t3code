@@ -1007,6 +1007,71 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  // regression: #24371 Cursor lists only fixed effort presets unless asked for its picker
+  it.effect("opens Cursor on a plain model with the reasoning effort the thread picked", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("acp-registry-cursor");
+      const openCursor = Effect.fn("openCursor")(function* (stored: ModelSelection) {
+        let published: AcpRegistryLiveConfiguration | undefined;
+        const adapter = yield* makeAcpRegistryAdapterV2({
+          selfInvocation: yield* resolveSelfInvocation(),
+          instanceId,
+          settings: yield* decodeAcpRegistryAdapterSettings({ agentId: "cursor" }),
+          environment: {},
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({
+                resolve: (_settings, cwd) =>
+                  Effect.succeed({
+                    distribution: "local" as const,
+                    spawn: { command: process.execPath, args: [mockAgentPath], cwd },
+                  }),
+              }),
+              Layer.mock(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator)({
+                withForegroundStartup: (_startupKey, effect) => effect,
+                publishLiveConfiguration: (_instanceId, configuration) =>
+                  Effect.sync(() => {
+                    published = configuration;
+                  }),
+              }),
+            ),
+          ),
+        );
+        yield* adapter
+          .openSession({
+            threadId: ThreadId.make("thread-acp-registry-cursor"),
+            providerSessionId: ProviderSessionId.make("provider-session-acp-registry-cursor"),
+            modelSelection: stored,
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: process.cwd(),
+            }),
+          })
+          .pipe(Effect.scoped);
+        return published;
+      });
+
+      const picked = yield* openCursor({
+        instanceId,
+        model: "gpt-5.4",
+        options: [{ id: "reasoning", value: "extra-high" }],
+      });
+      assert.equal(picked?.currentModelId, "gpt-5.4");
+      assert.deepInclude(
+        picked?.configOptions.find((option) => option.id === "reasoning"),
+        { currentValue: "extra-high" },
+      );
+      const saved = yield* openCursor({ instanceId, model: "composer-2[fast=true]" });
+      assert.equal(saved?.currentModelId, "composer-2");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("settles Claude's accepted foreground reply while retaining child output", () =>
     Effect.gen(function* () {
       const gate = makeProviderReplayGate(["accepted", "child-output", "wake"]);
