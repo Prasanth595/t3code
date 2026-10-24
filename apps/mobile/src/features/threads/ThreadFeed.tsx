@@ -1113,6 +1113,7 @@ function OpenSenderThreadButton(props: {
 /** Automation prompts are long, repeated runbooks; a folded bubble keeps them out of the way. */
 function ThreadAutomationMessageRow(props: {
   readonly environmentId: EnvironmentId;
+  readonly messageLink: ReturnType<typeof persistedMessageLink>;
   readonly text: string;
   readonly context?: OrchestrationMessageContext;
   readonly scheduledTaskId: ScheduledTaskId | undefined;
@@ -1220,7 +1221,7 @@ function ThreadAutomationMessageRow(props: {
           </Text>
           <MessageCopyButton
             isPrompt
-            messageLink={null}
+            messageLink={props.messageLink}
             text={props.text}
             onCopy={undefined}
             tintColor={props.iconSubtleColor}
@@ -1453,6 +1454,10 @@ function renderFeedEntry(
       return (
         <ThreadAutomationMessageRow
           environmentId={props.environmentId}
+          messageLink={persistedMessageLink(
+            { environmentId: props.environmentId, threadId: props.threadId },
+            message,
+          )}
           text={presentation.text}
           context={message.context}
           scheduledTaskId={presentation.scheduledTaskId}
