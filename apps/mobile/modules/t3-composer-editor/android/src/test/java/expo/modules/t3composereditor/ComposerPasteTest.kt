@@ -102,8 +102,14 @@ class ComposerPasteTest {
     editor.setSelection(10, 7)
     var intercepted: Triple<String, Int, Int>? = null
     editor.pasteTextListener = { text, start, end -> intercepted = Triple(text, start, end) }
+    val connection = editor.onCreateInputConnection(EditorInfo())!!
 
-    assertTrue(editor.onCreateInputConnection(EditorInfo())!!.commitText(pasted, 1))
+    assertTrue(connection.commitText(pasted, 1))
+    assertEquals(Triple(pasted, 7, 10), intercepted)
+    assertEquals("before old after", editor.text.toString())
+
+    intercepted = null
+    assertTrue(connection.commitText(pasted, 1, null))
     assertEquals(Triple(pasted, 7, 10), intercepted)
     assertEquals("before old after", editor.text.toString())
   }

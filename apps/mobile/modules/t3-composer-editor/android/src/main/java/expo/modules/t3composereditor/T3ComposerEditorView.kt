@@ -26,7 +26,9 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputConnectionWrapper
 import android.view.inputmethod.InputMethodManager
+import android.view.inputmethod.TextAttribute
 import android.widget.EditText
+import androidx.annotation.RequiresApi
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
@@ -666,13 +668,27 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
       ): Boolean = deleteAdjacentChip(beforeLength, afterLength) ||
         super.deleteSurroundingTextInCodePoints(beforeLength, afterLength)
       override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean =
+        commitUnlessPasted(text) { super.commitText(text, newCursorPosition) }
+
+      // InputConnectionWrapper sends this overload straight to its target, not through the
+      // two-argument commitText.
+      @RequiresApi(Build.VERSION_CODES.TIRAMISU)
+      override fun commitText(
+        text: CharSequence,
+        newCursorPosition: Int,
+        textAttribute: TextAttribute?
+      ): Boolean = commitUnlessPasted(text) {
+        super.commitText(text, newCursorPosition, textAttribute)
+      }
+
+      private fun commitUnlessPasted(text: CharSequence?, commit: () -> Boolean): Boolean =
         if (interceptKeyboardPaste(text)) {
           // The keyboard now treats its composing text as replaced; a span left behind would
           // let its next word overwrite text the paste did not remove.
           finishComposingText()
           true
         } else {
-          super.commitText(text, newCursorPosition)
+          commit()
         }
     }
   }
