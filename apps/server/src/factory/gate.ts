@@ -193,9 +193,9 @@ export const regateResultsComment = (
 ): string => resultsComment("passed again", results, attempt, headSha, baseSha);
 
 /** How many times the fetch of a checkout is tried before its failure is returned. */
-export const FETCH_ATTEMPTS = 3;
+const FETCH_ATTEMPTS = 3;
 /** The wait before the second and the third fetch, in milliseconds; each gets up to a second more. */
-export const FETCH_RETRY_DELAYS_MS = [5_000, 15_000] as const;
+const FETCH_RETRY_DELAYS_MS = [5_000, 15_000] as const;
 /**
  * What git's stderr says when the network dropped the fetch: an HTTP/2 stream error, a TLS
  * handshake that timed out, a name that did not resolve, a connection that failed or timed out,
