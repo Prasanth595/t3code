@@ -995,9 +995,9 @@ export const make = Effect.gen(function* () {
       if (input.expectedTunnelId !== undefined && input.expectedTunnelId !== tunnelId) {
         return false;
       }
-      // The caller judged the allocation as it was when listed. Any write since
-      // then, such as a recovery registration or a relink, may have changed
-      // that judgment, so the next sweep decides with fresh data.
+      // The caller judged the allocation as it was when listed. A write since
+      // then, such as a recovery registration, may have made its tunnel
+      // recoverable again, so the next sweep decides with fresh data.
       if (
         input.expectedGeneration !== undefined &&
         input.expectedGeneration !== allocation.generation
