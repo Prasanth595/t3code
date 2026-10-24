@@ -5,12 +5,7 @@ import {
 } from "./navigation-tabs";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { View, useWindowDimensions, type NativeSyntheticEvent } from "react-native";
-import {
-  Tabs,
-  type TabSelectedEvent,
-  type TabSelectionPreventedEvent,
-  type TabSelectionRejectedEvent,
-} from "react-native-screens";
+import { Tabs, type TabSelectedEvent, type TabSelectionRejectedEvent } from "react-native-screens";
 
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import {
@@ -94,11 +89,6 @@ export function WorkspaceNativeTabs(props: {
           tabBarMinimizeBehavior: "never",
           tabBarTintColor: colors["--color-primary"],
         }}
-        onTabSelectionPrevented={({
-          nativeEvent,
-        }: NativeSyntheticEvent<TabSelectionPreventedEvent>) => {
-          if (nativeEvent.preventedScreenKey === "settings") selectTab("settings");
-        }}
         onTabSelectionRejected={({
           nativeEvent,
         }: NativeSyntheticEvent<TabSelectionRejectedEvent>) =>
@@ -108,7 +98,6 @@ export function WorkspaceNativeTabs(props: {
           setProvenance(nativeEvent.provenance);
           if (nativeEvent.actionOrigin === "programmatic-js") return;
           const tab = workspaceTabForNativeSlot(primaryTabs, nativeEvent.selectedScreenKey);
-          // UIKit sends reselects here even when preventNativeSelection is enabled.
           if (tab) selectTab(tab);
         }}
       >
@@ -123,7 +112,6 @@ export function WorkspaceNativeTabs(props: {
               screenKey={slot}
               title=""
               tabBarItemAccessibilityLabel={settings ? "Settings" : WORKSPACE_TAB_LABELS[tab]}
-              preventNativeSelection={settings}
               ios={{
                 icon: settings
                   ? { type: "sfSymbol", name: "gearshape" }
