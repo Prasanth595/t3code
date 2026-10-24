@@ -8,10 +8,8 @@ import Animated, {
   Easing,
   FadeInUp,
   FadeOutDown,
-  LinearTransition,
   useAnimatedStyle,
   useSharedValue,
-  withTiming,
   type DerivedValue,
   type SharedValue,
 } from "react-native-reanimated";
@@ -65,8 +63,6 @@ export interface PendingUserInputCardProps {
  */
 const EXPANDED_CARD_IS_OVERLAY = Platform.OS === "ios";
 
-const CARD_LAYOUT_TRANSITION = LinearTransition.duration(200);
-
 function QuestionText(props: { readonly markdown: string }) {
   const styles = useMarkdownPreviewStyles();
   const openLink = useOpenPullRequest();
@@ -93,18 +89,9 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
     if (!cardCoverage) {
       return;
     }
-    const coverage = Math.max(0, cardHeightRef.current - barHeightRef.current);
-    if (coverage === cardCoverage.value) {
-      return;
-    }
-    if (cardCoverage.value === 0) {
-      cardCoverage.value = coverage;
-      return;
-    }
-    cardCoverage.value = withTiming(coverage, {
-      duration: USER_INPUT_TOGGLE_DURATION_MS,
-      easing: Easing.out(Easing.cubic),
-    });
+    // The card resizes with the keyboard every frame, so easing each sample would leave the
+    // feed inset and floating controls trailing it.
+    cardCoverage.value = Math.max(0, cardHeightRef.current - barHeightRef.current);
   }, [cardCoverage]);
   const handleBarLayout = useCallback(
     (event: LayoutChangeEvent) => {
@@ -197,7 +184,6 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
           ? undefined
           : FadeOutDown.duration(USER_INPUT_TOGGLE_DURATION_MS).easing(Easing.out(Easing.cubic))
       }
-      layout={CARD_LAYOUT_TRANSITION}
       className="overflow-hidden gap-2.5 rounded-[20px] border border-border bg-card-alt p-4"
       style={EXPANDED_CARD_IS_OVERLAY ? cardAnimatedStyle : cardMaxHeightStyle}
     >
