@@ -19,11 +19,38 @@ export type SettingsTarget = EnvironmentPresentation & {
   readonly serverConfig: NonNullable<EnvironmentPresentation["serverConfig"]>;
 };
 
+// Several mounted Settings components read the scope at once (the list, its header, a page and
+// its editor), so share the derived lists across them for the same inputs.
+const targetsCache = new WeakMap<readonly EnvironmentPresentation[], readonly SettingsTarget[]>();
+const groupsCache = new WeakMap<object, Map<string, ReturnType<typeof buildProjectGroups>>>();
+
 function connectedSettingsTargets(environments: readonly EnvironmentPresentation[]) {
-  return environments.filter(
-    (entry): entry is SettingsTarget =>
-      entry.connection.phase === "connected" && entry.serverConfig !== null,
-  );
+  let targets = targetsCache.get(environments);
+  if (!targets) {
+    targets = environments.filter(
+      (entry): entry is SettingsTarget =>
+        entry.connection.phase === "connected" && entry.serverConfig !== null,
+    );
+    targetsCache.set(environments, targets);
+  }
+  return targets;
+}
+
+function settingsProjectGroups(
+  projects: Parameters<typeof buildProjectGroups>[0]["projects"],
+  groupingMode: Parameters<typeof buildProjectGroups>[0]["settings"]["sidebarProjectGroupingMode"],
+) {
+  let byMode = groupsCache.get(projects);
+  if (!byMode) groupsCache.set(projects, (byMode = new Map()));
+  let groups = byMode.get(groupingMode);
+  if (!groups) {
+    groups = buildProjectGroups({
+      projects,
+      settings: { sidebarProjectGroupingMode: groupingMode, sidebarProjectGroupingOverrides: {} },
+    });
+    byMode.set(groupingMode, groups);
+  }
+  return groups;
 }
 
 interface SettingsEnvironmentSelection {
@@ -72,15 +99,8 @@ export function useSettingsEnvironmentFilter() {
   const projects = useProjects();
   const groupingSettings = useMobileProjectGroupingSettings();
   const groupingMode = groupingSettings.sidebarProjectGroupingMode;
-  const projectGroups = useMemo(
-    () =>
-      buildProjectGroups({
-        projects,
-        settings: { sidebarProjectGroupingMode: groupingMode, sidebarProjectGroupingOverrides: {} },
-      }),
-    [projects, groupingMode],
-  );
-  const availableTargets = useMemo(() => connectedSettingsTargets(environments), [environments]);
+  const projectGroups = settingsProjectGroups(projects, groupingMode);
+  const availableTargets = connectedSettingsTargets(environments);
   const selectedTargets = useMemo(
     () =>
       availableTargets.filter(

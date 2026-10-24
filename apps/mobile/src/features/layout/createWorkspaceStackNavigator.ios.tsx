@@ -68,6 +68,20 @@ const isPullRequestRoute = (route: Route) =>
   route.name === "PullRequestFile" ||
   route.name === "PullRequestFiles";
 
+/** Only these screens follow the sidebar's state; a thread's header draws its own toggle. */
+function SidebarToggleHeader(props: ComponentProps<typeof V5StackHeader>) {
+  const sidebarItem = useWorkspaceSidebarHeaderItem();
+  const options = useMemo(
+    () =>
+      ({
+        ...props.options,
+        unstable_headerLeftItems: () => [sidebarItem],
+      }) as AppNativeStackNavigationOptions as typeof props.options,
+    [props.options, sidebarItem],
+  );
+  return <V5StackHeader {...props} options={options} />;
+}
+
 function ColumnScreen(props: {
   readonly descriptor: Descriptor;
   readonly primary?: boolean;
@@ -82,14 +96,10 @@ function ColumnScreen(props: {
   readonly navigation: ViewProps["navigation"];
 }) {
   const { descriptor } = props;
-  const sidebarItem = useWorkspaceSidebarHeaderItem();
-  const options =
+  const Header =
     props.sidebarToggle && !descriptor.options.unstable_headerLeftItems
-      ? ({
-          ...descriptor.options,
-          unstable_headerLeftItems: () => [sidebarItem],
-        } as AppNativeStackNavigationOptions as typeof descriptor.options)
-      : descriptor.options;
+      ? SidebarToggleHeader
+      : V5StackHeader;
   const [presented, setPresented] = useState(false);
   const primaryColumn = useMemo(
     () =>
@@ -130,8 +140,8 @@ function ColumnScreen(props: {
     >
       <NavigationContext value={descriptor.navigation}>
         <NavigationRouteContext value={descriptor.route}>
-          <V5StackHeader
-            options={options}
+          <Header
+            options={descriptor.options}
             canGoBack={!props.primary}
             column={props.primary ? "primary" : "detail"}
             onCompose={

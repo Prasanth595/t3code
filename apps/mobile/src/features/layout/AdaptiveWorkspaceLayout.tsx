@@ -92,6 +92,7 @@ import {
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { AndroidHingeObserver } from "../../native/AndroidHingeObserver";
 import { WindowHingeContext } from "../../native/window-hinge-context";
+import { useAndroidWorkspaceRoot } from "../workspace/AndroidWorkspaceTabsProvider";
 import { openSettings } from "../settings/settings-navigation";
 
 export { useAdaptiveWorkspaceLayout };
@@ -209,9 +210,9 @@ function AdaptiveWorkspaceLayoutContent(
   const pathname = props.pathname;
   const workspace = useWorkspaceTabs();
   // Settings and Usage occupy the workspace rather than a list/detail pair.
+  const androidSettingsOpen = useAndroidWorkspaceRoot()?.settingsOpen ?? false;
   const workspacePage =
-    Platform.OS === "android" &&
-    (pathname.startsWith("/settings") || workspace?.state.selectedTab === "usage");
+    Platform.OS === "android" && (androidSettingsOpen || workspace?.state.selectedTab === "usage");
   const navigation = useNavigation();
   const activeRoleOwner = useRef<symbol | null>(null);
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
