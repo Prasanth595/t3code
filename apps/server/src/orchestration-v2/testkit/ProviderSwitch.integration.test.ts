@@ -414,6 +414,8 @@ describe("orchestration v2 provider switching", () => {
     "screenshot-option-change-retry-native",
     "prior-images-reasoning-change-overflow-native",
     "prior-images-reasoning-change-overflow-oversized-native",
+    "reasoning-change-overflow-prospective-payload-native",
+    "turn-usage-model-change-overflow-unknown-window-native",
     "prior-images-reasoning-change-overflow-compact-native",
     "prior-images-reasoning-change-replacement-small-native",
     "imported-prior-images-fallback",
@@ -480,12 +482,20 @@ describe("orchestration v2 provider switching", () => {
                   canReuseContextUsage: canReuseCodexContextUsage,
                   tokenUsageByRunOrdinal: {
                     2: {
-                      usedTokens: replaceNative ? 30_000 : replaceForOverflow ? 250_000 : 37_321,
+                      usedTokens: scenario.includes("prospective-payload")
+                        ? 16_850
+                        : replaceNative
+                          ? 30_000
+                          : replaceForOverflow
+                            ? 250_000
+                            : 37_321,
                       maxTokens: replaceNative
                         ? scenario.includes("small")
                           ? 32_000
                           : 64_000
-                        : 258_400,
+                        : scenario.includes("prospective-payload")
+                          ? 16_935
+                          : 258_400,
                     },
                   },
                 }
@@ -540,14 +550,16 @@ describe("orchestration v2 provider switching", () => {
               creationSource: "web",
               text,
               attachments:
-                turnUsageScenario && ordinal === 2
+                turnUsageScenario && !scenario.includes("prospective-payload") && ordinal === 2
                   ? Array.from({ length: 8 }, (_, index) => ({
                       ...screenshot,
                       id: `prior-${index}`,
                     }))
                   : scenario.includes("overflow-compact") && ordinal >= targetOrdinal
                     ? []
-                    : turnUsageScenario && ordinal >= targetOrdinal
+                    : turnUsageScenario &&
+                        !scenario.includes("prospective-payload") &&
+                        ordinal >= targetOrdinal
                       ? [screenshot, { ...screenshot, id: "current-2" }]
                       : scenario.startsWith("screenshot") && ordinal >= targetOrdinal
                         ? screenshots
@@ -605,15 +617,17 @@ describe("orchestration v2 provider switching", () => {
           yield* Effect.addFinalizer(() => Effect.sync(() => spy?.mockRestore()));
           const current = scenario.includes("overflow-oversized")
             ? "x".repeat(300_000)
-            : scenario.includes("overflow-compact")
-              ? "/compact"
-              : scenario.startsWith("compact")
+            : scenario.includes("unknown-window")
+              ? "x".repeat(100_000)
+              : scenario.includes("overflow-compact")
                 ? "/compact"
-                : capacityScenario && !turnUsageScenario
-                  ? "x".repeat(70_000)
-                  : scenario === "large-current-input"
-                    ? "x".repeat(9_000)
-                    : "Continue work";
+                : scenario.startsWith("compact")
+                  ? "/compact"
+                  : capacityScenario && !turnUsageScenario
+                    ? "x".repeat(70_000)
+                    : scenario === "large-current-input"
+                      ? "x".repeat(9_000)
+                      : "Continue work";
           if (returning) {
             if (scenario.includes("unsent")) yield* Ref.set(failStartOnce, true);
             yield* dispatch(
@@ -749,7 +763,11 @@ describe("orchestration v2 provider switching", () => {
           }
           if (replaceForOverflow) {
             const replaced = yield* orchestrator.getThreadProjection(threadId);
-            if (scenario.includes("overflow-oversized")) {
+            if (
+              scenario.includes("overflow-oversized") ||
+              scenario.includes("prospective-payload") ||
+              scenario.includes("unknown-window")
+            ) {
               assert.equal(replaced.runs.at(-1)?.status, "failed");
               const target = replaced.providerThreads.find(
                 (thread) => thread.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,

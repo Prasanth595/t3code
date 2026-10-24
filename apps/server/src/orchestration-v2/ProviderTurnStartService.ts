@@ -695,10 +695,45 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
+      const prepareReplacementHandoff = Effect.fn(
+        "ProviderTurnStartService.prepareReplacementHandoff",
+      )(function* () {
+        const transferId = yield* idAllocator.allocate.contextTransfer({
+          sourceThreadId: projection.thread.id,
+          targetThreadId: projection.thread.id,
+          type: "provider_resume_fallback",
+        });
+        const createdAt = yield* DateTime.now;
+        const handoff = yield* contextHandoffService.prepareProviderHandoff({
+          threadId: projection.thread.id,
+          targetRunId: run.id,
+          transferId,
+          fromProviderThreadIds: [providerThread.id],
+          toProviderThreadId: providerThread.id,
+          fromProviderInstanceId: providerThread.providerInstanceId,
+          toProviderInstanceId: run.providerInstanceId,
+          coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
+          strategy: "full_thread_summary",
+          runs: projection.runs,
+          items: (yield* projectionStore.getTurnStartHistory(input.threadId)).filter(
+            (item) =>
+              item.runId === null ||
+              projection.runs.some(
+                (source) => source.id === item.runId && source.ordinal < run.ordinal,
+              ),
+          ),
+          createdAt,
+        });
+        return { transferId, createdAt, handoff };
+      });
+      type PreparedReplacementHandoff = Effect.Success<
+        ReturnType<typeof prepareReplacementHandoff>
+      >;
       const replaceNativeThread = Effect.fn("ProviderTurnStartService.replaceNativeThread")(
         function* (replacementInput: {
           readonly reason: "resume_failed" | "uncertain_history_delivery" | "handoff_overflow";
           readonly errorTag?: string;
+          readonly prepared?: PreparedReplacementHandoff;
         }) {
           yield* Effect.logWarning("Replacing the native provider thread with portable context", {
             driver: session.driver,
@@ -722,32 +757,8 @@ export const layer: Layer.Layer<
           );
           if (replacement === undefined) return undefined;
           if (!(yield* isCurrentAttemptInStatus("starting"))) return undefined;
-          const transferId = yield* idAllocator.allocate.contextTransfer({
-            sourceThreadId: projection.thread.id,
-            targetThreadId: projection.thread.id,
-            type: "provider_resume_fallback",
-          });
-          const createdAt = yield* DateTime.now;
-          const handoff = yield* contextHandoffService.prepareProviderHandoff({
-            threadId: projection.thread.id,
-            targetRunId: run.id,
-            transferId,
-            fromProviderThreadIds: [providerThread.id],
-            toProviderThreadId: providerThread.id,
-            fromProviderInstanceId: providerThread.providerInstanceId,
-            toProviderInstanceId: run.providerInstanceId,
-            coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
-            strategy: "full_thread_summary",
-            runs: projection.runs,
-            items: (yield* projectionStore.getTurnStartHistory(input.threadId)).filter(
-              (item) =>
-                item.runId === null ||
-                projection.runs.some(
-                  (source) => source.id === item.runId && source.ordinal < run.ordinal,
-                ),
-            ),
-            createdAt,
-          });
+          const { transferId, createdAt, handoff } =
+            replacementInput.prepared ?? (yield* prepareReplacementHandoff());
           const replacementWrite = yield* eventSink.writeIfRunCurrent({
             threadId: projection.thread.id,
             runId: run.id,
@@ -1015,18 +1026,38 @@ export const layer: Layer.Layer<
           alreadyDeliveredItemIds: new Set<string>(),
         };
         if (planContextHandoffDelivery({ ...deliveryInput, budget }).status === "overflow") {
+          const prospectiveUsageState = usageStateFor({
+            ...loadedProviderThread,
+            nativeThreadRef: null,
+            contextUsage: null,
+          });
           const freshBudget = handoffBudget({
             tokenCap,
-            modelContextWindow: usageState.modelContextWindow,
+            modelContextWindow: prospectiveUsageState.modelContextWindow,
             userText,
             attachments: message.attachments,
-            providerThread: { ...loadedProviderThread, contextUsage: null },
+            providerThread: {
+              ...loadedProviderThread,
+              contextUsage: prospectiveUsageState.handoffUsage,
+            },
             nativeContextEstimate: 0,
           });
-          if (
-            planContextHandoffDelivery({ ...deliveryInput, budget: freshBudget }).status === "ready"
-          ) {
-            const replacement = yield* replaceNativeThread({ reason: "handoff_overflow" });
+          const prepared = yield* prepareReplacementHandoff();
+          const prospectivePlan = planContextHandoffDelivery({
+            handoffs: [prepared.handoff, ...effectiveHandoffs],
+            providerThread: {
+              ...loadedProviderThread,
+              nativeThreadRef: null,
+              contextUsage: null,
+            },
+            budget: freshBudget,
+            alreadyDeliveredItemIds: new Set<string>(),
+          });
+          if (prospectivePlan.status === "ready") {
+            const replacement = yield* replaceNativeThread({
+              reason: "handoff_overflow",
+              prepared,
+            });
             if (replacement === undefined) return;
             loadedProviderThread = replacement;
             usageState = usageStateFor(replacement);
