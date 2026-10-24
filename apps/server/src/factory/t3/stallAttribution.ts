@@ -27,7 +27,12 @@ const listed = (label: string, spans: ReadonlyArray<TrackedSpanReport>) =>
 export interface StallAttributionOptions {
   readonly intervalMs?: number;
   readonly thresholdMs?: number;
-  /** Set false to skip CPU profiles. */
+  /**
+   * Set true to CPU-profile the process after a long stall. Off by default: starting V8's
+   * profiler walks every compiled code object on the main thread, and on a large heap under
+   * load that walk has itself stalled the loop for 10 to 25 s, longer than the stall it was
+   * meant to explain.
+   */
   readonly profile?: boolean;
   /** Tests shorten these; the profiler's defaults are 5 s and 30 s. */
   readonly profileThresholdMs?: number;
@@ -46,7 +51,13 @@ export const makeWithStallAttribution =
   <A, E, R>(self: Layer.Layer<A, E, R>) =>
     Layer.provideMerge(attributionLayer(options), self);
 
-export const withStallAttribution = makeWithStallAttribution();
+/** The opt-in for stall-triggered CPU profiles: `T3FAC_STALL_PROFILE=1` in the server's environment. */
+export const stallProfileOptedIn = (env: Record<string, string | undefined>) =>
+  env.T3FAC_STALL_PROFILE === "1";
+
+export const withStallAttribution = makeWithStallAttribution({
+  profile: stallProfileOptedIn(globalThis.process.env),
+});
 
 const attributionLayer = (options: StallAttributionOptions) =>
   Layer.effect(
@@ -77,7 +88,7 @@ const attributionLayer = (options: StallAttributionOptions) =>
         ),
       );
       const profileOnStall =
-        options.profile === false
+        options.profile !== true
           ? undefined
           : makeStallProfiler({
               dir: path.join(logsDir, "stall-profiles"),
@@ -103,10 +114,13 @@ const attributionLayer = (options: StallAttributionOptions) =>
             onStall: ({ stallMs, windowStartMs, windowEndMs }) => {
               const spans = registry.active(windowStartMs, windowEndMs, REPORTED_SPANS);
               const oldestInFlight = registry.oldestInFlight(windowEndMs, REPORTED_SPANS);
+              // Started first so the record can say whether this stall began a profile. The
+              // log scan reads that to tell a profile's own stall from the one that caused it.
+              const profiled = profileOnStall?.(stallMs) ?? false;
               if (sink !== undefined) {
                 try {
                   sink.write(
-                    `${JSON.stringify({ time: DateTime.formatIso(DateTime.nowUnsafe()), stallMs, spans, oldestInFlight })}\n`,
+                    `${JSON.stringify({ time: DateTime.formatIso(DateTime.nowUnsafe()), stallMs, profiled, spans, oldestInFlight })}\n`,
                   );
                 } catch {
                   runFork(
@@ -117,10 +131,9 @@ const attributionLayer = (options: StallAttributionOptions) =>
               runFork(
                 Effect.logWarning(
                   `factory event loop stalled for ${stallMs} ms${listed("during the stall", spans)}${listed("oldest in flight", oldestInFlight)}`,
-                  { stallMs, spans, oldestInFlight },
+                  { stallMs, profiled, spans, oldestInFlight },
                 ),
               );
-              profileOnStall?.(stallMs);
             },
           }),
         ),
