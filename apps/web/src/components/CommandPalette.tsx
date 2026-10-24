@@ -883,13 +883,14 @@ function OpenCommandPaletteDialog(props: {
       (project) => project.environmentId === scratchTargetEnvironmentId && isScratch(project),
     );
     const noProjectIndex = pickerProjects[0] !== undefined && isScratch(pickerProjects[0]) ? 0 : 1;
+    const noProjectTitle = scratchProject?.title ?? "No project";
     return [
       ...projectItems.slice(0, noProjectIndex),
       {
         kind: "action" as const,
         value: "new-thread-in:no-project",
-        searchTerms: ["no project", "without project", "none"],
-        title: scratchProject?.title ?? "No project",
+        searchTerms: [noProjectTitle, "no project", "without project", "none"],
+        title: noProjectTitle,
         icon: scratchProject ? (
           <ProjectFavicon project={scratchProject} className={ITEM_ICON_CLASS} />
         ) : (
