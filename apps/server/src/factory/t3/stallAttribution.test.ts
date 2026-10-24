@@ -12,13 +12,24 @@ import * as Tracer from "effect/Tracer";
 
 import * as ServerConfig from "../../config.ts";
 import { useTempDirs } from "../ledger/testSupport.ts";
-import { makeWithStallAttribution, withStallAttribution } from "./stallAttribution.ts";
+import {
+  makeWithStallAttribution,
+  stallProfileOptedIn,
+  withStallAttribution,
+} from "./stallAttribution.ts";
 
 const tempDir = useTempDirs();
 
 /** Blocks this thread for `ms` without reading a clock. */
 const blockThread = (ms: number) =>
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/** The records in the logs directory's factory-event-loop-stalls.ndjson, in order. */
+const stallRecords = (logsDir: string): Array<any> =>
+  NodeFS.readFileSync(NodePath.join(logsDir, "factory-event-loop-stalls.ndjson"), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
 
 const serverConfig = (logsDir: string) =>
   Layer.succeed(ServerConfig.ServerConfig, {
@@ -146,13 +157,14 @@ describe("withStallAttribution", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("profiles the process into stall-profiles/ after a long stall", () =>
+  it.effect("profiles the process into stall-profiles/ after a long stall when opted in", () =>
     Effect.gen(function* () {
       const logsDir = tempDir();
       const base = yield* Effect.service(Tracer.Tracer);
       const decorated = makeWithStallAttribution({
         intervalMs: 10,
         thresholdMs: 100,
+        profile: true,
         profileThresholdMs: 200,
         profileDurationMs: 50,
       })(Layer.succeed(Tracer.Tracer, base));
@@ -175,6 +187,52 @@ describe("withStallAttribution", () => {
       const profiles = NodeFS.readdirSync(NodePath.join(logsDir, "stall-profiles"));
       assert.strictEqual(profiles.length, 1);
       assert.match(profiles[0]!, /\.cpuprofile$/);
+      assert.strictEqual(stallRecords(logsDir)[0]?.profiled, true);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect(
+    "does not profile by default: a long stall starts no profile and the record says so",
+    () =>
+      Effect.gen(function* () {
+        const logsDir = tempDir();
+        const base = yield* Effect.service(Tracer.Tracer);
+        const decorated = makeWithStallAttribution({
+          intervalMs: 10,
+          thresholdMs: 100,
+          profileThresholdMs: 200,
+          profileDurationMs: 5,
+        })(Layer.succeed(Tracer.Tracer, base));
+        const warned = yield* Deferred.make<void>();
+        const capture = Logger.make<unknown, void>(({ message }) => {
+          const text = String(Array.isArray(message) ? message[0] : message);
+          if (text.startsWith("factory event loop stalled"))
+            Deferred.doneUnsafe(warned, Effect.void);
+        });
+        yield* Effect.gen(function* () {
+          yield* Effect.sync(() => blockThread(250));
+          yield* Deferred.await(warned);
+        }).pipe(
+          Effect.provide(
+            decorated.pipe(
+              Layer.provide(Layer.merge(Logger.layer([capture]), serverConfig(logsDir))),
+            ),
+          ),
+          Effect.scoped,
+        );
+        const [record] = stallRecords(logsDir);
+        assert.isAtLeast(record.stallMs, 200);
+        assert.strictEqual(record.profiled, false);
+        assert.isFalse(NodeFS.existsSync(NodePath.join(logsDir, "stall-profiles")));
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("stallProfileOptedIn", () => {
+  it("is on only when T3FAC_STALL_PROFILE is 1", () => {
+    assert.isTrue(stallProfileOptedIn({ T3FAC_STALL_PROFILE: "1" }));
+    assert.isFalse(stallProfileOptedIn({ T3FAC_STALL_PROFILE: "0" }));
+    assert.isFalse(stallProfileOptedIn({ T3FAC_STALL_PROFILE: "" }));
+    assert.isFalse(stallProfileOptedIn({}));
+  });
 });
