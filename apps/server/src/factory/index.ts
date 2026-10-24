@@ -46,7 +46,7 @@ import { makeCause, type CauseStep, type ErrorKind, type MachineEvent } from "./
 import { Ledger } from "./ledger/ledger.ts";
 import { listUnfinishedRuns, runsByThread } from "./ledger/listRuns.ts";
 import { readRun } from "./ledger/read.ts";
-import { runIdToString, type RunId } from "./ledger/runId.ts";
+import { asciiLower, runIdToString, type RunId } from "./ledger/runId.ts";
 import {
   MachineLog,
   serverStartsSince,
@@ -584,8 +584,10 @@ export const liveWorld = (
           Effect.sync(() => onProject?.(watched.repo, { kind: "ok", project })),
         ),
         Effect.tapError((error) =>
-          // A transient failure says nothing new about the config: the last reading stands.
-          error.transient === true
+          // A transient failure with a last good copy says nothing new about the config: the
+          // pass runs on that copy and the last reading stands. Without a copy the repo is
+          // skipped, and the reading says why.
+          error.transient === true && lastGood.get(asciiLower(watched.repo))?.project !== undefined
             ? Effect.void
             : Effect.sync(() =>
                 onProject?.(watched.repo, { kind: "errors", errors: error.errors }),
