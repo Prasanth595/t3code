@@ -316,7 +316,10 @@ const layerPlatformServices = NodeServices.layer;
 
 const layerPersistence = Layer.empty.pipe(Layer.provideMerge(SqlitePersistence.layerConfig));
 
-const layerVcsDriverRegistry = VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer));
+const layerVcsDriverRegistry = VcsDriverRegistry.layer.pipe(
+  Layer.provide(VcsProjectConfig.layer),
+  Layer.provide(layerServerSettings),
+);
 
 const layerSourceControlProviderRegistry = SourceControlProviderRegistry.layer.pipe(
   Layer.provideMerge(SourceControlBuiltInDrivers.layer),
@@ -346,7 +349,11 @@ const layerRepositoryIdentityResolver = Layer.effect(
       }),
     });
   }),
-).pipe(Layer.provide(layerSourceControlProviderRegistry), Layer.provide(ProcessRunner.layer));
+).pipe(
+  Layer.provide(layerSourceControlProviderRegistry),
+  Layer.provide(ProcessRunner.layer),
+  Layer.provide(layerServerSettings),
+);
 
 const layerPullRequestService = PullRequestService.layer.pipe(
   Layer.provide(PullRequestProviderRegistry.layer),
@@ -438,7 +445,10 @@ const layerDevice = DeviceService.layer.pipe(
   Layer.provide(NetService.layer),
 );
 
-const layerWorkspaceEntries = WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer));
+const layerWorkspaceEntries = WorkspaceEntries.layer.pipe(
+  Layer.provide(WorkspacePaths.layer),
+  Layer.provide(layerServerSettings),
+);
 
 const layerWorkspaceFileSystem = WorkspaceFileSystem.layer.pipe(
   Layer.provide(WorkspacePaths.layer),

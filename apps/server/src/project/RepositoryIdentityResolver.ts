@@ -13,6 +13,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { explicitBareRepositoryEnv } from "../vcs/VcsProcess.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
@@ -233,6 +234,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   options: RepositoryIdentityResolverOptions = {},
 ) {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
   const refine = options.refine ?? Effect.succeed;
   const timeToLive = (exit: Exit.Exit<unknown>) =>
@@ -269,6 +271,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
 
   const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fnUntraced(
     function* (cwd, options) {
+      if (!(yield* ServerSettings.sourceControlEnabled(serverSettings))) return null;
       if (options?.refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
       const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
       if (cacheKey === null) return null;

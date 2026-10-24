@@ -264,6 +264,16 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
 export const layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
   Layer.effect(ServerSettingsService, makeTest(overrides));
 
+/**
+ * Whether the server may run Git in project folders. Off, every folder reads as
+ * having no repository. A failed read keeps the default.
+ */
+export const sourceControlEnabled = (settings: ServerSettingsService["Service"]) =>
+  settings.getSettings.pipe(
+    Effect.map((current) => current.sourceControlEnabled),
+    Effect.orElseSucceed(() => true),
+  );
+
 // Migrate saved token delivery without accepting it in settings writes or
 // letting one retired value reset the rest of the environment's settings.
 const PersistedResponseStreamingMode = Schema.Union([

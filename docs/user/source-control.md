@@ -10,6 +10,14 @@ rebases, the files Git brought in are left out. A file stays in the list when th
 committed it, or fixed a conflict in it. Use the branch comparison to review everything that changed
 against your base branch. Restore still returns the complete saved workspace.
 
+## Turn off Git integration
+
+If you manage Git yourself, turn off **Settings → Source Control → Git integration**. T3 Code then
+treats every folder on that server as having no Git repository. It stops saving checkpoints after
+turns, checking Git status, and showing diffs, branches, and pull request controls for projects.
+Worktree threads and automatic worktree cleanup are unavailable while it is off. The change applies
+right away to every project on that server.
+
 ## Connect an account
 
 Install Git and configure authentication on the machine running your T3 Code server. For a remote

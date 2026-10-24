@@ -4,9 +4,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
 const normalizePathSeparators = (value: string) => value.replaceAll("\\", "/");
@@ -21,7 +23,9 @@ const git = (cwd: string, args: ReadonlyArray<string>) =>
     });
   }).pipe(Effect.provide(ProcessRunner.layer));
 
-it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
+const layerTest = Layer.merge(NodeServices.layer, ServerSettings.layerTest());
+
+it.layer(layerTest)("RepositoryIdentityResolverLive", (it) => {
   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -286,5 +290,31 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(identity?.owner).toBe("T3Tools");
       expect(identity?.name).toBe("t3code");
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
+  it.effect("resolves no repository and runs no git while source control is off", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-source-control-off-test-",
+      });
+      yield* git(cwd, ["init"]);
+      yield* git(cwd, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
+
+      const commands: Array<string> = [];
+      const resolver = yield* RepositoryIdentityResolver.make().pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: (input) => {
+            commands.push(input.command);
+            return Effect.die("source control is off, so nothing may run");
+          },
+        }),
+        Effect.provide(ServerSettings.layerTest({ sourceControlEnabled: false })),
+      );
+
+      expect(yield* resolver.resolve(cwd)).toBeNull();
+      expect(yield* resolver.resolve(cwd, { refresh: true })).toBeNull();
+      expect(commands).toEqual([]);
+    }),
   );
 });

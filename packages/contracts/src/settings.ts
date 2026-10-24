@@ -1161,6 +1161,11 @@ export const ServerSettings = Schema.Struct({
   projectAgentBrowserAccessOverrides: Schema.Record(ProjectId, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /**
+   * Off makes the server treat every folder as having no repository, so it
+   * never runs Git in a project: no checkpoints, status, diffs, or branches.
+   */
+  sourceControlEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   defaultAutoPull: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   defaultProjectScripts: Schema.Array(ProjectScript).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -1532,6 +1537,7 @@ export const ServerSettingsPatch = Schema.Struct({
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
+  sourceControlEnabled: Schema.optionalKey(Schema.Boolean),
   defaultAutoPull: Schema.optionalKey(Schema.Boolean),
   defaultProjectScripts: Schema.optionalKey(Schema.Array(ProjectScript)),
   projectScriptOverrides: Schema.optionalKey(

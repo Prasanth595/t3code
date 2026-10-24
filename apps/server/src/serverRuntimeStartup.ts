@@ -192,6 +192,7 @@ export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
   projects: ReadonlyArray<Pick<Project, "id" | "workspaceRoot" | "autoPull">>,
   settings = DEFAULT_SERVER_SETTINGS,
 ) {
+  if (!settings.sourceControlEnabled) return;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const workspaceRoots = [
     ...new Set(

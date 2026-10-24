@@ -26,6 +26,7 @@ import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/p
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as ServerSettings from "../serverSettings.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
@@ -151,6 +152,7 @@ export const make = Effect.gen(function* () {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceSearchIndexes = yield* WorkspaceSearchIndex.WorkspaceSearchIndexMap;
   const vcsProcess = yield* VcsProcess.VcsProcess;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
 
   const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
     cwd: string,
@@ -334,6 +336,9 @@ export const make = Effect.gen(function* () {
           },
           catch: toError,
         });
+        if (!(yield* ServerSettings.sourceControlEnabled(serverSettings))) {
+          return { entries, truncated: false };
+        }
         // Use stdin so large directories cannot exceed the command-line argument limit.
         // Ignore classification is optional in non-git workspaces or when git is unavailable.
         const checkIgnore = (paths: ReadonlyArray<string>) =>
@@ -400,6 +405,9 @@ export const make = Effect.gen(function* () {
     "WorkspaceEntries.listIgnoredFiles",
   )(function* (input) {
     const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+    if (!(yield* ServerSettings.sourceControlEnabled(serverSettings))) {
+      return { files: [], truncated: false };
+    }
     // `--directory` reports a folder holding nothing but ignored files as one
     // `name/` entry, which is how `node_modules` and build output drop out.
     const result = yield* vcsProcess

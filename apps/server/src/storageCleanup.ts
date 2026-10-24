@@ -720,6 +720,8 @@ const make = Effect.gen(function* () {
     now: number,
     entries: StorageCleanupReportEntry[],
   ) {
+    // Deciding whether a checkout is safe to remove takes Git.
+    if (!serverSettings.sourceControlEnabled) return;
     if (!anyWorktreePolicy(serverSettings, worktreeCleanupEnabled)) return;
     const roots: Array<string> = [];
     for (const directory of managedWorktreesDirectories(
@@ -937,6 +939,8 @@ const make = Effect.gen(function* () {
         // the removal. Read only this path's threads: a full snapshot per
         // worktree takes seconds on large databases.
         const blockedSinceCheck = Effect.fnUntraced(function* () {
+          if (!(yield* settingsService.getSettings).sourceControlEnabled)
+            return "settings changed since check";
           const latestProjects = yield* projectStore.listShells();
           if (yield* containsProjectRoot(worktreePath, [project, ...latestProjects]))
             return "contains a project checkout";
@@ -1015,11 +1019,10 @@ const make = Effect.gen(function* () {
           return keep("commit changed since check");
         const finalChanges = yield* localChangesReason(worktreePath, settings);
         if (finalChanges !== null) return keep(finalChanges);
-        const current = resolveWorktreeCleanup(
-          yield* settingsService.getSettings,
-          thread.projectId,
-        );
+        const currentSettings = yield* settingsService.getSettings;
+        const current = resolveWorktreeCleanup(currentSettings, thread.projectId);
         if (
+          !currentSettings.sourceControlEnabled ||
           Object.keys(settings).some(
             (key) =>
               current[key as keyof typeof settings] !== settings[key as keyof typeof settings],

@@ -90,6 +90,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const PermissionIcon = runtimeModeConfig[settings.defaultRuntimeMode].icon;
   const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
   const mixedSubmodules = useScopedSettingsMixed(["worktreeSubmodules"]);
+  const mixedSourceControl = useScopedSettingsMixed(["sourceControlEnabled"]);
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
   const mixedAgentCredits = useScopedSettingsMixed(["removeAgentCreditsOnMerge"]);
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
@@ -379,6 +380,30 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         </>
       ) : (
         <>
+          <SettingsRow
+            serverScoped
+            settingKeys={["sourceControlEnabled"]}
+            mixed={mixedSourceControl}
+            {...searchableSetting("git-integration")}
+            description="When off, T3 Code treats every folder as having no Git repository: no checkpoints, status checks, diffs, or branch and pull request controls."
+            resetAction={
+              settings.sourceControlEnabled ? null : (
+                <SettingResetButton
+                  label="Git integration"
+                  tooltip="Turn Git integration back on"
+                  onClick={() => updateSettings({ sourceControlEnabled: true })}
+                />
+              )
+            }
+            control={
+              <Switch
+                aria-label="Git integration"
+                mixed={mixedSourceControl}
+                checked={mixedSourceControl ? false : settings.sourceControlEnabled}
+                onCheckedChange={(enabled) => updateSettings({ sourceControlEnabled: enabled })}
+              />
+            }
+          />
           <SettingsRow
             serverScoped
             settingKeys={["defaultAutoPull"]}

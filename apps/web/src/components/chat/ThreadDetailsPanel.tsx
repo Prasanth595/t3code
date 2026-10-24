@@ -6,9 +6,11 @@ import type {
   ResolvedKeybindingsConfig,
   ThreadId,
 } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 
 import type { DraftId } from "../../composerDraftStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
+import { serverEnvironment } from "../../state/server";
 import { type EnvMode, type EnvironmentOption } from "../BranchToolbar.logic";
 import { BranchToolbar } from "../BranchToolbar";
 import BaseGitActionsControl from "../GitActionsControl";
@@ -74,6 +76,9 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     props.activeProjectScripts ? props.gitCwd : null,
   );
   const activeThreadRef = { environmentId: props.environmentId, threadId: props.threadId };
+  const serverSettings = useAtomValue(serverEnvironment.settingsValueAtom(props.environmentId));
+  // Off, every folder reads as having no repository, so Initialize Git would only loop back here.
+  const sourceControlEnabled = serverSettings?.sourceControlEnabled ?? true;
   const branchToolbarProps = {
     showGitControls: props.isGitRepo,
     environmentId: props.environmentId,
@@ -157,7 +162,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
             </div>
           </ThreadDetailsSection>
 
-          {props.gitCwd ? (
+          {props.gitCwd && sourceControlEnabled ? (
             <ThreadDetailsSection
               headingId="thread-details-version-control-heading"
               title="Version Control"

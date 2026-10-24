@@ -1226,6 +1226,22 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("branch PR lookup finds nothing and runs no git while source control is off", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const gitCommands: string[] = [];
+      const { manager, ghCalls } = yield* makeManager({
+        gitCommands,
+        serverSettings: { sourceControlEnabled: false },
+      });
+
+      expect(yield* manager.branchPullRequest({ cwd: repoDir, branch: "main" })).toBeNull();
+      expect(gitCommands).toEqual([]);
+      expect(ghCalls).toEqual([]);
+    }),
+  );
+
   it.effect("branch PR lookup uses the saved name after the local branch is deleted", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -4065,6 +4081,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           VcsDriverRegistry.layer.pipe(
             Layer.provide(VcsProjectConfig.layer),
             Layer.provide(VcsProcess.layer),
+            Layer.provide(ServerSettings.layerTest()),
           ),
         );
         const handle = yield* Context.get(registry, VcsDriverRegistry.VcsDriverRegistry).resolve({

@@ -369,3 +369,22 @@ it.effect("automatic pull only updates enabled, behind, clean default-branch che
     assert.deepStrictEqual(pulled, ["/inherited"]);
   }),
 );
+
+it.effect("automatic pull runs no git while source control is off", () =>
+  Effect.gen(function* () {
+    const calls: string[] = [];
+    const record = (cwd: string) =>
+      Effect.sync(() => calls.push(cwd)).pipe(Effect.andThen(Effect.die("git must not run")));
+    const git = {
+      statusDetails: record,
+      pullCurrentBranch: record,
+    } as unknown as GitVcsDriver.GitVcsDriver["Service"];
+
+    yield* ServerRuntimeStartup.autoPullProjects(
+      [{ id: ProjectId.make("/project"), workspaceRoot: "/project" } as never],
+      { ...DEFAULT_SERVER_SETTINGS, defaultAutoPull: true, sourceControlEnabled: false },
+    ).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git));
+
+    assert.deepStrictEqual(calls, []);
+  }),
+);
