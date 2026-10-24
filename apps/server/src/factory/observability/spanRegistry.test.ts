@@ -123,6 +123,21 @@ describe("makeSpanRegistry.active", () => {
     ]);
   });
 
+  it("gives a SQL statement the connection of the transaction span it runs under", () => {
+    const c = clock();
+    const registry = makeSpanRegistry({ now: c.now });
+    c.set(10);
+    const tx = registry.start("sql.transaction", "span");
+    registry.markConnection(tx, "writer");
+    c.set(20);
+    const sql = registry.start("sqlite", "span", tx);
+    registry.markSql(sql, "INSERT INTO t VALUES (1)");
+    expect(registry.active(0, 100, 10).map((s) => [s.name, s.connection])).toEqual([
+      ["sqlite", "writer"],
+      ["sql.transaction", "writer"],
+    ]);
+  });
+
   it("ignores an end for a span it already dropped", () => {
     const registry = makeSpanRegistry({ maxInFlight: 1 });
     const first = registry.start("first", "span");
@@ -258,6 +273,20 @@ describe("wrapTracer", () => {
     expect(byName.get("sqlite")).toBe("reader");
     expect(byName.get("sqlite 2")).toBe("writer");
     expect(byName.get("sqlite 3")).toBeUndefined();
+  });
+
+  it("takes the connection a sql.transaction span names, so its statements inherit it", () => {
+    const { registry, tracer } = setup();
+    const tx = tracer.span(spanOptions("sql.transaction", Option.some(parentSpan)));
+    tx.attribute("db.connection", "writer");
+    const sql = tracer.span(spanOptions("sqlite", Option.some(tx), "client"));
+    sql.attribute("db.system.name", "sqlite");
+    const other = tracer.span(spanOptions("rpc.request", Option.some(parentSpan)));
+    other.attribute("db.connection", "writer");
+    const byName = new Map(registry.active(0, 10, 10).map((s) => [s.name, s.connection]));
+    expect(byName.get("sql.transaction")).toBe("writer");
+    expect(byName.get("sqlite")).toBe("writer");
+    expect(byName.get("rpc.request")).toBeUndefined();
   });
 
   it("links a span to its parent, so the parent's own time excludes the child's", () => {

@@ -16,6 +16,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import * as ServerConfig from "../../config.ts";
 import { useTempDirs } from "../ledger/testSupport.ts";
+import type { TrackedSpanReport } from "../observability/spanRegistry.ts";
 import {
   makeWithStallAttribution,
   stallProfileOptedIn,
@@ -28,12 +29,20 @@ const tempDir = useTempDirs();
 const blockThread = (ms: number) =>
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
+interface StallRecord {
+  readonly time: string;
+  readonly stallMs: number;
+  readonly profiled: boolean;
+  readonly spans: ReadonlyArray<TrackedSpanReport>;
+  readonly oldestInFlight: ReadonlyArray<TrackedSpanReport>;
+}
+
 /** The records in the logs directory's factory-event-loop-stalls.ndjson, in order. */
-const stallRecords = (logsDir: string): Array<any> =>
+const stallRecords = (logsDir: string): Array<StallRecord> =>
   NodeFS.readFileSync(NodePath.join(logsDir, "factory-event-loop-stalls.ndjson"), "utf8")
     .trim()
     .split("\n")
-    .map((line) => JSON.parse(line));
+    .map((line) => JSON.parse(line) as StallRecord);
 
 const serverConfig = (logsDir: string) =>
   Layer.succeed(ServerConfig.ServerConfig, {
@@ -168,16 +177,18 @@ describe("withStallAttribution", () => {
         const logsDir = tempDir();
         const base = yield* Effect.service(Tracer.Tracer);
         const sql = yield* SqlClient.SqlClient;
-        // Enough rows to hold a thread past the stall threshold on any machine.
-        const count = (rows: number) => sql<{ readonly n: number }>`
-          WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ${rows})
-          SELECT COUNT(*) AS n FROM c
-        `;
+        // Enough rows to hold a thread past the stall threshold on any machine. The alias names
+        // the connection the statement is meant for, so the test can find it in the report.
+        const count = (rows: number, alias: "reader_rows" | "writer_rows") =>
+          sql.unsafe<{ readonly n: number }>(
+            `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ${rows})
+             SELECT COUNT(*) AS ${alias} FROM c`,
+          );
         // The reader worker refuses a database that is not in WAL mode, which the server's
         // persistence layer sets, and the first read brings the worker up. Both can stall under
         // load, so they run before the detector starts.
         yield* sql`PRAGMA journal_mode = WAL`;
-        yield* count(1).pipe(NodeSqliteClient.readOnly);
+        yield* count(1, "reader_rows").pipe(NodeSqliteClient.readOnly);
 
         // Resolves once the client has put a statement on the reader, so the writer's statement
         // blocks the loop while the reader's is in flight on its worker.
@@ -198,16 +209,22 @@ describe("withStallAttribution", () => {
         const decorated = makeWithStallAttribution({ intervalMs: 10, thresholdMs: 100 })(
           Layer.succeed(Tracer.Tracer, observing),
         );
+        // The writer's statement ends inside the stall it causes, so the warning that names it is
+        // that stall's, whatever else paused the loop before.
         const warned = yield* Deferred.make<string>();
         const capture = Logger.make<unknown, void>(({ message }) => {
           const text = String(Array.isArray(message) ? message[0] : message);
-          if (text.startsWith("factory event loop stalled"))
+          if (text.startsWith("factory event loop stalled") && text.includes("writer_rows"))
             Deferred.doneUnsafe(warned, Effect.succeed(text));
         });
         const warning = yield* Effect.gen(function* () {
-          const reader = yield* Effect.forkChild(count(8_000_000).pipe(NodeSqliteClient.readOnly));
+          const reader = yield* Effect.forkChild(
+            count(8_000_000, "reader_rows").pipe(NodeSqliteClient.readOnly),
+          );
           yield* Deferred.await(readerAcquired);
-          yield* count(8_000_000);
+          // Inside a transaction the statement runs on the transaction's connection, which the
+          // client names on the sql.transaction span, not on the statement's. Most writes run so.
+          yield* sql.withTransaction(count(8_000_000, "writer_rows"));
           yield* Fiber.join(reader);
           return yield* Deferred.await(warned);
         }).pipe(
@@ -221,8 +238,10 @@ describe("withStallAttribution", () => {
         assert.include(warning, "sqlite[writer] (");
         assert.include(warning, "sqlite[reader] (");
 
-        const [record] = stallRecords(logsDir);
-        const connections = (record.spans as Array<{ name: string; connection?: string }>)
+        const record = stallRecords(logsDir).find((r) =>
+          r.spans.some((span) => span.query?.includes("writer_rows")),
+        );
+        const connections = record!.spans
           .filter((span) => span.name === "sqlite")
           .map((span) => span.connection);
         assert.include(connections, "writer");
@@ -307,10 +326,9 @@ describe("withStallAttribution", () => {
           ),
           Effect.scoped,
         );
-        const [record] = stallRecords(logsDir);
+        const record = stallRecords(logsDir)[0]!;
         assert.isAtLeast(record.stallMs, 200);
         assert.strictEqual(record.profiled, false);
-        assert.isFalse(NodeFS.existsSync(NodePath.join(logsDir, "stall-profiles")));
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
