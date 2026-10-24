@@ -3784,7 +3784,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             },
             client: undefined,
             issuedAt: 0,
-            capabilities: new Set(["orchestration"]),
+            capabilities: new Set(["orchestration"] as const),
           }),
           Effect.provideService(
             McpSchema.McpServerClient,
@@ -3818,6 +3818,25 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.deepEqual(
         projection.thread.lastVisitedAt,
         DateTime.subtract(completedAt, { milliseconds: 1 }),
+      );
+
+      // A deferred mark that lands after a newer visit keeps the read state.
+      const visitedAt = DateTime.add(completedAt, { milliseconds: 500 });
+      yield* orchestrator.dispatch({
+        type: "thread.visit",
+        commandId: CommandId.make("runtime-layer-own-mark-unread-visit"),
+        threadId,
+        visitedAt: DateTime.formatIso(visitedAt),
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.mark-unread",
+        commandId: CommandId.make("runtime-layer-own-mark-unread-after-visit"),
+        threadId,
+        runId: scheduledRun.id,
+      });
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.lastVisitedAt,
+        visitedAt,
       );
     }).pipe(
       Effect.provide(

@@ -419,8 +419,7 @@ export interface ThreadManagementServiceShape {
    * Marking unread rewinds the visit to just before the latest run completed,
    * so an agent that marks its own thread unread uses this to wait for its
    * turn to end. A run that ends any other way leaves the thread as it was,
-   * as does anything `thread.mark-unread` refuses then, such as a queued
-   * message.
+   * as does a newer run or a visit after the run completed.
    */
   readonly markUnreadAfterRun: (input: {
     readonly projectId: ProjectId;
@@ -984,12 +983,13 @@ const make = Effect.gen(function* () {
   const markUnreadAfterRun: ThreadManagementServiceShape["markUnreadAfterRun"] = Effect.fn(
     "orchestrationV2.threadManagement.markUnreadAfterRun",
   )(function* (input) {
-    const { run } = yield* waitForThread({ ...input, timeoutMs: AFTER_RUN_WAIT_MS });
-    if (run?.status !== "completed") return;
+    const { run, timedOut } = yield* waitForThread({ ...input, timeoutMs: AFTER_RUN_WAIT_MS });
+    if (timedOut || run?.status !== "completed") return;
     yield* dispatch({
       type: "thread.mark-unread",
       commandId: CommandId.make(`server:mark-unread-after-run:${input.runId}`),
       threadId: input.threadId,
+      runId: run.id,
     });
   });
 
