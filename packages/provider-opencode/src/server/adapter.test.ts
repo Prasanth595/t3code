@@ -1630,6 +1630,83 @@ describe("OpenCodeAdapterV2", () => {
     ),
   );
 
+  it.effect.each(["during", "after"] as const)(
+    "completes the turn when the session goes idle %s a rejected steer",
+    (idleTiming) =>
+      Effect.gen(function* () {
+        const nativeEvents = asyncEventStream();
+        const sessionId = `native-steer-rejected-${idleTiming}`;
+        const idle = {
+          type: "session.status",
+          properties: { sessionID: sessionId, status: { type: "idle" } },
+        };
+        const promptIds: Array<string> = [];
+        const harness = yield* makeOpenCodeRuntimeHarness(
+          `steer-rejected-${idleTiming}`,
+          sessionId,
+          {
+            event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+            session: {
+              create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+              get: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+              messages: async () => ({ data: [] }),
+              promptAsync: async (input: { messageID: string }) => {
+                promptIds.push(input.messageID);
+                if (promptIds.length === 1) return { data: true };
+                if (idleTiming === "during") await nativeEvents.push(idle);
+                throw new Error("steer rejected");
+              },
+              abort: async () => ({ data: true }),
+              children: async () => ({ data: [] }),
+            },
+          },
+        );
+        yield* harness.startTurn();
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.updated",
+            properties: {
+              sessionID: sessionId,
+              info: {
+                id: promptIds[0],
+                sessionID: sessionId,
+                role: "user",
+                time: { created: DateTime.toEpochMillis(harness.now) },
+              },
+            },
+          }),
+        );
+        const running = yield* harness.runtime.readThreadSnapshot({
+          providerThread: harness.providerThread,
+        });
+        const steer = yield* Effect.exit(
+          harness.runtime.steerTurn({
+            threadId: harness.threadId,
+            runId: harness.runId,
+            providerThread: harness.providerThread,
+            providerTurnId: running.providerTurns.at(-1)!.id,
+            message: {
+              messageId: MessageId.make(`message-steer-rejected-${idleTiming}`),
+              text: "also cover the README",
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+            },
+          }),
+        );
+        assert.isTrue(Exit.isFailure(steer));
+        if (idleTiming === "after") yield* Effect.promise(() => nativeEvents.push(idle));
+
+        const settled = yield* harness.runtime.readThreadSnapshot({
+          providerThread: harness.providerThread,
+        });
+        assert.equal(settled.providerTurns.at(-1)?.status, "completed");
+      }).pipe(
+        Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+        Effect.scoped,
+      ),
+  );
+
   it.effect("interrupts an initial prompt while its SDK request is pending", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
