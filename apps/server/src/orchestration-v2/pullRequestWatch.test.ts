@@ -389,12 +389,16 @@ describe("evaluatePullRequestWatch", () => {
 
   it("reports a merge queue removal stamped in the second the watch started", () => {
     const watching = watch({ startedAt: "2026-10-02T12:00:00.500Z" });
-    const dropped = detail({
-      mergeQueueRemoval: { id: "first", removedAt: "2026-10-02T12:00:00Z", reason: "CI failed" },
-    });
-    assert.deepEqual(evaluatePullRequestWatch(watching, dropped, noRemarks).changes, [
-      { kind: "merge-queue-removed", reason: "CI failed" },
-    ]);
+    const removed = (removedAt: string) =>
+      detail({ mergeQueueRemoval: { id: "first", removedAt, reason: "CI failed" } });
+    assert.deepEqual(
+      evaluatePullRequestWatch(watching, removed("2026-10-02T12:00:00Z"), noRemarks).changes,
+      [{ kind: "merge-queue-removed", reason: "CI failed" }],
+    );
+    assert.deepEqual(
+      evaluatePullRequestWatch(watching, removed("2026-10-02T11:59:59Z"), noRemarks).changes,
+      [],
+    );
   });
 
   it("does not spend the comment wake limit on check results", () => {
