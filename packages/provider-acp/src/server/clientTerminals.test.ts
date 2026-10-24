@@ -150,9 +150,12 @@ describe("AcpClientTerminals", () => {
     ),
   );
 
-  it.effect(
-    "waits for the configured deadline before force-killing a SIGTERM-ignoring terminal",
-    () =>
+  it.effect.each([
+    { deadline: "default", forceKillAfter: undefined, deadlineMillis: 5000 },
+    { deadline: "configured", forceKillAfter: "250 millis" as const, deadlineMillis: 250 },
+  ])(
+    "waits for the $deadline deadline before force-killing a SIGTERM-ignoring terminal",
+    ({ forceKillAfter, deadlineMillis }) =>
       Effect.gen(function* () {
         const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
         const child = ChildProcessSpawner.makeHandle({
@@ -177,7 +180,7 @@ describe("AcpClientTerminals", () => {
         });
         const terminals = yield* makeAcpClientTerminals({
           defaultCwd: process.cwd(),
-          forceKillAfter: "250 millis",
+          ...(forceKillAfter === undefined ? {} : { forceKillAfter }),
         }).pipe(
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
@@ -197,8 +200,9 @@ describe("AcpClientTerminals", () => {
         const killing = yield* terminals.kill(request).pipe(Effect.forkChild);
         const waiting = yield* terminals.waitForExit(request).pipe(Effect.forkChild);
 
-        yield* TestClock.adjust("249 millis");
+        yield* TestClock.adjust(deadlineMillis - 1);
         expect(yield* child.isRunning).toBe(true);
+        expect(killing.pollUnsafe()).toBeUndefined();
         expect(waiting.pollUnsafe()).toBeUndefined();
         yield* TestClock.adjust("1 millis");
         expect(yield* child.isRunning).toBe(false);
