@@ -156,6 +156,9 @@ export function makeReplayServerConfig(
   });
 }
 
+/** Settings a replay run starts with, over the harness defaults. */
+export type ReplayServerSettings = Parameters<typeof ServerSettings.layerTest>[0];
+
 export interface OrchestratorV2ProviderReplayScenario<
   Transcript extends ProviderReplayTranscript = ProviderReplayTranscript,
 > extends OrchestratorV2Scenario {
@@ -196,6 +199,8 @@ export function runOrchestratorV2ProviderReplayScenario<
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
+    /** Server settings for the run, over the replay defaults. */
+    readonly serverSettings?: ReplayServerSettings;
   } = {},
 ): Effect.Effect<
   OrchestratorV2ScenarioResult,
@@ -238,6 +243,8 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
+    /** Server settings for the run, over the replay defaults. */
+    readonly serverSettings?: ReplayServerSettings;
     readonly replayGate?: ProviderReplayGate;
   } = {},
 ): Layer.Layer<
@@ -271,6 +278,8 @@ export function layerWithRegistry<Error>(
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
+    /** Server settings for the run, over the replay defaults. */
+    readonly serverSettings?: ReplayServerSettings;
     readonly maxRunningDelegatedTasks?: number;
   } = {},
 ): Layer.Layer<
@@ -306,6 +315,7 @@ export function layerWithRegistry<Error>(
     ...(options.maxRunningDelegatedTasks === undefined
       ? {}
       : { maxRunningDelegatedTasks: options.maxRunningDelegatedTasks }),
+    ...options.serverSettings,
   }).pipe(Layer.orDie);
   const layerStores = Layer.mergeAll(
     EventStore.layer,

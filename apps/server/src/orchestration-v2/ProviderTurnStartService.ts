@@ -1511,6 +1511,7 @@ ${turnText}`,
         shouldFinalizeRun: runControls.shouldFinalizeRun,
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
         loadRunInterruptReason: runControls.loadRunInterruptReason,
+        typedText: message.text,
         message: {
           messageId: message.id,
           text: userText,
