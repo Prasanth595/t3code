@@ -9,7 +9,7 @@ import { cn } from "../../lib/utils";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { agentFileSync } from "../../state/agentFileSync";
 import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
-import { useEnvironmentQuery } from "../../state/query";
+import { useEnvironmentQuery, type EnvironmentQueryView } from "../../state/query";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -152,6 +152,18 @@ export function AgentFileLibrary({
     visible.find((item) => resourceKey(item) === selected) ??
     visible.find((item) => item.kind === "skill") ??
     visible[0];
+  const exported = useEnvironmentQuery(
+    resource?.kind === "skill" && !resource.unavailable
+      ? agentFileSync.export({
+          environmentId: resource.location.environmentId,
+          input: {
+            ...(resource.location.cwd ? { cwd: resource.location.cwd } : {}),
+            skills: [resource.path],
+            instructions: [],
+          },
+        })
+      : null,
+  );
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <div className="flex items-center gap-2">
@@ -170,6 +182,7 @@ export function AgentFileLibrary({
           onClick={() => {
             globalCatalog.refresh();
             projectCatalog.refresh();
+            exported.refresh();
             refreshSharing();
           }}
         >
@@ -281,6 +294,7 @@ export function AgentFileLibrary({
           <ResourceDetails
             key={resourceKey(resource)}
             resource={resource}
+            exported={exported}
             shares={shares}
             sharingKnown={sharingKnown}
             refreshSharing={refreshSharing}
@@ -304,6 +318,7 @@ export function AgentFileLibrary({
 
 function ResourceDetails({
   resource,
+  exported,
   shares,
   sharingKnown,
   refreshSharing,
@@ -312,6 +327,7 @@ function ResourceDetails({
   connected,
 }: {
   resource: AgentLibraryResource;
+  exported: EnvironmentQueryView<AgentFileSyncBundle>;
   shares: AgentFileShare[];
   sharingKnown: boolean;
   refreshSharing: () => void;
@@ -348,7 +364,7 @@ function ResourceDetails({
         </p>
       </header>
       <div className="p-4">
-        <ResourceContents resource={resource} />
+        <ResourceContents resource={resource} exported={exported} />
       </div>
       <div className="flex flex-col gap-3 border-t p-4">
         <h4 className="text-sm font-medium">Source & sharing</h4>
@@ -457,19 +473,13 @@ function ResourceOrigin({
   );
 }
 
-function ResourceContents({ resource }: { resource: AgentLibraryResource }) {
-  const exported = useEnvironmentQuery(
-    resource.kind === "skill" && !resource.unavailable
-      ? agentFileSync.export({
-          environmentId: resource.location.environmentId,
-          input: {
-            ...(resource.location.cwd ? { cwd: resource.location.cwd } : {}),
-            skills: [resource.path],
-            instructions: [],
-          },
-        })
-      : null,
-  );
+function ResourceContents({
+  resource,
+  exported,
+}: {
+  resource: AgentLibraryResource;
+  exported: EnvironmentQueryView<AgentFileSyncBundle>;
+}) {
   const files =
     exported.data?.find(
       (item): item is Extract<AgentFileSyncBundle[number], { kind: "skill" }> =>

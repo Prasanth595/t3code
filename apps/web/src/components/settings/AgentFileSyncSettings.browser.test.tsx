@@ -9,6 +9,8 @@ const state = vi.hoisted(() => ({
   writable: true,
   project: false,
   missing: false,
+  skillText: "# Review\nCheck changes.\n",
+  extraFile: false,
 }));
 
 vi.mock(import("../../state/agentFileSync"), async () => {
@@ -82,12 +84,17 @@ vi.mock(import("../../state/agentFileSync"), async () => {
       },
     ]),
   );
-  const exported = Atom.make(
+  const exported = Atom.make(() =>
     AsyncResult.success([
       {
         kind: "skill",
         path: ".agents/skills/review",
-        files: [{ path: "SKILL.md", data: btoa("# Review\nCheck changes.\n"), mode: 384 }],
+        files: [
+          { path: "SKILL.md", data: btoa(state.skillText), mode: 384 },
+          ...(state.extraFile
+            ? [{ path: "notes.txt", data: btoa("Supporting notes."), mode: 384 }]
+            : []),
+        ],
       },
     ]),
   );
@@ -148,6 +155,8 @@ function setup(reason = "") {
   state.writable = reason !== "read-only";
   state.project = reason === "project";
   state.missing = reason === "missing";
+  state.skillText = "# Review\nCheck changes.\n";
+  state.extraFile = false;
   const key = "t3:agent-file-sync:source:home";
   localStorage.setItem(`${key}:targets`, JSON.stringify(["available", "unavailable"]));
   return key;
@@ -243,4 +252,20 @@ it("keeps a missing shared skill visible so its destination can be managed", asy
   await expect
     .element(screen.getByText("Share this skill…", { exact: true }))
     .not.toBeInTheDocument();
+});
+
+it("refreshes the selected skill text and its supporting-file list", async () => {
+  setup();
+  await using screen = await render(
+    <RegistryProvider>
+      <AgentFileSyncSettings />
+    </RegistryProvider>,
+  );
+  await expect.element(screen.getByText("Check changes.", { exact: true })).toBeVisible();
+  state.skillText = "# Review\nUpdated review.";
+  state.extraFile = true;
+  await userEvent.click(screen.getByRole("button", { name: "Refresh files" }));
+  await expect.element(screen.getByText("Updated review.", { exact: true })).toBeVisible();
+  await userEvent.click(screen.getByRole("combobox", { name: "Skill file" }));
+  await expect.element(screen.getByRole("option", { name: "notes.txt" })).toBeVisible();
 });
