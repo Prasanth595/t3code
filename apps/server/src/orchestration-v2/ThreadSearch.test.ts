@@ -22,6 +22,7 @@ import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EventStore from "./EventStore.ts";
+import { rebuildMessageSearch } from "./messageSearchIndex.ts";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -264,6 +265,52 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       yield* projections.apply(message(threadId, "citation", "user", "quiet silver lantern"));
       assert.deepEqual(yield* snippets("what are you talking about"), []);
       assert.deepEqual(yield* snippets("lantern"), ["quiet silver lantern"]);
+    }),
+  );
+
+  it.effect("finds accented, CJK, and apostrophe words of a quote through the index", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:search-citation-index");
+      const threadId = ThreadId.make("thread:citation-index");
+      // The stored link percent-encodes these words; the index must hold them as they read.
+      const encodedQuote = serializeAssistantCitation({
+        version: 1,
+        environmentId: EnvironmentId.make("environment:local"),
+        threadId: ThreadId.make("thread:quoted"),
+        messageId: MessageId.make("quoted-answer"),
+        text: "The kittiwake's résumé mentions 灯台の光 twice.",
+        comment: "naïve question",
+        start: 0,
+        end: 44,
+        prefix: "",
+        suffix: "",
+      });
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [thread(threadId, project), message(threadId, "citation-index", "user", encodedQuote)],
+        projections.apply,
+        { discard: true },
+      );
+      const index = yield* sql`
+        SELECT 1 FROM sqlite_master WHERE name = 'orchestration_v2_message_search'
+      `;
+      assert.lengthOf(index, 1);
+      const threadIds = (query: string) =>
+        search.search({ query }).pipe(Effect.map(({ matches }) => matches.map((m) => m.threadId)));
+
+      for (const query of ["kittiwake's", "kittiwake’s", "résumé", "灯台の光", "naïve"]) {
+        assert.deepEqual(yield* threadIds(query), [threadId], query);
+      }
+      // `t3 doctor` rebuilds the index after VACUUM; quotes must still read.
+      yield* rebuildMessageSearch(sql);
+      assert.deepEqual(yield* threadIds("résumé"), [threadId]);
+
+      yield* projections.apply(message(threadId, "citation-index", "user", "plain words"));
+      assert.deepEqual(yield* threadIds("résumé"), []);
+      assert.deepEqual(yield* threadIds("plain"), [threadId]);
     }),
   );
 

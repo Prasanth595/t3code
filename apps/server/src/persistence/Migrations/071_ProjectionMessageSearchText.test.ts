@@ -42,6 +42,20 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
         yield* insertMessage("plain", "quiet silver lantern");
         yield* insertMessage("invalid", "[Assistant quote](t3-citation://v1/not-a-citation)");
         yield* insertMessage("unreadable", 20261001);
+        yield* insertMessage(
+          "accented",
+          serializeAssistantCitation({
+            version: 1,
+            environmentId: EnvironmentId.make("environment:local"),
+            threadId: ThreadId.make("thread:quoted"),
+            messageId: MessageId.make("quoted-answer"),
+            text: "The kittiwake's résumé",
+            start: 0,
+            end: 22,
+            prefix: "",
+            suffix: "",
+          }),
+        );
         yield* Effect.forEach(
           Array.from({ length: 501 }, (_, index) => `page-${String(index).padStart(3, "0")}`),
           (messageId) => insertMessage(messageId, quote),
@@ -62,6 +76,20 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
         assert.isNull(searchText.get("unreadable"));
         assert.equal(searchText.get("page-000"), readable);
         assert.equal(searchText.get("page-500"), readable);
+
+        // Messages migration 69 indexed as stored are indexed again as they read.
+        const indexed = (phrase: string) =>
+          sql<{ readonly message_id: string }>`
+            SELECT messages.message_id
+            FROM orchestration_v2_message_search AS search
+            INNER JOIN orchestration_v2_projection_messages AS messages
+              ON messages.rowid = search.rowid
+            WHERE orchestration_v2_message_search MATCH ${phrase}
+          `.pipe(Effect.map((rows) => rows.map((row) => row.message_id)));
+        assert.deepEqual(yield* indexed('"résumé"'), ["accented"]);
+        assert.deepEqual(yield* indexed(`"kittiwake's"`), ["accented"]);
+        assert.deepEqual(yield* indexed('"beacon01"'), []);
+        assert.lengthOf(yield* indexed('"what are you talking about"'), 502);
       }),
     );
   },
