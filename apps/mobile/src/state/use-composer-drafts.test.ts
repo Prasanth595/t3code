@@ -1988,6 +1988,62 @@ describe("mobile composer drafts", () => {
     },
   );
 
+  it("keeps saving drafts when one saved draft cannot be read", async () => {
+    const file = {
+      id: "newer-file",
+      type: "file" as const,
+      name: "plan.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 42,
+      fileUri: "file:///documents/t3-composer-attachments/plan.pdf",
+    };
+    const unreadable = {
+      text: "Written by a newer build",
+      attachments: [file],
+      workspaceSelection: { mode: "cloud", branch: null, worktreePath: null },
+    };
+    composerDraftFileMocks.setDocument({
+      schemaVersion: 1,
+      drafts: {
+        "environment-1:newer": unreadable,
+        "environment-1:saved": { text: "Saved draft", attachments: [] },
+      },
+    });
+
+    await releaseUnusedComposerAttachmentFiles([file]);
+    setComposerDraftText("environment-1:new", "Keep my new edits too");
+    await flushComposerDrafts();
+
+    expect(getComposerDraftSnapshot("environment-1:saved").text).toBe("Saved draft");
+    expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts).toEqual({
+      "environment-1:newer": unreadable,
+      "environment-1:saved": { text: "Saved draft", attachments: [] },
+      "environment-1:new": { text: "Keep my new edits too", attachments: [] },
+    });
+    expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
+  });
+
+  it("replaces a draft it cannot read once that composer gets a new draft", async () => {
+    composerDraftFileMocks.setDocument({
+      schemaVersion: 1,
+      drafts: {
+        "environment-1:thread-1": {
+          text: "Written by a newer build",
+          attachments: [],
+          workspaceSelection: { mode: "cloud", branch: null, worktreePath: null },
+        },
+      },
+    });
+
+    await waitForComposerDraftsLoaded();
+    setComposerDraftText("environment-1:thread-1", "Started over");
+    await flushComposerDrafts();
+    setComposerDraftText("environment-1:thread-1", "");
+    await flushComposerDrafts();
+
+    expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts).toEqual({});
+  });
+
   it("serializes environment cleanup after an older queued write", async () => {
     vi.useFakeTimers();
     composerDraftFileMocks.setDocument({ schemaVersion: 1, drafts: {} });
