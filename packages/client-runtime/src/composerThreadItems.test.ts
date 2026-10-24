@@ -26,4 +26,15 @@ describe("matchComposerThreadItems", () => {
     });
     expect(items.map((item) => item.thread.threadId)).toEqual([pasted]);
   });
+
+  it("does not match an ID that differs from the pasted one only by case", () => {
+    const pasted = "import:opencode:ses_AbC123";
+    const items = matchComposerThreadItems({
+      shells: [shell(pasted, "Imported A"), shell("import:opencode:ses_abc123", "Imported B")],
+      environmentId: env,
+      excludeThreadId: null,
+      query: pasted,
+    });
+    expect(items.map((item) => item.thread.threadId)).toEqual([pasted]);
+  });
 });
