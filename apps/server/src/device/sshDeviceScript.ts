@@ -153,7 +153,10 @@ async function install(name, version, entry) {
   const agentFile = path.join(state, 'agent.json');
   const stopAgent = () => {
     const entry = read(agentFile)?.entryPath || path.join(root, 'tools', 'agent-device@' + agentVersion, 'node_modules', 'agent-device', 'bin', 'agent-device.mjs');
-    return !fs.existsSync(entry) || run(process.execPath, [entry, 'daemon', 'stop', '--state-dir', state]).status === 0;
+    if (fs.existsSync(entry)) return run(process.execPath, [entry, 'daemon', 'stop', '--state-dir', state]).status === 0;
+    // A running daemon outlives its deleted CLI, so without one only a recorded pid that is gone counts as stopped.
+    const pid = read(daemonFile)?.pid;
+    return Number.isSafeInteger(pid) && pid > 0 && !maintenanceAlive(pid);
   };
   if (mode === 'stop' || mode === 'stop-agent') {
     const hub = read(hubFile);

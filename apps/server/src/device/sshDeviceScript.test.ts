@@ -92,3 +92,43 @@ if (fs.existsSync(${JSON.stringify(failMarker)})) process.exitCode = 1;`,
     });
   }),
 );
+
+it.effect("keeps a daemon record its missing agent CLI cannot stop", () =>
+  Effect.gen(function* () {
+    if ((yield* HostProcess.Platform) === "win32") return;
+    yield* Effect.promise(async () => {
+      const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-start-"));
+      try {
+        const state = NodePath.join(home, ".t3/device/hosts/owner");
+        const daemonFile = NodePath.join(state, "daemon.json");
+        await NodeFSP.mkdir(NodePath.join(home, "bin"));
+        await NodeFSP.mkdir(state, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(state, "agent.json"),
+          JSON.stringify({ entryPath: NodePath.join(home, "missing/agent-device.mjs") }),
+        );
+        const start = async (pid: number) => {
+          await NodeFSP.writeFile(
+            daemonFile,
+            JSON.stringify({ pid, httpPort: 1, token: "claims" }),
+          );
+          return NodeChildProcess.spawnSync(process.execPath, [], {
+            input: remoteDeviceScript("owner", "start"),
+            env: { HOME: home, PATH: NodePath.join(home, "bin") },
+            encoding: "utf8",
+          });
+        };
+        // This test process stands in for a daemon that is still running.
+        expect((await start(process.pid)).stderr).toContain(
+          "Could not stop the agent-device daemon",
+        );
+        expect(await NodeFSP.readFile(daemonFile, "utf8")).toContain("claims");
+        const exited = NodeChildProcess.spawnSync(process.execPath, ["-e", ""]).pid;
+        expect((await start(exited)).stderr).toContain("Android SDK missing");
+        await expect(NodeFSP.access(daemonFile)).rejects.toThrow();
+      } finally {
+        await NodeFSP.rm(home, { recursive: true, force: true });
+      }
+    });
+  }),
+);
