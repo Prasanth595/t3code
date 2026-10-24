@@ -25,12 +25,15 @@ import {
   RuntimeRequestId,
   TurnItemId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
@@ -38,6 +41,7 @@ import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
@@ -1520,6 +1524,9 @@ layer("ProviderEventIngestorV2", (it) => {
         const eventSink = yield* EventSink.EventSinkV2;
         const projections = yield* ProjectionStore.ProjectionStoreV2;
         const outbox = yield* EffectOutbox.EffectOutboxV2.pipe(Effect.provide(EffectOutbox.layer));
+        const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2.pipe(
+          Effect.provide(CommandReceiptStore.layer),
+        );
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
         const now = yield* DateTime.now;
@@ -1640,7 +1647,7 @@ layer("ProviderEventIngestorV2", (it) => {
           "cancelled",
         );
         const commandId = CommandId.make(`${threadId}:respond`);
-        yield* eventSink
+        const exit = yield* eventSink
           .commitCommand({
             commandId,
             threadId,
@@ -1680,12 +1687,23 @@ layer("ProviderEventIngestorV2", (it) => {
             ],
           })
           .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(exit));
+        const error = Exit.isFailure(exit)
+          ? Cause.findErrorOption(exit.cause).pipe(Option.getOrThrow)
+          : undefined;
+        assert.instanceOf(error, EventSink.EventSinkRuntimeRequestNotPendingError);
+        assert.deepInclude(error, { requestId: request.id, status: "cancelled" });
+        assert.isTrue(Option.isNone(yield* receipts.getByCommandId(commandId)));
         const projection = yield* projections.getThreadProjection(threadId);
         assert.equal(
           projection.runtimeRequests.find((entry) => entry.id === request.id)?.status,
           "cancelled",
         );
         assert.equal(projection.nodes.find((entry) => entry.id === nodeId)?.status, "cancelled");
+        assert.equal(
+          projection.turnItems.find((entry) => entry.id === item.id)?.status,
+          "cancelled",
+        );
         assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
       }),
   );
