@@ -34,6 +34,8 @@
         "sign-macos.ts",
         "smoke-desktop-app.ts",
         "verify-windows-desktop-artifact.ts",
+        // Workflow QA tooling is run by hand; its modules are reached from this one.
+        "workflow-qa/cli.ts",
       ],
       "ignoreDependencies": ["agent-device", "esbuild"],
       // The `t3` npm package's files: copied into the package, never imported.
