@@ -18,7 +18,7 @@ import type {
   PullRequestListState,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { useNavigate, useSearch } from "@tanstack/react-router";
+import { useSearch } from "@tanstack/react-router";
 import { ArrowDownUpIcon, LayersIcon, Plug2Icon } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState, type ComponentProps } from "react";
 
@@ -54,6 +54,10 @@ import {
 import { environmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 import {
+  usePullRequestHistorySelection,
+  usePullRequestNavigation,
+} from "./usePullRequestNavigation";
+import {
   PullRequestFiltersMenu,
   PullRequestSearchInput,
   pullRequestHostLabel,
@@ -68,7 +72,6 @@ import {
   usePullRequestDisplayGroups,
   usePullRequestQueryFilters,
   usePullRequestScope,
-  type PullRequestsSearch,
 } from "./usePullRequestListView";
 import { pullRequestGroups, pullRequestListEntryId } from "./pullRequestListGroups.logic";
 import { PullRequestListEmptyState } from "./PullRequestListEmptyState";
@@ -143,7 +146,6 @@ export function PullRequestsPage() {
   const sort = search.sort ?? "ready";
   const statsPolicy: PullRequestStatsPolicy =
     sort === "ready" || sort === "largest" || sort === "smallest" ? "eager" : "visible";
-  const navigate = useNavigate({ from: "/pull-requests" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const {
     capableEnvironments,
@@ -195,38 +197,10 @@ export function PullRequestsPage() {
     (renderedPullRequestSurface?.environmentId as EnvironmentId | undefined) ??
     selectedProject?.environmentId ??
     null;
-  const updateSearch = (patch: {
-    [Key in keyof PullRequestsSearch]?: PullRequestsSearch[Key] | undefined;
-  }) =>
-    void navigate({
-      search: (previous: PullRequestsSearch): PullRequestsSearch => {
-        const next = { ...previous, ...patch };
-        return {
-          involvement: next.involvement ?? previous.involvement,
-          state: next.state ?? previous.state,
-          ...(next.sort && next.sort !== "ready" ? { sort: next.sort } : {}),
-          ...(next.repository ? { repository: next.repository } : {}),
-          ...(next.number ? { number: next.number } : {}),
-          ...(next.projectId ? { projectId: next.projectId } : {}),
-          ...(next.environmentId ? { environmentId: next.environmentId } : {}),
-          ...(next.host ? { host: next.host } : {}),
-          ...(next.selectedHost ? { selectedHost: next.selectedHost } : {}),
-          ...(next.selectedProjectId ? { selectedProjectId: next.selectedProjectId } : {}),
-          ...(next.selectedEnvironmentId
-            ? { selectedEnvironmentId: next.selectedEnvironmentId }
-            : {}),
-          ...(next.q ? { q: next.q } : {}),
-          ...(next.draft ? { draft: next.draft } : {}),
-          ...(next.review ? { review: next.review } : {}),
-          ...(next.checks ? { checks: next.checks } : {}),
-          ...(next.author ? { author: next.author } : {}),
-          ...(next.labels && next.labels.length > 0 ? { labels: next.labels } : {}),
-        };
-      },
-      replace: true,
-    });
+  const updateSearch = usePullRequestNavigation();
 
   const clearedSelection = {
+    tab: undefined,
     repository: undefined,
     number: undefined,
     selectedProjectId: undefined,
@@ -999,10 +973,11 @@ export function PullRequestsPage() {
     if (rightPanelState.isOpen) setMaximized((value) => !value);
   };
   const onGuideShown = () => setMaximized(true);
-  useEffect(() => {
-    if (!pullRequestsSupported || rightPanelRef === null || linkedSelection === null) return;
-    useRightPanelStore.getState().openPullRequest(rightPanelRef, linkedSelection);
-  }, [linkedSelection, pullRequestsSupported, rightPanelRef]);
+  usePullRequestHistorySelection(
+    pullRequestsSupported ? rightPanelRef : null,
+    linkedSelection,
+    search,
+  );
 
   const selected =
     rightPanelState.isOpen && activePullRequestSurface !== null
@@ -1027,6 +1002,7 @@ export function PullRequestsPage() {
       surface === null
         ? clearedSelection
         : {
+            tab: surface.detailTab,
             repository: surface.repository,
             number: surface.number,
             selectedProjectId: surface.projectId as ProjectId,
@@ -1063,6 +1039,7 @@ export function PullRequestsPage() {
     if (rightPanelRef === null) return;
     useRightPanelStore.getState().openPullRequest(rightPanelRef, entry);
     updateSearch({
+      tab: undefined,
       repository: entry.repository,
       number: entry.number,
       selectedProjectId: entry.projectId,
@@ -1483,6 +1460,8 @@ export function PullRequestsPage() {
             pullRequestStatusSeeds={listedPullRequestTabStatuses}
           >
             <PullRequestDetailPanel
+              initialTab={search.tab ?? "summary"}
+              onTabChange={(tab) => updateSearch({ tab })}
               getShortcutContext={getShortcutContext}
               shortcutsEnabled={activePullRequestSurface?.id === renderedPullRequestSurface.id}
               key={renderedPullRequestSurface.id}
@@ -1498,6 +1477,7 @@ export function PullRequestsPage() {
                   environmentId: panelEnvironmentId,
                 });
                 updateSearch({
+                  tab: undefined,
                   repository: reference.repository,
                   number: reference.number,
                   selectedHost: reference.host,

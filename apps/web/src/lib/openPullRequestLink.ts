@@ -142,13 +142,13 @@ export function useOpenChangeRequestLink(
             ...previous,
             involvement: previous.involvement ?? "all",
             state: previous.state ?? "all",
+            tab: undefined,
             repository,
             number: parsed.number,
             selectedHost: parsed.authority ?? parsed.host,
             selectedProjectId: project.id,
             selectedEnvironmentId: project.environmentId,
           }),
-          replace: true,
         });
       }
       return true;
