@@ -76,6 +76,9 @@ function view() {
   );
 }
 
+// router: false because the device view renders no links and never navigates.
+const options = { router: false } as const;
+
 function flatPointer(container: HTMLElement) {
   const surface = container.querySelector("canvas")!.parentElement!;
   // Synthetic IDs exercise concurrent touches independently of the browser's capture state.
@@ -100,7 +103,7 @@ function flatPointer(container: HTMLElement) {
 it("keeps the first flat pointer active when a second finger moves and lifts", async () => {
   using input = setup();
   const { configure, touches } = input;
-  await using screen = await render(view(), { router: false });
+  await using screen = await render(view(), options);
   await act(async () => configure());
   const { send } = flatPointer(screen.container);
   send("pointerdown", 1);
@@ -118,18 +121,35 @@ it("keeps the first flat pointer active when a second finger moves and lifts", a
   ]);
 });
 
+it("ignores a flat pointer that goes down before input connects", async () => {
+  using input = setup();
+  const { configure, touches } = input;
+  await using screen = await render(view(), options);
+  const { send } = flatPointer(screen.container);
+  send("pointerdown", 1);
+  await act(async () => configure());
+  send("pointerdown", 2, 0.5, 0.5);
+  send("pointerup", 2, 0.75, 0.75);
+  expect(touches).toEqual([
+    { type: "begin", x: 0.5, y: 0.5 },
+    { type: "end", x: 0.75, y: 0.75 },
+  ]);
+});
+
 it.each(["pointerup", "pointercancel", "lostpointercapture"])(
   "ends the owned flat pointer exactly once on %s, then accepts a new pointer",
   async (ending) => {
     using input = setup();
     const { configure, touches } = input;
-    await using screen = await render(view(), { router: false });
+    await using screen = await render(view(), options);
     await act(async () => configure());
     const { send } = flatPointer(screen.container);
     send("pointerdown", 7);
     send("pointermove", 7, 0.5, 0.5);
     send("lostpointercapture", 8, 0, 0);
-    send(ending, 7, 0.5, 0.5);
+    // Capture loss reports its own point; the end must still use the last move.
+    const at = ending === "lostpointercapture" ? 0 : 0.5;
+    send(ending, 7, at, at);
     send("lostpointercapture", 7, 0, 0);
     send("pointerup", 7);
     send("pointermove", 7);

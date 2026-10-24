@@ -414,7 +414,10 @@ export function DeviceStreamView(props: {
           className={cn("relative select-none", showPhone && "invisible pointer-events-none")}
           style={{ width: frame.width, height: frame.height }}
           onPointerDown={(event) => {
-            if (event.button !== 0 || activePointer.current !== null) return;
+            // iOS drops touches sent before admission, so an early pointer would never begin.
+            if (event.button !== 0 || !inputState.connected || activePointer.current !== null) {
+              return;
+            }
             event.currentTarget.setPointerCapture(event.pointerId);
             (event.currentTarget.parentElement as HTMLElement | null)?.focus();
             const { x, y } = normalizedPoint(event);
