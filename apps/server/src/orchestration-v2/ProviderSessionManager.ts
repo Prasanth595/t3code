@@ -1673,12 +1673,13 @@ export const layerWithOptions = (
           ),
         );
 
-      const ingestRunlessEvent = Effect.fn("ProviderSessionManager.ingestRunlessEvent")(function* (
-        entry: LiveSessionEntry,
-        threadId: ThreadId,
-        event: ProviderAdapter.ProviderAdapterV2Event,
-      ) {
-        yield* Effect.gen(function* () {
+      // Callers hold `entry.requestEventPermit`.
+      const ingestRunlessEventHeld = Effect.fn("ProviderSessionManager.ingestRunlessEventHeld")(
+        function* (
+          entry: LiveSessionEntry,
+          threadId: ThreadId,
+          event: ProviderAdapter.ProviderAdapterV2Event,
+        ) {
           const current = (yield* Ref.get(sessions)).get(
             sessionKey(entry.runtime.providerSessionId),
           );
@@ -1700,8 +1701,17 @@ export const layerWithOptions = (
                   }),
               ),
             );
-        }).pipe(entry.requestEventPermit.withPermits(1));
-      });
+        },
+      );
+
+      const ingestRunlessEvent = (
+        entry: LiveSessionEntry,
+        threadId: ThreadId,
+        event: ProviderAdapter.ProviderAdapterV2Event,
+      ) =>
+        ingestRunlessEventHeld(entry, threadId, event).pipe(
+          entry.requestEventPermit.withPermits(1),
+        );
 
       // A run stops reading once it settles, but Claude can adopt a new native session
       // (`/clear`) in events queued behind the terminal. Persist those provider thread
@@ -1709,24 +1719,15 @@ export const layerWithOptions = (
       const persistUnreadProviderThreadUpdates = Effect.fn(
         "ProviderSessionManager.persistUnreadProviderThreadUpdates",
       )(
-        function* (
-          subscribers: Ref.Ref<
-            ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
-          >,
-          unread: ReadonlyArray<ProviderSessionEventSignal>,
-        ) {
-          if ((yield* Ref.get(subscribers)).size > 0) return;
-          const entry = [...(yield* Ref.get(sessions)).values()].find(
-            (candidate) => candidate.eventSubscribers === subscribers,
-          );
-          if (entry === undefined) return;
+        function* (entry: LiveSessionEntry, unread: ReadonlyArray<ProviderSessionEventSignal>) {
+          if ((yield* Ref.get(entry.eventSubscribers)).size > 0) return;
           for (const signal of unread) {
             if (
               signal.type === "event" &&
               signal.event.type === "provider_thread.updated" &&
               signal.event.providerThread.appThreadId !== null
             ) {
-              yield* ingestRunlessEvent(
+              yield* ingestRunlessEventHeld(
                 entry,
                 signal.event.providerThread.appThreadId,
                 signal.event,
@@ -1754,25 +1755,41 @@ export const layerWithOptions = (
             updated.set(subscriberId, queue);
             return updated;
           });
-          const close = Ref.modify(subscribers, (current) => {
-            if (!current.has(subscriberId)) {
-              return [false, current] as const;
-            }
-            const updated = new Map(current);
-            updated.delete(subscriberId);
-            return [true, updated] as const;
-          }).pipe(
-            Effect.flatMap((removed) =>
-              removed
-                ? // Ending first makes every later offer report it was refused, so a signal is
-                  // either drained here or seen as undelivered by its publisher.
-                  Queue.end(queue).pipe(
-                    Effect.andThen(Queue.clear(queue)),
-                    Effect.flatMap((unread) =>
-                      persistUnreadProviderThreadUpdates(subscribers, unread),
-                    ),
-                  )
-                : Effect.void,
+          const removeAndDrain = (entry: LiveSessionEntry | undefined) =>
+            Ref.modify(subscribers, (current) => {
+              if (!current.has(subscriberId)) {
+                return [false, current] as const;
+              }
+              const updated = new Map(current);
+              updated.delete(subscriberId);
+              return [true, updated] as const;
+            }).pipe(
+              Effect.flatMap((removed) =>
+                removed
+                  ? // Ending first makes every later offer report it was refused, so a signal is
+                    // either drained here or seen as undelivered by its publisher.
+                    Queue.end(queue).pipe(
+                      Effect.andThen(Queue.clear(queue)),
+                      Effect.flatMap((unread) =>
+                        entry === undefined
+                          ? Effect.void
+                          : persistUnreadProviderThreadUpdates(entry, unread),
+                      ),
+                    )
+                  : Effect.void,
+              ),
+            );
+          // The pump persists a refused update under the same permit. Holding it from
+          // the end of the queue through the drained writes keeps an older drained
+          // update from committing over a newer refused one.
+          const close = Ref.get(sessions).pipe(
+            Effect.map((current) =>
+              [...current.values()].find((candidate) => candidate.eventSubscribers === subscribers),
+            ),
+            Effect.flatMap((entry) =>
+              entry === undefined
+                ? removeAndDrain(undefined)
+                : removeAndDrain(entry).pipe(entry.requestEventPermit.withPermits(1)),
             ),
           );
           // One signal per pull, so what a reader never pulled is still queued at close.
