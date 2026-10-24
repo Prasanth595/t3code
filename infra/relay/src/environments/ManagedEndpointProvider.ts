@@ -195,6 +195,7 @@ export class ManagedEndpointProvider extends Context.Service<
       readonly expectedTunnelId?: string;
       readonly expectedInactiveBefore?: string;
       readonly expectedRecoveryEnabled?: boolean;
+      readonly expectedRecoveryEnabledAt?: string | null;
       readonly expectedStatus?: "inactive" | "down";
       readonly markReleased?: boolean;
     }) => Effect.Effect<boolean, ManagedEndpointDeprovisioningFailed>;
@@ -998,10 +999,16 @@ export const make = Effect.gen(function* () {
       // connecting, so Cloudflare keeps reporting the tunnel's old inactivity.
       // A registration after the cutoff means the host is coming back to it.
       // A relink that replaced the environment key keeps the old timestamp,
-      // but that registration can no longer recover the tunnel.
+      // but that registration can no longer recover the tunnel. A newer
+      // registration since the caller's listing can, so the guard still
+      // applies to it.
+      const recoveryUnusable =
+        input.expectedRecoveryEnabled === false &&
+        input.expectedRecoveryEnabledAt !== undefined &&
+        input.expectedRecoveryEnabledAt === allocation.recoveryEnabledAt;
       if (
         input.expectedInactiveBefore !== undefined &&
-        input.expectedRecoveryEnabled !== false &&
+        !recoveryUnusable &&
         allocation.recoveryEnabledAt !== null
       ) {
         const registeredAt = DateTime.make(allocation.recoveryEnabledAt);

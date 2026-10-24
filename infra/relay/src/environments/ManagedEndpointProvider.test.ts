@@ -1284,18 +1284,29 @@ describe("ManagedEndpointProvider", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect.each([
+  it.effect.each<{
+    readonly when: string;
+    readonly inactiveBefore: string;
+    readonly listedRecovery?: { readonly enabled: boolean; readonly enabledAt: string | null };
+    readonly released: boolean;
+  }>([
     { when: "after", inactiveBefore: "2026-06-01T00:05:00.000Z", released: false },
     { when: "before", inactiveBefore: "2026-06-02T00:05:00.000Z", released: true },
     {
       when: "after, with a replaced environment key",
       inactiveBefore: "2026-06-01T00:05:00.000Z",
-      recoveryEnabled: false,
+      listedRecovery: { enabled: false, enabledAt: "2026-06-02T00:00:00.000Z" },
       released: true,
     },
-  ] as const)(
-    "releases a down tunnel only if its host registered recovery before the cutoff ($when)",
-    ({ inactiveBefore, released, ...rest }) => {
+    {
+      when: "after, registered again since a replaced-key listing",
+      inactiveBefore: "2026-06-01T00:05:00.000Z",
+      listedRecovery: { enabled: false, enabledAt: "2026-05-01T00:00:00.000Z" },
+      released: false,
+    },
+  ])(
+    "releases a down tunnel unless a usable recovery registration came after the cutoff ($when)",
+    ({ inactiveBefore, listedRecovery, released }) => {
       const tunnelCalls: TunnelCall[] = [];
       const allocations = makeAllocations();
       const layer = layerProvider(
@@ -1322,7 +1333,12 @@ describe("ManagedEndpointProvider", () => {
             expectedTunnelId: "tunnel-id",
             expectedStatus: "down",
             expectedInactiveBefore: inactiveBefore,
-            ...("recoveryEnabled" in rest ? { expectedRecoveryEnabled: rest.recoveryEnabled } : {}),
+            ...(listedRecovery === undefined
+              ? {}
+              : {
+                  expectedRecoveryEnabled: listedRecovery.enabled,
+                  expectedRecoveryEnabledAt: listedRecovery.enabledAt,
+                }),
           }),
         ).toBe(released);
         expect(tunnelCalls.some((call) => call.operation === "delete")).toBe(released);
