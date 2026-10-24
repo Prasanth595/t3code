@@ -81,6 +81,14 @@ export function splitBufferedAssistantText(text: string): { ready: string; rest:
   return { ready: text.slice(0, boundary), rest: text.slice(boundary) };
 }
 
+// Each passed snapshot is stored as a durable event holding the full text, so
+// a long item streamed paragraph by paragraph would store bytes growing with
+// the square of its length. Past this length, a snapshot passes only once its
+// text is a quarter longer than the last one, keeping the stored total within
+// a few times the final text.
+const SNAPSHOT_GROWTH_START_LENGTH = 8_000;
+const SNAPSHOT_GROWTH_FACTOR = 1.25;
+
 export function makeAssistantStreamingFilter(mode: ResponseStreamingMode) {
   const delivered = new Map<string, { text: string; at: number }>();
   return (
@@ -111,6 +119,12 @@ export function makeAssistantStreamingFilter(mode: ResponseStreamingMode) {
     if (previous && now - previous.at < 400) return null;
     const { ready } = splitBufferedAssistantText(message.text);
     if (!ready || ready === previous?.text) return null;
+    if (
+      previous &&
+      previous.text.length >= SNAPSHOT_GROWTH_START_LENGTH &&
+      ready.length < previous.text.length * SNAPSHOT_GROWTH_FACTOR
+    )
+      return null;
     delivered.set(key, { text: ready, at: now });
     if (event.type === "message.updated")
       return { ...event, message: { ...event.message, text: ready } };
