@@ -519,10 +519,10 @@ export const layerWithOptions = (
       ) =>
         Ref.get(subscribers).pipe(
           Effect.flatMap((current) =>
-            Effect.forEach(current.values(), (queue) => Queue.offer(queue, signal), {
-              discard: true,
-            }),
+            Effect.forEach(current.values(), (queue) => Queue.offer(queue, signal)),
           ),
+          // A closing subscriber's queue refuses offers, so false means no reader got it.
+          Effect.map((accepted) => accepted.includes(true)),
         );
 
       const failSubscribers = Effect.fn("ProviderSessionManager.failSubscribers")(function* (
@@ -1764,8 +1764,10 @@ export const layerWithOptions = (
           }).pipe(
             Effect.flatMap((removed) =>
               removed
-                ? Queue.clear(queue).pipe(
-                    Effect.tap(() => Queue.end(queue)),
+                ? // Ending first makes every later offer report it was refused, so a signal is
+                  // either drained here or seen as undelivered by its publisher.
+                  Queue.end(queue).pipe(
+                    Effect.andThen(Queue.clear(queue)),
                     Effect.flatMap((unread) =>
                       persistUnreadProviderThreadUpdates(subscribers, unread),
                     ),
@@ -2066,22 +2068,26 @@ export const layerWithOptions = (
                   // (project trust, login, or session-switch hooks). Persist
                   // their runless request artifacts directly so the normal T3
                   // request UI can answer them and unblock session setup.
-                  // A provider thread can also change while idle (Claude adopts
-                  // a new session after `/clear`). With no run subscribed, that
-                  // update would be dropped and a later resume would reopen the
-                  // old native session.
-                  const threadId =
-                    sessionScopedRuntimeRequestThreadId(event) ??
-                    (event.type === "provider_thread.updated" &&
-                    event.providerThread.appThreadId !== null &&
-                    (yield* Ref.get(entry.eventSubscribers)).size === 0
-                      ? event.providerThread.appThreadId
-                      : undefined);
+                  const threadId = sessionScopedRuntimeRequestThreadId(event);
                   if (threadId !== undefined) {
                     yield* ingestRunlessEvent(entry, threadId, event);
                     return;
                   }
-                  yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
+                  const delivered = yield* publishToSubscribers(entry.eventSubscribers, {
+                    type: "event",
+                    event,
+                  });
+                  // A provider thread can also change while idle (Claude adopts
+                  // a new session after `/clear`). With no run reading it, that
+                  // update would be dropped and a later resume would reopen the
+                  // old native session.
+                  if (
+                    !delivered &&
+                    event.type === "provider_thread.updated" &&
+                    event.providerThread.appThreadId !== null
+                  ) {
+                    yield* ingestRunlessEvent(entry, event.providerThread.appThreadId, event);
+                  }
                   yield* releaseLiveOutput;
                 }),
               ),

@@ -9357,62 +9357,262 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
           const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
           const compiledSelection = compileClaudeModelSelection(requestedTurnInput.modelSelection);
-          // Adoption renames the live query under the SDK lock, so read it together with the
-          // alias it implies. A later adoption only renames this same process, which the turn
-          // picks up when it attaches.
-          const [existing, existingNativeThreadId, turnInput] = yield* sdkMessageLock.withPermits(
-            1,
-          )(
-            Effect.map(
-              Ref.get(queryContext),
-              (live) =>
-                [
-                  live,
-                  live?.nativeThreadId,
-                  followAdoptedNativeSession(requestedTurnInput),
-                ] as const,
-            ),
-          );
-          const nativeThreadId = yield* getNativeThreadId(turnInput.providerThread);
-          const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
-          // A continuation prompts nothing: it drains output the live process
-          // already produced, so it keeps that process whatever its selection.
-          if (
-            existing !== null &&
-            existingNativeThreadId === nativeThreadId &&
-            isClaudeProviderContinuationTurn(turnInput)
-          ) {
-            return existing;
-          }
-          if (
-            existing !== null &&
-            existingNativeThreadId === nativeThreadId &&
-            existing.queryPolicyKey === queryPolicyKey &&
-            !existing.stopping &&
-            existing.selection.queryIdentity !== compiledSelection.queryIdentity &&
-            canApplyClaudeSelectionLive(existing.selection, compiledSelection) &&
-            (existing.selection.apiModelId === compiledSelection.apiModelId ||
-              existing.openedPermissionMode === queryPolicy.permissionMode)
-          ) {
-            const live = existing;
-            yield* live.query.setModel(compiledSelection.apiModelId).pipe(
-              Effect.andThen(
-                live.query.applyFlagSettings(claudeLiveSelectionFlagSettings(compiledSelection)),
-              ),
-              Effect.tapError(() =>
-                Effect.sync(() => {
-                  live.selection = { ...live.selection, queryIdentity: "" };
-                }),
-              ),
+          // Replacing the process reads files first. Those reads run before the SDK lock and
+          // the decision is made again under it, so a `/clear` adopted meanwhile is followed.
+          let replacementPrep:
+            | {
+                readonly appendSystemPromptFileText: string | undefined;
+                readonly subagentPromptCacheTtl: typeof ClaudePromptCacheTtl.Type | undefined;
+              }
+            | undefined;
+          while (true) {
+            const prep = replacementPrep;
+            // Adoption renames the live query under the SDK lock, so the alias, the decision
+            // and any replacement happen under it too. A later adoption only renames the
+            // process this returns, which the turn picks up when it attaches.
+            const decision = yield* sdkMessageLock.withPermits(1)(
+              Effect.gen(function* () {
+                const existing = yield* Ref.get(queryContext);
+                const turnInput = followAdoptedNativeSession(requestedTurnInput);
+                const nativeThreadId = yield* getNativeThreadId(turnInput.providerThread);
+                const resumeSessionAt = yield* getNativeConversationHeadId(
+                  turnInput.providerThread,
+                );
+                const sameNativeThread =
+                  existing !== null && existing.nativeThreadId === nativeThreadId;
+                // A continuation prompts nothing: it drains output the live process
+                // already produced, so it keeps that process whatever its selection.
+                if (sameNativeThread && isClaudeProviderContinuationTurn(turnInput)) {
+                  return { _tag: "Continue", live: existing } as const;
+                }
+                if (
+                  sameNativeThread &&
+                  existing.queryPolicyKey === queryPolicyKey &&
+                  (existing.selection.queryIdentity === compiledSelection.queryIdentity ||
+                    (!existing.stopping &&
+                      canApplyClaudeSelectionLive(existing.selection, compiledSelection) &&
+                      (existing.selection.apiModelId === compiledSelection.apiModelId ||
+                        existing.openedPermissionMode === queryPolicy.permissionMode)))
+                ) {
+                  return { _tag: "Reuse", live: existing } as const;
+                }
+
+                // Background agents and shells run inside the CLI process, so a new selection
+                // would kill them and lose their results. Refuse until they finish or the user
+                // presses Stop, which closes the process.
+                if (
+                  sameNativeThread &&
+                  !existing.stopping &&
+                  (yield* liveProcessRunsBackgroundWork(existing))
+                ) {
+                  return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError();
+                }
+                if (prep === undefined) return { _tag: "Prepare", turnInput } as const;
+
+                const closedExistingNativeThreadId =
+                  existing !== null ? existing.nativeThreadId : null;
+                if (existing !== null) {
+                  yield* existing.query.close.pipe(Effect.ignore);
+                  if (existing.nativeThreadId !== nativeThreadId) {
+                    yield* clearWakeStateForNativeThread(existing.nativeThreadId);
+                    yield* resetBackgroundTaskStateForNativeThreadProcess(existing.nativeThreadId, {
+                      status: "idle",
+                    });
+                  }
+                }
+                const openedWithResume = (yield* Ref.get(openedNativeThreads)).has(nativeThreadId);
+                // openedNativeThreads is per session instance and is lost when the
+                // provider session is idle-released. A prior turn on this native id
+                // requires resume; sessionId would fail with "already in use".
+                const hasPersistedProviderTurn =
+                  turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
+                const shouldResume =
+                  resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+                const queryOptions = makeClaudeQueryOptions({
+                  modelSelection: turnInput.modelSelection,
+                  nativeThreadId,
+                  resume: shouldResume,
+                  ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
+                  cwd: turnInput.runtimePolicy.cwd,
+                  attachmentsDir,
+                  settings: adapterOptions.settings,
+                  environment: claudeQueryEnvironment(
+                    adapterOptions.environment,
+                    turnInput.appThread,
+                    turnInput.appThread.lineage.relationshipToParent === "subagent"
+                      ? prep.subagentPromptCacheTtl
+                      : undefined,
+                  ),
+                  tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
+                  ...(mcpOverrides.allowedTools === undefined
+                    ? {}
+                    : { allowedTools: mcpOverrides.allowedTools }),
+                  ...(mcpOverrides.mcpServers === undefined
+                    ? {}
+                    : { mcpServers: mcpOverrides.mcpServers }),
+                  permissionMode: queryPolicy.permissionMode,
+                  ...(queryPolicy.allowDangerouslySkipPermissions === undefined
+                    ? {}
+                    : {
+                        allowDangerouslySkipPermissions:
+                          queryPolicy.allowDangerouslySkipPermissions,
+                      }),
+                  canUseTool,
+                  onUserDialog,
+                  supportedDialogKinds: ["resume_return"],
+                  ...(prep.appendSystemPromptFileText === undefined
+                    ? {}
+                    : { appendSystemPromptFileText: prep.appendSystemPromptFileText }),
+                });
+                const querySession = yield* queryRunner
+                  .open({
+                    threadId: turnInput.threadId,
+                    providerSessionId: input.providerSessionId,
+                    options: queryOptions,
+                  })
+                  .pipe(
+                    Effect.onError(() =>
+                      closedExistingNativeThreadId === nativeThreadId
+                        ? Effect.gen(function* () {
+                            yield* clearWakeStateForNativeThread(nativeThreadId);
+                            yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
+                              status: "idle",
+                            });
+                          })
+                        : Effect.void,
+                    ),
+                  );
+                // Marked only after a successful open: a failed create must not
+                // leave the runtime believing the native session exists, or the
+                // retry would resume a session that was never created.
+                yield* Ref.update(openedNativeThreads, (current) => {
+                  if (current.has(nativeThreadId)) {
+                    return current;
+                  }
+                  const updated = new Set(current);
+                  updated.add(nativeThreadId);
+                  return updated;
+                });
+                yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
+                  status: "active",
+                });
+                const closed = yield* Deferred.make<void, never>();
+                const context: ClaudeLiveQueryContext = {
+                  queryPolicy,
+                  nativeThreadId,
+                  query: querySession,
+                  queryPolicyKey,
+                  selection: compiledSelection,
+                  closed,
+                  lastTurn: null,
+                  promptEchoMode: "unknown",
+                  openedPermissionMode: queryOptions.permissionMode,
+                  receivedInit: false,
+                  permissionMode: queryOptions.permissionMode,
+                  stopping: false,
+                  subagentsFromEarlierProcesses: new Set(
+                    [...(yield* Ref.get(sessionSubagentsByTaskId)).values()].filter(
+                      (subagent) => subagent.task.status === "running",
+                    ),
+                  ),
+                };
+                yield* Ref.set(queryContext, context);
+                yield* querySession.messages.pipe(
+                  Stream.runForEach((message) =>
+                    sdkMessageLock.withPermits(1)(
+                      Effect.gen(function* () {
+                        if (
+                          message.type === "system" &&
+                          message.subtype === "init" &&
+                          Reflect.get(message, "parent_tool_use_id") == null
+                        ) {
+                          yield* adoptNativeSessionId(context, message.session_id);
+                        }
+                        if (
+                          message.type === "system" &&
+                          message.subtype === "init" &&
+                          !context.receivedInit
+                        ) {
+                          context.openedPermissionMode =
+                            message.permissionMode ?? context.openedPermissionMode;
+                          context.receivedInit = true;
+                        }
+                        if (
+                          message.type === "system" &&
+                          (message.subtype === "init" || message.subtype === "status") &&
+                          message.permissionMode !== undefined
+                        ) {
+                          context.permissionMode = message.permissionMode;
+                        }
+                        yield* handleSdkMessage({ query: querySession, message });
+                      }),
+                    ),
+                  ),
+                  Effect.exit,
+                  Effect.flatMap(
+                    Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
+                      const heldContext = yield* Ref.get(activeTurn);
+                      if (
+                        (yield* Ref.get(queryContext))?.query === querySession &&
+                        heldContext !== null &&
+                        heldContext.heldRootFrames.length > 0
+                      ) {
+                        yield* releaseHeldRootFrames(heldContext);
+                      }
+                      const ownsLiveQuery = yield* Ref.modify(queryContext, (current) =>
+                        current?.query === querySession ? [true, null] : [false, current],
+                      );
+                      if (ownsLiveQuery) {
+                        yield* finalizeActiveTurnAfterQueryExit(
+                          context,
+                          exit._tag === "Failure" ? exit.cause : undefined,
+                        );
+                        yield* endSubagentCallsOfClosedQuery(
+                          context.nativeThreadId,
+                          context.stopping ? "interrupted" : "failed",
+                        );
+                      }
+                    }),
+                  ),
+                  Effect.ensuring(Deferred.succeed(closed, undefined)),
+                  Effect.forkIn(sessionScope),
+                );
+                return { _tag: "Opened", live: context } as const;
+              }),
             );
-            live.selection = compiledSelection;
-          }
-          if (
-            existing !== null &&
-            existingNativeThreadId === nativeThreadId &&
-            existing.queryPolicyKey === queryPolicyKey &&
-            existing.selection.queryIdentity === compiledSelection.queryIdentity
-          ) {
+            if (decision._tag === "Prepare") {
+              // Read before closing the live process so a bad path leaves it running.
+              replacementPrep = {
+                appendSystemPromptFileText: yield* readClaudeAppendSystemPromptFile({
+                  settings: adapterOptions.settings,
+                  cwd: decision.turnInput.runtimePolicy.cwd,
+                  fileSystem,
+                  path,
+                }),
+                subagentPromptCacheTtl:
+                  decision.turnInput.appThread.lineage.relationshipToParent === "subagent"
+                    ? yield* resolveSubagentPromptCacheTtl(decision.turnInput.runtimePolicy.cwd)
+                    : undefined,
+              };
+              continue;
+            }
+            if (decision._tag !== "Reuse") return decision.live;
+            const existing = decision.live;
+            if (existing.selection.queryIdentity !== compiledSelection.queryIdentity) {
+              yield* existing.query.setModel(compiledSelection.apiModelId).pipe(
+                Effect.andThen(
+                  existing.query.applyFlagSettings(
+                    claudeLiveSelectionFlagSettings(compiledSelection),
+                  ),
+                ),
+                Effect.tapError(() =>
+                  Effect.sync(() => {
+                    existing.selection = { ...existing.selection, queryIdentity: "" };
+                  }),
+                ),
+              );
+              existing.selection = compiledSelection;
+            }
             // A denied ExitPlanMode leaves Claude in plan mode. Restore only from plan:
             // Auto/default may reflect a policy restriction that forbids restoring bypass.
             if (existing.permissionMode === "plan" && existing.openedPermissionMode !== "plan") {
@@ -9432,192 +9632,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             return existing;
           }
-
-          // Background agents and shells run inside the CLI process, so a new selection would
-          // kill them and lose their results. Refuse until they finish or the user presses Stop,
-          // which closes the process.
-          if (
-            existing !== null &&
-            existingNativeThreadId === nativeThreadId &&
-            !existing.stopping &&
-            (yield* liveProcessRunsBackgroundWork(existing))
-          ) {
-            return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError();
-          }
-
-          // Read before closing the live process so a bad path leaves it running.
-          const appendSystemPromptFileText = yield* readClaudeAppendSystemPromptFile({
-            settings: adapterOptions.settings,
-            cwd: turnInput.runtimePolicy.cwd,
-            fileSystem,
-            path,
-          });
-          const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
-          if (existing !== null) {
-            yield* existing.query.close.pipe(Effect.ignore);
-            if (existing.nativeThreadId !== nativeThreadId) {
-              yield* clearWakeStateForNativeThread(existing.nativeThreadId);
-              yield* resetBackgroundTaskStateForNativeThreadProcess(existing.nativeThreadId, {
-                status: "idle",
-              });
-            }
-          }
-
-          const openedWithResume = (yield* Ref.get(openedNativeThreads)).has(nativeThreadId);
-          // openedNativeThreads is per session instance and is lost when the
-          // provider session is idle-released. A prior turn on this native id
-          // requires resume; sessionId would fail with "already in use".
-          const hasPersistedProviderTurn =
-            turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
-          const shouldResume =
-            resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
-          const queryOptions = makeClaudeQueryOptions({
-            modelSelection: turnInput.modelSelection,
-            nativeThreadId,
-            resume: shouldResume,
-            ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
-            cwd: turnInput.runtimePolicy.cwd,
-            attachmentsDir,
-            settings: adapterOptions.settings,
-            environment: claudeQueryEnvironment(
-              adapterOptions.environment,
-              turnInput.appThread,
-              turnInput.appThread.lineage.relationshipToParent === "subagent"
-                ? yield* resolveSubagentPromptCacheTtl(turnInput.runtimePolicy.cwd)
-                : undefined,
-            ),
-            tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
-            ...(mcpOverrides.allowedTools === undefined
-              ? {}
-              : { allowedTools: mcpOverrides.allowedTools }),
-            ...(mcpOverrides.mcpServers === undefined
-              ? {}
-              : { mcpServers: mcpOverrides.mcpServers }),
-            permissionMode: queryPolicy.permissionMode,
-            ...(queryPolicy.allowDangerouslySkipPermissions === undefined
-              ? {}
-              : {
-                  allowDangerouslySkipPermissions: queryPolicy.allowDangerouslySkipPermissions,
-                }),
-            canUseTool,
-            onUserDialog,
-            supportedDialogKinds: ["resume_return"],
-            ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
-          });
-          const querySession = yield* queryRunner
-            .open({
-              threadId: turnInput.threadId,
-              providerSessionId: input.providerSessionId,
-              options: queryOptions,
-            })
-            .pipe(
-              Effect.onError(() =>
-                closedExistingNativeThreadId === nativeThreadId
-                  ? Effect.gen(function* () {
-                      yield* clearWakeStateForNativeThread(nativeThreadId);
-                      yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
-                        status: "idle",
-                      });
-                    })
-                  : Effect.void,
-              ),
-            );
-          // Marked only after a successful open: a failed create must not
-          // leave the runtime believing the native session exists, or the
-          // retry would resume a session that was never created.
-          yield* Ref.update(openedNativeThreads, (current) => {
-            if (current.has(nativeThreadId)) {
-              return current;
-            }
-            const updated = new Set(current);
-            updated.add(nativeThreadId);
-            return updated;
-          });
-          yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
-            status: "active",
-          });
-          const closed = yield* Deferred.make<void, never>();
-          const context: ClaudeLiveQueryContext = {
-            queryPolicy,
-            nativeThreadId,
-            query: querySession,
-            queryPolicyKey,
-            selection: compiledSelection,
-            closed,
-            lastTurn: null,
-            promptEchoMode: "unknown",
-            openedPermissionMode: queryOptions.permissionMode,
-            receivedInit: false,
-            permissionMode: queryOptions.permissionMode,
-            stopping: false,
-            subagentsFromEarlierProcesses: new Set(
-              [...(yield* Ref.get(sessionSubagentsByTaskId)).values()].filter(
-                (subagent) => subagent.task.status === "running",
-              ),
-            ),
-          };
-          yield* Ref.set(queryContext, context);
-          yield* querySession.messages.pipe(
-            Stream.runForEach((message) =>
-              sdkMessageLock.withPermits(1)(
-                Effect.gen(function* () {
-                  if (
-                    message.type === "system" &&
-                    message.subtype === "init" &&
-                    Reflect.get(message, "parent_tool_use_id") == null
-                  ) {
-                    yield* adoptNativeSessionId(context, message.session_id);
-                  }
-                  if (
-                    message.type === "system" &&
-                    message.subtype === "init" &&
-                    !context.receivedInit
-                  ) {
-                    context.openedPermissionMode =
-                      message.permissionMode ?? context.openedPermissionMode;
-                    context.receivedInit = true;
-                  }
-                  if (
-                    message.type === "system" &&
-                    (message.subtype === "init" || message.subtype === "status") &&
-                    message.permissionMode !== undefined
-                  ) {
-                    context.permissionMode = message.permissionMode;
-                  }
-                  yield* handleSdkMessage({ query: querySession, message });
-                }),
-              ),
-            ),
-            Effect.exit,
-            Effect.flatMap(
-              Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
-                const heldContext = yield* Ref.get(activeTurn);
-                if (
-                  (yield* Ref.get(queryContext))?.query === querySession &&
-                  heldContext !== null &&
-                  heldContext.heldRootFrames.length > 0
-                ) {
-                  yield* releaseHeldRootFrames(heldContext);
-                }
-                const ownsLiveQuery = yield* Ref.modify(queryContext, (current) =>
-                  current?.query === querySession ? [true, null] : [false, current],
-                );
-                if (ownsLiveQuery) {
-                  yield* finalizeActiveTurnAfterQueryExit(
-                    context,
-                    exit._tag === "Failure" ? exit.cause : undefined,
-                  );
-                  yield* endSubagentCallsOfClosedQuery(
-                    context.nativeThreadId,
-                    context.stopping ? "interrupted" : "failed",
-                  );
-                }
-              }),
-            ),
-            Effect.ensuring(Deferred.succeed(closed, undefined)),
-            Effect.forkIn(sessionScope),
-          );
-          return context;
         });
 
         const startTurn = Effect.fn("ClaudeAdapterV2.startTurn")(
