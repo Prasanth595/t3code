@@ -31,6 +31,7 @@ import { useUiRuntimeMemoryWarningGc } from "./lib/useUiRuntimeMemoryWarningGc";
 import { SubscriptionUsageCoordinator } from "./widgets/SubscriptionUsageCoordinator";
 import { VoiceInputProvider } from "./features/voice-input/VoiceInputProvider";
 import { GlobalVoiceInputControl } from "./features/voice-input/GlobalVoiceInputControl";
+import { restoreSettingsLinkState } from "./features/settings/settings-navigation";
 import { NativeLayoutMetricsProvider } from "./native/native-layout-metrics";
 
 import "../global.css";
@@ -46,7 +47,7 @@ const appLinking = {
   config: { initialRouteName: "Home" },
   filter: shouldHandleAppLink,
   getStateFromPath: (path: string, options: Parameters<typeof getStateFromPath>[1]) =>
-    restoreDraftLinkState(getStateFromPath(path, options), path),
+    restoreSettingsLinkState(restoreDraftLinkState(getStateFromPath(path, options), path)),
 };
 
 const Navigation = createStaticNavigation(RootStack);

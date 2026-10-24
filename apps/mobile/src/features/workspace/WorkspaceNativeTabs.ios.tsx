@@ -26,6 +26,7 @@ import { useControlTheme } from "../../components/ui/useControlTheme";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { openSettings } from "../settings/settings-navigation";
 
 const PULL_REQUEST_ICON = require("../../../assets/icons/pull-request.png");
 
@@ -99,10 +100,7 @@ export function WorkspaceNativeTabs(props: {
           nativeEvent,
         }: NativeSyntheticEvent<TabSelectionPreventedEvent>) => {
           if (nativeEvent.preventedScreenKey === "settings") {
-            navigation.navigate("SettingsSheet", {
-              screen: "SettingsContent",
-              params: { screen: "Settings" },
-            });
+            openSettings(navigation, "Settings");
           }
         }}
         onTabSelectionRejected={({
@@ -116,10 +114,7 @@ export function WorkspaceNativeTabs(props: {
           const tab = workspaceTabForNativeSlot(primaryTabs, nativeEvent.selectedScreenKey);
           // UIKit sends reselects here even when preventNativeSelection is enabled.
           if (tab === "settings") {
-            navigation.navigate("SettingsSheet", {
-              screen: "SettingsContent",
-              params: { screen: "Settings" },
-            });
+            openSettings(navigation, "Settings");
             return;
           }
           if (!tab) return;
@@ -166,7 +161,7 @@ export function WorkspaceNativeTabs(props: {
       {(deviceType === "pad" ||
         compactTabs ||
         (layout.primarySidebarOverlaysContent &&
-          (workspace.settingsOpen || !workspaceUsesColumns(selectedTab)))) &&
+          !workspaceUsesColumns(selectedTab, workspace.settingsOpen))) &&
       !props.hidden ? (
         <View
           pointerEvents="box-none"

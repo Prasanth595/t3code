@@ -6,6 +6,7 @@ import { useControlTheme } from "../../components/ui/useControlTheme";
 import { useNavigationTabOrder, useHiddenNavigationTabs } from "./navigation-tabs";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
+import { openSettings } from "../settings/settings-navigation";
 
 const NativeSidebarTabBar = requireNativeView<
   ViewProps & {
@@ -51,11 +52,7 @@ export function WorkspaceSidebarTabs(props: {
       onCompose={() => props.onNewTask?.()}
       onSelectionChange={({ nativeEvent }) => {
         const tab = tabs.find((candidate) => candidate === nativeEvent.tab);
-        if (tab === "settings")
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "Settings" },
-          });
+        if (tab === "settings") openSettings(navigation, "Settings");
         else if (tab) selectTab(tab);
       }}
       // Keep the host stable while UIKit updates the bars' intrinsic size and safe area together.

@@ -60,6 +60,7 @@ import {
 import { parseActiveThreadPath, type HardwareKeyboardCommand } from "./hardwareKeyboardCommands";
 import { threadJumpIndex } from "./threadKeyboardShortcuts";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import { openSettings } from "../settings/settings-navigation";
 
 const PALETTE_COMMANDS: ReadonlyArray<HardwareKeyboardCommand> = [
   "commandPalette",
@@ -269,66 +270,42 @@ export function CommandPalette(props: {
         kind: "action",
         title: "Open settings",
         searchTerms: ["preferences", "configuration"],
-        run: () =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "Settings" },
-          }),
+        run: () => openSettings(navigation, "Settings"),
       },
       {
         key: "appearance",
         kind: "action",
         title: "Appearance",
         searchTerms: ["theme", "colors", "dark", "light"],
-        run: () =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "SettingsAppearance" },
-          }),
+        run: () => openSettings(navigation, "SettingsAppearance"),
       },
       {
         key: "environments",
         kind: "action",
         title: "Manage environments",
         searchTerms: ["connections", "server", "remote"],
-        run: () =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "SettingsEnvironments" },
-          }),
+        run: () => openSettings(navigation, "SettingsEnvironments"),
       },
       {
         key: "scheduledTasks",
         kind: "action",
         title: "Scheduled tasks",
         searchTerms: ["schedule", "automations", "recurring"],
-        run: () =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "SettingsScheduledTasks" },
-          }),
+        run: () => openSettings(navigation, "SettingsScheduledTasks"),
       },
       {
         key: "usage",
         kind: "action",
         title: "Usage",
         searchTerms: ["limits", "accounts", "quota"],
-        run: () =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "SettingsUsage" },
-          }),
+        run: () => openSettings(navigation, "SettingsUsage"),
       },
       {
         key: "archive",
         kind: "action",
         title: "Archived threads",
         searchTerms: ["restore", "history"],
-        run: () =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "SettingsArchive" },
-          }),
+        run: () => openSettings(navigation, "SettingsArchive"),
       },
     ];
     const projectByKey = new Map(

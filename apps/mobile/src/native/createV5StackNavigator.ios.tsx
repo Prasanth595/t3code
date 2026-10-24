@@ -262,9 +262,7 @@ export function V5CardStackView(
 export function V5StackView(props: V5StackViewProps) {
   const groups = partitionStackPresentations(props.state.routes, (route) => {
     const presentation = props.descriptors[route.key]?.options.presentation;
-    return (
-      route.name === "SettingsSheet" || (presentation !== undefined && presentation !== "card")
-    );
+    return presentation !== undefined && presentation !== "card";
   });
   const routes = groups.map((group) => group[0]!);
   const descriptors = Object.fromEntries(

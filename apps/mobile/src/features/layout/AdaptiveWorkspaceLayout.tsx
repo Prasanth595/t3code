@@ -43,6 +43,7 @@ import {
   type VerticalHinge,
   deriveWorkspacePaneLayout,
   isPrimarySidebarPinned,
+  isWorkspaceListPath,
   type WorkspaceAuxiliaryPaneRole,
 } from "../../lib/layout";
 import {
@@ -91,6 +92,7 @@ import {
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { AndroidHingeObserver } from "../../native/AndroidHingeObserver";
 import { WindowHingeContext } from "../../native/window-hinge-context";
+import { openSettings } from "../settings/settings-navigation";
 
 export { useAdaptiveWorkspaceLayout };
 
@@ -236,7 +238,7 @@ function AdaptiveWorkspaceLayoutContent(
   const [overlaySidebar, setOverlaySidebar] = useState({
     active: baseLayout.primarySidebarOverlaysContent,
     pathname,
-    visible: pathname === "/",
+    visible: isWorkspaceListPath(pathname),
   });
   if (
     overlaySidebar.active !== baseLayout.primarySidebarOverlaysContent ||
@@ -245,7 +247,7 @@ function AdaptiveWorkspaceLayoutContent(
     setOverlaySidebar({
       active: baseLayout.primarySidebarOverlaysContent,
       pathname,
-      visible: pathname === "/",
+      visible: isWorkspaceListPath(pathname),
     });
   }
   const preferredSidebarVisible = baseLayout.primarySidebarOverlaysContent
@@ -458,10 +460,7 @@ function AdaptiveWorkspaceLayoutContent(
     setSupplementaryPanePreferredWidth(nextWidth);
   };
   const handleOpenSettings = () => {
-    navigation.navigate("SettingsSheet", {
-      screen: "SettingsContent",
-      params: { screen: "Settings" },
-    });
+    openSettings(navigation, "Settings");
   };
 
   const selectAndroidWorkspace = useAndroidWorkspaceSelection();
@@ -555,10 +554,7 @@ function AdaptiveWorkspaceLayoutContent(
   // Minted here (root stack navigation) so the sidebar pane stays free of
   // navigation hooks — on iOS it renders inside an independent nav tree.
   const handleOpenEnvironmentSettings = () => {
-    navigation.navigate("SettingsSheet", {
-      screen: "SettingsContent",
-      params: { screen: "SettingsEnvironments" },
-    });
+    openSettings(navigation, "SettingsEnvironments");
   };
 
   const handleOpenThreadPullRequests = useOpenThreadPullRequests();

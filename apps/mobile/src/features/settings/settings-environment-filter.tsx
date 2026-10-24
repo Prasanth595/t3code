@@ -1,6 +1,14 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { buildProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { useProjects } from "../../state/entities";
@@ -18,25 +26,52 @@ function connectedSettingsTargets(environments: readonly EnvironmentPresentation
   );
 }
 
-const SettingsEnvironmentFilterContext = createContext<{
-  readonly availableTargets: readonly SettingsTarget[];
-  readonly selectedTargets: readonly SettingsTarget[];
+interface SettingsEnvironmentSelection {
   readonly selectedIds: ReadonlySet<EnvironmentId> | null;
-  readonly projectGroups: ReturnType<typeof buildProjectGroups>;
-  readonly selectableProjectGroups: ReturnType<typeof buildProjectGroups>;
   readonly selectedProjectKey: string | null;
-  readonly selectProject: (projectKey: string | null) => void;
-  readonly selectAll: () => void;
-  readonly toggleEnvironment: (environmentId: EnvironmentId) => void;
-} | null>(null);
+  readonly setSelectedIds: Dispatch<SetStateAction<ReadonlySet<EnvironmentId> | null>>;
+  readonly setSelectedProjectKey: Dispatch<SetStateAction<string | null>>;
+}
 
-export function SettingsEnvironmentFilterProvider(props: { readonly children: ReactNode }) {
+const SettingsEnvironmentSelectionContext = createContext<SettingsEnvironmentSelection | null>(
+  null,
+);
+
+/**
+ * Holds the Settings scope selection across Settings pages, which are separate root routes.
+ * It stays mounted for the whole app, so it keeps only the selection; the environment and
+ * project data is derived in the hook, by the Settings pages that are mounted. The selection
+ * resets when Settings closes.
+ */
+export function SettingsEnvironmentFilterProvider(props: {
+  readonly open: boolean;
+  readonly children: ReactNode;
+}) {
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<EnvironmentId> | null>(null);
+  const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
+  if (!props.open && (selectedIds !== null || selectedProjectKey !== null)) {
+    setSelectedIds(null);
+    setSelectedProjectKey(null);
+  }
+  const value = useMemo(
+    () => ({ selectedIds, selectedProjectKey, setSelectedIds, setSelectedProjectKey }),
+    [selectedIds, selectedProjectKey],
+  );
+  return (
+    <SettingsEnvironmentSelectionContext value={value}>
+      {props.children}
+    </SettingsEnvironmentSelectionContext>
+  );
+}
+
+export function useSettingsEnvironmentFilter() {
+  const selection = useContext(SettingsEnvironmentSelectionContext);
+  if (selection === null) throw new Error("Settings environment filter provider is missing.");
+  const { selectedIds, selectedProjectKey, setSelectedIds, setSelectedProjectKey } = selection;
   const { environments } = useEnvironments();
   const projects = useProjects();
   const groupingSettings = useMobileProjectGroupingSettings();
   const groupingMode = groupingSettings.sidebarProjectGroupingMode;
-  const [selectedIds, setSelectedIds] = useState<ReadonlySet<EnvironmentId> | null>(null);
-  const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const projectGroups = useMemo(
     () =>
       buildProjectGroups({
@@ -62,7 +97,7 @@ export function SettingsEnvironmentFilterProvider(props: { readonly children: Re
       ),
     [projectGroups, selectedTargets],
   );
-  const value = useMemo(
+  return useMemo(
     () => ({
       availableTargets,
       selectedTargets,
@@ -84,17 +119,8 @@ export function SettingsEnvironmentFilterProvider(props: { readonly children: Re
       projectGroups,
       selectableProjectGroups,
       selectedProjectKey,
+      setSelectedIds,
+      setSelectedProjectKey,
     ],
   );
-  return (
-    <SettingsEnvironmentFilterContext value={value}>
-      {props.children}
-    </SettingsEnvironmentFilterContext>
-  );
-}
-
-export function useSettingsEnvironmentFilter() {
-  const filter = useContext(SettingsEnvironmentFilterContext);
-  if (filter === null) throw new Error("Settings environment filter provider is missing.");
-  return filter;
 }

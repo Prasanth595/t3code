@@ -1,9 +1,10 @@
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useRoute } from "@react-navigation/native";
 import type { ComponentProps } from "react";
 import { Platform } from "react-native";
 
 import { ListRow } from "../../../components/ui/ListRow";
 import type { SettingsLegalDocumentTarget, SettingsSheetTarget } from "./settings-sheet-targets";
+import { openSettings } from "../settings-navigation";
 
 export function SettingsRow(props: {
   readonly disabled?: boolean;
@@ -16,6 +17,8 @@ export function SettingsRow(props: {
   readonly onPress?: () => void;
 }) {
   const navigation = useNavigation();
+  // The Settings list opens pages in place of the detail column; a page's own rows push below.
+  const inList = ["Home", "Settings"].includes(useRoute().name);
   const valueBelow =
     props.valuePosition === "below" ||
     (props.valuePosition === undefined && Platform.OS === "android");
@@ -28,10 +31,8 @@ export function SettingsRow(props: {
       disabled={props.disabled}
       onPress={() => {
         if (props.target) {
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: props.target },
-          });
+          if (inList) openSettings(navigation, props.target);
+          else navigation.navigate(props.target);
         } else if (props.fullScreenTarget) {
           navigation.navigate(props.fullScreenTarget);
         } else {

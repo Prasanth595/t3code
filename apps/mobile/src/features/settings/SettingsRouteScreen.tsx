@@ -33,6 +33,7 @@ import {
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
+import { openSettings } from "./settings-navigation";
 
 export function SettingsRouteScreen() {
   const surface = useWorkspaceSurface();
@@ -88,7 +89,7 @@ function ConfiguredSettingsRouteScreen() {
             label="T3 Account"
             value={accountLabel}
             disabled={!isLoaded}
-            onPress={() => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" })}
+            onPress={() => openSettings(navigation, "SettingsAuth")}
           />
           <SettingsRow
             icon="desktopcomputer"

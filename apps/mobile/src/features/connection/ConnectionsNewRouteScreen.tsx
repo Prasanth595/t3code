@@ -32,6 +32,7 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { CloudEnvironmentRows } from "./CloudEnvironmentRows";
 import { splitEnvironmentSections } from "./environmentSections";
+import { openSettings } from "../settings/settings-navigation";
 
 type ConnectionsNewRouteParams = {
   readonly mode?: string;
@@ -390,7 +391,7 @@ function T3ConnectSection() {
           label="Sign in to T3 Connect"
           description="Reach your machines from anywhere, no network setup."
           disabled={!isLoaded}
-          onPress={() => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" })}
+          onPress={() => openSettings(navigation, "SettingsAuth")}
         />
       )}
     </View>
