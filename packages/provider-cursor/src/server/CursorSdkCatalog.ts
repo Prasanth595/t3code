@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
 import { AuthenticationError, Cursor, CursorSdkError } from "./sdk.ts";
 
 export interface CursorSdkCatalogSnapshot {
-  readonly user: SDKUser;
+  readonly user: SDKUser | undefined;
   readonly models: ReadonlyArray<SDKModel>;
 }
 
@@ -82,7 +82,16 @@ export const makeCursorSdkCatalog = Effect.fn("CursorSdkCatalog.make")(function*
     read: (apiKey) =>
       Effect.all(
         {
-          user: probes.readUser(apiKey),
+          // Enterprise teams can block /v1/me while models and local runs work.
+          // The key name and email only label the account, so only a rejected
+          // key fails the read.
+          user: probes
+            .readUser(apiKey)
+            .pipe(
+              Effect.catch((error) =>
+                error.authenticationFailure ? Effect.fail(error) : Effect.undefined,
+              ),
+            ),
           models: Cache.get(modelCache, apiKey),
         },
         { concurrency: "unbounded" },
