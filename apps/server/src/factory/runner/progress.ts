@@ -309,6 +309,8 @@ export const LAUNCH_SENDING_RESUMED = `${LAUNCH_SENDING} resumed-from `;
 export const LAUNCH_SENDING_PULL_REQUEST = " pull-request ";
 /** The step written before `launch-sending` when the run's base is not the repo's: `launch-base <branch>`. */
 export const LAUNCH_BASE = "launch-base ";
+/** The cause reason of a `pr_opened` line a stuck exit writes for the pull request the session left on its branch. */
+export const PR_LEFT = "pr-left";
 /** The ledger step that says the issue text was checked again after the launch. */
 export const APPROVAL_RECHECKED = "approval-rechecked";
 /** The ledger step written before the reminder is sent: `result-line-reminding <k>`, `k` the ordinal of the run that ended. */
@@ -667,7 +669,10 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         if (typeof pr === "number" && typeof url === "string") {
           opened.push(pr);
           lastPr = { pr, url };
-          prReported = true;
+          // A pull request a stopping session left (`pr-left`) is for the next attempt to
+          // continue; the session did not report it for the gate, so the run keeps its slot
+          // and its time limit.
+          if (entry.cause?.reason !== PR_LEFT) prReported = true;
         }
         break;
       }
