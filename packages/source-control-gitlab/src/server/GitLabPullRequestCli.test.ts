@@ -120,6 +120,25 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("reads a page whose descriptions are far larger than the default output cap", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(mergeRequests(3, 1))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.listMergeRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 10,
+      });
+
+      // One merge request description can be about 1 MB, so a page of them passes the 1 MB default.
+      expect(callAt(0).maxOutputBytes).toBeGreaterThan(8 * 1024 * 1024);
+    }),
+  );
+
   it.effect("walks pages at a fixed size, because GitLab pages by offset", () =>
     Effect.gen(function* () {
       mockedExecute

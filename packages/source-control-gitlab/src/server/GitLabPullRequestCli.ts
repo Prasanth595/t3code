@@ -198,6 +198,9 @@ const DIFF_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DIFF_TIMEOUT_MS = 60_000;
 const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
+// A list page carries every row's full description, and one bot-written description can be
+// close to 1 MB (GitLab's own limit), so the default cap would fail the whole project.
+const LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 export interface GitLabMergeRequestListBatch {
   readonly items: ReadonlyArray<GitLabMergeRequestListItem>;
@@ -600,6 +603,7 @@ export const make = Effect.gen(function* () {
         ["per_page", String(perPage)],
         ["page", String(input.page)],
       ])}`,
+      maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
     }).pipe(
       Effect.flatMap((result) => {
         const raw = result.stdout.trim();
