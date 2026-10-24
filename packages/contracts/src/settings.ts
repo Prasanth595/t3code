@@ -1160,10 +1160,18 @@ export const WorkflowPresetTarget = Schema.Struct({
 });
 export type WorkflowPresetTarget = typeof WorkflowPresetTarget.Type;
 
+/**
+ * Stored scripts decode their saved presets with this schema, so it carries no rule a
+ * preset written earlier could break. Name uniqueness and length are checked only when
+ * settings are written (`workflowPresetsWriteProblems` in `@t3tools/shared/serverSettings`).
+ */
 export const WorkflowPreset = Schema.Struct({
   id: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
+  /** The first choice in the profile's model preference order. */
   target: WorkflowPresetTarget,
+  /** Tried in order when `target` cannot be served at review or start; absent on older presets. */
+  fallbacks: Schema.optionalKey(Schema.Array(WorkflowPresetTarget)),
 });
 export type WorkflowPreset = typeof WorkflowPreset.Type;
 
@@ -1187,9 +1195,23 @@ export const WorkflowPresets = Schema.Struct({
 );
 export type WorkflowPresets = typeof WorkflowPresets.Type;
 
+/**
+ * Words that put the coordinator into graph planning (see `@t3tools/shared/workflowIntent`).
+ * The built-in word "workflow" is not stored here; `enabled: false` turns off every trigger,
+ * the built-in one included.
+ */
+export const WorkflowTriggers = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  extras: Schema.Array(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+});
+export type WorkflowTriggers = typeof WorkflowTriggers.Type;
+
 export const ServerSettings = Schema.Struct({
   workflowPresets: WorkflowPresets.pipe(
     Schema.withDecodingDefault(Effect.succeed({ presets: [], defaultPresetId: null })),
+  ),
+  workflowTriggers: WorkflowTriggers.pipe(
+    Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(WorkflowTriggers)({}))),
   ),
   // Null means unmigrated; empty is authoritative and must not resurrect cleared preferences.
   favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -1500,6 +1522,12 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
     operation: ServerSettingsOperation,
     providerInstanceId: Schema.optional(Schema.String),
     environmentVariable: Schema.optional(Schema.String),
+    /**
+     * Why a settings write was refused, in words for the person who made it. Only the settings
+     * owner sets it, on a `normalize` refusal. No `cause` is ever copied into `message`, since a
+     * cause can carry provider operation output or secrets. Older clients ignore this key.
+     */
+    detail: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -1510,7 +1538,8 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
       this.environmentVariable === undefined
         ? ""
         : ` and environment variable ${this.environmentVariable}`;
-    return `Server settings ${this.operation} failed${provider}${variable} at ${this.settingsPath}.`;
+    const reason = this.detail === undefined ? "" : ` ${this.detail}`;
+    return `Server settings ${this.operation} failed${provider}${variable} at ${this.settingsPath}.${reason}`;
   }
 }
 
@@ -1528,6 +1557,12 @@ const ModelSelectionPatch = Schema.Struct({
 
 export const ServerSettingsPatch = Schema.Struct({
   workflowPresets: Schema.optionalKey(WorkflowPresets),
+  workflowTriggers: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      extras: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+    }),
+  ),
   setModelFavorites: Schema.optionalKey(
     Schema.Array(Schema.Struct({ ...ModelFavorite.fields, favorite: Schema.Boolean })),
   ),
