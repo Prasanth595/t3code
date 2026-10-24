@@ -292,12 +292,26 @@ describe("remote environment authorization", () => {
         "https://remote.example.com/api/auth/websocket-ticket/rpc",
         "https://remote.example.com/api/auth/websocket-ticket",
       ]);
-      expect(proofs.map((proof) => proof.url)).toEqual([
-        "https://remote.example.com/api/auth/websocket-ticket/rpc",
-        "https://remote.example.com/api/auth/websocket-ticket",
-        "https://remote.example.com/ws",
+      expect(proofs).toEqual([
+        {
+          method: "POST",
+          url: "https://remote.example.com/api/auth/websocket-ticket/rpc",
+          accessToken: "dpop-access-token",
+        },
+        {
+          method: "POST",
+          url: "https://remote.example.com/api/auth/websocket-ticket",
+          accessToken: "dpop-access-token",
+        },
+        { method: "GET", url: "https://remote.example.com/ws", accessToken: "old-ticket" },
       ]);
-      expect(url).toContain("wsTicket=old-ticket");
+      expectFetchCall(fetch.calls, 2, {
+        url: "https://remote.example.com/api/auth/websocket-ticket",
+        method: "POST",
+        headers: { dpop: "proof-2" },
+      });
+      expect(new URL(url).searchParams.get("wsTicket")).toBe("old-ticket");
+      expect(new URL(url).searchParams.get("dpop")).toBe("proof-3");
     }),
   );
 
