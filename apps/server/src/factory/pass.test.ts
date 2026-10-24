@@ -1045,7 +1045,7 @@ describe("claiming new issues", () => {
           assert.equal(items(fake).length, 1);
           assert.equal(
             items(fake)[0]!.message,
-            `${REPO}: project config or tracker login could not be re-read for 3 passes in a row, running on the last good copy; last error: ${TLS}`,
+            `${REPO}: project config not loaded for 3 passes in a row, issues are not being picked up; last error: cannot read the tracker's login: HTTP 401: Bad credentials`,
           );
         }),
     );
