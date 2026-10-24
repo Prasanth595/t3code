@@ -894,18 +894,6 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     Platform.OS === "ios"
       ? deviceType !== "duo-unfolded" || (composerOwnsKeyboard && !sidebarSearchActive)
       : !keyboardStateSuspect;
-  // The question card reads the keyboard frame on the UI thread, in the same frame the sticky
-  // view translates, so it gets the full height while the keyboard is closed and never crosses
-  // the header while the keyboard moves.
-  const { height: keyboardTranslation } = useReanimatedKeyboardAnimation();
-  const pendingUserInputMaxHeight = useDerivedValue(() =>
-    derivePendingUserInputMaxHeight({
-      windowHeight,
-      keyboardHeight: keyboardStickyEnabled ? -keyboardTranslation.value : 0,
-      navigationHeaderHeight,
-      composerOverlapHeight: composerBottomInset,
-    }),
-  );
   const estimatedOverlayHeight = composerOverlapHeight;
   // The overlay's measured height includes the home-indicator inset (the
   // composer pads it), but contentInsetAdjustmentBehavior="automatic" makes
@@ -932,6 +920,18 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     setScreenHeight(event.nativeEvent.layout.height);
   }, []);
   const screenAreaHeight = screenHeight ?? windowHeight;
+  // The question card reads the keyboard frame on the UI thread, in the same frame the sticky
+  // view translates, so it gets the full height while the keyboard is closed and never crosses
+  // the header while the keyboard moves.
+  const { height: keyboardTranslation } = useReanimatedKeyboardAnimation();
+  const pendingUserInputMaxHeight = useDerivedValue(() =>
+    derivePendingUserInputMaxHeight({
+      windowHeight: screenAreaHeight,
+      keyboardHeight: keyboardStickyEnabled ? -keyboardTranslation.value : 0,
+      navigationHeaderHeight,
+      composerOverlapHeight: composerBottomInset,
+    }),
+  );
   // The usage panel stacks with the composer and any approval card, so it gets
   // whatever room they leave below the header. Measured only while it is open
   // so typing in the composer does not re-render the screen.
