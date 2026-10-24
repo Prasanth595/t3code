@@ -65,8 +65,10 @@ find only searches the files loaded so far.
 In a diff, a thread's changed files, or a file link in chat, `mod`-click a file
 to open it in your preferred editor. `mod+Alt`-click reveals it in Finder or
 your file manager. In the Files panel, `mod`-click adds to the selection, so use
-`mod+Shift`-click for the editor; `mod+Alt`-click still reveals. These clicks
-open the file on the environment's machine and are not configurable.
+`mod+Shift`-click for the editor; `mod+Alt`-click still reveals. When you're
+connected to another machine, diffs, changed files, and the Files panel open the
+editor on your machine over SSH, like the Open In button, and reveal isn't
+available. These clicks are not configurable.
 
 ## iPad
 
