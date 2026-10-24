@@ -130,6 +130,7 @@ describe("getChangeRequest", () => {
         Effect.provide(
           Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
             getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            listBuildChecks: () => Effect.succeed([]),
             listIterations: () =>
               Effect.succeed([ITERATION, { ...ITERATION, id: 4, headCommit: "new-head" }]),
             listIterationChanges: () =>
@@ -164,6 +165,7 @@ describe("getChangeRequest", () => {
           Effect.provide(
             Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
               getPullRequest: () => Effect.succeed(PULL_REQUEST),
+              listBuildChecks: () => Effect.succeed([]),
               listIterations: () =>
                 state === "missing"
                   ? Effect.succeed([])
@@ -187,6 +189,43 @@ describe("getChangeRequest", () => {
         expect(detail.headSha).toBeUndefined();
         expect(detail.changedFiles).toBe(0);
       }),
+  );
+});
+
+describe("getChangeRequestPreview", () => {
+  it.effect("stays readable when build checks are not", () =>
+    Effect.gen(function* () {
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            listBuildChecks: () =>
+              Effect.fail(
+                new AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError({
+                  command: "az",
+                  cwd: "/w",
+                  operation: "listBuildChecks",
+                  cause: "policy read denied",
+                }),
+              ),
+          }),
+        ),
+      );
+      const input = { cwd: "/w", repository: "acme/web", host: "dev.azure.com", number: 7 };
+
+      const preview = yield* provider.getChangeRequestPreview!(input);
+      expect(preview).toEqual({
+        number: 7,
+        title: "Pull request 7",
+        url: PULL_REQUEST.url,
+        author: null,
+        state: "open",
+        isDraft: false,
+        createdAt: PULL_REQUEST.createdAt,
+      });
+      const detail = yield* Effect.flip(provider.getChangeRequest(input));
+      expect(detail._tag).toBe("PullRequestProviderError");
+    }),
   );
 });
 

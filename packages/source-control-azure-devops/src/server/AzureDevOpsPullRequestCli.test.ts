@@ -61,6 +61,17 @@ const oneIteration = {
   ],
 };
 
+const buildPolicy = {
+  status: "rejected",
+  configuration: {
+    id: 12,
+    isEnabled: true,
+    isBlocking: true,
+    type: { id: "0609b952-1397-4640-95ec-e00a01b2c241" },
+    settings: { displayName: "Tests" },
+  },
+};
+
 function pullRequestRows(
   count: number,
   firstNumber: number,
@@ -120,6 +131,7 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
             output(json({ ...pullRequestRow, lastMergeSourceCommit: { commitId: previousHead } })),
           ),
         )
+        .mockReturnValueOnce(Effect.succeed(output("[]")))
         .mockReturnValueOnce(
           Effect.succeed(
             output(
@@ -146,8 +158,8 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       });
 
       expect(detail.headSha).toBe(latestHead);
-      expect(argsOfCall(2)).toContain("iterationId=2");
-      expect(mockedExecute).toHaveBeenCalledTimes(3);
+      expect(argsOfCall(3)).toContain("iterationId=2");
+      expect(mockedExecute).toHaveBeenCalledTimes(4);
     }),
   );
 
@@ -254,6 +266,85 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       const secondArgs = argsOfCall(1);
       assert.strictEqual(secondArgs[secondArgs.indexOf("--skip") + 1], "3");
       assert.strictEqual(secondArgs[secondArgs.indexOf("--top") + 1], "2");
+    }),
+  );
+
+  it.effect("reports the pull request's build validation policies as its checks", () =>
+    Effect.gen(function* () {
+      const policy = (status: string, configuration: Record<string, unknown>) => ({
+        status,
+        configuration: { ...buildPolicy.configuration, ...configuration },
+      });
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output(json(pullRequestRow))))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              JSON.stringify(
+                Array.from({ length: 100 }, () =>
+                  policy("approved", { type: { id: "reviewers" } }),
+                ),
+              ),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              JSON.stringify([
+                policy("rejected", {}),
+                policy("approved", { id: 13 }),
+                policy("running", { id: 14, isBlocking: false, settings: null }),
+                policy("rejected", { id: 15, isEnabled: false }),
+                policy("notApplicable", { id: 16 }),
+              ]),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(output(json(oneIteration))))
+        .mockReturnValueOnce(Effect.succeed(output(json({ changeEntries: [] }))));
+      const provider = yield* AzureDevOpsPullRequestProvider.make;
+
+      const detail = yield* provider.getChangeRequest({
+        cwd: "/w",
+        repository: "platform/web",
+        host: "dev.azure.com",
+        number: 42,
+      });
+
+      assert.deepEqual(
+        detail.checks.map(({ name, status, required }) => ({ name, status, required })),
+        [
+          { name: "Tests (#12)", status: "failure", required: true },
+          { name: "Tests (#13)", status: "success", required: true },
+          { name: "Build validation (#14)", status: "pending", required: false },
+        ],
+      );
+      assert.equal(argsOfCall(2)[argsOfCall(2).indexOf("--skip") + 1], "100");
+    }),
+  );
+
+  it.effect("fails the read rather than report a passing subset of the policies", () =>
+    Effect.gen(function* () {
+      const passedPage = output(
+        JSON.stringify(Array.from({ length: 100 }, () => ({ ...buildPolicy, status: "approved" }))),
+      );
+      const provider = yield* AzureDevOpsPullRequestProvider.make;
+      for (const unreadable of [output("{}"), { ...output("[]"), stdoutTruncated: true }]) {
+        mockedExecute
+          .mockReturnValueOnce(Effect.succeed(output(json(pullRequestRow))))
+          .mockReturnValueOnce(Effect.succeed(passedPage))
+          .mockReturnValueOnce(Effect.succeed(unreadable));
+        const failure = yield* Effect.flip(
+          provider.getChangeRequest({
+            cwd: "/w",
+            repository: "platform/web",
+            host: "dev.azure.com",
+            number: 42,
+          }),
+        );
+        assert.equal(failure.reason, "failed");
+      }
     }),
   );
 
