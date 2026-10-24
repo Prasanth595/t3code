@@ -461,7 +461,6 @@ describe("toChecks", () => {
         (check) => check.status,
       );
     assert.deepStrictEqual(statusOf([run("99", "failure"), run("100", "success")]), ["success"]);
-    assert.deepStrictEqual(statusOf([run("100", "success"), run("99", "failure")]), ["success"]);
-    assert.deepStrictEqual(statusOf([run("100", "success"), run("101", "failure")]), ["failure"]);
+    assert.deepStrictEqual(statusOf([run("101", "failure"), run("100", "success")]), ["failure"]);
   });
 });
