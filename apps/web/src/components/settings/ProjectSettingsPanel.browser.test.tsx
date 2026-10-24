@@ -568,13 +568,13 @@ describe("project name composition", () => {
       );
     });
     expect(state.update).not.toHaveBeenCalled();
-    expect(document.activeElement).toBe(input);
+    await expect.element(input).toHaveFocus();
 
     await userEvent.type(input, "語");
     await userEvent.keyboard("{Enter}");
     await vi.waitFor(() => expect(state.update).toHaveBeenCalledTimes(2));
     expect(state.projects.map((project) => project.title)).toEqual(["日本語", "日本語"]);
-    expect(nameInput(screen).value).toBe("日本語");
+    await expect.element(nameInput(screen)).toHaveValue("日本語");
 
     await userEvent.fill(nameInput(screen), "日本語の名前");
     await userEvent.keyboard("{Tab}");
