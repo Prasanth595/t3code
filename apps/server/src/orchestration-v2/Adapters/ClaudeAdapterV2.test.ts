@@ -2584,6 +2584,73 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect(
+    "resumes the session a /clear selects while a model change reads the system prompt file",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const reading = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let gateRead = false;
+        const gatedFileSystem: FileSystem.FileSystem = {
+          ...fileSystem,
+          readFileString: (filePath) =>
+            filePath.endsWith("rules.md")
+              ? gateRead
+                ? Deferred.succeed(reading, undefined).pipe(
+                    Effect.andThen(Deferred.await(release)),
+                    Effect.as("Rules"),
+                  )
+                : Effect.succeed("Rules")
+              : fileSystem.readFileString(filePath),
+        };
+        const harness = yield* makeWakeHarnessWithOptions({
+          freshQueueOnReopen: true,
+          close: (queue) => Queue.shutdown(queue),
+          settings: {
+            ...DEFAULT_CLAUDE_SETTINGS,
+            launchArgs: "--append-system-prompt-file rules.md",
+          },
+        }).pipe(Effect.provideService(FileSystem.FileSystem, gatedFileSystem));
+        const turn = (ordinal: number) =>
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: DateTime.makeUnsafe(0),
+            attemptId: RunAttemptId.make(`clear-during-prompt-file-${ordinal}`),
+            text: ordinal === 1 ? "/clear" : "Continue the cleared conversation",
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            ...(ordinal === 1 ? {} : { modelSelection: CLAUDE_TEST_RESTART_MODEL_SELECTION }),
+          });
+        yield* harness.runtime.startTurn(turn(1));
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+
+        gateRead = true;
+        const started = yield* harness.runtime.startTurn(turn(2)).pipe(Effect.forkScoped);
+        yield* Deferred.await(reading);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            session_id: "cleared-native-session",
+            uuid: "00000000-0000-4000-8000-000000000531",
+          }),
+        );
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(started);
+
+        assert.equal(harness.processQueues.length, 2);
+        assert.equal(harness.getOpenedOptions()?.resume, "cleared-native-session");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
   describe("Claude settings restrictions", () => {
     it.effect("resolves cached managed policy from the configured home through the real SDK", () =>
       Effect.gen(function* () {
