@@ -1,5 +1,6 @@
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -756,10 +757,64 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  // A caller that arrives while a refresh for its cwd runs cannot reuse that
+  // refresh: it may have read Git before the caller's change, such as a PR an
+  // agent just opened. Those callers share one follow-up refresh instead of
+  // each queueing another full status read and PR lookup behind the remote
+  // lock. Keyed by the raw cwd so each refresh keeps its caller's auto-pull
+  // policy input.
+  // No entry means idle; `null` means a refresh runs with no follow-up queued.
+  type SharedRefresh = Deferred.Deferred<VcsStatusResult, GitManagerServiceError>;
+  const queuedRefreshesRef = yield* Ref.make(new Map<string, SharedRefresh | null>());
+
+  const runQueuedRefreshes = Effect.fn("VcsStatusBroadcaster.runQueuedRefreshes")(function* (
+    rawCwd: string,
+    first: SharedRefresh,
+  ) {
+    let next: SharedRefresh | null = first;
+    while (next !== null) {
+      yield* Deferred.into(refreshStatus(rawCwd), next);
+      next = yield* Ref.modify(queuedRefreshesRef, (queued) => {
+        const followUp = queued.get(rawCwd) ?? null;
+        const nextQueued = new Map(queued);
+        if (followUp === null) {
+          nextQueued.delete(rawCwd);
+        } else {
+          nextQueued.set(rawCwd, null);
+        }
+        return [followUp, nextQueued] as const;
+      });
+    }
+  });
+
+  const shareQueuedRefreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
+    "VcsStatusBroadcaster.shareQueuedRefreshStatus",
+  )(function* (rawCwd) {
+    const requested = yield* Deferred.make<VcsStatusResult, GitManagerServiceError>();
+    // Registering and forking together keeps an interrupt from leaving an entry with no worker.
+    const shared = yield* Effect.uninterruptible(
+      Effect.gen(function* () {
+        const followUp = yield* Ref.modify(
+          queuedRefreshesRef,
+          (queued): readonly [SharedRefresh | undefined, Map<string, SharedRefresh | null>] => {
+            if (!queued.has(rawCwd)) return [undefined, new Map(queued).set(rawCwd, null)];
+            const followUp = queued.get(rawCwd) ?? requested;
+            return [followUp, new Map(queued).set(rawCwd, followUp)];
+          },
+        );
+        if (followUp !== undefined) return followUp;
+        // The broadcaster scope owns the work, so one caller's interrupt does not cancel it for the rest.
+        yield* runQueuedRefreshes(rawCwd, requested).pipe(Effect.forkIn(broadcasterScope));
+        return requested;
+      }),
+    );
+    return yield* Deferred.await(shared);
+  });
+
   return VcsStatusBroadcaster.of({
     getStatus,
     refreshLocalStatus,
-    refreshStatus,
+    refreshStatus: shareQueuedRefreshStatus,
     refreshPullRequestStatus,
     streamStatus,
   });

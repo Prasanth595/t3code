@@ -600,4 +600,45 @@ describe("VcsStatusBroadcaster", () => {
       assert.isTrue(Option.isSome(yield* Deferred.poll(remoteInterrupted)));
     }).pipe(Effect.provide(layerTest));
   });
+
+  it.effect("refreshes requested during a refresh share one follow-up refresh", () => {
+    const state: Parameters<typeof layerTestFor>[0] = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const fetchStarted = yield* Deferred.make<void>();
+      const finishFetch = yield* Deferred.make<void>();
+      state.beforeRemoteStatus = Deferred.succeed(fetchStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(finishFetch)),
+      );
+      const first = yield* broadcaster.refreshStatus("/repo").pipe(Effect.forkScoped);
+      yield* Deferred.await(fetchStarted);
+      // Every read after the first sees a PR, so a caller that reused the
+      // first refresh would get a status from before its own request.
+      state.beforeRemoteStatus = Effect.sync(() => {
+        state.currentRemoteStatus = remoteStatusWithPr;
+      });
+      const later = yield* Effect.all(
+        [broadcaster.refreshStatus("/repo"), broadcaster.refreshStatus("/repo")],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* Deferred.succeed(finishFetch, undefined);
+
+      assert.isNull((yield* Fiber.join(first)).pr);
+      const [second, third] = yield* Fiber.join(later);
+      assert.deepStrictEqual(second.pr, remoteStatusWithPr.pr);
+      assert.deepStrictEqual(third.pr, remoteStatusWithPr.pr);
+      assert.equal(state.remoteStatusCalls, 2);
+
+      yield* broadcaster.refreshStatus("/repo");
+      assert.equal(state.remoteStatusCalls, 3);
+    }).pipe(Effect.provide(layerTestFor(state)));
+  });
 });
