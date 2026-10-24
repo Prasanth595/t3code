@@ -9315,35 +9315,78 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return false;
         });
 
-        const openQuery = Effect.fnUntraced(function* (
+        // A turn can be built from a projection read before an idle `/clear` adoption
+        // landed. Opening its native ID would replace the live process with the
+        // pre-clear session, so follow the adoption this adapter already made.
+        const followAdoptedNativeSession = (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
-          nativeThreadId: string,
+        ): ProviderAdapter.ProviderAdapterV2TurnInput => {
+          const requestedNativeId = turnInput.providerThread.nativeThreadRef?.nativeId ?? undefined;
+          let adoptedNativeId = requestedNativeId;
+          while (adoptedNativeId !== undefined && adoptedNativeSessionIds.has(adoptedNativeId)) {
+            adoptedNativeId = adoptedNativeSessionIds.get(adoptedNativeId);
+          }
+          return adoptedNativeId === undefined || adoptedNativeId === requestedNativeId
+            ? turnInput
+            : {
+                ...turnInput,
+                providerThread: {
+                  ...turnInput.providerThread,
+                  nativeThreadRef: {
+                    driver: CLAUDE_PROVIDER,
+                    nativeId: adoptedNativeId,
+                    strength: "strong",
+                  },
+                  nativeConversationHeadRef: null,
+                },
+              };
+        };
+
+        const openQuery = Effect.fnUntraced(function* (
+          requestedTurnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
         ) {
-          const queryPolicy = yield* queryPolicyForTurn(turnInput);
+          const queryPolicy = yield* queryPolicyForTurn(requestedTurnInput);
           const mcpOverrides = claudeMcpQueryOverrides({
-            mcpSession: yield* mcpSessions.read(turnInput.threadId),
+            mcpSession: yield* mcpSessions.read(requestedTurnInput.threadId),
             readOnlySandbox:
-              sandboxPolicyKindForClaudeRuntimePolicy(turnInput.runtimePolicy) === "readOnly",
+              sandboxPolicyKindForClaudeRuntimePolicy(requestedTurnInput.runtimePolicy) ===
+              "readOnly",
             ...(queryPolicy.allowedTools === undefined
               ? {}
               : { allowedTools: queryPolicy.allowedTools }),
           });
           const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
-          const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection);
+          const compiledSelection = compileClaudeModelSelection(requestedTurnInput.modelSelection);
+          // Adoption renames the live query under the SDK lock, so read it together with the
+          // alias it implies. A later adoption only renames this same process, which the turn
+          // picks up when it attaches.
+          const [existing, existingNativeThreadId, turnInput] = yield* sdkMessageLock.withPermits(
+            1,
+          )(
+            Effect.map(
+              Ref.get(queryContext),
+              (live) =>
+                [
+                  live,
+                  live?.nativeThreadId,
+                  followAdoptedNativeSession(requestedTurnInput),
+                ] as const,
+            ),
+          );
+          const nativeThreadId = yield* getNativeThreadId(turnInput.providerThread);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
-          const existing = yield* Ref.get(queryContext);
           // A continuation prompts nothing: it drains output the live process
           // already produced, so it keeps that process whatever its selection.
           if (
             existing !== null &&
-            existing.nativeThreadId === nativeThreadId &&
+            existingNativeThreadId === nativeThreadId &&
             isClaudeProviderContinuationTurn(turnInput)
           ) {
             return existing;
           }
           if (
             existing !== null &&
-            existing.nativeThreadId === nativeThreadId &&
+            existingNativeThreadId === nativeThreadId &&
             existing.queryPolicyKey === queryPolicyKey &&
             !existing.stopping &&
             existing.selection.queryIdentity !== compiledSelection.queryIdentity &&
@@ -9366,7 +9409,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
           if (
             existing !== null &&
-            existing.nativeThreadId === nativeThreadId &&
+            existingNativeThreadId === nativeThreadId &&
             existing.queryPolicyKey === queryPolicyKey &&
             existing.selection.queryIdentity === compiledSelection.queryIdentity
           ) {
@@ -9395,7 +9438,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // which closes the process.
           if (
             existing !== null &&
-            existing.nativeThreadId === nativeThreadId &&
+            existingNativeThreadId === nativeThreadId &&
             !existing.stopping &&
             (yield* liveProcessRunsBackgroundWork(existing))
           ) {
@@ -9579,30 +9622,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
         const startTurn = Effect.fn("ClaudeAdapterV2.startTurn")(
           function* (requestedTurnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
-            // A turn can be built from a projection read before an idle `/clear` adoption
-            // landed. Opening its native ID would replace the live process with the
-            // pre-clear session, so follow the adoption this adapter already made.
-            const requestedNativeId =
-              requestedTurnInput.providerThread.nativeThreadRef?.nativeId ?? undefined;
-            let adoptedNativeId = requestedNativeId;
-            while (adoptedNativeId !== undefined && adoptedNativeSessionIds.has(adoptedNativeId)) {
-              adoptedNativeId = adoptedNativeSessionIds.get(adoptedNativeId);
-            }
-            const turnInput =
-              adoptedNativeId === undefined || adoptedNativeId === requestedNativeId
-                ? requestedTurnInput
-                : {
-                    ...requestedTurnInput,
-                    providerThread: {
-                      ...requestedTurnInput.providerThread,
-                      nativeThreadRef: {
-                        driver: CLAUDE_PROVIDER,
-                        nativeId: adoptedNativeId,
-                        strength: "strong" as const,
-                      },
-                      nativeConversationHeadRef: null,
-                    },
-                  };
+            const turnInput = followAdoptedNativeSession(requestedTurnInput);
             const startedAt = yield* DateTime.now;
             let nativeThreadId = yield* getNativeThreadId(turnInput.providerThread);
             const nativeTurnId = `turn:${turnInput.attemptId}`;
@@ -9662,7 +9682,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     skills: yield* userInvocableSkills(turnInput.runtimePolicy.cwd),
                     uuid: promptUuid,
                   });
-            const querySession = yield* openQuery(turnInput, nativeThreadId);
+            const querySession = yield* openQuery(turnInput);
             const context: ActiveClaudeTurnContext = {
               input: turnInput,
               queryPolicy: querySession.queryPolicy,
@@ -9712,10 +9732,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const attachTurn = Effect.gen(function* () {
               if (querySession.nativeThreadId !== context.nativeThreadId) {
                 context.nativeThreadId = querySession.nativeThreadId;
-                const providerThread = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
-                  querySession.nativeThreadId,
-                );
-                if (providerThread !== undefined) context.input = { ...turnInput, providerThread };
+                context.input = {
+                  ...turnInput,
+                  providerThread: {
+                    ...turnInput.providerThread,
+                    nativeThreadRef: {
+                      driver: CLAUDE_PROVIDER,
+                      nativeId: querySession.nativeThreadId,
+                      strength: "strong",
+                    },
+                    nativeConversationHeadRef: null,
+                  },
+                };
               }
               nativeThreadId = context.nativeThreadId;
               querySession.lastTurn = context;

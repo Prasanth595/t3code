@@ -1673,6 +1673,74 @@ export const layerWithOptions = (
           ),
         );
 
+      const ingestRunlessEvent = Effect.fn("ProviderSessionManager.ingestRunlessEvent")(function* (
+        entry: LiveSessionEntry,
+        threadId: ThreadId,
+        event: ProviderAdapter.ProviderAdapterV2Event,
+      ) {
+        yield* Effect.gen(function* () {
+          const current = (yield* Ref.get(sessions)).get(
+            sessionKey(entry.runtime.providerSessionId),
+          );
+          if (current?.runtime !== entry.runtime) return;
+          yield* providerEventIngestor
+            .ingestNormalized({
+              providerSessionId: entry.runtime.providerSessionId,
+              providerInstanceId: entry.runtime.instanceId,
+              threadId,
+              event,
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterEventStreamError({
+                    driver: entry.runtime.driver,
+                    providerSessionId: entry.runtime.providerSessionId,
+                    cause,
+                  }),
+              ),
+            );
+        }).pipe(entry.requestEventPermit.withPermits(1));
+      });
+
+      // A run stops reading once it settles, but Claude can adopt a new native session
+      // (`/clear`) in events queued behind the terminal. Persist those provider thread
+      // updates when the last reader leaves, or a later resume reopens the old session.
+      const persistUnreadProviderThreadUpdates = Effect.fn(
+        "ProviderSessionManager.persistUnreadProviderThreadUpdates",
+      )(
+        function* (
+          subscribers: Ref.Ref<
+            ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
+          >,
+          unread: ReadonlyArray<ProviderSessionEventSignal>,
+        ) {
+          if ((yield* Ref.get(subscribers)).size > 0) return;
+          const entry = [...(yield* Ref.get(sessions)).values()].find(
+            (candidate) => candidate.eventSubscribers === subscribers,
+          );
+          if (entry === undefined) return;
+          for (const signal of unread) {
+            if (
+              signal.type === "event" &&
+              signal.event.type === "provider_thread.updated" &&
+              signal.event.providerThread.appThreadId !== null
+            ) {
+              yield* ingestRunlessEvent(
+                entry,
+                signal.event.providerThread.appThreadId,
+                signal.event,
+              );
+            }
+          }
+        },
+        Effect.catchCause((cause) =>
+          Effect.logWarning("orchestration-v2.driver-session.unread-thread-update-failed", {
+            cause,
+          }),
+        ),
+      );
+
       const makeEventSubscription = Effect.fn("ProviderSessionManager.makeEventSubscription")(
         function* (
           subscribers: Ref.Ref<
@@ -1696,11 +1764,17 @@ export const layerWithOptions = (
           }).pipe(
             Effect.flatMap((removed) =>
               removed
-                ? Queue.clear(queue).pipe(Effect.andThen(Queue.end(queue)), Effect.asVoid)
+                ? Queue.clear(queue).pipe(
+                    Effect.tap(() => Queue.end(queue)),
+                    Effect.flatMap((unread) =>
+                      persistUnreadProviderThreadUpdates(subscribers, unread),
+                    ),
+                  )
                 : Effect.void,
             ),
           );
-          const events = Stream.fromQueue(queue).pipe(
+          // One signal per pull, so what a reader never pulled is still queued at close.
+          const events = Stream.fromEffectRepeat(Queue.take(queue)).pipe(
             Stream.mapEffect((signal) =>
               signal.type === "event"
                 ? Effect.succeed(signal.event)
@@ -2004,29 +2078,7 @@ export const layerWithOptions = (
                       ? event.providerThread.appThreadId
                       : undefined);
                   if (threadId !== undefined) {
-                    yield* Effect.gen(function* () {
-                      const current = (yield* Ref.get(sessions)).get(
-                        sessionKey(entry.runtime.providerSessionId),
-                      );
-                      if (current?.runtime !== entry.runtime) return;
-                      yield* providerEventIngestor
-                        .ingestNormalized({
-                          providerSessionId: entry.runtime.providerSessionId,
-                          providerInstanceId: entry.runtime.instanceId,
-                          threadId,
-                          event,
-                        })
-                        .pipe(
-                          Effect.mapError(
-                            (cause) =>
-                              new ProviderAdapter.ProviderAdapterEventStreamError({
-                                driver: entry.runtime.driver,
-                                providerSessionId: entry.runtime.providerSessionId,
-                                cause,
-                              }),
-                          ),
-                        );
-                    }).pipe(entry.requestEventPermit.withPermits(1));
+                    yield* ingestRunlessEvent(entry, threadId, event);
                     return;
                   }
                   yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
