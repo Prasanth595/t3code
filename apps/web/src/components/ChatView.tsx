@@ -45,6 +45,8 @@ import {
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { useUsageLimitsPanel } from "./chat/useUsageLimitsPanel";
+import { useSideQuestionPanel } from "./chat/useSideQuestionPanel";
+import { ComposerSideQuestion } from "./chat/ComposerSideQuestion";
 import { useWorktreeSetup } from "./chat/useWorktreeSetup";
 import { useChatShortcuts } from "./chat/useChatShortcuts";
 import { ChatBannerLane } from "./chat/ChatBannerLane";
@@ -223,7 +225,10 @@ import {
   serverEnvironment,
 } from "../state/server";
 import { threadEnvironment } from "../state/threads";
-import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
+import {
+  resolveProviderSkillsForCwd,
+  resolveProviderSlashCommandsForCwd,
+} from "@t3tools/client-runtime/providerSkills";
 import { vcsEnvironment } from "../state/vcs";
 import {
   type EnvironmentPresentation,
@@ -431,6 +436,9 @@ export default function ChatView(props: ChatViewProps) {
     reportFailure: false,
   });
   const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
+    reportFailure: false,
+  });
+  const askSideQuestion = useOrchestrationCommand(threadEnvironment.askSideQuestion, {
     reportFailure: false,
   });
   const createAttachmentAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -1578,6 +1586,16 @@ export default function ChatView(props: ChatViewProps) {
       })
     : null;
   const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
+  const sideQuestionPanel = useSideQuestionPanel({
+    environmentId,
+    threadId: serverThread?.id ?? null,
+    threadKey: routeThreadKey,
+    providerSlashCommands:
+      conversationProviderStatus === null
+        ? null
+        : resolveProviderSlashCommandsForCwd(conversationProviderStatus, gitCwd),
+    ask: askSideQuestion,
+  });
   const gitStatusQuery = useEnvironmentQuery(
     gitStatusCwd === null
       ? null
@@ -2907,6 +2925,8 @@ export default function ChatView(props: ChatViewProps) {
     usageLimitsOffered,
     openUsageLimits,
     clearUsageLimitsFor,
+    sideQuestionOffered: sideQuestionPanel.offered,
+    askSideQuestion: sideQuestionPanel.ask,
     needsLoadBalancing,
     loadBalancing,
     readPendingEnvironmentChange,
@@ -3489,6 +3509,20 @@ export default function ChatView(props: ChatViewProps) {
                               }
                             />
                           ) : null}
+                          {composerMounted && sideQuestionPanel.panel ? (
+                            <div className="relative z-10 mb-2">
+                              <ComposerSideQuestion
+                                state={sideQuestionPanel.panel}
+                                environmentId={environmentId}
+                                cwd={gitCwd ?? undefined}
+                                onAsk={sideQuestionPanel.ask}
+                                onDismiss={() => {
+                                  sideQuestionPanel.dismiss();
+                                  composerRef.current?.focusAtEnd();
+                                }}
+                              />
+                            </div>
+                          ) : null}
                           {!composerMounted ? null : (
                             <ChatComposer
                               canOperateThread={canOperateThread}
@@ -3561,6 +3595,13 @@ export default function ChatView(props: ChatViewProps) {
                                 usageLimitsKey !== null &&
                                 !composerHasNonPromptContent
                                   ? openUsageLimits
+                                  : undefined
+                              }
+                              onSideQuestionCommand={
+                                sideQuestionPanel.offered &&
+                                canOperateThread &&
+                                !composerHasNonPromptContent
+                                  ? sideQuestionPanel.ask
                                   : undefined
                               }
                               environmentUnavailable={activeEnvironmentUnavailableState}

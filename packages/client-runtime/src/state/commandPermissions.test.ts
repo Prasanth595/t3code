@@ -60,6 +60,23 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("requires the destination operate grant for side questions", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const sideQuestion = createCommandPermissions(runtime, WS_METHODS.providerAskSideQuestion);
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(sideQuestion.permissionAtom(env))).toBe(false);
+        expect((yield* sideQuestion.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(sideQuestion.permissionAtom(env))).toBe(true);
+        yield* sideQuestion.authorize(registry, env);
+      }),
+    ),
+  );
+
   it.effect("requires the destination preview grant to close a browser tab", () =>
     Effect.scoped(
       Effect.gen(function* () {

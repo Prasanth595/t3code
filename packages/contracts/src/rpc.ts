@@ -156,6 +156,9 @@ import {
   OrchestrationSearchThreadsResult,
 } from "./threadSearch.ts";
 import {
+  ProviderAskSideQuestionError,
+  ProviderAskSideQuestionInput,
+  ProviderAskSideQuestionResult,
   ProviderUploadFeedbackError,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
@@ -410,6 +413,7 @@ export const WS_METHODS = {
   mcpAppsUpdateModelContext: "mcpApps.updateModelContext",
 
   providerUploadFeedback: "provider.uploadFeedback",
+  providerAskSideQuestion: "provider.askSideQuestion",
   providerAuthStart: "provider.auth.start",
   providerConsumeResetCredit: "provider.consumeResetCredit",
   providerAuthComplete: "provider.auth.complete",
@@ -1347,6 +1351,12 @@ const WsMcpAppsReadResourceRpc = Rpc.make(WS_METHODS.mcpAppsReadResource, {
   error: Schema.Union([McpAppRequestError, EnvironmentAuthorizationError]),
 });
 
+const WsProviderAskSideQuestionRpc = Rpc.make(WS_METHODS.providerAskSideQuestion, {
+  payload: ProviderAskSideQuestionInput,
+  success: ProviderAskSideQuestionResult,
+  error: Schema.Union([ProviderAskSideQuestionError, EnvironmentAuthorizationError]),
+});
+
 const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFeedback, {
   payload: ProviderUploadFeedbackInput,
   success: ProviderUploadFeedbackResult,
@@ -2019,6 +2029,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsMcpAppsReadResourceRpc,
   WsMcpAppsUpdateModelContextRpc,
   WsProviderUploadFeedbackRpc,
+  WsProviderAskSideQuestionRpc,
   WsSubscribeVcsStatusRpc,
   WsSubscribeWorktreeSetupRpc,
   WsWorktreeSetupCancelRpc,

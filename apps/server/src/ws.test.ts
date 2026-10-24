@@ -7,12 +7,21 @@ import {
   ThreadId,
   WS_METHODS,
   WsSubscribeServerConfigRpc,
+  WsRpcGroup,
+  OrchestrationV2AppThread,
+  OrchestrationV2ProviderThread,
+  type ProviderAskSideQuestionInput,
+  type ProviderAskSideQuestionResult,
+  type ProviderAskSideQuestionError,
   type OrchestrationV2StoredEvent,
   type OrchestrationProjectShell,
   type ServerConfig,
   type ServerConfigStreamEvent,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -370,6 +379,135 @@ const layerConfigSources = Layer.mergeAll(
     ),
   ),
   Layer.provideMerge(NodeServices.layer),
+);
+
+const decodeSideQuestionProviderThread = Schema.decodeUnknownEffect(OrchestrationV2ProviderThread);
+const decodeSideQuestionThread = Schema.decodeUnknownEffect(OrchestrationV2AppThread);
+it.effect("never starts a stopped provider session to answer a side question", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("side-question-thread");
+    const providerThread = yield* decodeSideQuestionProviderThread({
+      id: "side-question-provider-thread",
+      driver: "claudeAgent",
+      providerInstanceId: "claude-custom",
+      providerSessionId: "side-question-session",
+      appThreadId: threadId,
+      ownerNodeId: null,
+      nativeThreadRef: { driver: "claudeAgent", nativeId: "native-session", strength: "strong" },
+      nativeConversationHeadRef: null,
+      status: "idle",
+      firstRunOrdinal: null,
+      lastRunOrdinal: null,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const thread = yield* decodeSideQuestionThread({
+      id: threadId,
+      projectId: "side-question-project",
+      createdBy: "user",
+      creationSource: "web",
+      title: "Side question",
+      providerInstanceId: "claude-custom",
+      modelSelection: { instanceId: "claude-custom", model: "claude-sonnet-4-6" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: providerThread.id,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    });
+    let opened = 0;
+    const rpc = WsRpcGroup.requests.get(WS_METHODS.providerAskSideQuestion)!;
+    class SideQuestionHandler extends Context.Service<
+      SideQuestionHandler,
+      {
+        readonly handler: (
+          input: ProviderAskSideQuestionInput,
+        ) => Effect.Effect<ProviderAskSideQuestionResult, ProviderAskSideQuestionError>;
+      }
+    >()(rpc.key) {}
+    const services = Layer.mergeAll(
+      layerUnusedConfigRpcServices,
+      Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+      Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadRecords: () =>
+          Effect.succeed<ProjectionStore.ProjectionRecords<ProjectionStore.ProjectionRecordField>>({
+            thread,
+            providerThreads: [providerThread],
+            providerSessions: [],
+            runs: [],
+            attempts: [],
+            nodes: [],
+            subagents: [],
+            providerTurns: [],
+            runtimeRequests: [],
+            messages: [],
+            plans: [],
+            turnItems: [],
+            checkpointScopes: [],
+            checkpoints: [],
+            contextHandoffs: [],
+            contextTransfers: [],
+          }),
+      }),
+      Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+        get: () => Effect.succeedNone,
+        open: () =>
+          Effect.sync(() => {
+            opened += 1;
+          }).pipe(Effect.andThen(Effect.interrupt)),
+      }),
+    );
+    const handlers = yield* Layer.build(
+      layerWsRpc(
+        {
+          sessionId: AuthSessionId.make("side-question-test"),
+          subject: "test",
+          method: "browser-session-cookie",
+          scopes: [],
+        },
+        {},
+        {},
+        yield* PreviewAutomationBroker.PreviewAutomationBroker,
+        yield* ServerBrowser.ServerBrowser,
+      ).pipe(Layer.provide(services)),
+    );
+    const error = yield* Context.getUnsafe(handlers, SideQuestionHandler)
+      .handler({ threadId, question: "Where are we?" })
+      .pipe(Effect.flip);
+    assert.equal(
+      error.detail,
+      "The agent isn't running for this thread. Send a message, then ask again.",
+    );
+    assert.equal(opened, 0);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+        layerConfigSources,
+      ),
+    ),
+  ),
 );
 
 it.effect(

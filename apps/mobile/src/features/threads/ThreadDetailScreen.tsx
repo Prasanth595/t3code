@@ -137,6 +137,14 @@ import {
   threadComposerErrorsAtom,
 } from "../../state/thread-composer-error";
 import { threadEnvironment } from "../../state/threads";
+import { uuidv4 } from "../../lib/uuid";
+import { ComposerSideQuestion } from "./ComposerSideQuestion";
+import {
+  beginSideQuestion,
+  finishSideQuestion,
+  type SideQuestionExchange,
+  type SideQuestionPanelState,
+} from "./sideQuestionPanel";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useDelayedStatus } from "../../lib/useDelayedStatus";
 import type {
@@ -609,6 +617,9 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const unsettleThread = useAtomCommand(threadEnvironment.unsettle, { reportFailure: false });
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata, { reportFailure: false });
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
+  const askSideQuestion = useAtomCommand(threadEnvironment.askSideQuestion, {
+    reportFailure: false,
+  });
   const [statusRequest, setStatusRequest] = useState<{ threadKey: string } | null>(null);
   const statusPending = statusRequest?.threadKey === selectedThreadKey;
   const [lifecycleNow, setLifecycleNow] = useState(() => new Date().toISOString());
@@ -870,6 +881,61 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
           },
     );
   const dismissUsageLimits = () => setUsageLimitsPanel(null);
+  // The /btw panel. Like the web one it lives only in memory, so a reload
+  // starts clean and the thread's transcript never gains anything.
+  const [sideQuestionPanel, setSideQuestionPanel] = useState<SideQuestionPanelState | null>(null);
+  const sideQuestionPanelRef = useRef(sideQuestionPanel);
+  const updateSideQuestionPanel = (next: SideQuestionPanelState | null) => {
+    sideQuestionPanelRef.current = next;
+    setSideQuestionPanel(next);
+  };
+  if (sideQuestionPanel !== null && sideQuestionPanel.threadKey !== selectedThreadKey) {
+    setSideQuestionPanel(null);
+  }
+  useLayoutEffect(() => {
+    if (sideQuestionPanelRef.current?.threadKey !== selectedThreadKey) {
+      sideQuestionPanelRef.current = null;
+    }
+  }, [selectedThreadKey]);
+  const handleSideQuestion = (question: string): boolean => {
+    const threadKey = selectedThreadKey;
+    question = question.trim();
+    const askedId = uuidv4();
+    const next = beginSideQuestion(sideQuestionPanelRef.current, threadKey, askedId, question);
+    if (next === null) return false;
+    updateSideQuestionPanel(next);
+    if (question.length === 0) return true;
+    const settled = next.exchanges.filter(
+      (exchange): exchange is SideQuestionExchange & { answer: string } => exchange.answer !== null,
+    );
+    void askSideQuestion({
+      environmentId: props.environmentId,
+      input: {
+        threadId: props.selectedThread.id,
+        question,
+        ...(settled.length === 0
+          ? {}
+          : {
+              history: settled.map((exchange) => ({
+                question: exchange.question,
+                response: exchange.answer,
+              })),
+            }),
+      },
+    }).then((result) => {
+      const error = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
+      updateSideQuestionPanel(
+        finishSideQuestion(
+          sideQuestionPanelRef.current,
+          askedId,
+          result._tag === "Failure"
+            ? { error: error instanceof Error ? error.message : "The side question failed." }
+            : result.value,
+        ),
+      );
+    });
+    return true;
+  };
   // A send may resolve after navigating away, so only the originating
   // thread's panel is cleared; a panel opened elsewhere in the meantime stays.
   const clearUsageLimitsFor = (threadKey: string) =>
@@ -1567,6 +1633,20 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                       />
                     </Animated.View>
                   ) : null}
+                  {sideQuestionPanel && activeUserInputRequestId === null ? (
+                    <Animated.View
+                      className="shrink-0 px-4 pb-3"
+                      entering={FadeInDown.duration(220)}
+                      exiting={FadeOut.duration(140)}
+                    >
+                      <ComposerSideQuestion
+                        key={sideQuestionPanel.id}
+                        state={sideQuestionPanel}
+                        onAsk={handleSideQuestion}
+                        onClose={() => updateSideQuestionPanel(null)}
+                      />
+                    </Animated.View>
+                  ) : null}
                   {usageLimitsReport && activeUserInputRequestId === null ? (
                     <Animated.View
                       className="shrink-0 px-4"
@@ -1747,6 +1827,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                         onResumeQueue={props.onResumeQueue}
                         onSendMessage={handleSendMessage}
                         onShowUsageLimits={showUsageLimits}
+                        onSideQuestion={handleSideQuestion}
                         canSwitchProvider={props.canSwitchThreadProvider}
                         onUpdateModelSelection={props.onUpdateThreadModelSelection}
                         onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}

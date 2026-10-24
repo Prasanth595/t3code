@@ -22,6 +22,8 @@ import {
   type ServerConfig as T3ServerConfig,
   type UsageLimitsReport,
 } from "@t3tools/contracts";
+import { parseSideQuestionCommand, SIDE_QUESTION_COMMAND } from "@t3tools/shared/sideQuestion";
+import { resolveProviderSlashCommandsForCwd } from "@t3tools/client-runtime/providerSkills";
 import {
   collectProviderUsageLimits,
   hasProviderUsageLimits,
@@ -274,6 +276,8 @@ export interface ThreadComposerProps {
     stillSendable?: () => boolean,
   ) => Promise<MessageId | null>;
   readonly onShowUsageLimits: (report: UsageLimitsReport | null) => void;
+  /** An empty question opens the panel without making a request. */
+  readonly onSideQuestion: (question: string) => boolean;
   readonly canSwitchProvider: boolean;
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
@@ -469,7 +473,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const composerDraftKey = props.draftKey ?? composerOwnerKey;
-  const { text: draftMessage, attachments: draftAttachments } = useComposerDraft(composerDraftKey);
+  const {
+    text: draftMessage,
+    attachments: draftAttachments,
+    context: draftContext,
+  } = useComposerDraft(composerDraftKey);
+  const contextImports = useAtomValue(composerContextImportsAtom);
   const queuedEdit = props.queuedEdit ?? null;
   const hasContent =
     draftMessage.trim().length > 0 ||
@@ -535,7 +544,30 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       draftKey: composerDraftKey,
     });
   };
-  const { onSendMessage, onChangeDraftMessage, onShowUsageLimits } = props;
+  const { onSendMessage, onChangeDraftMessage, onShowUsageLimits, onSideQuestion } = props;
+  // The /btw panel needs a thread composer to show it, and the provider must
+  // advertise the command, which Claude does.
+  const sideQuestionProviderStatus =
+    props.serverConfig?.providers.find(
+      (provider) =>
+        provider.instanceId ===
+        (props.selectedThread.runtime?.providerInstanceId ?? currentModelSelection.instanceId),
+    ) ?? null;
+  const sideQuestionOffered =
+    !props.isDraft &&
+    sideQuestionProviderStatus !== null &&
+    resolveProviderSlashCommandsForCwd(sideQuestionProviderStatus, props.projectCwd).some(
+      (command) => command.name === SIDE_QUESTION_COMMAND.name,
+    );
+  const canAskSideQuestion =
+    sideQuestionOffered &&
+    queuedEdit === null &&
+    draftAttachments.length === 0 &&
+    (draftContext?.records.length ?? 0) === 0 &&
+    !contextImports[composerDraftKey] &&
+    props.interactionLocked !== true &&
+    props.sendBlockedReason == null &&
+    pendingPastedTextAttachmentCount === 0;
   const usageLimitsOffered =
     selectedProviderStatus !== null &&
     hasProviderUsageLimits(
@@ -580,6 +612,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     offersUsageLimits: usageLimitsOffered,
     onUsageLimits:
       usageLimitsOffered && draftAttachments.length === 0 ? openUsageLimits : undefined,
+    offersSideQuestion: canAskSideQuestion,
+    onSideQuestion: canAskSideQuestion ? onSideQuestion : undefined,
   });
   const voiceInput = useVoiceInputController({
     ownerKey: composerDraftKey,
@@ -615,7 +649,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     serverConfig: props.serverConfig,
     states: uploadStates,
   });
-  const contextImports = useAtomValue(composerContextImportsAtom);
   const sendBlockedReason =
     (queuedEdit?.saving === true ? "Saving…" : null) ??
     props.sendBlockedReason ??
@@ -681,6 +714,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       return;
     if (usageLimitsOffered && isUsageLimitsCommand(draftMessage) && draftAttachments.length === 0) {
       if (openUsageLimits()) onChangeDraftMessage("");
+      return;
+    }
+    const sideQuestion = parseSideQuestionCommand(draftMessage);
+    if (canAskSideQuestion && sideQuestion !== null) {
+      if (onSideQuestion(sideQuestion)) onChangeDraftMessage("");
       return;
     }
     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
@@ -902,7 +940,18 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               triggerKind={composerMenu.trigger.kind}
               isLoading={composerMenu.isLoading}
               error={composerMenu.error}
-              onSelect={composerMenu.onSelect}
+              onSelect={(item) => {
+                if (
+                  item.type === "provider-slash-command" &&
+                  item.command.name === SIDE_QUESTION_COMMAND.name &&
+                  (isSubmissionLocked ||
+                    sendBlockedReason !== null ||
+                    pendingPastedTextAttachmentCountRef.current > 0 ||
+                    pendingNativeImagePasteCountRef.current > 0)
+                )
+                  return;
+                composerMenu.onSelect(item);
+              }}
             />
           </ComposerPopoverAnchor>
         ) : null}

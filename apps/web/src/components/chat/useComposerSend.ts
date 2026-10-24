@@ -16,6 +16,7 @@ import {
   makeThreadErrorSetter,
 } from "../ChatView.logic";
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
+import { parseSideQuestionCommand } from "@t3tools/shared/sideQuestion";
 import {
   AuthOrchestrationOperateScope,
   DEFAULT_MODEL,
@@ -208,6 +209,9 @@ interface ComposerSendInput {
   readonly usageLimitsKey: string | null;
   readonly usageLimitsOffered: boolean;
   readonly openUsageLimits: UsageLimitsPanel["open"];
+  /** Whether the selected provider offers /btw and the panel can show it. */
+  readonly sideQuestionOffered: boolean;
+  readonly askSideQuestion: (question: string) => boolean;
   readonly clearUsageLimitsFor: UsageLimitsPanel["clearFor"];
   readonly needsLoadBalancing: boolean;
   readonly loadBalancing: DraftEnvironmentRouting["loadBalancing"];
@@ -295,6 +299,8 @@ export function useComposerSend(input: ComposerSendInput) {
     usageLimitsKey,
     usageLimitsOffered,
     openUsageLimits,
+    sideQuestionOffered,
+    askSideQuestion,
     clearUsageLimitsFor,
     needsLoadBalancing,
     loadBalancing,
@@ -404,6 +410,21 @@ export function useComposerSend(input: ComposerSendInput) {
       isUsageLimitsCommand(promptRef.current)
     ) {
       if (openUsageLimits()) {
+        promptRef.current = "";
+        setComposerDraftPrompt(composerDraftTarget, "");
+        composerRef.current?.resetCursorState();
+      }
+      return;
+    }
+    const sideQuestionText = sideQuestionOffered
+      ? parseSideQuestionCommand(promptRef.current)
+      : null;
+    if (
+      sideQuestionText !== null &&
+      !directAnnotation &&
+      !draftHasNonPromptContent(composerDraftTarget)
+    ) {
+      if (askSideQuestion(sideQuestionText)) {
         promptRef.current = "";
         setComposerDraftPrompt(composerDraftTarget, "");
         composerRef.current?.resetCursorState();

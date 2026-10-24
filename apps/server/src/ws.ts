@@ -74,6 +74,7 @@ import {
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   ProjectMutationError,
+  ProviderAskSideQuestionError,
   ProviderUploadFeedbackError,
   ProviderSetupError,
   RelayClientInstallFailedError,
@@ -118,6 +119,7 @@ import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManag
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import {
@@ -262,6 +264,8 @@ import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
+const isProviderAskSideQuestionError = Schema.is(ProviderAskSideQuestionError);
+const isProviderAdapterProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
 
 const resolveDiscoveryForConfig = <A, E, R>(
   discovery: Effect.Effect<A, E, R>,
@@ -2352,6 +2356,63 @@ export const layerWsRpc = (
                     ? cause
                     : new ProviderUploadFeedbackError({
                         threadId: input.threadId,
+                        cause,
+                      }),
+                ),
+              ),
+          ),
+        [WS_METHODS.providerAskSideQuestion]:
+          /* Request instrumentation already owns the span; keep this helper in that context. */
+          Effect.fnUntraced(
+            function* (input) {
+              const projection = yield* threadManagement.getThreadRecords(input.threadId, [
+                "providerThreads",
+                "providerSessions",
+              ]);
+              const providerThread =
+                projection.providerThreads.find(
+                  (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+                ) ?? projection.providerThreads.at(-1);
+              const providerSessionId = providerThread?.providerSessionId ?? null;
+              // Asking never starts the provider: opening a stopped Claude session
+              // would run its SessionStart hooks for what is only a question.
+              const runtime =
+                providerSessionId === null
+                  ? null
+                  : Option.getOrNull(yield* providerSessionsV2.get(providerSessionId));
+              if (providerThread === undefined || runtime === null) {
+                return yield* new ProviderAskSideQuestionError({
+                  threadId: input.threadId,
+                  detail:
+                    "The agent isn't running for this thread. Send a message, then ask again.",
+                });
+              }
+              if (runtime.askSideQuestion === undefined) {
+                return yield* new ProviderAskSideQuestionError({
+                  threadId: input.threadId,
+                  detail: "This provider can't answer side questions.",
+                });
+              }
+              const answer = yield* runtime.askSideQuestion({
+                providerThread,
+                question: input.question,
+                ...(input.history === undefined ? {} : { history: input.history }),
+              });
+              return {
+                answer: answer.answer,
+                ...(answer.synthetic === true ? { synthetic: true } : {}),
+              };
+            },
+            (effect, input) =>
+              effect.pipe(
+                Effect.mapError((cause) =>
+                  isProviderAskSideQuestionError(cause)
+                    ? cause
+                    : new ProviderAskSideQuestionError({
+                        threadId: input.threadId,
+                        detail: isProviderAdapterProtocolError(cause)
+                          ? cause.detail
+                          : "The side question could not be answered.",
                         cause,
                       }),
                 ),

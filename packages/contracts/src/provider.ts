@@ -138,6 +138,43 @@ export class ProviderUploadFeedbackError extends Schema.TaggedError<ProviderUplo
   }
 }
 
+/**
+ * One earlier side question and its answer, replayed so a follow-up side
+ * question keeps the conversation without the main thread ever seeing it.
+ */
+export const ProviderSideQuestionHistoryEntry = Schema.Struct({
+  question: TrimmedNonEmptyString,
+  response: Schema.String,
+});
+export type ProviderSideQuestionHistoryEntry = typeof ProviderSideQuestionHistoryEntry.Type;
+
+export const ProviderAskSideQuestionInput = Schema.Struct({
+  threadId: ThreadId,
+  question: TrimmedNonEmptyString,
+  history: Schema.optionalKey(Schema.Array(ProviderSideQuestionHistoryEntry)),
+});
+export type ProviderAskSideQuestionInput = typeof ProviderAskSideQuestionInput.Type;
+
+export const ProviderAskSideQuestionResult = Schema.Struct({
+  answer: Schema.String,
+  /** The provider answered without its own model, e.g. a refusal fallback. */
+  synthetic: Schema.optionalKey(Schema.Boolean),
+});
+export type ProviderAskSideQuestionResult = typeof ProviderAskSideQuestionResult.Type;
+
+export class ProviderAskSideQuestionError extends Schema.TaggedError<ProviderAskSideQuestionError>()(
+  "ProviderAskSideQuestionError",
+  {
+    threadId: ThreadId,
+    detail: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 const ProviderEventKind = Schema.Literals(["session", "notification", "request", "error"]);
 
 export const ProviderEvent = Schema.Struct({

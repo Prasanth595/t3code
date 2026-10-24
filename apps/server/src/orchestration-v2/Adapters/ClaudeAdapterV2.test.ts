@@ -2148,6 +2148,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       toolUseId: string,
     ) => Effect.Effect<boolean, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
     readonly environment?: NodeJS.ProcessEnv;
+    /** Stubs the CLI's side-question control request. */
+    readonly askSideQuestion?: (
+      question: string,
+      history: ReadonlyArray<{ readonly question: string; readonly response: string }>,
+    ) => Effect.Effect<
+      { readonly answer: string; readonly synthetic?: boolean },
+      ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError
+    >;
     readonly subagentLaunchToolUseId?: string;
     readonly nativeSessionId?: string;
     readonly settings?: ClaudeSettings;
@@ -2266,6 +2274,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                     ),
                   backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
                   stopTask: options?.stopTask ?? (() => Effect.void),
+                  ...(options?.askSideQuestion === undefined
+                    ? {}
+                    : { askSideQuestion: options.askSideQuestion }),
                   interrupt: Effect.void,
                   close: Queue.shutdown(processMessages),
                 };
@@ -2291,6 +2302,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   }).pipe(Effect.andThen(() => options?.setPermissionMode?.(mode) ?? Effect.void)),
                 backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
                 stopTask: options?.stopTask ?? (() => Effect.void),
+                ...(options?.askSideQuestion === undefined
+                  ? {}
+                  : { askSideQuestion: options.askSideQuestion }),
                 interrupt: options?.interrupt ?? Effect.void,
                 close: options?.close?.(sdkMessages) ?? Effect.void,
               };
@@ -2382,6 +2396,213 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  it.effect("answers a side question from the live session without prompting a turn", () =>
+    Effect.gen(function* () {
+      const calls: Array<{
+        question: string;
+        history: ReadonlyArray<{ readonly question: string; readonly response: string }>;
+      }> = [];
+      const harness = yield* makeWakeHarnessWithOptions({
+        askSideQuestion: (question, history) =>
+          Effect.sync(() => {
+            calls.push({ question, history });
+            return { answer: "It parses the flag before reading the file." };
+          }),
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("side-question"),
+          text: "Refactor the parser",
+          attachments: [],
+        }),
+      );
+      const offeredBefore = harness.offeredMessages.length;
+
+      const answer = yield* harness.runtime.askSideQuestion!({
+        providerThread: harness.providerThread,
+        question: "Where does the flag get parsed?",
+      });
+
+      assert.deepEqual(answer, { answer: "It parses the flag before reading the file." });
+      assert.deepEqual(calls, [{ question: "Where does the flag get parsed?", history: [] }]);
+      // The transcript is untouched: no prompt was offered and no turn item appeared.
+      assert.equal(harness.offeredMessages.length, offeredBefore);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("replays earlier side questions and reports a synthetic reply", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        askSideQuestion: (_question, history) =>
+          Effect.succeed({ answer: `${history.length} earlier questions`, synthetic: true }),
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("side-question-history"),
+          text: "Refactor the parser",
+          attachments: [],
+        }),
+      );
+
+      const answer = yield* harness.runtime.askSideQuestion!({
+        providerThread: harness.providerThread,
+        question: "And the second one?",
+        history: [{ question: "First?", response: "First answer." }],
+      });
+
+      assert.deepEqual(answer, { answer: "1 earlier questions", synthetic: true });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("asks the user to send a message instead of starting Claude for a question", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        askSideQuestion: () => Effect.succeed({ answer: "never asked" }),
+      });
+      // No turn has run, so there is no CLI process to ask.
+      const error = yield* harness.runtime.askSideQuestion!({
+        providerThread: harness.providerThread,
+        question: "Anything?",
+      }).pipe(Effect.flip);
+
+      assert.equal(
+        error._tag === "ProviderAdapterProtocolError" ? error.detail : error._tag,
+        "Claude isn't running for this thread. Send a message, then ask again.",
+      );
+      assert.equal(harness.getOpenedOptions(), undefined);
+      assert.equal(harness.offeredMessages.length, 0);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("bounds a side question that never answers without starting another turn", () =>
+    Effect.gen(function* () {
+      const asked = yield* Deferred.make<void>();
+      const harness = yield* makeWakeHarnessWithOptions({
+        askSideQuestion: () =>
+          Deferred.succeed(asked, undefined).pipe(Effect.andThen(Effect.never)),
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("bounded-side-question"),
+          text: "Refactor the parser",
+          attachments: [],
+        }),
+      );
+      const offeredBefore = harness.offeredMessages.length;
+      const request = yield* harness.runtime.askSideQuestion!({
+        providerThread: harness.providerThread,
+        question: "Anything?",
+      }).pipe(Effect.flip, Effect.forkChild);
+      yield* Deferred.await(asked);
+      yield* TestClock.adjust("90 seconds");
+      const error = yield* Fiber.join(request);
+      assert.equal(
+        error._tag === "ProviderAdapterProtocolError" ? error.detail : error._tag,
+        "Claude did not answer the side question in time.",
+      );
+      assert.equal(harness.offeredMessages.length, offeredBefore);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("tells the user to update when Claude Code rejects the side question", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        askSideQuestion: () =>
+          Effect.fail(
+            new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+              method: "askSideQuestion",
+              cause: new Error("Unsupported control request subtype: side_question"),
+            }),
+          ),
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("old-cli-side-question"),
+          text: "Refactor the parser",
+          attachments: [],
+        }),
+      );
+      const error = yield* harness.runtime.askSideQuestion!({
+        providerThread: harness.providerThread,
+        question: "Anything?",
+      }).pipe(Effect.flip);
+
+      assert.equal(
+        error._tag === "ProviderAdapterProtocolError" ? error.detail : error._tag,
+        "Update Claude Code to ask side questions.",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("keeps SDK error details out of a side question failure", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        askSideQuestion: () =>
+          Effect.fail(
+            new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+              method: "askSideQuestion",
+              cause: new Error("Connection failed for /private/claude/session at internal.host"),
+            }),
+          ),
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("failed-side-question"),
+          text: "Refactor the parser",
+          attachments: [],
+        }),
+      );
+      const error = yield* harness.runtime.askSideQuestion!({
+        providerThread: harness.providerThread,
+        question: "Anything?",
+      }).pipe(Effect.flip);
+
+      assert.equal(
+        error._tag === "ProviderAdapterProtocolError" ? error.detail : error._tag,
+        "Claude could not answer the side question.",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
 
   describe("Claude settings restrictions", () => {
     it.effect("resolves cached managed policy from the configured home through the real SDK", () =>

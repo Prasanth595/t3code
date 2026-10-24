@@ -27,6 +27,53 @@ import {
 } from "./use-composer-command-menu";
 
 describe("mobile slash commands", () => {
+  it.each([false, true])("offers /btw only when the composer can ask=%s", (offersSideQuestion) => {
+    const items = buildComposerSlashCommandItems({
+      query: "btw",
+      atMessageStart: true,
+      hasThread: true,
+      offersSideQuestion,
+      allowInteractionMode: false,
+      selectedProviderStatus: {
+        driver: ProviderDriverKind.make("claude"),
+        slashCommands: [{ name: "btw" }],
+      },
+    });
+    expect(items.map((item) => item.label)).toEqual(offersSideQuestion ? ["/btw"] : []);
+  });
+
+  it("offers /btw from the live session when the draft provider lacks it", () => {
+    const items = buildComposerSlashCommandItems({
+      query: "btw",
+      atMessageStart: true,
+      hasThread: true,
+      offersSideQuestion: true,
+      allowInteractionMode: false,
+      selectedProviderStatus: {
+        driver: ProviderDriverKind.make("codex"),
+        slashCommands: [],
+      },
+    });
+    expect(items.map((item) => item.label)).toEqual(["/btw"]);
+  });
+
+  it.each([1, 2, 3, 4])("consumes the full /btw token with the caret at %s", (rangeEnd) => {
+    expect(
+      resolveComposerCommandSelection({
+        draftMessage: "/btw what changed?",
+        trigger: { rangeStart: 0, rangeEnd },
+        item: {
+          id: "pcmd:btw",
+          type: "provider-slash-command",
+          command: { name: "btw" },
+          label: "/btw",
+          description: "Ask a side question",
+        },
+        allowInteractionMode: false,
+      }),
+    ).toEqual({ text: " what changed?", cursor: 0, interactionMode: null });
+  });
+
   const antigravity = {
     driver: ProviderDriverKind.make("antigravity"),
     showInteractionModeToggle: false,

@@ -468,6 +468,12 @@ export interface ProviderAdapterV2ThreadSnapshot {
   readonly providerPayload?: unknown;
 }
 
+/** A side question's answer. `synthetic` marks a reply the provider did not model itself. */
+export interface ProviderAdapterV2SideQuestionAnswer {
+  readonly answer: string;
+  readonly synthetic?: boolean;
+}
+
 export interface ProviderAdapterV2ReadThreadSnapshotInput {
   readonly providerThread: OrchestrationV2ProviderThread;
 }
@@ -631,6 +637,16 @@ export interface ProviderAdapterV2SessionRuntime {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly reason?: string;
   }) => Effect.Effect<{ readonly feedbackId: string }, ProviderAdapterV2Error>;
+  /**
+   * A quick question answered by the running provider session without adding
+   * a turn: no tools run and the main conversation never sees it. Absent means
+   * the driver cannot answer one.
+   */
+  readonly askSideQuestion?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly question: string;
+    readonly history?: ReadonlyArray<{ readonly question: string; readonly response: string }>;
+  }) => Effect.Effect<ProviderAdapterV2SideQuestionAnswer, ProviderAdapterV2Error>;
   /**
    * Absent means apps from this provider are not interactive and their tool
    * calls stay plain tool rows.

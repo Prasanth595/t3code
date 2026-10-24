@@ -46,6 +46,7 @@ import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { splitTransferredFiles } from "./workspaceFileDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
+import { SIDE_QUESTION_COMMAND, parseSideQuestionCommand } from "@t3tools/shared/sideQuestion";
 import {
   memo,
   type ReactNode,
@@ -408,6 +409,8 @@ export interface ChatComposerProps {
   keepFullHistory: boolean;
   onToggleKeepFullHistory: () => void;
   onUsageLimitsCommand?: (() => void) | undefined;
+  /** Runs a standalone `/btw <question>`; the question never becomes a turn. */
+  onSideQuestionCommand?: ((question: string) => boolean) | undefined;
   environmentUnavailable: {
     readonly label: string;
     readonly connection: EnvironmentConnectionPresentation;
@@ -1209,6 +1212,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     threadPullRequests,
     planModeUiEnabled,
     compactSlashCommandAvailable,
+    sideQuestionCommandAvailable: props.onSideQuestionCommand !== undefined,
     selectedProvider,
     selectedProviderSkills,
     selectedProviderSlashCommands,
@@ -1920,7 +1924,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   };
 
-  const { onUsageLimitsCommand } = props;
+  const { onUsageLimitsCommand, onSideQuestionCommand } = props;
   const onSelectComposerItem = (item: ComposerCommandItem) => {
     if (composerSelectLockRef.current) return;
     composerSelectLockRef.current = true;
@@ -1976,6 +1980,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (applied) {
           setComposerHighlightedItemId(null);
           onUsageLimitsCommand();
+        }
+        return;
+      }
+      if (item.command.name === SIDE_QUESTION_COMMAND.name && onSideQuestionCommand) {
+        const question = parseSideQuestionCommand(snapshot.value);
+        if (!onSideQuestionCommand(question ?? "")) return;
+        const start = question === null ? trigger.rangeStart : 0;
+        const end = question === null ? trigger.rangeEnd : snapshot.value.length;
+        const applied = applyPromptReplacement(start, end, "", {
+          expectedText: snapshot.value.slice(start, end),
+          focusEditorAfterReplace: false,
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
         }
         return;
       }

@@ -35,6 +35,8 @@ import {
   spawnAndCollect,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
+import { compareSemverVersions } from "@t3tools/shared/semver";
+import { SIDE_QUESTION_COMMAND } from "@t3tools/shared/sideQuestion";
 import { resolveClaudeSdkExecutablePath } from "./Drivers/ClaudeExecutable.ts";
 import { hasClaudeManagedMcpConfig, makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "./Drivers/ClaudeSkills.ts";
@@ -467,11 +469,22 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
     skills,
     slashCommands: dedupeSlashCommands([
       COMPACT_SLASH_COMMAND,
+      ...(claudeAnswersSideQuestions(machineSnapshot.version) ? [SIDE_QUESTION_COMMAND] : []),
       ...(capabilities?.slashCommands ?? []),
     ]),
     slashCommandsPending: !capabilities,
   };
 });
+
+/**
+ * Claude Code answers SDK side questions from this version on, and its
+ * initialize response does not say whether it can, so the version decides.
+ */
+const CLAUDE_SIDE_QUESTION_MIN_VERSION = "2.1.268";
+
+function claudeAnswersSideQuestions(version: string | null): boolean {
+  return version !== null && compareSemverVersions(version, CLAUDE_SIDE_QUESTION_MIN_VERSION) >= 0;
+}
 
 export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(function* (
   claudeSettings: ClaudeSettings,
@@ -598,7 +611,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const probeFailure =
     probeResult && Result.isFailure(probeResult) ? probeResult.failure : undefined;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
-  const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
+  const slashCommands = [
+    COMPACT_SLASH_COMMAND,
+    ...(claudeAnswersSideQuestions(parsedVersion) ? [SIDE_QUESTION_COMMAND] : []),
+    ...(capabilities?.slashCommands ?? []),
+  ];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
   if (!capabilities) {

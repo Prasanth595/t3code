@@ -24,6 +24,7 @@ import {
   setComposerDraftContext,
 } from "../../state/use-composer-drafts";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
+import { SIDE_QUESTION_COMMAND } from "@t3tools/shared/sideQuestion";
 import {
   detectComposerTrigger,
   replaceTextRange,
@@ -66,6 +67,8 @@ export function buildComposerSlashCommandItems(input: {
   readonly hasThread: boolean;
   readonly hasCompactableConversation?: boolean;
   readonly offersUsageLimits?: boolean;
+  /** Whether this composer can show the /btw panel. */
+  readonly offersSideQuestion?: boolean;
   readonly allowInteractionMode: boolean;
   readonly selectedProviderStatus: Pick<
     ServerProvider,
@@ -105,7 +108,13 @@ export function buildComposerSlashCommandItems(input: {
   // Providers expand commands only at the start of a message. T3 commands
   // change local state and do not have this restriction.
   if (!input.atMessageStart) return items;
-  for (const command of input.selectedProviderStatus?.slashCommands ?? []) {
+  const commands = [
+    ...(input.selectedProviderStatus?.slashCommands ?? []).filter(
+      (command) => command.name !== SIDE_QUESTION_COMMAND.name,
+    ),
+    ...(input.offersSideQuestion ? [SIDE_QUESTION_COMMAND] : []),
+  ];
+  for (const command of commands) {
     if (!command.name.toLowerCase().includes(query)) continue;
     if (command.name === "compact" && !input.hasCompactableConversation) continue;
     if (command.name === USAGE_LIMITS_COMMAND.name && input.offersUsageLimits && !input.hasThread) {
@@ -151,6 +160,15 @@ export function resolveComposerCommandSelection(input: {
     };
   }
 
+  if (item.type === "provider-slash-command" && item.command.name === SIDE_QUESTION_COMMAND.name) {
+    let end = trigger.rangeEnd;
+    while (end < draftMessage.length && /\S/.test(draftMessage.charAt(end))) end += 1;
+    return {
+      ...replaceTextRange(draftMessage, trigger.rangeStart, end, ""),
+      interactionMode: null,
+    };
+  }
+
   let replacement = "";
   if (item.type === "path") {
     replacement = `${serializeComposerFileLink(item.path)} `;
@@ -181,10 +199,12 @@ export function useComposerCommandMenu({
   hasThread,
   hasCompactableConversation,
   offersUsageLimits = false,
+  offersSideQuestion = false,
   enabled = true,
   onChangeDraftMessage,
   onUpdateInteractionMode,
   onUsageLimits,
+  onSideQuestion,
 }: {
   readonly draftMessage: string;
   readonly ownerKey: string | null;
@@ -199,10 +219,14 @@ export function useComposerCommandMenu({
   readonly hasThread: boolean;
   readonly hasCompactableConversation: boolean;
   readonly offersUsageLimits?: boolean;
+  /** Whether this composer can show the /btw panel. */
+  readonly offersSideQuestion?: boolean;
   readonly enabled?: boolean;
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onUpdateInteractionMode?: (mode: ProviderInteractionMode) => void;
   readonly onUsageLimits?: () => void;
+  /** An empty question opens the panel without making a request. */
+  readonly onSideQuestion?: (question: string) => boolean;
 }) {
   const [selection, setSelection] = useState(() => composerSelectionAtEnd(draftMessage));
   const previousOwnerKeyRef = useRef(ownerKey);
@@ -385,6 +409,7 @@ export function useComposerCommandMenu({
         hasThread,
         hasCompactableConversation,
         offersUsageLimits,
+        offersSideQuestion,
         allowInteractionMode: onUpdateInteractionMode !== undefined,
         selectedProviderStatus: selectedProviderStatus
           ? {
@@ -595,6 +620,25 @@ export function useComposerCommandMenu({
       setSelection({ start: cleared.cursor, end: cleared.cursor });
       onChangeDraftMessage(cleared.text);
       onUsageLimits();
+      return;
+    }
+
+    if (
+      item.type === "provider-slash-command" &&
+      item.command.name === SIDE_QUESTION_COMMAND.name &&
+      offersSideQuestion &&
+      onSideQuestion
+    ) {
+      const cleared = resolveComposerCommandSelection({
+        draftMessage,
+        trigger,
+        item,
+        allowInteractionMode: false,
+      });
+      if (onSideQuestion(cleared.text.trim())) {
+        setSelection({ start: 0, end: 0 });
+        onChangeDraftMessage("");
+      }
       return;
     }
 

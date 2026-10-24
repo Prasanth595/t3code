@@ -519,6 +519,18 @@ export interface ClaudeAgentSdkQuerySession {
   readonly backgroundTasks: (
     toolUseId: string,
   ) => Effect.Effect<boolean, ClaudeAgentSdkQueryRunnerError>;
+  /**
+   * Answers a question from the running session without prompting a turn.
+   * Absent on SDK versions that do not ship the control request; see
+   * `claudeAskSideQuestion` for why the method is typed by hand.
+   */
+  readonly askSideQuestion?: (
+    question: string,
+    history: ReadonlyArray<{ readonly question: string; readonly response: string }>,
+  ) => Effect.Effect<
+    ProviderAdapter.ProviderAdapterV2SideQuestionAnswer,
+    ClaudeAgentSdkQueryRunnerError
+  >;
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
@@ -634,6 +646,64 @@ export function claudeQueryMessages(queryRuntime: ClaudeQuery): AsyncIterable<SD
   return { [Symbol.asyncIterator]: () => queryRuntime };
 }
 
+interface ClaudeSideQuestionReply {
+  readonly response: string;
+  readonly synthetic?: boolean;
+}
+
+const isProviderAdapterProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
+
+const SIDE_QUESTION_NEEDS_RUNNING_SESSION =
+  "Claude isn't running for this thread. Send a message, then ask again.";
+const SIDE_QUESTION_NEEDS_UPDATE = "Update Claude Code to ask side questions.";
+
+/**
+ * Claude Code versions before side questions reject the control request with
+ * this text. The question never reached the model, so updating fixes it.
+ */
+const UNSUPPORTED_SIDE_QUESTION_ERROR = "Unsupported control request subtype";
+
+function sideQuestionFailureDetail(cause: unknown): string {
+  const inner = isClaudeAgentSdkQueryRunnerError(cause) ? cause.cause : cause;
+  const message = inner instanceof Error ? inner.message : String(inner);
+  if (message.includes(UNSUPPORTED_SIDE_QUESTION_ERROR)) return SIDE_QUESTION_NEEDS_UPDATE;
+  return "Claude could not answer the side question.";
+}
+
+/**
+ * `askSideQuestion` ships in the SDK runtime but not in its type declarations,
+ * so the call is typed here. A `null` reply means the CLI declined to answer
+ * (it is shutting down, or the question failed validation).
+ */
+function claudeAskSideQuestion(
+  queryRuntime: ClaudeQuery,
+  question: string,
+  history: ReadonlyArray<{ readonly question: string; readonly response: string }>,
+): Promise<ProviderAdapter.ProviderAdapterV2SideQuestionAnswer> {
+  const ask = (
+    queryRuntime as unknown as {
+      askSideQuestion: (
+        question: string,
+        options?: { readonly history?: ReadonlyArray<unknown> },
+      ) => Promise<ClaudeSideQuestionReply | null>;
+    }
+  ).askSideQuestion;
+  if (typeof ask !== "function") {
+    throw new Error("This Claude Code version cannot answer side questions.");
+  }
+  return ask
+    .call(queryRuntime, question, history.length === 0 ? {} : { history: [...history] })
+    .then((reply) => {
+      if (reply === null) {
+        throw new Error("Claude did not answer the side question.");
+      }
+      return {
+        answer: reply.response,
+        ...(reply.synthetic === true ? { synthetic: true } : {}),
+      };
+    });
+}
+
 export interface ClaudeAgentSdkLoggedQueryOptions {
   readonly model: ClaudeAgentSdkQueryOptions["model"];
   readonly tools: ClaudeAgentSdkQueryOptions["tools"];
@@ -710,6 +780,17 @@ export type ClaudeAgentSdkProtocolLogEvent =
       readonly payload: {
         readonly type: "query.background_tasks";
         readonly toolUseId: string;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "query.ask_side_question";
+        readonly questionLength: number;
+        readonly historyLength: number;
+        readonly answerLength: number;
+        readonly synthetic: boolean;
       };
     }
   | {
@@ -1117,6 +1198,25 @@ export const layerQueryRunner: Layer.Layer<
                   direction: "outgoing",
                   stage: "decoded",
                   payload: { type: "query.background_tasks", toolUseId },
+                }),
+              ),
+            ),
+          askSideQuestion: (question, history) =>
+            Effect.tryPromise({
+              try: () => claudeAskSideQuestion(queryRuntime, question, history),
+              catch: (cause) => queryRunnerError(cause, "askSideQuestion"),
+            }).pipe(
+              Effect.tap((answer) =>
+                logProtocolEvent({
+                  direction: "outgoing",
+                  stage: "decoded",
+                  payload: {
+                    type: "query.ask_side_question",
+                    questionLength: question.length,
+                    historyLength: history.length,
+                    answerLength: answer.answer.length,
+                    synthetic: answer.synthetic ?? false,
+                  },
                 }),
               ),
             ),
@@ -10329,6 +10429,50 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 cause: "Claude V2 adapter does not implement snapshots.",
               }),
             ),
+          askSideQuestion: Effect.fn("ClaudeAdapterV2.askSideQuestion")(
+            function* (sideInput) {
+              const nativeThreadId = yield* getNativeThreadId(sideInput.providerThread);
+              const live = yield* Ref.get(queryContext);
+              // Only a running session answers. Resuming a stopped one would start
+              // a CLI that runs the user's SessionStart hooks and settings, which
+              // a question must not do.
+              if (live === null || live.nativeThreadId !== nativeThreadId || live.stopping) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CLAUDE_PROVIDER,
+                  detail: SIDE_QUESTION_NEEDS_RUNNING_SESSION,
+                });
+              }
+              if (live.query.askSideQuestion === undefined) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CLAUDE_PROVIDER,
+                  detail: SIDE_QUESTION_NEEDS_UPDATE,
+                });
+              }
+              return yield* live.query.askSideQuestion(sideInput.question, sideInput.history ?? []);
+            },
+            (effect) =>
+              effect.pipe(
+                Effect.timeoutOrElse({
+                  duration: "90 seconds",
+                  orElse: () =>
+                    Effect.fail(
+                      new ProviderAdapter.ProviderAdapterProtocolError({
+                        driver: CLAUDE_PROVIDER,
+                        detail: "Claude did not answer the side question in time.",
+                      }),
+                    ),
+                }),
+                Effect.mapError((cause) =>
+                  isProviderAdapterProtocolError(cause)
+                    ? cause
+                    : new ProviderAdapter.ProviderAdapterProtocolError({
+                        driver: CLAUDE_PROVIDER,
+                        detail: sideQuestionFailureDetail(cause),
+                        payload: cause,
+                      }),
+                ),
+              ),
+          ),
           rollbackThread: Effect.fn("ClaudeAdapterV2.rollbackThread")(
             function* (rollbackInput) {
               const currentTurn = yield* Ref.get(activeTurn);

@@ -243,6 +243,14 @@ provider supports it. Web and desktop also offer compaction from the context met
 Claude instances can also compact idle threads for you. See
 [compact long conversations](./providers-claude.md#compact-long-conversations).
 
+Send `/btw` followed by a question, or pick it from the slash menu, to ask
+something without adding it to the conversation. It works with Claude while the
+thread's session is running, including mid-turn, and the answer comes from that
+session, so it already knows what the agent is doing. The question and answer
+never appear in the thread's transcript. The panel above the composer keeps your
+follow-up questions and their answers until you close it or switch threads. Web,
+desktop, and mobile all have the panel.
+
 ## Goals
 
 With Codex and Claude, send `/goal` followed by what "done" means, for example

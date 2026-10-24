@@ -2295,5 +2295,31 @@ it.layer(
         ),
       ),
     );
+
+    it.effect.each([
+      { version: "2.1.267", offered: false },
+      { version: "2.1.268", offered: true },
+    ])("offers /btw on Claude Code $version: $offered", ({ version, offered }) =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities(),
+        );
+        assert.strictEqual(
+          status.slashCommands.some((command) => command.name === "btw"),
+          offered,
+        );
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") {
+              return { stdout: `${version} (Claude Code)\n`, stderr: "", code: 0 };
+            }
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
   });
 });
