@@ -13,6 +13,7 @@ const reactTests = [
   "src/features/diffs/nativeReviewDiffSurface.test.tsx",
   "src/features/pull-requests/usePullRequestDiff.test.tsx",
   "src/components/ProjectFavicon.test.tsx",
+  "src/features/voice-mode/useVoiceMode.test.tsx",
   "src/components/ui/Dialog.android.test.tsx",
   "src/features/files/ZipArchiveView.test.tsx",
   "src/features/pull-requests/guide/useReviewGuide.test.tsx",

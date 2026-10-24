@@ -57,6 +57,8 @@ import {
   parseStandaloneComposerSlashCommand,
 } from "../../composer-logic";
 import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
+import { resolveVoiceAvailability } from "../../voice/voiceAvailability";
+import { toggleThreadVoice, voiceMode } from "../../voice/voiceMode";
 import { type ChatMessage } from "../../types";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { newMessageId, newThreadId } from "~/lib/utils";
@@ -655,6 +657,35 @@ export function useComposerSend(input: ComposerSendInput) {
 
       return;
     }
+    const parsedSlashCommand =
+      composerImages.length === 0 &&
+      composerFiles.length === 0 &&
+      sendableComposerTerminalContexts.length === 0 &&
+      composerPreviewAnnotations.length === 0 &&
+      composerReviewComments.length === 0 &&
+      composerThreadContexts.length === 0 &&
+      multipleModelSelections === null
+        ? parseStandaloneComposerSlashCommand(trimmed)
+        : null;
+    if (parsedSlashCommand === "voice") {
+      const voiceTarget = scopeThreadRef(environmentId, activeThread.id);
+      // Providers without voice receive "/voice" as a normal message.
+      const voiceAvailability = resolveVoiceAvailability({
+        provider: providerInstanceEntries.find(
+          (entry) => entry.instanceId === activeThread.providerInstanceId,
+        )?.snapshot,
+        hasMessages: activeThread.latestUserMessageAt !== null,
+        hasSession: activeThread.activeProviderThreadId !== null,
+      });
+      // An active conversation always stops, even if the provider stopped offering voice.
+      if (voiceAvailability.kind !== "unsupported" || voiceMode.isActiveFor(voiceTarget)) {
+        toggleThreadVoice(voiceTarget, voiceAvailability);
+        promptRef.current = "";
+        clearComposerDraftContent(composerDraftTarget);
+        composerRef.current?.resetCursorState();
+        return;
+      }
+    }
     if (
       !directAnnotation &&
       sendInteractionModeEnabled &&
@@ -730,17 +761,9 @@ export function useComposerSend(input: ComposerSendInput) {
       }
       return;
     }
+    // Providers without voice receive their native commands unchanged.
     const standaloneSlashCommand =
-      sendInteractionModeEnabled &&
-      composerImages.length === 0 &&
-      composerFiles.length === 0 &&
-      sendableComposerTerminalContexts.length === 0 &&
-      composerPreviewAnnotations.length === 0 &&
-      composerReviewComments.length === 0 &&
-      composerThreadContexts.length === 0 &&
-      composerEnvironmentContexts.length === 0
-        ? parseStandaloneComposerSlashCommand(trimmed)
-        : null;
+      sendInteractionModeEnabled && parsedSlashCommand !== "voice" ? parsedSlashCommand : null;
     if (standaloneSlashCommand && multipleModelSelections === null) {
       handleInteractionModeChange(standaloneSlashCommand);
       promptRef.current = "";
