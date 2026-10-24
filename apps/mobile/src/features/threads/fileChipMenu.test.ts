@@ -19,6 +19,15 @@ it("copies native paths from a relative file chip in a Windows workspace", () =>
   );
 });
 
+it("offers copying contents only when the file can be read from the host", () => {
+  const hasCopyContents = (href: string, canCopyContents: boolean) =>
+    fileChipMenu(resolveFileChipTarget(href, "/repo")!, canCopyContents).actions.some(
+      ({ id }) => id === "copy-contents",
+    );
+  expect(hasCopyContents("src/app.ts", true)).toBe(true);
+  expect(hasCopyContents("src/app.ts", false)).toBe(false);
+});
+
 describe("resolveFileChipTarget", () => {
   it("resolves a workspace-relative link to both paths", () => {
     expect(resolveFileChipTarget("src/app.ts:12", "/repo")).toEqual({
@@ -61,7 +70,7 @@ describe("file chip downloads", () => {
     ["screens/image.PNG", "/repo/screens/image.PNG", "image/png"],
   ])("offers a host download for %s", (href, path, mimeType) => {
     const target = resolveFileChipTarget(href, "/repo")!;
-    expect(fileChipMenu(target).actions).toContainEqual({
+    expect(fileChipMenu(target, false).actions).toContainEqual({
       id: "save",
       title: "Save or share",
     });
@@ -76,7 +85,7 @@ describe("file chip downloads", () => {
     for (const href of ["src/app.ts", "/tmp/archive.zip", "/tmp/clip.mp4.txt"]) {
       const target = resolveFileChipTarget(href, "/repo")!;
       expect(fileChipShareSource(target, threadId)).toBeNull();
-      expect(fileChipMenu(target).actions.some(({ id }) => id === "save")).toBe(false);
+      expect(fileChipMenu(target, false).actions.some(({ id }) => id === "save")).toBe(false);
     }
   });
 });

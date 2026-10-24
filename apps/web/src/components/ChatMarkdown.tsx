@@ -46,6 +46,7 @@ import {
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
+import { copyableFileContents } from "@t3tools/client-runtime/state/projects";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -500,12 +501,17 @@ function useChatMarkdownState({
     reportFailure: false,
     refresh: true,
   });
+  const readProjectFile = useAtomQueryRunner(projectEnvironment.readFile, {
+    reportFailure: false,
+    refresh: true,
+  });
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
   const pullRequestLinking = usePullRequestLinking(threadRef?.environmentId);
   const environmentId = threadRef?.environmentId ?? explicitEnvironmentId ?? null;
   const canOperateHost = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const remoteOpen = useRemoteOpenResolution(environmentId);
   const canUseShellActions =
@@ -854,6 +860,17 @@ function useChatMarkdownState({
         }
         resolveCopyPaths={async () =>
           markdownFileCopyPaths(fileLinkMeta, await resolveHostPath(), cwd)
+        }
+        resolveContents={
+          environmentId !== null && cwd && canReadFiles
+            ? async () =>
+                copyableFileContents(
+                  await readProjectFile({
+                    environmentId,
+                    input: { cwd, relativePath: (await resolveHostPath()).absolutePath },
+                  }),
+                )
+            : undefined
         }
         onOpenInPanel={(path) => openFileInPanel(fileLinkMeta, path)}
         onOpenMedia={

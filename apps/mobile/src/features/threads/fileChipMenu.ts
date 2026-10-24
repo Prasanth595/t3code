@@ -67,12 +67,18 @@ export function fileChipShareSource(target: FileChipTarget, threadId: ThreadId) 
     : null;
 }
 
-export function fileChipMenu(target: FileChipTarget): MarkdownFileContextMenu {
+export function fileChipMenu(
+  target: FileChipTarget,
+  canCopyContents: boolean,
+): MarkdownFileContextMenu {
   return {
     title: target.fullPath ?? target.relativePath ?? "",
     actions: [
       ...(target.fullPath ? [{ id: "copy-full-path", title: "Copy full path" }] : []),
       ...(target.relativePath ? [{ id: "copy-relative-path", title: "Copy relative path" }] : []),
+      ...(canCopyContents && target.fullPath
+        ? [{ id: "copy-contents", title: "Copy file contents" }]
+        : []),
       { id: "open-file", title: "Open in file viewer" },
       ...(fileChipMetadata(target)
         ? [
