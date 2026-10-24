@@ -1248,7 +1248,8 @@ describe("liveWorld", () => {
     const sha = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
     const calls: Array<ReadonlyArray<string>> = [];
     const answer = (args: ReadonlyArray<string>): string | { readonly stderr: string } => {
-      const path = args[1] ?? "";
+      // The repo is matched in any case, as GitHub matches it, so a test can pass it mixed-case.
+      const path = (args[1] ?? "").toLowerCase();
       if (args[0] === "api" && path === `repos/${REPO}`) return '{"default_branch":"main"}';
       if (args[0] === "api" && path === `repos/${REPO}/git/ref/heads/main`) {
         if (ref === "missing") return { stderr: "gh: Not Found (HTTP 404)" };
@@ -1301,7 +1302,12 @@ describe("liveWorld", () => {
   };
 
   /** The project config of `REPO` at `root`, and what the settings page was told about it. */
-  const readProject = (process: FactoryProcess["Service"], root: string, withLastGood = false) => {
+  const readProject = (
+    process: FactoryProcess["Service"],
+    root: string,
+    withLastGood = false,
+    repo = REPO,
+  ) => {
     const readings: Array<RepoConfigReading> = [];
     const world = liveWorld(
       machine,
@@ -1330,7 +1336,7 @@ describe("liveWorld", () => {
         ),
       },
     );
-    return Effect.result(world.project({ repo: REPO, path: root })).pipe(
+    return Effect.result(world.project({ repo, path: root })).pipe(
       Effect.map((result) => ({ result, readings })),
     );
   };
@@ -1474,9 +1480,11 @@ describe("liveWorld", () => {
     it.effect("a transient config read with a last good copy leaves the reading", () =>
       Effect.gen(function* () {
         const { process } = baseConfigGh({ stderr: TLS });
-        const fiber = yield* Effect.forkChild(readProject(process, checkout("main").root, true), {
-          startImmediately: true,
-        });
+        // The copy is keyed lower-cased, as the pass keys it, whatever case the repo is watched in.
+        const fiber = yield* Effect.forkChild(
+          readProject(process, checkout("main").root, true, "RawPHP/Softfac"),
+          { startImmediately: true },
+        );
         yield* TestClock.adjust(PAST_RETRIES);
         const { result, readings } = yield* Fiber.join(fiber);
         assert.isTrue(Result.isFailure(result));
@@ -1504,7 +1512,9 @@ describe("liveWorld", () => {
     it.effect("a config read GitHub answered with an error is not transient", () =>
       Effect.gen(function* () {
         const { process } = baseConfigGh({ stderr: "gh: Server Error (HTTP 502)" });
-        const { result, readings } = yield* readProject(process, checkout("main").root);
+        // With a last good copy too: the pass skips the repo on a failure GitHub answered, so
+        // the settings page is told.
+        const { result, readings } = yield* readProject(process, checkout("main").root, true);
         assert.isTrue(Result.isFailure(result));
         if (Result.isFailure(result)) assert.notStrictEqual(result.failure.transient, true);
         assert.strictEqual(readings[0]?.kind, "errors");
