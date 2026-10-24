@@ -16,12 +16,17 @@ import {
 } from "@t3tools/contracts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import type { AnyProviderDriver, ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -644,5 +649,75 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         expect(ghost.availability).toBe("unavailable");
         expect(ghost.unavailableReason).toMatch(/ghostDriver/);
       }).pipe(Effect.provide(layerTest)),
+  );
+});
+
+describe("ProviderInstanceRegistry — reconcile", () => {
+  const reconcileDriverKind = ProviderDriverKind.make("reconcileTest");
+  const reconcileInstanceId = ProviderInstanceId.make("reconcile_test");
+
+  const makeReconcileInstance = (displayName: string | undefined): ProviderInstance => ({
+    instanceId: reconcileInstanceId,
+    driverKind: reconcileDriverKind,
+    continuationIdentity: {
+      driverKind: reconcileDriverKind,
+      continuationKey: `reconcileTest:${displayName}`,
+    },
+    displayName,
+    enabled: true,
+    snapshot: {} as ProviderInstance["snapshot"],
+    orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+    textGeneration: {} as ProviderInstance["textGeneration"],
+  });
+
+  const configWithName = (displayName: string): ProviderInstanceConfigMap => ({
+    [reconcileInstanceId]: { driver: reconcileDriverKind, displayName, config: {} },
+  });
+
+  it.effect("stops returning a replaced instance before closing its scope", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const closedNames = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
+        const replacementStarted = yield* Deferred.make<void>();
+        const releaseReplacement = yield* Deferred.make<void>();
+
+        const driver: AnyProviderDriver = {
+          driverKind: reconcileDriverKind,
+          metadata: { displayName: "Reconcile test" },
+          configSchema: Schema.Struct({}),
+          defaultConfig: () => ({}),
+          create: ({ displayName }) =>
+            Effect.gen(function* () {
+              yield* Effect.addFinalizer(() =>
+                Ref.update(closedNames, (names) => [...names, displayName]),
+              );
+              if (displayName === "Second") {
+                yield* Deferred.succeed(replacementStarted, undefined);
+                yield* Deferred.await(releaseReplacement);
+              }
+              return makeReconcileInstance(displayName);
+            }),
+        };
+
+        const { registry, mutator } = yield* makeProviderInstanceRegistry({
+          drivers: [driver],
+          configMap: configWithName("First"),
+        });
+        expect((yield* registry.getInstance(reconcileInstanceId))?.displayName).toBe("First");
+
+        const reconcileFiber = yield* mutator
+          .reconcile(configWithName("Second"))
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(replacementStarted);
+
+        expect(yield* Ref.get(closedNames)).toEqual(["First"]);
+        expect(yield* registry.getInstance(reconcileInstanceId)).toBeUndefined();
+        expect(yield* registry.listInstances).toEqual([]);
+
+        yield* Deferred.succeed(releaseReplacement, undefined);
+        yield* Fiber.join(reconcileFiber);
+        expect((yield* registry.getInstance(reconcileInstanceId))?.displayName).toBe("Second");
+      }),
+    ),
   );
 });

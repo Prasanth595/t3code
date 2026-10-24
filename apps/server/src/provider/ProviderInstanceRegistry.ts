@@ -192,7 +192,17 @@ const makeReconcile = <R>(input: {
           replacedIds.add(instanceId);
         }
       }
-      for (const id of [...removedIds, ...replacedIds]) {
+      // Drop the ids before closing so `getInstance` never returns a closed
+      // runtime while replacements build.
+      const retiredIds = [...removedIds, ...replacedIds];
+      if (retiredIds.length > 0) {
+        yield* Ref.update(state.entries, (entries) => {
+          const remaining = new Map(entries);
+          for (const id of retiredIds) remaining.delete(id);
+          return remaining;
+        });
+      }
+      for (const id of retiredIds) {
         const live = previousEntries.get(id);
         if (live) {
           yield* Scope.close(live.scope, Exit.void).pipe(Effect.ignore);
