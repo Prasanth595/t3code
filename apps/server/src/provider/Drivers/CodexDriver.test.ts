@@ -383,6 +383,47 @@ it.layer(layerTest)("CodexDriver", (it) => {
       ),
   );
 
+  it.effect.skipIf(windowsHost)(
+    "uses an environment CODEX_HOME as the instance's shared home",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const tempDir = yield* fs
+          .makeTempDirectoryScoped({ prefix: "t3-codex-driver-" })
+          .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+
+        const instances = yield* Effect.forEach(["work", "personal"], (account) =>
+          Effect.gen(function* () {
+            const codexHome = NodePath.join(tempDir, `codex-${account}`);
+            const binaryPath = NodePath.join(codexHome, "packages", "standalone", "bin", "codex");
+            yield* fs.makeDirectory(NodePath.dirname(binaryPath), { recursive: true });
+            yield* fs.writeFileString(binaryPath, "#!/bin/sh\n");
+            yield* fs.chmod(binaryPath, 0o755);
+            const instance = yield* CodexDriver.create({
+              instanceId: ProviderInstanceId.make(`codex-${account}`),
+              displayName: account,
+              enabled: false,
+              environment: [{ name: "CODEX_HOME", value: codexHome, sensitive: false }],
+              config: { ...CodexDriver.defaultConfig(), binaryPath },
+            });
+            return {
+              codexHome,
+              continuationKey: instance.continuationIdentity.continuationKey,
+              update: (yield* instance.snapshot.resolveMaintenance()).update,
+            };
+          }),
+        );
+
+        for (const { codexHome, continuationKey, update } of instances) {
+          expect(continuationKey).toBe(`codex:home:${codexHome}`);
+          expect(update?.env).toEqual({ CODEX_HOME: codexHome });
+        }
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        Effect.scoped,
+      ),
+  );
+
   for (const fixture of [
     {
       name: "leaves mise npm-backend installations manual-only",

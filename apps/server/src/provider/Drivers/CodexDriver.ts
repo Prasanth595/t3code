@@ -140,7 +140,14 @@ export const CodexDriver: ProviderDriver<
     const modelCatalog = yield* ModelCatalog.ModelCatalog;
     const currentCatalog = modelCatalog.current(DRIVER_KIND);
     const processEnv = yield* mergeProviderInstanceEnvironment(environment);
-    const homeLayout = yield* resolveCodexHomeLayout(config);
+    // Codex reads CODEX_HOME from the environment when homePath is empty, so
+    // that home owns this instance's sessions and must key continuation.
+    const environmentHome = processEnv.CODEX_HOME?.trim();
+    const homeLayout = yield* resolveCodexHomeLayout(
+      !config.homePath.trim() && !config.shadowHomePath.trim() && environmentHome
+        ? { ...config, homePath: environmentHome }
+        : config,
+    );
     const continuationIdentity = codexContinuationIdentity(homeLayout);
     const stampIdentity = withInstanceIdentity({
       instanceId,
