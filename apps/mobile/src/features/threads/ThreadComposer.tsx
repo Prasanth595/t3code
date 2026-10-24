@@ -151,6 +151,7 @@ export function useCompactComposerEditor(
   const [compactSlot, setCompactSlot] = useState({ width: 0, labelYielded: false });
   const [labelYielded, setLabelYielded] = useState(false);
   const [measuredRowWidth, setMeasuredRowWidth] = useState(0);
+  const [editorLayoutWidth, setEditorLayoutWidth] = useState(0);
   if (labelYielded && value.length === 0) setLabelYielded(false);
   const compactWidth =
     !yieldsModelLabel || compactSlot.labelYielded === labelYielded ? compactSlot.width : 0;
@@ -161,22 +162,25 @@ export function useCompactComposerEditor(
   const inset =
     Platform.OS === "android" ? COLLAPSED_EDITOR_DEFAULT_INSET : collapsedEditorInset(text);
   const minimum = Math.max(INLINE_EDITOR_HEIGHT, Math.ceil(text.lineHeight) + 2 * inset);
-  const height = Math.max(
-    minimum,
-    Math.min(text.lineHeight * 4 + 2 * inset, contentHeight + 2 * inset),
-  );
+  const wraps = contentHeight > text.lineHeight * 1.5;
+  const wrapIsSettled =
+    !yieldsModelLabel ||
+    (labelYielded && compactSlot.labelYielded && editorLayoutWidth >= compactSlot.width - 1);
   // A line that fits the expanded editor may still overflow its compact slot.
   // Compare its measured width too so widening cannot trigger a collapse loop.
   const isExpanded =
     opensOnFocus ||
     (value.length > 0 &&
-      (contentHeight > text.lineHeight * 1.5 ||
-        (compactWidth > 0 && contentSize.width > compactWidth)));
+      ((wraps && wrapIsSettled) || (compactWidth > 0 && contentSize.width > compactWidth)));
+  const visibleHeight = wraps && !isExpanded ? text.lineHeight : contentHeight;
+  const height = Math.max(
+    minimum,
+    Math.min(text.lineHeight * 4 + 2 * inset, visibleHeight + 2 * inset),
+  );
   const nearsModelLabel =
     yieldsModelLabel &&
     value.length > 0 &&
-    compactWidth > 0 &&
-    contentSize.width > compactWidth - text.fontSize;
+    (wraps || (compactWidth > 0 && contentSize.width > compactWidth - text.fontSize));
   if (nearsModelLabel && !labelYielded) setLabelYielded(true);
   const compactRowHeight = Math.max(44, minimum);
   const animatedHeight = useSharedValue(height);
@@ -239,6 +243,9 @@ export function useCompactComposerEditor(
         editorWidth.set(event.nativeEvent.layout.width);
         setCompactSlot({ width: Math.max(0, event.nativeEvent.layout.width - 8), labelYielded });
       }
+    },
+    onEditorFrameLayout: (event: { nativeEvent: { layout: { width: number } } }) => {
+      if (event.nativeEvent.layout.width > 0) setEditorLayoutWidth(event.nativeEvent.layout.width);
     },
     editorProps: {
       singleLineCentered: !isExpanded,
@@ -1077,6 +1084,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               </View>
             </ComposerDictationDraftContent>
             <Animated.View
+              onLayout={compactEditor.onEditorFrameLayout}
               style={[
                 compactEditor.editorStyle,
                 showsCompactDictation ? { display: "none" } : undefined,
