@@ -134,6 +134,7 @@ describe("gitHubViewerPermissions", () => {
         "close",
         "reopen",
       ],
+      attachments: true,
       comment: true,
       resolve: true,
       stackRebase: true,
@@ -154,6 +155,7 @@ describe("gitHubViewerPermissions", () => {
       }),
     ).toEqual({
       actions: [],
+      attachments: false,
       comment: true,
       resolve: false,
       verdicts: ["comment", "approve", "request-changes"],
@@ -186,6 +188,7 @@ describe("gitHubViewerPermissions", () => {
       }),
     ).toEqual({
       actions: ["ready", "draft", "close", "reopen"],
+      attachments: false,
       comment: true,
       resolve: true,
       verdicts: ["comment"],
@@ -206,6 +209,7 @@ describe("gitHubViewerPermissions", () => {
 
       expect(detail.viewerPermissions).toEqual({
         actions: ["ready", "draft", "close", "reopen"],
+        attachments: false,
         comment: true,
         resolve: false,
         verdicts: ["comment", "approve", "request-changes"],

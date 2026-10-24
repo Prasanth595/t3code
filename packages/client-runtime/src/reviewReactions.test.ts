@@ -1,7 +1,7 @@
 import type { PullRequestReaction, PullRequestReactionContent } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { applyPendingPullRequestReactions } from "./pullRequestReactions.ts";
+import { applyPendingPullRequestReactions } from "./reviewReactions.ts";
 
 function reaction(overrides: Partial<PullRequestReaction> = {}): PullRequestReaction {
   return {

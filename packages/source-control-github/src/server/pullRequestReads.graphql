@@ -291,6 +291,9 @@ query PullRequestActivity(
           body
           state
           submittedAt
+          commit {
+            oid
+          }
           lastEditedAt
           url
           author {

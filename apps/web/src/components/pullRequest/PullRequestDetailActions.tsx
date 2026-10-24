@@ -4,10 +4,9 @@ import type {
   PullRequestMergeMethod,
   PullRequestUpdateMethod,
 } from "@t3tools/contracts";
-import { CheckIcon, ChevronDownIcon, FolderGit2Icon, GitBranchIcon, PlayIcon } from "lucide-react";
+import { ChevronDownIcon, FolderGit2Icon, GitBranchIcon, PlayIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
-import { AnimatedWidth } from "~/components/AnimatedWidth";
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Badge } from "../ui/badge";
@@ -32,6 +31,7 @@ export type PerformPullRequestAction = (
   action: PullRequestAction,
   method?: PullRequestMergeMethod,
   updateMethod?: PullRequestUpdateMethod,
+  adminOverride?: boolean,
 ) => Promise<boolean>;
 
 export function ActOnEnvironmentPicker({
@@ -189,31 +189,25 @@ export function PullRequestResolveConflictsButton({
 
 /** The header's one prominent control, which depends on where the pull request stands. */
 export function PullRequestPrimaryAction({
-  pullRequestKey,
   primaryAction,
   autoMergeArmed,
   armedAutoMergeLabel,
-  pendingAutoMergeLabel,
-  selectedMergeMethod,
-  selectedMergeMethodLabel,
   statePresentation,
   pendingAction,
   perform,
   resolveConflicts,
+  mergeControl,
 }: {
-  pullRequestKey: string;
   primaryAction: ReturnType<typeof resolvePullRequestPrimaryControl> | null;
   autoMergeArmed: boolean;
   armedAutoMergeLabel: string;
-  pendingAutoMergeLabel: string;
-  selectedMergeMethod: PullRequestMergeMethod;
-  selectedMergeMethodLabel: string;
   statePresentation: ReturnType<typeof resolvePullRequestState> | null;
   pendingAction: PullRequestAction | null;
   perform: PerformPullRequestAction;
   resolveConflicts: ReactNode;
+  /** The merge button, with its confirmation and any admin override; armed for auto-merge or not. */
+  mergeControl: (autoMerge: boolean) => ReactNode;
 }) {
-  const inlineConfirm = useInlineActionConfirm(pullRequestKey);
   const actionPending = pendingAction !== null;
   return (
     <>
@@ -255,57 +249,7 @@ export function PullRequestPrimaryAction({
           <TooltipPopup side="top">Ready for review</TooltipPopup>
         </Tooltip>
       ) : primaryAction === "enable-auto-merge" ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span className="inline-flex shrink-0">
-                <Button
-                  size="xs"
-                  variant="default"
-                  disabled={actionPending}
-                  {...inlineConfirm.props(
-                    "enable-auto-merge",
-                    () => void perform("enable-auto-merge", selectedMergeMethod),
-                  )}
-                  aria-label={
-                    pendingAction === "enable-auto-merge"
-                      ? "Enabling..."
-                      : inlineConfirm.isArmed("enable-auto-merge")
-                        ? "Confirm auto-merge?"
-                        : pendingAutoMergeLabel
-                  }
-                >
-                  {inlineConfirm.isArmed("enable-auto-merge") ? (
-                    <CheckIcon aria-hidden className="size-3.5" />
-                  ) : (
-                    <PullRequestGlyph.merged aria-hidden className="size-3.5" />
-                  )}
-                  <AnimatedWidth className="@max-[30rem]/pr-header:hidden">
-                    <span className="grid">
-                      <span aria-hidden className="invisible col-start-1 row-start-1">
-                        {pendingAutoMergeLabel}
-                      </span>
-                      <span className="col-start-1 row-start-1">
-                        {pendingAction === "enable-auto-merge"
-                          ? "Enabling..."
-                          : inlineConfirm.isArmed("enable-auto-merge")
-                            ? "Confirm auto-merge?"
-                            : pendingAutoMergeLabel}
-                      </span>
-                    </span>
-                  </AnimatedWidth>
-                </Button>
-              </span>
-            }
-          />
-          <TooltipPopup side="top">
-            {pendingAction === "enable-auto-merge"
-              ? "Enabling..."
-              : inlineConfirm.isArmed("enable-auto-merge")
-                ? "Confirm auto-merge?"
-                : pendingAutoMergeLabel}
-          </TooltipPopup>
-        </Tooltip>
+        mergeControl(true)
       ) : primaryAction === "auto-merge-armed" ? (
         <Tooltip>
           <TooltipTrigger
@@ -321,57 +265,7 @@ export function PullRequestPrimaryAction({
           </TooltipPopup>
         </Tooltip>
       ) : primaryAction === "merge" ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span className="inline-flex shrink-0">
-                <Button
-                  size="xs"
-                  variant="default"
-                  disabled={actionPending}
-                  {...inlineConfirm.props(
-                    "merge",
-                    () => void perform("merge", selectedMergeMethod),
-                  )}
-                  aria-label={
-                    pendingAction === "merge"
-                      ? "Merging..."
-                      : inlineConfirm.isArmed("merge")
-                        ? "Confirm merge?"
-                        : selectedMergeMethodLabel
-                  }
-                >
-                  {inlineConfirm.isArmed("merge") ? (
-                    <CheckIcon aria-hidden className="size-3.5" />
-                  ) : (
-                    <PullRequestGlyph.merged aria-hidden className="size-3.5" />
-                  )}
-                  <AnimatedWidth className="@max-[30rem]/pr-header:hidden">
-                    <span className="grid">
-                      <span aria-hidden className="invisible col-start-1 row-start-1">
-                        {selectedMergeMethodLabel}
-                      </span>
-                      <span className="col-start-1 row-start-1">
-                        {pendingAction === "merge"
-                          ? "Merging..."
-                          : inlineConfirm.isArmed("merge")
-                            ? "Confirm merge?"
-                            : selectedMergeMethodLabel}
-                      </span>
-                    </span>
-                  </AnimatedWidth>
-                </Button>
-              </span>
-            }
-          />
-          <TooltipPopup side="top">
-            {pendingAction === "merge"
-              ? "Merging..."
-              : inlineConfirm.isArmed("merge")
-                ? "Confirm merge?"
-                : selectedMergeMethodLabel}
-          </TooltipPopup>
-        </Tooltip>
+        mergeControl(false)
       ) : (primaryAction === "merged" || primaryAction === "closed") &&
         statePresentation !== null ? (
         <Badge size="control" variant="outline">

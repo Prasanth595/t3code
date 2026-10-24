@@ -10,14 +10,12 @@ import type {
 } from "@t3tools/contracts";
 import {
   ArrowUpRightIcon,
-  BookOpenIcon,
   CopyIcon,
   HammerIcon,
   LinkIcon,
   MessageCircleQuestionIcon,
   MoreHorizontalIcon,
   RotateCcwIcon,
-  SparklesIcon,
   Trash2Icon,
 } from "lucide-react";
 
@@ -61,21 +59,15 @@ export function PullRequestActionsMenu({
   handoff,
   attachesToComposer,
   askAboutPullRequest,
-  explainPullRequest,
   canFixFindings,
   startFixFindings,
   handoffLabels,
-  canWriteGuide,
-  guideRunning,
-  guideWritten,
-  writeGuide,
   pickableEnvironments,
   actingEnvironmentId,
   onActingEnvironmentChange,
   can,
   autoMergeArmed,
   showsDraftToggle,
-  showsMergeNow,
   showsAutoMerge,
   showsMergeMethods,
   allowedMergeMethods,
@@ -101,21 +93,15 @@ export function PullRequestActionsMenu({
   handoff: string | null;
   attachesToComposer: boolean;
   askAboutPullRequest: () => void;
-  explainPullRequest: () => void;
   canFixFindings: boolean;
   startFixFindings: () => void;
   handoffLabels: { readonly fixFindings: string };
-  canWriteGuide: boolean;
-  guideRunning: boolean;
-  guideWritten: boolean;
-  writeGuide: () => void;
   pickableEnvironments: ReadonlyArray<PickableEnvironment>;
   actingEnvironmentId: EnvironmentId;
   onActingEnvironmentChange: (environmentId: EnvironmentId) => void;
   can: (action: PullRequestAction) => boolean;
   autoMergeArmed: boolean;
   showsDraftToggle: boolean;
-  showsMergeNow: boolean;
   showsAutoMerge: boolean;
   showsMergeMethods: boolean;
   allowedMergeMethods: ReadonlyArray<PullRequestMergeMethod>;
@@ -188,27 +174,10 @@ export function PullRequestActionsMenu({
             </span>
           </span>
         </MenuItem>
-        <MenuItem disabled={handoff !== null} onClick={explainPullRequest}>
-          <BookOpenIcon className="mt-1 size-3.5 shrink-0 self-start" />
-          <span className="flex min-w-0 flex-col">
-            <span>
-              {handoff === "explain" ? "Opening..." : `Explain this ${terminology.shortLabel}`}
-            </span>
-            <span className="text-xs text-muted-foreground">
-              A walk through the diff and what to read closely.
-            </span>
-          </span>
-        </MenuItem>
         <MenuItem disabled={handoff !== null || !canFixFindings} onClick={startFixFindings}>
           <HammerIcon className="size-3.5" />
           {handoff === "findings" ? "Preparing..." : handoffLabels.fixFindings}
         </MenuItem>
-        {canWriteGuide ? (
-          <MenuItem disabled={guideRunning} onClick={writeGuide}>
-            <SparklesIcon className="size-3.5" />
-            {guideRunning ? "Writing guide..." : !guideWritten ? "Write guide" : "Rewrite guide"}
-          </MenuItem>
-        ) : null}
         {pickableEnvironments.length > 0 ? (
           <ActOnEnvironmentPicker
             environments={pickableEnvironments}
@@ -233,17 +202,9 @@ export function PullRequestActionsMenu({
                 {detail.isDraft ? "Ready for review" : "Convert to draft"}
               </MenuItem>
             ) : null}
-            {showsMergeNow ? (
-              <MenuItem
-                closeOnClick={inlineConfirm.isArmed("merge")}
-                aria-label={inlineConfirm.isArmed("merge") ? "Confirm merge?" : "Merge now"}
-                disabled={actionPending}
-                {...inlineConfirm.props("merge", () => void perform("merge", selectedMergeMethod))}
-              >
-                <PullRequestGlyph.merged className="size-3.5" />
-                {inlineConfirm.isArmed("merge") ? "Confirm merge?" : "Merge now"}
-              </MenuItem>
-            ) : null}
+            {/* The same merge, left with the host to carry out once its requirements
+                pass. A conflicting branch cannot be armed because nothing the host
+                waits for will clear the conflict. */}
             {autoMergeArmed && can("disable-auto-merge") ? (
               <MenuItem disabled={actionPending} onClick={() => void perform("disable-auto-merge")}>
                 <PullRequestGlyph.merged className="size-3.5" />
@@ -271,7 +232,10 @@ export function PullRequestActionsMenu({
             ) : null}
             {showsMergeMethods ? (
               <>
-                {showsDraftToggle || showsMergeNow || showsAutoMerge ? <MenuSeparator /> : null}
+                {/* Only below the draft control. A host with no draft of its own, or
+                    a draft whose control is already the header button, would leave
+                    this against the separator that opened the group. */}
+                {showsDraftToggle || showsAutoMerge ? <MenuSeparator /> : null}
                 <MenuRadioGroup
                   value={selectedMergeMethod}
                   onValueChange={(method) => onSelectMergeMethod(method as PullRequestMergeMethod)}
@@ -292,11 +256,7 @@ export function PullRequestActionsMenu({
                 </MenuRadioGroup>
               </>
             ) : null}
-            {pullRequestActionMenuHasGroup(
-              showsDraftToggle,
-              showsAutoMerge || showsMergeNow,
-              showsMergeMethods,
-            ) ? (
+            {pullRequestActionMenuHasGroup(showsDraftToggle, showsAutoMerge, showsMergeMethods) ? (
               <MenuSeparator />
             ) : null}
           </>
