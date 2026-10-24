@@ -323,6 +323,27 @@ it("validates remote device hosts and rejects ambiguous host ids", () => {
   expect(() => decodeDeviceHostSettings({ deviceHosts: [{ ...host, port: 0 }] })).toThrow();
 });
 
+describe("ServerSettings project overrides across versions", () => {
+  it("sends back an override key from a newer server when an older client edits the entry", () => {
+    const projectId = ProjectId.make("project-a");
+    // As an older client reads a newer server's settings, with one key it does not know.
+    const entry = decodeServerSettings({
+      projectSettingsOverrides: {
+        [projectId]: { defaultAutoPull: true, addedByNewerServer: { mode: "kept" } },
+      },
+    }).projectSettingsOverrides[projectId];
+
+    const sent = Schema.encodeSync(ServerSettingsPatch)({
+      projectSettingsOverrides: { [projectId]: { ...entry, defaultAutoPull: false } },
+    });
+
+    expect(decodeServerSettingsPatch(sent).projectSettingsOverrides?.[projectId]).toEqual({
+      defaultAutoPull: false,
+      addedByNewerServer: { mode: "kept" },
+    });
+  });
+});
+
 describe("resolveProjectProviderInstanceEnabled", () => {
   const projectId = "project-a" as ProjectId;
   const instanceId = ProviderInstanceId.make("codex_work");

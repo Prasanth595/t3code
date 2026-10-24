@@ -1044,6 +1044,15 @@ export const ProjectSettingsOverrides = Schema.Struct({
 export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
 
 /**
+ * Keeps entry keys this build does not know. Writers send a whole entry built
+ * from the one they read, so dropping them would let an older client or server
+ * wipe overrides added after it was built.
+ */
+export const keepUnknownOverrideKeys = <Entry extends Schema.Struct<Schema.Struct.Fields>>(
+  entry: Entry,
+) => Schema.StructWithRest(entry, [Schema.Record(Schema.String, Schema.Unknown)]);
+
+/**
  * Whether `null` is a stored override value for this key rather than "unset".
  * Clients writing a project override treat null for every other key as a
  * request to remove the override, so a picker's "Inherit" item and the row's
@@ -1177,9 +1186,10 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE)),
   ),
 
-  projectSettingsOverrides: Schema.Record(ProjectId, ProjectSettingsOverrides).pipe(
-    Schema.withDecodingDefault(Effect.succeed({})),
-  ),
+  projectSettingsOverrides: Schema.Record(
+    ProjectId,
+    keepUnknownOverrideKeys(ProjectSettingsOverrides),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /**
    * The fold runs once so a later reset in the settings UI is not undone by the
    * next server start.
@@ -1553,10 +1563,12 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(
       ProjectId,
       Schema.NullOr(
-        Schema.Struct({
-          ...ProjectSettingsOverrides.fields,
-          sourceControlWritingStyle: Schema.optionalKey(SourceControlWritingStyleSettings),
-        }),
+        keepUnknownOverrideKeys(
+          Schema.Struct({
+            ...ProjectSettingsOverrides.fields,
+            sourceControlWritingStyle: Schema.optionalKey(SourceControlWritingStyleSettings),
+          }),
+        ),
       ),
     ),
   ),
