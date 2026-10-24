@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 import {
   makeSubagentChildThread,
@@ -26,8 +27,9 @@ import {
   endRunlessRootTurns,
 } from "@t3tools/provider-core/server/subagentProjection";
 
-import { emptyProjection } from "./ProjectionStore.ts";
-import { isAutoSettlementCandidate } from "./ThreadSettlementService.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import { isAutoSettlementCandidate, resolveAutoSettlementAt } from "./ThreadSettlementService.ts";
 
 const parentThreadId = ThreadId.make("thread:subagent-snoozed-parent");
 const childThreadId = ThreadId.make("thread:subagent-awake-child");
@@ -160,8 +162,58 @@ it("creates a pinned parent's subagent child unpinned so it can settle", () => {
   }
 });
 
+it.effect.each([
+  ["sql", ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))],
+  ["memory", ProjectionStore.layerMemory],
+] as const)(
+  "%s: a pinned parent's subagent child is born unpinned and settles once idle",
+  ([, testLayer]) =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const parentThread = { ...makeParentThread(), pinnedAt: parentCreatedAt, pinOrderKey: "a0" };
+      const childThread = makeSubagentChildThread({
+        parentThread,
+        childThreadId,
+        parentNodeId: NodeId.make("node:subagent-parent"),
+        activeProviderThreadId: null,
+        providerInstanceId: childProviderInstanceId,
+        modelSelection: childModelSelection,
+        title: "Child",
+        now: childCreatedAt,
+        createdBy: "agent",
+        creationSource: "provider",
+      });
+
+      assert.isNull(childThread.pinnedAt);
+      assert.isNull(childThread.pinOrderKey);
+
+      for (const thread of [parentThread, childThread]) {
+        yield* store.apply({
+          id: EventId.make(`event:${thread.id}`),
+          type: "thread.created",
+          threadId: thread.id,
+          occurredAt: thread.createdAt,
+          payload: thread,
+        });
+      }
+      const candidates = yield* store.getSettlementCandidates();
+      assert.deepEqual(
+        candidates.map((candidate) => candidate.id),
+        [childThreadId],
+      );
+      const settledAt = resolveAutoSettlementAt({
+        thread: candidates[0]!,
+        pullRequest: null,
+        nowMs: DateTime.toEpochMillis(DateTime.add(childCreatedAt, { days: 4 })),
+        autoSettleAfterDays: 3,
+        autoSettleOnMerge: false,
+      });
+      assert.equal(settledAt && DateTime.formatIso(settledAt), DateTime.formatIso(childCreatedAt));
+    }).pipe(Effect.provide(testLayer)),
+);
+
 function taskFixture() {
-  const projection = emptyProjection({
+  const projection = ProjectionStore.emptyProjection({
     type: "thread.created",
     id: EventId.make("task-fixture"),
     threadId: parentThreadId,
