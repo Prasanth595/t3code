@@ -653,7 +653,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     bodyText,
     draftMessage,
     opensCard && compactRowWidth > 0 && !isWideRow,
-    isWideRow,
+    isWideRow && stripAttachments.length === 0,
   );
   const showsCompactDictation = isVoiceInputPresented;
   const isToolbarVisible = isVoiceInputPresented;
