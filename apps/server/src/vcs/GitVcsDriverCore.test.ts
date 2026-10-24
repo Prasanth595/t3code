@@ -219,7 +219,8 @@ it.effect("treats a repository's only non-origin remote as its primary remote", 
     const remote = yield* makeTmpDir("git-vcs-driver-remote-");
     yield* initRepoWithCommit(cwd);
     yield* git(remote, ["init", "--bare"]);
-    yield* git(cwd, ["remote", "add", "github", remote]);
+    assert.equal((yield* driver.statusDetailsLocal(cwd)).hasOriginRemote, false);
+    yield* driver.ensureRemote({ cwd, preferredName: "github", url: remote });
 
     assert.equal((yield* driver.statusDetailsLocal(cwd)).hasOriginRemote, true);
     assert.equal((yield* driver.listRefs({ cwd, refresh: true })).hasPrimaryRemote, true);
