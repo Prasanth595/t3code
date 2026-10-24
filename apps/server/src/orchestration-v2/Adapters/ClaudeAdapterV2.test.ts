@@ -2469,6 +2469,100 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect(
+    "closes the cleared session's live query when rolling back into the pre-clear one",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          freshQueueOnReopen: true,
+          close: (queue) => Queue.shutdown(queue),
+        });
+        const preClearUuid = "00000000-0000-4000-8000-000000000521";
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: DateTime.makeUnsafe(0),
+            attemptId: RunAttemptId.make("rollback-across-clear-1"),
+            text: "Start the build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({ uuid: preClearUuid, text: "Build started." }),
+        );
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        const preClearTurn = lastProviderTurn(harness.events);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            session_id: "cleared-native-session",
+            uuid: "00000000-0000-4000-8000-000000000522",
+          }),
+        );
+        const isClearedThreadUpdate = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+          event.type === "provider_thread.updated" &&
+          event.providerThread.nativeThreadRef?.nativeId === "cleared-native-session";
+        yield* harness.until(() => harness.events.some(isClearedThreadUpdate));
+
+        // History rollback hands the adapter the pre-clear session the turn ran in.
+        const rolledBack = yield* harness.runtime.rollbackThread({
+          providerThread: harness.providerThread,
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("checkpoint-before-clear"),
+            appRunOrdinal: 1,
+            providerTurn: preClearTurn,
+          },
+          providerThreadTurns: [preClearTurn],
+        });
+        assert.equal(
+          rolledBack.providerThread.nativeThreadRef?.nativeId,
+          harness.providerThread.nativeThreadRef?.nativeId,
+        );
+        assert.equal(rolledBack.providerThread.nativeConversationHeadRef?.nativeId, preClearUuid);
+        const eventsAfterRollback = harness.events.length;
+
+        // The cleared session's process finishing its background task after the rollback.
+        const clearedQuery = harness.processQueues[0]!;
+        const clearedQueryStillLive = clearedQuery.state._tag === "Open";
+        if (clearedQueryStillLive) yield* harness.offerAndWait(wakeNotification);
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: rolledBack.providerThread,
+            now: DateTime.makeUnsafe(0),
+            attemptId: RunAttemptId.make("rollback-across-clear-2"),
+            text: "Continue from before the clear.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+          }),
+        );
+        assert.deepEqual(
+          harness.events
+            .slice(eventsAfterRollback)
+            .filter(isClearedThreadUpdate)
+            .map((event) => event.type),
+          [],
+          "the cleared session overwrote the rolled-back provider thread",
+        );
+        assert.isFalse(clearedQueryStillLive, "rollback left the cleared session's query running");
+        assert.equal(
+          harness.getOpenedOptions()?.resume,
+          harness.providerThread.nativeThreadRef?.nativeId,
+        );
+        assert.equal(harness.getOpenedOptions()?.resumeSessionAt, preClearUuid);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
   it.effect("keeps the cleared session when the next turn carries the pre-clear thread", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarnessWithOptions({
@@ -2496,6 +2590,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           uuid: "00000000-0000-4000-8000-000000000511",
         }),
       );
+      const resumed = yield* harness.runtime.resumeThread({
+        providerThread: harness.providerThread,
+      });
+      assert.equal(resumed.nativeThreadRef?.nativeId, "cleared-native-session");
       yield* harness.runtime.startTurn(turn(2));
       assert.equal(harness.processQueues.length, 1);
       yield* harness.offerAndWait(turnOneResult);
