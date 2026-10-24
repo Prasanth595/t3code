@@ -661,6 +661,57 @@ it.layer(NodeServices.layer)("agent file sync", (it) => {
         ).toHaveLength(1);
       }),
   );
+  it.effect("finds valid skills after 500 entries without a skill manifest", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      for (let index = 0; index < 500; index++)
+        yield* f.fs.makeDirectory(f.path.join(f.source, ".agents/skills", `a${index}`), {
+          recursive: true,
+        });
+      yield* f.write(f.source, ".agents/skills/z-valid/SKILL.md", "Valid skill");
+      const catalog = yield* f.sync.list({ cwd: f.source });
+      expect(catalog.skills.map((skill) => skill.path)).toEqual([".agents/skills/z-valid"]);
+      expect(catalog.warnings).toEqual([]);
+    }),
+  );
+  it.effect("caps the inventory at 500 valid skills and emits one truncation warning", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      for (let index = 0; index < 501; index++)
+        yield* f.write(
+          f.source,
+          `.agents/skills/skill-${String(index).padStart(3, "0")}/SKILL.md`,
+          "Skill",
+        );
+      const catalog = yield* f.sync.list({ cwd: f.source });
+      expect(catalog.skills).toHaveLength(500);
+      expect(catalog.skills[499]?.name).toBe("skill-499");
+      expect(catalog.warnings).toHaveLength(1);
+      expect(catalog.warnings[0]).toContain("500");
+    }),
+  );
+  it.effect("exports 100 skills together with every supported personal instruction file", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const skills = Array.from({ length: 100 }, (_, index) => `.agents/skills/skill-${index}`);
+      for (const skill of skills) yield* f.write(f.source, `${skill}/SKILL.md`, "Skill");
+      const paths = [
+        "AGENTS.md",
+        "CLAUDE.md",
+        ".agents/AGENTS.md",
+        ".codex/AGENTS.md",
+        ".claude/CLAUDE.md",
+        ".config/opencode/AGENTS.md",
+      ];
+      for (const path of paths) yield* f.write(f.source, path, "## Shared\nRules");
+      const bundle = yield* f.sync.export({
+        skills,
+        instructions: paths.map((path) => ({ path, sectionIds: ["Shared:0"] })),
+      });
+      expect(bundle).toHaveLength(106);
+      expect(yield* f.sync.preview({ bundle })).toHaveLength(106);
+    }),
+  );
   it.effect("personal sync uses the environment's home and never scans provider credentials", () =>
     Effect.gen(function* () {
       const f = yield* fixture;

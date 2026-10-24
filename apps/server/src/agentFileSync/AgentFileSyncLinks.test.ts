@@ -271,6 +271,9 @@ it.layer(NodeServices.layer)("sync subscriptions", (it) => {
       expect(link).not.toHaveProperty("previous");
       expect(yield* (yield* f.load).list).toEqual([link]);
       expect(
+        yield* f.fs.readDirectory(f.path.join(f.directory, "data/userdata/agent-file-sync")),
+      ).toEqual([]);
+      expect(
         (yield* f.files
           .check({
             selection: {

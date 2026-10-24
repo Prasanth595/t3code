@@ -191,6 +191,14 @@ const make = Effect.gen(function* () {
           }
           return yield* published.failure;
         }
+        if (result.undoId)
+          yield* files
+            .discard({ undoId: result.undoId })
+            .pipe(
+              Effect.catch(() =>
+                Effect.logWarning("Could not remove a completed sync setup receipt"),
+              ),
+            );
       }),
     );
   });

@@ -114,6 +114,9 @@ export class AgentFileSync extends Context.Service<
     readonly undo: (input: {
       readonly undoId: string;
     }) => Effect.Effect<AgentFileSyncApplyResult, AgentFileSyncError>;
+    readonly discard: (input: {
+      readonly undoId: string;
+    }) => Effect.Effect<void, AgentFileSyncError>;
   }
 >()("t3/agentFileSync/AgentFileSync") {}
 
@@ -258,7 +261,7 @@ const make = Effect.gen(function* () {
     const skills: AgentFileSyncCatalog["skills"][number][] = [];
     const instructions: AgentFileSyncCatalog["instructions"][number][] = [];
     const warnings: string[] = [];
-    for (const directory of SKILL_ROOTS) {
+    skillRoots: for (const directory of SKILL_ROOTS) {
       const names = yield* io(
         fs.readDirectory(path.join(base, directory)).pipe(
           Effect.catchTags({
@@ -270,13 +273,17 @@ const make = Effect.gen(function* () {
         ),
         directory,
       );
-      for (const name of [...names].sort().slice(0, Math.max(0, 500 - skills.length))) {
+      for (const name of [...names].sort()) {
         if (!validPart(name)) continue;
         const at = `${directory}/${name}`;
-        if (yield* io(fs.exists(path.join(base, at, "SKILL.md")), at))
+        if (yield* io(fs.exists(path.join(base, at, "SKILL.md")), at)) {
+          if (skills.length >= 500) {
+            warnings.push("Showing the first 500 skills.");
+            break skillRoots;
+          }
           skills.push({ path: at, name });
+        }
       }
-      if (skills.length >= 500) warnings.push(`${directory}: showing the first 500 entries.`);
     }
     let instructionBytes = 0;
     for (const at of scope.cwd ? PROJECT_INSTRUCTIONS : PERSONAL_INSTRUCTIONS) {
@@ -679,6 +686,18 @@ const make = Effect.gen(function* () {
       }),
     );
   });
+  const discard: AgentFileSync["Service"]["discard"] = Effect.fn("AgentFileSync.discard")(
+    function* ({ undoId }) {
+      if (!/^[a-f0-9-]{36}$/.test(undoId))
+        return yield* new AgentFileSyncError({ reason: "invalid-path" });
+      yield* lock.withPermit(
+        io(
+          fs.remove(path.join(receiptDirectory, `${undoId}.json`), { force: true }),
+          "sync history",
+        ),
+      );
+    },
+  );
   return AgentFileSync.of({
     list,
     check,
@@ -687,6 +706,7 @@ const make = Effect.gen(function* () {
     apply,
     reconcile,
     undo,
+    discard,
   });
 });
 

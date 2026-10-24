@@ -32,7 +32,7 @@ export const AgentFileSyncResource = Schema.Union([
 ]);
 export type AgentFileSyncResource = typeof AgentFileSyncResource.Type;
 export const AgentFileSyncBundle = Schema.Array(AgentFileSyncResource).check(
-  Schema.isMaxLength(100),
+  Schema.isMaxLength(120),
 );
 export type AgentFileSyncBundle = typeof AgentFileSyncBundle.Type;
 export const AgentFileSyncCatalog = Schema.Struct({
