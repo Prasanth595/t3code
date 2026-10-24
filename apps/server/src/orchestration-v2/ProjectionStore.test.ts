@@ -3407,6 +3407,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         if (lastErrorClass === "usage_limit") {
           assert.deepEqual(candidate, {
             id: sqlShell.id,
+            providerInstanceId: sqlShell.providerInstanceId,
             status: sqlShell.status,
             lastErrorClass: sqlShell.lastErrorClass,
             usageLimitResetAt: sqlShell.usageLimitResetAt,
@@ -3585,10 +3586,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       yield* sql`UPDATE orchestration_v2_projection_threads
         SET payload_json = json_set(payload_json, '$.limitRecovery', json(${encodeUnknownJsonString(recovery)}))
         WHERE thread_id = ${threadId}`;
-      assert.isUndefined(
+      // Armed rows load before the reset too, so the sweep can see an allowance restored early.
+      assert.deepEqual(
         (yield* store.getLimitRecoveryCandidates({ ...recoveryOptions, autoResume: true })).find(
           (row) => row.id === threadId,
-        ),
+        )?.limitRecovery,
+        recovery,
       );
       const due = (yield* store.getLimitRecoveryCandidates({
         ...recoveryOptions,

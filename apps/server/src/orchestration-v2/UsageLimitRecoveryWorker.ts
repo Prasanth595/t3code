@@ -1,7 +1,13 @@
-import { CommandId, MessageId, type OrchestrationV2Command } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  type OrchestrationV2Command,
+  type ServerProviderUsageLimits,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -13,6 +19,7 @@ export function limitRecoveryCommand(
   autoResume: boolean,
   nowMs: number,
   snooze = false,
+  usageLimits?: ServerProviderUsageLimits,
 ): OrchestrationV2Command | null {
   if (
     thread.status !== "failed" ||
@@ -25,12 +32,9 @@ export function limitRecoveryCommand(
   )
     return null;
   const resetMs = Date.parse(thread.usageLimitResetAt);
+  const failedAtMs = DateTime.toEpochMillis(thread.latestRunCompletedAt ?? thread.updatedAt);
   // An already-expired window reported with a fresh failure cannot start a retry loop.
-  if (
-    !Number.isFinite(resetMs) ||
-    resetMs <= DateTime.toEpochMillis(thread.latestRunCompletedAt ?? thread.updatedAt)
-  )
-    return null;
+  if (!Number.isFinite(resetMs) || resetMs <= failedAtMs) return null;
   const identity = `${thread.id}:${thread.latestRunId}:${resetMs}`;
   const recovery = thread.limitRecovery;
   if (recovery?.runId !== thread.latestRunId || recovery.resetAt !== thread.usageLimitResetAt) {
@@ -47,13 +51,27 @@ export function limitRecoveryCommand(
       },
     };
   }
+  // A reset credit or provider refresh can restore the allowance before the
+  // reported reset. Only a reading taken after the failure counts, so a resumed
+  // run that fails again waits for the next reading instead of looping.
+  const clearedAt =
+    resetMs > nowMs &&
+    usageLimits !== undefined &&
+    usageLimits.unavailable === undefined &&
+    usageLimits.windows.length > 0 &&
+    usageLimits.windows.every((window) => window.usedPercent < 100) &&
+    Date.parse(usageLimits.checkedAt) > failedAtMs
+      ? usageLimits.checkedAt
+      : undefined;
   if (
     !recovery.autoResume ||
-    resetMs > nowMs ||
+    (resetMs > nowMs && clearedAt === undefined) ||
     (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs)
   )
     return null;
-  const deliveryIdentity = `${identity}:${recovery.requestId ?? "legacy"}`;
+  // A separate id for early delivery keeps a rejected one from claiming the
+  // receipt of the delivery at the reset.
+  const deliveryIdentity = `${identity}:${recovery.requestId ?? "legacy"}${clearedAt === undefined ? "" : ":early"}`;
   return {
     type: "message.dispatch",
     commandId: CommandId.make(`limit-resume:${deliveryIdentity}`),
@@ -63,6 +81,7 @@ export function limitRecoveryCommand(
     ...(recovery.requestId === undefined
       ? {}
       : { usageLimitRecoveryRequestId: recovery.requestId }),
+    ...(clearedAt === undefined ? {} : { usageLimitClearedAt: clearedAt }),
     text: "Continue where you left off.",
     attachments: [],
     dispatchMode: { type: "start_immediately" },
@@ -76,6 +95,7 @@ const makeSweep = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const settings = yield* ServerSettings.ServerSettingsService;
+  const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   return Effect.fn("UsageLimitRecoveryWorker.sweep")(function* () {
     const preferences = yield* settings.getSettings;
     const now = yield* DateTime.now;
@@ -85,12 +105,15 @@ const makeSweep = Effect.gen(function* () {
       snooze: preferences.snoozeLimitedThreads,
     });
     const nowMs = DateTime.toEpochMillis(now);
+    const providers = candidates.length === 0 ? [] : yield* providerRegistry.getProviders;
     for (const thread of candidates) {
       const command = limitRecoveryCommand(
         thread,
         preferences.autoResumeLimitedThreads,
         nowMs,
         preferences.snoozeLimitedThreads,
+        providers.find((provider) => provider.instanceId === thread.providerInstanceId)
+          ?.usageLimits,
       );
       if (command === null) continue;
       yield* Effect.gen(function* () {

@@ -6040,6 +6040,126 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       }),
   );
 
+  it.effect(
+    "resumes an armed continuation early once a fresh reading shows the limits cleared",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const events = yield* EventSink.EventSinkV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const threadId = ThreadId.make("recovery:early-reset");
+        const projectId = ProjectId.make("recovery:project:early-reset");
+        const now = yield* DateTime.now;
+        yield* seedProject({
+          projectId,
+          title: "Recovery project",
+          workspaceRoot: process.cwd(),
+          defaultModelSelection: modelSelection,
+          createdAt: DateTime.formatIso(now),
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("recovery:create:early-reset"),
+          threadId,
+          projectId,
+          title: "Limited thread",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("recovery:message:early-reset"),
+          threadId,
+          messageId: MessageId.make("recovery:message:early-reset"),
+          text: "Work on this.",
+          attachments: [],
+          dispatchMode: { type: "defer_start" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        const resetAt = DateTime.formatIso(DateTime.add(now, { hours: 3 }));
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make("recovery:run:early-reset"),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...run, status: "failed", completedAt: now },
+            },
+            {
+              id: EventId.make("recovery:error:early-reset"),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make("recovery:error:early-reset"),
+                type: "error",
+                threadId,
+                runId: run.id,
+                nodeId: run.rootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed",
+                title: "Usage limit reached",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                failure: {
+                  class: "usage_limit",
+                  message: "Plan limit reached.",
+                  code: "usageLimitExceeded",
+                  retryable: null,
+                  resetAt,
+                },
+              },
+            },
+          ],
+        });
+        const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        const arm = limitRecoveryCommand(shell, true, DateTime.toEpochMillis(now));
+        assert(arm?.type === "thread.metadata.update" && arm.limitRecovery != null);
+        yield* orchestrator.autoArmLimitRecovery({
+          commandId: arm.commandId,
+          threadId,
+          limitRecovery: arm.limitRecovery,
+        });
+        yield* TestClock.adjust("1 minute");
+        const checkedNow = yield* DateTime.now;
+        const reading = (checkedAt: DateTime.Utc, usedPercent: number) => ({
+          checkedAt: DateTime.formatIso(checkedAt),
+          windows: [{ id: "five_hour", kind: "session" as const, label: "5h", usedPercent }],
+        });
+        const armed = (yield* projections.getLimitRecoveryCandidates({
+          now: checkedNow,
+          autoResume: true,
+          snooze: false,
+        })).find((row) => row.id === threadId);
+        assert.isDefined(armed);
+        const nowMs = DateTime.toEpochMillis(checkedNow);
+        // Readings from before the failure, or ones that still show the limit, keep waiting.
+        assert.isNull(limitRecoveryCommand(armed!, true, nowMs, false, reading(now, 0)));
+        assert.isNull(limitRecoveryCommand(armed!, true, nowMs, false, reading(checkedNow, 100)));
+        const resume = limitRecoveryCommand(armed!, true, nowMs, false, reading(checkedNow, 0));
+        assert(resume?.type === "message.dispatch");
+        yield* orchestrator.dispatch(resume);
+        const resumed = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(resumed.runs, 2);
+        assert.equal(resumed.runs[1]?.status, "starting");
+      }),
+  );
+
   it.effect.each([
     "resume",
     "queued-resume",

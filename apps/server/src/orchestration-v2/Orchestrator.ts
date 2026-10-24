@@ -4879,7 +4879,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         recovery.requestId !== command.usageLimitRecoveryRequestId ||
         recovery.runId !== run.id ||
         recovery.resetAt !== failure.resetAt ||
-        Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now) ||
+        (Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now) &&
+          (command.usageLimitClearedAt === undefined ||
+            Date.parse(command.usageLimitClearedAt) <=
+              DateTime.toEpochMillis(run.completedAt ?? run.requestedAt))) ||
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
         projection.thread.settledOverride === "settled" ||
