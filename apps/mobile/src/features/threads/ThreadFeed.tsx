@@ -2826,7 +2826,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         "Could not open the linked message",
         props.threadSyncError ??
           props.historyControls?.error ??
-          (props.threadSyncStatus === "cached" || props.threadSyncStatus === "empty"
+          (props.threadSyncStatus === "cached" ||
+          props.threadSyncStatus === "empty" ||
+          props.threadSyncStatus === "synchronizing"
             ? "Thread messages are unavailable. Reconnect and try the link again."
             : "Earlier history did not load. Try the link again."),
       );
