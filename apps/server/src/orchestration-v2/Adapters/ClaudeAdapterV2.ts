@@ -10558,6 +10558,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }
 
               const nativeThreadId = yield* getNativeThreadId(rollbackInput.providerThread);
+              // Rolling back into a session `/clear` left makes it current again.
+              adoptedNativeSessionIds.delete(nativeThreadId);
               yield* closeLiveQueryForNativeThread(nativeThreadId);
               const now = yield* DateTime.now;
               const resumeSessionAt = yield* resolveClaudeRollbackResumeSessionAt(rollbackInput);

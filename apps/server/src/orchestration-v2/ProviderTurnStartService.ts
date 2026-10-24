@@ -704,12 +704,27 @@ export const layer: Layer.Layer<
           const sourceRun = sourceProjection.runs.find(
             (candidate) => candidate.id === nativeForkTransfer.sourcePoint.runId,
           );
-          const sourceProviderThread = sourceProjection.providerThreads.find(
-            (candidate) => candidate.id === sourceRun?.providerThreadId,
-          );
           const sourceAttempt = sourceProjection.attempts.find(
             (candidate) => candidate.id === sourceRun?.activeAttemptId,
           );
+          const currentSourceProviderThread = sourceProjection.providerThreads.find(
+            (candidate) => candidate.id === sourceRun?.providerThreadId,
+          );
+          // A provider can move its thread to another native session (Claude's `/clear`), so
+          // fork from the session the source attempt ran in.
+          const sourceProviderThread =
+            currentSourceProviderThread?.nativeThreadRef == null ||
+            sourceAttempt?.nativeThreadId === undefined ||
+            sourceAttempt.nativeThreadId === currentSourceProviderThread.nativeThreadRef.nativeId
+              ? currentSourceProviderThread
+              : {
+                  ...currentSourceProviderThread,
+                  nativeThreadRef: {
+                    ...currentSourceProviderThread.nativeThreadRef,
+                    nativeId: sourceAttempt.nativeThreadId,
+                  },
+                  nativeConversationHeadRef: null,
+                };
           const sourceProviderTurn =
             latestProviderTurnForAttempt(sourceProjection.providerTurns, sourceAttempt?.id) ??
             sourceProjection.providerTurns.find(
