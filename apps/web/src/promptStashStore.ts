@@ -104,6 +104,48 @@ function resolveBaseStorage(): { storage: StateStorage; durable: boolean } {
 
 const { storage: baseStashStorage, durable: storageIsDurable } = resolveBaseStorage();
 
+interface StashEntryImages {
+  attachments: ReadonlyArray<PersistedComposerImageAttachment>;
+  droppedImageNames: ReadonlyArray<string>;
+  unreadableImageNames: ReadonlyArray<string>;
+}
+
+/**
+ * Finalized images storage refused (quota), by entry id. Storage gets the
+ * entry with those images listed as dropped, so a reload or another tab
+ * reports them missing; this tab keeps them until it reloads, as the stash
+ * toast promises.
+ */
+const unsavedImagesByEntryId = new Map<string, StashEntryImages>();
+
+function withUnsavedImages(entry: PromptStashEntry): PromptStashEntry {
+  const images = unsavedImagesByEntryId.get(entry.id);
+  return images ? { ...entry, ...images, pendingImageCount: 0 } : entry;
+}
+
+function withoutUnsavedImages(entry: PromptStashEntry): PromptStashEntry {
+  const images = unsavedImagesByEntryId.get(entry.id);
+  if (!images) return entry;
+  return {
+    ...entry,
+    attachments: [],
+    droppedImageNames: [
+      ...images.droppedImageNames,
+      ...images.attachments.map((attachment) => attachment.name),
+    ],
+    unreadableImageNames: images.unreadableImageNames,
+    pendingImageCount: 0,
+  };
+}
+
+/** Storage's entries as this tab shows them, forgetting images of entries now gone. */
+function visibleEntries(entries: ReadonlyArray<PromptStashEntry>): ReadonlyArray<PromptStashEntry> {
+  for (const entryId of unsavedImagesByEntryId.keys()) {
+    if (!entries.some((entry) => entry.id === entryId)) unsavedImagesByEntryId.delete(entryId);
+  }
+  return unsavedImagesByEntryId.size === 0 ? entries : entries.map(withUnsavedImages);
+}
+
 /**
  * Persists the queue, immediately rather than debounced. Stashing is a
  * deliberate, infrequent keystroke — not a per-character autosave — so there
@@ -119,7 +161,9 @@ function persistEntries(entries: ReadonlyArray<PromptStashEntry>): {
       PROMPT_STASH_STORAGE_KEY,
       JSON.stringify({
         version: PROMPT_STASH_STORAGE_VERSION,
-        state: { entries },
+        state: {
+          entries: unsavedImagesByEntryId.size === 0 ? entries : entries.map(withoutUnsavedImages),
+        },
       }),
     );
     return { written: true, durable: storageIsDurable };
@@ -184,11 +228,7 @@ interface PromptStashStoreState {
    */
   finalizeEntryImages: (
     entryId: string,
-    images: {
-      attachments: ReadonlyArray<PersistedComposerImageAttachment>;
-      droppedImageNames: ReadonlyArray<string>;
-      unreadableImageNames: ReadonlyArray<string>;
-    },
+    images: StashEntryImages,
   ) => { attached: boolean; durable: boolean };
 }
 
@@ -204,16 +244,17 @@ export const usePromptStashStore = create<PromptStashStoreState>()((set, get) =>
     if (!written) {
       return { evicted: null, written: false, durable: false };
     }
-    set(() => ({ entries: nextEntries }));
+    set(() => ({ entries: visibleEntries(nextEntries) }));
     return { evicted, written: true, durable };
   },
   takeEntry: (entryId) => {
     const entries = latestEntries(get().entries);
-    const entry = entries.find((candidate) => candidate.id === entryId) ?? null;
-    if (!entry) return { entry: null, durable: true };
+    const stored = entries.find((candidate) => candidate.id === entryId);
+    if (!stored) return { entry: null, durable: true };
+    const entry = withUnsavedImages(stored);
     const nextEntries = entries.filter((candidate) => candidate.id !== entryId);
     const { durable } = persistEntries(nextEntries);
-    set(() => ({ entries: nextEntries }));
+    set(() => ({ entries: visibleEntries(nextEntries) }));
     return { entry, durable };
   },
   finalizeEntryImages: (entryId, images) => {
@@ -229,8 +270,18 @@ export const usePromptStashStore = create<PromptStashStoreState>()((set, get) =>
       unreadableImageNames: images.unreadableImageNames,
       pendingImageCount: 0,
     };
-    const { durable } = persistEntries(nextEntries);
-    set(() => ({ entries: nextEntries }));
+    const { written, durable } = persistEntries(nextEntries);
+    if (!written) {
+      // The smaller write without the images settles the stored entry, so it
+      // never shows "saving…" again with no encoder left to finish it.
+      unsavedImagesByEntryId.set(entryId, {
+        attachments: images.attachments,
+        droppedImageNames: images.droppedImageNames,
+        unreadableImageNames: images.unreadableImageNames,
+      });
+      persistEntries(nextEntries);
+    }
+    set(() => ({ entries: visibleEntries(nextEntries) }));
     return { attached: true, durable };
   },
 }));
@@ -247,7 +298,7 @@ export const usePromptStashStore = create<PromptStashStoreState>()((set, get) =>
   if (storageIsDurable && typeof window !== "undefined") {
     window.addEventListener("storage", (event) => {
       if (event.key !== PROMPT_STASH_STORAGE_KEY && event.key !== null) return;
-      usePromptStashStore.setState({ entries: readPersistedEntries() ?? [] });
+      usePromptStashStore.setState({ entries: visibleEntries(readPersistedEntries() ?? []) });
     });
   }
 }
