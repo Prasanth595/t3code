@@ -298,7 +298,7 @@ const rigFor = (
       reads.push(`pullRequest ${n}`);
       return Effect.succeed(null);
     },
-    openPullRequestsClosing: () => Effect.succeed([]),
+    openPullRequestsOnHead: () => Effect.succeed([]),
     markPrDraft: notForward,
     markPrReady: notForward,
     commentOnPr: notForward,

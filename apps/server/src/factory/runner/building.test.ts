@@ -35,7 +35,7 @@ import {
 import {
   GitHubFailed,
   GitHubRateLimited,
-  type ClosingPullRequest,
+  type OpenPullRequest,
   type GitHubError,
   type IssueDetail,
   type PullRequest,
@@ -236,12 +236,12 @@ interface World {
     textCheck?: GitHubError;
     issue?: GitHubError;
     closedBy?: GitHubError;
-    openPullRequestsClosing?: GitHubError;
+    openPullRequestsOnHead?: GitHubError;
   };
   /** Who GitHub says closed the issue: a login, nobody, or a failed read. */
   closedBy: string | null | GitHubError;
-  /** The open pull requests GitHub says would close the issue. */
-  closing: Array<ClosingPullRequest>;
+  /** The open pull requests GitHub lists from each branch. */
+  onHead: Record<string, Array<OpenPullRequest>>;
   /** The next send fails; `delivered` says T3 took the message all the same. */
   sendFailure: {
     error: SessionsError | MessageRejectedError | ThreadNotFoundError;
@@ -326,7 +326,7 @@ const rigFor = (
     thread: { worktreePath: "/t3/wt", branch: "t3code/abc", archived: false },
     failNext: {},
     closedBy: null,
-    closing: [],
+    onHead: {},
     sendFailure: null,
     archiveFails: null,
     threadOnce: null,
@@ -377,10 +377,10 @@ const rigFor = (
       const error = takeFailure("pullRequest");
       return error === undefined ? Effect.succeed(world.pr) : Effect.fail(error);
     },
-    openPullRequestsClosing: (n) => {
-      readCall(`openPullRequestsClosing ${n}`);
-      const error = takeFailure("openPullRequestsClosing");
-      return error === undefined ? Effect.succeed(world.closing) : Effect.fail(error);
+    openPullRequestsOnHead: (branch) => {
+      readCall(`openPullRequestsOnHead ${branch}`);
+      const error = takeFailure("openPullRequestsOnHead");
+      return error === undefined ? Effect.succeed(world.onHead[branch] ?? []) : Effect.fail(error);
     },
     markPrDraft: (n) => {
       ghCall(`markPrDraft ${n}`);
@@ -2934,19 +2934,16 @@ describe("watch and timeLimit: the end of a run", () => {
       closeIssue(noPr);
       noPr.clock.now = T0 + LIMIT_MS + 1;
       assert.strictEqual((yield* timeLimit(noPr.ctx, noPr.run)).kind, "stopped");
-      assert.deepStrictEqual(noPr.reads, []);
+      // The stop looks for a pull request on the branch; the issue itself is not read.
+      assert.deepStrictEqual(noPr.reads, ["openPullRequestsOnHead t3code/abc"]);
     }),
   );
 });
 
-/** An open draft by the factory on `head` into `main`, as GitHub's closing references list it. */
-const closingDraft = (
-  head: string,
-  over: Partial<ClosingPullRequest> = {},
-): ClosingPullRequest => ({
+/** An open draft by the factory on `head` into `main`, as GitHub lists it from the branch. */
+const draftOn = (head: string, over: Partial<OpenPullRequest> = {}): OpenPullRequest => ({
   number: 12,
   url: URL12,
-  isDraft: true,
   headRef: head,
   baseRef: "main",
   crossRepository: false,
@@ -3020,6 +3017,63 @@ describe("advance: an earlier attempt's pull request", () => {
     }),
   );
 
+  it.effect("is bound by the branch attempt 1 was relaunched on after an interruption", () =>
+    Effect.gen(function* () {
+      const rig = secondAttempt([
+        ...STARTED,
+        {
+          event: "session_interrupted",
+          data: {
+            resumes: 1,
+            relaunch: true,
+            run_ordinal: null,
+            branch: "t3code/int",
+            t3_error: null,
+            ended_in_pass: 2,
+          },
+        },
+        FINISHED_EVENT,
+      ]);
+      rig.world.pr = { ...defaultPr(), headRef: "t3code/int" };
+      assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+    }),
+  );
+
+  it.effect("is bound by the branch attempt 1's launch resumed from", () =>
+    Effect.gen(function* () {
+      const rig = secondAttempt(
+        STARTED.map((event) =>
+          event.event === "session_launched"
+            ? {
+                event: "session_launched" as const,
+                data: {
+                  ...event.data,
+                  resumed_from: { run: "rawphp__softfac__10__1", branch: "t3code/res" },
+                },
+              }
+            : event,
+        ),
+      );
+      rig.world.pr = { ...defaultPr(), headRef: "t3code/res" };
+      assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+    }),
+  );
+
+  it.effect("passes over an attempt with no ledger", () =>
+    Effect.gen(function* () {
+      // Attempt 1 is the plain start `rigFor` seeds; attempt 2 worked on t3code/old; attempt 3
+      // left no ledger; attempt 4 reports the pull request on t3code/old.
+      const rig = rigFor();
+      seed(rig.dataDir, { ...run10, attempt: 2 }, FIRST_ATTEMPT);
+      const run10n4: RunId = { ...run10, attempt: 4 };
+      seed(rig.dataDir, run10n4, STARTED);
+      const fourth: Rig = { ...rig, run: run10n4 };
+      fourth.world.pr = { ...defaultPr(), number: 14, headRef: "t3code/old" };
+      setStatus(fourth, "completed", `Built it.\nFACTORY-DONE: ${URL14}`);
+      assert.strictEqual((yield* advanceIn(fourth)).kind, "ready-for-gate");
+    }),
+  );
+
   it.effect("is still refused on a branch no attempt of the issue worked on", () =>
     Effect.gen(function* () {
       const rig = secondAttempt();
@@ -3050,11 +3104,11 @@ describe("advance: the pull request a session leaves when it stops or asks", () 
   it.effect("is recorded when the session said stuck after opening one on its branch", () =>
     Effect.gen(function* () {
       const rig = rigFor();
-      rig.world.closing = [closingDraft("t3code/abc")];
+      rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
       setStatus(rig, "completed", "FACTORY-STOP: stuck");
       assertStuck(rig, yield* advanceIn(rig), { publicReason: SAID_STUCK, extra: [PR_OPENED] });
       // The issue is read first, as for every building run; the lookup is the only other read.
-      assert.deepStrictEqual(rig.reads, ["issue 10", "openPullRequestsClosing 10"]);
+      assert.deepStrictEqual(rig.reads, ["issue 10", "openPullRequestsOnHead t3code/abc"]);
       assert.deepStrictEqual(
         readRun(rig.dataDir, rig.run).entries.find((e) => e.event === "pr_opened")?.cause,
         { step: "advance", reason: "pr-opened" },
@@ -3065,7 +3119,7 @@ describe("advance: the pull request a session leaves when it stops or asks", () 
   it.effect("is recorded when the session asked questions after opening one on its branch", () =>
     Effect.gen(function* () {
       const rig = rigFor();
-      rig.world.closing = [closingDraft("t3code/abc")];
+      rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
       setStatus(rig, "completed", `${QUESTIONS}\nFACTORY-STOP: needs-info`);
       assert.deepStrictEqual(yield* advanceIn(rig), { kind: "needs-info" });
       assert.deepStrictEqual(rig.gh, needsInfoCalls(QUESTIONS));
@@ -3082,36 +3136,77 @@ describe("advance: the pull request a session leaves when it stops or asks", () 
 
   it.effect("is recorded from the branch T3 made the worktree on", () =>
     Effect.gen(function* () {
+      // T3 renamed the thread's branch; the session pushed the worktree's own `t3/<hash>`.
       const rig = rigFor();
-      rig.world.closing = [closingDraft("t3/2e8db933")];
+      rig.world.onHead = { "t3/2e8db933": [draftOn("t3/2e8db933")] };
       setStatus(rig, "completed", "FACTORY-STOP: stuck", { worktreePath: LAUNCH_WORKTREE });
       const outcome = yield* advanceIn(rig);
       assert.strictEqual(outcome.kind, "stuck");
       assert.ok(linesOf(rig).some((line) => line.event === "pr_opened"));
+      assert.deepStrictEqual(rig.reads, [
+        "issue 10",
+        "openPullRequestsOnHead t3code/abc",
+        "openPullRequestsOnHead t3/2e8db933",
+      ]);
     }),
   );
 
   it.effect("is not recorded from another branch, another author, a fork or another base", () =>
     Effect.gen(function* () {
-      for (const other of [
-        closingDraft("someone/else"),
-        closingDraft("t3code/abc", { author: "someone" }),
-        closingDraft("t3code/abc", { author: null }),
-        closingDraft("t3code/abc", { crossRepository: true }),
-        closingDraft("t3code/abc", { baseRef: "dev" }),
+      for (const onHead of [
+        { "someone/else": [draftOn("someone/else")] },
+        { "t3code/abc": [draftOn("t3code/abc", { author: "someone" })] },
+        { "t3code/abc": [draftOn("t3code/abc", { author: null })] },
+        { "t3code/abc": [draftOn("t3code/abc", { crossRepository: true })] },
+        { "t3code/abc": [draftOn("t3code/abc", { baseRef: "dev" })] },
       ]) {
         const rig = rigFor();
-        rig.world.closing = [other];
+        rig.world.onHead = onHead;
         setStatus(rig, "completed", "FACTORY-STOP: stuck");
         assertStuck(rig, yield* advanceIn(rig), { publicReason: SAID_STUCK });
       }
     }),
   );
 
+  it.effect("matches the factory's login whatever its case", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc", { author: "RAWPHP" })] };
+      setStatus(rig, "completed", "FACTORY-STOP: stuck");
+      assertStuck(rig, yield* advanceIn(rig), { publicReason: SAID_STUCK, extra: [PR_OPENED] });
+    }),
+  );
+
+  it.effect("is recorded when the session refused the result-line reminder", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
+      setEnded(rig, 1, WORKING_MESSAGE);
+      rig.world.sendFailure = { error: refusal(), delivered: false };
+      const outcome = yield* advanceIn(rig);
+      assert.strictEqual(outcome.kind, "stuck");
+      assert.ok(linesOf(rig).some((line) => line.event === "pr_opened"));
+    }),
+  );
+
+  it.effect("is recorded when the run is stopped at its time limit", () =>
+    Effect.gen(function* () {
+      const rig = limitedRig();
+      rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
+      const elapsed = yield* stopAtTheLimit(rig);
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        PR_OPENED,
+        ...limitEvents(elapsed, "t3code/abc").slice(STARTED.length),
+      ]);
+      assert.deepStrictEqual(rig.reads, ["openPullRequestsOnHead t3code/abc"]);
+    }),
+  );
+
   it.effect("is recorded once", () =>
     Effect.gen(function* () {
       const rig = rigFor([...STARTED, PR_OPENED]);
-      rig.world.closing = [closingDraft("t3code/abc")];
+      rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
       setStatus(rig, "completed", "FACTORY-STOP: stuck");
       const outcome = yield* advanceIn(rig);
       assert.strictEqual(outcome.kind, "stuck");
@@ -3122,7 +3217,7 @@ describe("advance: the pull request a session leaves when it stops or asks", () 
   it.effect("is an error with nothing written when GitHub cannot list them", () =>
     Effect.gen(function* () {
       const rig = rigFor();
-      rig.world.failNext.openPullRequestsClosing = ghFailure();
+      rig.world.failNext.openPullRequestsOnHead = ghFailure();
       setStatus(rig, "completed", "FACTORY-STOP: stuck");
       const before = bytesOf(rig);
       const error = yield* Effect.flip(advanceIn(rig));

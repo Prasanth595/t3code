@@ -297,7 +297,7 @@ class FakeGh {
         ? Effect.fail(ghFailure())
         : Effect.succeed(this.closedByAnswer);
     },
-    openPullRequestsClosing: () => Effect.succeed([]),
+    openPullRequestsOnHead: () => Effect.succeed([]),
     pullRequest: (n) =>
       this.run(`pullRequest ${n}`, () => {}).pipe(
         Effect.map(() => {

@@ -4128,22 +4128,20 @@ it.effect("closedBy refuses an answer it cannot read", () =>
   }),
 );
 
-/** One node of GitHub's answer: an open draft by the factory on `main`, unless `over` says otherwise. */
-const closingPr = (
+/** One pull request as GitHub lists it: open, by the factory, on `main`, unless `over` says otherwise. */
+const listedPr = (
   number: number,
   over: Partial<{
     state: string;
     headRefName: string;
     baseRefName: string;
     isCrossRepository: boolean;
-    isDraft: boolean;
     author: { login: string } | null;
   }> = {},
 ) =>
   JSON.stringify({
     number,
     url: `https://github.com/rawphp/softfac/pull/${number}`,
-    isDraft: true,
     state: "OPEN",
     headRefName: `t3/pr-${number}`,
     baseRefName: "main",
@@ -4155,6 +4153,8 @@ const closingPr = (
 const closingReply = (nodes: string) =>
   `{"data":{"repository":{"issue":{"closedByPullRequestsReferences":{"nodes":[${nodes}]}}}}}`;
 
+const PR_LIST_FIELDS = "number,url,headRefName,baseRefName,isCrossRepository,author";
+
 it.effect(
   "openPullRequestsClosing lists the open pull requests that would close the issue, with one call",
   () =>
@@ -4164,16 +4164,11 @@ it.effect(
         reply(
           closingReply(
             [
-              closingPr(12, { state: "MERGED" }),
-              closingPr(14, { headRefName: "t3/softfac-issue-6-1" }),
-              closingPr(13, { state: "CLOSED" }),
-              closingPr(15, { headRefName: "t3/fork", isCrossRepository: true }),
-              closingPr(16, {
-                headRefName: "t3/nobody",
-                baseRefName: "dev",
-                isDraft: false,
-                author: null,
-              }),
+              listedPr(12, { state: "MERGED" }),
+              listedPr(14, { headRefName: "t3/softfac-issue-6-1" }),
+              listedPr(13, { state: "CLOSED" }),
+              listedPr(15, { headRefName: "t3/fork", isCrossRepository: true }),
+              listedPr(16, { headRefName: "t3/nobody", baseRefName: "dev", author: null }),
             ].join(","),
           ),
         ),
@@ -4182,7 +4177,6 @@ it.effect(
         {
           number: 14,
           url: "https://github.com/rawphp/softfac/pull/14",
-          isDraft: true,
           headRef: "t3/softfac-issue-6-1",
           baseRef: "main",
           crossRepository: false,
@@ -4191,7 +4185,6 @@ it.effect(
         {
           number: 15,
           url: "https://github.com/rawphp/softfac/pull/15",
-          isDraft: true,
           headRef: "t3/fork",
           baseRef: "main",
           crossRepository: true,
@@ -4200,7 +4193,6 @@ it.effect(
         {
           number: 16,
           url: "https://github.com/rawphp/softfac/pull/16",
-          isDraft: false,
           headRef: "t3/nobody",
           baseRef: "dev",
           crossRepository: false,
@@ -4236,6 +4228,90 @@ it.effect("openPullRequestsClosing refuses an answer it cannot read", () =>
     for (const text of ["", "no", "{}", '{"data":{"repository":{"issue":null}}}']) {
       const t = setup(reply(text));
       const error = yield* t.err(t.github.openPullRequestsClosing(6));
+      assert.strictEqual(error._tag, "GitHubParse", text);
+    }
+  }),
+);
+
+const prListCall = (head: string) => [
+  "pr",
+  "list",
+  "--repo",
+  REPO,
+  "--state",
+  "open",
+  "--head",
+  head,
+  "--limit",
+  "100",
+  "--json",
+  PR_LIST_FIELDS,
+];
+
+it.effect(
+  "openPullRequestsOnHead lists the open pull requests from the branch, with the exact call",
+  () =>
+    Effect.gen(function* () {
+      // `gh pr list --json author` carries more than the login; a blank login is nobody.
+      const t = setup(
+        reply(
+          `[${listedPr(14, { headRefName: "t3code/abc" })},${JSON.stringify({
+            number: 15,
+            url: "https://github.com/rawphp/softfac/pull/15",
+            headRefName: "t3code/abc",
+            baseRefName: "dev",
+            isCrossRepository: true,
+            author: { id: "", is_bot: false, login: "", name: "" },
+          })}]`,
+        ),
+      );
+      assert.deepStrictEqual(yield* t.ok(t.github.openPullRequestsOnHead("t3code/abc")), [
+        {
+          number: 14,
+          url: "https://github.com/rawphp/softfac/pull/14",
+          headRef: "t3code/abc",
+          baseRef: "main",
+          crossRepository: false,
+          author: "rawphp",
+        },
+        {
+          number: 15,
+          url: "https://github.com/rawphp/softfac/pull/15",
+          headRef: "t3code/abc",
+          baseRef: "dev",
+          crossRepository: true,
+          author: null,
+        },
+      ]);
+      assert.deepStrictEqual(t.calls(), [prListCall("t3code/abc")]);
+    }),
+);
+
+it.effect("openPullRequestsOnHead is empty when the branch has none", () =>
+  Effect.gen(function* () {
+    const t = setup(reply("[]"));
+    assert.deepStrictEqual(yield* t.ok(t.github.openPullRequestsOnHead("t3code/abc")), []);
+  }),
+);
+
+it.effect(
+  "openPullRequestsOnHead refuses a branch name that could be taken for an option, before calling gh",
+  () =>
+    Effect.gen(function* () {
+      for (const head of ["-x", "--force", "a b", "a..b", "", "a\u0001b"]) {
+        const t = setup(reply("[]"));
+        const error = yield* t.err(t.github.openPullRequestsOnHead(head));
+        assert.strictEqual(error._tag, "GitHubInvalidArgument", JSON.stringify(head));
+        assert.deepStrictEqual(t.calls(), [], JSON.stringify(head));
+      }
+    }),
+);
+
+it.effect("openPullRequestsOnHead refuses an answer it cannot read", () =>
+  Effect.gen(function* () {
+    for (const text of ["", "no", "{}", '[{"number":"x"}]']) {
+      const t = setup(reply(text));
+      const error = yield* t.err(t.github.openPullRequestsOnHead("t3code/abc"));
       assert.strictEqual(error._tag, "GitHubParse", text);
     }
   }),

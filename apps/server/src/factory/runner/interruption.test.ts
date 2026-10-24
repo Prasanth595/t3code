@@ -389,7 +389,7 @@ const rigFor = (
       return Effect.succeed(world.issue);
     },
     closedBy: () => Effect.succeed(null),
-    openPullRequestsClosing: () => Effect.succeed([]),
+    openPullRequestsOnHead: () => Effect.succeed([]),
     pullRequest: (n) => {
       gh.push(`pullRequest ${n}`);
       return Effect.succeed(world.pr);
