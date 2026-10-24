@@ -713,7 +713,8 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       ]);
       const next: RunningHost = {
         hub,
-        agentDevice: null,
+        // The agent daemon outlives the hub and still holds session claims.
+        agentDevice: running?.agentDevice ?? null,
         helpers: {
           serveSimAxSettings: axExists ? candidate.serveSimAxSettings : null,
           serveSimCli: cliExists ? candidate.serveSimCli : null,

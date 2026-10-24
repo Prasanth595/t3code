@@ -19,6 +19,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -53,6 +54,7 @@ const fixture = Effect.fn("fixture")(function* (
   options: {
     readonly endsDevices?: boolean;
     readonly onClose?: Effect.Effect<"ok" | "missing" | "reject" | "http_error" | "malformed">;
+    readonly onPlatformAvailability?: Effect.Effect<void>;
   } = {},
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
@@ -197,7 +199,10 @@ const fixture = Effect.fn("fixture")(function* (
       hubInstalled: true,
       agentDeviceInstalled: false,
     })),
-    platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+    platformAvailability: (platform) =>
+      (options.onPlatformAvailability ?? Effect.void).pipe(
+        Effect.as({ platform, available: true }),
+      ),
     ensureReady: (onPhase) =>
       Effect.gen(function* () {
         if (runtimeFailure && runtimeFailure._tag !== "AgentDeviceStartError")
@@ -1349,9 +1354,32 @@ describe("agent session release on close", () => {
       expect(closedSessions).toHaveLength(1);
     }),
   );
-  it.effect("does not let reopen publish while the old claim is being released", () =>
+  it.effect("keeps another thread's record for its own release when a close shuts down", () =>
     Effect.gen(function* () {
-      const started = yield* Deferred.make<void>();
+      const { service, closedSessions } = yield* fixture();
+      yield* service.configure({ enabled: true, agentAccessEnabled: true });
+      const threadId = ThreadId.make("shutting-down");
+      const other = ThreadId.make("peer");
+      const session = yield* openClaim(service, threadId);
+      yield* openClaim(service, other, session.deviceId);
+      yield* service.close({ threadId, shutdown: true });
+      expect((yield* service.state).sessions.map((entry) => entry.threadId)).toEqual([other]);
+      yield* service.close({ threadId: other });
+      expect((yield* service.state).sessions).toHaveLength(0);
+      const names = yield* Effect.forEach([threadId, other], (thread) =>
+        agentDeviceSession(thread, session.hostId, session.deviceId),
+      ).pipe(Effect.provide(NodeCrypto.layer));
+      expect(
+        closedSessions.map((body) => (body as { params: { session: string } }).params.session),
+      ).toEqual(names);
+    }),
+  );
+
+  it.effect("publishes a reopened session only after the old claim is released and removed", () =>
+    Effect.gen(function* () {
+      const events: string[] = [];
+      const entered = yield* Queue.unbounded<void>();
+      const releasing = yield* Deferred.make<void>();
       const finish = yield* Deferred.make<void>();
       const { service } = yield* fixture(
         Effect.void,
@@ -1362,24 +1390,35 @@ describe("agent session release on close", () => {
         undefined,
         {
           onClose: Effect.gen(function* () {
-            yield* Deferred.succeed(started, undefined);
+            events.push("release started");
+            yield* Deferred.succeed(releasing, undefined);
             yield* Deferred.await(finish);
+            events.push("release finished");
             return "ok" as const;
           }),
+          onPlatformAvailability: Queue.offer(entered, undefined),
         },
       );
       yield* service.configure({ enabled: true, agentAccessEnabled: true });
       const threadId = ThreadId.make("reopen");
       const session = yield* openClaim(service, threadId);
+      yield* Queue.take(entered);
+      const publications = yield* service.subscribe;
       const closing = yield* service.close({ threadId }).pipe(Effect.forkChild);
-      yield* Deferred.await(started);
+      yield* Deferred.await(releasing);
       const opening = yield* openClaim(service, threadId, session.deviceId).pipe(Effect.forkChild);
-      yield* Effect.yieldNow;
-      expect(opening.pollUnsafe()).toBeUndefined();
+      yield* Queue.take(entered);
+      events.push("reopen entered");
       yield* Deferred.succeed(finish, undefined);
       yield* Fiber.join(closing);
-      yield* Fiber.join(opening);
-      expect((yield* service.state).sessions).toHaveLength(1);
-    }),
+      const reopened = yield* Fiber.join(opening);
+      expect(events).toEqual(["release started", "reopen entered", "release finished"]);
+      const published = (yield* PubSub.takeAll(publications))
+        .map(({ sessions }) =>
+          sessions.includes(session) ? "old" : sessions.includes(reopened) ? "reopened" : "none",
+        )
+        .filter((label, index, labels) => label !== labels[index - 1]);
+      expect(published).toEqual(["none", "reopened"]);
+    }).pipe(Effect.scoped),
   );
 });

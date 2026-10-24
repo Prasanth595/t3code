@@ -713,9 +713,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           ? { ...device, booted: false }
           : device,
       ),
-      sessions: state.sessions.filter(
-        (session) => !(session.hostId === ready.hostId && session.deviceId === deviceId),
-      ),
+      // Close removes each record only after its own release, so other
+      // threads keep theirs for their own close.
+      sessions: readyOverride
+        ? state.sessions
+        : state.sessions.filter(
+            (session) => !(session.hostId === ready.hostId && session.deviceId === deviceId),
+          ),
     }));
     // Discovery can stall while an emulator saves its snapshot. A failed
     // refresh must not turn an accepted shutdown into an action failure.

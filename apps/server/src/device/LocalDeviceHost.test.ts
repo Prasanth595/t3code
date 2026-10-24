@@ -42,6 +42,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-agent-start-" });
+  const hub = { running: true };
   const stateDir = agentDeviceStateDir(path, path.join(baseDir, "userdata"));
   for (const [name, version, entry] of [
     ["expo-device-hub", DEVICE_HUB_VERSION, "dist/server/cli.mjs"],
@@ -68,7 +69,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
             stderr: Stream.empty,
             all: Stream.empty,
             exitCode: Effect.never,
-            isRunning: Effect.succeed(true),
+            isRunning: Effect.sync(() => hub.running),
             kill: () => Effect.void,
             stdin: Sink.drain,
             getInputFd: () => Sink.drain,
@@ -92,7 +93,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     ),
   );
   yield* host.ensureReady(() => Effect.void);
-  return { host, fs, stateDir };
+  return { host, fs, stateDir, hub };
 });
 
 describe("AgentDevice startup", () => {
@@ -198,6 +199,24 @@ describe("AgentDevice startup", () => {
       );
       expect((yield* host.current)?.releaseAgentSession).toBeTypeOf("function");
       expect(attempts).toBe(1);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps releasing agent sessions after a dead hub is replaced", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { host, hub } = yield* agentFixture((stateDir) =>
+        fs
+          .writeFileString(
+            `${stateDir}/daemon.json`,
+            JSON.stringify({ httpPort: 12345, token: "test-token" }),
+          )
+          .pipe(Effect.orDie, Effect.as(processOutput(0))),
+      );
+      yield* host.ensureAgentReady(() => Effect.void);
+      hub.running = false;
+      yield* host.ensureReady(() => Effect.void);
+      expect((yield* host.current)?.releaseAgentSession).toBeTypeOf("function");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
