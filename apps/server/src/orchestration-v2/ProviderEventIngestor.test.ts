@@ -4,6 +4,7 @@ import {
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
+  CommandId,
   MessageId,
   GitCommandError,
   type ModelSelection,
@@ -37,6 +38,7 @@ import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -1509,6 +1511,183 @@ layer("ProviderEventIngestorV2", (it) => {
           );
         }),
       ),
+  );
+
+  it.effect.each(["command", "user_input"] as const)(
+    "rejects a %s response planned before terminal normalization cancelled the request",
+    (kind) =>
+      Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2.pipe(Effect.provide(EffectOutbox.layer));
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+        const now = yield* DateTime.now;
+        const threadEvent = yield* threadCreatedEvent(now);
+        const threadId = threadEvent.threadId;
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const providerThreadId = idAllocator.derive.providerThread({
+          driver: CODEX_DRIVER,
+          nativeThreadId: `${threadId}:respond-race`,
+        });
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: CODEX_DRIVER,
+          nativeTurnId: `${threadId}:respond-race`,
+        });
+        const nodeId = NodeId.make(`${threadId}:request`);
+        const request: OrchestrationV2RuntimeRequest = {
+          id: RuntimeRequestId.make(`${threadId}:request`),
+          nodeId,
+          providerTurnId,
+          nativeRequestRef: null,
+          kind,
+          status: "pending",
+          responseCapability: { type: "live", providerSessionId },
+          createdAt: now,
+          resolvedAt: null,
+        };
+        const node: OrchestrationV2ExecutionNode = {
+          id: nodeId,
+          threadId,
+          runId: null,
+          parentNodeId: null,
+          rootNodeId: nodeId,
+          kind: kind === "user_input" ? "user_input_request" : "approval_request",
+          status: "waiting",
+          countsForRun: false,
+          providerThreadId,
+          providerTurnId,
+          nativeItemRef: null,
+          runtimeRequestId: request.id,
+          checkpointScopeId: null,
+          startedAt: now,
+          completedAt: null,
+        };
+        const itemBase = {
+          id: TurnItemId.make(`${threadId}:request`),
+          threadId,
+          runId: null,
+          nodeId,
+          providerThreadId,
+          providerTurnId,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "waiting" as const,
+          title: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        };
+        const item: OrchestrationV2TurnItem =
+          kind === "user_input"
+            ? { ...itemBase, type: "user_input_request", requestId: request.id, questions: [] }
+            : { ...itemBase, type: "approval_request", requestId: request.id, requestKind: kind };
+        const domainEvents = (
+          payloads: ReadonlyArray<
+            | {
+                readonly type: "runtime-request.updated";
+                readonly payload: OrchestrationV2RuntimeRequest;
+              }
+            | { readonly type: "node.updated"; readonly payload: OrchestrationV2ExecutionNode }
+            | { readonly type: "turn-item.updated"; readonly payload: OrchestrationV2TurnItem }
+          >,
+        ) =>
+          Effect.forEach(payloads, (payload) =>
+            Effect.map(
+              idAllocator.allocate.event({ threadId }),
+              (id): OrchestrationV2DomainEvent => ({ id, threadId, occurredAt: now, ...payload }),
+            ),
+          );
+        yield* eventSink.write({
+          events: [
+            threadEvent,
+            ...(yield* domainEvents([
+              { type: "runtime-request.updated", payload: request },
+              { type: "node.updated", payload: node },
+              { type: "turn-item.updated", payload: item },
+            ])),
+          ],
+        });
+        // The respond command plans from this pending read before the stop commits.
+        const planned = yield* projections.getRuntimeResponseContext(threadId, request.id);
+        assert.equal(planned.request?.status, "pending");
+        yield* ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+          event: {
+            type: "provider_turn.updated",
+            driver: CODEX_DRIVER,
+            providerTurn: {
+              id: providerTurnId,
+              providerThreadId,
+              nodeId,
+              runAttemptId: null,
+              nativeTurnRef: null,
+              ordinal: 1,
+              status: "interrupted",
+              startedAt: now,
+              completedAt: now,
+            },
+          },
+        });
+        assert.equal(
+          (yield* projections.getRuntimeRequest(threadId, request.id))?.status,
+          "cancelled",
+        );
+        const commandId = CommandId.make(`${threadId}:respond`);
+        yield* eventSink
+          .commitCommand({
+            commandId,
+            threadId,
+            commandType: "runtime-request.respond",
+            acceptedAt: now,
+            events: yield* domainEvents([
+              {
+                type: "runtime-request.updated",
+                payload: {
+                  ...planned.request!,
+                  status: "resolved",
+                  resolvedAt: now,
+                  ...(kind === "user_input" ? { answers: { q: "yes" } } : { decision: "accept" }),
+                },
+              },
+              {
+                type: "node.updated",
+                payload: { ...planned.node!, status: "completed", completedAt: now },
+              },
+              {
+                type: "turn-item.updated",
+                payload: { ...planned.item!, status: "completed", completedAt: now },
+              },
+            ]),
+            effects: [
+              {
+                id: `effect:${commandId}:runtime-request.respond:${request.id}`,
+                commandId,
+                threadId,
+                request: {
+                  type: "runtime-request.respond",
+                  providerSessionId,
+                  requestId: request.id,
+                  ...(kind === "user_input" ? { answers: { q: "yes" } } : { decision: "accept" }),
+                },
+              },
+            ],
+          })
+          .pipe(Effect.exit);
+        const projection = yield* projections.getThreadProjection(threadId);
+        assert.equal(
+          projection.runtimeRequests.find((entry) => entry.id === request.id)?.status,
+          "cancelled",
+        );
+        assert.equal(projection.nodes.find((entry) => entry.id === nodeId)?.status, "cancelled");
+        assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+      }),
   );
 
   it.effect("persists a failed provider terminal as one expected error item", () =>
