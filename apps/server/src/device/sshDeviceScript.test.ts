@@ -66,7 +66,10 @@ it.each([
 ] as const)(
   "%s on %s: %s preserves the response and cleans up the bootstrap",
   async (mode, platform, scenario) => {
-    const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-handles-"));
+    const home = await NodeFSP.mkdtemp(
+      NodePath.join(NodeOS.tmpdir(), "t3-ssh-handles-\u00e9-\u05d0-"),
+    );
+    const execPath = platform === "win32" ? "C:\\Users\\\u00e9-\u05d0\\node.exe" : process.execPath;
     const owner = "test-owner";
     const state = NodePath.join(home, ".t3/device/hosts", owner);
     const tools = NodePath.join(home, ".t3/device/tools");
@@ -92,11 +95,15 @@ it.each([
               spawn: () => {
                 throw Error("Unexpected service restart");
               },
-              spawnSync: (command: string, _args: Array<string>, options?: { input?: string }) => {
-                if (
-                  command === "powershell.exe" &&
-                  options?.input?.includes("Win32_ProcessStartup")
-                ) {
+              spawnSync: (command: string, args: Array<string>) => {
+                if (command === "powershell.exe" && args.includes("-EncodedCommand")) {
+                  const launchScript = Buffer.from(
+                    args[args.indexOf("-EncodedCommand") + 1]!,
+                    "base64",
+                  ).toString("utf16le");
+                  expect(launchScript).toContain("Win32_ProcessStartup");
+                  expect(launchScript).toContain(`CurrentDirectory = '${home}'`);
+                  expect([command, ...args].join(" ").length + 1).toBeLessThan(30000);
                   launches++;
                   if (scenario === "launch failure")
                     return {
@@ -112,6 +119,7 @@ it.each([
                     name.startsWith(".bootstrap-"),
                   )!;
                   const file = NodePath.join(state, directory, "bootstrap.cjs");
+                  expect(launchScript).toContain(`CommandLine = '"${execPath}" "${file}"'`);
                   void run(NodeFS.readFileSync(file, "utf8"), true, NodePath.dirname(file));
                   return { status: 0, stdout: JSON.stringify({ ReturnValue: 0, ProcessId: 1234 }) };
                 }
@@ -130,7 +138,7 @@ it.each([
         },
         process: {
           platform,
-          execPath: process.execPath,
+          execPath,
           pid: worker ? 1234 : 5678,
           versions: process.versions,
           env: {},
@@ -141,6 +149,7 @@ it.each([
         },
         fetch: async () => ({ ok: true }),
         AbortSignal,
+        Buffer,
         setTimeout: (callback: () => void) => {
           void Promise.resolve().then(callback);
         },
@@ -214,7 +223,7 @@ it.each([
             ...(mode === "agent-start" ? { daemonPort: 23456, token: "test-token" } : {}),
           });
         else if (mode === "probe")
-          expect(JSON.parse(messages[0]!)).toMatchObject({ nodePath: process.execPath });
+          expect(JSON.parse(messages[0]!)).toMatchObject({ nodePath: execPath });
       }
       expect(
         (await NodeFSP.readdir(state)).filter((name) => name.startsWith(".bootstrap-")),

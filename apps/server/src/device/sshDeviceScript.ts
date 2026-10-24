@@ -252,11 +252,11 @@ async function start() {
     fs.writeFileSync(script, bootstrap.toString() + '\nconst finish = ' + finish.toString() + ';\nbootstrap().then(value => finish({ value }), error => finish({ error: error.message }));', { mode: 0o600 });
     const quote = value => "'" + value.replaceAll("'", "''") + "'";
     const command = '"' + process.execPath + '" "' + script + '"';
-    const launched = require('node:child_process').spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '-'], {
+    const launchScript = "$ErrorActionPreference = 'Stop'\n" +
+      "$startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0; CreateFlags = [uint32]1024; EnvironmentVariables = [string[]]@([Environment]::GetEnvironmentVariables().GetEnumerator() | ForEach-Object { $_.Key + '=' + $_.Value }) }\n" +
+      "Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = " + quote(command) + "; CurrentDirectory = " + quote(process.cwd()) + "; ProcessStartupInformation = $startup } | Select-Object ReturnValue,ProcessId | ConvertTo-Json -Compress\n";
+    const launched = require('node:child_process').spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(launchScript, 'utf16le').toString('base64')], {
       encoding: 'utf8', timeout: 30000,
-      input: "$ErrorActionPreference = 'Stop'\n" +
-        "$startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0; CreateFlags = [uint32]1024; EnvironmentVariables = [string[]]@([Environment]::GetEnvironmentVariables().GetEnumerator() | ForEach-Object { $_.Key + '=' + $_.Value }) }\n" +
-        "Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = " + quote(command) + "; CurrentDirectory = " + quote(process.cwd()) + "; ProcessStartupInformation = $startup } | Select-Object ReturnValue,ProcessId | ConvertTo-Json -Compress\n",
     });
     if (launched.status !== 0) throw Error('Could not isolate Windows device startup: ' + (launched.error?.message || launched.stderr));
     const launch = JSON.parse(launched.stdout);
