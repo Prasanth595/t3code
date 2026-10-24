@@ -2148,57 +2148,59 @@ it.layer(
   });
 
   describe("checkClaudeProviderStatus", () => {
-    it.effect.each([
-      {
-        tokenSource: "unknown-auth-source",
-        apiKeySource: "none",
-        apiProvider: "firstParty",
-        expected: "unsupported",
-      },
-      {
-        tokenSource: "CLAUDE_CODE_OAUTH_TOKEN",
-        apiKeySource: "none",
-        apiProvider: "firstParty",
-        expected: "probeFailed",
-      },
-      {
-        tokenSource: "ANTHROPIC_AUTH_TOKEN",
-        apiKeySource: "none",
-        apiProvider: "firstParty",
-        expected: "unsupported",
-      },
-      {
-        tokenSource: "oauth",
-        apiKeySource: "none",
-        apiProvider: "firstParty",
-        expected: "probeFailed",
-      },
-      {
-        tokenSource: "none",
-        apiKeySource: "ANTHROPIC_API_KEY",
-        apiProvider: "firstParty",
-        expected: "unsupported",
-      },
-      {
-        tokenSource: "oauth",
-        apiKeySource: "ANTHROPIC_API_KEY",
-        apiProvider: "firstParty",
-        expected: "unsupported",
-      },
-      {
-        tokenSource: undefined,
-        apiKeySource: undefined,
-        apiProvider: undefined,
-        expected: "unsupported",
-      },
-      {
-        tokenSource: "oauth",
-        apiKeySource: "none",
-        apiProvider: "bedrock",
-        expected: "unsupported",
-      },
-    ])(
-      "keeps unavailable OAuth probes eligible for streamed limits: $tokenSource/$apiKeySource/$apiProvider",
+    it.effect.each(
+      [
+        {
+          tokenSource: "unknown-auth-source",
+          apiKeySource: "none",
+          apiProvider: "firstParty",
+          expected: "unsupported",
+        },
+        {
+          tokenSource: "CLAUDE_CODE_OAUTH_TOKEN",
+          apiKeySource: "none",
+          apiProvider: "firstParty",
+          expected: "probeFailed",
+        },
+        {
+          tokenSource: "ANTHROPIC_AUTH_TOKEN",
+          apiKeySource: "none",
+          apiProvider: "firstParty",
+          expected: "unsupported",
+        },
+        {
+          tokenSource: "oauth",
+          apiKeySource: "none",
+          apiProvider: "firstParty",
+          expected: "probeFailed",
+        },
+        {
+          tokenSource: "none",
+          apiKeySource: "ANTHROPIC_API_KEY",
+          apiProvider: "firstParty",
+          expected: "unsupported",
+        },
+        {
+          tokenSource: "oauth",
+          apiKeySource: "ANTHROPIC_API_KEY",
+          apiProvider: "firstParty",
+          expected: "unsupported",
+        },
+        {
+          tokenSource: undefined,
+          apiKeySource: undefined,
+          apiProvider: undefined,
+          expected: "unsupported",
+        },
+        {
+          tokenSource: "oauth",
+          apiKeySource: "none",
+          apiProvider: "bedrock",
+          expected: "unsupported",
+        },
+      ].flatMap((account) => [false, true].map((usageMissing) => ({ ...account, usageMissing }))),
+    )(
+      "classifies unavailable usage: $tokenSource/$apiKeySource/$apiProvider (missing: $usageMissing)",
       (account) =>
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(
@@ -2209,11 +2211,19 @@ it.layer(
                 email: undefined,
                 subscriptionType: undefined,
                 slashCommands: [],
-                usage: { rate_limits_available: false, rate_limits: null },
+                ...(account.usageMissing
+                  ? {}
+                  : { usage: { rate_limits_available: false, rate_limits: null } }),
               }),
             { ANTHROPIC_BASE_URL: "" },
           );
           assert.strictEqual(status.usageLimits?.unavailable?.reason, account.expected);
+          if (account.expected === "probeFailed") {
+            assert.include(
+              status.usageLimits?.unavailable?.message,
+              "Limits will appear when a turn reports them.",
+            );
+          }
         }).pipe(
           Effect.provide(layerMockSpawner(() => ({ stdout: "2.1.309\n", stderr: "", code: 0 }))),
         ),
