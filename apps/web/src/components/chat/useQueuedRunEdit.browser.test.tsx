@@ -1,5 +1,6 @@
 import { EnvironmentId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import { useRef } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { render } from "../../../test/render";
@@ -149,6 +150,39 @@ it.each(["Updated message", ""])(
     await expect.element(screen.getByRole("button", { name: "Remove report.pdf" })).toBeVisible();
   },
 );
+
+it("saves an empty restored edit that keeps its attachment", async () => {
+  setup();
+  // Navigation is simulated by rerendering, without route consumers.
+  await using screen = await render(<Editor />, { router: false });
+  await screen.getByRole("button", { name: "Edit queued message" }).click();
+  await screen.getByRole("textbox", { name: "Message" }).fill("");
+  await screen.rerender(<div>Another thread</div>);
+  const persisted = JSON.parse(
+    JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState())),
+  );
+  useComposerDraftStore.setState(
+    useComposerDraftStore.persist.getOptions().merge!(
+      persisted,
+      useComposerDraftStore.getInitialState(),
+    ),
+  );
+  await screen.rerender(<Editor />);
+  await screen.getByRole("button", { name: "Edit queued message" }).click();
+  await expect.element(screen.getByRole("textbox", { name: "Message" })).toHaveValue("");
+  await expect.element(screen.getByRole("button", { name: "Remove report.pdf" })).toBeVisible();
+  await screen.getByRole("button", { name: "Save edit" }).click();
+  await vi.waitFor(() =>
+    expect(commands.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          text: ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+          edit: expect.objectContaining({ attachments: [expect.anything()] }),
+        }),
+      }),
+    ),
+  );
+});
 
 it("reopens an untouched edit with the queued message saved by another client", async () => {
   setup();

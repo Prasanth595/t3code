@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 import {
@@ -85,6 +85,29 @@ describe("queued message file edits", () => {
     expect(store.getComposerDraft(threadTarget)?.files).toEqual([file]);
     expect(store.getComposerDraft(editTarget)).toBeNull();
   });
+
+  it.each(["", "Separate draft"])(
+    "handles attachment-only removals without overwriting composer %j",
+    (separateDraft) => {
+      const store = useComposerDraftStore.getState();
+      store.setPrompt(threadTarget, separateDraft);
+      store.setPrompt(editTarget, "Original message");
+      store.setQueuedMessageEdit(editTarget, {
+        messageId: MessageId.make("message:queued"),
+        originalText: "Original message",
+        removedAttachmentIds: ["attachment:removed"],
+      });
+      expect(
+        recoverQueuedMessageEdit({ editTarget, threadTarget, originalText: "Original message" }),
+      ).toBe(separateDraft ? "discarded" : "kept");
+      expect(store.getComposerDraft(threadTarget)?.prompt).toBe(
+        separateDraft || "Original message",
+      );
+      expect(store.getComposerDraft(threadTarget)?.files).toEqual([]);
+      expect(store.getComposerDraft(threadTarget)?.queuedMessageEdit).toBeUndefined();
+      expect(store.getComposerDraft(editTarget)).toBeNull();
+    },
+  );
 
   it("does not overwrite a separate draft when the queued run leaves", () => {
     const store = useComposerDraftStore.getState();

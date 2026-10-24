@@ -16,9 +16,13 @@ export function recoverQueuedMessageEdit(input: {
   const draft = store.getComposerDraft(input.editTarget);
   const dirty =
     draft !== null &&
-    (draft.prompt !== input.originalText || draft.images.length > 0 || draft.files.length > 0);
+    (draft.prompt !== input.originalText ||
+      draft.images.length > 0 ||
+      draft.files.length > 0 ||
+      (draft.queuedMessageEdit?.removedAttachmentIds.length ?? 0) > 0);
   if (dirty && !composerDraftHasUserContent(store.getComposerDraft(input.threadTarget))) {
     store.moveComposerPromptAndImages(input.editTarget, input.threadTarget);
+    // A new composer draft keeps the edited content, not IDs belonging to the old queued message.
     store.setQueuedMessageEdit(input.editTarget, undefined);
     return "kept";
   }
