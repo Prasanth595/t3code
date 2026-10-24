@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import { describe, expect, it } from "vite-plus/test";
 
 import { applyAppearanceFontVariables, type AppearanceFontPreferences } from "./appearanceFonts";
