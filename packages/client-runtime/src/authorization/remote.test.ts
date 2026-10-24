@@ -251,6 +251,37 @@ describe("remote environment authorization", () => {
     }),
   );
 
+  it.effect("falls back to the bare ticket path on a server without the audience route", () =>
+    Effect.gen(function* () {
+      const fetch = recordedFetch(
+        Response.json({ message: "Not Found" }, { status: 404 }),
+        Response.json({ ticket: "old-ticket", expiresAt: "2026-05-01T12:05:00.000Z" }),
+      );
+      const proofs: Array<{ method: string; url: string; accessToken: string }> = [];
+
+      const url = yield* resolveRemoteDpopWebSocketConnectionUrl({
+        wsBaseUrl: "wss://remote.example.com/",
+        httpBaseUrl: "https://remote.example.com/",
+        accessToken: "dpop-access-token",
+        createProof: (input) => {
+          proofs.push(input);
+          return Effect.succeed(`proof-${proofs.length}`);
+        },
+      }).pipe(provideRemoteHttp(fetch.fetchFn));
+
+      expect(fetch.calls.map(([target]) => String(target))).toEqual([
+        "https://remote.example.com/api/auth/websocket-ticket/rpc",
+        "https://remote.example.com/api/auth/websocket-ticket",
+      ]);
+      expect(proofs.map((proof) => proof.url)).toEqual([
+        "https://remote.example.com/api/auth/websocket-ticket/rpc",
+        "https://remote.example.com/api/auth/websocket-ticket",
+        "https://remote.example.com/ws",
+      ]);
+      expect(url).toContain("wsTicket=old-ticket");
+    }),
+  );
+
   it.effect("names the signed-in Connect account and this device by hash only", () =>
     Effect.gen(function* () {
       const fetch = recordedFetch(

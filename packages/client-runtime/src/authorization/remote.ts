@@ -5,6 +5,7 @@ import {
   AuthTokenExchangeGrantType,
   type ClientConnectionMethod,
   type AuthEnvironmentScope,
+  type AuthWebSocketTicketResult,
   type AuthWebSocketTicketUse,
 } from "@t3tools/contracts";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
@@ -16,6 +17,7 @@ import * as ClientCapabilities from "../platform/capabilities.ts";
 import {
   executeEnvironmentHttpRequest,
   makeEnvironmentHttpApiGroupClient,
+  RemoteEnvironmentAuthUndeclaredStatusError,
   type RemoteEnvironmentRequestError,
 } from "../rpc/http.ts";
 
@@ -186,6 +188,27 @@ export const fetchRemoteSessionState = Effect.fn(
 const webSocketTicketPath = (use: AuthWebSocketTicketUse | undefined) =>
   use === undefined ? "/api/auth/websocket-ticket" : `/api/auth/websocket-ticket/${use}`;
 
+/**
+ * A server that predates ticket audiences has no `/:use` route and answers 404.
+ * Its tickets are the unbound kind it always issued, so the bare path is the
+ * right request there, not an error.
+ */
+const issueWebSocketTicketWithFallback = <E, R>(
+  use: AuthWebSocketTicketUse | undefined,
+  issue: (
+    use: AuthWebSocketTicketUse | undefined,
+  ) => Effect.Effect<AuthWebSocketTicketResult, E, R>,
+) =>
+  use === undefined
+    ? issue(undefined)
+    : issue(use).pipe(
+        Effect.catchIf(
+          (error) =>
+            error instanceof RemoteEnvironmentAuthUndeclaredStatusError && error.status === 404,
+          () => issue(undefined),
+        ),
+      );
+
 export const issueRemoteWebSocketTicket = Effect.fn(
   "clientRuntime.authorization.issueRemoteWebSocketTicket",
 )(function* (input: {
@@ -196,32 +219,46 @@ export const issueRemoteWebSocketTicket = Effect.fn(
 }) {
   const client = yield* makeEnvironmentHttpApiGroupClient(input.httpBaseUrl, "auth");
   const headers = { authorization: `Bearer ${input.bearerToken}` };
-  return yield* executeEnvironmentHttpRequest(
-    environmentEndpointUrl(input.httpBaseUrl, webSocketTicketPath(input.use)),
-    input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
-    input.use === undefined
-      ? client.webSocketTicket({ headers })
-      : client.webSocketTicketFor({ headers, params: { use: input.use } }),
+  return yield* issueWebSocketTicketWithFallback(input.use, (use) =>
+    executeEnvironmentHttpRequest(
+      environmentEndpointUrl(input.httpBaseUrl, webSocketTicketPath(use)),
+      input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
+      use === undefined
+        ? client.webSocketTicket({ headers })
+        : client.webSocketTicketFor({ headers, params: { use } }),
+    ),
   );
 });
 
 export const issueRemoteDpopWebSocketTicket = Effect.fn(
   "clientRuntime.authorization.issueRemoteDpopWebSocketTicket",
-)(function* (input: {
+)(function* <E = never>(input: {
   readonly httpBaseUrl: string;
   readonly accessToken: string;
   readonly dpopProof: string;
   readonly use?: AuthWebSocketTicketUse;
+  /** Proof for the bare path, used only when the server lacks the `/:use` route. */
+  readonly fallbackProof?: Effect.Effect<string, E>;
   readonly timeoutMs?: number;
 }) {
   const client = yield* makeEnvironmentHttpApiGroupClient(input.httpBaseUrl, "auth");
-  const headers = { authorization: `DPoP ${input.accessToken}`, dpop: input.dpopProof };
-  return yield* executeEnvironmentHttpRequest(
-    environmentEndpointUrl(input.httpBaseUrl, webSocketTicketPath(input.use)),
-    input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
-    input.use === undefined
-      ? client.webSocketTicket({ headers })
-      : client.webSocketTicketFor({ headers, params: { use: input.use } }),
+  const fallbackProof = input.fallbackProof;
+  return yield* issueWebSocketTicketWithFallback(
+    fallbackProof === undefined ? undefined : input.use,
+    (use) =>
+      Effect.gen(function* () {
+        // The proof names the path it signs, so the fallback request needs its own.
+        const dpopProof =
+          use === input.use || fallbackProof === undefined ? input.dpopProof : yield* fallbackProof;
+        const headers = { authorization: `DPoP ${input.accessToken}`, dpop: dpopProof };
+        return yield* executeEnvironmentHttpRequest(
+          environmentEndpointUrl(input.httpBaseUrl, webSocketTicketPath(use)),
+          input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
+          use === undefined
+            ? client.webSocketTicket({ headers })
+            : client.webSocketTicketFor({ headers, params: { use } }),
+        );
+      }),
   );
 });
 
@@ -291,6 +328,13 @@ export const resolveRemoteDpopWebSocketConnectionUrl = Effect.fn(
     accessToken: input.accessToken,
     dpopProof: ticketProof,
     use: "rpc",
+    fallbackProof: Effect.suspend(() =>
+      input.createProof({
+        method: "POST",
+        url: environmentEndpointUrl(input.httpBaseUrl, webSocketTicketPath(undefined)),
+        accessToken: input.accessToken,
+      }),
+    ),
     ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
   });
   const url = rpcSocketUrl(input.wsBaseUrl);
