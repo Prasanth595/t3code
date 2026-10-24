@@ -67,6 +67,7 @@ import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
+import { resolveUsageLimitsAfterProbe } from "@t3tools/provider-core/server/usageLimits";
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
 const decodeServerProvider = Schema.decodeSync(ServerProvider);
@@ -2217,7 +2218,22 @@ it.layer(
               }),
             { ANTHROPIC_BASE_URL: "" },
           );
-          assert.strictEqual(status.usageLimits?.unavailable?.reason, account.expected);
+          assert.strictEqual(
+            status.usageLimits?.unavailable?.reason,
+            account.usageMissing ? "probeFailed" : account.expected,
+          );
+          if (account.usageMissing) {
+            const published = {
+              checkedAt: "2026-10-23T12:00:00.000Z",
+              windows: [
+                { id: "five_hour", kind: "session", label: "Session", usedPercent: 25 } as const,
+              ],
+            };
+            assert.strictEqual(
+              resolveUsageLimitsAfterProbe({ published, probed: status.usageLimits }),
+              published,
+            );
+          }
           if (account.expected === "probeFailed") {
             assert.include(
               status.usageLimits?.unavailable?.message,

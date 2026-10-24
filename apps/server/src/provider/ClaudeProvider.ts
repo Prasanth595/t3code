@@ -39,6 +39,7 @@ import { resolveClaudeSdkExecutablePath } from "./Drivers/ClaudeExecutable.ts";
 import { hasClaudeManagedMcpConfig, makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
+import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import {
   type ClaudeScopedLimitNames,
   claudeUsageResponseToLimits,
@@ -665,11 +666,16 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     (capabilities.tokenSource === "oauth" ||
       capabilities.tokenSource === "CLAUDE_CODE_OAUTH_TOKEN");
   const usageLimits = !capabilities.usage
-    ? claudeUsageResponseToLimits({
-        response: { rate_limits_available: false, rate_limits: null },
+    ? makeUnavailableUsageLimits({
         checkedAt,
-        allowStreamedLimits,
-      }).limits
+        reason: "probeFailed",
+        ...(allowStreamedLimits
+          ? {
+              message:
+                "This Claude login cannot probe limits. Limits will appear when a turn reports them.",
+            }
+          : {}),
+      })
     : scopedLimitNames
       ? yield* recordClaudeUsageResponse(scopedLimitNames, {
           response: capabilities.usage,
