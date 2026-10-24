@@ -13,19 +13,32 @@ export interface RootStackNavigation {
 }
 
 /**
- * Resets the root stack from anywhere. Always reads and targets the root navigator: the
- * sidebar and rail render in the root layout, where `useNavigation()` is the container, and a
- * container dispatch runs on the deepest focused navigator, which can be a nested stack that
- * rejects the reset.
+ * The root stack's state, read from anywhere. The sidebar and rail render in the root layout,
+ * where `useNavigation()` is the container, so walk up to the root navigator.
  */
+export function rootStackState(navigation: RootStackNavigation) {
+  let root = navigation;
+  for (let parent = root.getParent(); parent; parent = root.getParent()) root = parent;
+  return root.getRootState?.() ?? root.getState();
+}
+
+/**
+ * Replaces the root stack. Targets the root explicitly: a container dispatch runs on the deepest
+ * focused navigator, which can be a nested stack that rejects the reset.
+ */
+export function dispatchRootStackReset(
+  navigation: RootStackNavigation,
+  state: NavigationState,
+  payload: RootStackResetAction["payload"],
+) {
+  // Same shape as `CommonActions.reset`, which would pull React Native into node tests.
+  navigation.dispatch({ type: "RESET", payload, target: state.key });
+}
+
 export function resetRootStack(
   navigation: RootStackNavigation,
   nextState: (state: NavigationState) => RootStackResetAction["payload"],
 ) {
-  let root = navigation;
-  for (let parent = root.getParent(); parent; parent = root.getParent()) root = parent;
-  const state = root.getRootState?.() ?? root.getState();
-  if (!state) return;
-  // Same shape as `CommonActions.reset`, which would pull React Native into node tests.
-  navigation.dispatch({ type: "RESET", payload: nextState(state), target: state.key });
+  const state = rootStackState(navigation);
+  if (state) dispatchRootStackReset(navigation, state, nextState(state));
 }

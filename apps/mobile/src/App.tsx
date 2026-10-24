@@ -36,6 +36,7 @@ import {
   hydrateWorkspaceSelections,
   launchWorkspaceURL,
   recordWorkspaceSelections,
+  settingsLinkPage,
 } from "./features/workspace/workspace-selection-store";
 import { NativeLayoutMetricsProvider } from "./native/native-layout-metrics";
 
@@ -54,7 +55,10 @@ const appLinking = {
   filter: shouldHandleAppLink,
   getInitialURL: async () => (await Linking.getInitialURL()) ?? (await launchWorkspaceURL()),
   getStateFromPath: (path: string, options: Parameters<typeof getStateFromPath>[1]) =>
-    restoreSettingsLinkState(restoreDraftLinkState(getStateFromPath(path, options), path)),
+    restoreSettingsLinkState(
+      restoreDraftLinkState(getStateFromPath(path, options), path),
+      settingsLinkPage(),
+    ),
 };
 
 const Navigation = createStaticNavigation(RootStack);

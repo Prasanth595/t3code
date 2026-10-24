@@ -1,15 +1,72 @@
 import type { WorkspaceSelections } from "../../persistence/mobile-preferences";
-import { isSettingsRoute, settingsNavigationState } from "../settings/settings-navigation";
+import {
+  SETTINGS_PAGE_TARGETS,
+  type SettingsPageTarget,
+} from "../settings/components/settings-page-targets";
+import { settingsNavigationState } from "../settings/settings-navigation";
 import type { WorkspaceTab } from "./workspace-tabs-state";
 
-type RouteLike = { readonly name: string; readonly params?: object | undefined };
+type RouteLike = {
+  readonly name: string;
+  readonly key?: string;
+  readonly params?: object | undefined;
+};
+type ThreadSelection = NonNullable<WorkspaceSelections["threads"]>;
+type PullRequestSelection = NonNullable<WorkspaceSelections["pullRequests"]>;
 
 /** Opened when Settings has columns and none of its pages has been opened yet. */
-export const DEFAULT_SETTINGS_PAGE = "SettingsEnvironments";
+export const DEFAULT_SETTINGS_PAGE = "SettingsEnvironments" satisfies SettingsPageTarget;
+
+// Pages a Settings row opens, minus Project overview: it shows the project chosen in the
+// Settings scope, which resets whenever Settings closes.
+const REMEMBERED_SETTINGS_PAGES: ReadonlySet<string> = new Set(
+  SETTINGS_PAGE_TARGETS.filter((page) => page !== "SettingsProjectOverview"),
+);
+
+export function rememberedSettingsPage(selections: WorkspaceSelections): SettingsPageTarget {
+  return selections.settings && REMEMBERED_SETTINGS_PAGES.has(selections.settings)
+    ? (selections.settings as SettingsPageTarget)
+    : DEFAULT_SETTINGS_PAGE;
+}
+
+/** Whether a remembered chat or pull request can still be opened. */
+export interface WorkspaceSelectionCheck {
+  readonly thread: (selection: ThreadSelection) => boolean;
+  readonly pullRequest: (selection: PullRequestSelection) => boolean;
+}
 
 function stringParam(params: object | undefined, key: string) {
   const value = (params as Record<string, unknown> | undefined)?.[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function pullRequestSelection(params: object | undefined): PullRequestSelection | undefined {
+  const value = params as Record<string, unknown> | undefined;
+  if (
+    typeof value?.environmentId !== "string" ||
+    typeof value.projectId !== "string" ||
+    typeof value.repository !== "string" ||
+    typeof value.number !== "number"
+  ) {
+    return undefined;
+  }
+  return {
+    environmentId: value.environmentId,
+    projectId: value.projectId,
+    repository: value.repository,
+    number: value.number,
+    ...(typeof value.host === "string" ? { host: value.host } : {}),
+  };
+}
+
+function samePullRequest(left: PullRequestSelection | undefined, right: PullRequestSelection) {
+  return (
+    left?.environmentId === right.environmentId &&
+    left.projectId === right.projectId &&
+    left.repository === right.repository &&
+    left.number === right.number &&
+    left.host === right.host
+  );
 }
 
 /**
@@ -31,67 +88,90 @@ export function workspaceSelectionsIn(
   ) {
     next = { ...next, threads: { environmentId, threadId } };
   }
-  const pullRequest = routes.findLast((route) => route.name === "PullRequest")?.params as
-    | Record<string, unknown>
-    | undefined;
-  if (
-    pullRequest &&
-    typeof pullRequest.environmentId === "string" &&
-    typeof pullRequest.projectId === "string" &&
-    typeof pullRequest.repository === "string" &&
-    typeof pullRequest.number === "number"
-  ) {
-    const selection = {
-      environmentId: pullRequest.environmentId,
-      projectId: pullRequest.projectId,
-      repository: pullRequest.repository,
-      number: pullRequest.number,
-      ...(typeof pullRequest.host === "string" ? { host: pullRequest.host } : {}),
-    };
-    const current = next.pullRequests;
-    if (
-      current?.environmentId !== selection.environmentId ||
-      current.projectId !== selection.projectId ||
-      current.repository !== selection.repository ||
-      current.number !== selection.number ||
-      current.host !== selection.host
-    ) {
-      next = { ...next, pullRequests: selection };
-    }
+  const pullRequest = pullRequestSelection(
+    routes.findLast((route) => route.name === "PullRequest")?.params,
+  );
+  if (pullRequest && !samePullRequest(next.pullRequests, pullRequest)) {
+    next = { ...next, pullRequests: pullRequest };
   }
   const list = routes.findIndex((route) => route.name === "Settings");
-  const page = list < 0 ? undefined : routes[list + 1];
-  // Pages that need params, such as one environment's detail, are reached from another page.
-  if (
-    page &&
-    isSettingsRoute(page.name) &&
-    page.params === undefined &&
-    page.name !== next.settings
-  ) {
-    next = { ...next, settings: page.name };
+  const page = list < 0 ? undefined : routes[list + 1]?.name;
+  if (page && REMEMBERED_SETTINGS_PAGES.has(page) && page !== next.settings) {
+    next = { ...next, settings: page };
   }
   return next;
+}
+
+let routeKeys = 0;
+
+/** New routes get their key here, so the caller knows which route it is about to show. */
+function keyed<Route extends RouteLike>(route: Route): Route & { readonly key: string } {
+  if (route.key !== undefined) return route as Route & { readonly key: string };
+  routeKeys += 1;
+  return { ...route, key: `${route.name}-workspace-${routeKeys}` };
+}
+
+function detailRoute(
+  state: { readonly routes: readonly RouteLike[] },
+  tab: "threads" | "pullRequests",
+  selections: WorkspaceSelections,
+  check: WorkspaceSelectionCheck,
+): RouteLike | undefined {
+  if (tab === "threads") {
+    const thread = selections.threads;
+    if (!thread || !check.thread(thread)) return undefined;
+    return (
+      state.routes.find(
+        (route) =>
+          route.name === "Thread" &&
+          stringParam(route.params, "environmentId") === thread.environmentId &&
+          stringParam(route.params, "threadId") === thread.threadId,
+      ) ?? { name: "Thread", params: thread }
+    );
+  }
+  const pullRequest = selections.pullRequests;
+  if (!pullRequest || !check.pullRequest(pullRequest)) return undefined;
+  return (
+    state.routes.find(
+      (route) =>
+        route.name === "PullRequest" &&
+        samePullRequest(pullRequestSelection(route.params), pullRequest),
+    ) ?? { name: "PullRequest", params: pullRequest }
+  );
 }
 
 /**
  * The root stack for opening a workspace tab. With columns the detail column must show
  * something, so the tab reopens the page it last showed (Settings falls back to its default);
- * without columns the tab opens on its list.
+ * without columns the tab opens on its list. Routes already on screen keep their keys, and
+ * `overlays` (open sheets) stay on top.
  */
 export function workspaceTabNavigationState<
-  State extends { readonly routes: readonly { readonly name: string }[] },
->(state: State, tab: WorkspaceTab | "settings", selections: WorkspaceSelections, columns: boolean) {
+  State extends { readonly routes: readonly RouteLike[] },
+>(
+  state: State,
+  tab: WorkspaceTab | "settings",
+  selections: WorkspaceSelections,
+  options: {
+    readonly columns: boolean;
+    readonly check: WorkspaceSelectionCheck;
+    readonly overlays?: readonly RouteLike[];
+  },
+) {
+  const overlays = options.overlays ?? [];
   if (tab === "settings") {
-    const page = columns ? (selections.settings ?? DEFAULT_SETTINGS_PAGE) : "Settings";
-    return settingsNavigationState(state, page as Parameters<typeof settingsNavigationState>[1]);
+    const settings = settingsNavigationState(
+      state,
+      options.columns ? rememberedSettingsPage(selections) : undefined,
+    );
+    const routes = [...settings.routes.map(keyed), ...overlays];
+    return { ...settings, index: routes.length - 1, routes };
   }
   const home = state.routes.find((route) => route.name === "Home") ?? { name: "Home" };
   const detail =
-    !columns || tab === "usage"
-      ? undefined
-      : tab === "threads"
-        ? selections.threads && { name: "Thread", params: selections.threads }
-        : selections.pullRequests && { name: "PullRequest", params: selections.pullRequests };
-  const routes = detail ? [home, detail] : [home];
+    options.columns && tab !== "usage"
+      ? detailRoute(state, tab, selections, options.check)
+      : undefined;
+  const routes = [...[home, ...(detail ? [detail] : [])].map(keyed), ...overlays];
   return { ...state, index: routes.length - 1, routes };
 }

@@ -16,7 +16,6 @@ import { environmentSession } from "./session";
 import { environmentCatalog } from "../connection/catalog";
 import { createRemoteEnvironmentProjectionAtoms } from "./remote-environment-projections";
 import { serverEnvironment } from "./server";
-import { openSettings } from "../features/settings/settings-navigation";
 
 const connectionPairingUrlAtom = Atom.make("").pipe(
   Atom.keepAlive,
@@ -177,7 +176,7 @@ export function useRemoteConnections() {
             { text: "Cancel", style: "cancel" },
             {
               text: "Open T3 Account",
-              onPress: () => openSettings(navigation, "SettingsAuth"),
+              onPress: () => navigation.navigate("SettingsAuth"),
             },
             remove,
           ],

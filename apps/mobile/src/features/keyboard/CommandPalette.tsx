@@ -402,6 +402,7 @@ export function CommandPalette(props: {
     );
     return [...actions, ...projectItems, ...threadItems];
   }, [
+    selectTab,
     activeThread,
     activeThreadRef,
     environments.length,

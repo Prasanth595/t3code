@@ -18,7 +18,7 @@ export function androidWorkspaceTabNavigationState(
   tab: AndroidWorkspaceNavigationTab,
 ) {
   const home = androidWorkspaceNavigationState(state);
-  return tab === "settings" ? settingsNavigationState(home) : home;
+  return tab === "settings" ? settingsNavigationState(home, undefined) : home;
 }
 
 /** Settings stays selected while one of its pages is the topmost workspace route. */

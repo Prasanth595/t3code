@@ -24,7 +24,6 @@ import { androidWorkspaceDestinationAnimation } from "./lib/android-workspace-na
 import { getCompactBrandHeaderOptions } from "./components/CompactBrandTitle";
 import { WorkspaceConnectionStatusProvider } from "./features/home/WorkspaceConnectionTitle";
 import { WorkspaceRootScreen } from "./features/workspace/WorkspaceRootScreen";
-import { AndroidWorkspaceSettings } from "./features/workspace/AndroidWorkspaceSettings";
 import { AndroidWorkspaceTabsProvider } from "./features/workspace/AndroidWorkspaceTabsProvider";
 import {
   PullRequestRouteScreen,
@@ -125,6 +124,7 @@ import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
 import { SettingsThreadsRouteScreen } from "./features/settings/SettingsThreadsRouteScreen";
 import { SettingsEnvironmentFilterProvider } from "./features/settings/settings-environment-filter";
 import { settingsOpenIn } from "./features/settings/settings-navigation";
+import { WORKSPACE_OVERLAY_ROUTES } from "./features/layout/workspace-overlay-routes";
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
 import {
   SettingsLegalDocumentCloseHeaderButton,
@@ -229,7 +229,6 @@ const SETTINGS_SCREENS = {
   Settings: createNativeStackScreen({
     screen: SettingsRouteScreen,
     linking: "settings",
-    layout: ({ children }) => <AndroidWorkspaceSettings>{children}</AndroidWorkspaceSettings>,
     options: {
       ...SETTINGS_PAGE_OPTIONS,
       title: "Settings",
@@ -453,12 +452,12 @@ const SETTINGS_SCREENS = {
   SettingsAuth: createNativeStackScreen({
     screen: SettingsAuthRouteScreen,
     linking: "settings/auth",
-    options: { headerShown: false },
+    options: { headerShown: false, presentation: "modal" },
   }),
   SettingsWaitlist: createNativeStackScreen({
     screen: SettingsAuthRouteScreen,
     linking: "settings/waitlist",
-    options: { headerShown: false },
+    options: { headerShown: false, presentation: "modal" },
   }),
 };
 
@@ -466,39 +465,6 @@ const SETTINGS_SCREENS = {
 // iOS 26's shared-header morphing between Home and Thread (each pair inside one bar morphs;
 // across two bars the whole screen slides).
 const THREAD_LINKING_PREFIX = "threads/:environmentId/:threadId";
-
-const WORKSPACE_OVERLAY_ROUTES = new Set([
-  "PullRequestReview",
-  "PullRequestInlineComment",
-  "ConnectOnboarding",
-  "Connections",
-  "ConnectionsNew",
-  "GitBranches",
-  "GitCommit",
-  "GitConfirm",
-  "GitOverview",
-  "NewTaskProject",
-  "NewTaskFiles",
-  "NewTaskFile",
-  "NewTaskAttachment",
-  "NewTaskThreadSettings",
-  "AddProject",
-  "AddProjectRepository",
-  "AddProjectDestination",
-  "AddProjectLocal",
-  "AddProjectNew",
-  "NewTaskEnvironment",
-  "NewTaskBranch",
-  "SettingsLegal",
-  "ThreadAgents",
-  "ThreadBackgroundWork",
-  "ThreadPullRequests",
-  "ThreadQueue",
-  "ThreadReviewComment",
-  "ThreadDevicePreview",
-  "ThreadBrowserPreview",
-  "ThreadSettingsSheet",
-]);
 
 function workspaceLocationFromState(state: NavigationState) {
   const routes = state.routes.filter((route) => !WORKSPACE_OVERLAY_ROUTES.has(route.name));

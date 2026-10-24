@@ -28,9 +28,7 @@ import { WorkspaceTabsProvider, useWorkspaceTabs } from "../workspace/WorkspaceT
 import { WorkspaceNativeTabs } from "../workspace/WorkspaceNativeTabs.ios";
 import { workspaceUsesColumns } from "../workspace/workspace-tabs-state";
 import { isSettingsRoute, settingsOpenIn } from "../settings/settings-navigation";
-import { resetRootStack } from "../../lib/root-stack-reset";
-import { currentWorkspaceSelections } from "../workspace/workspace-selection-store";
-import { workspaceTabNavigationState } from "../workspace/workspace-tab-navigation";
+import { workspaceRoutesOf } from "./workspace-overlay-routes";
 import { useWorkspaceSidebarHeaderItem } from "./useWorkspaceSidebarHeaderItem";
 import { useDeviceType, useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 
@@ -74,14 +72,10 @@ const isPullRequestRoute = (route: Route) =>
 /** Only these screens follow the sidebar's state; a thread's header draws its own toggle. */
 function SidebarToggleHeader(props: ComponentProps<typeof V5StackHeader>) {
   const sidebarItem = useWorkspaceSidebarHeaderItem();
-  const options = useMemo(
-    () =>
-      ({
-        ...props.options,
-        unstable_headerLeftItems: () => [sidebarItem],
-      }) as AppNativeStackNavigationOptions as typeof props.options,
-    [props.options, sidebarItem],
-  );
+  const options = {
+    ...props.options,
+    unstable_headerLeftItems: () => [sidebarItem],
+  } as AppNativeStackNavigationOptions as typeof props.options;
   return <V5StackHeader {...props} options={options} />;
 }
 
@@ -181,6 +175,7 @@ function WorkspaceColumns(
     setPrimarySidebarVisible,
     toggleAuxiliaryPane,
     startNewTask,
+    openWorkspaceTab,
   } = useAdaptiveWorkspaceLayout();
   const deviceType = useDeviceType();
   // Split screens must remain mounted while UIKit animates a detached route away.
@@ -304,29 +299,16 @@ function WorkspaceColumns(
       onExpand={() => {
         collapsed.current = false;
         // Native callbacks can outlive the render that created them, so decide from the live
-        // router state: expanding gives the tab a detail column, filled with its last page.
+        // router state. An expanded split has columns, so its tab gets a page beside the list.
         const live = props.navigation.getState();
-        const isOverlay = (route: { readonly key: string }) => {
-          const presentation = props.descriptors[route.key]?.options.presentation;
-          return presentation !== undefined && presentation !== "card";
-        };
-        const routes = live.routes.slice(0, live.index + 1);
-        const firstOverlay = routes.findIndex(isOverlay);
-        const workspaceRoutes = firstOverlay < 0 ? routes : routes.slice(0, firstOverlay);
-        if (workspaceRoutes.some((route) => route.name !== "Home" && route.name !== "Settings"))
-          return;
-        const settings = workspaceRoutes.some((route) => route.name === "Settings");
-        const tab = (["threads", "pullRequests", "usage"] as const).find((candidate) =>
-          workspaceTabs?.isTabActive(candidate),
-        );
-        resetRootStack(props.navigation, (state) =>
-          workspaceTabNavigationState(
-            state,
-            settings ? "settings" : (tab ?? "threads"),
-            currentWorkspaceSelections(),
-            true,
-          ),
-        );
+        const { workspace } = workspaceRoutesOf(live.routes.slice(0, live.index + 1));
+        if (workspace.some((route) => route.name !== "Home" && route.name !== "Settings")) return;
+        const tab = workspace.some((route) => route.name === "Settings")
+          ? "settings"
+          : (["threads", "pullRequests", "usage"] as const).find((candidate) =>
+              workspaceTabs?.isTabActive(candidate),
+            );
+        openWorkspaceTab(tab ?? "threads", { columns: true });
       }}
       preferredDisplayMode={
         // UIKit applies the mode as a collapsed split expands, before the new width reaches JS, so a
@@ -402,13 +384,17 @@ function WorkspaceColumns(
               />
             </ColumnContent>
           </Split.Screen>
-          {screens.routes.map((route, index) => {
+          {screens.routes.map((route) => {
             const descriptor = props.descriptors[route.key] ?? screens.descriptors[route.key];
             return descriptor ? (
               <ColumnScreen
                 key={route.key}
                 descriptor={descriptor}
-                sidebarToggle={layout.usesSplitView && index === 0 && isSettingsRoute(route.name)}
+                sidebarToggle={
+                  layout.usesSplitView &&
+                  props.detail[0]?.key === route.key &&
+                  isSettingsRoute(route.name)
+                }
                 attached={props.detail.some((current) => current.key === route.key)}
                 onDismiss={handleNativeDismiss}
                 onAppearance={followCollapsedSplit}

@@ -302,118 +302,7 @@ export function V5StackView(props: V5StackViewProps) {
   );
 }
 
-export function V5SheetStackView(props: V5StackViewProps) {
-  const { preventedRoutes } = usePreventRemoveContext();
-  const groups = partitionStackPresentations(
-    props.state.routes,
-    (route) => props.descriptors[route.key]?.options.presentation === "formSheet",
-  );
-  const [retained, setRetained] = useState({
-    groups: groups.slice(1),
-    descriptors: props.descriptors,
-    observedRoutes: props.state.routes,
-    observedDescriptors: props.descriptors,
-  });
-  if (
-    retained.observedRoutes !== props.state.routes ||
-    retained.observedDescriptors !== props.descriptors
-  ) {
-    const active = new Set(groups.slice(1).map((group) => group[0]!.key));
-    const sheets = [
-      ...groups.slice(1),
-      ...retained.groups.filter((group) => !active.has(group[0]!.key)),
-    ];
-    const sheetKeys = new Set(sheets.flatMap((group) => group.map((route) => route.key)));
-    setRetained({
-      groups: sheets,
-      descriptors: Object.fromEntries(
-        Object.entries({ ...retained.descriptors, ...props.descriptors }).filter(([key]) =>
-          sheetKeys.has(key),
-        ),
-      ),
-      observedRoutes: props.state.routes,
-      observedDescriptors: props.descriptors,
-    });
-  }
-  const removeSheet = (key: string) => {
-    setRetained((current) => {
-      const sheets = current.groups.filter((group) => group[0]!.key !== key);
-      const sheetKeys = new Set(sheets.flatMap((group) => group.map((route) => route.key)));
-      return {
-        ...current,
-        groups: sheets,
-        descriptors: Object.fromEntries(
-          Object.entries(current.descriptors).filter(([routeKey]) => sheetKeys.has(routeKey)),
-        ),
-      };
-    });
-  };
-  const base = groups[0] ?? [];
-  return (
-    <View className="flex-1 bg-screen">
-      <V5CardStackView
-        {...props}
-        state={{ ...props.state, routes: base, index: base.length - 1, preloadedRoutes: [] }}
-      />
-      {retained.groups.map((group) => {
-        const first = group[0]!;
-        const descriptor = props.descriptors[first.key] ?? retained.descriptors[first.key];
-        if (!descriptor) return null;
-        const options = descriptor.options;
-        const attached = nativeWorkspacePopCount(props.state, first.key) > 0;
-        return (
-          <FormSheet
-            key={first.key}
-            isOpen={attached}
-            detents={options.sheetAllowedDetents}
-            initialDetentIndex={options.sheetInitialDetentIndex}
-            largestUndimmedDetentIndex={options.sheetLargestUndimmedDetentIndex}
-            prefersGrabberVisible={options.sheetGrabberVisible}
-            prefersHorizontalBars={options.sheetPrefersHorizontalBars}
-            preferredCornerRadius={options.sheetCornerRadius}
-            prefersScrollingExpandsWhenScrolledToEdge={options.sheetExpandsWhenScrolledToEdge}
-            nativeContainerStyle={{
-              backgroundColor: StyleSheet.flatten(options.contentStyle)?.backgroundColor,
-            }}
-            preventNativeDismiss={
-              group.some((route) => preventedRoutes[route.key]?.preventRemove) ||
-              options.gestureEnabled === false
-            }
-            onNativeDismissPrevented={() => {
-              const guarded = group.findLast((route) => preventedRoutes[route.key]?.preventRemove);
-              if (guarded) {
-                const state = props.navigation.getState();
-                const action = nativeWorkspacePopAction(state, first.key);
-                if (action) props.navigation.dispatch(action);
-              }
-            }}
-            onDismiss={() => removeSheet(first.key)}
-            onNativeDismiss={() => {
-              const state = props.navigation.getState();
-              const action = nativeWorkspacePopAction(state, first.key);
-              if (action) props.navigation.dispatch(action);
-              removeSheet(first.key);
-            }}
-          >
-            <V5CardStackView
-              {...props}
-              descriptors={{ ...retained.descriptors, ...props.descriptors }}
-              state={{
-                ...props.state,
-                routes: group,
-                index: group.length - 1,
-                preloadedRoutes: [],
-              }}
-            />
-          </FormSheet>
-        );
-      })}
-    </View>
-  );
-}
-
 function V5Navigator({
-  nativeSheets,
   id,
   initialRouteName,
   UNSTABLE_routeNamesChangeBehavior,
@@ -424,7 +313,7 @@ function V5Navigator({
   screenLayout,
   UNSTABLE_router,
   ...rest
-}: NativeStackNavigatorProps & { readonly nativeSheets?: boolean }) {
+}: NativeStackNavigatorProps) {
   const { state, describe, descriptors, navigation, NavigationContent } = useNavigationBuilder<
     StackNavigationState<ParamListBase>,
     StackRouterOptions,
@@ -442,7 +331,7 @@ function V5Navigator({
     screenLayout,
     UNSTABLE_router,
   });
-  const StackView = nativeSheets ? V5SheetStackView : V5StackView;
+  const StackView = V5StackView;
   return (
     <NavigationContent>
       <StackView
@@ -460,10 +349,6 @@ function V5StackNavigator(props: NativeStackNavigatorProps) {
   return <V5Navigator {...props} />;
 }
 
-function V5SheetStackNavigator(props: NativeStackNavigatorProps) {
-  return <V5Navigator {...props} nativeSheets />;
-}
-
 type V5TypeBag<ParamList extends ParamListBase, NavigatorID extends string | undefined> = Omit<
   NativeStackTypeBag<ParamList, NavigatorID>,
   "Navigator"
@@ -475,13 +360,4 @@ export function createV5StackNavigator<
   const Config extends StaticConfig<TypeBag> = StaticConfig<TypeBag>,
 >(config?: Config): TypedNavigator<TypeBag, Config> {
   return createNavigatorFactory(V5StackNavigator)(config);
-}
-
-export function createV5SheetStackNavigator<
-  const ParamList extends ParamListBase,
-  const NavigatorID extends string | undefined = string | undefined,
-  const TypeBag extends NavigatorTypeBagBase = V5TypeBag<ParamList, NavigatorID>,
-  const Config extends StaticConfig<TypeBag> = StaticConfig<TypeBag>,
->(config?: Config): TypedNavigator<TypeBag, Config> {
-  return createNavigatorFactory(V5SheetStackNavigator)(config);
 }
