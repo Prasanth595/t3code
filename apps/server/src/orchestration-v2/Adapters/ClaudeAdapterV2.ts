@@ -9318,28 +9318,38 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // A turn can be built from a projection read before an idle `/clear` adoption
         // landed. Opening its native ID would replace the live process with the
         // pre-clear session, so follow the adoption this adapter already made.
+        const resolveAdoptedNativeId = (nativeId: string): string => {
+          let adoptedNativeId = nativeId;
+          while (adoptedNativeSessionIds.has(adoptedNativeId)) {
+            adoptedNativeId = adoptedNativeSessionIds.get(adoptedNativeId)!;
+          }
+          return adoptedNativeId;
+        };
+        const followAdoptedProviderThread = (
+          providerThread: OrchestrationV2ProviderThread,
+        ): OrchestrationV2ProviderThread => {
+          const requestedNativeId = providerThread.nativeThreadRef?.nativeId;
+          if (requestedNativeId === undefined || requestedNativeId === null) return providerThread;
+          const adoptedNativeId = resolveAdoptedNativeId(requestedNativeId);
+          return adoptedNativeId === requestedNativeId
+            ? providerThread
+            : {
+                ...providerThread,
+                nativeThreadRef: {
+                  driver: CLAUDE_PROVIDER,
+                  nativeId: adoptedNativeId,
+                  strength: "strong",
+                },
+                nativeConversationHeadRef: null,
+              };
+        };
         const followAdoptedNativeSession = (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
         ): ProviderAdapter.ProviderAdapterV2TurnInput => {
-          const requestedNativeId = turnInput.providerThread.nativeThreadRef?.nativeId ?? undefined;
-          let adoptedNativeId = requestedNativeId;
-          while (adoptedNativeId !== undefined && adoptedNativeSessionIds.has(adoptedNativeId)) {
-            adoptedNativeId = adoptedNativeSessionIds.get(adoptedNativeId);
-          }
-          return adoptedNativeId === undefined || adoptedNativeId === requestedNativeId
+          const providerThread = followAdoptedProviderThread(turnInput.providerThread);
+          return providerThread === turnInput.providerThread
             ? turnInput
-            : {
-                ...turnInput,
-                providerThread: {
-                  ...turnInput.providerThread,
-                  nativeThreadRef: {
-                    driver: CLAUDE_PROVIDER,
-                    nativeId: adoptedNativeId,
-                    strength: "strong",
-                  },
-                  nativeConversationHeadRef: null,
-                },
-              };
+            : { ...turnInput, providerThread };
         };
 
         const openQuery = Effect.fnUntraced(function* (
@@ -10352,7 +10362,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ),
           resumeThread: Effect.fn("ClaudeAdapterV2.resumeThread")(
             function* (threadInput: { readonly providerThread: OrchestrationV2ProviderThread }) {
-              const nativeThreadId = threadInput.providerThread.nativeThreadRef?.nativeId;
+              // A projection read before an idle `/clear` adoption still names the pre-clear session.
+              const providerThread = followAdoptedProviderThread(threadInput.providerThread);
+              const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
               if (
                 nativeThreadId !== undefined &&
                 nativeThreadId !== null &&
@@ -10370,7 +10382,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }
               const updatedAt = yield* DateTime.now;
               return {
-                ...threadInput.providerThread,
+                ...providerThread,
                 providerSessionId: input.providerSessionId,
                 status: "idle" as const,
                 updatedAt,
@@ -10558,8 +10570,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }
 
               const nativeThreadId = yield* getNativeThreadId(rollbackInput.providerThread);
-              // Rolling back into a session `/clear` left makes it current again.
+              // Rolling back into a session `/clear` left makes it current again. The process
+              // still running the adopted session must stop, and forgetting that session keeps
+              // its exit from republishing it over the rollback.
+              const adoptedNativeThreadId = resolveAdoptedNativeId(nativeThreadId);
               adoptedNativeSessionIds.delete(nativeThreadId);
+              if (adoptedNativeThreadId !== nativeThreadId) {
+                yield* Ref.update(lastProviderThreadByNativeThread, (entries) => {
+                  const next = new Map(entries);
+                  next.delete(adoptedNativeThreadId);
+                  return next;
+                });
+                yield* closeLiveQueryForNativeThread(adoptedNativeThreadId);
+              }
               yield* closeLiveQueryForNativeThread(nativeThreadId);
               const now = yield* DateTime.now;
               const resumeSessionAt = yield* resolveClaudeRollbackResumeSessionAt(rollbackInput);
