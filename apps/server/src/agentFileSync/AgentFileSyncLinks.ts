@@ -100,7 +100,9 @@ const make = Effect.gen(function* () {
   const persist = Effect.fn("AgentFileSyncLinks.persist")(function* (next: State) {
     const oldKeys = new Set(state.map(baselineKey));
     const nextKeys = new Set(next.map(baselineKey));
-    yield* Effect.gen(function* () {
+    const nextCatalog = encode(next.map(({ previous: _previous, ...link }) => link));
+    const previousCatalog = encode(state.map(({ previous: _previous, ...link }) => link));
+    const result = yield* Effect.gen(function* () {
       // Publish immutable baselines before the catalog so interrupted writes leave the prior state readable.
       for (const link of next) {
         if (oldKeys.has(baselineKey(link))) continue;
@@ -109,34 +111,41 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError((cause) => new AgentFileSyncError({ reason: "io", cause })));
       }
       yield* secrets
-        .set(SECRET, Buffer.from(encode(next.map(({ previous: _previous, ...link }) => link))))
+        .set(SECRET, Buffer.from(nextCatalog))
         .pipe(Effect.mapError((cause) => new AgentFileSyncError({ reason: "io", cause })));
-    }).pipe(
-      Effect.tapError(() =>
-        Effect.gen(function* () {
-          // A write may report failure after publishing. Preserve every baseline the saved catalog references.
-          const stored = yield* secrets.get(SECRET);
-          const published = Option.isSome(stored)
-            ? yield* decode(Buffer.from(stored.value).toString("utf8"))
-            : [];
-          const protectedKeys = new Set(published.map(baselineKey));
-          for (const key of nextKeys) {
-            if (oldKeys.has(key) || protectedKeys.has(key)) continue;
-            yield* secrets
-              .remove(key)
-              .pipe(
-                Effect.catch(() =>
-                  Effect.logWarning("Could not remove an unpublished agent file sync baseline"),
-                ),
-              );
-          }
-        }).pipe(
-          Effect.catch(() =>
-            Effect.logWarning("Could not verify unpublished agent file sync baselines"),
-          ),
+    }).pipe(Effect.result);
+    if (result._tag === "Failure") {
+      // Storage may report failure after rename. Confirm publication before rolling back files or metadata.
+      const saved = yield* secrets.get(SECRET).pipe(
+        Effect.flatMap((stored) =>
+          Option.isSome(stored)
+            ? decode(Buffer.from(stored.value).toString("utf8"))
+            : Effect.succeed([]),
         ),
-      ),
-    );
+        Effect.result,
+      );
+      if (
+        saved._tag === "Failure" ||
+        (encode(saved.success) !== nextCatalog && encode(saved.success) !== previousCatalog)
+      ) {
+        writable = false;
+        return yield* new AgentFileSyncError({ reason: "unreadable-state", cause: result.failure });
+      }
+      if (encode(saved.success) !== nextCatalog) {
+        for (const key of nextKeys) {
+          if (oldKeys.has(key)) continue;
+          yield* secrets
+            .remove(key)
+            .pipe(
+              Effect.catch(() =>
+                Effect.logWarning("Could not remove an unpublished agent file sync baseline"),
+              ),
+            );
+        }
+        return yield* result.failure;
+      }
+      yield* Effect.logWarning("Sync catalog publication was confirmed after a storage error");
+    }
     state = next;
     for (const key of oldKeys) {
       if (nextKeys.has(key)) continue;
@@ -220,6 +229,12 @@ const make = Effect.gen(function* () {
           ]);
         }).pipe(Effect.result);
         if (published._tag === "Failure") {
+          if (published.failure.reason === "unreadable-state" && result.undoId)
+            return yield* new AgentFileSyncError({
+              reason: "recovery",
+              path: result.undoId,
+              cause: published.failure,
+            });
           if (result.undoId) {
             const restored = yield* files.undo({ undoId: result.undoId }).pipe(Effect.result);
             if (restored._tag === "Failure" || restored.success.failures.length)

@@ -119,7 +119,7 @@ export class AgentFileSyncError extends Schema.TaggedError<AgentFileSyncError>()
       case "changed-backup":
         return `Sync stopped with a preserved file backup${at}. Review it alongside the destination before resuming.`;
       case "recovery":
-        return `Sync setup failed and could not restore every file. An undo receipt is retained${at}; use its ID to retry undo after reviewing the destination.`;
+        return `Sync setup needs recovery. An undo receipt is retained${at}; review the destination and saved subscription before retrying undo.`;
       case "invalid-block":
         return `Instruction sync markers are incomplete or duplicated${at}.`;
       case "overlap":

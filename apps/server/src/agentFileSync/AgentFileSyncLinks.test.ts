@@ -274,6 +274,56 @@ it.layer(NodeServices.layer)("sync subscriptions", (it) => {
       }
     }),
   );
+  it.effect(
+    "keeps committed setup after a post-publication error and rejects overlapping retries",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        f.failAfterWrites.add("agent-file-sync-links");
+        const result = yield* f.subscribe().pipe(Effect.result);
+        expect(result._tag).toBe("Success");
+        const saved = yield* f.links.list;
+        expect(saved).toHaveLength(1);
+        expect(yield* (yield* f.load).list).toEqual(saved);
+        expect(yield* f.fs.readFileString(f.path.join(f.directory, "AGENTS.md"))).toContain(
+          "Initial",
+        );
+        expect(
+          yield* f.fs.readDirectory(f.path.join(f.directory, "data/userdata/agent-file-sync")),
+        ).toEqual([]);
+        expect((yield* f.subscribe().pipe(Effect.flip)).reason).toBe("overlap");
+        expect(yield* f.links.list).toEqual(saved);
+      }),
+  );
+  it.effect.each(["before", "after"] as const)(
+    "retains setup files and recovery receipt when a failure %s publication cannot be verified",
+    (when) =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        (when === "before" ? f.failWrites : f.failAfterWrites).add("agent-file-sync-links");
+        f.failReads.add("agent-file-sync-links");
+        const result = yield* f.subscribe().pipe(Effect.result);
+        expect(result).toMatchObject({ _tag: "Failure", failure: { reason: "recovery" } });
+        if (result._tag !== "Failure") return;
+        const undoId = result.failure.path!;
+        expect(
+          yield* f.fs.exists(
+            f.path.join(f.directory, "data/userdata/agent-file-sync", `${undoId}.json`),
+          ),
+        ).toBe(true);
+        expect(yield* f.fs.readFileString(f.path.join(f.directory, "AGENTS.md"))).toContain(
+          "Initial",
+        );
+        expect((yield* f.subscribe().pipe(Effect.flip)).reason).toBe("unreadable-state");
+        f.failReads.clear();
+        const restarted = yield* f.load;
+        expect(yield* restarted.list).toHaveLength(when === "before" ? 0 : 1);
+        if (when === "before") {
+          expect((yield* f.files.undo({ undoId })).failures).toEqual([]);
+          expect(yield* f.fs.exists(f.path.join(f.directory, "AGENTS.md"))).toBe(false);
+        } else yield* f.files.discard({ undoId });
+      }),
+  );
   it.effect("preserves baselines referenced by a catalog published before a write error", () =>
     Effect.gen(function* () {
       const f = yield* fixture;
@@ -282,9 +332,10 @@ it.layer(NodeServices.layer)("sync subscriptions", (it) => {
       const result = yield* f.links
         .refresh({ id: original.id, generation: 0, bundle: bundle("Published") })
         .pipe(Effect.result);
-      expect(result).toMatchObject({ _tag: "Failure", failure: { reason: "io" } });
+      expect(result._tag).toBe("Success");
       const restarted = yield* f.load;
       expect(yield* restarted.list).toMatchObject([{ id: original.id, generation: 1 }]);
+      expect(yield* f.links.list).toEqual(yield* restarted.list);
       f.failAfterWrites.clear();
       yield* restarted.refresh({ id: original.id, generation: 1, bundle: bundle("Next") });
       expect((yield* restarted.list)[0]?.paused).toBe(false);
