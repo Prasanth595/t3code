@@ -84,7 +84,6 @@ export interface ProviderProbeResult {
 
 export interface ServerProviderPresentation {
   readonly displayName: string;
-  readonly badgeLabel?: string;
   readonly showInteractionModeToggle?: boolean;
   readonly reportsContextWindow?: boolean;
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
@@ -247,7 +246,6 @@ export function buildServerProvider(input: {
     ...(typeof input.presentation.supportsConversationRollback === "boolean"
       ? { supportsConversationRollback: input.presentation.supportsConversationRollback }
       : {}),
-    ...(input.presentation.badgeLabel ? { badgeLabel: input.presentation.badgeLabel } : {}),
     ...(typeof input.presentation.showInteractionModeToggle === "boolean"
       ? { showInteractionModeToggle: input.presentation.showInteractionModeToggle }
       : {}),

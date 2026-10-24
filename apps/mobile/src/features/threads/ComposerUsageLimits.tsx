@@ -44,6 +44,7 @@ export function ComposerUsageLimits({
               dense
               first={index === 0}
               driver={account.driver}
+              appearance={account}
               label={driverLabel}
               instanceLabel={
                 account.instanceId
