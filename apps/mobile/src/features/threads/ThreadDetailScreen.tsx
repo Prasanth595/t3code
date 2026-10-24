@@ -22,7 +22,8 @@ import {
   isThreadWokeUnseen,
   snoozeWakeLabel,
 } from "@t3tools/client-runtime/state/thread-settled";
-import type { WorktreeSetupCardProps } from "./worktree-setup-card";
+import { PreparationProgressSheet, type WorktreeSetupCardProps } from "./worktree-setup-card";
+import { preparationPillLabel, preparationSteps } from "./preparation-progress";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -233,6 +234,9 @@ export interface ThreadDetailScreenProps {
         readonly kind: "preparing";
         readonly preparingWorktree: boolean;
         readonly serverOwned: boolean;
+        /** The server has the task; until then the outbox is still sending it. */
+        readonly sent: boolean;
+        readonly startedAt: string | null;
       }
     | { readonly kind: "failed"; readonly reason: string; readonly onEditTask: () => void }
     | null;
@@ -609,6 +613,25 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const selectedThreadKeyRef = useRef(selectedThreadKey);
   const lastScrolledSubmittedMessageIdRef = useRef<MessageId | null>(null);
   const [composerHeight, setComposerHeight] = useState<number | null>(null);
+  const [preparationDetailsThreadKey, setPreparationDetailsThreadKey] = useState<string | null>(
+    null,
+  );
+  // Once the server's stages arrive, the setup card in the feed takes over.
+  const preparationDetailsOpen =
+    preparationDetailsThreadKey === selectedThreadKey &&
+    props.creationState?.kind === "preparing" &&
+    !props.worktreeSetup;
+  // Forget the sheet once the setup card takes over or another thread opens,
+  // so returning to this thread does not reopen it.
+  if (preparationDetailsThreadKey !== null && !preparationDetailsOpen) {
+    setPreparationDetailsThreadKey(null);
+  }
+  const preparationInput = (creation: { preparingWorktree: boolean; sent: boolean }) => ({
+    sent: creation.sent,
+    preparingWorktree: creation.preparingWorktree,
+    connected: props.connectionStateLabel === "connected",
+    environmentLabel: props.environmentLabel,
+  });
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
   const [submittedMessageId, setSubmittedMessageId] = useState<MessageId | null>(null);
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
@@ -759,7 +782,8 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       if (props.worktreeSetup) return null;
       return {
         kind: "preparing",
-        label: props.creationState.preparingWorktree ? "Setting up worktree…" : "Starting…",
+        label: preparationPillLabel(preparationInput(props.creationState)),
+        onPress: () => setPreparationDetailsThreadKey(selectedThreadKey),
       };
     }
     if (props.creationState?.kind === "failed") {
@@ -1574,6 +1598,13 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                 onLayout={handleComposerOverlayLayout}
                 className="w-full"
               >
+                {preparationDetailsOpen && props.creationState?.kind === "preparing" ? (
+                  <PreparationProgressSheet
+                    steps={preparationSteps(preparationInput(props.creationState))}
+                    startedAt={props.creationState.startedAt}
+                    onClose={() => setPreparationDetailsThreadKey(null)}
+                  />
+                ) : null}
                 <FloatingWorkingControl
                   colorScheme={isDarkMode ? "dark" : "light"}
                   status={floatingStatus}
