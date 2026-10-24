@@ -2,6 +2,7 @@ import {
   connectionRouteId,
   connectionRouteKind,
   connectionRoutes,
+  type ConnectionCatalogEntry,
   type ConnectionRoute,
   type ConnectionTarget,
 } from "@t3tools/client-runtime/connection";
@@ -44,9 +45,17 @@ export interface RemoteOpenResolution {
 
 const LOCAL_EXEC: RemoteOpenState = { mode: "local-exec" };
 const REMOTE_UNAVAILABLE: RemoteOpenState = { mode: "remote-unavailable" };
-const UNRESOLVED_REMOTE_OPEN: RemoteOpenResolution = {
+// The saved entry and advertised targets a resolution was computed from.
+interface SourcedRemoteOpenResolution extends RemoteOpenResolution {
+  readonly entry: ConnectionCatalogEntry | null;
+  readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
+}
+
+const UNRESOLVED_REMOTE_OPEN: SourcedRemoteOpenResolution = {
   state: LOCAL_EXEC,
   isResolved: false,
+  entry: null,
+  remoteOpenTargets: undefined,
 };
 
 function parseHostname(url: string): string | null {
@@ -123,24 +132,31 @@ function remoteOpenStatesEqual(previous: RemoteOpenState, next: RemoteOpenState)
 // The presentation changes with every server config push and reconnect. This
 // keeps the previous resolution while it is equal, so subscribers re-render only
 // when where files open actually changes. Between connections the route in use is
-// unknown, so the last resolution stands until a route connects again.
+// unknown, so the last resolution stands until a route connects again, unless the
+// saved entry or the advertised targets it came from changed meanwhile.
 const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
-  Atom.make((get): RemoteOpenResolution => {
+  Atom.make((get): SourcedRemoteOpenResolution => {
     const presentation = get(environmentPresentations.presentationAtom(environmentId));
     const entry = presentation?.entry ?? null;
     if (entry === null) {
       return UNRESOLVED_REMOTE_OPEN;
     }
-    const previous = Option.getOrNull(get.self<RemoteOpenResolution>());
+    const remoteOpenTargets = presentation?.serverConfig?.remoteOpenTargets;
+    const previous = Option.getOrNull(get.self<SourcedRemoteOpenResolution>());
+    const sourceUnchanged =
+      previous !== null &&
+      previous.isResolved &&
+      previous.entry === entry &&
+      previous.remoteOpenTargets === remoteOpenTargets;
     const connection = Option.getOrNull(
       get(environmentSession.preparedConnectionValueAtom(environmentId)),
     );
-    if (connection === null && previous !== null && previous.isResolved) {
+    if (connection === null && sourceUnchanged) {
       return previous;
     }
     const connectedRouteId = connection === null ? null : connectionRouteId(connection.target);
     const profile = Option.getOrNull(entry.profile);
-    const next: RemoteOpenResolution = {
+    const next: SourcedRemoteOpenResolution = {
       state: resolveRemoteOpenState({
         target: entry.target,
         connectedRoute:
@@ -149,16 +165,14 @@ const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
           ) ?? null,
         sshTarget:
           profile !== null && profile._tag === "SshConnectionProfile" ? profile.target : null,
-        remoteOpenTargets: presentation?.serverConfig?.remoteOpenTargets,
+        remoteOpenTargets,
         isDesktopRenderer: window.desktopBridge !== undefined,
       }),
       isResolved: true,
+      entry,
+      remoteOpenTargets,
     };
-    return previous !== null &&
-      previous.isResolved &&
-      remoteOpenStatesEqual(previous.state, next.state)
-      ? previous
-      : next;
+    return sourceUnchanged && remoteOpenStatesEqual(previous.state, next.state) ? previous : next;
   }).pipe(Atom.withLabel(`remote-open-resolution:${environmentId}`)),
 );
 
