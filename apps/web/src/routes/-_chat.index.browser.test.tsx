@@ -44,6 +44,6 @@ it("waits for a manual retry after the environment refuses draft creation", asyn
   expect(fixture.openThread).toHaveBeenCalledTimes(1);
 
   await screen.getByRole("button", { name: "Try again" }).click();
-  await expect.poll(() => fixture.openThread.mock.calls.length).toBe(2);
+  await vi.waitFor(() => expect(fixture.openThread).toHaveBeenCalledTimes(2));
   await expect.element(screen.getByRole("button", { name: "Try again" })).toBeVisible();
 });
