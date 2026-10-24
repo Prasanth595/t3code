@@ -104,6 +104,25 @@ describe("makeSpanRegistry.active", () => {
     expect(names.length).toBeLessThanOrEqual(5);
   });
 
+  it("reports the connection a SQL statement ran on", () => {
+    const c = clock();
+    const registry = makeSpanRegistry({ now: c.now });
+    c.set(10);
+    const sql = registry.start("sqlite", "span");
+    registry.markSql(sql, "SELECT 1");
+    registry.markConnection(sql, "reader");
+    expect(registry.active(0, 100, 10)).toEqual([
+      {
+        name: "sqlite",
+        kind: "sql",
+        ageMs: 90,
+        open: true,
+        query: "SELECT 1",
+        connection: "reader",
+      },
+    ]);
+  });
+
   it("ignores an end for a span it already dropped", () => {
     const registry = makeSpanRegistry({ maxInFlight: 1 });
     const first = registry.start("first", "span");
@@ -222,6 +241,23 @@ describe("wrapTracer", () => {
     const spans = registry.active(0, 10, 10);
     expect(spans.map((s) => s.kind)).toEqual(["sql", "span"]);
     expect(spans[0]?.query).toHaveLength(160);
+  });
+
+  it("keeps the connection a client span's db.connection names, and ignores a value it does not know", () => {
+    const { registry, tracer } = setup();
+    const reader = tracer.span(spanOptions("sqlite", Option.some(parentSpan), "client"));
+    reader.attribute("db.system.name", "sqlite");
+    reader.attribute("db.connection", "reader");
+    const writer = tracer.span(spanOptions("sqlite 2", Option.some(parentSpan), "client"));
+    writer.attribute("db.system.name", "sqlite");
+    writer.attribute("db.connection", "writer");
+    const odd = tracer.span(spanOptions("sqlite 3", Option.some(parentSpan), "client"));
+    odd.attribute("db.system.name", "sqlite");
+    odd.attribute("db.connection", 42);
+    const byName = new Map(registry.active(0, 10, 10).map((s) => [s.name, s.connection]));
+    expect(byName.get("sqlite")).toBe("reader");
+    expect(byName.get("sqlite 2")).toBe("writer");
+    expect(byName.get("sqlite 3")).toBeUndefined();
   });
 
   it("links a span to its parent, so the parent's own time excludes the child's", () => {

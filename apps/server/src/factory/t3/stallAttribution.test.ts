@@ -8,7 +8,10 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
 import * as Tracer from "effect/Tracer";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import * as ServerConfig from "../../config.ts";
 import { useTempDirs } from "../ledger/testSupport.ts";
@@ -154,6 +157,64 @@ describe("withStallAttribution", () => {
           record.oldestInFlight.map((s: { name: string }) => s.name),
           [0, 1, 2, 3, 4].map((i) => `http.server GET /ws ${i}`),
         );
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "tags each sqlite statement in flight with the connection it ran on, reader or writer",
+    () =>
+      Effect.gen(function* () {
+        const logsDir = tempDir();
+        const base = yield* Effect.service(Tracer.Tracer);
+        const decorated = makeWithStallAttribution({ intervalMs: 10, thresholdMs: 100 })(
+          Layer.succeed(Tracer.Tracer, base),
+        );
+        const warned = yield* Deferred.make<string>();
+        const capture = Logger.make<unknown, void>(({ message }) => {
+          const text = String(Array.isArray(message) ? message[0] : message);
+          if (text.startsWith("factory event loop stalled") && text.includes("sqlite"))
+            Deferred.doneUnsafe(warned, Effect.succeed(text));
+        });
+        const warning = yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          // Enough rows to hold a thread past the stall threshold on any machine.
+          const count = (rows: number) => sql<{ readonly n: number }>`
+            WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ${rows})
+            SELECT COUNT(*) AS n FROM c
+          `;
+          yield* count(1).pipe(NodeSqliteClient.readOnly);
+          // The reader's statement is posted to its worker before the writer's starts, so it
+          // is in flight off the loop while the writer's blocks the loop.
+          yield* Effect.all([count(8_000_000).pipe(NodeSqliteClient.readOnly), count(8_000_000)], {
+            concurrency: "unbounded",
+          });
+          return yield* Deferred.await(warned);
+        }).pipe(
+          // The server's Observability layer keeps a statement's span current while it runs, which
+          // is what lets the client annotate the connection on it.
+          Effect.provideService(Statement.SpanPropagationEnabled, true),
+          Effect.provide(
+            Layer.mergeAll(
+              decorated.pipe(
+                Layer.provide(Layer.merge(Logger.layer([capture]), serverConfig(logsDir))),
+              ),
+              NodeSqliteClient.layer({
+                filename: NodePath.join(tempDir(), "state.sqlite"),
+                readerWorker: true,
+              }),
+            ),
+          ),
+          Effect.scoped,
+        );
+        assert.include(warning, "sqlite[writer] (");
+        assert.include(warning, "sqlite[reader] (");
+
+        const connections = stallRecords(logsDir)
+          .flatMap((record) => record.spans as Array<{ name: string; connection?: string }>)
+          .filter((span) => span.name === "sqlite")
+          .map((span) => span.connection);
+        assert.include(connections, "writer");
+        assert.include(connections, "reader");
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
