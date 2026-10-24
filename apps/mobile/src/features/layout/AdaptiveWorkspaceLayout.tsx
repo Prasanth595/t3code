@@ -94,6 +94,9 @@ import { AndroidHingeObserver } from "../../native/AndroidHingeObserver";
 import { WindowHingeContext } from "../../native/window-hinge-context";
 import { useAndroidWorkspaceRoot } from "../workspace/AndroidWorkspaceTabsProvider";
 import { openSettings } from "../settings/settings-navigation";
+import { resetRootStack } from "../../lib/root-stack-reset";
+import { currentWorkspaceSelections } from "../workspace/workspace-selection-store";
+import { workspaceTabNavigationState } from "../workspace/workspace-tab-navigation";
 
 export { useAdaptiveWorkspaceLayout };
 
@@ -460,9 +463,16 @@ function AdaptiveWorkspaceLayoutContent(
     }
     setSupplementaryPanePreferredWidth(nextWidth);
   };
-  const handleOpenSettings = () => {
-    openSettings(navigation, "Settings");
-  };
+  // This layout provides the context useSelectWorkspaceTab reads, so it builds the state itself.
+  const handleOpenSettings = () =>
+    resetRootStack(navigation, (state) =>
+      workspaceTabNavigationState(
+        state,
+        "settings",
+        currentWorkspaceSelections(),
+        Platform.OS === "ios" && layout.usesSplitView,
+      ),
+    );
 
   const selectAndroidWorkspace = useAndroidWorkspaceSelection();
   const deferredThreadSelection = useMemo(() => createDeferredNavigation(), []);

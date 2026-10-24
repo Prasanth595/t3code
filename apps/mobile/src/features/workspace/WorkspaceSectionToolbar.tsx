@@ -12,7 +12,6 @@ import {
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 import { useCompactWorkspaceTabs, useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
-import { openSettings } from "../settings/settings-navigation";
 
 const PULL_REQUEST_ICON = require("../../../assets/icons/pull-request.png");
 
@@ -50,7 +49,7 @@ export function WorkspaceTabToolbarButtons() {
         accessibilityLabel="Settings"
         icon="gearshape"
         tintColor={selected === "settings" ? selectedTint : undefined}
-        onPress={() => openSettings(navigation, "Settings")}
+        onPress={() => selectTab("settings")}
       />
     </>
   );

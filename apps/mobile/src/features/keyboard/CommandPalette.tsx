@@ -61,6 +61,7 @@ import { parseActiveThreadPath, type HardwareKeyboardCommand } from "./hardwareK
 import { threadJumpIndex } from "./threadKeyboardShortcuts";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { openSettings } from "../settings/settings-navigation";
+import { useSelectWorkspaceTab } from "../workspace/useSelectWorkspaceTab";
 
 const PALETTE_COMMANDS: ReadonlyArray<HardwareKeyboardCommand> = [
   "commandPalette",
@@ -209,6 +210,7 @@ export function CommandPalette(props: {
   readonly onCommand: (command: HardwareKeyboardCommand) => void;
 }) {
   const navigation = useNavigation();
+  const selectTab = useSelectWorkspaceTab();
   const { themeVariables } = useAppearancePreferences();
   const { selectThread, selectThreadRoute } = useAdaptiveWorkspaceLayout();
   const runCommand = props.onCommand;
@@ -270,7 +272,7 @@ export function CommandPalette(props: {
         kind: "action",
         title: "Open settings",
         searchTerms: ["preferences", "configuration"],
-        run: () => openSettings(navigation, "Settings"),
+        run: () => selectTab("settings"),
       },
       {
         key: "appearance",

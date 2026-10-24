@@ -124,7 +124,7 @@ import { SettingsNotificationsRouteScreen } from "./features/settings/SettingsNo
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
 import { SettingsThreadsRouteScreen } from "./features/settings/SettingsThreadsRouteScreen";
 import { SettingsEnvironmentFilterProvider } from "./features/settings/settings-environment-filter";
-import { openSettings, settingsOpenIn } from "./features/settings/settings-navigation";
+import { settingsOpenIn } from "./features/settings/settings-navigation";
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
 import {
   SettingsLegalDocumentCloseHeaderButton,
@@ -143,6 +143,7 @@ import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { HORIZONTAL_FORM_SHEET_OPTIONS, formSheetDetents } from "./native/sheet-surface";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
 import { useComposerAttachmentUploadWorker } from "./state/composer-attachment-uploads";
+import { useSelectWorkspaceTab } from "./features/workspace/useSelectWorkspaceTab";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -1045,10 +1046,11 @@ function GuardedScreenLayout(props: {
 
 function ScreenRenderFallback(props: RenderFailureProps & { readonly routeName: string }) {
   const navigation = useNavigation();
+  const selectTab = useSelectWorkspaceTab();
   const exit = navigation.canGoBack()
     ? { label: "Go back", onPress: () => navigation.goBack() }
     : props.routeName === "Home"
-      ? { label: "Open settings", onPress: () => openSettings(navigation) }
+      ? { label: "Open settings", onPress: () => selectTab("settings") }
       : { label: "Return home", onPress: () => navigation.dispatch(StackActions.replace("Home")) };
 
   return <RenderFailureView {...props} exit={exit} />;

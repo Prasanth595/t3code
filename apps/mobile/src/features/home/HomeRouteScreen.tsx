@@ -35,6 +35,7 @@ import { useThreadListActions } from "./useThreadListActions";
 import { getConnectionAwareBrandHeaderOptions } from "./WorkspaceConnectionTitle";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { openSettings } from "../settings/settings-navigation";
+import { useSelectWorkspaceTab } from "../workspace/useSelectWorkspaceTab";
 
 export function HomeRouteScreen() {
   const { width: windowWidth } = useWindowDimensions();
@@ -55,6 +56,7 @@ export function HomeRouteScreen() {
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const navigation = useNavigation();
+  const selectTab = useSelectWorkspaceTab();
   const workspace = useWorkspaceTabs();
   const [localSearchQuery, setLocalSearchQuery] = useState("");
   const searchQuery =
@@ -229,7 +231,7 @@ export function HomeRouteScreen() {
           onEnvironmentChange={setSelectedEnvironmentId}
           onProjectChange={setSelectedProjectKey}
           onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
-          onOpenSettings={() => openSettings(navigation, "Settings")}
+          onOpenSettings={() => selectTab("settings")}
           onSearchQueryChange={setSearchQuery}
           onStartNewTask={startNewTask}
         />
@@ -252,7 +254,7 @@ export function HomeRouteScreen() {
           onRegenerateThreadTitle={regenerateThreadTitle}
           onEnvironmentChange={setSelectedEnvironmentId}
           onProjectChange={setSelectedProjectKey}
-          onOpenSettings={() => openSettings(navigation, "Settings")}
+          onOpenSettings={() => selectTab("settings")}
           onSearchQueryChange={setSearchQuery}
           onSelectThread={handleSelectThread}
           onSelectPendingTask={openPendingTask}

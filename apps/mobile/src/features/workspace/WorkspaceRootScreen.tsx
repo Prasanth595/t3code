@@ -46,6 +46,7 @@ import {
   useSystemWorkspaceTabBar,
 } from "./useSystemWorkspaceTabBar";
 import { openSettings } from "../settings/settings-navigation";
+import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 
 const TAB_TITLES = WORKSPACE_TAB_LABELS;
 
@@ -72,6 +73,7 @@ function WorkspaceRootTitle(props: {
 
 function WorkspaceRootContent() {
   const navigation = useNavigation();
+  const selectTab = useSelectWorkspaceTab();
   const { width: windowWidth } = useWindowDimensions();
   const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
   const primaryColumn = use(NativePrimaryColumnContext);
@@ -186,7 +188,7 @@ function WorkspaceRootContent() {
               {
                 accessibilityLabel: "Settings",
                 icon: "gearshape",
-                onPress: () => openSettings(navigation, "Settings"),
+                onPress: () => selectTab("settings"),
               },
             ]}
           />

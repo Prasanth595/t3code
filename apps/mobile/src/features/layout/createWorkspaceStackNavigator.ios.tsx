@@ -2,7 +2,6 @@ import {
   createNavigatorFactory,
   NavigationContext,
   NavigationRouteContext,
-  StackActions,
   StackRouter,
   useNavigationBuilder,
   type NavigatorTypeBagBase,
@@ -29,6 +28,9 @@ import { WorkspaceTabsProvider, useWorkspaceTabs } from "../workspace/WorkspaceT
 import { WorkspaceNativeTabs } from "../workspace/WorkspaceNativeTabs.ios";
 import { workspaceUsesColumns } from "../workspace/workspace-tabs-state";
 import { isSettingsRoute, settingsOpenIn } from "../settings/settings-navigation";
+import { resetRootStack } from "../../lib/root-stack-reset";
+import { currentWorkspaceSelections } from "../workspace/workspace-selection-store";
+import { workspaceTabNavigationState } from "../workspace/workspace-tab-navigation";
 import { useWorkspaceSidebarHeaderItem } from "./useWorkspaceSidebarHeaderItem";
 import { useDeviceType, useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 
@@ -212,16 +214,6 @@ function WorkspaceColumns(
   const workspaceTabs = useWorkspaceTabs();
   const selectedTab = workspaceTabs?.state.selectedTab;
   const settingsOpen = workspaceTabs?.settingsOpen ?? false;
-  // A split view can't give the list the whole width, so with columns side by side Settings
-  // opens a first page beside its list, like the system Settings app.
-  const settingsNeedsPage =
-    settingsOpen &&
-    layout.usesSplitView &&
-    !layout.primarySidebarOverlaysContent &&
-    props.detail.length === 0;
-  useEffect(() => {
-    if (settingsNeedsPage) props.navigation.dispatch(StackActions.push("SettingsEnvironments"));
-  }, [settingsNeedsPage, props.navigation]);
   const openNewTask = startNewTask;
   // The cover detail rail needs room for thread tools above the fixed tabs.
   // The unfolded Duo keeps compose in its detail bar.
@@ -311,6 +303,30 @@ function WorkspaceColumns(
       }}
       onExpand={() => {
         collapsed.current = false;
+        // Native callbacks can outlive the render that created them, so decide from the live
+        // router state: expanding gives the tab a detail column, filled with its last page.
+        const live = props.navigation.getState();
+        const isOverlay = (route: { readonly key: string }) => {
+          const presentation = props.descriptors[route.key]?.options.presentation;
+          return presentation !== undefined && presentation !== "card";
+        };
+        const routes = live.routes.slice(0, live.index + 1);
+        const firstOverlay = routes.findIndex(isOverlay);
+        const workspaceRoutes = firstOverlay < 0 ? routes : routes.slice(0, firstOverlay);
+        if (workspaceRoutes.some((route) => route.name !== "Home" && route.name !== "Settings"))
+          return;
+        const settings = workspaceRoutes.some((route) => route.name === "Settings");
+        const tab = (["threads", "pullRequests", "usage"] as const).find((candidate) =>
+          workspaceTabs?.isTabActive(candidate),
+        );
+        resetRootStack(props.navigation, (state) =>
+          workspaceTabNavigationState(
+            state,
+            settings ? "settings" : (tab ?? "threads"),
+            currentWorkspaceSelections(),
+            true,
+          ),
+        );
       }}
       preferredDisplayMode={
         // UIKit applies the mode as a collapsed split expands, before the new width reaches JS, so a
@@ -452,10 +468,6 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
           !layout.usesSplitView &&
           (metrics?.verticalBarEdge ?? "none") === "none"
         }
-        onSelect={() => {
-          if (props.state.index > 0)
-            props.navigation.dispatch({ type: "POP_TO_TOP", target: props.state.key });
-        }}
       >
         {props.nativeColumns && !workspacePage ? (
           <WorkspaceColumns

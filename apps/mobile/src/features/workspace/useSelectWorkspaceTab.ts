@@ -1,22 +1,37 @@
-import { StackActions, useNavigation } from "@react-navigation/native";
+import { useNavigation } from "@react-navigation/native";
 import { useCallback } from "react";
 import { Keyboard, Platform } from "react-native";
-import { resetAndroidWorkspace } from "../../lib/android-workspace-navigation";
+
+import { resetRootStack } from "../../lib/root-stack-reset";
+import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
+import { currentWorkspaceSelections } from "./workspace-selection-store";
+import { workspaceTabNavigationState } from "./workspace-tab-navigation";
 import type { WorkspaceTab } from "./workspace-tabs-state";
 
-/** Switch workspace tabs from inside the sidebar, closing any open detail first. */
+/** iOS columns show a detail beside the list, so a tab opens with a page in it. */
+export function useWorkspaceColumns() {
+  const { layout } = useAdaptiveWorkspaceLayout();
+  return Platform.OS === "ios" && layout.usesSplitView;
+}
+
+/**
+ * The one way to open a workspace tab, Settings included: it replaces the root stack with the
+ * tab's list and, with columns, the page the tab last showed.
+ */
 export function useSelectWorkspaceTab() {
-  const workspace = useWorkspaceTabs()!;
+  const workspace = useWorkspaceTabs();
   const navigation = useNavigation();
-  const { dispatch } = workspace;
+  const columns = useWorkspaceColumns();
+  const dispatch = workspace?.dispatch;
   return useCallback(
-    (tab: WorkspaceTab) => {
+    (tab: WorkspaceTab | "settings") => {
       Keyboard.dismiss();
-      if (Platform.OS === "android") resetAndroidWorkspace(navigation);
-      else navigation.dispatch(StackActions.popTo("Home"));
-      dispatch({ type: "select", tab });
+      resetRootStack(navigation, (state) =>
+        workspaceTabNavigationState(state, tab, currentWorkspaceSelections(), columns),
+      );
+      if (tab !== "settings") dispatch?.({ type: "select", tab });
     },
-    [dispatch, navigation],
+    [columns, dispatch, navigation],
   );
 }

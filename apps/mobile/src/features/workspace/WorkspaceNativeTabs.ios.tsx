@@ -1,11 +1,10 @@
-import { useNavigation } from "@react-navigation/native";
 import {
   WORKSPACE_TAB_LABELS,
   NAVIGATION_TAB_ICONS,
   useEnabledNavigationTabs,
 } from "./navigation-tabs";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
-import { Keyboard, View, useWindowDimensions, type NativeSyntheticEvent } from "react-native";
+import { View, useWindowDimensions, type NativeSyntheticEvent } from "react-native";
 import {
   Tabs,
   type TabSelectedEvent,
@@ -26,7 +25,7 @@ import { useControlTheme } from "../../components/ui/useControlTheme";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
-import { openSettings } from "../settings/settings-navigation";
+import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 
 const PULL_REQUEST_ICON = require("../../../assets/icons/pull-request.png");
 
@@ -61,13 +60,12 @@ function RetainedWorkspaceTab(props: {
 export function WorkspaceNativeTabs(props: {
   readonly children: ReactNode;
   readonly hidden: boolean;
-  readonly onSelect: () => void;
 }) {
   const workspace = useWorkspaceTabs()!;
   const order = useEnabledNavigationTabs();
   const primaryTabs = order.slice(0, 4);
   const overflow = order[4];
-  const navigation = useNavigation();
+  const selectTab = useSelectWorkspaceTab();
   const [provenance, setProvenance] = useState(0);
   const systemTabBar = useSystemWorkspaceTabBar();
   const deviceType = useDeviceType();
@@ -99,9 +97,7 @@ export function WorkspaceNativeTabs(props: {
         onTabSelectionPrevented={({
           nativeEvent,
         }: NativeSyntheticEvent<TabSelectionPreventedEvent>) => {
-          if (nativeEvent.preventedScreenKey === "settings") {
-            openSettings(navigation, "Settings");
-          }
+          if (nativeEvent.preventedScreenKey === "settings") selectTab("settings");
         }}
         onTabSelectionRejected={({
           nativeEvent,
@@ -113,14 +109,7 @@ export function WorkspaceNativeTabs(props: {
           if (nativeEvent.actionOrigin === "programmatic-js") return;
           const tab = workspaceTabForNativeSlot(primaryTabs, nativeEvent.selectedScreenKey);
           // UIKit sends reselects here even when preventNativeSelection is enabled.
-          if (tab === "settings") {
-            openSettings(navigation, "Settings");
-            return;
-          }
-          if (!tab) return;
-          Keyboard.dismiss();
-          props.onSelect();
-          workspace.dispatch({ type: "select", tab });
+          if (tab) selectTab(tab);
         }}
       >
         {NATIVE_WORKSPACE_TAB_SLOTS.map((slot, index) => {
