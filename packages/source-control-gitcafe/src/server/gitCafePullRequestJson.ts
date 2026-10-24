@@ -260,6 +260,8 @@ export const GitCafeChecks = Schema.Struct({
   items: Schema.Array(
     Schema.Struct({
       id: Schema.optional(Schema.NullOr(Schema.String)),
+      provider: Schema.optional(Schema.NullOr(Schema.String)),
+      githubApp: Schema.optional(Schema.NullOr(Schema.String)),
       name: TrimmedNonEmptyString,
       status: Schema.Literals(["queued", "in_progress", "completed"]),
       conclusion: Schema.NullOr(Schema.String),
@@ -650,20 +652,22 @@ function runOrder(check: GitCafeCheck): bigint | null {
 /**
  * GitCafe lists every run of a commit's checks, so a re-run arrives beside the run it replaced.
  * The newest run is the check's state; an older failure is history, not a failing check. Runs whose
- * order cannot be told apart are all kept, so no failure is hidden.
+ * order cannot be told apart are all kept, so no failure is hidden. Two reporters may share a check
+ * name, so a run only replaces runs from the same provider and GitHub app.
  */
 export function toChecks(checks: typeof GitCafeChecks.Type): ReadonlyArray<PullRequestCheck> {
   const kept: Array<GitCafeCheck> = [];
-  const newestByName = new Map<string, { index: number; order: bigint }>();
+  const newestByKey = new Map<string, { index: number; order: bigint }>();
   for (const check of checks.items) {
     const order = runOrder(check);
     if (order === null) {
       kept.push(check);
       continue;
     }
-    const newest = newestByName.get(check.name);
+    const key = JSON.stringify([check.provider ?? null, check.githubApp ?? null, check.name]);
+    const newest = newestByKey.get(key);
     if (newest === undefined) {
-      newestByName.set(check.name, { index: kept.length, order });
+      newestByKey.set(key, { index: kept.length, order });
       kept.push(check);
     } else if (order > newest.order) {
       kept[newest.index] = check;
