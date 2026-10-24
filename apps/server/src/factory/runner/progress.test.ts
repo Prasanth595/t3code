@@ -503,6 +503,33 @@ describe("readProgress: the branch a launch resumed from", () => {
   });
 });
 
+describe("readProgress: the launch-sending step of a resume", () => {
+  it("reads the branch of a resume from an earlier run's branch, with no pull request", () => {
+    const seen = readProgress([step(1, "launch-sending resumed-from t3code/abc")]);
+    assert.isTrue(seen.launchSent);
+    assert.strictEqual(seen.launchResumedFrom, "t3code/abc");
+    assert.strictEqual(seen.launchResumedPr, null);
+  });
+
+  it("reads the branch and the pull request of a resume onto an open pull request", () => {
+    const seen = readProgress([
+      step(
+        1,
+        "launch-sending resumed-from t3code/abc pull-request https://github.com/rawphp/softfac/pull/12",
+      ),
+    ]);
+    assert.strictEqual(seen.launchResumedFrom, "t3code/abc");
+    assert.strictEqual(seen.launchResumedPr, "https://github.com/rawphp/softfac/pull/12");
+  });
+
+  it("is none for a plain launch", () => {
+    const seen = readProgress([step(1, "launch-sending")]);
+    assert.isTrue(seen.launchSent);
+    assert.strictEqual(seen.launchResumedFrom, null);
+    assert.strictEqual(seen.launchResumedPr, null);
+  });
+});
+
 describe("readProgress: a cancelled forward wait", () => {
   const sentBack = (ms: number, ordinal: number) =>
     line(ms, "gate_sent_back", { attempt: 1, run_ordinal: ordinal });

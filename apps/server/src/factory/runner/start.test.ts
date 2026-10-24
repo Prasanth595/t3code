@@ -32,6 +32,7 @@ import {
   GitHubFailed,
   GitHubInvalidArgument,
   type ClaimOutcome,
+  type ClosingPullRequest,
   type FactoryComment,
   type GitHubError,
   type IssueDetail,
@@ -113,6 +114,8 @@ const fakeTracker = (script: {
   branchTip?: "found" | "missing" | GitHubError;
   /** Whether the issue text was edited since the approval (false by default), or a failed read. Read at each call. */
   editedSince?: boolean | GitHubError;
+  /** The open pull requests GitHub says would close the issue (none by default), or a failed read. */
+  closing?: ReadonlyArray<ClosingPullRequest> | GitHubError;
 }) => {
   const calls: Array<string> = [];
   const issues = [...(script.issues ?? [detail("ready")])];
@@ -193,6 +196,13 @@ const fakeTracker = (script: {
       calls.push(`textEditedSince ${n} ${since}`);
       const edited = script.editedSince ?? false;
       return typeof edited === "boolean" ? Effect.succeed(edited) : Effect.fail(edited);
+    },
+    openPullRequestsClosing: (n) => {
+      calls.push(`openPullRequestsClosing ${n}`);
+      const closing = script.closing ?? [];
+      return Array.isArray(closing)
+        ? Effect.succeed(closing as ReadonlyArray<ClosingPullRequest>)
+        : Effect.fail(closing as GitHubError);
     },
     // The gate's actions: the claim never performs them.
     markPrReady: () => Effect.die("not the claim's"),
@@ -2198,6 +2208,306 @@ describe("start: the resume after a time limit", () => {
       const request = t3.launchRequests[0]!;
       assert.strictEqual(request.baseRef, "main");
       assert.strictEqual(request.startFromOrigin, false);
+    }),
+  );
+});
+
+const URL12 = "https://github.com/rawphp/softfac/pull/12";
+const PR_OPENED_12: RunEvent = { event: "pr_opened", data: { pr: 12, url: URL12 } };
+const EXISTING_PR_WORDS = "Do not open another pull request.";
+
+/** An open draft on `head` into `main`, as `pullRequest` reads it. */
+const openDraft = (head: string): PullRequest => ({
+  number: 12,
+  isDraft: true,
+  open: true,
+  merged: false,
+  headRef: head,
+  crossRepository: false,
+  baseRef: "main",
+  headSha: "a".repeat(40),
+  mergeable: "mergeable",
+});
+
+/** An open draft by the factory on `head` into `main`, as GitHub's closing references list it. */
+const closingDraft = (
+  head: string,
+  over: Partial<ClosingPullRequest> = {},
+): ClosingPullRequest => ({
+  number: 12,
+  url: URL12,
+  isDraft: true,
+  headRef: head,
+  baseRef: "main",
+  crossRepository: false,
+  author: USER,
+  ...over,
+});
+
+/**
+ * Run 1 of issue 7: started on `t3code/abc`, reported pull request #12 (`pr_opened`), then ended
+ * with `outcome`: `needs-info`, or stuck for the reason code `code`.
+ */
+const seedEndedWithPr = (
+  dataDir: string,
+  ending: { outcome: "needs-info" } | { outcome: "stuck"; code: string },
+) => {
+  const ledger = Ledger.create(dataDir, run7, { clock: () => T0 - 1000 });
+  try {
+    for (const { line, cause: why } of startedLinesOn("t3code/abc")) ledger.append(line, why);
+    const why = makeCause("advance", ending.outcome === "stuck" ? ending.code : "questions-asked");
+    ledger.append(PR_OPENED_12, makeCause("advance", "pr-opened"));
+    if (ending.outcome === "needs-info") {
+      ledger.append({ event: "questions_posted", data: { questions: "1. Which?" } }, why);
+      ledger.append({ event: "state_changed", data: { from: "building", to: "needs-info" } }, why);
+      ledger.finish("needs-info", null, null, why);
+    } else {
+      ledger.append(
+        {
+          event: "stuck",
+          data: {
+            reason: ending.code === "time-limit" ? TIME_LIMIT_TEXT : "the session said stuck",
+            branch: "t3code/abc",
+            commits_ahead: 2,
+          },
+        },
+        why,
+      );
+      ledger.append({ event: "state_changed", data: { from: "building", to: "stuck" } }, why);
+      ledger.finish("stuck", null, null, why);
+    }
+  } finally {
+    ledger.close();
+  }
+};
+
+const prLookups = (calls: ReadonlyArray<string>) =>
+  calls.filter((c) => /^(openPullRequestsClosing|pullRequest) /.test(c));
+
+/** The last launch resumed onto pull request #12 on `t3code/abc`, and its lines say so. */
+const assertResumedOntoPr = (
+  dataDir: string,
+  t3: ReturnType<typeof fakeSessions>,
+  from: { run: string },
+) => {
+  const request = t3.launchRequests.at(-1)!;
+  assert.strictEqual(request.baseRef, "t3code/abc");
+  assert.strictEqual(request.startFromOrigin, true);
+  assert.strictEqual(
+    request.message,
+    launchMessage(REPO, 7, USER, "/gh/rawphp", {
+      after: "existing-pr",
+      branch: "t3code/abc",
+      prUrl: URL12,
+    }),
+  );
+  assert.ok(request.message.includes(EXISTING_PR_WORDS), request.message);
+  assert.ok(request.message.includes("git push origin HEAD:t3code/abc"), request.message);
+  const line = launchLineOf(dataDir);
+  assert.deepStrictEqual((line.data as { resumed_from: unknown }).resumed_from, {
+    run: from.run,
+    branch: "t3code/abc",
+  });
+  assert.strictEqual(line.cause?.reason, "resumed-from-branch");
+  const sending = entriesOf(dataDir, run7n(2)).find(
+    (e) =>
+      e.event === "step_changed" &&
+      String((e.data as { step: string }).step).startsWith("launch-sending"),
+  );
+  assert.deepStrictEqual(sending?.data, {
+    step: `launch-sending resumed-from t3code/abc pull-request ${URL12}`,
+  });
+};
+
+describe("start: the resume onto an open pull request of an earlier attempt", () => {
+  it.effect("after needs-info, continues the pull request the earlier run's ledger names", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedEndedWithPr(dataDir, { outcome: "needs-info" });
+      const { tracker, calls } = fakeTracker({ pulls: { 12: openDraft("t3code/abc") } });
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assertResumedOntoPr(dataDir, t3, { run: "rawphp__softfac__7__1" });
+      // The ledger's pull request is read from GitHub; its closing references are not needed.
+      assert.deepStrictEqual(prLookups(calls), ["pullRequest 12"]);
+      // Neither the branch nor the text is asked about: the open pull request is the work.
+      assert.deepStrictEqual(lookups(calls), []);
+    }),
+  );
+
+  it.effect("after a session that said stuck, continues its pull request", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedEndedWithPr(dataDir, { outcome: "stuck", code: "session-stuck" });
+      const { tracker } = fakeTracker({ pulls: { 12: openDraft("t3code/abc") } });
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assertResumedOntoPr(dataDir, t3, { run: "rawphp__softfac__7__1" });
+    }),
+  );
+
+  it.effect("after a time limit, the pull request wins over the branch", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedEndedWithPr(dataDir, { outcome: "stuck", code: "time-limit" });
+      const { tracker } = fakeTracker({ pulls: { 12: openDraft("t3code/abc") } });
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assertResumedOntoPr(dataDir, t3, { run: "rawphp__softfac__7__1" });
+      assert.ok(!t3.launchRequests[0]!.message.includes(RESUME_WORDS));
+    }),
+  );
+
+  it.effect("is made even when the issue text changed since the earlier approval", () =>
+    Effect.gen(function* () {
+      // A changed text starts the work over, but on the same pull request: never a second one.
+      const dataDir = tempDir();
+      seedEndedWithPr(dataDir, { outcome: "needs-info" });
+      const { tracker } = fakeTracker({
+        pulls: { 12: openDraft("t3code/abc") },
+        editedSince: true,
+      });
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assertResumedOntoPr(dataDir, t3, { run: "rawphp__softfac__7__1" });
+    }),
+  );
+
+  it.effect(
+    "with an empty ledger, continues the open pull request GitHub says closes the issue",
+    () =>
+      Effect.gen(function* () {
+        // Another machine opened it: only GitHub knows. The launch line names this run itself.
+        const dataDir = tempDir();
+        const { tracker, calls } = fakeTracker({ closing: [closingDraft("t3code/abc")] });
+        const t3 = fakeSessions(dataDir, {});
+        yield* startIn(dataDir, tracker, t3.sessions);
+        const request = t3.launchRequests[0]!;
+        assert.strictEqual(request.commandId, "softfac:rawphp__softfac__7__1:launch");
+        assert.strictEqual(request.baseRef, "t3code/abc");
+        assert.strictEqual(request.startFromOrigin, true);
+        assert.strictEqual(
+          request.message,
+          launchMessage(REPO, 7, USER, "/gh/rawphp", {
+            after: "existing-pr",
+            branch: "t3code/abc",
+            prUrl: URL12,
+          }),
+        );
+        assert.deepStrictEqual(prLookups(calls), ["openPullRequestsClosing 7"]);
+        const line = entriesOf(dataDir, run7).find((e) => e.event === "session_launched")!;
+        assert.deepStrictEqual((line.data as { resumed_from: unknown }).resumed_from, {
+          run: "rawphp__softfac__7__1",
+          branch: "t3code/abc",
+        });
+      }),
+  );
+
+  it.effect("takes the newest open pull request of the factory's own on GitHub", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker } = fakeTracker({
+        closing: [
+          closingDraft("t3code/first", {
+            number: 11,
+            url: "https://github.com/rawphp/softfac/pull/11",
+          }),
+          closingDraft("t3code/abc"),
+        ],
+      });
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assert.strictEqual(t3.launchRequests[0]!.baseRef, "t3code/abc");
+      assert.ok(t3.launchRequests[0]!.message.includes(URL12));
+    }),
+  );
+
+  it.effect("passes over pull requests that are not the factory's own on this base", () =>
+    Effect.gen(function* () {
+      for (const other of [
+        closingDraft("t3code/abc", { author: "someone" }),
+        closingDraft("t3code/abc", { author: null }),
+        closingDraft("t3code/abc", { crossRepository: true }),
+        closingDraft("t3code/abc", { baseRef: "dev" }),
+        closingDraft("--force"),
+        closingDraft("a b"),
+      ]) {
+        const dataDir = tempDir();
+        const { tracker } = fakeTracker({ closing: [other] });
+        const t3 = fakeSessions(dataDir, {});
+        yield* startIn(dataDir, tracker, t3.sessions);
+        const request = t3.launchRequests[0]!;
+        assert.strictEqual(request.baseRef, "main", JSON.stringify(other));
+        assert.strictEqual(request.message, launchMessage(REPO, 7, USER, "/gh/rawphp"));
+      }
+    }),
+  );
+
+  it.effect("falls back to a plain start when the ledger's pull request is no longer open", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedEndedWithPr(dataDir, { outcome: "needs-info" });
+      const { tracker, calls } = fakeTracker({
+        pulls: { 12: { ...openDraft("t3code/abc"), open: false } },
+      });
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assert.deepStrictEqual(prLookups(calls), ["pullRequest 12", "openPullRequestsClosing 7"]);
+      assertPlainStart(dataDir, t3);
+    }),
+  );
+
+  it.effect("falls back to the branch after a time limit when the pull request is closed", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedEndedWithPr(dataDir, { outcome: "stuck", code: "time-limit" });
+      const { tracker } = fakeTracker({ pulls: { 12: null } });
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      const request = t3.launchRequests[0]!;
+      assert.strictEqual(request.baseRef, "t3code/abc");
+      assert.ok(request.message.includes(RESUME_WORDS), request.message);
+    }),
+  );
+
+  it.effect(
+    "is an error that leaves the issue in triage when GitHub cannot list the pull requests",
+    () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        const { tracker, calls } = fakeTracker({ closing: ghFailure() });
+        const t3 = fakeSessions(dataDir, {});
+        const error = yield* Effect.flip(startIn(dataDir, tracker, t3.sessions));
+        assert.strictEqual(error._tag, "GitHubFailed");
+        assert.deepStrictEqual(t3.launchRequests, []);
+        assert.ok(!calls.some((c) => c.startsWith("setState 7 building")), calls.join("\n"));
+      }),
+  );
+
+  it.effect("sent again, reuses the recorded pull request and asks GitHub nothing", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedEndedWithPr(dataDir, { outcome: "needs-info" });
+      seedSecondRun(dataDir, [
+        ...startedLines().slice(0, 3),
+        {
+          line: {
+            event: "step_changed",
+            data: { step: `launch-sending resumed-from t3code/abc pull-request ${URL12}` },
+          },
+          cause: cause("launch-sending"),
+        },
+      ]);
+      // The pull request was closed since the first send: the retry sends the same request.
+      const { tracker, calls } = fakeTracker({
+        issues: [detail("triage", [USER])],
+        pulls: { 12: null },
+      });
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assertResumedOntoPr(dataDir, t3, { run: "rawphp__softfac__7__1" });
+      assert.deepStrictEqual(prLookups(calls), []);
+      assert.deepStrictEqual(lookups(calls), []);
     }),
   );
 });
