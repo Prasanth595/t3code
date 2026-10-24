@@ -94,10 +94,14 @@ it.effect("names the model and the disabled extensions when Pi cannot load it", 
   }),
 );
 
-const failedTurn = {
+const failedTurnWith = (errorMessage: string) => ({
   type: "message_end",
-  message: { role: "assistant", stopReason: "error", errorMessage: "401 Invalid API key" },
-};
+  message: { role: "assistant", stopReason: "error", errorMessage },
+});
+
+const failedTurn = failedTurnWith(
+  '401: {"error":{"message":"Incorrect API key provided: sk-test-SECRET123"}}',
+);
 
 const generateCommitMessage = (turnEvents: ReadonlyArray<Record<string, unknown>>, reply = "") =>
   Effect.gen(function* () {
@@ -120,7 +124,18 @@ it.effect("reports Pi's turn error when the reply is empty", () =>
     const error = yield* generateCommitMessage([failedTurn]).pipe(Effect.flip);
 
     assert.equal(error._tag, "TextGenerationError");
-    assert.equal(error.detail, "Pi could not generate text: 401 Invalid API key");
+    assert.equal(error.detail, "Pi could not generate text: the model provider returned HTTP 401.");
+  }),
+);
+
+it.effect("keeps Pi's raw error text out of the error", () =>
+  Effect.gen(function* () {
+    const error = yield* generateCommitMessage([
+      failedTurnWith("Invalid API key sk-test-SECRET123"),
+    ]).pipe(Effect.flip);
+
+    assert.equal(error.detail, "Pi could not generate text: the model provider reported an error.");
+    assert.notInclude(error.message, "SECRET123");
   }),
 );
 

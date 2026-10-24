@@ -15,6 +15,15 @@ const PI_TIMEOUT_MS = 180_000;
 
 const isTextGenerationError = Schema.is(TextGenerationError);
 
+// Pi's `errorMessage` is the provider's raw response text and can echo
+// credentials, so only a leading HTTP status reaches the error detail.
+const piTurnErrorDetail = (errorMessage: string | undefined) => {
+  const status = errorMessage?.match(/^([45]\d\d)\b/)?.[1];
+  return status === undefined
+    ? "Pi could not generate text: the model provider reported an error."
+    : `Pi could not generate text: the model provider returned HTTP ${status}.`;
+};
+
 export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* (
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv = process.env,
@@ -92,7 +101,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
           if (event["type"] === "message_end" && piRecordString(message, "role") === "assistant") {
             turnError =
               piRecordString(message, "stopReason") === "error"
-                ? (piRecordString(message, "errorMessage") ?? "Pi reported a model error.")
+                ? piTurnErrorDetail(piRecordString(message, "errorMessage"))
                 : undefined;
           }
         }
@@ -107,10 +116,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
       if (!text) {
         return yield* new TextGenerationError({
           operation,
-          detail:
-            turnError === undefined
-              ? "Pi returned empty output."
-              : `Pi could not generate text: ${turnError.slice(0, 1_000)}`,
+          detail: turnError ?? "Pi returned empty output.",
         });
       }
       return yield* TextGenerationOperations.decodeJsonReply(request, "Pi", text);
