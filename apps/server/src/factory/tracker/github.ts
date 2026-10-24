@@ -211,9 +211,9 @@ const GH_OUTPUT_LIMIT = 8 * 1024 * 1024;
 /** gh's stderr for the primary limit, the secondary limit, and a 429. */
 const RATE_LIMITED = /API rate limit|secondary rate limit|HTTP 429/i;
 /** How many times one call is tried before its failure is returned. */
-const GH_ATTEMPTS = 3;
-/** The wait before the second and the third attempt, in milliseconds; each gets up to a second more. */
-const GH_RETRY_DELAYS_MS = [2_000, 5_000] as const;
+const GH_ATTEMPTS = 5;
+/** The wait before the second to the fifth attempt, in milliseconds; each gets up to a second more. */
+const GH_RETRY_DELAYS_MS = [2_000, 5_000, 15_000, 30_000] as const;
 /**
  * gh's stderr when GitHub never received the request, so trying again is safe for a write
  * too: a TLS handshake that timed out, or a dial that timed out, was refused or found no host.
@@ -353,6 +353,13 @@ const isCallSpecific = (error: GitHubError): boolean =>
 /** GitHub saying the thing asked for is not there: `gh` failed with a 404. */
 export const isNotFound = (error: GitHubError): boolean =>
   error._tag === "GitHubFailed" && error.stderr.includes("HTTP 404");
+
+/**
+ * `gh` failed in a way that says GitHub never received the call, so another try may well
+ * succeed; a caller tells a transient failure from a real one by it.
+ */
+export const isNotReceived = (error: GitHubError): boolean =>
+  error._tag === "GitHubFailed" && notReceived(error.stderr) !== null;
 
 const Login = Schema.Struct({ login: Schema.String });
 const OptionalText = Schema.optional(Schema.NullOr(Schema.String));
