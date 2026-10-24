@@ -56,6 +56,22 @@ describe("readProgress: the pull request", () => {
     assert.strictEqual(seen.prReported, false);
   });
 
+  it("is kept but not reported when the line records a pull request a stopping session left", () => {
+    // A `pr-left` line is written by a stuck exit, for the next attempt to continue: the session
+    // did not report it for the gate, so the run still holds its slot and its time limit.
+    const left: Entry = {
+      ...line(1, "pr_opened", { pr: 12, url: "https://github.com/rawphp/softfac/pull/12" }),
+      cause: { step: "pass", reason: "pr-left" },
+    };
+    const seen = readProgress([left]);
+    assert.deepStrictEqual(seen.opened, [12]);
+    assert.deepStrictEqual(seen.lastPr, {
+      pr: 12,
+      url: "https://github.com/rawphp/softfac/pull/12",
+    });
+    assert.strictEqual(seen.prReported, false);
+  });
+
   it("is reported from pr_opened until the run is building again", () => {
     const opened = line(1, "pr_opened", {
       pr: 12,

@@ -3120,7 +3120,7 @@ describe("advance: the pull request a session leaves when it stops or asks", () 
       assert.deepStrictEqual(rig.reads, ["issue 10", "openPullRequestsOnHead t3code/abc"]);
       assert.deepStrictEqual(
         readRun(rig.dataDir, rig.run).entries.find((e) => e.event === "pr_opened")?.cause,
-        { step: "advance", reason: "pr-opened" },
+        { step: "advance", reason: "pr-left" },
       );
     }),
   );
@@ -3209,6 +3209,24 @@ describe("advance: the pull request a session leaves when it stops or asks", () 
         ...limitEvents(elapsed, "t3code/abc").slice(STARTED.length),
       ]);
       assert.deepStrictEqual(rig.reads, ["openPullRequestsOnHead t3code/abc"]);
+    }),
+  );
+
+  it.effect("does not keep the time limit from stopping the run when the stop fails after it", () =>
+    Effect.gen(function* () {
+      // The record is written, then the stuck comment fails: the next call stops the run still.
+      const rig = limitedRig();
+      rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
+      rig.world.failNext.postComment = ghFailure();
+      rig.clock.now = T0 + LIMIT_MS + 1;
+      assert.strictEqual((yield* Effect.flip(timeLimit(rig.ctx, rig.run)))._tag, "GitHubFailed");
+      assert.ok(linesOf(rig).some((line) => line.event === "pr_opened"));
+      assert.deepStrictEqual(yield* timeLimit(rig.ctx, rig.run), {
+        kind: "stopped",
+        reason: TIME_LIMIT,
+      });
+      assert.strictEqual(linesOf(rig).filter((line) => line.event === "pr_opened").length, 1);
+      assert.deepStrictEqual(stuckCauses(rig), Array(3).fill("pass time-limit"));
     }),
   );
 
