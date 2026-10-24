@@ -170,6 +170,11 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+import {
+  applyWorkflowUpdate,
+  workflowJsonBytes,
+  WORKFLOW_UPDATE_BYTES,
+} from "@t3tools/shared/workflowUpdate";
 
 const isMessageQuestionAnswer = Schema.is(
   Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
@@ -7796,6 +7801,46 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const projection = yield* loadWorkflowProjection(command);
     const task = yield* runningWorkflow(command, projection);
     const now = yield* DateTime.now;
+    if ("kind" in command.workflow) {
+      const revision = task.workflow?.revision ?? 0;
+      const payload = {
+        id: task.id,
+        previousRevision: revision,
+        revision: revision + 1,
+        patch: command.workflow,
+        ...(command.progress === undefined ? {} : { progress: command.progress }),
+        updatedAt: now,
+      };
+      const event = {
+        type: "workflow.updated" as const,
+        threadId: command.threadId,
+        ...(task.runId === null ? {} : { runId: task.runId }),
+        nodeId: task.id,
+        occurredAt: now,
+        payload,
+      };
+      // Validate the merged identity/plan before committing, and budget the event, not just the patch.
+      yield* Effect.try({
+        try: () => applyWorkflowUpdate(task, payload),
+        catch: (cause) => workflowDispatchError(command, String(cause)),
+      });
+      const initialPlan =
+        command.workflow.plan !== undefined &&
+        task.workflow?.plan === undefined &&
+        Object.keys(command.workflow).every((key) => key === "kind" || key === "plan");
+      if (
+        !initialPlan &&
+        (workflowJsonBytes(command) > WORKFLOW_UPDATE_BYTES ||
+          workflowJsonBytes(event) > WORKFLOW_UPDATE_BYTES - 2048)
+      ) {
+        return yield* workflowDispatchError(
+          command,
+          "Workflow update exceeds 64 KiB; split changed agents and outcomes.",
+        );
+      }
+      yield* emit(events, command)(event);
+      return;
+    }
     yield* emit(
       events,
       command,
@@ -11367,13 +11412,34 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   }) {
     const { command, task, now } = input;
     const emitEvent = emit(input.events, command);
-    yield* emitEvent({
-      type: "subagent.updated",
-      threadId: command.threadId,
-      nodeId: task.id,
-      occurredAt: now,
-      payload: task,
-    });
+    if (task.workflow !== undefined) {
+      const revision = task.workflow.revision ?? 0;
+      yield* emitEvent({
+        type: "workflow.updated",
+        threadId: command.threadId,
+        nodeId: task.id,
+        occurredAt: now,
+        payload: {
+          id: task.id,
+          previousRevision: revision,
+          revision: revision + 1,
+          status: task.status,
+          result: task.result,
+          completedAt: task.completedAt,
+          ...(task.completionDelivery === undefined
+            ? {}
+            : { completionDelivery: task.completionDelivery }),
+          updatedAt: now,
+        },
+      });
+    } else
+      yield* emitEvent({
+        type: "subagent.updated",
+        threadId: command.threadId,
+        nodeId: task.id,
+        occurredAt: now,
+        payload: task,
+      });
     const node = input.nodes.find((candidate) => candidate.id === task.id);
     if (node !== undefined)
       yield* emitEvent({
@@ -11414,9 +11480,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       let nodes: ReadonlyArray<OrchestrationV2ExecutionNode> | undefined;
       for (const recorded of projection.subagents) {
         const updated = pending.findLast(
-          (event) => event.type === "subagent.updated" && event.payload.id === recorded.id,
+          (event) =>
+            (event.type === "subagent.updated" || event.type === "workflow.updated") &&
+            event.payload.id === recorded.id,
         );
-        const task = updated?.type === "subagent.updated" ? updated.payload : recorded;
+        const task =
+          updated?.type === "subagent.updated"
+            ? updated.payload
+            : updated?.type === "workflow.updated"
+              ? applyWorkflowUpdate(recorded, updated.payload)
+              : recorded;
         // Stop ends a T3 workflow on this thread; its members stop with the thread's tasks.
         if (
           task.origin === "app_owned" &&
@@ -13514,6 +13587,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const { event } = stored;
     if (event.type === "subagent.updated")
       return !isOrchestrationV2WorkActive(event.payload.status);
+    if (event.type === "workflow.updated")
+      return (
+        event.payload.status !== undefined && !isOrchestrationV2WorkActive(event.payload.status)
+      );
     if (event.type !== "provider-thread.updated") return false;
     if ((event.payload.pendingBackgroundTasks?.length ?? 0) > 0) {
       providerThreadsWithBackgroundWork.add(event.payload.id);
@@ -13521,12 +13598,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     return providerThreadsWithBackgroundWork.delete(event.payload.id);
   };
-  yield* Stream.merge(
-    eventSink.stream({
-      afterSequence: terminalEventsAfterSequence,
-      eventType: "provider-thread.updated",
-    }),
-    eventSink.stream({ afterSequence: terminalEventsAfterSequence, eventType: "subagent.updated" }),
+  yield* Stream.mergeAll(
+    [
+      eventSink.stream({
+        afterSequence: terminalEventsAfterSequence,
+        eventType: "provider-thread.updated",
+      }),
+      eventSink.stream({
+        afterSequence: terminalEventsAfterSequence,
+        eventType: "subagent.updated",
+      }),
+      eventSink.stream({
+        afterSequence: terminalEventsAfterSequence,
+        eventType: "workflow.updated",
+      }),
+    ],
+    { concurrency: 3 },
   ).pipe(
     Stream.filter(settlesChildWork),
     Stream.runForEach((stored) =>

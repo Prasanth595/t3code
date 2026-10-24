@@ -10,12 +10,17 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import { fullWorkflowRowEvent } from "../orchestration-v2/ThreadStream.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
 import { crossProvider, providerDimensions } from "./ProviderDimensions.ts";
 
 type SubagentEvent = Extract<OrchestrationV2DomainEvent, { readonly type: "subagent.updated" }>;
+type WorkflowUpdateEvent = Extract<
+  OrchestrationV2DomainEvent,
+  { readonly type: "workflow.updated" }
+>;
 
 const FINAL_STATUSES: ReadonlySet<string> = new Set([
   "completed",
@@ -75,9 +80,24 @@ const make = Effect.gen(function* () {
     (effect) => effect.pipe(Effect.ignoreCause),
   );
 
+  const onWorkflowUpdate = Effect.fnUntraced(
+    function* (event: WorkflowUpdateEvent) {
+      const status = event.payload.status;
+      if (status === undefined || !FINAL_STATUSES.has(status)) return;
+      const { subagents } = yield* orchestrator.getThreadRecords(event.threadId, ["subagents"]);
+      const full = fullWorkflowRowEvent(event, subagents);
+      if (full !== undefined) yield* onSubagent(full);
+    },
+    (effect) => effect.pipe(Effect.ignoreCause),
+  );
+
   yield* forkParked(
     Stream.runForEach(orchestrator.streamDomainEvents, (event) =>
-      event.type === "subagent.updated" ? onSubagent(event) : Effect.void,
+      event.type === "subagent.updated"
+        ? onSubagent(event)
+        : event.type === "workflow.updated"
+          ? onWorkflowUpdate(event)
+          : Effect.void,
     ),
   );
 });

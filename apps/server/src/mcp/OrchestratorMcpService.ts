@@ -2814,6 +2814,7 @@ const make = Effect.gen(function* () {
     // its agents already finished.
     yield* workflowRunner.launch({
       workflowId: row.id,
+      ...(row.workflow === undefined ? {} : { previousWorkflow: row.workflow }),
       threadId: row.threadId,
       source: stored.value.source,
       args: stored.value.args,
@@ -3620,6 +3621,8 @@ const make = Effect.gen(function* () {
             .streamStoredEventsFrom({
               threadId: scope.thread.threadId,
               afterSequence,
+              // Workflows cannot be waited on here (readTask refuses them), so only delegated
+              // task rows matter; filtering keeps transcript events out of this stream.
               eventType: "subagent.updated",
             })
             .pipe(
