@@ -497,7 +497,6 @@ export default function DiffPanel({
     ...matchingBaseRefChoices.map(valueForBaseRefChoice),
   ];
   const {
-    scope: filePatchScope,
     family: filePatchFamily,
     isPending: areFilePatchesPending,
     fileStates,
