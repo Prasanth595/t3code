@@ -446,11 +446,11 @@ export function usePendingThreadRequests(input: {
     const nextPrompt = carryDisplacedCustomAnswerIntoPrompt(currentPrompt, displacedAnswer);
     if (nextPrompt !== currentPrompt) {
       setComposerDraftPrompt(composerDraftTarget, nextPrompt);
-      // The question owns the box, so the draft is out of sight until it resolves.
+      // The question owns the box, so the draft (thread or queued edit) is out of sight until it resolves.
       toastManager.add({
         type: "info",
-        title: "Your typed text moved to the message draft",
-        description: "It will be in the composer once the question is answered.",
+        title: "Your typed text was set aside",
+        description: "It will be back in the composer once the question is answered.",
         data: { threadRef: activeThreadId ? { environmentId, threadId: activeThreadId } : null },
       });
       if (activeThreadId) {

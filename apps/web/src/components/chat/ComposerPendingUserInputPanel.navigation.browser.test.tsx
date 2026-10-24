@@ -146,7 +146,7 @@ it("retains answers, selections and question position after leaving chat, includ
   expect(requests).toMatchObject(expected);
 });
 
-it("tells the user when an option click moves their typed answer into the hidden message draft", async () => {
+it("tells the user when an option click moves their typed answer into the hidden composer draft", async () => {
   using _timers = fakeTimers();
   const environmentId = EnvironmentId.make("displaced-environment");
   const draftTarget = { environmentId, threadId: threadRef.threadId };
