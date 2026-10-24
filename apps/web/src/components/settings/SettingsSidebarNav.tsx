@@ -185,7 +185,6 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     void navigate({
       to,
       hash: "",
-      replace: true,
       hashScrollIntoView: false,
     });
   };
@@ -207,7 +206,6 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     void navigate({
       to: item.to,
       hash: targetId,
-      replace: true,
       hashScrollIntoView: false,
       state: { settingsTargetHighlight: true },
     });

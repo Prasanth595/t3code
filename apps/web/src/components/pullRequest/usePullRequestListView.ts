@@ -9,6 +9,7 @@ import {
   type PullRequestListState,
 } from "@t3tools/contracts";
 import { useState } from "react";
+import type { PullRequestDetailTab } from "../../rightPanelStore";
 
 import { useAllEnvironmentShellsBootstrapped, useProjects } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
@@ -41,6 +42,7 @@ import { pullRequestFilterProjects } from "./pullRequestProjectFilter.logic";
 import { pullRequestListEntryId } from "./pullRequestListGroups.logic";
 
 export interface PullRequestsSearch extends PullRequestListPreferences {
+  readonly tab?: PullRequestDetailTab | undefined;
   readonly environmentId?: EnvironmentId;
   readonly projectId?: ProjectId;
   readonly host?: string;

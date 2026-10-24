@@ -321,7 +321,10 @@ export function PullRequestDetailPanel({
       : null;
   const [threadPickerOpen, setThreadPickerOpen] = useState(false);
   const [openReviewRequest, setOpenReviewRequest] = useState(0);
-  const [tab, setTab] = useState<PullRequestDetailTab>(initialTab);
+  const [tabSelection, setTabSelection] = useState({ initialTab, tab: initialTab });
+  const tab = tabSelection.initialTab === initialTab ? tabSelection.tab : initialTab;
+  if (tabSelection.initialTab !== initialTab) setTabSelection({ initialTab, tab: initialTab });
+  const setTab = (next: PullRequestDetailTab) => setTabSelection({ initialTab, tab: next });
   const selectTab = (next: PullRequestDetailTab) => {
     setTab(next);
     onTabChange?.(next);

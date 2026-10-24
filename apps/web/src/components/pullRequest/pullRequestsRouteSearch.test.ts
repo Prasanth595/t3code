@@ -36,4 +36,11 @@ describe("pull requests route search", () => {
     expect(matchedSearch("/pull-requests?q=fix")?.q).toBe("fix");
     expect(matchedSearch("/pull-requests?q=%224089%22")?.q).toBe("4089");
   });
+
+  it("restores supported PR detail tabs and drops unknown tabs", () => {
+    for (const tab of ["code", "timeline", "guide"]) {
+      expect(matchedSearch(`/pull-requests?tab=${tab}`)?.tab).toBe(tab);
+    }
+    expect(matchedSearch("/pull-requests?tab=unknown")?.tab).toBeUndefined();
+  });
 });

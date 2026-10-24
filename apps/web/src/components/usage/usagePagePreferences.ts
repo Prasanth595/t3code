@@ -11,6 +11,22 @@ const UsagePagePreferencesSchema = Schema.Struct({
 });
 export type UsagePagePreferences = typeof UsagePagePreferencesSchema.Type;
 
+export function validateUsagePageSearch(raw: Record<string, unknown>): {
+  metric?: UsagePagePreferences["metric"] | undefined;
+  windowDays?: UsagePagePreferences["windowDays"] | undefined;
+} {
+  return {
+    metric:
+      raw.metric === "cost" || raw.metric === "tokens" || raw.metric === "limits"
+        ? raw.metric
+        : undefined,
+    windowDays:
+      raw.windowDays === 1 || raw.windowDays === 7 || raw.windowDays === 30 || raw.windowDays === 90
+        ? raw.windowDays
+        : undefined,
+  };
+}
+
 const DEFAULT_PREFERENCES: UsagePagePreferences = { metric: "limits", windowDays: 30 };
 
 export function readUsagePagePreferences(): UsagePagePreferences {

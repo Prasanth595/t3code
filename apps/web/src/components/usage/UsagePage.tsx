@@ -103,11 +103,8 @@ import {
 } from "./usageShortcuts";
 import { useEscapeToGoBack } from "../../hooks/useNavigateBack";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
-import {
-  readUsagePagePreferences,
-  saveUsagePagePreferences,
-  type UsagePagePreferences,
-} from "./usagePagePreferences";
+import { type UsagePagePreferences } from "./usagePagePreferences";
+import { useUsagePageNavigation } from "./useUsagePageNavigation";
 
 function isUsageMetric(value: string | null | undefined): value is UsageMetric {
   return METRIC_OPTIONS.some((option) => option.value === value);
@@ -179,7 +176,7 @@ function UsageModelDialogHost({
 }
 
 export function UsagePage() {
-  const [preferences, setPreferences] = useState(readUsagePagePreferences);
+  const { preferences, updatePreferences } = useUsagePageNavigation();
   useEscapeToGoBack();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const hour12 = usePrimarySettings((settings) => resolveHour12(settings.timestampFormat));
@@ -199,6 +196,16 @@ export function UsagePage() {
       preferences.windowDays === 1 ? "hour" : "day",
     ),
   }));
+  if (windowSelection.days !== preferences.windowDays) {
+    setWindowSelection({
+      days: preferences.windowDays,
+      window: makeWindow(
+        preferences.windowDays,
+        undefined,
+        preferences.windowDays === 1 ? "hour" : "day",
+      ),
+    });
+  }
   const metric = preferences.metric;
   const showingLimits = metric === "limits";
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -238,18 +245,9 @@ export function UsagePage() {
     (environment) => environment.canReadDiagnostics,
   );
 
-  const updatePreferences = (patch: Partial<UsagePagePreferences>) => {
-    const nextPreferences = { ...preferences, ...patch };
-    setPreferences(nextPreferences);
-    saveUsagePagePreferences(nextPreferences);
-  };
   const selectWindow = (days: number) => {
     if (!isUsageWindowDays(days)) return;
     updatePreferences({ windowDays: days });
-    setWindowSelection({
-      days,
-      window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
-    });
   };
   const selectMetric = (nextMetric: UsageMetric) => {
     if (nextMetric === "limits") setLimitsNow(Date.now());
