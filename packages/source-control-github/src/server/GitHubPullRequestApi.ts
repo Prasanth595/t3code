@@ -37,6 +37,7 @@ import {
   type PullRequestReviewVerdict,
   type PullRequestReviewerCandidateList,
   type PullRequestReviewerKind,
+  type PullRequestLabel,
   type PullRequestLabelCandidateList,
   type PullRequestThreadCommentsResult,
   type PullRequestUpdateMethod,
@@ -59,6 +60,7 @@ import {
   pullRequestChecksFromContexts,
   decodeWorkflowRunsJson,
   type GitHubPullRequestCore,
+  type GitHubPullRequestFileStat,
   type GitHubPullRequestWatchFingerprint,
   isSubjectOfPullRequest,
   LenientPullRequestList,
@@ -67,10 +69,13 @@ import {
   pullRequestLookup,
   toActorAvatars,
   toLabelCandidates,
+  toRepositoryAuthors,
+  toRepositoryLabels,
   toPullRequestActivityPage,
   toPullRequestCheckContextsPage,
   toPullRequestCore,
   toPullRequestFilesViewedPage,
+  toPullRequestFileStatsPage,
   toPullRequestHeads,
   toPullRequestNodeId,
   toPullRequestPreview,
@@ -412,6 +417,11 @@ export interface GitHubPullRequestFilesViewed {
   readonly truncated: boolean;
 }
 
+export interface GitHubPullRequestFileStats {
+  readonly files: ReadonlyArray<GitHubPullRequestFileStat>;
+  readonly truncated: boolean;
+}
+
 export class GitHubPullRequestApi extends Context.Service<
   GitHubPullRequestApi,
   {
@@ -562,6 +572,13 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly number: number;
     }) => Effect.Effect<GitHubPullRequestFilesViewed, GitHubPullRequestApiError>;
 
+    readonly getPullRequestFileStats: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+    }) => Effect.Effect<GitHubPullRequestFileStats, GitHubPullRequestApiError>;
+
     /**
      * GitHub takes a single path per mutation, so a burst is batched with aliases into one
      * document rather than one subprocess per press.
@@ -630,6 +647,26 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly host: string;
       readonly number: number;
     }) => Effect.Effect<PullRequestLabelCandidateList, GitHubPullRequestApiError>;
+
+    readonly listRepositoryLabels: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly query?: string | undefined;
+    }) => Effect.Effect<
+      { readonly items: ReadonlyArray<PullRequestLabel>; readonly truncated: boolean },
+      GitHubPullRequestApiError
+    >;
+
+    readonly searchRepositoryAuthors: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly query?: string | undefined;
+    }) => Effect.Effect<
+      { readonly items: ReadonlyArray<PullRequestActor>; readonly truncated: boolean },
+      GitHubPullRequestApiError
+    >;
 
     readonly setLabels: (input: {
       readonly cwd: string;
@@ -2320,6 +2357,30 @@ export const make = Effect.gen(function* () {
         );
     },
 
+    listRepositoryLabels: (input) => {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      const operation = "listRepositoryLabels";
+      return client
+        .RepositoryLabels({ owner, name, query: input.query ?? null })
+        .pipe(
+          graphql({ ...input, operation, allowReserve: true }),
+          Effect.map(toRepositoryLabels),
+          Effect.flatMap(found({ ...input, operation })),
+        );
+    },
+
+    searchRepositoryAuthors: (input) => {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      const operation = "searchRepositoryAuthors";
+      return client
+        .RepositoryAuthors({ owner, name, query: input.query ?? null })
+        .pipe(
+          graphql({ ...input, operation, allowReserve: true }),
+          Effect.map(toRepositoryAuthors),
+          Effect.flatMap(found({ ...input, operation })),
+        );
+    },
+
     setLabels: (input) => {
       const { owner, name } = parseRepositorySelector(input.repository);
       const issue = `repos/${owner}/${name}/issues/${input.number}/labels`;
@@ -2646,6 +2707,34 @@ export const make = Effect.gen(function* () {
           variables: { owner, name, number: input.number },
           connection: (result) => {
             const page = toPullRequestFilesViewedPage(result);
+            return {
+              ...page,
+              pageInfo: { hasNextPage: page.nextCursor !== null, endCursor: page.nextCursor },
+            };
+          },
+        }),
+        {
+          ...target,
+          maxPages: FILES_VIEWED_MAX_PAGES,
+          hasNextPage: (page) => page.nextCursor !== null,
+        },
+      ).pipe(
+        graphql(target),
+        Effect.map(({ pages, truncated }) => ({
+          files: pages.flatMap((page) => page.files),
+          truncated,
+        })),
+      );
+    },
+
+    getPullRequestFileStats: (input) => {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      const target = { ...input, operation: "getPullRequestFileStats" };
+      return readPages(
+        GraphQLClient.pages(client.PullRequestFileStats, {
+          variables: { owner, name, number: input.number },
+          connection: (result) => {
+            const page = toPullRequestFileStatsPage(result);
             return {
               ...page,
               pageInfo: { hasNextPage: page.nextCursor !== null, endCursor: page.nextCursor },
