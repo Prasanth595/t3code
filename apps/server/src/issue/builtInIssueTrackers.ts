@@ -1,7 +1,15 @@
+import * as AzureDevOpsIssueTrackerDriver from "@t3tools/source-control-azure-devops/server/issueTrackerDriver";
+import * as ForgejoIssueTrackerDriver from "@t3tools/source-control-forgejo/server/issueTrackerDriver";
 import * as GitHubIssueTrackerDriver from "@t3tools/source-control-github/server/issueTrackerDriver";
+import * as GitLabIssueTrackerDriver from "@t3tools/source-control-gitlab/server/issueTrackerDriver";
 import type { IssueTrackerDriver } from "@t3tools/issue-tracker-core/server/driver";
 
-const drivers = [GitHubIssueTrackerDriver.driver];
+const drivers = [
+  GitHubIssueTrackerDriver.driver,
+  GitLabIssueTrackerDriver.driver,
+  AzureDevOpsIssueTrackerDriver.driver,
+  ForgejoIssueTrackerDriver.driver,
+];
 
 export type BuiltInIssueTrackersEnv =
   (typeof drivers)[number] extends IssueTrackerDriver<infer R> ? R : never;
