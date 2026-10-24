@@ -427,6 +427,45 @@ describe("thread details Changes row", () => {
     expect(state.previewRequests).toEqual(["auto:true", "auto:true"]);
   });
 
+  it("refreshes when it first mounts during a Changes panel load that predates an edit", async () => {
+    setup();
+    featureBranch();
+    function ChangesPanelPreview() {
+      useEnvironmentQuery(
+        reviewEnvironment.diffPreview({
+          environmentId: threadRef.environmentId,
+          input: { cwd: "/repo", ignoreWhitespace: true },
+        }),
+      );
+      return null;
+    }
+    let resolveFirst!: (value: ReviewDiffPreviewResult) => void;
+    state.nextPreview = { promise: new Promise((resolve) => (resolveFirst = resolve)) };
+    const screen = await render(
+      <>
+        <ChangesPanelPreview />
+      </>,
+    );
+    await using _ = screen;
+    await vi.waitFor(() => expect(state.previewRequests).toEqual(["auto:true"]));
+
+    // An edit outside a turn changes the status totals while the panel's request is in flight.
+    const stale = previewData({ ignoreWhitespace: true });
+    state.nextPreview = undefined;
+    state.branchChanges = { baseRef: "main", insertions: 3, deletions: 1 };
+    state.previewTotals["auto:true"] = { additions: 2, deletions: 1 };
+    await screen.rerender(
+      <>
+        <ChangesPanelPreview />
+        {control("thread", "/repo", "panel", "initial")}
+      </>,
+    );
+    await act(async () => resolveFirst(stale));
+
+    await expect.element(changesRow()).toHaveTextContent("Changes+2-1");
+    expect(state.previewRequests).toEqual(["auto:true", "auto:true"]);
+  });
+
   it("refreshes after a turn edit that lands while the first comparison loads", async () => {
     setup();
     featureBranch();

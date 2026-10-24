@@ -106,3 +106,15 @@ export function useEnvironmentQueryRefresh<A, E>(
   const refresh = useAtomRefresh(selectedAtom);
   return { refresh, isPending: () => atom !== null && registry.get(selectedAtom).waiting };
 }
+
+/**
+ * Whether a request for `atom` was already in flight when this render read it.
+ * It never starts one, so call it before the hooks that subscribe to `atom`.
+ */
+export function useEnvironmentQueryWasPending(
+  atom: Atom.Atom<AsyncResult.AsyncResult<unknown, unknown>> | null,
+): boolean {
+  const registry = useContext(RegistryContext);
+  const node = atom === null ? undefined : registry.getNodes().get(atom);
+  return node !== undefined && Option.getOrUndefined(node.valueOption())?.waiting === true;
+}

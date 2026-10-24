@@ -101,7 +101,11 @@ import {
 } from "~/lib/sourceControlActions";
 import { useThreadProjection, useQuietThreadShell } from "~/state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
-import { useEnvironmentQuery, useEnvironmentQueryRefresh } from "~/state/query";
+import {
+  useEnvironmentQuery,
+  useEnvironmentQueryRefresh,
+  useEnvironmentQueryWasPending,
+} from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { sourceControlEnvironment } from "~/state/sourceControl";
 import { threadEnvironment } from "~/state/threads";
@@ -992,6 +996,8 @@ function ThreadChangesControl({
           input: { cwd: gitCwd, ...(baseRef ? { baseRef } : {}), ignoreWhitespace },
         })
       : null;
+  // Read before subscribing: a request in flight now belongs to the Changes panel.
+  const panelPending = useEnvironmentQueryWasPending(previewAtom);
   const changesDiffPreview = useEnvironmentQuery(previewAtom);
   // Status totals catch edits made outside a turn; the mutation id catches edits that
   // leave them unchanged but differ against a custom base or with whitespace hidden.
@@ -1009,18 +1015,19 @@ function ThreadChangesControl({
     if (previewAtom === null) return;
     const previous = changesPreviewKeys.get(previewAtom);
     if (previous === undefined) {
-      changesPreviewKeys.set(previewAtom, changeKey);
-      // A request from this mount covers the current workspace, but a result the
-      // Changes panel cached may predate it. Pending is read live because the
-      // mount's own revalidation starts after this render.
-      if (hasPreview && !previewRequest.isPending()) refresh();
+      // A request from this mount covers the current workspace, but the panel's
+      // cached result or in-flight request may predate it. An unknown key makes the
+      // check below refresh once the panel's request settles. Pending is read live
+      // for cached data because the mount's own revalidation starts after render.
+      changesPreviewKeys.set(previewAtom, panelPending ? "" : changeKey);
+      if (hasPreview && !panelPending && !previewRequest.isPending()) refresh();
       return;
     }
     // A change during a fetch still needs a refresh after it settles.
     if (previous === changeKey || isPending) return;
     changesPreviewKeys.set(previewAtom, changeKey);
     refresh();
-  }, [previewAtom, changeKey, isPending, refresh, hasPreview, previewRequest]);
+  }, [previewAtom, changeKey, isPending, refresh, hasPreview, previewRequest, panelPending]);
   const changesTotals = resolveChangesTotals({
     gitStatus,
     diffPreview: canReadFiles ? changesDiffPreview.data : null,
