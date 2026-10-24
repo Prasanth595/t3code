@@ -82,6 +82,7 @@ export function QueuedRunsControl({
   )?.projection;
   const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun);
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
+  const resume = useAtomCommand(threadEnvironment.resumeThreadQueue);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
   const [expanded, setExpanded] = useState(true);
   const queueListId = useId();
@@ -107,7 +108,10 @@ export function QueuedRunsControl({
   const queued = workflow?.queuedRuns ?? [];
   const activeRun = workflow?.activeRun ?? null;
   const canReorder = workflow?.canReorder === true;
-  const nextSteerable = queued.find(({ steerRejectionReason }) => steerRejectionReason === null);
+  const canSend = workflow?.canSendNow === true || workflow?.canPromoteToSteer === true;
+  const nextSteerable = queued.find(
+    ({ steerRejectionReason }) => workflow?.canSendNow || steerRejectionReason === null,
+  );
   const queuedImageUrlById = new Map(
     queuedImageAttachmentUrls.flatMap((url, index) => {
       const resource = queuedImageAttachmentResources[index];
@@ -173,22 +177,29 @@ export function QueuedRunsControl({
     void move(runId, queued[insertIndex]?.run.id ?? null);
   };
 
-  const steer = async (queuedRunId: RunId) => {
-    if (activeRun === null || !workflow?.canPromoteToSteer || steerInFlightRef.current) return;
+  const sendQueuedMessage = async (queuedRunId: RunId) => {
+    if (!canSend || steerInFlightRef.current) return;
     steerInFlightRef.current = true;
     setBusyRunId(queuedRunId);
-    await promote({
-      environmentId: props.environmentId,
-      input: { threadId: props.threadId, queuedRunId, targetRunId: activeRun.id },
-    });
+    if (workflow?.canSendNow) {
+      await resume({
+        environmentId: props.environmentId,
+        input: { threadId: props.threadId, runId: queuedRunId },
+      });
+    } else if (activeRun !== null) {
+      await promote({
+        environmentId: props.environmentId,
+        input: { threadId: props.threadId, queuedRunId, targetRunId: activeRun.id },
+      });
+    }
     steerInFlightRef.current = false;
     setBusyRunId(null);
   };
 
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
-      if (!nextSteerable || !workflow?.canPromoteToSteer) return false;
-      if (!repeat && busyRunId === null) void steer(nextSteerable.run.id);
+      if (!nextSteerable || !canSend) return false;
+      if (!repeat && busyRunId === null) void sendQueuedMessage(nextSteerable.run.id);
       return true;
     },
     // Declines while a queued message is already being edited so the key keeps
@@ -429,24 +440,23 @@ export function QueuedRunsControl({
                               disabled={
                                 item.runId === null ||
                                 busyRunId !== null ||
-                                !workflow?.canPromoteToSteer ||
-                                item.steerRejectionReason !== null
+                                !canSend ||
+                                (!workflow?.canSendNow && item.steerRejectionReason !== null)
                               }
                               onClick={() => {
                                 if (item.runId !== null) {
-                                  void steer(item.runId);
+                                  void sendQueuedMessage(item.runId);
                                 }
                               }}
                             >
                               <CornerUpRightIcon />
-                              Steer
+                              {workflow?.canSendNow ? "Send now" : "Steer"}
                             </Button>
                           </TooltipTrigger>
                           <TooltipPopup>
-                            {activeRun === null
-                              ? "There is no active run to steer"
-                              : (item.steerRejectionReason ??
-                                `Send as a steer instead${item.runId === nextSteerable?.run.id && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`)}
+                            {!workflow?.canSendNow && item.steerRejectionReason
+                              ? item.steerRejectionReason
+                              : `${workflow?.canSendNow ? "Start a turn with this message" : "Send as a steer instead"}${item.runId === nextSteerable?.run.id && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
                           </TooltipPopup>
                         </Tooltip>
                         <Tooltip>

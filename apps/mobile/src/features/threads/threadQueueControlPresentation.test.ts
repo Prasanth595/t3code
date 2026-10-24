@@ -7,6 +7,43 @@ import {
 } from "./threadQueueControlPresentation";
 
 describe("threadQueueControlPresentation", () => {
+  it.each([
+    { busy: false, isEditing: false, expected: true },
+    { busy: true, isEditing: false, expected: false },
+    { busy: false, isEditing: true, expected: false },
+  ])(
+    "gates sending a stopped thread's queued message with $busy busy and $isEditing editing",
+    ({ busy, isEditing, expected }) => {
+      const controls = resolveThreadQueueRowControls({
+        busy,
+        isEditing,
+        canPromoteToSteer: false,
+        canSendNow: true,
+        canReorder: false,
+        index: 0,
+        queuedCount: 1,
+        steerRejectionReason: "Goal commands must run as a separate turn.",
+        text: "/goal finish the refactor",
+      });
+
+      expect(controls.canSend).toBe(expected);
+    },
+  );
+
+  it("rejects steering a goal into an active turn", () => {
+    const controls = resolveThreadQueueRowControls({
+      busy: false,
+      canPromoteToSteer: true,
+      canSendNow: false,
+      canReorder: true,
+      index: 0,
+      queuedCount: 1,
+      steerRejectionReason: "Goal commands must run as a separate turn.",
+      text: "/goal finish the refactor",
+    });
+    expect(controls.canSend).toBe(false);
+  });
+
   it("shows an assistant quote as its quoted text", () => {
     const href = formatAssistantCitationHref({
       version: 1,
@@ -22,6 +59,7 @@ describe("threadQueueControlPresentation", () => {
     const controls = resolveThreadQueueRowControls({
       busy: false,
       canPromoteToSteer: true,
+      canSendNow: false,
       canReorder: true,
       index: 0,
       queuedCount: 1,
@@ -38,6 +76,7 @@ describe("threadQueueControlPresentation", () => {
     const editing = resolveThreadQueueRowControls({
       busy: false,
       canPromoteToSteer: true,
+      canSendNow: false,
       canReorder: true,
       index: 1,
       isEditing: true,
@@ -48,7 +87,7 @@ describe("threadQueueControlPresentation", () => {
 
     expect(editing.isEditing).toBe(true);
     expect(editing.canEdit).toBe(false);
-    expect(editing.canSteer).toBe(false);
+    expect(editing.canSend).toBe(false);
     expect(editing.canMoveUp).toBe(true);
     expect(editing.canDismiss).toBe(true);
   });
