@@ -29,7 +29,7 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
     it.effect("backfills readable text only for messages whose citations read differently", () =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        yield* runMigrations({ toMigrationInclusive: 68 });
+        yield* runMigrations({ toMigrationInclusive: 69 });
         const insertMessage = (messageId: string, text: unknown) => sql`
           INSERT INTO orchestration_v2_projection_messages (
             message_id, thread_id, role, streaming, created_at, updated_at, payload_json

@@ -48,6 +48,7 @@ describe("V2 preview upgrade", () => {
         [66, "RepairClientSettlementTimestamps"],
         [67, "WebhookDedupe"],
         [68, "ShellStopRequestIndex"],
+        [69, "ThreadMessageSearch"],
         [71, "ProjectionMessageSearchText"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
@@ -140,6 +141,7 @@ describe("V2 preview upgrade", () => {
         [66, "RepairClientSettlementTimestamps"],
         [67, "WebhookDedupe"],
         [68, "ShellStopRequestIndex"],
+        [69, "ThreadMessageSearch"],
         [71, "ProjectionMessageSearchText"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
