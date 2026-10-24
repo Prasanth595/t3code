@@ -31,10 +31,21 @@ const fixture = Effect.gen(function* () {
   const storage = new Map<string, Uint8Array>();
   const writes: string[] = [];
   const failWrites = new Set<string>();
+  const failReads = new Set<string>();
   const secrets = Layer.succeed(
     ServerSecretStore.ServerSecretStore,
     ServerSecretStore.ServerSecretStore.of({
-      get: (name) => Effect.sync(() => Option.fromNullishOr(storage.get(name))),
+      get: (name) =>
+        Effect.suspend(() =>
+          failReads.has(name)
+            ? Effect.fail(
+                new ServerSecretStore.SecretStoreReadError({
+                  resource: name,
+                  cause: "PRIVATE READ ERROR",
+                }),
+              )
+            : Effect.sync(() => Option.fromNullishOr(storage.get(name))),
+        ),
       set: (name, data) =>
         Effect.suspend(() =>
           failWrites.has(name)
@@ -86,7 +97,19 @@ const fixture = Effect.gen(function* () {
     });
     return (yield* links.list)[0]!;
   });
-  return { fs, path, directory, files, links, load, subscribe, storage, writes, failWrites };
+  return {
+    fs,
+    path,
+    directory,
+    files,
+    links,
+    load,
+    subscribe,
+    storage,
+    writes,
+    failWrites,
+    failReads,
+  };
 });
 
 it.layer(NodeServices.layer)("sync subscriptions", (it) => {
@@ -469,13 +492,13 @@ it.layer(NodeServices.layer)("sync subscriptions", (it) => {
         let failInstall = failure === "write";
         const intercepted = FileSystem.FileSystem.of({
           ...fs,
-          rename: (from, to) =>
+          link: (from, to) =>
             Effect.suspend(() => {
               if (failInstall && to.endsWith("/AGENTS.md")) {
                 failInstall = false;
-                return fs.rename(from, `${to}/missing-parent/file`);
+                return fs.link(from, `${to}/missing-parent/file`);
               }
-              return fs.rename(from, to);
+              return fs.link(from, to);
             }),
         });
         const f = yield* fixture.pipe(Effect.provideService(FileSystem.FileSystem, intercepted));
@@ -525,12 +548,12 @@ it.layer(NodeServices.layer)("sync subscriptions", (it) => {
       let skillPath = "";
       const intercepted = FileSystem.FileSystem.of({
         ...fs,
-        rename: (from, to) =>
+        link: (from, to) =>
           to.endsWith(`${path.sep}AGENTS.md`)
             ? fs
                 .writeFileString(path.join(skillPath, "SKILL.md"), "Local edit during setup")
                 .pipe(Effect.andThen(fs.rename(from, path.join(to, "missing-parent", "file"))))
-            : fs.rename(from, to),
+            : fs.link(from, to),
       });
       const f = yield* fixture.pipe(Effect.provideService(FileSystem.FileSystem, intercepted));
       const skill = ".agents/skills/recovery";
@@ -572,5 +595,123 @@ it.layer(NodeServices.layer)("sync subscriptions", (it) => {
       );
       expect(yield* f.links.list).toEqual([]);
     }),
+  );
+  it.effect("recovers from unreadable catalog storage without exposing its cause", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const original = yield* f.subscribe();
+      const saved = f.storage.get("agent-file-sync-links");
+      const logs: unknown[] = [];
+      f.failReads.add("agent-file-sync-links");
+      const recovered = yield* f.load.pipe(
+        Effect.provide(
+          Logger.layer([Logger.make(({ message }) => logs.push(message))], {
+            mergeWithExisting: false,
+          }),
+        ),
+      );
+      expect(yield* recovered.list).toEqual([]);
+      expect(f.storage.get("agent-file-sync-links")).toEqual(saved);
+      expect(logs).toHaveLength(1);
+      expect(JSON.stringify(logs)).not.toContain("PRIVATE READ ERROR");
+      f.failReads.clear();
+      expect(yield* (yield* f.load).list).toEqual([original]);
+    }),
+  );
+  it.effect("persists preview failures as a visible paused subscription", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const link = yield* f.subscribe();
+      const original = yield* f.fs.readFileString(f.path.join(f.directory, "AGENTS.md"));
+      yield* f.fs.remove(f.path.join(f.directory, "AGENTS.md"), { recursive: true });
+      yield* f.fs.makeDirectory(f.path.join(f.directory, "AGENTS.md"));
+      const error = yield* f.links
+        .refresh({ id: link.id, generation: 0, bundle: bundle("Updated") })
+        .pipe(Effect.flip);
+      expect(error.reason).toBe("linked-destination");
+      const paused = (yield* f.links.list)[0]!;
+      expect(paused).toMatchObject({ paused: true, error: error.message, generation: 1 });
+      expect(yield* (yield* f.load).list).toEqual([paused]);
+      yield* f.fs.remove(f.path.join(f.directory, "AGENTS.md"), { recursive: true });
+      yield* f.fs.writeFileString(f.path.join(f.directory, "AGENTS.md"), original);
+      yield* f.fs.chmod(f.path.join(f.directory, "AGENTS.md"), 0o600);
+      yield* f.links.manage({ id: link.id, action: "resume" });
+      yield* f.links.refresh({ id: link.id, generation: 2, bundle: bundle("Updated") });
+      expect((yield* f.links.list)[0]?.paused).toBe(false);
+      expect(yield* f.fs.readFileString(f.path.join(f.directory, "AGENTS.md"))).toContain(
+        "Updated",
+      );
+    }),
+  );
+  it.effect.each(["skill-first", "instructions-first"] as const)(
+    "rejects subscriptions inside an owned skill directory (%s)",
+    (order) =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const skillPath = ".agents/skills/owned";
+        const cwd = f.path.join(f.directory, skillPath);
+        yield* f.fs.makeDirectory(cwd, { recursive: true });
+        yield* f.fs.writeFileString(f.path.join(cwd, "SKILL.md"), "Local skill");
+        const skill: AgentFileSyncBundle = [
+          {
+            kind: "skill",
+            path: skillPath,
+            files: [
+              { path: "SKILL.md", data: Buffer.from("Skill").toString("base64"), mode: 0o600 },
+              {
+                path: "AGENTS.md",
+                data: Buffer.from("Skill instructions").toString("base64"),
+                mode: 0o600,
+              },
+            ],
+          },
+        ];
+        const instructions = bundle("Nested instructions");
+        const subscribeSkill = Effect.gen(function* () {
+          yield* f.links.subscribe({
+            sourceEnvironmentId: EnvironmentId.make("source"),
+            selection: { skills: [skillPath], instructions: [] },
+            label: "Skill",
+            bundle: skill,
+            expected: yield* f.files.preview({ bundle: skill }),
+          });
+        });
+        const subscribeInstructions = Effect.gen(function* () {
+          yield* f.links.subscribe({
+            cwd,
+            sourceEnvironmentId: EnvironmentId.make("source"),
+            selection: {
+              skills: [],
+              instructions: [{ path: "AGENTS.md", sectionIds: ["Shared:0"] }],
+            },
+            label: "Instructions",
+            bundle: instructions,
+            expected: yield* f.files.preview({ cwd, bundle: instructions }),
+          });
+        });
+        yield* order === "skill-first" ? subscribeSkill : subscribeInstructions;
+        const contents = yield* f.fs.readFileString(f.path.join(cwd, "AGENTS.md"));
+        expect(
+          (yield* (order === "skill-first" ? subscribeInstructions : subscribeSkill).pipe(
+            Effect.flip,
+          )).reason,
+        ).toBe("overlap");
+        expect(yield* f.fs.readFileString(f.path.join(cwd, "AGENTS.md"))).toBe(contents);
+        expect(yield* f.links.list).toHaveLength(1);
+        const sibling = `${cwd}-sibling`;
+        yield* f.fs.makeDirectory(sibling);
+        yield* f.links.subscribe({
+          cwd: sibling,
+          sourceEnvironmentId: EnvironmentId.make("source"),
+          selection: {
+            skills: [],
+            instructions: [{ path: "AGENTS.md", sectionIds: ["Shared:0"] }],
+          },
+          label: "Sibling",
+          bundle: instructions,
+          expected: yield* f.files.preview({ cwd: sibling, bundle: instructions }),
+        });
+        expect(yield* f.links.list).toHaveLength(2);
+      }),
   );
 });

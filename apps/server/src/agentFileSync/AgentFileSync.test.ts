@@ -511,6 +511,118 @@ it.layer(NodeServices.layer)("agent file sync", (it) => {
         ).toHaveLength(1);
       }),
   );
+
+  it.effect("rejects case-aliased skill parent directories before any writes", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const skill = ".agents/skills/case-alias";
+      const bundle: AgentFileSyncBundle = [
+        ...sectionBundle("Must not be written"),
+        {
+          kind: "skill",
+          path: skill,
+          files: ["SKILL.md", "Scripts/a.txt", "scripts/b.txt"].map((path) => ({
+            path,
+            data: Buffer.from(path).toString("base64"),
+            mode: 0o600,
+          })),
+        },
+      ];
+      expect((yield* f.sync.preview({ cwd: f.target, bundle }).pipe(Effect.flip)).reason).toBe(
+        "invalid-path",
+      );
+      expect(
+        (yield* f.sync.apply({ cwd: f.target, bundle, expected: [] }).pipe(Effect.flip)).reason,
+      ).toBe("invalid-path");
+      expect(yield* f.fs.exists(f.path.join(f.target, "AGENTS.md"))).toBe(false);
+      expect(yield* f.fs.exists(f.path.join(f.target, skill))).toBe(false);
+    }),
+  );
+  it.effect.each(["capture", "backup", "install", "recreated"] as const)(
+    "preserves local instruction edits during %s",
+    (phase) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        let armed = false;
+        let absolute = "";
+        let backup = "";
+        const local = "Local host text added during sync";
+        const append = (at: string) =>
+          fs
+            .readFileString(at)
+            .pipe(Effect.flatMap((text) => fs.writeFileString(at, `${text}\n${local}\n`)));
+        const intercepted = FileSystem.FileSystem.of({
+          ...fs,
+          rename: (from, to) =>
+            Effect.gen(function* () {
+              if (
+                armed &&
+                phase === "capture" &&
+                (from === absolute || (from.endsWith(`${path.sep}new`) && to === absolute))
+              ) {
+                armed = false;
+                yield* append(absolute);
+              }
+              yield* fs.rename(from, to);
+              if (from === absolute && to.includes(".t3-sync-backup-")) {
+                backup = to;
+                if (armed && phase === "backup") {
+                  armed = false;
+                  yield* append(backup);
+                }
+                if (armed && phase === "recreated") {
+                  armed = false;
+                  yield* fs.writeFileString(absolute, local);
+                }
+              }
+              if (
+                armed &&
+                phase === "install" &&
+                to === absolute &&
+                from.endsWith(`${path.sep}new`)
+              ) {
+                armed = false;
+                yield* append(backup);
+              }
+            }),
+          link: (from, to) =>
+            fs.link(from, to).pipe(
+              Effect.andThen(
+                Effect.suspend(() => {
+                  if (armed && phase === "install" && to === absolute) {
+                    armed = false;
+                    return append(backup);
+                  }
+                  return Effect.void;
+                }),
+              ),
+            ),
+        });
+        const f = yield* fixture.pipe(Effect.provideService(FileSystem.FileSystem, intercepted));
+        absolute = path.join(f.target, "AGENTS.md");
+        const previous = sectionBundle("Original");
+        yield* f.write(f.target, "AGENTS.md", "Local original text\n");
+        yield* f.run(previous);
+        armed = true;
+        const error = yield* f.sync
+          .reconcile({ cwd: f.target, previous, bundle: sectionBundle("Updated") })
+          .pipe(Effect.flip);
+        expect(error.reason).toBe(
+          phase === "install" || phase === "recreated" ? "changed-backup" : "changed",
+        );
+        expect(armed).toBe(false);
+        const preserved = phase === "install" ? backup : absolute;
+        expect(yield* fs.readFileString(preserved)).toContain(local);
+        if (phase === "install" || phase === "recreated") {
+          expect(error.message).toContain(backup);
+          expect(yield* fs.readFileString(backup)).toContain("Local original text");
+        }
+        expect(
+          yield* fs.readDirectory(path.join(f.directory, "state/userdata/agent-file-sync")),
+        ).toHaveLength(1);
+      }),
+  );
   it.effect("personal sync uses the environment's home and never scans provider credentials", () =>
     Effect.gen(function* () {
       const f = yield* fixture;

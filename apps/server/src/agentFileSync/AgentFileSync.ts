@@ -347,6 +347,7 @@ const make = Effect.gen(function* () {
       let after: AgentFileSyncFile[];
       if (resource.kind === "skill") {
         const names = new Set<string>();
+        const directories = new Map<string, string>();
         for (const file of resource.files) {
           if (
             !safeRelative(file.path) ||
@@ -358,6 +359,15 @@ const make = Effect.gen(function* () {
             )
           )
             return yield* new AgentFileSyncError({ reason: "invalid-path", path: file.path });
+          const parts = file.path.split("/");
+          for (let index = 1; index < parts.length; index++) {
+            const directory = parts.slice(0, index).join("/");
+            const key = directory.toLowerCase();
+            const existing = directories.get(key);
+            if (existing !== undefined && existing !== directory)
+              return yield* new AgentFileSyncError({ reason: "invalid-path", path: file.path });
+            directories.set(key, directory);
+          }
           names.add(file.path.toLowerCase());
           if (file.path.split("/").length > MAX_SKILL_DEPTH)
             return yield* new AgentFileSyncError({ reason: "limit", path: file.path });
@@ -457,7 +467,7 @@ const make = Effect.gen(function* () {
           // Staging can take time. The earlier preview check cannot protect edits made during it.
           if (revision(yield* readSnapshot(base, at, kind, true)) !== expected)
             return yield* new AgentFileSyncError({ reason: "changed", path: at });
-          const hasBackup = expected !== null && kind === "skill";
+          const hasBackup = expected !== null;
           // Keep the backup outside the staging scope so a failed rollback cannot erase it.
           const backup = `${absolute}.t3-sync-backup-${NodeCrypto.randomUUID()}`;
           if (hasBackup) yield* io(fs.rename(absolute, backup), at);
@@ -468,15 +478,22 @@ const make = Effect.gen(function* () {
                 expected
             )
               return yield* new AgentFileSyncError({ reason: "changed", path: at });
-            if (files !== null) yield* io(fs.rename(staged, absolute), at);
-            else if (!hasBackup) yield* io(fs.remove(absolute, { force: true }), at);
+            // A file recreated by an editor after capture must not be overwritten on installation.
+            if (files !== null)
+              yield* io(
+                kind === "instructions" ? fs.link(staged, absolute) : fs.rename(staged, absolute),
+                at,
+              );
           }).pipe(Effect.result);
           if (installed._tag === "Failure") {
             if (hasBackup) {
               const restored = yield* Effect.gen(function* () {
                 if (yield* io(fs.exists(absolute), at))
                   return yield* new AgentFileSyncError({ reason: "changed", path: at });
-                yield* io(fs.rename(backup, absolute), at);
+                if (kind === "instructions") {
+                  yield* io(fs.link(backup, absolute), at);
+                  yield* io(fs.remove(backup), at);
+                } else yield* io(fs.rename(backup, absolute), at);
               }).pipe(Effect.result);
               if (restored._tag === "Failure")
                 return yield* new AgentFileSyncError({
@@ -495,7 +512,7 @@ const make = Effect.gen(function* () {
               return yield* new AgentFileSyncError({ reason: "changed-backup", path: backup });
             yield* fs.remove(backup, { recursive: true }).pipe(
               Effect.tapError(() =>
-                Effect.logWarning("Could not remove a skill sync backup", { path: backup }),
+                Effect.logWarning("Could not remove a sync backup", { path: backup }),
               ),
               Effect.ignore,
             );

@@ -59,15 +59,15 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const home = yield* HostProcess.HomeDirectory;
   const path = yield* Path.Path;
-  const stored = yield* secrets.get(SECRET);
-  const metadata = Option.isSome(stored)
-    ? yield* decode(Buffer.from(stored.value).toString("utf8")).pipe(
-        Effect.tapError(() =>
-          Effect.logWarning("Ignoring unreadable agent file sync subscriptions"),
-        ),
-        Effect.orElseSucceed(() => []),
-      )
-    : [];
+  const metadata = yield* secrets.get(SECRET).pipe(
+    Effect.flatMap((stored) =>
+      Option.isSome(stored)
+        ? decode(Buffer.from(stored.value).toString("utf8"))
+        : Effect.succeed([]),
+    ),
+    Effect.tapError(() => Effect.logWarning("Ignoring unreadable agent file sync subscriptions")),
+    Effect.orElseSucceed(() => []),
+  );
   const loadBaseline = Effect.fn("AgentFileSyncLinks.loadBaseline")(
     function* (link: AgentFileSyncLink) {
       const baseline = yield* secrets.get(baselineKey(link));
@@ -125,14 +125,35 @@ const make = Effect.gen(function* () {
         const destination = yield* fs
           .realPath(input.cwd ?? home)
           .pipe(Effect.mapError((cause) => new AgentFileSyncError({ reason: "io", cause })));
-        const destinations = new Set(input.bundle.map((item) => path.join(destination, item.path)));
+        const destinations = input.bundle.map((item) => ({
+          ...item,
+          absolute: path.join(destination, item.path),
+        }));
+        const contains = (parent: string, child: string) => {
+          const relative = path.relative(parent, child);
+          return (
+            relative === "" ||
+            (!path.isAbsolute(relative) &&
+              relative !== ".." &&
+              !relative.startsWith(`..${path.sep}`))
+          );
+        };
         for (const job of state) {
           const existing = yield* fs
             .realPath(job.scope.cwd ?? home)
             .pipe(Effect.orElseSucceed(() => null));
+          if (existing === null) continue;
           if (
-            existing !== null &&
-            job.previous.some((resource) => destinations.has(path.join(existing, resource.path)))
+            job.previous.some((resource) =>
+              destinations.some((item) => {
+                const absolute = path.join(existing, resource.path);
+                return (
+                  absolute === item.absolute ||
+                  (resource.kind === "skill" && contains(absolute, item.absolute)) ||
+                  (item.kind === "skill" && contains(item.absolute, absolute))
+                );
+              }),
+            )
           )
             return yield* new AgentFileSyncError({ reason: "overlap" });
         }
@@ -182,6 +203,18 @@ const make = Effect.gen(function* () {
         ),
       );
   });
+  const pause = Effect.fn("AgentFileSyncLinks.pause")(function* (
+    job: State[number],
+    error: AgentFileSyncError,
+  ) {
+    yield* persist(
+      state.map((entry) =>
+        entry.id === job.id
+          ? { ...entry, error: error.message, paused: true, generation: entry.generation + 1 }
+          : entry,
+      ),
+    );
+  });
   const commitRefresh = Effect.fn("AgentFileSyncLinks.commitRefresh")(function* (
     job: State[number],
     bundle: AgentFileSyncBundle | null,
@@ -190,19 +223,19 @@ const make = Effect.gen(function* () {
       .reconcile({ ...job.scope, previous: job.previous, bundle: bundle ?? job.previous })
       .pipe(Effect.result);
     if (result._tag === "Success" && bundle === null && job.error === null) return;
-    const next =
-      result._tag === "Success"
-        ? {
-            ...job,
-            previous: bundle ?? job.previous,
-            revision: bundle ? bundleRevision(bundle) : job.revision,
-            error: null,
-            lastSyncedAt: yield* Clock.currentTimeMillis,
-            generation: job.generation + 1,
-          }
-        : { ...job, error: result.failure.message, paused: true, generation: job.generation + 1 };
+    if (result._tag === "Failure") {
+      yield* pause(job, result.failure);
+      return yield* result.failure;
+    }
+    const next = {
+      ...job,
+      previous: bundle ?? job.previous,
+      revision: bundle ? bundleRevision(bundle) : job.revision,
+      error: null,
+      lastSyncedAt: yield* Clock.currentTimeMillis,
+      generation: job.generation + 1,
+    };
     yield* persist(state.map((entry) => (entry.id === job.id ? next : entry)));
-    if (result._tag === "Failure") return yield* result.failure;
     if (bundle !== null) yield* removePending(job.id);
   });
   const refresh: AgentFileSyncLinks["Service"]["refresh"] = Effect.fn("AgentFileSyncLinks.refresh")(
@@ -228,7 +261,9 @@ const make = Effect.gen(function* () {
           }
           if (pending !== null) yield* removePending(job.id);
           if (input.bundle !== null) {
-            yield* files.preview({ ...job.scope, bundle: input.bundle });
+            yield* files
+              .preview({ ...job.scope, bundle: input.bundle })
+              .pipe(Effect.tapError((error) => pause(job, error)));
             yield* secrets
               .set(
                 pendingKey(job.id),

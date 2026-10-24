@@ -114,7 +114,7 @@ export class AgentFileSyncError extends Schema.TaggedError<AgentFileSyncError>()
       case "changed":
         return `Files changed since the preview or sync. Review them again${at}.`;
       case "changed-backup":
-        return `Sync stopped with a preserved skill backup${at}. Review it alongside the destination before resuming.`;
+        return `Sync stopped with a preserved file backup${at}. Review it alongside the destination before resuming.`;
       case "recovery":
         return `Sync setup failed and could not restore every file. An undo receipt is retained${at}; use its ID to retry undo after reviewing the destination.`;
       case "invalid-block":
