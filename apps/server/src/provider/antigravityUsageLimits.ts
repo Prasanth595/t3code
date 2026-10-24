@@ -124,7 +124,7 @@ function summaryWindows(summary: typeof Summary.Type) {
   return [...windows.values()];
 }
 
-/** Older accounts expose model quotas without a window length. Do not invent a reset cadence. */
+/** Model quotas carry no window length. Do not invent a reset cadence. */
 function modelWindows(models: typeof Models.Type) {
   const windows = new Map<string, ServerProviderUsageWindow>();
   for (const [modelId, model] of Object.entries(models.models)) {
@@ -282,11 +282,18 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     const summary = yield* fetchWindows("retrieveUserQuotaSummary", (response) =>
       decodeSummary(response).pipe(Effect.map(summaryWindows)),
     );
-    const windows = summary.length
-      ? summary
+    // Every endpoint's summary has also answered with only the Claude/GPT
+    // group while the Gemini models still carried a quota, so read Gemini from
+    // the model list whenever no summary reports it.
+    const reportsGemini = summary.some((window) => window.id.startsWith("gemini-"));
+    const models = reportsGemini
+      ? []
       : yield* fetchWindows("fetchAvailableModels", (response) =>
           decodeModels(response).pipe(Effect.map(modelWindows)),
         );
+    const windows = summary.length
+      ? [...summary, ...models.filter((window) => window.id.startsWith("gemini-"))]
+      : models;
     if (windows.length === 0) {
       return makeUnavailableUsageLimits({
         checkedAt,

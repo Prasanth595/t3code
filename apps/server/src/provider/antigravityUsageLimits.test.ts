@@ -188,6 +188,52 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("adds Gemini model quotas when no endpoint's summary reports Gemini", () =>
+    Effect.gen(function* () {
+      const { probe, requests } = yield* fixture({
+        // Both endpoints have answered with only the Claude/GPT group while
+        // the account's Gemini models still carried a quota.
+        summary: {
+          groups: [
+            {
+              displayName: "Claude and GPT models",
+              buckets: [
+                { bucketId: "3p-weekly", window: "weekly", remainingFraction: 1 },
+                { bucketId: "3p-5h", window: "5h", remainingFraction: 1 },
+              ],
+            },
+          ],
+        },
+        models: {
+          models: {
+            "gemini-a": {
+              modelProvider: "MODEL_PROVIDER_GOOGLE",
+              quotaInfo: { remainingFraction: 0.99, resetTime: "2026-10-24T04:29:07Z" },
+            },
+            "claude-a": {
+              modelProvider: "MODEL_PROVIDER_ANTHROPIC",
+              quotaInfo: { remainingFraction: 1, resetTime: "2026-10-24T06:50:54Z" },
+            },
+          },
+        },
+      });
+      const limits = yield* probe;
+      expect(limits.windows.map((window) => window.id).toSorted()).toEqual([
+        "3p-5h",
+        "3p-weekly",
+        "gemini-quota",
+      ]);
+      expect(limits.windows.find((window) => window.id === "gemini-quota")).toMatchObject({
+        label: "Gemini · Reported quota",
+        kind: "other",
+        resetsAt: "2026-10-24T04:29:07.000Z",
+      });
+      expect(
+        requests.filter((request) => request.url.endsWith(":fetchAvailableModels")),
+      ).toHaveLength(2);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("keeps one endpoint's quotas when the other fails", () =>
     Effect.gen(function* () {
       const { probe } = yield* fixture({
