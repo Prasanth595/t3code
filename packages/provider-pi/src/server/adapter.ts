@@ -72,7 +72,11 @@ import {
   materializePiT3McpExtension,
   resolvePiLaunchArgs,
 } from "./mcpInjection.ts";
-import { PI_FILE_CHANGE_TOOLS, PI_T3_SESSION_END_STATUS_KEY } from "./mcpExtensionSource.ts";
+import {
+  PI_FILE_CHANGE_TOOLS,
+  PI_T3_SESSION_END_STATUS_KEY,
+  PI_T3_SESSION_START_STATUS_KEY,
+} from "./mcpExtensionSource.ts";
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
 const PI_DRIVER_KIND = PI_PROVIDER;
@@ -549,6 +553,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       let pendingWake: PiWake | null = null;
       // Status key to its text, which becomes the task description.
       const backgroundWork = new Map<string, string>();
+      let acceptingBackgroundWork = true;
       // The thread whose roster lists backgroundWork. Unlike threadState it
       // survives a vetoed or failed switch, and it is null between a session's
       // teardown and the next binding, when new statuses have no owner yet.
@@ -1261,9 +1266,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         if (method === undefined) return;
         if (method === "setStatus") {
           const statusKey = recordString(event, "statusKey");
+          if (statusKey === PI_T3_SESSION_START_STATUS_KEY) {
+            acceptingBackgroundWork = true;
+            return;
+          }
           if (statusKey === PI_T3_SESSION_END_STATUS_KEY) {
-            // The outgoing jobs can never clear their statuses now. A reload
-            // restarts extensions in the same session, so its binding stays.
+            // Ignore progress from later shutdown handlers. A reload restarts
+            // extensions in the same session, so its binding stays.
+            acceptingBackgroundWork = false;
             const outgoingState = backgroundWorkState;
             if (recordString(event, "statusText") !== "reload") backgroundWorkState = null;
             if (backgroundWork.size === 0) return;
@@ -1272,8 +1282,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             return;
           }
           if (
-            statusKey !== PI_BACKGROUND_WORK_STATUS_KEY &&
-            statusKey?.startsWith(`${PI_BACKGROUND_WORK_STATUS_KEY}:`) !== true
+            !acceptingBackgroundWork ||
+            (statusKey !== PI_BACKGROUND_WORK_STATUS_KEY &&
+              statusKey?.startsWith(`${PI_BACKGROUND_WORK_STATUS_KEY}:`) !== true)
           ) {
             return;
           }
@@ -2268,11 +2279,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           // replacement's start-hook statuses Pi sent before replying, so the
           // new binding lists only its own background work.
           const drained = yield* Deferred.make<void>();
-          if (yield* Queue.offer(connection.events, { type: "t3.drain", drained }))
-            yield* Deferred.await(drained).pipe(
-              Effect.timeout(Duration.millis(PI_REQUEST_TIMEOUT_MS)),
-              Effect.ignore,
-            );
+          const queued = yield* Queue.offer(connection.events, { type: "t3.drain", drained });
+          if (!queued) return yield* protocolError("Pi transport closed during session switch");
+          yield* Deferred.await(drained).pipe(
+            Effect.timeout(Duration.millis(PI_REQUEST_TIMEOUT_MS)),
+            Effect.catchTags({
+              TimeoutError: () => protocolError("Timed out draining Pi session events"),
+            }),
+          );
         }
         const stateData = yield* request({ type: "get_state" });
         if (!modelsDiscovered) {
@@ -2619,7 +2633,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 return yield* protocolError("Pi native wake belongs to a different app thread");
               }
               pendingWake = null;
-              state.providerThread = turnInput.providerThread;
+              state.providerThread = {
+                ...turnInput.providerThread,
+                pendingBackgroundTasks: pendingBackgroundTasks(),
+              };
               state.activeTurn = activeTurn;
               activeTurn.adoptedWake = wake !== null && !continuation;
               if (compactCommand !== null) {

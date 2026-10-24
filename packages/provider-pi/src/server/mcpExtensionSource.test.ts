@@ -78,22 +78,33 @@ describe("Pi orchestration prompt section", () => {
 });
 
 describe("Pi session teardown", () => {
-  it("marks where the outgoing session's background work ends", async () => {
-    const bridge = await loadMcpBridge();
-    const statuses: Array<readonly [string, string | undefined]> = [];
-    const ui = {
-      notify: assert.fail,
-      setStatus: (key: string, text: string | undefined) => statuses.push([key, text]),
-    };
-    const shutdown = bridge.handlers.get("session_shutdown")!;
-    for (const reason of ["reload", "new"]) {
-      await shutdown(Object.assign({ systemPrompt: "" }, { reason }), { ui });
-    }
-    assert.deepStrictEqual(statuses, [
-      [PI_T3_SESSION_END_STATUS_KEY, "reload"],
-      [PI_T3_SESSION_END_STATUS_KEY, "new"],
-    ]);
-  });
+  it.each(["MCP", "permission-only"])(
+    "marks shutdown and replacement start with %s",
+    async (mode) => {
+      const handlers = mode === "MCP" ? (await loadMcpBridge()).handlers : await loadHooks();
+      const statuses: Array<readonly [string, string | undefined]> = [];
+      const ui = {
+        notify: () => undefined,
+        setStatus: (key: string, text: string | undefined) => statuses.push([key, text]),
+      };
+      type LifecycleHook = (
+        event: { systemPrompt: string; reason?: string },
+        ctx: { ui: typeof ui },
+      ) => unknown;
+      const shutdown = handlers.get("session_shutdown") as LifecycleHook;
+      const start = handlers.get("session_start") as LifecycleHook;
+      for (const reason of ["reload", "new"]) {
+        await shutdown(Object.assign({ systemPrompt: "" }, { reason }), { ui });
+        await start({ systemPrompt: "" }, { ui });
+      }
+      assert.deepStrictEqual(statuses, [
+        [PI_T3_SESSION_END_STATUS_KEY, "reload"],
+        ["t3:session-start", "started"],
+        [PI_T3_SESSION_END_STATUS_KEY, "new"],
+        ["t3:session-start", "started"],
+      ]);
+    },
+  );
 });
 
 describe("Pi MCP tool results", () => {
@@ -152,7 +163,7 @@ describe("Pi MCP tool results", () => {
 describe("Pi MCP tool exposure", () => {
   const discoveryContext = {
     model: { api: "anthropic-messages" },
-    ui: { notify: () => undefined },
+    ui: { notify: () => undefined, setStatus: () => undefined },
   };
 
   it("keeps orchestration direct and optional bridge tools discoverable on modern Pi", async () => {

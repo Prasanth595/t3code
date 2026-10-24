@@ -61,6 +61,14 @@ process stays up for about four more hours after the first 30 idle minutes. Star
 session in the same process, for example by rolling back, drops these statuses. When the extension
 wakes the agent with the result, the reply appears in the thread.
 
+Extensions must stop reporting a session's background work before their `session_shutdown` handler
+returns. Use the
+current `ctx.ui` when reporting progress; do not reuse a saved UI or `setStatus` handle after a
+session switch or extension reload. Older Pi versions do not invalidate every outgoing context,
+so the extension must also stop its old callbacks. T3 cannot distinguish a stale status from a
+current job's status once the next session has started. On newer Pi versions, reloading extensions
+invalidates their contexts but does not guarantee that their child processes stop.
+
 ## Permission Modes
 
 T3 Code applies the composer permission mode through Pi's blocking tool hook:

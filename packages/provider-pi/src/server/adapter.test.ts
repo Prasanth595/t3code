@@ -30,8 +30,10 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { vi } from "vite-plus/test";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -51,6 +53,13 @@ import {
 import { makePiRpcConnection, type PiRpcRecord } from "./rpc.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 import { turnItemOutputText } from "../../../client-runtime/src/work-log/itemDetail.ts";
+
+// ESM exports cannot be spied on directly; keep every queue operation real
+// except the drain offer intercepted by the registration failure tests.
+vi.mock("effect/Queue", async (importOriginal) => {
+  const actual = await importOriginal<typeof Queue>();
+  return { ...actual, offer: vi.fn(actual.offer) };
+});
 
 const layerTest = Layer.mergeAll(
   NodeServices.layer,
@@ -1355,10 +1364,8 @@ describe("PiAdapterV2", () => {
       yield* setStatus("t3:background:docs", "Docs building");
       assert.lengthOf(yield* takeRoster(), 2);
 
-      // Pi tears the outgoing session down before the replacement starts, and
-      // T3's bridge marks that point. Old jobs can never clear their statuses
-      // after it; statuses set after it come from the replacement's start hooks,
-      // even under a key an old job used.
+      // Shutdown handlers can still report progress before Pi invalidates the
+      // outgoing contexts. Only statuses after session_start belong to the new session.
       fake.queueState({ sessionFile: "/fake/replaced.jsonl" });
       const replaced = yield* switchSession(
         Effect.gen(function* () {
@@ -1366,6 +1373,8 @@ describe("PiAdapterV2", () => {
           assert.lengthOf(yield* takeRoster(), 2);
           yield* setStatus("t3:session-end", "ended");
           assert.lengthOf(yield* takeRoster(), 0);
+          yield* setStatus("t3:background:docs", "Outgoing cleanup still running");
+          yield* setStatus("t3:session-start", "started");
           yield* setStatus("t3:background:tests", "Tests restarted");
           yield* setStatus("t3:background:deploy", "Deploying");
         }),
@@ -1426,6 +1435,8 @@ describe("PiAdapterV2", () => {
       // Pi writes the teardown, the replacement's start hooks and its reply in
       // one burst; the reply skips the event queue the statuses wait in.
       yield* setStatus("t3:session-end", "new");
+      yield* setStatus("t3:background:build", "Outgoing cleanup still running");
+      yield* setStatus("t3:session-start", "started");
       yield* setStatus("t3:background:watch", "Watching");
       yield* fake.emit({
         type: "response",
@@ -1440,6 +1451,119 @@ describe("PiAdapterV2", () => {
         ["t3:background:watch"],
       );
       assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(replacement));
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["rejected", "unacknowledged"] as const)(
+    "rejects replacement registration when its event drain is %s",
+    (drainFailure) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime } = yield* openRuntime(fake);
+        yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        const drainOffered = yield* Deferred.make<void>();
+        const offer = vi.mocked(Queue.offer).getMockImplementation()!;
+        const drainOffer = vi.mocked(Queue.offer).mockImplementation((queue, event) => {
+          if (
+            typeof event === "object" &&
+            event !== null &&
+            "type" in event &&
+            event.type === "t3.drain"
+          ) {
+            return Deferred.succeed(drainOffered, undefined).pipe(
+              Effect.as(drainFailure === "unacknowledged"),
+            );
+          }
+          return offer(queue, event);
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(() => drainOffer.mockImplementation(offer)));
+        const stateRequestsBefore = fake
+          .allRequests()
+          .filter((request) => request["type"] === "get_state").length;
+        const switching = yield* runtime
+          .ensureThread({
+            threadId: THREAD_ID,
+            modelSelection: modelSelection("default"),
+            runtimePolicy,
+          })
+          .pipe(Effect.result, Effect.forkScoped);
+        yield* Deferred.await(drainOffered);
+        if (drainFailure === "unacknowledged") yield* TestClock.adjust(Duration.seconds(15));
+        const result = yield* Fiber.join(switching);
+        assert.equal(
+          result._tag,
+          "Failure",
+          "Registration must not bind a session whose preceding events were not drained",
+        );
+        assert.equal(
+          fake.allRequests().filter((request) => request["type"] === "get_state").length,
+          stateRequestsBefore,
+        );
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("preserves background task changes while turn model selection waits", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* takeEvent((event) => event.type === "provider_thread.updated");
+      const setStatus = (statusKey: string, statusText?: string) =>
+        fake.emit({
+          type: "extension_ui_request",
+          id: `status-${statusKey}`,
+          method: "setStatus",
+          statusKey,
+          ...(statusText === undefined ? {} : { statusText }),
+        });
+      yield* setStatus("t3:background:build", "Build running");
+      const before = yield* takeEvent((event) => event.type === "provider_thread.updated");
+      assert.isTrue(before.type === "provider_thread.updated");
+      if (before.type !== "provider_thread.updated") return;
+      fake.deferNextModelSelection();
+      const starting = yield* startTurn(
+        runtime,
+        before.providerThread,
+        "default",
+        [],
+        "Continue the review",
+        modelSelection("xai/grok-4.6"),
+      ).pipe(Effect.forkScoped);
+      const modelRequest = yield* fake.takeRequest("set_model");
+      yield* setStatus("t3:background:build");
+      yield* takeEvent((event) => event.type === "provider_thread.updated");
+      yield* setStatus("t3:background:tests", "Tests running");
+      const latest = yield* takeEvent((event) => event.type === "provider_thread.updated");
+      assert.isTrue(latest.type === "provider_thread.updated");
+      if (latest.type !== "provider_thread.updated") return;
+      assert.deepStrictEqual(
+        latest.providerThread.pendingBackgroundTasks?.map((task) => task.taskId),
+        ["t3:background:tests"],
+      );
+      yield* fake.emit({
+        type: "response",
+        id: modelRequest["id"],
+        command: "set_model",
+        success: true,
+        data: { provider: "xai", id: "grok-4.6" },
+      });
+      yield* Fiber.join(starting);
+      const installed = yield* takeEvent((event) => event.type === "provider_thread.updated");
+      assert.isTrue(installed.type === "provider_thread.updated");
+      if (installed.type !== "provider_thread.updated") return;
+      assert.equal(installed.providerThread.status, "active");
+      assert.deepStrictEqual(
+        installed.providerThread.pendingBackgroundTasks,
+        latest.providerThread.pendingBackgroundTasks,
+      );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
@@ -1469,13 +1593,27 @@ describe("PiAdapterV2", () => {
         );
       yield* setStatus("t3:background:build", "Build running");
       yield* takeRoster(1);
-      // The reload ends the old extension instances, so their jobs can never clear.
+      // Later shutdown handlers can await cleanup while old contexts still report.
       yield* setStatus("t3:session-end", "reload");
       yield* takeRoster(0);
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
-      // The reloaded extensions run in the same session and thread.
-      yield* setStatus("t3:background:build", "Build restarted");
-      yield* takeRoster(1);
+      yield* setStatus("t3:background:build", "Outgoing cleanup still running");
+      yield* setStatus("t3:session-start", "started");
+      yield* setStatus("t3:background:tests", "Tests restarted");
+      const restarted = yield* takeEvent(
+        (event) =>
+          event.type === "provider_thread.updated" &&
+          event.providerThread.pendingBackgroundTasks?.some(
+            (task) => task.taskId === "t3:background:tests",
+          ) === true,
+      );
+      assert.isTrue(restarted.type === "provider_thread.updated");
+      if (restarted.type !== "provider_thread.updated") return;
+      assert.equal(restarted.providerThread.id, providerThread.id);
+      assert.deepStrictEqual(
+        restarted.providerThread.pendingBackgroundTasks?.map((task) => task.taskId),
+        ["t3:background:tests"],
+      );
       assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
