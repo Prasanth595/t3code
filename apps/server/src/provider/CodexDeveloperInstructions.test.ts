@@ -49,12 +49,17 @@ describe("Codex orchestration context", () => {
       .map(([, entry]) => entry.value)
       .join("\n");
 
-    NodeAssert.match(orchestration, /independent[^.]*review rounds?, call `delegate_task` again/i);
-    NodeAssert.match(
-      orchestration,
-      /same child's conversation[^.]*`t3_thread_send`[^.]*`childThreadId`/,
+    NodeAssert.ok(
+      orchestration.includes(
+        "For independent T3 delegated review rounds, call `delegate_task` again.",
+      ),
     );
-    NodeAssert.doesNotMatch(orchestration, /Do not use `t3_thread_send`/);
+    NodeAssert.ok(
+      orchestration.includes(
+        "For a follow-up that needs the same child's conversation, use `t3_thread_send` on its `childThreadId`.",
+      ),
+    );
+    NodeAssert.ok(!orchestration.includes("Do not use `t3_thread_send`"));
   });
 });
 
