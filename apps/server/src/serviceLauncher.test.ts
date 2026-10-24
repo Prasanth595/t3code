@@ -219,47 +219,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
     }),
   );
 
-  it.effect("stays idle instead of exiting when another server owns the T3 home", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-refused-" });
-      const statePath = path.join(root, "runtime", "service-state.json");
-      yield* writeFakeRuntime(
-        fs,
-        path,
-        path.join(root, "runtime", "versions", "1.0.0"),
-        `process.exit(${SERVER_EXIT_CODE_STATE_DIR_OWNED});\n`,
-      );
-      yield* Effect.promise(() =>
-        writeServiceState(statePath, {
-          protocol: SERVICE_LAUNCHER_PROTOCOL,
-          activeVersion: "1.0.0",
-        }),
-      );
-      const refused = Promise.withResolvers<void>();
-      yield* Effect.acquireRelease(
-        Effect.sync(() =>
-          vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
-            if (String(chunk).includes("owns this T3 home")) refused.resolve();
-            return true;
-          }),
-        ),
-        (spy) => Effect.sync(() => spy.mockRestore()),
-      );
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
-      let completed = false;
-      const running = launcher.run().finally(() => {
-        completed = true;
-      });
-      yield* Effect.promise(() => refused.promise);
-      assert.isFalse(completed);
-      yield* Effect.promise(() => launcher.stop("SIGTERM"));
-      yield* Effect.promise(() => running);
-    }),
-  );
-
-  it.effect("starts the server again once the other owner releases the T3 home", () =>
+  it.effect("waits without exiting and restarts once the other owner releases the T3 home", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -285,9 +245,9 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
           activeVersion: "1.0.0",
         }),
       );
-      const otherOwner = new NodeSqlite.DatabaseSync(ownerPath);
+      using otherOwner = new NodeSqlite.DatabaseSync(ownerPath);
       otherOwner.exec("BEGIN EXCLUSIVE;");
-      const refused = Promise.withResolvers<void>();
+      let refused = Promise.withResolvers<void>();
       const owned = Promise.withResolvers<void>();
       yield* Effect.acquireRelease(
         Effect.sync(() =>
@@ -315,13 +275,31 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
           stateDirOwnerPollMs: 10,
         },
       );
-      const running = launcher.run();
+      let completed = false;
+      const running = launcher.run().finally(() => {
+        completed = true;
+      });
+      yield* Effect.promise(() => refused.promise);
+      assert.isFalse(completed);
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      yield* Effect.promise(() => running);
+      assert.isTrue(stateDirOwned(root));
+
+      refused = Promise.withResolvers<void>();
+      const restarted = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        {
+          stateDirOwnerPollMs: 10,
+        },
+      );
+      const recovering = restarted.run();
       yield* Effect.promise(() => refused.promise);
       otherOwner.close();
       yield* Effect.promise(() => owned.promise);
-      yield* Effect.promise(() => launcher.stop("SIGTERM"));
-      yield* Effect.promise(() => running);
-      assert.strictEqual(spawnedChildren.length - spawnsBefore, 2);
+      yield* Effect.promise(() => restarted.stop("SIGTERM"));
+      yield* Effect.promise(() => recovering);
+      assert.strictEqual(spawnedChildren.length - spawnsBefore, 3);
     }),
   );
 
@@ -335,7 +313,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       yield* fs.makeDirectory(stateDir, { recursive: true });
       assert.isFalse(stateDirOwned(root));
 
-      const owner = new NodeSqlite.DatabaseSync(path.join(stateDir, "server-owner.sqlite"));
+      using owner = new NodeSqlite.DatabaseSync(path.join(stateDir, "server-owner.sqlite"));
       owner.exec("BEGIN EXCLUSIVE;");
       assert.isTrue(stateDirOwned(root));
       owner.close();
