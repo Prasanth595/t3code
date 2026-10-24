@@ -2,6 +2,7 @@ import {
   createNavigatorFactory,
   NavigationContext,
   NavigationRouteContext,
+  StackActions,
   StackRouter,
   useNavigationBuilder,
   type NavigatorTypeBagBase,
@@ -211,6 +212,16 @@ function WorkspaceColumns(
   const workspaceTabs = useWorkspaceTabs();
   const selectedTab = workspaceTabs?.state.selectedTab;
   const settingsOpen = workspaceTabs?.settingsOpen ?? false;
+  // A split view can't give the list the whole width, so with columns side by side Settings
+  // opens a first page beside its list, like the system Settings app.
+  const settingsNeedsPage =
+    settingsOpen &&
+    layout.usesSplitView &&
+    !layout.primarySidebarOverlaysContent &&
+    props.detail.length === 0;
+  useEffect(() => {
+    if (settingsNeedsPage) props.navigation.dispatch(StackActions.push("SettingsEnvironments"));
+  }, [settingsNeedsPage, props.navigation]);
   const openNewTask = startNewTask;
   // The cover detail rail needs room for thread tools above the fixed tabs.
   // The unfolded Duo keeps compose in its detail bar.
