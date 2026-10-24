@@ -6,6 +6,7 @@ import {
   isFileDiffFoldedByDefault,
   isLineInFileDiff,
   setFileDiffFold,
+  setFileViewedFold,
 } from "./pullRequestDiff.logic";
 
 function fileWithHunks(
@@ -69,6 +70,26 @@ describe("isFileDiffFoldedByDefault", () => {
         viewed: false,
       }),
     ).toBe(true);
+  });
+});
+
+describe("setFileViewedFold", () => {
+  // regression: a tick after Expand all must not hold the file shut once it stops being viewed
+  it("folds a ticked file only while it stays viewed", () => {
+    const folds = setFileViewedFold("a.ts", true, new Set());
+    const input = { foldOverride: "expanded", filesCollapsedSetting: false } as const;
+    expect(
+      isFileDiffFoldedByDefault({ ...input, viewed: true, viewedFold: folds.has("a.ts") }),
+    ).toBe(true);
+    expect(
+      isFileDiffFoldedByDefault({ ...input, viewed: false, viewedFold: folds.has("a.ts") }),
+    ).toBe(false);
+  });
+
+  it("drops the fold on untick and keeps the same set when nothing changes", () => {
+    const folds = setFileViewedFold("a.ts", true, new Set());
+    expect(setFileViewedFold("a.ts", true, folds)).toBe(folds);
+    expect(setFileViewedFold("a.ts", false, folds).size).toBe(0);
   });
 });
 

@@ -25,12 +25,17 @@ export type DiffFoldOverride = "expanded" | "folded" | null;
  * A file the reader marked viewed opens folded every time the diff is drawn, not only in the
  * moment the box was ticked, until the toolbar folds or unfolds every file at once. A file pushed
  * to since it was marked is no longer viewed, so it opens again.
+ *
+ * `viewedFold` is a tick made after the toolbar unfolded everything. It folds the file only while
+ * the file stays viewed, so losing the tick some other way than unticking opens it again.
  */
 export function isFileDiffFoldedByDefault(input: {
   readonly foldOverride: DiffFoldOverride;
   readonly filesCollapsedSetting: boolean;
   readonly viewed: boolean;
+  readonly viewedFold?: boolean;
 }): boolean {
+  if (input.viewed && input.viewedFold === true) return true;
   if (input.foldOverride !== null) return input.foldOverride === "folded";
   return input.filesCollapsedSetting || input.viewed;
 }
@@ -65,4 +70,16 @@ export function setFileDiffFold(
   }
   if (foldChoices.get(fileKey) === collapsed) return foldChoices;
   return new Map(foldChoices).set(fileKey, collapsed);
+}
+
+export function setFileViewedFold(
+  fileKey: string,
+  folded: boolean,
+  viewedFolds: ReadonlySet<string>,
+): ReadonlySet<string> {
+  if (viewedFolds.has(fileKey) === folded) return viewedFolds;
+  const next = new Set(viewedFolds);
+  if (folded) next.add(fileKey);
+  else next.delete(fileKey);
+  return next;
 }
