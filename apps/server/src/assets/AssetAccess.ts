@@ -30,7 +30,11 @@ import {
   readImageDimensions,
   type ImageDimensions,
 } from "@t3tools/shared/imageDimensions";
-import { githubMediaFetchUrl, githubMediaFileName } from "@t3tools/shared/githubMedia";
+import {
+  githubMediaFetchUrl,
+  githubMarkdownRepository,
+  githubMediaFileName,
+} from "@t3tools/shared/githubMedia";
 import { MCP_APP_MAX_HTML_BYTES } from "@t3tools/shared/mcpApp";
 import {
   isProjectFaviconPath,
@@ -164,6 +168,7 @@ const AssetClaimsSchema = Schema.Union([
     /** Already narrowed to a GitHub media host at mint time; the signature is what keeps it there. */
     url: Schema.String,
     cwd: Schema.String,
+    repositoryUrl: Schema.optional(Schema.String),
     expiresAt: Schema.Number,
   }),
 ]);
@@ -190,6 +195,7 @@ export type ResolvedAsset =
     }
   | {
       readonly kind: "github-media";
+      readonly repositoryUrl?: string;
       readonly url: string;
       readonly cwd: string;
       readonly expiresAt: number;
@@ -805,7 +811,11 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
     }
     case "github-media": {
       const fetchUrl = githubMediaFetchUrl(input.resource.url);
-      if (fetchUrl === null) {
+      if (
+        fetchUrl === null ||
+        (input.resource.repositoryUrl !== undefined &&
+          githubMarkdownRepository(input.resource.repositoryUrl) === null)
+      ) {
         return yield* new AssetGitHubMediaUrlValidationError({});
       }
       claims = {
@@ -813,6 +823,9 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         kind: "github-media",
         url: fetchUrl,
         cwd: input.resource.cwd,
+        ...(input.resource.repositoryUrl === undefined
+          ? {}
+          : { repositoryUrl: input.resource.repositoryUrl }),
         expiresAt,
       };
       fileName = githubMediaFileName(fetchUrl);
@@ -931,6 +944,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       kind: "github-media",
       url: claims.url,
       cwd: claims.cwd,
+      ...(claims.repositoryUrl === undefined ? {} : { repositoryUrl: claims.repositoryUrl }),
       expiresAt: claims.expiresAt,
     } satisfies ResolvedAsset;
   }

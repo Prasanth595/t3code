@@ -237,9 +237,9 @@ interface ChatMarkdownProps {
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
   renderContextReference?: ((reference: ChatMarkdownContextReference) => ReactNode) | undefined;
-  /** Loads GitHub-hosted media through `cwd`'s GitHub credential, which a private repository's
-      uploads need; without it those images and videos load unauthenticated and 404. */
+  /** Loads GitHub-hosted media through the server credential. */
   githubMedia?: boolean | undefined;
+  githubMediaRepositoryUrl?: string | undefined;
   headingLevelOffset?: number | undefined;
 }
 
@@ -452,6 +452,7 @@ function useChatMarkdownState({
   renderContextReference,
   headingLevelOffset = 0,
   githubMedia = false,
+  githubMediaRepositoryUrl,
 }: ChatMarkdownProps) {
   const resolvedTheme = useRenderedAppearance();
   const markdownRef = useRef<HTMLElement>(null);
@@ -889,6 +890,7 @@ function useChatMarkdownState({
     expandMedia,
     fileLinkChip,
     githubMedia,
+    githubMediaRepositoryUrl,
     renderContextReference,
     headingLevelOffset,
     imageBaseDir,
@@ -1354,6 +1356,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       cwd,
       environmentId,
       githubMedia,
+      githubMediaRepositoryUrl,
       imageBaseDir,
       threadRef,
       workspaceMutationId,
@@ -1397,7 +1400,14 @@ const CHAT_MARKDOWN_COMPONENTS = {
       return (
         <ChatMarkdownAssetImage
           environmentId={environmentId}
-          resource={{ _tag: "github-media", cwd, url: githubMediaUrl }}
+          resource={{
+            _tag: "github-media",
+            cwd,
+            url: githubMediaUrl,
+            ...(githubMediaRepositoryUrl === undefined
+              ? {}
+              : { repositoryUrl: githubMediaRepositoryUrl }),
+          }}
           alt={altText}
           kind={kind}
           copyMarkdown={copyMarkdown}
