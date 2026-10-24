@@ -512,6 +512,44 @@ it.layer(NodeServices.layer)("agent file sync", (it) => {
       }),
   );
 
+  it.effect("leaves original instructions in place when hard links are unavailable", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const intercepted = FileSystem.FileSystem.of({ ...fs, link: (from) => fs.link(from, from) });
+      const f = yield* fixture.pipe(Effect.provideService(FileSystem.FileSystem, intercepted));
+      yield* f.write(f.target, "AGENTS.md", "Original host rules");
+      const result = yield* f.run(sectionBundle("Shared"));
+      expect(result.failures).toHaveLength(1);
+      expect(yield* fs.readFileString(f.path.join(f.target, "AGENTS.md"))).toBe(
+        "Original host rules",
+      );
+      expect((yield* f.sync.undo({ undoId: result.undoId! })).failures).toEqual([]);
+      expect(
+        (yield* fs.readDirectory(f.target)).some((name) => name.includes(".t3-sync-backup-")),
+      ).toBe(false);
+    }),
+  );
+  it.effect("rejects case-aliased skill roots before writing other selected resources", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const bundle: AgentFileSyncBundle = [
+        ...sectionBundle("Must not be written"),
+        ...["Review", "review"].map((name) => ({
+          kind: "skill" as const,
+          path: `.agents/skills/${name}`,
+          files: [{ path: "SKILL.md", data: Buffer.from("Skill").toString("base64"), mode: 0o600 }],
+        })),
+      ];
+      expect((yield* f.sync.preview({ cwd: f.target, bundle }).pipe(Effect.flip)).reason).toBe(
+        "invalid-path",
+      );
+      expect(
+        (yield* f.sync.apply({ cwd: f.target, bundle, expected: [] }).pipe(Effect.flip)).reason,
+      ).toBe("invalid-path");
+      expect(yield* f.fs.exists(f.path.join(f.target, "AGENTS.md"))).toBe(false);
+      expect(yield* f.fs.exists(f.path.join(f.target, ".agents"))).toBe(false);
+    }),
+  );
   it.effect("rejects case-aliased skill parent directories before any writes", () =>
     Effect.gen(function* () {
       const f = yield* fixture;

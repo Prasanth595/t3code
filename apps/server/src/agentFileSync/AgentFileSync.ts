@@ -340,9 +340,9 @@ const make = Effect.gen(function* () {
     const paths = new Set<string>();
     for (const resource of input.bundle) {
       yield* validResource(input, resource.path, resource.kind);
-      if (paths.has(resource.path))
+      if (paths.has(resource.path.toLowerCase()))
         return yield* new AgentFileSyncError({ reason: "invalid-path", path: resource.path });
-      paths.add(resource.path);
+      paths.add(resource.path.toLowerCase());
       const before = yield* readSnapshot(base, resource.path, resource.kind, true);
       let after: AgentFileSyncFile[];
       if (resource.kind === "skill") {
@@ -360,6 +360,8 @@ const make = Effect.gen(function* () {
           )
             return yield* new AgentFileSyncError({ reason: "invalid-path", path: file.path });
           const parts = file.path.split("/");
+          if (parts.length > MAX_SKILL_DEPTH)
+            return yield* new AgentFileSyncError({ reason: "limit", path: file.path });
           for (let index = 1; index < parts.length; index++) {
             const directory = parts.slice(0, index).join("/");
             const key = directory.toLowerCase();
@@ -369,8 +371,6 @@ const make = Effect.gen(function* () {
             directories.set(key, directory);
           }
           names.add(file.path.toLowerCase());
-          if (file.path.split("/").length > MAX_SKILL_DEPTH)
-            return yield* new AgentFileSyncError({ reason: "limit", path: file.path });
           if (Buffer.from(file.data, "base64").toString("base64") !== file.data)
             return yield* new AgentFileSyncError({ reason: "invalid-path", path: file.path });
           if (Buffer.from(file.data, "base64").byteLength > MAX_FILE_BYTES)
@@ -463,6 +463,9 @@ const make = Effect.gen(function* () {
               yield* io(fs.writeFile(target, Buffer.from(file.data, "base64")), at);
               yield* io(fs.chmod(target, file.mode), at);
             }
+            // Unsupported filesystems must fail before the original instructions leave their path.
+            if (kind === "instructions")
+              yield* io(fs.link(staged, path.join(temporary, "link-check")), at);
           }
           // Staging can take time. The earlier preview check cannot protect edits made during it.
           if (revision(yield* readSnapshot(base, at, kind, true)) !== expected)
