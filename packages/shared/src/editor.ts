@@ -11,14 +11,17 @@ type Editor = (typeof EDITORS)[number];
 
 // On Windows, Zed's stable, Preview and Nightly channels each install a `zed`
 // CLI in their own folder, so PATH order alone can open a prerelease build
-// when the user picked "Zed". A prerelease install is one path component
-// naming both Zed and the channel (`Zed Nightly`, `Zed Preview`); a folder
-// called "preview" elsewhere in the path does not count.
-const isPrereleaseZedPath = (filePath: string) =>
-  filePath.split(/[\\/]/).some((component) => {
-    const name = component.toLowerCase();
-    return name.includes("zed") && (name.includes("nightly") || name.includes("preview"));
-  });
+// when the user picked "Zed". The nearest folder naming Zed is the install
+// (`Zed`, `Zed Nightly`, `Zed Preview`) and decides the channel, so a user or
+// parent folder further up, such as `zedpreview`, cannot mark stable Zed.
+const isPrereleaseZedPath = (filePath: string) => {
+  const install = filePath
+    .split(/[\\/]/)
+    .slice(0, -1)
+    .findLast((folder) => folder.toLowerCase().includes("zed"))
+    ?.toLowerCase();
+  return install !== undefined && (install.includes("nightly") || install.includes("preview"));
+};
 
 const installNames: Partial<Record<Editor["id"], ReadonlyArray<string>>> = {
   vscode: ["Visual Studio Code"],

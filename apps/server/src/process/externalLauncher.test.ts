@@ -702,9 +702,10 @@ it.effect.each(["Zed Nightly", "Zed Preview"])(
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-zed-channels-" });
-      const prereleaseBin = path.join(root, "Programs", channel, "bin");
-      // "preview" outside the install's own folder name does not mark a channel.
-      const stableBin = path.join(root, "Users", "preview", "Programs", "Zed", "bin");
+      // A user folder naming Zed and a channel does not mark either install.
+      const programs = path.join(root, "Users", "zedpreview", "Programs");
+      const prereleaseBin = path.join(programs, channel, "bin");
+      const stableBin = path.join(programs, "Zed", "bin");
       for (const dir of [prereleaseBin, stableBin]) {
         yield* fs.makeDirectory(dir, { recursive: true });
         yield* fs.writeFileString(path.join(dir, "zed.EXE"), "");
