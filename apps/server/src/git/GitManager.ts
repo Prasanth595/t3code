@@ -35,6 +35,7 @@ import {
   type VcsStatusRemoteResult,
   VcsStatusResult,
   ModelSelection,
+  type OrchestrationV2TurnItem,
   type ProjectId,
   SourceControlProviderError,
   type SourceControlWritingStyleSettings,
@@ -73,6 +74,11 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 
 import { GitManagerError, GitPullRequestMaterializationError } from "@t3tools/contracts";
+import {
+  historicalMessage,
+  renderHistory,
+  selectHistory,
+} from "@t3tools/provider-core/server/handoffBudget";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import {
   conventionalCommitsTextGenerationPolicy,
@@ -89,6 +95,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import type { ChangeRequest } from "@t3tools/contracts";
 
@@ -176,6 +183,8 @@ const PR_LOOKUP_FAILURE_BASE_TTL = Duration.seconds(20);
 const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
 const PR_LOOKUP_GIT_STATE_TTL = Duration.minutes(5);
+const PR_THREAD_CONTEXT_BYTES = 16_000;
+const PR_THREAD_COMMAND_OUTPUT_CHARS = 2_000;
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 
 /**
@@ -185,7 +194,7 @@ const isSourceControlProviderError = Schema.is(SourceControlProviderError);
  * into sustained pressure. Backing off per branch keeps the retry rate below
  * the healthy rate once a branch has failed more than a couple of times.
  */
-export function prLookupFailureTtl(consecutiveFailures: number): Duration.Duration {
+function prLookupFailureTtl(consecutiveFailures: number): Duration.Duration {
   const exponent = Math.max(0, consecutiveFailures - 1);
   const backoffMs = Duration.toMillis(PR_LOOKUP_FAILURE_BASE_TTL) * Math.pow(2, exponent);
   return Duration.min(Duration.millis(backoffMs), PR_LOOKUP_FAILURE_MAX_TTL);
@@ -252,7 +261,7 @@ export function pullRequestRepositoryKey(value: string): string | null {
   try {
     const url = new URL(value);
     const match =
-      /^(.*)(?:\/pull\/|\/-\/merge_requests\/|\/pull-requests\/|\/pullrequest\/)\d+(?:\/.*)?$/iu.exec(
+      /^(.*)(?:\/pulls?\/|\/-\/merge_requests\/|\/pull-requests\/|\/pullrequest\/)\d+(?:\/.*)?$/iu.exec(
         url.pathname,
       );
     if (match?.[1] === undefined) return null;
@@ -485,6 +494,13 @@ function toPullRequestInfo(summary: ChangeRequest): PullRequestInfo {
 function limitContext(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   return `${value.slice(0, maxChars)}\n\n[truncated]`;
+}
+
+// Preserve command evidence when selectHistory drops oversized items; test verdicts are at the tail.
+function limitCommandOutput(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
+  if (item.type !== "command_execution" || item.output === undefined) return item;
+  if (item.output.length <= PR_THREAD_COMMAND_OUTPUT_CHARS) return item;
+  return { ...item, output: `[truncated]\n${item.output.slice(-PR_THREAD_COMMAND_OUTPUT_CHARS)}` };
 }
 
 function shortenSha(sha: string | undefined): string | null {
@@ -737,6 +753,31 @@ export const make = Effect.gen(function* () {
         );
     return { settings: resolveProjectSettings(settings, projectId).settings, projectId };
   });
+  const readThreadContext = Effect.fnUntraced(
+    function* (threadId: ThreadId | undefined) {
+      if (threadId === undefined) return undefined;
+      const { visibleTurnItems } = yield* threads.getThreadProjection(threadId);
+      const selected = selectHistory({
+        messages: visibleTurnItems.flatMap(
+          ({ item }) => historicalMessage(limitCommandOutput(item)) ?? [],
+        ),
+        coverage: "Digest of the thread that made this change, oldest first.",
+        budget: PR_THREAD_CONTEXT_BYTES,
+      });
+      return selected.messages.length === 0
+        ? undefined
+        : renderHistory(selected.messages, selected.context);
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("GitManager.readThreadContext failed", {
+            threadId,
+            errorTag: error._tag,
+          }).pipe(Effect.as(undefined)),
+        ),
+      ),
+  );
   const readWorktreesDirectory = serverSettingsService.getSettings.pipe(
     Effect.map((settings) => settings.worktreesDirectory),
     Effect.orElseSucceed(() => ""),
@@ -823,7 +864,10 @@ export const make = Effect.gen(function* () {
             ? [["Recent commit subjects from this repository:", ...subjects].join("\n")]
             : []),
           ...(agentInstructions ? [`Local AGENTS.md:\n${agentInstructions}`] : []),
-          ...(claudeInstructions ? [`Local CLAUDE.md:\n${claudeInstructions}`] : []),
+          // CLAUDE.md is often a symlink or copy of AGENTS.md; skip the duplicate.
+          ...(claudeInstructions && claudeInstructions !== agentInstructions
+            ? [`Local CLAUDE.md:\n${claudeInstructions}`]
+            : []),
         ].join("\n\n");
         if (!examples) {
           return repositoryConventionsTextGenerationPolicy;
@@ -1152,21 +1196,27 @@ export const make = Effect.gen(function* () {
     return prLookupFailureTtl(streak);
   };
   const pullRequestStateChanges = yield* PubSub.sliding<ThreadPullRequestKey>(64);
-  const lookupStates = new Map<string, PullRequestInfo["state"]>();
+  const lookupStates = new Map<
+    string,
+    { readonly state: PullRequestInfo["state"]; readonly isDraft: boolean }
+  >();
   const noteLookupState = (pr: PullRequestInfo) =>
     Effect.suspend(() => {
       const parsed = parseChangeRequestUrl(pr.url);
       if (parsed === null || parsed.number !== pr.number) return Effect.void;
       const key = normalizeThreadPullRequestKey(parsed);
       const id = threadPullRequestKeyOf(key);
-      const previous = lookupStates.get(id) ?? "open";
+      const previous = lookupStates.get(id);
       lookupStates.delete(id);
       if (lookupStates.size >= PR_LOOKUP_CACHE_CAPACITY) {
         const oldest = lookupStates.keys().next().value;
         if (oldest !== undefined) lookupStates.delete(oldest);
       }
-      lookupStates.set(id, pr.state);
-      return previous === pr.state ? Effect.void : PubSub.publish(pullRequestStateChanges, key);
+      lookupStates.set(id, { state: pr.state, isDraft: pr.isDraft === true });
+      return (previous?.state ?? "open") === pr.state &&
+        (previous?.isDraft === true) === (pr.isDraft === true)
+        ? Effect.void
+        : PubSub.publish(pullRequestStateChanges, key);
     });
   const prLookupCache = yield* Cache.makeWith(
     (key: string) => {
@@ -2225,6 +2275,7 @@ export const make = Effect.gen(function* () {
     settings: SourceControlTextGenerationSettings,
     cwd: string,
     fallbackBranch: string | null,
+    threadId: ThreadId | undefined,
     emit: GitActionProgressEmitter,
   ) {
     const provider = yield* sourceControlProvider(cwd);
@@ -2283,6 +2334,7 @@ export const make = Effect.gen(function* () {
             yield* provider.readChangeRequestTemplate({ cwd, treeish: baseRangeRef }),
           )
         : undefined;
+    const threadContext = yield* readThreadContext(threadId);
 
     const generated = yield* textGeneration.generatePrContent({
       cwd,
@@ -2292,6 +2344,7 @@ export const make = Effect.gen(function* () {
       diffSummary: limitContext(rangeContext.diffSummary, 20_000),
       diffPatch: limitContext(rangeContext.diffPatch, 60_000),
       ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
+      ...(threadContext ? { threadContext } : {}),
       ...(policy ? { policy } : {}),
       modelSelection: settings.modelSelection,
     });
@@ -2663,6 +2716,9 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // A user is waiting on these, so a host's background rate-limit pause must not refuse them.
+  const asUserAction = Effect.provideService(SourceControlRateLimit.Interactive, true);
+
   const resolvePullRequest: GitManager["Service"]["resolvePullRequest"] = Effect.fn(
     "resolvePullRequest",
   )(function* (input) {
@@ -2674,7 +2730,37 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.map((resolved) => toResolvedPullRequest(resolved)));
 
     return { pullRequest };
+  }, asUserAction);
+
+  const ensureNoTrackedChanges = Effect.fn("ensureNoTrackedChanges")(function* (
+    cwd: string,
+    pullRequestNumber: number,
+  ) {
+    const trackedChanges = yield* gitCore.execute({
+      operation: "GitManager.preparePullRequestThread.trackedChanges",
+      cwd,
+      args: ["status", "--porcelain", "--untracked-files=no"],
+    });
+    if (trackedChanges.stdout.trim().length > 0) {
+      return yield* new GitManagerError({
+        operation: "preparePullRequestThread",
+        cwd,
+        detail: `This repository has uncommitted changes. Commit or stash them before checking out pull request #${pullRequestNumber} here, or check it out in its own folder.`,
+      });
+    }
   });
+
+  // Some hosts only switch branches on checkout; use the existing lossless refresh to advance them.
+  const moveToPullRequestHead = (cwd: string, headSha: string | undefined) =>
+    headSha === undefined || !/^[0-9a-f]{7,64}$/i.test(headSha)
+      ? Effect.succeed(false)
+      : gitCore.resolveCommit({ cwd, revision: headSha }).pipe(
+          Effect.flatMap(({ commitSha }) =>
+            gitCore.refreshCheckedOutBranch({ cwd, targetCommit: commitSha }),
+          ),
+          Effect.map((refreshed) => refreshed.onTarget),
+          Effect.orElseSucceed(() => false),
+        );
 
   const preparePullRequestThread: GitManager["Service"]["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
@@ -2709,25 +2795,26 @@ export const make = Effect.gen(function* () {
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
 
       if (input.mode === "local") {
+        yield* ensureNoTrackedChanges(input.cwd, pullRequest.number);
         yield* (yield* sourceControlProvider(input.cwd)).checkoutChangeRequest({
           cwd: input.cwd,
           reference: normalizedReference,
-          force: true,
         });
         const details = yield* gitCore.statusDetails(input.cwd);
+        const branch = details.branch ?? pullRequest.headBranch;
         yield* configurePullRequestHeadUpstream(
           input.cwd,
           {
             ...pullRequest,
             ...toPullRequestHeadRemoteInfo(pullRequestSummary),
           },
-          details.branch ?? pullRequest.headBranch,
+          branch,
         );
         return {
           pullRequest,
-          branch: details.branch ?? pullRequest.headBranch,
+          branch,
           worktreePath: null,
-          isOnPullRequestHead: true,
+          isOnPullRequestHead: yield* moveToPullRequestHead(input.cwd, pullRequestSummary.headSha),
         };
       }
 
@@ -2953,7 +3040,7 @@ export const make = Effect.gen(function* () {
         isOnPullRequestHead: true,
       };
     }).pipe(Effect.ensuring(invalidateStatus(input.cwd)));
-  });
+  }, asUserAction);
 
   const runFeatureBranchStep = Effect.fn("runFeatureBranchStep")(function* (
     settings: SourceControlTextGenerationSettings,
@@ -3151,7 +3238,13 @@ export const make = Effect.gen(function* () {
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("pr"))),
                 Effect.flatMap(() =>
-                  runPrStep(textGenerationSettings, input.cwd, currentBranch, progress.emit),
+                  runPrStep(
+                    textGenerationSettings,
+                    input.cwd,
+                    currentBranch,
+                    input.threadId,
+                    progress.emit,
+                  ),
                 ),
               )
           : { status: "skipped_not_requested" as const };
@@ -3192,6 +3285,7 @@ export const make = Effect.gen(function* () {
         ),
       );
     },
+    asUserAction,
   );
 
   return GitManager.of({

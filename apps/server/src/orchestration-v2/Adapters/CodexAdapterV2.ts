@@ -14,6 +14,7 @@ import {
 } from "../../provider/CodexTurnTokenUsage.ts";
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 import type { CodexEffectiveRuntime } from "../../provider/CodexManagedRuntime.ts";
+import { classifyCodexManagedError } from "../../provider/CodexManagedErrors.ts";
 import {
   buildCodexInitializeParams,
   codexAppServerEnvironment,
@@ -158,7 +159,7 @@ type CodexFileChangeKinds = Readonly<
   Record<string, CodexSchema.V2ItemStartedNotification__PatchChangeKind>
 >;
 
-export function codexFileChangeApprovalPrompt(input: {
+function codexFileChangeApprovalPrompt(input: {
   readonly reason?: string | null;
   readonly grantRoot?: string | null;
   readonly fileChanges?: CodexFileChangeKinds;
@@ -420,14 +421,14 @@ function codexItemStatus(status: "inProgress" | "completed" | "failed" | "declin
  * The composers let a skill be typed with any currency sigil (`€review`), but
  * Codex only parses `$name` as a skill mention.
  */
-export function codexSkillMentionText(text: string): string {
+function codexSkillMentionText(text: string): string {
   return text.replace(SKILL_MENTION_PATTERN, "$1$$$2");
 }
 
 const BACKGROUND_COMMAND_DETAIL_COMMAND_MAX_LENGTH = 200;
 const BACKGROUND_COMMAND_DETAIL_OUTPUT_TAIL_MAX_LENGTH = 1_000;
 
-export function codexBackgroundCommandDetail(item: {
+function codexBackgroundCommandDetail(item: {
   readonly command: string;
   readonly exitCode?: number | null | undefined;
   readonly aggregatedOutput?: string | null | undefined;
@@ -445,6 +446,18 @@ export function codexBackgroundCommandDetail(item: {
       : output;
   const header = `Background command completed${exit}: ${command}`;
   return outputTail.length === 0 ? header : `${header}\n\nOutput tail:\n${outputTail}`;
+}
+
+// Codex spawns can omit the prompt, which registers as an empty string.
+function codexNativeSubagentLabel(task: OrchestrationV2Subagent): string | undefined {
+  return task.title?.trim() || task.prompt.trim() || undefined;
+}
+
+function codexNativeSubagentDetail(task: OrchestrationV2Subagent): string {
+  const header = `Subagent ${task.status}: ${codexNativeSubagentLabel(task) ?? task.id}`;
+  return task.result == null || task.result.length === 0
+    ? header
+    : `${header}\n\nResult:\n${task.result}`;
 }
 
 export interface CodexDynamicToolProjection extends McpToolPresentation {
@@ -492,37 +505,35 @@ function codexDynamicToolOutput(
   return item.success === false ? { success: false } : undefined;
 }
 
-export const projectCodexDynamicToolItem = Effect.fn("CodexAdapterV2.projectDynamicToolItem")(
-  function* (
-    item: CodexDynamicToolItem,
-  ): Effect.fn.Return<CodexDynamicToolProjection, never, Crypto.Crypto> {
-    const output =
-      item.type === "mcpToolCall" ? codexMcpToolOutput(item) : codexDynamicToolOutput(item);
-    const toolName =
-      item.type === "mcpToolCall"
-        ? `${item.server}.${item.tool}`
-        : [trimText(item.namespace), item.tool].filter(Boolean).join(".");
-    const presentation: McpToolPresentation =
-      item.type === "mcpToolCall" ? yield* mcpToolPresentation(item) : {};
-    const title =
-      dynamicToolTitle(toolName, item.arguments, presentation.title) ?? presentation.title;
-    const toolSurface = presentation.toolSurface ?? dynamicToolSurface(toolName, item.arguments);
-    const toolSource =
-      toolSurface === "computer" && presentation.toolSource?.kind !== "computer"
-        ? COMPUTER_USE_TOOL_SOURCE
-        : presentation.toolSource;
-    const projection: CodexDynamicToolProjection = {
-      ...presentation,
-      ...(toolSurface ? { toolSurface } : {}),
-      ...(toolSource ? { toolSource } : {}),
-      toolName,
-      ...(title ? { title } : {}),
-      input: item.arguments,
-      status: codexItemStatus(item.status).turnItem,
-    };
-    return output === undefined ? projection : { ...projection, output };
-  },
-);
+const projectCodexDynamicToolItem = Effect.fn("CodexAdapterV2.projectDynamicToolItem")(function* (
+  item: CodexDynamicToolItem,
+): Effect.fn.Return<CodexDynamicToolProjection, never, Crypto.Crypto> {
+  const output =
+    item.type === "mcpToolCall" ? codexMcpToolOutput(item) : codexDynamicToolOutput(item);
+  const toolName =
+    item.type === "mcpToolCall"
+      ? `${item.server}.${item.tool}`
+      : [trimText(item.namespace), item.tool].filter(Boolean).join(".");
+  const presentation: McpToolPresentation =
+    item.type === "mcpToolCall" ? yield* mcpToolPresentation(item) : {};
+  const title =
+    dynamicToolTitle(toolName, item.arguments, presentation.title) ?? presentation.title;
+  const toolSurface = presentation.toolSurface ?? dynamicToolSurface(toolName, item.arguments);
+  const toolSource =
+    toolSurface === "computer" && presentation.toolSource?.kind !== "computer"
+      ? COMPUTER_USE_TOOL_SOURCE
+      : presentation.toolSource;
+  const projection: CodexDynamicToolProjection = {
+    ...presentation,
+    ...(toolSurface ? { toolSurface } : {}),
+    ...(toolSource ? { toolSource } : {}),
+    toolName,
+    ...(title ? { title } : {}),
+    input: item.arguments,
+    status: codexItemStatus(item.status).turnItem,
+  };
+  return output === undefined ? projection : { ...projection, output };
+});
 
 function codexNativeItemRef(nativeItemId: string) {
   return {
@@ -900,7 +911,7 @@ export type CodexGoalCommand =
   | { readonly type: "resume" }
   | { readonly type: "set"; readonly objective: string };
 
-export function parseCodexGoalCommand(text: string): CodexGoalCommand | null {
+function parseCodexGoalCommand(text: string): CodexGoalCommand | null {
   const match = /^\/goal(?:\s+([\s\S]*))?$/u.exec(text.trim());
   if (match === null) return null;
   const argument = (match[1] ?? "").trim();
@@ -1110,9 +1121,51 @@ function codexErrorInfoCode(value: unknown): string | null {
   return Object.keys(value)[0] ?? null;
 }
 
+type CodexErrorInfo = CodexSchema.ServerNotification__CodexErrorInfo;
+
+/**
+ * Retry exhaustion only says why it failed through the last attempt's HTTP
+ * status. Exhaustion on 429 is a usage or rate limit, so it keeps the Limited
+ * state and resume controls; other statuses stay provider or transport errors.
+ */
+function codexExhaustionHttpStatus(errorInfo: CodexErrorInfo | null | undefined): number | null {
+  return typeof errorInfo === "object" &&
+    errorInfo !== null &&
+    "responseTooManyFailedAttempts" in errorInfo
+    ? (errorInfo.responseTooManyFailedAttempts.httpStatusCode ?? null)
+    : null;
+}
+
+function codexUsageLimitError(
+  code: string | null,
+  errorInfo: CodexErrorInfo | null | undefined,
+): boolean {
+  return (
+    code === "usageLimitExceeded" ||
+    code === "rateLimitExceeded" ||
+    codexExhaustionHttpStatus(errorInfo) === 429
+  );
+}
+
+/**
+ * ChatGPT sharing reports its own reason inside Codex's generic turn error, so
+ * the code it names replaces Codex's, and clients pick a recovery from it.
+ */
+function withCodexManagedFailure(
+  failure: OrchestrationV2ProviderFailure,
+  nativeError: unknown,
+): OrchestrationV2ProviderFailure {
+  const managed = classifyCodexManagedError(nativeError);
+  return managed === undefined
+    ? failure
+    : { ...failure, message: managed.message, code: managed.code };
+}
+
 interface ActiveCodexTurnContext {
+  closedCommandItemIds?: ReadonlySet<string>;
   latestProviderFailure?: {
     readonly nativeMessage: string;
+    readonly nativeCode: string | null;
     readonly failure: OrchestrationV2ProviderFailure;
   };
   readonly nativeStartReady?: Deferred.Deferred<void>;
@@ -1131,6 +1184,7 @@ interface ActiveCodexTurnContext {
   readonly rootNodeId: OrchestrationV2ExecutionNode["id"];
   readonly subagent: CodexSubagentThreadContext | null;
   readonly startedAt: DateTime.Utc;
+  readonly runningCompactionItemIds: Set<string>;
   // Modern approval requests omit paths; keep the kinds without retaining patch bodies.
   readonly fileChangeKindsByItem: Map<string, CodexFileChangeKinds>;
   readonly itemPositions: Map<
@@ -1141,6 +1195,7 @@ interface ActiveCodexTurnContext {
 
 interface ActiveCodexProviderRetry {
   readonly nativeMessage: string;
+  readonly nativeCode: string | null;
   readonly retry: OrchestrationV2ProviderRetry;
   readonly failure: OrchestrationV2ProviderFailure;
   readonly startedAt: DateTime.Utc;
@@ -2011,6 +2066,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             startedAt: input.startedAt,
             itemPositions: new Map(),
             fileChangeKindsByItem: new Map(),
+            runningCompactionItemIds: new Set(),
           };
           yield* Ref.update(limitedTurnItems, (current) => {
             const next = new Map(current);
@@ -2592,6 +2648,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               startedAt: turn.startedAt,
               itemPositions: new Map(),
               fileChangeKindsByItem: new Map(),
+              runningCompactionItemIds: new Set(),
             };
             beginTurnTokenUsage(activeContext);
             endSessionApprovalsOnModeChange(activeContext);
@@ -3607,6 +3664,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               type: "file_change",
               fileName: firstChange.path,
               diffStr: firstChange.diff,
+              changes: item.changes.map((change) => {
+                const movePath = change.kind.type === "update" ? change.kind.move_path : undefined;
+                return movePath
+                  ? { operation: change.kind.type, path: movePath, oldPath: change.path }
+                  : { operation: change.kind.type, path: change.path };
+              }),
             };
             return { node, turnItem };
           },
@@ -4529,15 +4592,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (!payload.willRetry) {
               context.latestProviderFailure = {
                 nativeMessage: payload.error.message,
-                failure: makeProviderFailure({
-                  message: payload.error.additionalDetails?.trim() || payload.error.message,
-                  code: notificationCode,
-                  class:
-                    notificationCode === "usageLimitExceeded" ||
-                    notificationCode === "rateLimitExceeded"
+                nativeCode: notificationCode,
+                failure: withCodexManagedFailure(
+                  makeProviderFailure({
+                    message: payload.error.additionalDetails?.trim() || payload.error.message,
+                    code: notificationCode,
+                    class: codexUsageLimitError(notificationCode, payload.error.codexErrorInfo)
                       ? "usage_limit"
                       : "provider_error",
-                }),
+                  }),
+                  payload.error,
+                ),
               };
               return;
             }
@@ -4551,25 +4616,28 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             };
             const code = codexErrorInfoCode(payload.error.codexErrorInfo);
             const additionalDetails = payload.error.additionalDetails?.trim();
-            const failure = makeProviderFailure({
-              message:
-                additionalDetails === undefined || additionalDetails.length === 0
-                  ? payload.error.message
-                  : additionalDetails,
-              code,
-              class:
-                code === "usageLimitExceeded" || code === "rateLimitExceeded"
+            const failure = withCodexManagedFailure(
+              makeProviderFailure({
+                message:
+                  additionalDetails === undefined || additionalDetails.length === 0
+                    ? payload.error.message
+                    : additionalDetails,
+                code,
+                class: codexUsageLimitError(code, payload.error.codexErrorInfo)
                   ? "usage_limit"
                   : code?.startsWith("http") === true || code?.startsWith("responseStream") === true
                     ? "transport_error"
                     : "provider_error",
-              retryable: true,
-            });
+                retryable: true,
+              }),
+              payload.error,
+            );
             const itemOrdinal =
               previous?.itemOrdinal ??
               (yield* resolveItemOrdinal(context, `terminal-failure:${context.providerTurnId}`));
             const state: ActiveCodexProviderRetry = {
               nativeMessage: payload.error.message,
+              nativeCode: code,
               retry,
               failure,
               startedAt: previous?.startedAt ?? updatedAt,
@@ -4604,15 +4672,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const emitCompactionItem = Effect.fn("CodexAdapterV2.emitCompactionItem")(function* (
           context: ActiveCodexTurnContext,
           nativeItemId: string,
-          status: "running" | "completed",
-          nativeStartedAt?: DateTime.Utc,
+          status: "running" | "completed" | "failed" | "interrupted" | "cancelled",
+          updatedAt: DateTime.Utc,
         ) {
-          const now = yield* DateTime.now;
           const { ordinal, startedAt } = yield* resolveItemPosition(
             context,
             nativeItemId,
-            nativeStartedAt,
+            updatedAt,
           );
+          if (status === "running") context.runningCompactionItemIds.add(nativeItemId);
+          else context.runningCompactionItemIds.delete(nativeItemId);
           yield* emitProviderEvent({
             type: "turn_item.updated",
             driver: CODEX_PROVIDER,
@@ -4632,13 +4701,49 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               type: "compaction",
               driver: CODEX_PROVIDER,
               status,
-              title: status === "completed" ? "Context compacted" : "Compacting context",
+              title:
+                status === "running"
+                  ? "Compacting context"
+                  : status === "completed"
+                    ? "Context compacted"
+                    : status === "failed"
+                      ? "Context compaction failed"
+                      : "Context compaction stopped",
               startedAt,
-              completedAt: status === "completed" ? now : null,
-              updatedAt: now,
+              completedAt: status === "running" ? null : updatedAt,
+              updatedAt,
             },
           });
         });
+
+        // Unloading an idle thread kills its terminals without completing
+        // their command items, while the shared provider session stays alive.
+        yield* client.handleServerNotification("thread/closed", (payload) =>
+          Effect.gen(function* () {
+            const completedAt = yield* DateTime.now;
+            for (const context of (yield* Ref.get(settledTurns)).values()) {
+              if (context.providerThread.nativeThreadRef?.nativeId !== payload.threadId) continue;
+              const commands = (yield* Ref.get(runningCommandItemsByTurn)).get(
+                context.nativeTurnId,
+              );
+              if (commands !== undefined) {
+                context.closedCommandItemIds = new Set(commands.keys());
+              }
+              yield* terminalizeRunningCommandItems(
+                context,
+                context.nativeTurnId,
+                "interrupted",
+                completedAt,
+              );
+              yield* Ref.update(runningCommandItemsByTurn, (current) => {
+                const updated = new Map(current);
+                updated.delete(context.nativeTurnId);
+                return updated;
+              });
+              yield* releaseSettledTurnIfIdle(context.nativeTurnId);
+            }
+          }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
+        );
 
         yield* client.handleServerNotification("item/started", (payload) =>
           Effect.gen(function* () {
@@ -4808,7 +4913,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             if (payload.item.type === "contextCompaction") {
-              yield* emitCompactionItem(context, payload.item.id, "completed");
+              yield* emitCompactionItem(
+                context,
+                payload.item.id,
+                "completed",
+                DateTime.makeUnsafe(payload.completedAtMs),
+              );
               return;
             }
 
@@ -4819,6 +4929,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             if (payload.item.type === "commandExecution") {
+              // Other tools can retain the context after thread closure.
+              if (context.closedCommandItemIds?.has(payload.item.id)) return;
               const turnDrained = yield* clearRunningCommandItem(payload.turnId, payload.item.id);
               const artifacts = yield* buildCommandExecutionArtifacts(context, payload.item);
               yield* emitProviderEvent({
@@ -5560,28 +5672,38 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             readonly context: ActiveCodexTurnContext;
             readonly status: OrchestrationV2ProviderTurn["status"];
             readonly failureMessage?: string;
-            readonly failureCode?: string | null;
+            readonly failureErrorInfo?: CodexErrorInfo;
             readonly providerRetry?: ActiveCodexProviderRetry;
           }): Effect.fn.Return<CodexRootTerminalEvent> {
             const terminalStatus = providerTurnStatusToTerminal(input.status);
             if (terminalStatus === "failed") {
               const previousFailure = input.context.latestProviderFailure ?? input.providerRetry;
+              const failureCode =
+                input.failureErrorInfo === undefined
+                  ? undefined
+                  : codexErrorInfoCode(input.failureErrorInfo);
+              const failureClass = codexUsageLimitError(failureCode ?? null, input.failureErrorInfo)
+                ? "usage_limit"
+                : "provider_error";
+              // The notification carries the richer message, so it wins when the
+              // completion repeats it. An explicit exhaustion status on the
+              // completion still decides the class; a missing one is not evidence.
+              const exhaustionStatus = codexExhaustionHttpStatus(input.failureErrorInfo);
               const failure =
                 previousFailure !== undefined &&
                 (input.failureMessage === undefined ||
                   input.failureMessage === previousFailure.nativeMessage) &&
-                (input.failureCode === undefined ||
-                  input.failureCode === previousFailure.failure.code)
+                (failureCode === undefined || failureCode === previousFailure.nativeCode) &&
+                (exhaustionStatus === null || previousFailure.failure.class === failureClass)
                   ? previousFailure.failure
-                  : makeProviderFailure({
-                      message: input.failureMessage,
-                      code: input.failureCode,
-                      class:
-                        input.failureCode === "usageLimitExceeded" ||
-                        input.failureCode === "rateLimitExceeded"
-                          ? "usage_limit"
-                          : "provider_error",
-                    });
+                  : withCodexManagedFailure(
+                      makeProviderFailure({
+                        message: input.failureMessage,
+                        code: failureCode,
+                        class: failureClass,
+                      }),
+                      input.failureMessage,
+                    );
               return {
                 type: "turn.terminal",
                 driver: CODEX_PROVIDER,
@@ -5672,7 +5794,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             readonly nativeTurnId: string;
             readonly status: OrchestrationV2ProviderTurn["status"];
             readonly failureMessage?: string;
-            readonly failureCode?: string | null;
+            readonly failureErrorInfo?: CodexErrorInfo;
             readonly providerRetry?: ActiveCodexProviderRetry;
             readonly goalHoldTurn?: OrchestrationV2ProviderTurn;
           }) {
@@ -5782,7 +5904,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly status: OrchestrationV2ProviderTurn["status"];
           readonly completedAt: DateTime.Utc;
           readonly failureMessage?: string;
-          readonly failureCode?: string | null;
+          readonly failureErrorInfo?: CodexErrorInfo;
         }) =>
           turnTerminalizationPermit.withPermits(1)(
             Effect.gen(function* () {
@@ -5835,6 +5957,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* planDeltas.flushTurn(input.nativeTurnId);
               for (const [key, part] of reasoningParts) {
                 if (part.turnId === input.nativeTurnId) reasoningParts.delete(key);
+              }
+              // Failed compaction can end the turn without item/completed.
+              for (const nativeItemId of input.context.runningCompactionItemIds) {
+                yield* emitCompactionItem(
+                  input.context,
+                  nativeItemId,
+                  providerTurnStatusToTerminal(input.status),
+                  input.completedAt,
+                );
               }
               const nativeThreadId = input.context.providerThread.nativeThreadRef?.nativeId;
               const activation =
@@ -5934,6 +6065,41 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   status: input.status,
                   completedAt: input.completedAt,
                 });
+                // Codex does not wake a parent whose turn already completed, so
+                // the child's result would sit unread until the next message.
+                // Only direct children of a root turn wake it: a grandchild
+                // reports to its own parent, and a root turn already running on
+                // the thread receives the result natively.
+                const parent = input.context.subagent.parentContext;
+                if (
+                  continuationRequests !== undefined &&
+                  parent.subagent === null &&
+                  (input.status === "completed" || input.status === "failed") &&
+                  !(yield* Ref.get(terminalizedNonCompletedNativeTurns)).has(parent.nativeTurnId) &&
+                  ![...(yield* Ref.get(activeTurns)).values()].some(
+                    (active) =>
+                      active.subagent === null &&
+                      active.providerThread.id === parent.providerThread.id,
+                  )
+                ) {
+                  const task = input.context.subagent.task;
+                  yield* continuationRequests.offer({
+                    threadId: parent.projectionThreadId,
+                    providerThreadId: parent.providerThread.id,
+                    driver: CODEX_PROVIDER,
+                    detail: codexNativeSubagentDetail(task),
+                    // The detail is the whole wake; Codex buffers no output for it.
+                    delivery: "message_text",
+                    notification: backgroundWorkNotification([
+                      {
+                        kind: "subagent",
+                        label: codexNativeSubagentLabel(task),
+                        outcome: input.status,
+                        childThreadId: input.context.subagent.childThreadId,
+                      },
+                    ]),
+                  });
+                }
               }
               if (input.status === "interrupted" || input.status === "failed") {
                 yield* terminalizeRunningCommandItems(
@@ -6055,9 +6221,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     failureMessage: payload.turn.error.message,
                     ...(payload.turn.error.codexErrorInfo == null
                       ? {}
-                      : {
-                          failureCode: codexErrorInfoCode(payload.turn.error.codexErrorInfo),
-                        }),
+                      : { failureErrorInfo: payload.turn.error.codexErrorInfo }),
                   }),
             });
           }),
@@ -6090,6 +6254,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             startedAt: now,
             itemPositions: new Map(),
             fileChangeKindsByItem: new Map(),
+            runningCompactionItemIds: new Set(),
           };
           const providerTurn = {
             id: context.providerTurnId,
