@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+
+import type { Project } from "./types";
 
 const { readPreparedConnection } = vi.hoisted(() => ({
   readPreparedConnection: vi.fn<() => { httpBaseUrl: string } | null>(() => null),
@@ -15,6 +17,7 @@ import {
   migratePersistedBrowserHistoryState,
   normalizeHistoryUrl,
   recordVisitForThread,
+  registerHistoryProjectForThread,
   resetBrowserHistoryForTests,
   setTitleForThreadUrl,
   upsertHistoryEntry,
@@ -198,6 +201,60 @@ describe("pendingVisitsByThreadKey", () => {
     const entries = useBrowserHistoryStore.getState().byProjectKey["proj-a"];
     expect(entries?.map((e) => e.url)).toEqual(["http://newer.test/", "http://older.test/"]);
     expect(entries?.[0]?.lastVisitedAt).toBe(2000);
+  });
+});
+
+describe("registerHistoryProjectForThread", () => {
+  beforeEach(() => {
+    resetBrowserHistoryForTests();
+  });
+
+  it("files a new thread's visits under its sidebar project, shared by the project's machines", () => {
+    const repositoryIdentity = {
+      canonicalKey: "github.com/t3tools/t3code",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "https://github.com/t3tools/t3code.git",
+      },
+    };
+    const project = (environmentId: EnvironmentId, workspaceRoot: string): Project => ({
+      environmentId,
+      id: ProjectId.make("project-1"),
+      title: "t3code",
+      workspaceRoot,
+      repositoryIdentity,
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-07-01T00:00:00.000Z",
+      updatedAt: "2026-07-01T00:00:00.000Z",
+    });
+    const localProject = project(EnvironmentId.make("env-1"), "/local/t3code");
+    const remoteProject = project(EnvironmentId.make("env-2"), "/remote/t3code");
+    const grouping = {
+      projects: [localProject, remoteProject],
+      settings: {
+        sidebarProjectGroupingMode: "repository" as const,
+        sidebarProjectGroupingOverrides: {},
+      },
+      primaryEnvironmentId: localProject.environmentId,
+    };
+    const remoteThreadRef = {
+      environmentId: remoteProject.environmentId,
+      threadId: ThreadId.make("thread-2"),
+    };
+
+    recordVisitForThread(threadRef, "http://a.test/", 1);
+    registerHistoryProjectForThread(threadRef, localProject, grouping);
+    registerHistoryProjectForThread(remoteThreadRef, remoteProject, grouping);
+    recordVisitForThread(remoteThreadRef, "http://b.test/", 2);
+
+    expect(Object.values(useBrowserHistoryStore.getState().byProjectKey)).toEqual([
+      [
+        { url: "http://b.test/", lastVisitedAt: 2 },
+        { url: "http://a.test/", lastVisitedAt: 1 },
+      ],
+    ]);
   });
 });
 

@@ -177,6 +177,7 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
 import { newMessageId } from "~/lib/utils";
 import { registerFaviconProjectForThread } from "~/browserFaviconStore";
+import { registerHistoryProjectForThread } from "~/browserHistoryStore";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -235,6 +236,7 @@ import {
   resolveThreadDetailRef,
   useEnvironmentSupportsServerBrowser,
   useProject,
+  useProjects,
   useQuietThreadProjection,
   useThreadUpdatedAt,
   useThreadLastVisitedAt,
@@ -1114,6 +1116,23 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !activeProjectRef) return;
     registerFaviconProjectForThread(activeThreadRef, activeProjectRef);
   }, [activeProjectRef, activeThreadRef]);
+  const allProjects = useProjects();
+  const sidebarProjectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  useEffect(() => {
+    if (!clientSettingsHydrated || !activeThreadRef || !activeProject) return;
+    registerHistoryProjectForThread(activeThreadRef, activeProject, {
+      projects: allProjects,
+      settings: sidebarProjectGroupingSettings,
+      primaryEnvironmentId,
+    });
+  }, [
+    activeProject,
+    activeThreadRef,
+    allProjects,
+    clientSettingsHydrated,
+    primaryEnvironmentId,
+    sidebarProjectGroupingSettings,
+  ]);
   const activeEnvironment =
     activeThread == null ? null : (environmentById.get(activeThread.environmentId) ?? null);
   const activeEnvironmentUnavailable =
