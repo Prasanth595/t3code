@@ -495,6 +495,8 @@ export function useThreadComposerState() {
     }
     const payload = resolveQueuedEditPayload({
       edit,
+      text,
+      draftText: draft.text,
       draftContext: draft.context,
       draftAttachments: draft.attachments,
       uploaded: prepared.value.attachments,
@@ -508,10 +510,7 @@ export function useThreadComposerState() {
         edit: {
           messageId: edit.messageId,
           attachments: payload.attachments,
-          context: composerRecallContext(text, draft.text, payload.context) ?? {
-            version: 1,
-            records: [],
-          },
+          context: payload.context,
         },
       },
     });

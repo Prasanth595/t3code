@@ -2,6 +2,7 @@ import { ScheduledTaskId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  appendRewoundPrompt,
   buildComposerPromptHistoryEntries,
   recallableComposerPrompt,
   stepComposerPromptHistory,
@@ -22,6 +23,17 @@ function backward(position: ComposerPromptHistoryPosition | null, currentPrompt:
 function forward(position: ComposerPromptHistoryPosition | null, currentPrompt: string) {
   return stepComposerPromptHistory({ direction: "forward", entries, position, currentPrompt });
 }
+
+describe("appendRewoundPrompt", () => {
+  it("restores the authored prompt rather than the generated wire text", () => {
+    const message = {
+      text: "Ultrathink:\n  keep this\n",
+      context: { version: 1, records: [], composerRecall: [12, 24] },
+    } as const;
+    expect(appendRewoundPrompt("", message)).toBe("  keep this\n");
+    expect(appendRewoundPrompt("draft", message)).toBe("draft\n\n  keep this\n");
+  });
+});
 
 describe("recallableComposerPrompt", () => {
   it.each([

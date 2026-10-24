@@ -1,4 +1,3 @@
-import { composerRecallContext } from "@t3tools/shared/composerContextReferences";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -41,7 +40,11 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import type { ChatComposerHandle } from "./ChatComposer";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
-import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./queuedMessageEdit";
+import {
+  prepareQueuedEditAttachments,
+  queuedEditContext,
+  recoverQueuedMessageEdit,
+} from "./queuedMessageEdit";
 import type { EditQueuedRunRequest } from "./QueuedRunsControl";
 
 interface EditingQueuedRun {
@@ -108,12 +111,6 @@ async function submitQueuedRunEdit(input: {
       readImage: readFileAsDataUrl,
       uploadFiles,
     });
-    // Kept records for removed attachments would point at nothing.
-    const keptRecords = (editing.context?.records ?? []).filter(
-      (record) =>
-        !("attachmentId" in record) ||
-        editing.existingAttachments.some((attachment) => attachment.id === record.attachmentId),
-    );
     const newRecords =
       buildMessageContext({
         terminalContexts: content.terminalContexts.filter(
@@ -136,20 +133,12 @@ async function submitQueuedRunEdit(input: {
         edit: {
           messageId: editing.messageId,
           attachments: uploads,
-          context: composerRecallContext(
-            editText.length === 0 ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT : editText,
-            content.prompt,
-            {
-              version: 1,
-              records: [
-                ...new Map(
-                  [...keptRecords, ...newRecords].map(
-                    (record) => [record.contextId, record] as const,
-                  ),
-                ).values(),
-              ],
-            },
-          ) ?? { version: 1, records: [] },
+          context: queuedEditContext({
+            editing,
+            sentText: editText.length === 0 ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT : editText,
+            composerText: content.prompt,
+            newRecords,
+          }),
         },
       },
     });

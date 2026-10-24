@@ -9,6 +9,16 @@ export type ComposerPromptHistoryMessage = Parameters<typeof resolveUserMessageP
   readonly context?: OrchestrationMessageContext | undefined;
 };
 
+/** Appends a rewound message's authored prompt after whatever the user already drafted. */
+export function appendRewoundPrompt(
+  currentPrompt: string,
+  message: { readonly text: string; readonly context?: OrchestrationMessageContext | undefined },
+): string {
+  const restoredPrompt = recallableComposerPrompt(message.text, message.context);
+  if (restoredPrompt.length === 0) return currentPrompt;
+  return currentPrompt.length > 0 ? `${currentPrompt}\n\n${restoredPrompt}` : restoredPrompt;
+}
+
 export interface ComposerPromptHistoryEntry {
   readonly id: string;
   readonly prompt: string;
