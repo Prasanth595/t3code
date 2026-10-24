@@ -62,12 +62,9 @@ function escapeWindowsShellArg(arg: string): string {
   return escaped.replace(WINDOWS_SHELL_META_CHARS, "^$1");
 }
 
-/**
- * A `.cmd`/`.bat` shim forwards its arguments with `%*`, so cmd.exe parses them
- * again once the first caret layer is gone. A quote in the argument ends the
- * quoting that keeps `&` or `|` literal there, so it gets a second layer, as in
- * cross-spawn. Other arguments stay quoted through both parses and keep one.
- */
+// A `.cmd`/`.bat` shim's `%*` makes cmd.exe parse the arguments again without the
+// first caret layer. A quote there exposes `&` or `|`, so such arguments get
+// cross-spawn's second layer; quote-free ones stay quoted through both parses.
 function escapeWindowsShimArg(arg: string): string {
   const escaped = escapeWindowsShellArg(arg);
   return arg.includes('"') ? escaped.replace(WINDOWS_SHELL_META_CHARS, "^$1") : escaped;
