@@ -65,6 +65,8 @@ import {
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
+  gitHubApiHostForRemote,
+  parseFetchRemotes,
   parseGitHubRepositorySelector,
   resolveGitHubRepository,
 } from "@t3tools/source-control-github/server/gitHubRepositoryResolution";
@@ -2027,41 +2029,130 @@ export const make = Effect.gen(function* () {
     upstreamRef: string | null,
     headContext: Pick<BranchHeadContext, "isCrossRepository" | "remoteName">,
   ) {
-    const configuredRef = yield* gitCore.readConfigValue(cwd, `branch.${branch}.t3-merge-base-ref`);
-    if (configuredRef?.startsWith("refs/heads/") || configuredRef?.startsWith("refs/remotes/")) {
-      const configuredBranch = yield* gitCore.resolveBranchName(cwd, configuredRef);
-      if (configuredBranch) return { baseBranch: configuredBranch, baseRef: configuredRef };
-    }
-
-    const configured = yield* gitCore.readConfigValue(cwd, `branch.${branch}.gh-merge-base`);
-    if (configured) {
-      const localRef = configured.startsWith("refs/") ? configured : `refs/heads/${configured}`;
-      const localBranch = yield* gitCore.resolveBranchName(cwd, localRef);
-      if (localBranch) {
-        const shadowsRemote =
-          configured.includes("/") &&
-          !configured.startsWith("refs/") &&
-          (yield* gitCore.resolveBranchName(cwd, `refs/remotes/${configured}`)) !== null;
-        return {
-          baseBranch: localBranch,
-          baseRef: configured.startsWith("refs/") || shadowsRemote ? localRef : localBranch,
-        };
+    const recordedBase = yield* Effect.gen(function* () {
+      const configuredRef = yield* gitCore.readConfigValue(
+        cwd,
+        `branch.${branch}.t3-merge-base-ref`,
+      );
+      if (configuredRef?.startsWith("refs/heads/") || configuredRef?.startsWith("refs/remotes/")) {
+        const configuredBranch = yield* gitCore.resolveBranchName(cwd, configuredRef);
+        return { baseBranch: configuredBranch, baseRef: configuredRef };
       }
-      if (configured.includes("/") && !configured.startsWith("refs/")) {
-        const remoteRef = `refs/remotes/${configured}`;
+
+      const configured = yield* gitCore.readConfigValue(cwd, `branch.${branch}.gh-merge-base`);
+      if (configured) {
+        const localRef = configured.startsWith("refs/") ? configured : `refs/heads/${configured}`;
+        const localBranch = yield* gitCore.resolveBranchName(cwd, localRef);
+        if (localBranch) {
+          const shadowsRemote =
+            configured.includes("/") &&
+            !configured.startsWith("refs/") &&
+            (yield* gitCore.resolveBranchName(cwd, `refs/remotes/${configured}`)) !== null;
+          return {
+            baseBranch: localBranch,
+            baseRef: configured.startsWith("refs/") || shadowsRemote ? localRef : localBranch,
+          };
+        }
+        if (configured.includes("/") && !configured.startsWith("refs/")) {
+          const remoteRef = `refs/remotes/${configured}`;
+          const remoteBranch = yield* gitCore.resolveBranchName(cwd, remoteRef);
+          if (remoteBranch) return { baseBranch: remoteBranch, baseRef: remoteRef };
+        }
+        const configuredBranch = yield* gitCore.resolveBranchName(cwd, configured);
+        if (configuredBranch) return { baseBranch: configuredBranch, baseRef: configuredBranch };
+      }
+      return null;
+    });
+    let missingRemoteBase: string | null = null;
+    if (recordedBase) {
+      const publishedRemote =
+        (upstreamRef && headContext.remoteName !== "." ? headContext.remoteName : null) ??
+        (yield* gitCore.readConfigValue(cwd, `branch.${branch}.pushRemote`)) ??
+        (yield* gitCore.readConfigValue(cwd, "remote.pushDefault")) ??
+        headContext.remoteName ??
+        "origin";
+      let baseRemotes = [publishedRemote];
+      let targetRepository: string | null = null;
+      if (!recordedBase.baseRef.startsWith("refs/remotes/")) {
+        const handle = yield* sourceControlProviders
+          .resolveHandle({ cwd })
+          .pipe(Effect.catchTags({ SourceControlProviderError: () => Effect.succeed(null) }));
+        if (handle) {
+          const remotesResult = yield* gitCore.execute({
+            operation: "GitManager.resolvePrBase.remotes",
+            cwd,
+            args: ["remote", "-v"],
+          });
+          const remotes = parseFetchRemotes(remotesResult.stdout);
+          if (handle.provider.kind === "github") {
+            const hostHint = handle.context
+              ? (urlHost(handle.context.provider.baseUrl) ?? undefined)
+              : undefined;
+            const defaultHost = hostHint ?? environment.GH_HOST ?? "github.com";
+            const resolved = yield* gitCore.execute({
+              operation: "GitManager.resolvePrBase.resolved",
+              cwd,
+              args: ["config", "--get-regexp", "^remote\\..*\\.gh-resolved$"],
+              allowNonZeroExit: true,
+            });
+            const target =
+              parseGitHubRepositorySelector(environment.GH_REPO ?? "", defaultHost) ??
+              resolveGitHubRepository({
+                remotes: remotesResult.stdout,
+                resolved: resolved.stdout,
+                hostHint,
+                defaultHost,
+              }).locator;
+            if (target) {
+              targetRepository = `${target.host}/${target.owner}/${target.name}`.toLowerCase();
+            }
+          } else if (handle.context) {
+            targetRepository = normalizeGitRemoteUrl(handle.context.remoteUrl);
+          }
+          if (targetRepository) {
+            baseRemotes = remotes
+              .filter((remote) => {
+                const key = normalizeGitRemoteUrl(remote.url);
+                const host =
+                  handle.provider.kind === "github" ? gitHubApiHostForRemote(remote.url) : null;
+                return (
+                  (host ? `${host}/${key.split("/").slice(1).join("/")}` : key) === targetRepository
+                );
+              })
+              .map((remote) => remote.name)
+              .toSorted((left, right) =>
+                left === publishedRemote ? -1 : right === publishedRemote ? 1 : 0,
+              );
+          }
+        }
+      }
+      const remoteRefs = recordedBase.baseRef.startsWith("refs/remotes/")
+        ? [recordedBase.baseRef]
+        : baseRemotes.map(
+            (remote) =>
+              `refs/remotes/${remote}/${recordedBase.baseRef.replace(/^refs\/heads\//, "")}`,
+          );
+      for (const remoteRef of remoteRefs) {
         const remoteBranch = yield* gitCore.resolveBranchName(cwd, remoteRef);
-        if (remoteBranch) return { baseBranch: remoteBranch, baseRef: remoteRef };
+        if (remoteBranch) {
+          return {
+            baseBranch: recordedBase.baseBranch ?? remoteBranch,
+            baseRef: recordedBase.baseBranch ? recordedBase.baseRef : remoteRef,
+            message: null,
+          };
+        }
       }
-      const configuredBranch = yield* gitCore.resolveBranchName(cwd, configured);
-      if (configuredBranch) return { baseBranch: configuredBranch, baseRef: configuredBranch };
+      missingRemoteBase =
+        remoteRefs[0]?.slice("refs/remotes/".length) ??
+        `${targetRepository}/${recordedBase.baseRef.replace(/^refs\/heads\//, "")}`;
     }
 
-    if (upstreamRef && !headContext.isCrossRepository) {
+    if (!missingRemoteBase && upstreamRef && !headContext.isCrossRepository) {
       const upstreamBranch = extractBranchNameFromRemoteRef(upstreamRef, {
         remoteName: headContext.remoteName,
       });
       if (upstreamBranch.length > 0 && upstreamBranch !== branch) {
-        return { baseBranch: upstreamBranch, baseRef: upstreamBranch };
+        return { baseBranch: upstreamBranch, baseRef: upstreamBranch, message: null };
       }
     }
 
@@ -2069,19 +2160,20 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((provider) => provider.getDefaultBranch({ cwd })),
       Effect.orElseSucceed(() => null),
     );
-    if (defaultFromProvider) {
-      return { baseBranch: defaultFromProvider, baseRef: defaultFromProvider };
-    }
-
-    const defaultFromRemote = yield* gitCore.resolvePrimaryRemoteName(cwd).pipe(
-      Effect.flatMap((remoteName) => gitCore.resolveDefaultBranchName(cwd, remoteName)),
-      Effect.orElseSucceed(() => null),
-    );
-    if (defaultFromRemote) {
-      return { baseBranch: defaultFromRemote, baseRef: defaultFromRemote };
-    }
-
-    return { baseBranch: "main", baseRef: "main" };
+    const baseBranch =
+      defaultFromProvider ??
+      (yield* gitCore.resolvePrimaryRemoteName(cwd).pipe(
+        Effect.flatMap((remoteName) => gitCore.resolveDefaultBranchName(cwd, remoteName)),
+        Effect.orElseSucceed(() => null),
+      )) ??
+      "main";
+    return {
+      baseBranch,
+      baseRef: baseBranch,
+      message: missingRemoteBase
+        ? `Base ${missingRemoteBase} is unavailable in this checkout. Using default branch ${baseBranch}.`
+        : null,
+    };
   });
 
   const resolveBaseRangeRef = Effect.fn("resolveBaseRangeRef")(function* (
@@ -2305,16 +2397,19 @@ export const make = Effect.gen(function* () {
     const existing = yield* findOpenPr(cwd, headContext);
     if (existing) {
       return {
-        status: "opened_existing" as const,
-        url: existing.url,
-        number: existing.number,
-        baseBranch: existing.baseRefName,
-        headBranch: existing.headRefName,
-        title: existing.title,
+        pr: {
+          status: "opened_existing" as const,
+          url: existing.url,
+          number: existing.number,
+          baseBranch: existing.baseRefName,
+          headBranch: existing.headRefName,
+          title: existing.title,
+        },
+        message: null,
       };
     }
 
-    const { baseBranch, baseRef } = yield* resolvePrBase(
+    const { baseBranch, baseRef, message } = yield* resolvePrBase(
       cwd,
       branch,
       details.upstreamRef,
@@ -2323,7 +2418,7 @@ export const make = Effect.gen(function* () {
     yield* emit({
       kind: "phase_started",
       phase: "pr",
-      label: `Generating ${terms.shortLabel} content...`,
+      label: message ?? `Generating ${terms.shortLabel} content...`,
     });
     const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseRef);
     const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
@@ -2382,20 +2477,26 @@ export const make = Effect.gen(function* () {
     const created = yield* findOpenPr(cwd, headContext);
     if (!created) {
       return {
-        status: "created" as const,
-        baseBranch,
-        headBranch: headContext.headBranch,
-        title: generated.title,
+        pr: {
+          status: "created" as const,
+          baseBranch,
+          headBranch: headContext.headBranch,
+          title: generated.title,
+        },
+        message,
       };
     }
 
     return {
-      status: "created" as const,
-      url: created.url,
-      number: created.number,
-      baseBranch: created.baseRefName,
-      headBranch: created.headRefName,
-      title: created.title,
+      pr: {
+        status: "created" as const,
+        url: created.url,
+        number: created.number,
+        baseBranch: created.baseRefName,
+        headBranch: created.headRefName,
+        title: created.title,
+      },
+      message,
     };
   });
 
@@ -3228,7 +3329,7 @@ export const make = Effect.gen(function* () {
               )
           : { status: "skipped_not_requested" as const };
 
-        const pr = wantsPr
+        const { pr, message: prMessage } = wantsPr
           ? yield* progress
               .emit({
                 kind: "phase_started",
@@ -3247,9 +3348,9 @@ export const make = Effect.gen(function* () {
                   ),
                 ),
               )
-          : { status: "skipped_not_requested" as const };
+          : { pr: { status: "skipped_not_requested" as const }, message: null };
 
-        const toast = yield* buildCompletionToast(input.cwd, {
+        const completionToast = yield* buildCompletionToast(input.cwd, {
           action: input.action,
           branch: branchStep,
           commit,
@@ -3257,6 +3358,12 @@ export const make = Effect.gen(function* () {
           pr,
         });
 
+        const toast = prMessage
+          ? {
+              ...completionToast,
+              description: [completionToast.description, prMessage].filter(Boolean).join(" "),
+            }
+          : completionToast;
         const result = {
           action: input.action,
           branch: branchStep,
