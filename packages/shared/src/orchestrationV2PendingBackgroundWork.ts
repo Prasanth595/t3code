@@ -294,26 +294,34 @@ export function derivePendingBackgroundWork(input: {
   return Array.from(byTaskId.values());
 }
 
-type PullRequestWatchIdentity = Pick<ThreadPullRequestLink, "host" | "repository" | "number">;
+type PullRequestWatchLink = Pick<
+  ThreadPullRequestLink,
+  "host" | "repository" | "number" | "source" | "watch"
+>;
+
+const isWatchedLink = (link: Pick<ThreadPullRequestLink, "source" | "watch">) =>
+  link.watch !== undefined && link.source !== "stack-dismissed";
 
 // Links store their normalized identity, and this id only has to be unique within the
 // thread, so it reads those fields instead of parsing the URL.
-const pullRequestWatchTaskId = (link: PullRequestWatchIdentity) =>
+const pullRequestWatchTaskId = (link: PullRequestWatchLink) =>
   `pull-request-watch:${link.host.toLowerCase()}/${link.repository.toLowerCase()}#${link.number}`;
 
 /** Maps a PR-watch monitor's task id back to the linked PR it watches. */
-export function findPullRequestForWatchTask<Link extends PullRequestWatchIdentity>(
+export function findPullRequestForWatchTask<Link extends PullRequestWatchLink>(
   taskId: string,
   pullRequests: ReadonlyArray<Link> | undefined,
 ): Link | undefined {
-  return pullRequests?.find((link) => pullRequestWatchTaskId(link) === taskId);
+  return pullRequests?.find(
+    (link) => isWatchedLink(link) && pullRequestWatchTaskId(link) === taskId,
+  );
 }
 
 function pullRequestWatchTasks(
   pullRequests: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined,
 ): Array<PendingBackgroundWorkTask> {
   return (pullRequests ?? []).flatMap((link) =>
-    link.watch === undefined || link.source === "stack-dismissed"
+    !isWatchedLink(link)
       ? []
       : [
           {

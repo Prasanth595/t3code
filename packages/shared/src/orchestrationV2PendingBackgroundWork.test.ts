@@ -420,6 +420,12 @@ describe("derivePendingBackgroundWork kinds", () => {
       // Same number in another repository must not match.
       const otherRepo = { ...pullRequests[0]!, repository: "acme/other" };
       expect(findPullRequestForWatchTask(task!.taskId, [otherRepo])).toBe(undefined);
+      // Legacy link lists can repeat an identity; only the watched copy owns the monitor.
+      const dismissed = { ...pullRequests[0]!, source: "stack-dismissed" as const };
+      expect(findPullRequestForWatchTask(task!.taskId, [dismissed, pullRequests[0]!])).toBe(
+        pullRequests[0],
+      );
+      expect(findPullRequestForWatchTask(task!.taskId, [dismissed])).toBe(undefined);
     });
 
     it("lists no watch while a run is active", () => {
