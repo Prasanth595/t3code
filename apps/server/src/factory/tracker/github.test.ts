@@ -42,6 +42,7 @@ import {
   type Feedback,
   type GitHubError,
   isNotFound,
+  isNotReceived,
   isPlainRefName,
   isSafeBranchName,
   makeGitHub,
@@ -962,6 +963,37 @@ it("only a failure with HTTP 404 in stderr is not found", () => {
     new GitHubRateLimited({ args, stderr: "HTTP 404 API rate limit" }),
   ];
   for (const other of others) assert.isFalse(isNotFound(other), other._tag);
+});
+
+it("only a failure GitHub never received is not received", () => {
+  const args = ["api", "repos/rawphp/softfac/issues"];
+  const failed = (stderr: string) => new GitHubFailed({ args, status: 1, stderr });
+  assert.isTrue(
+    isNotReceived(failed('Get "https://api.github.com/x": net/http: TLS handshake timeout')),
+  );
+  assert.isTrue(
+    isNotReceived(
+      failed('Post "https://api.github.com/x": dial tcp 140.82.112.6:443: i/o timeout'),
+    ),
+  );
+  assert.isTrue(
+    isNotReceived(
+      failed('Get "https://api.github.com/x": dial tcp 1.2.3.4:443: connect: connection refused'),
+    ),
+  );
+  assert.isTrue(
+    isNotReceived(
+      failed('Get "https://api.github.com/x": dial tcp: lookup api.github.com: no such host'),
+    ),
+  );
+  const others: ReadonlyArray<GitHubError> = [
+    failed("HTTP 502: Bad Gateway (https://api.github.com/graphql)"),
+    failed("HTTP 404: Not Found"),
+    failed('Get "https://api.github.com/x": read tcp 10.0.0.2:5000->1.2.3.4:443: i/o timeout'),
+    new GitHubTimedOut({ args, seconds: 30 }),
+    new GitHubRateLimited({ args, stderr: "net/http: TLS handshake timeout" }),
+  ];
+  for (const other of others) assert.isFalse(isNotReceived(other), other._tag);
 });
 
 it.effect("a signal-killed gh is a failure with status -1", () =>
@@ -6443,7 +6475,7 @@ describe("retrying a call GitHub never received", () => {
       assert.strictEqual(logs[0]!.level, "Info");
       assert.match(
         logs[0]!.text,
-        /^`gh issue list --repo rawphp\/softfac .*` attempt 1 of 3 failed \(TLS handshake timeout\); trying again in [23]\.\d s$/,
+        /^`gh issue list --repo rawphp\/softfac .*` attempt 1 of 5 failed \(TLS handshake timeout\); trying again in [23]\.\d s$/,
       );
     }),
   );
@@ -6462,45 +6494,86 @@ describe("retrying a call GitHub never received", () => {
     }),
   );
 
-  it.effect("three failed attempts return the last failure unchanged", () =>
+  it.effect(
+    "four TLS handshake timeouts then an answer: the call succeeds after four logged retries",
+    () =>
+      Effect.gen(function* () {
+        const logs: Array<string> = [];
+        const capture = Logger.make(({ message }) => {
+          logs.push(String(Array.isArray(message) ? message[0] : message));
+        });
+        const t = setup(fail(1, TLS), fail(1, TLS), fail(1, TLS), fail(1, TLS), reply(LIST_ONE));
+        const fiber = yield* Effect.forkChild(
+          t
+            .ok(t.github.listIssues("ready"))
+            .pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: false }))),
+          { startImmediately: true },
+        );
+        yield* TestClock.adjust(2_000 + 5_000 + 15_000 + 30_000 + 4_000);
+        const listing = yield* Fiber.join(fiber);
+        assert.strictEqual(listing.items.length, 1);
+        assert.strictEqual(t.inputs.length, 5);
+        assert.strictEqual(logs.length, 4);
+        logs.forEach((line, index) => {
+          assert.match(
+            line,
+            new RegExp(
+              `attempt ${index + 1} of 5 failed \\(TLS handshake timeout\\); trying again in \\d+\\.\\d s$`,
+            ),
+          );
+        });
+      }),
+  );
+
+  it.effect("five failed attempts return the last failure unchanged", () =>
     Effect.gen(function* () {
-      const t = setup(fail(1, TLS), fail(1, DIAL_TIMEOUT), fail(1, "third: " + TLS));
+      const t = setup(
+        fail(1, TLS),
+        fail(1, DIAL_TIMEOUT),
+        fail(1, TLS),
+        fail(1, TLS),
+        fail(1, "fifth: " + TLS),
+      );
       const fiber = yield* Effect.forkChild(t.err(t.github.listIssues("ready")), {
         startImmediately: true,
       });
-      yield* TestClock.adjust("9 seconds");
+      yield* TestClock.adjust(2_000 + 5_000 + 15_000 + 30_000 + 4_000);
       const error = yield* Fiber.join(fiber);
-      assert.strictEqual(t.inputs.length, 3);
+      assert.strictEqual(t.inputs.length, 5);
       assert.strictEqual(error._tag, "GitHubFailed");
       if (error._tag !== "GitHubFailed") return;
       assert.strictEqual(error.status, 1);
-      assert.strictEqual(error.stderr, "third: " + TLS);
+      assert.strictEqual(error.stderr, "fifth: " + TLS);
     }),
   );
 
-  it.effect("the retries wait 2 s then 5 s, each plus the jitter drawn for it", () =>
+  it.effect("the retries wait 2, 5, 15 then 30 s, each plus the jitter drawn for it", () =>
     Effect.gen(function* () {
-      // The wrapper draws one jitter per retry; the same seed here gives the same two draws.
+      // The wrapper draws one jitter per retry; the same seed here gives the same four draws.
       const seed = "retry-jitter";
-      const [first, second] = yield* Effect.all([
+      const draws = yield* Effect.all([
+        Random.nextIntBetween(0, 1000),
+        Random.nextIntBetween(0, 1000),
         Random.nextIntBetween(0, 1000),
         Random.nextIntBetween(0, 1000),
       ]).pipe(Random.withSeed(seed));
-      assert.ok(first! > 0 && second! > 0, `draws ${first} and ${second}: pick another seed`);
-      const t = setup(fail(1, TLS), fail(1, TLS), reply(LIST_ONE));
+      assert.ok(
+        draws.every((draw) => draw > 0),
+        `draws ${draws.join(", ")}: pick another seed`,
+      );
+      const t = setup(fail(1, TLS), fail(1, TLS), fail(1, TLS), fail(1, TLS), reply(LIST_ONE));
       const fiber = yield* Effect.forkChild(
         t.ok(t.github.listIssues("ready")).pipe(Random.withSeed(seed)),
         { startImmediately: true },
       );
       assert.strictEqual(t.inputs.length, 1);
-      yield* TestClock.adjust(2_000 + first! - 1);
-      assert.strictEqual(t.inputs.length, 1);
-      yield* TestClock.adjust(1);
-      assert.strictEqual(t.inputs.length, 2);
-      yield* TestClock.adjust(5_000 + second! - 1);
-      assert.strictEqual(t.inputs.length, 2);
-      yield* TestClock.adjust(1);
-      assert.strictEqual(t.inputs.length, 3);
+      const delays = [2_000, 5_000, 15_000, 30_000];
+      for (const [index, delay] of delays.entries()) {
+        yield* TestClock.adjust(delay + draws[index]! - 1);
+        assert.strictEqual(t.inputs.length, index + 1);
+        yield* TestClock.adjust(1);
+        assert.strictEqual(t.inputs.length, index + 2);
+      }
       yield* Fiber.join(fiber);
       for (const input of t.inputs) assert.strictEqual(input.timeoutMs, 60_000);
     }),
