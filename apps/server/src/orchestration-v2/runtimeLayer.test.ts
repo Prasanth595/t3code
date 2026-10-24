@@ -3850,6 +3850,91 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     ),
   );
 
+  it.effect("keeps a visit when a deferred mark-unread lands after its run rolled back", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-rollback-mark-unread-thread");
+      const updateRun = (
+        run: OrchestrationV2Run,
+        id: string,
+        status: "completed" | "rolled_back",
+      ) =>
+        Effect.gen(function* () {
+          yield* TestClock.adjust("1 second");
+          const now = yield* DateTime.now;
+          yield* eventSink.write({
+            commandId: CommandId.make(id),
+            events: [
+              {
+                id: EventId.make(id),
+                type: "run.updated",
+                threadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: { ...run, status, startedAt: now, completedAt: now },
+              },
+            ],
+          });
+          return now;
+        });
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-rollback-mark-unread-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-rollback-mark-unread-project"),
+        title: "Rollback mark unread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/runtime-layer-rollback-mark-unread",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-rollback-mark-unread-message"),
+        threadId,
+        messageId: MessageId.make("runtime-layer-rollback-mark-unread-message"),
+        text: "run",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0];
+      if (run === undefined) return yield* Effect.die(new Error("Run missing."));
+      const completedAt = yield* updateRun(
+        run,
+        "runtime-layer-rollback-mark-unread-completed",
+        "completed",
+      );
+      const visitedAt = DateTime.add(completedAt, { milliseconds: 500 });
+      yield* orchestrator.dispatch({
+        type: "thread.visit",
+        commandId: CommandId.make("runtime-layer-rollback-mark-unread-visit"),
+        threadId,
+        visitedAt: DateTime.formatIso(visitedAt),
+      });
+      // Rollback rewrites the same run with a later completedAt.
+      yield* updateRun(run, "runtime-layer-rollback-mark-unread-rolled-back", "rolled_back");
+
+      yield* orchestrator.dispatch({
+        type: "thread.mark-unread",
+        commandId: CommandId.make("runtime-layer-rollback-mark-unread-deferred"),
+        threadId,
+        runId: run.id,
+      });
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.lastVisitedAt,
+        visitedAt,
+      );
+    }),
+  );
+
   it.effect("settles past held automatic runs but not held user messages", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

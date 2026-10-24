@@ -3067,6 +3067,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         // while the deferred mark is in flight still wins.
         markUnreadVisitedAt =
           latestRun?.id === command.runId &&
+          latestRun.status === "completed" &&
           latestRunCompletedAt !== null &&
           (thread.lastVisitedAt === null ||
             DateTime.toEpochMillis(thread.lastVisitedAt) <
