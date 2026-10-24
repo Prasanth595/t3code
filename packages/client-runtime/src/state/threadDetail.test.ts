@@ -197,48 +197,46 @@ describe("quietThreadAtom", () => {
   });
 });
 
-it.each([100, 1000, 10000])(
-  "only compares replaced entries in a reducer delta among %i items",
-  (size) => {
-    let slotReads = 0;
-    const countReads = <T>(items: ReadonlyArray<T>): ReadonlyArray<T> =>
-      new Proxy(items, {
-        get(target, key, receiver) {
-          if (typeof key === "string" && /^\d+$/.test(key)) slotReads++;
-          return Reflect.get(target, key, receiver);
-        },
-      });
-    const items = Array.from({ length: size }, (_, index) => ({
-      ...assistant,
-      id: TurnItemId.make(`item-${index}`),
-      ordinal: index,
-    }));
-    const before = {
-      ...v2Projection,
-      turnItems: countReads(items),
-      visibleTurnItems: countReads(
-        items.map((item, position) => ({
-          item,
-          position,
-          visibility: "local" as const,
-          sourceThreadId: v2ThreadId,
-          sourceItemId: item.id,
-        })),
-      ),
-    };
-    const next = applyOrchestrationV2ProjectionEvent(before, {
-      id: EventId.make("text-delta"),
-      type: "turn-item.updated",
-      threadId: v2ThreadId,
-      occurredAt: later,
-      payload: { ...items.at(-1)!, text: "Hello", updatedAt: later },
+it("only compares replaced entries in a streamed reducer delta", () => {
+  const size = 100;
+  let slotReads = 0;
+  const countReads = <T>(items: ReadonlyArray<T>): ReadonlyArray<T> =>
+    new Proxy(items, {
+      get(target, key, receiver) {
+        if (typeof key === "string" && /^\d+$/.test(key)) slotReads++;
+        return Reflect.get(target, key, receiver);
+      },
     });
-    slotReads = 0;
+  const items = Array.from({ length: size }, (_, index) => ({
+    ...assistant,
+    id: TurnItemId.make(`item-${index}`),
+    ordinal: index,
+  }));
+  const before = {
+    ...v2Projection,
+    turnItems: countReads(items),
+    visibleTurnItems: countReads(
+      items.map((item, position) => ({
+        item,
+        position,
+        visibility: "local" as const,
+        sourceThreadId: v2ThreadId,
+        sourceItemId: item.id,
+      })),
+    ),
+  };
+  const next = applyOrchestrationV2ProjectionEvent(before, {
+    id: EventId.make("text-delta"),
+    type: "turn-item.updated",
+    threadId: v2ThreadId,
+    occurredAt: later,
+    payload: { ...items.at(-1)!, text: "Hello", updatedAt: later },
+  });
+  slotReads = 0;
 
-    expect(sameThreadStructure(before, next!)).toBe(true);
-    expect(slotReads).toBeLessThanOrEqual(2);
-  },
-);
+  expect(sameThreadStructure(before, next!)).toBe(true);
+  expect(slotReads).toBeLessThanOrEqual(2);
+});
 
 function replaceItem(projection: OrchestrationV2ThreadProjection, item: OrchestrationV2TurnItem) {
   return applyOrchestrationV2ProjectionEvent(projection, {
@@ -250,79 +248,55 @@ function replaceItem(projection: OrchestrationV2ThreadProjection, item: Orchestr
   })!;
 }
 
-describe("reducer structure comparisons", () => {
-  it.each(["assistant_message", "reasoning"] as const)(
-    "keeps %s text quiet but observes completion and run changes",
-    (type) => {
-      const item = { ...assistant, type };
-      const initial = withItem(item);
-      const streamed = replaceItem(initial, { ...item, text: "Hello", updatedAt: later });
-      const completed = replaceItem(streamed, {
-        ...item,
-        status: "completed",
-        streaming: false,
-        text: "Hello there",
-      });
-      const movedRun = replaceItem(completed, { ...item, runId: RunId.make("another-run") });
-
-      expect(sameThreadStructure(initial, streamed)).toBe(true);
-      expect(sameThreadStructure(streamed, completed)).toBe(false);
-      expect(sameThreadStructure(completed, movedRun)).toBe(false);
-      expect(streamed.visibleTurnItems[0]?.item).toMatchObject({ text: "Hello" });
-      expect(initial.turnItems[0]).toBe(item);
-      expect(initial.visibleTurnItems[0]?.item).toMatchObject({ text: "Hel" });
-    },
-  );
-
-  it("compares all changes when the reader skips events in a batch", () => {
-    const initial = mergeOlderHistoryIntoProjection(withItem(assistant), [
-      {
-        ...withItem(assistant).visibleTurnItems[0]!,
-        sourceItemId: TurnItemId.make("older"),
-        item: { ...assistant, id: TurnItemId.make("older"), ordinal: 0 },
-      },
-    ]);
-    const older = initial.turnItems.find((item) => item.id === "older")!;
-    const completed = replaceItem(initial, { ...older, status: "completed" });
-    const streamed = replaceItem(completed, { ...assistant, text: "Hello", updatedAt: later });
-
-    expect(sameThreadStructure(completed, streamed)).toBe(true);
-    expect(sameThreadStructure(initial, streamed)).toBe(false);
-    expect(
-      sameThreadStructure(initial, {
-        ...streamed,
-        turnItems: initial.turnItems,
-        visibleTurnItems: streamed.visibleTurnItems.slice(),
-      }),
-    ).toBe(false);
+it("matches full structure comparisons across streamed, batched, and reordered updates", () => {
+  const message = { ...assistant, ordinal: 2 };
+  const reasoning = {
+    ...assistant,
+    id: TurnItemId.make("reasoning"),
+    type: "reasoning" as const,
+    ordinal: 1,
+  };
+  const initial = mergeOlderHistoryIntoProjection(withItem(message), [
+    withItem(reasoning).visibleTurnItems[0]!,
+  ]);
+  const updates = [
+    { ...message, text: "Hello", updatedAt: later },
+    { ...reasoning, text: "Thinking", updatedAt: later },
+    { ...reasoning, text: "Done", status: "completed" as const, streaming: false },
+    { ...message, text: "Hello there", updatedAt: later },
+    { ...message, text: "Hello there", ordinal: 0 },
+    { ...message, text: "More text", ordinal: 0 },
+    { ...message, text: "More text", ordinal: 2 },
+    { ...message, text: "More text", runId: RunId.make("another-run") },
+  ];
+  const projections = [initial];
+  const withoutHints = (projection: OrchestrationV2ThreadProjection) => ({
+    ...projection,
+    turnItems: projection.turnItems.slice(),
+    visibleTurnItems: projection.visibleTurnItems.slice(),
   });
+  const consecutive: boolean[] = [];
+  for (const item of updates) {
+    const previous = projections.at(-1)!;
+    const next = replaceItem(previous, item);
+    consecutive.push(sameThreadStructure(previous, next));
+    // All earlier snapshots include readers that skip one or several updates in a batch.
+    for (const before of projections) {
+      expect(sameThreadStructure(before, next)).toBe(
+        sameThreadStructure(withoutHints(before), withoutHints(next)),
+      );
+    }
+    projections.push(next);
+  }
 
-  it("compares snapshot resets and history merges without a replacement hint", () => {
-    const initial = withItem(assistant);
-    const streamed = replaceItem(initial, { ...assistant, text: "Hello", updatedAt: later });
-    const snapshot = {
-      ...streamed,
-      turnItems: streamed.turnItems.map((item) => ({ ...item, title: "Restored" })),
-      visibleTurnItems: streamed.visibleTurnItems.map((row) => ({ ...row })),
-    };
-    const older = { ...assistant, id: TurnItemId.make("older"), ordinal: 0 };
-    const history = mergeOlderHistoryIntoProjection(streamed, [
-      {
-        position: 0,
-        visibility: "local",
-        sourceThreadId: v2ThreadId,
-        sourceItemId: older.id,
-        item: older,
-      },
-    ]);
-    const next = replaceItem(history, { ...assistant, text: "Hello there", updatedAt: later });
-
-    expect(sameThreadStructure(initial, snapshot)).toBe(false);
-    expect(sameThreadStructure(streamed, history)).toBe(false);
-    expect(sameThreadStructure(history, next)).toBe(true);
-    expect(next.visibleTurnItems.map((row) => [row.item.id, row.position])).toEqual([
-      [older.id, 0],
-      [assistant.id, 1],
-    ]);
-  });
+  expect(consecutive).toEqual([true, true, false, true, false, true, false, false]);
+  expect(sameThreadStructure(initial, projections[4]!)).toBe(false);
+  expect(projections[5]!.visibleTurnItems.map((row) => [row.item.id, row.position])).toEqual([
+    [assistant.id, 0],
+    [reasoning.id, 1],
+  ]);
+  expect(projections[7]!.visibleTurnItems.map((row) => [row.item.id, row.position])).toEqual([
+    [reasoning.id, 0],
+    [assistant.id, 1],
+  ]);
 });

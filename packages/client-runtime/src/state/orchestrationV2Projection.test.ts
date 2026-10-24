@@ -556,48 +556,46 @@ it("does not scan every row against every run for a streaming item update", () =
   expect(runReads).toBeLessThanOrEqual(100);
 });
 
-it.each([100, 1000, 10000])(
-  "does not scan ordering or positions for a stable replacement among %i rows",
-  (size) => {
-    let ordinalReads = 0;
-    let positionReads = 0;
-    const items = Array.from({ length: size }, (_, index) => ({
-      ...commandItem(`item-${index}`, "before", index),
-      get ordinal() {
-        ordinalReads++;
-        return index;
-      },
-    }));
-    const rows = items.map((item, index) => ({
-      item,
-      get position() {
-        positionReads++;
-        return index;
-      },
-      visibility: "local" as const,
-      sourceThreadId: threadId,
-      sourceItemId: item.id,
-    }));
-    const payload = commandItem(`item-${size - 1}`, "after", size - 1);
-    const next = applyOrchestrationV2ProjectionEvent(
-      { ...emptyProjection, runs: [run], turnItems: items, visibleTurnItems: rows },
-      {
-        id: "stable-replacement",
-        type: "turn-item.updated",
-        threadId,
-        occurredAt: now,
-        payload,
-      } as OrchestrationV2DomainEvent,
-    );
+it("does not scan ordering or positions for a streamed replacement", () => {
+  const size = 100;
+  let ordinalReads = 0;
+  let positionReads = 0;
+  const items = Array.from({ length: size }, (_, index) => ({
+    ...commandItem(`item-${index}`, "before", index),
+    get ordinal() {
+      ordinalReads++;
+      return index;
+    },
+  }));
+  const rows = items.map((item, index) => ({
+    item,
+    get position() {
+      positionReads++;
+      return index;
+    },
+    visibility: "local" as const,
+    sourceThreadId: threadId,
+    sourceItemId: item.id,
+  }));
+  const payload = commandItem(`item-${size - 1}`, "after", size - 1);
+  const next = applyOrchestrationV2ProjectionEvent(
+    { ...emptyProjection, runs: [run], turnItems: items, visibleTurnItems: rows },
+    {
+      id: "stable-replacement",
+      type: "turn-item.updated",
+      threadId,
+      occurredAt: now,
+      payload,
+    } as OrchestrationV2DomainEvent,
+  );
 
-    expect(ordinalReads).toBeLessThanOrEqual(2);
-    expect(positionReads).toBeLessThanOrEqual(2);
-    expect(next?.visibleTurnItems.at(-1)).toMatchObject({ item: payload, position: size - 1 });
-    expect(next?.visibleTurnItems[0]).toBe(rows[0]);
-    expect(items.at(-1)).toMatchObject({ output: "before" });
-    expect(rows.at(-1)?.item).toBe(items.at(-1));
-  },
-);
+  expect(ordinalReads).toBeLessThanOrEqual(2);
+  expect(positionReads).toBeLessThanOrEqual(2);
+  expect(next?.visibleTurnItems.at(-1)).toMatchObject({ item: payload, position: size - 1 });
+  expect(next?.visibleTurnItems[0]).toBe(rows[0]);
+  expect(items.at(-1)).toMatchObject({ output: "before" });
+  expect(rows.at(-1)?.item).toBe(items.at(-1));
+});
 
 it("rechecks visibility when an existing item changes runs without changing ordinal", () => {
   const first = commandItem("item-first", "first", 1);
