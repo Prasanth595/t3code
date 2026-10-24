@@ -1,4 +1,5 @@
 import { useSidebarWorkspaceTabs } from "../workspace/useSystemWorkspaceTabBar";
+import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -74,7 +75,16 @@ import type { QueuedRunEdit } from "../../state/queued-run-edit";
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
 import * as Haptics from "expo-haptics";
-import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   AppState,
   Keyboard,
@@ -106,6 +116,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceContentWidth } from "../layout/workspace-content-width";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import {
+  useDeviceType,
   useDuoBottomBarInset,
   useNativeColumnLayoutMetrics,
   useNativeLayoutMetrics,
@@ -129,6 +140,12 @@ import { ThreadBrowserFloat } from "../browser/ThreadBrowserFloat";
 import { useThreadServerBrowserTabs } from "../../state/preview";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { claimThreadOpen } from "@t3tools/client-runtime/state/thread-search";
+import {
+  finishThreadMessageJump,
+  pendingThreadMessageJump,
+  subscribeThreadMessageJump,
+} from "./threadMessageJump";
 import { parentThreadIsBelow } from "../../lib/android-workspace-navigation";
 import {
   clearThreadComposerError,
@@ -402,6 +419,36 @@ function ThreadVisitWatermark(props: {
   const wakeIsLatestUpdate = selectedThreadUpdatedAt === selectedThreadWokeAt;
   const selectedThreadLastVisitedAt = thread.lastVisitedAt;
   const selectedThreadCompletedAt = thread.latestRun?.completedAt;
+  // Opening a thread is one visit that also counts toward search ranking; a
+  // palette pick already sent it with the query. The watermark effect below
+  // skips it.
+  const recordedOpenRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!showContent) return;
+    if (recordedOpenRef.current === selectedThreadKey) return;
+    recordedOpenRef.current = selectedThreadKey;
+    // Recorded here even when the server cannot take opens, so recents follow it.
+    const claimed = claimThreadOpen(props.environmentId, selectedThreadId, Date.now());
+    if (!claimed || selectedThreadLastVisitedAt === undefined) return;
+    lastDispatchedVisitRef.current = `${selectedThreadKey}:${selectedThreadUpdatedAt}`;
+    lastVisitDispatchRef.current = { threadKey: selectedThreadKey, at: Date.now() };
+    void visitThread({
+      environmentId: props.environmentId,
+      input: {
+        threadId: selectedThreadId,
+        visitedAt: selectedThreadUpdatedAt,
+        opened: true,
+      },
+    });
+  }, [
+    props.environmentId,
+    selectedThreadId,
+    selectedThreadKey,
+    selectedThreadLastVisitedAt,
+    selectedThreadUpdatedAt,
+    showContent,
+    visitThread,
+  ]);
   useEffect(() => {
     if (!showContent || selectedThreadLastVisitedAt === undefined) return;
     const threadUpdatedAtMs = Date.parse(selectedThreadUpdatedAt);
@@ -455,6 +502,15 @@ function ThreadVisitWatermark(props: {
 
 export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetailScreenProps) {
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
+  const deviceType = useDeviceType();
+  const workspace = useWorkspaceTabs();
+  const sidebarSearchActive =
+    deviceType === "duo-unfolded" &&
+    workspace?.state.tabs[workspace.state.selectedTab].searchMode === "active";
+  // Keep the last input owner through keyboard dismissal, so closing sidebar
+  // search cannot briefly lift the composer into the keyboard's closing frame.
+  const [composerOwnsKeyboard, setComposerOwnsKeyboard] = useState(false);
+  if (sidebarSearchActive && composerOwnsKeyboard) setComposerOwnsKeyboard(false);
   const navigation = useNavigation();
   const { session: voiceInputSession } = useGlobalVoiceInput();
   const reportedModelSelection = useThreadReportedModelSelection(props.selectedThreadDetailRef);
@@ -514,6 +570,8 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const handleOwnedInputFocusChange = (focused: boolean) => {
     ownedInputFocusedRef.current = focused;
     if (focused) {
+      if (deviceType === "duo-folded" || deviceType === "duo-unfolded")
+        setComposerOwnsKeyboard(true);
       setKeyboardStateSuspect(false);
     }
   };
@@ -566,10 +624,13 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     (Platform.OS === "ios" && Platform.isPad
       ? Math.max(bottomSafeArea, 12) - (hasSidebarTabBar ? 5 : 0)
       : undefined);
-  const composerBottomInset =
-    alignedBottomInset !== undefined
-      ? Math.max(0, alignedBottomInset - THREAD_COMPOSER_BOTTOM_GUTTER)
-      : Math.max(bottomSafeArea, 12);
+  // The Duo's floating sidebar pill ends three points below the composer's usual gutter.
+  const composerBottomInset = Math.max(
+    0,
+    (alignedBottomInset !== undefined
+      ? alignedBottomInset - THREAD_COMPOSER_BOTTOM_GUTTER
+      : Math.max(bottomSafeArea, 12)) - (hasSidebarTabBar ? 3 : 0),
+  );
   const composerKeyboardOffset = composerBottomInset;
   const contentPresentationKind = props.contentPresentation.kind;
   const realThreadSyncLabel = (() => {
@@ -801,6 +862,39 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       (entry) => "acknowledged" in entry && entry.acknowledged === true,
     );
   const selectedThreadFeed = props.selectedThreadFeed;
+  // A palette message result opens the thread at that message: earlier
+  // history loads until the message is in the feed, which then scrolls to it.
+  const jumpMessageId = useSyncExternalStore(subscribeThreadMessageJump, () =>
+    pendingThreadMessageJump(selectedThreadKey),
+  );
+  const jumpMessageLoaded =
+    jumpMessageId !== null &&
+    selectedThreadFeed.some((entry) => entry.type === "message" && entry.id === jumpMessageId);
+  // A jump this screen never reached lets go when the thread closes.
+  useEffect(() => () => finishThreadMessageJump(selectedThreadKey), [selectedThreadKey]);
+  const historyForJump = props.historyControls;
+  // History down to the message in one request; another page if it is not
+  // there yet.
+  const loadEarlierForJump = useEffectEvent(() => {
+    if (jumpMessageId !== null) historyForJump?.onLoadThrough(jumpMessageId);
+  });
+  useEffect(() => {
+    if (jumpMessageId === null || jumpMessageLoaded || contentPresentationKind !== "ready") return;
+    if (historyForJump?.loading) return;
+    if (!historyForJump?.hasMoreHistory || historyForJump.error !== null) {
+      finishThreadMessageJump(selectedThreadKey);
+      return;
+    }
+    loadEarlierForJump();
+  }, [
+    contentPresentationKind,
+    historyForJump?.error,
+    historyForJump?.hasMoreHistory,
+    historyForJump?.loading,
+    jumpMessageId,
+    jumpMessageLoaded,
+    selectedThreadKey,
+  ]);
   const hasCompactableConversation =
     selectedThreadFeed.some(
       (entry) =>
@@ -1402,6 +1496,8 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
               listRef={listRef}
               freeze={freeze}
               anchorMessageId={anchorMessageId}
+              jumpToMessageId={jumpMessageLoaded ? jumpMessageId : null}
+              onJumpedToMessage={() => finishThreadMessageJump(selectedThreadKey)}
               submittedMessageId={submittedMessageId}
               contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
               keyboardOffset={composerKeyboardOffset}
@@ -1441,7 +1537,11 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       {showContent ? (
         <KeyboardStickyView
           // Waiting for a visibility render misses the first keyboard frames.
-          enabled={Platform.OS === "ios" || !keyboardStateSuspect}
+          enabled={
+            Platform.OS === "ios"
+              ? deviceType !== "duo-unfolded" || (composerOwnsKeyboard && !sidebarSearchActive)
+              : !keyboardStateSuspect
+          }
           pointerEvents="box-none"
           style={{ position: "absolute", bottom: 0, left: 0, right: 0, top: 0 }}
           offset={{ closed: 0, opened: composerKeyboardOffset }}
@@ -1660,7 +1760,6 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                     </View>
                   ) : (
                     <>
-                      {props.draftMode?.controls}
                       <ThreadComposer
                         isDraft={Boolean(props.draftMode)}
                         canOperateThread={props.canOperateThread}
@@ -1674,6 +1773,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                             : "Ask the repo agent, or run a command…"
                         }
                         contentMaxWidth={contentMaxWidth}
+                        draftControls={props.draftMode?.controls}
                         connectionState={props.connectionStateLabel}
                         environmentLabel={props.environmentLabel}
                         selectedThread={props.selectedThread}
