@@ -3,6 +3,10 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import { AudioPreviewUnmountContext } from "../files/AudioPreview";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
+import { useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
+import { isAppWorkflow } from "@t3tools/client-runtime/state/subagentRuntime";
+import { environmentThreadDetails } from "../../state/threads";
 import { MarkdownFindContext } from "./markdownFindContext";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock } from "./WorkLog";
@@ -30,6 +34,18 @@ const EMPTY_PENDING_APPROVALS: ReadonlyArray<PendingApproval> = [];
 const EMPTY_RESPONDING_REQUEST_IDS: TimelineRowSharedState["respondingRequestIds"] = [];
 
 const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
+const appWorkflowIdsAtom = Atom.family((key: string) => {
+  const ref = parseScopedThreadKey(key);
+  let ids: ReadonlySet<string> = new Set();
+  return Atom.make((get) => {
+    const thread = ref === null ? null : get(environmentThreadDetails.threadAtom(ref));
+    const next = (thread?.projection.subagents ?? [])
+      .filter(isAppWorkflow)
+      .map((agent) => agent.id);
+    if (next.length !== ids.size || next.some((id) => !ids.has(id))) ids = new Set(next);
+    return ids;
+  });
+});
 
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
@@ -394,6 +410,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   historyControls,
 }: MessagesTimelineProps) {
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
+  const appWorkflowIds = useAtomValue(appWorkflowIdsAtom(listIdentityKey));
   // Snapshot restore positions on identity changes; ongoing scroll writes must not move them.
   // Find open at the opening is part of the snapshot: opening find later
   // announces its own navigation (threadFindStore's announceOpening).
@@ -581,6 +598,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         runningRunId,
         isWorking,
         runlessWorkActive,
+        appWorkflowIds,
       })
     : null;
   const activeFindRunId =
@@ -666,6 +684,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   );
   const pendingApprovalRequestIds = new Set(pendingApprovalsByRequestId.keys());
   const rawRows = useIncrementalTimelineRows(`${listIdentityKey}\0${workspaceRoot ?? ""}`, {
+    appWorkflowIds,
     timelineEntries,
     pendingApprovalRequestIds,
     latestRun,

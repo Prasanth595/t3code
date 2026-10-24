@@ -1,5 +1,8 @@
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
-import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
+import {
+  isAppWorkflowTurnItem,
+  isLiveSubagentTurnItem,
+} from "@t3tools/client-runtime/state/subagentRuntime";
 import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
 import {
@@ -838,7 +841,10 @@ function deriveUnsettledRunId(
 }
 
 // Children can outlive their launching turn; keep cards visible while the footer counts them.
-function liveSubagentCardEntryIds(entries: ReadonlyArray<TimelineEntry>): ReadonlySet<string> {
+function liveSubagentCardEntryIds(
+  entries: ReadonlyArray<TimelineEntry>,
+  appWorkflowIds?: ReadonlySet<string>,
+): ReadonlySet<string> {
   const visible = new Set<string>();
   let batch: Array<Extract<TimelineEntry, { kind: "event" }>> = [];
   const flush = () => {
@@ -854,6 +860,11 @@ function liveSubagentCardEntryIds(entries: ReadonlyArray<TimelineEntry>): Readon
       continue;
     }
     const item = entry.projectedItem.item;
+    // Workflow blocks render independently; their liveness must not retain sibling tasks.
+    if (isAppWorkflowTurnItem(item, appWorkflowIds)) {
+      flush();
+      continue;
+    }
     const previous = batch.at(-1)?.projectedItem.item;
     if (
       previous !== undefined &&
@@ -974,6 +985,7 @@ function failedTimelineRunIds(
 }
 
 function deriveTurnFolds(input: {
+  appWorkflowIds?: ReadonlySet<string> | undefined;
   timelineEntries: ReadonlyArray<TimelineEntry>;
   terminalAssistantMessageIds: ReadonlySet<string>;
   latestRun: TimelineLatestRun | null;
@@ -1110,6 +1122,8 @@ function deriveTurnFolds(input: {
       if (
         isCompaction ||
         timelineEntryIsPersistentResourceCard(entry) ||
+        (entry.kind === "event" &&
+          isAppWorkflowTurnItem(entry.projectedItem.item, input.appWorkflowIds)) ||
         input.liveSubagentEntryIds.has(entry.id) ||
         input.completeSupersededReplyEntryIds.has(entry.id)
       ) {
@@ -1343,7 +1357,12 @@ function timelineRowEntries(entries: ReadonlyArray<TimelineEntry>) {
 function deriveTimelineTurnFolds(
   input: Pick<
     MessagesTimelineRowsInput,
-    "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
+    | "timelineEntries"
+    | "latestRun"
+    | "isWorking"
+    | "runlessWorkActive"
+    | "runningRunId"
+    | "appWorkflowIds"
   >,
 ) {
   const timelineEntries = timelineRowEntries(input.timelineEntries);
@@ -1360,12 +1379,14 @@ function deriveTimelineTurnFolds(
     latestRun: input.latestRun ?? null,
     unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
     runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
-    liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries),
+    appWorkflowIds: input.appWorkflowIds,
+    liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries, input.appWorkflowIds),
     completeSupersededReplyEntryIds: completeSupersededReplyEntryIds(timelineEntries),
   });
 }
 
 export function deriveMessagesTimelineRows(input: {
+  appWorkflowIds?: ReadonlySet<string> | undefined;
   timelineEntries: ReadonlyArray<TimelineEntry>;
   pendingApprovalRequestIds?: ReadonlySet<RuntimeRequestId>;
   latestRun?: TimelineLatestRun | null;
@@ -1410,7 +1431,7 @@ export function deriveMessagesTimelineRows(input: {
   const nextRows: MessagesTimelineRow[] = [];
   const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(timelineEntries);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
-  const liveSubagentEntryIds = liveSubagentCardEntryIds(timelineEntries);
+  const liveSubagentEntryIds = liveSubagentCardEntryIds(timelineEntries, input.appWorkflowIds);
   const completeSupersededReplyIds = completeSupersededReplyEntryIds(timelineEntries);
   const supersededFoldsByAnchorEntryId = deriveSupersededAttemptFolds(
     timelineEntries,
@@ -1428,6 +1449,7 @@ export function deriveMessagesTimelineRows(input: {
   });
   const runlessWorkActive = input.isWorking && input.runlessWorkActive === true;
   const foldsByAnchorEntryId = deriveTurnFolds({
+    appWorkflowIds: input.appWorkflowIds,
     timelineEntries: timelineEntries,
     terminalAssistantMessageIds,
     latestRun: input.latestRun ?? null,
@@ -1947,8 +1969,10 @@ export function deriveMessagesTimelineRows(input: {
       const previous = nextRows.at(-1);
       if (
         timelineEntry.projectedItem.item.type === "subagent" &&
+        !isAppWorkflowTurnItem(timelineEntry.projectedItem.item, input.appWorkflowIds) &&
         previous?.kind === "event" &&
         previous.projectedItem.item.type === "subagent" &&
+        !isAppWorkflowTurnItem(previous.projectedItem.item, input.appWorkflowIds) &&
         previous.projectedItem.item.runId === timelineEntry.projectedItem.item.runId &&
         previous.projectedItem.item.providerTurnId ===
           timelineEntry.projectedItem.item.providerTurnId
@@ -2195,7 +2219,12 @@ interface MessagesTimelineRowsProjection {
 export function timelineTurnFoldRunIdsByEntryId(
   input: Pick<
     MessagesTimelineRowsInput,
-    "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
+    | "timelineEntries"
+    | "latestRun"
+    | "isWorking"
+    | "runlessWorkActive"
+    | "runningRunId"
+    | "appWorkflowIds"
   >,
 ): ReadonlyMap<string, RunId> {
   const byEntryId = new Map<string, RunId>();
