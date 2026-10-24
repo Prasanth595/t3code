@@ -62,6 +62,17 @@ function escapeWindowsShellArg(arg: string): string {
   return escaped.replace(WINDOWS_SHELL_META_CHARS, "^$1");
 }
 
+/**
+ * A `.cmd`/`.bat` shim forwards its arguments with `%*`, so cmd.exe parses them
+ * again once the first caret layer is gone. A quote in the argument ends the
+ * quoting that keeps `&` or `|` literal there, so it gets a second layer, as in
+ * cross-spawn. Other arguments stay quoted through both parses and keep one.
+ */
+function escapeWindowsShimArg(arg: string): string {
+  const escaped = escapeWindowsShellArg(arg);
+  return arg.includes('"') ? escaped.replace(WINDOWS_SHELL_META_CHARS, "^$1") : escaped;
+}
+
 export interface ResolvedSpawnCommand {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
@@ -905,7 +916,7 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
   // passing args with `shell: true` prints DEP0190. Build the same escaped line
   // here and pass no args.
   return {
-    command: [resolvedCommand, ...args].map(escapeWindowsShellArg).join(" "),
+    command: [escapeWindowsShellArg(resolvedCommand), ...args.map(escapeWindowsShimArg)].join(" "),
     args: [],
     shell: true,
   };
