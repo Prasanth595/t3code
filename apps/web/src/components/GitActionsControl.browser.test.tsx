@@ -101,7 +101,13 @@ vi.mock(import("~/state/query"), async (original) => ({
   // Serves the VCS status, source-control discovery, and review diff preview queries.
   useEnvironmentQuery: ((query: unknown) =>
     query !== null && typeof query === "object" && "previewInput" in query
-      ? { data: previewData(query as PreviewQuery), error: null, isPending: false, isSuccess: true }
+      ? {
+          data: previewData(query as PreviewQuery),
+          error: null,
+          isPending: false,
+          isSuccess: true,
+          refresh: () => {},
+        }
       : {
           data: {
             ...(state.branchChanges === undefined ? {} : { branchChanges: state.branchChanges }),
@@ -211,7 +217,7 @@ vi.mock(import("~/components/ui/toast"), async (original) => {
 });
 
 import { useComposerDraftStore } from "~/composerDraftStore";
-import { useDiffPanelStore } from "~/diffPanelStore";
+import { useDiffPanelSessionStore, useDiffPanelStore } from "~/diffPanelStore";
 import GitActionsControl from "./GitActionsControl";
 
 // ThreadDetailsPanel keeps this component mounted behind React.memo when threads change.
@@ -251,7 +257,8 @@ function setup() {
   state.editorOpens = [];
   state.branchChanges = undefined;
   state.previewTotals = {};
-  useDiffPanelStore.setState({ byThreadKey: {} });
+  useDiffPanelStore.setState({ byThreadKey: {}, branchBaseRefByThreadKey: {} });
+  useDiffPanelSessionStore.setState({ ignoreWhitespace: null });
   useComposerDraftStore.setState({
     getDraftSession: () => state.draft as never,
     getDraftThreadByRef: () => state.draft as never,
@@ -315,5 +322,16 @@ describe("thread details Changes row", () => {
     await using _ = await render(control("thread", "/repo", "panel"));
 
     await expect.element(changesRow()).toHaveTextContent("Changes+0-0");
+  });
+
+  it("follows the whitespace toggle in the Changes panel", async () => {
+    setup();
+    featureBranch();
+    await using _ = await render(control("thread", "/repo", "panel"));
+    await expect.element(changesRow()).toHaveTextContent("Changes+1-0");
+
+    await act(async () => useDiffPanelSessionStore.getState().setIgnoreWhitespace(false));
+
+    await expect.element(changesRow()).toHaveTextContent("Changes+2-1");
   });
 });

@@ -137,9 +137,13 @@ interface DiffPanelSessionStoreState {
     defaults: ReadonlySet<string>,
     update: (current: ReadonlySet<string>) => ReadonlySet<string>,
   ) => void;
+  // Null follows the diffIgnoreWhitespace setting until the panel toggle is used.
+  ignoreWhitespace: boolean | null;
+  setIgnoreWhitespace: (ignoreWhitespace: boolean) => void;
 }
 
-// Session-only so folds survive right-panel switches without changing reload defaults.
+// Session-only so folds and the whitespace toggle survive right-panel switches without
+// changing reload defaults.
 export const useDiffPanelSessionStore = create<DiffPanelSessionStoreState>()((set) => ({
   collapsedFileKeysByScopeKey: {},
   updateCollapsedFileKeys: (scopeKey, defaults, update) =>
@@ -151,6 +155,8 @@ export const useDiffPanelSessionStore = create<DiffPanelSessionStoreState>()((se
         collapsedFileKeysByScopeKey: { ...state.collapsedFileKeysByScopeKey, [scopeKey]: next },
       };
     }),
+  ignoreWhitespace: null,
+  setIgnoreWhitespace: (ignoreWhitespace) => set({ ignoreWhitespace }),
 }));
 
 export function selectThreadDiffPanelSelection(
@@ -159,4 +165,15 @@ export function selectThreadDiffPanelSelection(
 ): DiffPanelSelection {
   if (!ref) return DEFAULT_SELECTION;
   return byThreadKey[scopedThreadKey(ref)] ?? DEFAULT_SELECTION;
+}
+
+export function selectThreadDiffPanelBaseRef(
+  state: Pick<DiffPanelStoreState, "byThreadKey" | "branchBaseRefByThreadKey">,
+  ref: ScopedThreadRef | null | undefined,
+): string | null {
+  if (!ref) return null;
+  const selection = selectThreadDiffPanelSelection(state.byThreadKey, ref);
+  return selection.kind === "branch"
+    ? selection.baseRef
+    : (state.branchBaseRefByThreadKey[scopedThreadKey(ref)] ?? null);
 }
