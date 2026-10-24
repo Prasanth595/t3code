@@ -53,6 +53,7 @@ import {
   hasCursorSkillMention,
   rewriteCursorSkillMentions,
 } from "./skills.ts";
+import { cursorWorkspaceMcpServers } from "./workspaceMcpServers.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { t3OrchestrationPromptForFirstRun } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
@@ -311,10 +312,11 @@ export function makeCursorAgentOptions(input: {
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
   readonly threadId: ThreadId;
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
+  readonly workspaceMcpServers?: Record<string, McpServerConfig>;
   readonly platform: NodeJS.Platform;
 }): AgentOptions {
   const policy = cursorRuntimeAgentPolicy(input.runtimePolicy, input.platform);
-  const mcpServers = cursorMcpServers(input.mcpSession);
+  const mcpServers = { ...input.workspaceMcpServers, ...cursorMcpServers(input.mcpSession) };
   return {
     model: cursorSdkModelSelection(input.modelSelection),
     name: `T3 Code ${input.threadId}`,
@@ -329,7 +331,7 @@ export function makeCursorAgentOptions(input: {
       },
       enableAgentRetries: true,
     },
-    ...(mcpServers === undefined ? {} : { mcpServers }),
+    ...(Object.keys(mcpServers).length === 0 ? {} : { mcpServers }),
   };
 }
 
@@ -2145,6 +2147,17 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             platform,
             threadId: openInput.threadId,
             mcpSession: yield* mcpSessions.read(openInput.threadId),
+            ...(openInput.runtimePolicy.cwd === null
+              ? {}
+              : {
+                  workspaceMcpServers: yield* cursorWorkspaceMcpServers(
+                    openInput.runtimePolicy.cwd,
+                    adapterOptions.environment,
+                  ).pipe(
+                    Effect.provideService(FileSystem.FileSystem, fileSystem),
+                    Effect.provideService(Path.Path, path),
+                  ),
+                }),
           });
           if (
             platform === "win32" &&

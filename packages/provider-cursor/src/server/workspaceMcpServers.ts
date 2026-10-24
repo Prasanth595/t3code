@@ -1,0 +1,151 @@
+/**
+ * The Cursor SDK reads `.cursor/mcp.json` and `~/.cursor/mcp.json` itself but
+ * expands only environment variables, so editor variables such as
+ * `${workspaceFolder}` reach the server command literally. Agent-level servers
+ * win over file servers with the same name, so the adapter passes a resolved
+ * copy of each server that uses one. The file order, project root and
+ * `mcp-disabled.json` lookup follow SDK 1.0.35.
+ */
+
+import type { McpServerConfig } from "@cursor/sdk";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import { parse as parseJsonc } from "jsonc-parser";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+
+// The SDK's own placeholder grammar: `${env:NAME}`, `${NAME}` and `${NAME:-default}`.
+const PLACEHOLDER_PATTERN = /\$\{(?:env:([A-Za-z_][A-Za-z0-9_]*)|([^:}]+)(?::-([^}]*))?)\}/g;
+const WORKSPACE_VARIABLE_PATTERN =
+  /\$\{(?:workspaceFolder|workspaceFolderBasename|userHome|pathSeparator|\/)\}/;
+
+const StringRecord = Schema.Record(Schema.String, Schema.String);
+const CursorMcpFile = Schema.Struct({
+  mcpServers: Schema.Record(
+    Schema.String,
+    Schema.Union([
+      Schema.Struct({
+        type: Schema.optional(Schema.Literal("stdio")),
+        command: Schema.String,
+        args: Schema.optional(Schema.Array(Schema.String)),
+        env: Schema.optional(StringRecord),
+        cwd: Schema.optional(Schema.String),
+      }),
+      Schema.Struct({
+        type: Schema.optional(Schema.Literals(["http", "sse"])),
+        url: Schema.String,
+        headers: Schema.optional(StringRecord),
+        auth: Schema.optional(
+          Schema.Struct({
+            CLIENT_ID: Schema.String,
+            CLIENT_SECRET: Schema.optional(Schema.String),
+            scopes: Schema.optional(Schema.Array(Schema.String)),
+          }),
+        ),
+      }),
+    ]),
+  ),
+});
+const decodeCursorMcpFile = Schema.decodeUnknownOption(CursorMcpFile);
+const decodeDisabledServers = Schema.decodeUnknownOption(Schema.Array(Schema.String));
+
+function expand<A>(value: A, resolve: (text: string) => string): A {
+  if (typeof value === "string") return resolve(value) as A;
+  if (Array.isArray(value)) return value.map((item: unknown) => expand(item, resolve)) as A;
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, expand(item, resolve)]),
+    ) as A;
+  }
+  return value;
+}
+
+/** Cursor's project slug, as `~/.cursor/projects/<slug>` names it. */
+function cursorProjectSlug(projectRoot: string): string {
+  return projectRoot
+    .replace(/[^a-zA-Z0-9]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(function* (
+  cwd: string,
+  environment: NodeJS.ProcessEnv,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const readJsonc = (file: string) =>
+    fileSystem.readFileString(file).pipe(
+      Effect.map((contents): unknown => parseJsonc(contents)),
+      Effect.orElseSucceed(() => undefined),
+    );
+
+  // The SDK takes the project root from `git rev-parse --show-toplevel`.
+  let projectRoot = cwd;
+  for (let directory = cwd; ; directory = path.dirname(directory)) {
+    if (
+      yield* fileSystem.exists(path.join(directory, ".git")).pipe(Effect.orElseSucceed(() => false))
+    ) {
+      projectRoot = directory;
+      break;
+    }
+    if (path.dirname(directory) === directory) break;
+  }
+  const userHome =
+    environment.HOME?.trim() ||
+    environment.USERPROFILE?.trim() ||
+    (yield* HostProcess.HomeDirectory);
+  const cursorDataDirectory = environment.CURSOR_DATA_DIR?.trim() || path.join(userHome, ".cursor");
+  const disabled = new Set(
+    decodeDisabledServers(
+      yield* readJsonc(
+        path.join(
+          cursorDataDirectory,
+          "projects",
+          cursorProjectSlug(projectRoot),
+          "mcp-disabled.json",
+        ),
+      ),
+    ).pipe(Option.getOrElse(() => [])),
+  );
+  const variables = new Map([
+    ["workspaceFolder", projectRoot],
+    ["workspaceFolderBasename", path.basename(projectRoot)],
+    ["userHome", userHome],
+    ["pathSeparator", path.sep],
+    ["/", path.sep],
+  ]);
+  const resolve = (text: string) =>
+    text.replace(
+      PLACEHOLDER_PATTERN,
+      (match, envName: string | undefined, name: string, fallback: string | undefined) =>
+        (envName === undefined
+          ? (variables.get(name) ?? environment[name] ?? fallback)
+          : environment[envName]) ?? match,
+    );
+
+  const seen = new Set<string>();
+  const servers: Record<string, McpServerConfig> = {};
+  for (const file of [
+    path.join(projectRoot, ".cursor", "mcp.json"),
+    path.join(userHome, ".cursor", "mcp.json"),
+  ]) {
+    const config = decodeCursorMcpFile(yield* readJsonc(file));
+    if (Option.isNone(config)) continue;
+    for (const [name, server] of Object.entries(config.value.mcpServers)) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      if (disabled.has(name)) continue;
+      let usesWorkspaceVariable = false;
+      const resolved = expand(server, (text) => {
+        usesWorkspaceVariable ||= WORKSPACE_VARIABLE_PATTERN.test(text);
+        return resolve(text);
+      });
+      // The SDK already resolves every other server the same way.
+      if (usesWorkspaceVariable) servers[name] = resolved as McpServerConfig;
+    }
+  }
+  return servers;
+});
