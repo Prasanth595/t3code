@@ -36,9 +36,14 @@ let saved = selections;
 let hydration: Promise<void> | null = null;
 
 function save() {
-  if (saved === selections) return;
-  saved = selections;
-  void savePreferencesPatch({ workspaceSelections: selections }).catch(() => undefined);
+  const writing = selections;
+  if (saved === writing) return;
+  // Marked saved only once written, so a failed write is retried on the next background.
+  void savePreferencesPatch({ workspaceSelections: writing })
+    .then(() => {
+      saved = writing;
+    })
+    .catch(() => undefined);
 }
 
 /** Loads the saved selections once; pages visited before it resolves win over saved ones. */
