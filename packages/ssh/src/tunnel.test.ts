@@ -5,6 +5,7 @@ import * as NetService from "@t3tools/shared/Net";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -431,10 +432,54 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
         }
       }),
     );
-    const launch = (stateKey: string) =>
+    const launch = (
+      stateKey: string,
+      gate?: {
+        readonly onLine: (line: string) => Effect.Effect<void>;
+        readonly release: Effect.Effect<void>;
+      },
+    ) =>
       Effect.gen(function* () {
         const child = yield* spawner.spawn(
           ChildProcess.make("sh", [launchScript, stateKey], {
+            ...(gate
+              ? {
+                  stdin: Stream.fromEffect(
+                    gate.release.pipe(Effect.as(new TextEncoder().encode("go\n"))),
+                  ),
+                }
+              : {}),
+            env: { PATH: process.env.PATH ?? "", HOME: home },
+            extendEnv: false,
+          }),
+        );
+        const [stdout, stderr, exitCode] = yield* Effect.all(
+          [
+            child.stdout.pipe(
+              Stream.decodeText(),
+              Stream.splitLines,
+              Stream.tap((line) => gate?.onLine(line) ?? Effect.void),
+              Stream.map((line) => `${line}\n`),
+              Stream.mkString,
+            ),
+            child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+            child.exitCode,
+          ],
+          { concurrency: "unbounded" },
+        );
+        assert.equal(exitCode, 0, stderr);
+        const pid = yield* readManagedPid(stateKey).pipe(Effect.orElseSucceed(() => null));
+        if (pid !== null) launchedPids.add(pid);
+        return JSON.parse(stdout.trim().split("\n").at(-1) ?? "") as {
+          remotePort: number;
+          serverKind: string;
+        };
+      });
+    const stop = (stateKey: string) =>
+      Effect.gen(function* () {
+        const child = yield* spawner.spawn(
+          ChildProcess.make("sh", ["-s"], {
+            stdin: Stream.make(new TextEncoder().encode(SshTunnel.buildRemoteStopScript(stateKey))),
             env: { PATH: process.env.PATH ?? "", HOME: home },
             extendEnv: false,
           }),
@@ -448,12 +493,7 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
           { concurrency: "unbounded" },
         );
         assert.equal(exitCode, 0, stderr);
-        const pid = yield* readManagedPid(stateKey).pipe(Effect.orElseSucceed(() => null));
-        if (pid !== null) launchedPids.add(pid);
-        return JSON.parse(stdout.trim().split("\n").at(-1) ?? "") as {
-          remotePort: number;
-          serverKind: string;
-        };
+        assert.deepEqual(JSON.parse(stdout), { stopped: true });
       });
     // A live server this key manages, outside the default home.
     const startOwnServer = (stateKey: string, runnerFrom: string) =>
@@ -475,6 +515,18 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
         );
         yield* fs.makeDirectory(stateDir(stateKey), { recursive: true });
         yield* fs.copyFile(`${stateDir(runnerFrom)}/run-t3.sh`, `${stateDir(stateKey)}/run-t3.sh`);
+        yield* fs.copyFile(
+          `${stateDir(runnerFrom)}/run-t3.sh`,
+          `${stateDir(stateKey)}/active-runner.sh`,
+        );
+        const identity = yield* spawner.spawn(
+          ChildProcess.make("ps", ["-p", String(server.pid), "-o", "lstart="], {
+            env: { LC_ALL: "C", TZ: "UTC" },
+          }),
+        );
+        const started = yield* identity.stdout.pipe(Stream.decodeText(), Stream.mkString);
+        assert.equal(yield* identity.exitCode, 0);
+        yield* fs.writeFileString(`${stateDir(stateKey)}/process-start`, started);
         yield* fs.writeFileString(`${stateDir(stateKey)}/pid`, `${server.pid}\n`);
         yield* fs.writeFileString(`${stateDir(stateKey)}/port`, `${Option.getOrThrow(port)}\n`);
         yield* fs.writeFileString(`${stateDir(stateKey)}/managed`, "managed\n");
@@ -484,7 +536,17 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
           exitCode: server.exitCode,
         };
       });
-    return { fs, home, stateDir, readManagedPid, launch, startOwnServer };
+    return {
+      fs,
+      home,
+      fakeServer,
+      stateDir,
+      readManagedPid,
+      launch,
+      launchScript,
+      stop,
+      startOwnServer,
+    };
   });
 
   it.live("keeps managing its server after the connection's state key changes", () =>
@@ -504,12 +566,221 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
 
       // new-alias now holds the server's runner, so a different runner under
       // the next key is an update and replaces it.
-      yield* fs.writeFileString(`${stateDir("new-alias")}/run-t3.sh`, "# previous runner\n");
+      yield* fs.writeFileString(`${stateDir("new-alias")}/active-runner.sh`, "# previous runner\n");
       assert.equal((yield* launch("newer-alias")).serverKind, "managed");
       const replacementPid = yield* readManagedPid("newer-alias");
       assert.notEqual(replacementPid, pid);
       assert.isFalse(isAlive(pid));
       assert.isTrue(isAlive(replacementPid));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("serializes two aliases claiming the same managed server", () =>
+    Effect.gen(function* () {
+      const { fs, stateDir, readManagedPid, launch, launchScript, stop } = yield* prepareLaunch;
+      const launched = yield* launch("old-alias");
+      const pid = yield* readManagedPid("old-alias");
+      const firstAtTransfer = yield* Deferred.make<void>();
+      const secondProgress = yield* Deferred.make<"waiting" | "transferring">();
+      const releaseFirst = yield* Deferred.make<void>();
+      const releaseSecond = yield* Deferred.make<void>();
+      const script = yield* fs.readFileString(launchScript);
+      // Pause at the transfer and report actual lock contention. This makes the
+      // race reproducible without depending on subprocess scheduling.
+      yield* fs.writeFileString(
+        launchScript,
+        script
+          .replace(
+            'if cmp -s "$PREVIOUS_STATE_DIR/active-runner.sh" "$RUNNER_FILE"; then',
+            'printf "transferring\\n"; read -r release; if cmp -s "$PREVIOUS_STATE_DIR/active-runner.sh" "$RUNNER_FILE"; then',
+          )
+          .replace(
+            '  if [ "$LOCK_WAIT_COUNT" -ge 200 ]; then',
+            '  printf "waiting\\n"; if [ "$LOCK_WAIT_COUNT" -ge 200 ]; then',
+          ),
+      );
+      const first = yield* launch("first-alias", {
+        onLine: (line) =>
+          line === "transferring"
+            ? Deferred.succeed(firstAtTransfer, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        release: Deferred.await(releaseFirst),
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(firstAtTransfer);
+      const second = yield* launch("second-alias", {
+        onLine: (line) =>
+          line === "waiting" || line === "transferring"
+            ? Deferred.succeed(secondProgress, line).pipe(Effect.asVoid)
+            : Effect.void,
+        release: Deferred.await(releaseSecond),
+      }).pipe(Effect.forkScoped);
+      assert.equal(yield* Deferred.await(secondProgress), "waiting");
+      yield* Deferred.succeed(releaseFirst, undefined);
+      assert.deepEqual(yield* Fiber.join(first), launched);
+      yield* Deferred.succeed(releaseSecond, undefined);
+      assert.deepEqual(yield* Fiber.join(second), launched);
+      assert.equal(yield* readManagedPid("second-alias"), pid);
+      assert.isFalse(yield* fs.exists(`${stateDir("first-alias")}/pid`));
+      assert.isFalse(yield* fs.exists(`${stateDir("old-alias")}/pid`));
+      yield* stop("old-alias");
+      yield* stop("first-alias");
+      assert.isTrue(isAlive(pid));
+      yield* stop("second-alias");
+      assert.isFalse(isAlive(pid));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("leaves one owner when transfer preparation is interrupted", () =>
+    Effect.gen(function* () {
+      const { fs, stateDir, readManagedPid, launch, launchScript, stop } = yield* prepareLaunch;
+      const launched = yield* launch("old-alias");
+      const pid = yield* readManagedPid("old-alias");
+      const script = yield* fs.readFileString(launchScript);
+      yield* fs.writeFileString(
+        launchScript,
+        script.replace(
+          '    cp "$PREVIOUS_STATE_DIR/process-start" "$PROCESS_START_FILE"',
+          '    printf "interrupted\\n" >"$STATE_DIR/interrupted"; kill -TERM "$$"',
+        ),
+      );
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(launch("new-alias"))));
+      assert.isTrue(yield* fs.exists(`${stateDir("new-alias")}/interrupted`));
+      assert.isFalse(yield* fs.exists(`${stateDir("new-alias")}/managed`));
+      assert.equal(yield* readManagedPid("old-alias"), pid);
+      yield* stop("new-alias");
+      assert.isTrue(isAlive(pid));
+      yield* fs.writeFileString(launchScript, script);
+      assert.deepEqual(yield* launch("new-alias"), launched);
+      assert.equal(yield* readManagedPid("new-alias"), pid);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live.each(["HUP", "PIPE"])("releases the ownership lock after %s", (signal) =>
+    Effect.gen(function* () {
+      const { fs, home, launch, launchScript } = yield* prepareLaunch;
+      const script = yield* fs.readFileString(launchScript);
+      yield* fs.writeFileString(
+        launchScript,
+        script.replace('mkdir -p "$STATE_DIR"', `kill -${signal} "$$"; mkdir -p "$STATE_DIR"`),
+      );
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(launch("alias"))));
+      assert.isFalse(yield* fs.exists(`${home}/.t3/ssh-launch/.ownership.lock`));
+      yield* fs.writeFileString(launchScript, script);
+      assert.equal((yield* launch("alias")).serverKind, "managed");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("does not replace a PID left by an interrupted transfer without ownership", () =>
+    Effect.gen(function* () {
+      const { fs, home, stateDir, readManagedPid, launch } = yield* prepareLaunch;
+      yield* launch("old-alias");
+      const pid = yield* readManagedPid("old-alias");
+      yield* fs.makeDirectory(stateDir("new-alias"));
+      for (const file of ["pid", "port", "process-start", "active-runner.sh"]) {
+        yield* fs.copyFile(`${stateDir("old-alias")}/${file}`, `${stateDir("new-alias")}/${file}`);
+      }
+      yield* fs.writeFileString(`${stateDir("new-alias")}/active-runner.sh`, "# previous runner\n");
+      yield* fs.writeFileString(`${home}/.t3/userdata/server-runtime.json`, "invalid");
+      yield* launch("new-alias");
+      assert.isTrue(isAlive(pid));
+      assert.equal(yield* readManagedPid("old-alias"), pid);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("reuses an adopted external port after its former managed process exits", () =>
+    Effect.gen(function* () {
+      const { fs, home, stateDir, readManagedPid, launch, startOwnServer } = yield* prepareLaunch;
+      const external = yield* launch("old-alias");
+      const pid = yield* readManagedPid("old-alias");
+      const own = yield* startOwnServer("own-alias", "old-alias");
+      yield* fs.remove(`${stateDir("old-alias")}/managed`);
+      assert.deepEqual(yield* launch("own-alias"), {
+        remotePort: external.remotePort,
+        serverKind: "external",
+      });
+      yield* Effect.flip(own.exitCode);
+      yield* fs.writeFileString(`${home}/.t3/userdata/server-runtime.json`, "invalid");
+      assert.deepEqual(yield* launch("own-alias"), {
+        remotePort: external.remotePort,
+        serverKind: "external",
+      });
+      assert.isTrue(isAlive(pid));
+      assert.isFalse(yield* fs.exists(`${stateDir("own-alias")}/process-start`));
+      assert.isFalse(yield* fs.exists(`${stateDir("own-alias")}/active-runner.sh`));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("does not take ownership from a stale record for a different process", () =>
+    Effect.gen(function* () {
+      const { fs, stateDir, readManagedPid, launch } = yield* prepareLaunch;
+      const launched = yield* launch("old-alias");
+      const pid = yield* readManagedPid("old-alias");
+      yield* fs.writeFileString(`${stateDir("old-alias")}/process-start`, "a previous process\n");
+      assert.deepEqual(yield* launch("new-alias"), {
+        remotePort: launched.remotePort,
+        serverKind: "external",
+      });
+      assert.equal(yield* readManagedPid("old-alias"), pid);
+      assert.isFalse(yield* fs.exists(`${stateDir("new-alias")}/pid`));
+      assert.isTrue(isAlive(pid));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("does not stop a reused PID recorded under the current key", () =>
+    Effect.gen(function* () {
+      const { fs, stateDir, readManagedPid, launch, stop } = yield* prepareLaunch;
+      yield* launch("alias");
+      const pid = yield* readManagedPid("alias");
+      yield* fs.writeFileString(`${stateDir("alias")}/process-start`, "a previous process\n");
+      yield* stop("alias");
+      assert.isTrue(isAlive(pid));
+      assert.isFalse(yield* fs.exists(`${stateDir("alias")}/pid`));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("keeps ownership when a server refuses to stop during replacement", () =>
+    Effect.gen(function* () {
+      const { fs, fakeServer, stateDir, readManagedPid, launch } = yield* prepareLaunch;
+      yield* fs.writeFileString(fakeServer, `process.on("SIGTERM", () => {});\n${FAKE_SERVER}`);
+      yield* launch("alias");
+      const pid = yield* readManagedPid("alias");
+      yield* fs.writeFileString(`${stateDir("alias")}/active-runner.sh`, "# previous runner\n");
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(launch("alias"))));
+      assert.equal(yield* readManagedPid("alias"), pid);
+      assert.isTrue(isAlive(pid));
+      assert.equal(yield* fs.readFileString(`${stateDir("alias")}/managed`), "managed\n");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("compares against the running runner after a prepared runner was overwritten", () =>
+    Effect.gen(function* () {
+      const { fs, stateDir, readManagedPid, launch } = yield* prepareLaunch;
+      yield* launch("alias");
+      const pid = yield* readManagedPid("alias");
+      // Pairing and a failed archive preparation can both overwrite run-t3.sh.
+      // They do not change which runner started the live server.
+      yield* fs.writeFileString(
+        `${stateDir("alias")}/active-runner.sh`,
+        "# previous live runner\n",
+      );
+      yield* launch("alias");
+      assert.notEqual(yield* readManagedPid("alias"), pid);
+      assert.isFalse(isAlive(pid));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("keeps legacy ownership records external when their process identity is unknown", () =>
+    Effect.gen(function* () {
+      const { fs, stateDir, readManagedPid, launch } = yield* prepareLaunch;
+      const launched = yield* launch("old-alias");
+      const pid = yield* readManagedPid("old-alias");
+      yield* fs.remove(`${stateDir("old-alias")}/process-start`, { force: true });
+      assert.deepEqual(yield* launch("new-alias"), {
+        remotePort: launched.remotePort,
+        serverKind: "external",
+      });
+      assert.equal(yield* readManagedPid("old-alias"), pid);
+      assert.isTrue(isAlive(pid));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

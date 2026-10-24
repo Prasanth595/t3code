@@ -534,6 +534,32 @@ fi
 exec "$T3_RUNTIME_DIR/t3" "$@"
 `;
 
+// Launch, stop, and pairing all change shared launcher state. Keep their lock
+// outside any connection key so a rename cannot race a previous key's stop.
+const REMOTE_STATE_LOCK_SCRIPT = `mkdir -p "$HOME/.t3/ssh-launch"
+LAUNCH_LOCK="$HOME/.t3/ssh-launch/.ownership.lock"
+LOCK_WAIT_COUNT=0
+while ! (set -C; printf '%s\\n' "$$" > "$LAUNCH_LOCK") 2>/dev/null; do
+  if [ "$LOCK_WAIT_COUNT" -ge 200 ]; then
+    printf 'Another SSH operation holds %s. Retry after it finishes. If it was killed, remove the lock only after confirming no SSH operation is running.\\n' "$LAUNCH_LOCK" >&2
+    exit 1
+  fi
+  sleep 0.1
+  LOCK_WAIT_COUNT=$((LOCK_WAIT_COUNT + 1))
+done
+release_launch_lock() {
+  rm -f "$LAUNCH_LOCK"
+}
+trap release_launch_lock EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 141' PIPE
+trap 'exit 143' TERM
+process_start() {
+  LC_ALL=C TZ=UTC ps -p "$1" -o lstart= 2>/dev/null
+}
+`;
+
 const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@T3_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
@@ -542,20 +568,28 @@ DEFAULT_SERVER_HOME="$HOME/.t3"
 DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
+PROCESS_START_FILE="$STATE_DIR/process-start"
 MANAGED_FILE="$STATE_DIR/managed"
 LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
+ACTIVE_RUNNER_FILE="$STATE_DIR/active-runner.sh"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
+@@T3_STATE_LOCK_SCRIPT@@
 mkdir -p "$STATE_DIR"
 cleanup_runner_next() {
   rm -f "$RUNNER_NEXT"
+  release_launch_lock
 }
 trap cleanup_runner_next EXIT
 cat >"$RUNNER_NEXT" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
 RUNNER_CHANGED=0
-if [ ! -f "$RUNNER_FILE" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNER_FILE"; then
+RUNNING_RUNNER="$RUNNER_FILE"
+if [ -f "$ACTIVE_RUNNER_FILE" ]; then
+  RUNNING_RUNNER="$ACTIVE_RUNNER_FILE"
+fi
+if [ ! -f "$RUNNING_RUNNER" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNING_RUNNER"; then
   RUNNER_CHANGED=1
 fi
 mv "$RUNNER_NEXT" "$RUNNER_FILE"
@@ -591,10 +625,14 @@ NODE
 wait_for_pid_exit() {
   PID_TO_WAIT="$1"
   WAIT_COUNT=0
-  while kill -0 "$PID_TO_WAIT" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
+  while server_running "$PID_TO_WAIT" && [ "$WAIT_COUNT" -lt 20 ]; do
     WAIT_COUNT=$((WAIT_COUNT + 1))
     sleep 0.1
   done
+  if server_running "$PID_TO_WAIT"; then
+    printf 'Remote T3 server with PID %s did not stop. Its ownership files were kept.\\n' "$PID_TO_WAIT" >&2
+    exit 1
+  fi
 }
 # kill -0 also succeeds for a server that exited but was not reaped yet, so
 # a zombie does not count as running. Without ps to tell, trust kill -0.
@@ -638,6 +676,11 @@ launcher_state_dir_for_pid() {
     [ "$OTHER_STATE_DIR" != "$STATE_DIR" ] || continue
     [ "$(cat "$OTHER_STATE_DIR/managed" 2>/dev/null || true)" = "managed" ] || continue
     [ "$(cat "$OTHER_STATE_DIR/pid" 2>/dev/null || true)" = "$1" ] || continue
+    # A bare PID from an older launcher cannot distinguish a manually started
+    # server after PID reuse. Only transfer a recorded process identity.
+    RECORDED_START="$(cat "$OTHER_STATE_DIR/process-start" 2>/dev/null || true)"
+    [ -n "$RECORDED_START" ] && [ -f "$OTHER_STATE_DIR/active-runner.sh" ] || continue
+    [ "$(process_start "$1" || true)" = "$RECORDED_START" ] || continue
     printf '%s\\n' "$OTHER_STATE_DIR"
     return 0
   done
@@ -646,6 +689,12 @@ launcher_state_dir_for_pid() {
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
+RECORDED_START="$(cat "$PROCESS_START_FILE" 2>/dev/null || true)"
+if [ -n "$RECORDED_START" ] && [ "$(process_start "$REMOTE_PID" || true)" != "$RECORDED_START" ]; then
+  REMOTE_PID=""
+  REMOTE_MANAGED=""
+  rm -f "$PID_FILE" "$PROCESS_START_FILE" "$MANAGED_FILE"
+fi
 DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
 DEFAULT_RUNTIME_PID=""
 DEFAULT_REMOTE_PORT=""
@@ -666,7 +715,7 @@ elif [ -n "$DEFAULT_REMOTE_PORT" ] && PREVIOUS_STATE_DIR="$(launcher_state_dir_f
   # whether this launch is an update.
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
-    if cmp -s "$PREVIOUS_STATE_DIR/run-t3.sh" "$RUNNER_FILE"; then
+    if cmp -s "$PREVIOUS_STATE_DIR/active-runner.sh" "$RUNNER_FILE"; then
       RUNNER_CHANGED=0
     else
       RUNNER_CHANGED=1
@@ -677,10 +726,15 @@ elif [ -n "$DEFAULT_REMOTE_PORT" ] && PREVIOUS_STATE_DIR="$(launcher_state_dir_f
     fi
     REMOTE_PID="$DEFAULT_RUNTIME_PID"
     REMOTE_MANAGED="managed"
+    rm -f "$MANAGED_FILE"
     printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
     printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
-    printf 'managed\\n' >"$MANAGED_FILE"
-    rm -f "$PREVIOUS_STATE_DIR/pid" "$PREVIOUS_STATE_DIR/managed"
+    cp "$PREVIOUS_STATE_DIR/process-start" "$PROCESS_START_FILE"
+    cp "$PREVIOUS_STATE_DIR/active-runner.sh" "$ACTIVE_RUNNER_FILE"
+    # Publish ownership with one rename after preparing the destination. A
+    # signal or failed copy before this leaves the previous owner intact.
+    mv "$PREVIOUS_STATE_DIR/managed" "$MANAGED_FILE"
+    rm -f "$PREVIOUS_STATE_DIR/pid" "$PREVIOUS_STATE_DIR/managed" "$PREVIOUS_STATE_DIR/process-start"
   else
     REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
   fi
@@ -693,18 +747,13 @@ elif [ -n "$DEFAULT_REMOTE_PORT" ]; then
         kill "$REMOTE_PID" 2>/dev/null || true
         wait_for_pid_exit "$REMOTE_PID"
       fi
-      REMOTE_PID=""
-      REMOTE_PORT="$DEFAULT_REMOTE_PORT"
-      REMOTE_MANAGED="external"
-      rm -f "$PID_FILE"
-      printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
-      printf 'external\\n' >"$MANAGED_FILE"
-    else
-      printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
-      printf 'external\\n' >"$MANAGED_FILE"
-      REMOTE_PID=""
-      REMOTE_MANAGED="external"
     fi
+    REMOTE_PID=""
+    REMOTE_PORT="$DEFAULT_REMOTE_PORT"
+    REMOTE_MANAGED="external"
+    rm -f "$PID_FILE" "$PROCESS_START_FILE" "$ACTIVE_RUNNER_FILE"
+    printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+    printf 'external\\n' >"$MANAGED_FILE"
   else
     REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
     REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
@@ -721,7 +770,7 @@ if [ "$REMOTE_MANAGED" = "external" ]; then
     REMOTE_PORT=""
     REMOTE_MANAGED=""
   fi
-elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && server_running "$REMOTE_PID"; then
+elif [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && server_running "$REMOTE_PID"; then
   # Reconnect owns the local tunnel, not the lifetime of an already running
   # server. A changed runner is the update path and still replaces it.
   if [ "$RUNNER_CHANGED" -eq 1 ]; then
@@ -751,6 +800,7 @@ if [ -z "$REMOTE_PORT" ]; then
   fi
   nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
+  process_start "$REMOTE_PID" >"$PROCESS_START_FILE" || true
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
   printf 'managed\\n' >"$MANAGED_FILE"
@@ -763,9 +813,10 @@ if [ -z "$REMOTE_PORT" ]; then
     fi
     kill "$REMOTE_PID" 2>/dev/null || true
     wait_for_pid_exit "$REMOTE_PID"
-    rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
+    rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$PROCESS_START_FILE"
     exit 1
   fi
+  cp "$RUNNER_FILE" "$ACTIVE_RUNNER_FILE"
 fi
 printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGED:-managed}"
 `;
@@ -774,6 +825,7 @@ const REMOTE_PAIRING_SCRIPT = `set -eu
 STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
 DEFAULT_SERVER_HOME="$HOME/.t3"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
+@@T3_STATE_LOCK_SCRIPT@@
 mkdir -p "$STATE_DIR"
 cat >"$RUNNER_FILE" <<'SH'
 @@T3_RUNNER_SCRIPT@@
@@ -784,13 +836,19 @@ PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
 `;
 
 const REMOTE_STOP_SCRIPT = `set -eu
+@@T3_STATE_LOCK_SCRIPT@@
 STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
 PID_FILE="$STATE_DIR/pid"
+PROCESS_START_FILE="$STATE_DIR/process-start"
 PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
-if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+RECORDED_START="$(cat "$PROCESS_START_FILE" 2>/dev/null || true)"
+if [ -n "$RECORDED_START" ] && [ "$(process_start "$REMOTE_PID" || true)" != "$RECORDED_START" ]; then
+  REMOTE_PID=""
+fi
+if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
   kill "$REMOTE_PID" 2>/dev/null || true
   WAIT_COUNT=0
   while kill -0 "$REMOTE_PID" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
@@ -802,7 +860,7 @@ if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMO
     exit 1
   fi
 fi
-rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
+rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$PROCESS_START_FILE"
 printf '{"stopped":true}\\n'
 `;
 
@@ -875,6 +933,7 @@ export function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string 
 
 export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_LAUNCH_SCRIPT, {
+    T3_STATE_LOCK_SCRIPT: REMOTE_STATE_LOCK_SCRIPT,
     T3_ARCHIVE_MODE: isNodeScriptRunner(input) ? "0" : "1",
     T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
@@ -891,12 +950,14 @@ export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
 function buildRemotePairingScript(stateKey: string, input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_PAIRING_SCRIPT, {
     T3_STATE_KEY: stateKey,
+    T3_STATE_LOCK_SCRIPT: REMOTE_STATE_LOCK_SCRIPT,
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
   });
 }
 
-function buildRemoteStopScript(stateKey: string): string {
+export function buildRemoteStopScript(stateKey: string): string {
   return applyScriptPlaceholders(REMOTE_STOP_SCRIPT, {
+    T3_STATE_LOCK_SCRIPT: REMOTE_STATE_LOCK_SCRIPT,
     T3_STATE_KEY: stateKey,
   });
 }
