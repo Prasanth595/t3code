@@ -584,7 +584,12 @@ export const liveWorld = (
           Effect.sync(() => onProject?.(watched.repo, { kind: "ok", project })),
         ),
         Effect.tapError((error) =>
-          Effect.sync(() => onProject?.(watched.repo, { kind: "errors", errors: error.errors })),
+          // A transient failure says nothing new about the config: the last reading stands.
+          error.transient === true
+            ? Effect.void
+            : Effect.sync(() =>
+                onProject?.(watched.repo, { kind: "errors", errors: error.errors }),
+              ),
         ),
         Effect.mapError((error): PassError => ({
           kind: error.kind,
