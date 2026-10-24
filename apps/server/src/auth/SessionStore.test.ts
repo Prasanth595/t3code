@@ -56,6 +56,13 @@ const relaySessionInput = {
   client: { label: "Relay desktop", deviceType: "desktop" },
 } as const;
 
+const narrowedScopes = [
+  "orchestration:read",
+  "orchestration:operate",
+  "terminal:operate",
+  "relay:read",
+] as const;
+
 const makeDiskSessionStoreLayer = Effect.fn("makeDiskSessionStoreLayer")(function* (
   baseDir: string,
   token?: string,
@@ -286,6 +293,25 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         ),
       ),
     ),
+  );
+
+  // Issue 17310: migration 069 revokes historical grants; a deliberately narrowed
+  // grant issued today keeps exactly what it asked for.
+  it.effect("verifies a newly narrowed cloud-connect DPoP session with exactly its grant", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({
+        subject: "cloud-connect",
+        method: "dpop-access-token",
+        proofKeyThumbprint: "proof-key",
+        ttl: Duration.hours(1),
+        scopes: narrowedScopes,
+      });
+
+      expect([...(yield* sessions.verify(issued.token)).scopes].toSorted()).toEqual(
+        [...narrowedScopes].toSorted(),
+      );
+    }).pipe(Effect.provide(layerSessionStore())),
   );
 
   it.effect("atomically replaces active sessions with the same subject and method", () =>
