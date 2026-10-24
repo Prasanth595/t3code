@@ -21,9 +21,6 @@ const state = vi.hoisted(() => ({
 vi.mock(import("../../state/server"), async (original) => {
   const actual = await original();
   const { Atom, AsyncResult } = await import("effect/reactivity");
-  state.tasks = Atom.make<AsyncResult.AsyncResult<ScheduledTaskListResult>>(
-    AsyncResult.success({ tasks: [] }),
-  );
   const allowed = Atom.make(true);
   return {
     ...actual,
@@ -87,33 +84,40 @@ vi.mock(import("./settingsLayout"), async (original) => ({
 import { ConfirmDialogHost } from "../ConfirmDialogHost";
 import { ScheduledTasksSettings } from "./ScheduledTasksSettings";
 
+function setup(tasks: ScheduledTaskListResult["tasks"]) {
+  state.tasks = Atom.make<AsyncResult.AsyncResult<ScheduledTaskListResult>>(
+    AsyncResult.success({ tasks }),
+  );
+}
+
+const task: ScheduledTask = {
+  id: ScheduledTaskId.make("task"),
+  title: "Daily summary",
+  prompt: "Summarize the project",
+  enabled: false,
+  schedule: { type: "interval", everyMs: 60_000 },
+  projectId: ProjectId.make("project"),
+  threadId: null,
+  workspaceStrategy: { type: "root" },
+  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "example" },
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  createdBy: "user",
+  creationSource: "web",
+  createdAt: "2026-10-20T00:00:00.000Z",
+  updatedAt: "2026-10-20T00:00:00.000Z",
+  nextRunAt: null,
+  lastRunAt: null,
+  lastRunStatus: "never",
+  lastRunError: null,
+  runCount: 0,
+};
+
 it("keeps a scheduled task until deletion is confirmed, including after cancelling", async () => {
+  setup([task]);
   using resources = new DisposableStack();
   const registry = AtomRegistry.make();
   resources.defer(() => registry.dispose());
-  const task: ScheduledTask = {
-    id: ScheduledTaskId.make("task"),
-    title: "Daily summary",
-    prompt: "Summarize the project",
-    enabled: false,
-    schedule: { type: "interval", everyMs: 60_000 },
-    projectId: ProjectId.make("project"),
-    threadId: null,
-    workspaceStrategy: { type: "root" },
-    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "example" },
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    createdBy: "user",
-    creationSource: "web",
-    createdAt: "2026-10-20T00:00:00.000Z",
-    updatedAt: "2026-10-20T00:00:00.000Z",
-    nextRunAt: null,
-    lastRunAt: null,
-    lastRunStatus: "never",
-    lastRunError: null,
-    runCount: 0,
-  };
-  registry.set(state.tasks, AsyncResult.success({ tasks: [task] }));
   await using screen = await render(
     <RegistryContext.Provider value={registry}>
       <ScheduledTasksSettings />
