@@ -921,6 +921,20 @@ export const layer: Layer.Layer<
             !deliveredAttemptIds.has(source.activeAttemptId),
         );
         const missedRunIds = new Set(missedRuns.map((source) => source.id));
+        const budgetFor = (turnText: string) =>
+          Effect.gen(function* () {
+            return handoffBudget({
+              tokenCap,
+              modelContextWindow,
+              userText: restartNote === "" ? turnText : `${restartNote}\n\n${turnText}`,
+              attachments: message.attachments,
+              providerThread: budgetProviderThread,
+              nativeContextEstimate:
+                budgetProviderThread.contextUsage?.usedTokens === undefined
+                  ? yield* nativeContextEstimate
+                  : 0,
+            });
+          });
         return {
           sameNativeThread,
           handoffUsage,
@@ -931,19 +945,8 @@ export const layer: Layer.Layer<
           legacyInputRunIds,
           missedRuns,
           missedRunIds,
-          budget: Effect.gen(function* () {
-            return handoffBudget({
-              tokenCap,
-              modelContextWindow,
-              userText: restartNote === "" ? userText : `${restartNote}\n\n${userText}`,
-              attachments: message.attachments,
-              providerThread: budgetProviderThread,
-              nativeContextEstimate:
-                budgetProviderThread.contextUsage?.usedTokens === undefined
-                  ? yield* nativeContextEstimate
-                  : 0,
-            });
-          }),
+          budget: budgetFor(userText),
+          budgetFor,
         };
       };
       const prepareRetryHandoff = Effect.fn("ProviderTurnStartService.prepareRetryHandoff")(
@@ -1244,6 +1247,7 @@ export const layer: Layer.Layer<
         nativeInputRunIds,
         legacyInputRunIds,
         budget,
+        budgetFor,
       } = handoffContext;
       const retryHandoff = resumedRetryHandoff ?? (yield* prepareRetryHandoff(handoffContext));
       const runningProviderThread: OrchestrationV2ProviderThread = {
@@ -1375,11 +1379,14 @@ export const layer: Layer.Layer<
       );
       const startWithHandoffs = Effect.fn("ProviderTurnStartService.startWithHandoffs")(
         function* (turnInput: Parameters<typeof session.startTurn>[0], compact = false) {
+          // Run execution has already shaped this text (per-turn notes); the wrapper only
+          // prepends context, so it must not rebuild the message from the stored text.
+          const turnText = turnInput.message.text;
           const delivery = yield* deliverContextHandoffs({
             handoffs: [...effectiveHandoffs, ...retryHandoff],
             deferInline: compact || goalCommand,
             providerThread: runningProviderThread,
-            budget,
+            budget: turnText === userText ? budget : budgetFor(turnText),
             alreadyDeliveredItemIds: deliveredItemIds,
             ...(session.injectHistory === undefined
               ? {}
@@ -1421,8 +1428,11 @@ export const layer: Layer.Layer<
               ...turnInput.message,
               text:
                 context === "" || goalCommand
-                  ? userText
-                  : `${context}\n\nUser message:\n${userText}`,
+                  ? turnText
+                  : `${context}
+
+User message:
+${turnText}`,
             },
           }).pipe(
             // Clear pending handoff markers for refused prompts so the next turn retains the native session.
