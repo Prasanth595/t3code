@@ -480,10 +480,12 @@ export default function ChatView(props: ChatViewProps) {
   const promptRef = useRef("");
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
+  const threadStatus = useThreadStatus(routeThreadDetailRef);
   const queuedRunEdit = useQueuedRunEdit({
     environmentId,
     routeThreadRef,
     threadDraftTarget: baseComposerDraftTarget,
+    threadIsLive: threadStatus === "live",
     activeThreadId: serverThread !== null || draftThread !== null ? threadId : null,
     serverProjection,
     promptRef,
@@ -493,7 +495,6 @@ export default function ChatView(props: ChatViewProps) {
   const reportedModelSelection = serverProjection
     ? deriveReportedModelSelection(serverProjection)
     : null;
-  const threadStatus = useThreadStatus(routeThreadDetailRef);
   const threadSyncPhase = resolveThreadSyncPhase({
     detailExists: serverProjection !== null,
     shellExists: serverThread !== null,

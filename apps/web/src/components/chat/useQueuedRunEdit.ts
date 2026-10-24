@@ -169,6 +169,7 @@ export function useQueuedRunEdit(input: {
   readonly environmentId: EnvironmentId;
   readonly routeThreadRef: ScopedThreadRef;
   readonly threadDraftTarget: ComposerThreadTarget;
+  readonly threadIsLive: boolean;
   // Null while the route has no thread yet; an edit needs one to target.
   readonly activeThreadId: ThreadId | null;
   readonly serverProjection: ThreadStructure | null;
@@ -179,6 +180,7 @@ export function useQueuedRunEdit(input: {
     environmentId,
     routeThreadRef,
     threadDraftTarget,
+    threadIsLive,
     activeThreadId,
     serverProjection,
     promptRef,
@@ -284,7 +286,7 @@ export function useQueuedRunEdit(input: {
   // thread was unmounted. A dirty edit uses the same keep-or-discard path.
   const runs = serverProjection?.runs;
   useEffect(() => {
-    if (activeThreadId === null || runs === undefined) return;
+    if (!threadIsLive || activeThreadId === null || runs === undefined) return;
     const prefix = `queued-edit:${scopedThreadKey(routeThreadRef)}:`;
     const queuedTargets = new Set(
       runs
@@ -318,7 +320,7 @@ export function useQueuedRunEdit(input: {
         setEditing(null);
       }
     }
-  }, [activeThreadId, editing, routeThreadRef, runs, threadDraftTarget]);
+  }, [activeThreadId, editing, routeThreadRef, runs, threadDraftTarget, threadIsLive]);
 
   /**
    * Saves the composer content into the queued message being edited. Reports

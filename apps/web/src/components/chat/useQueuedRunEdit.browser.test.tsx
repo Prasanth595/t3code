@@ -22,9 +22,11 @@ vi.mock(import("../../assets/assetUrls"), () => ({ useAssetUrls: () => [] }));
 function Editor({
   text = "Original message",
   queueState = null,
+  threadIsLive = true,
 }: {
   readonly text?: string;
   readonly queueState?: "queued" | "running" | "missing" | null;
+  readonly threadIsLive?: boolean;
 }) {
   const environmentId = EnvironmentId.make("environment:queue-edit");
   const threadId = ThreadId.make("thread:queue-edit");
@@ -35,6 +37,7 @@ function Editor({
     routeThreadRef: threadRef,
     threadDraftTarget: threadRef,
     activeThreadId: threadId,
+    threadIsLive,
     // This hook only reads run membership and message context from the projection.
     serverProjection:
       queueState === null
@@ -225,6 +228,51 @@ it("retains the edit while its run is still queued", async () => {
   await expect
     .element(screen.getByRole("textbox", { name: "Message" }))
     .toHaveValue("Still queued");
+});
+
+it.each(["missing", "running"] as const)(
+  "does not recover a retained edit from a stale %s projection before synchronization",
+  async (queueState) => {
+    setup();
+    // Navigation is simulated by rerendering, without route consumers.
+    await using screen = await render(<Editor />, { router: false });
+    await screen.getByRole("button", { name: "Edit queued message" }).click();
+    await screen.getByRole("textbox", { name: "Message" }).fill("Keep the queued edit");
+    await screen.rerender(<div>Another thread</div>);
+    await screen.rerender(<Editor queueState={queueState} threadIsLive={false} />);
+    await expect.element(screen.getByRole("textbox", { name: "Message" })).toHaveValue("");
+    const ref = scopeThreadRef(
+      EnvironmentId.make("environment:queue-edit"),
+      ThreadId.make("thread:queue-edit"),
+    );
+    await vi.waitFor(() =>
+      expect(
+        useComposerDraftStore
+          .getState()
+          .getComposerDraft(DraftId.make(`queued-edit:${scopedThreadKey(ref)}:run:queued`))?.prompt,
+      ).toBe("Keep the queued edit"),
+    );
+    await screen.rerender(<Editor queueState="queued" />);
+    await screen.getByRole("button", { name: "Edit queued message" }).click();
+    await expect
+      .element(screen.getByRole("textbox", { name: "Message" }))
+      .toHaveValue("Keep the queued edit");
+  },
+);
+
+it("recovers an expired edit only after the cached projection becomes live", async () => {
+  setup();
+  // Navigation is simulated by rerendering, without route consumers.
+  await using screen = await render(<Editor />, { router: false });
+  await screen.getByRole("button", { name: "Edit queued message" }).click();
+  await screen.getByRole("textbox", { name: "Message" }).fill("Recover after sync");
+  await screen.rerender(<div>Another thread</div>);
+  await screen.rerender(<Editor queueState="missing" threadIsLive={false} />);
+  await expect.element(screen.getByRole("textbox", { name: "Message" })).toHaveValue("");
+  await screen.rerender(<Editor queueState="missing" />);
+  await expect
+    .element(screen.getByRole("textbox", { name: "Message" }))
+    .toHaveValue("Recover after sync");
 });
 
 it("does not copy an untouched queued message back into the composer", async () => {
