@@ -10,6 +10,7 @@ import {
   decodeMergeRequestListJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
+  decodeTriggerJobChecksJson,
 } from "./gitLabMergeRequestJson.ts";
 
 function listJson(entries: ReadonlyArray<Record<string, unknown>>): string {
@@ -442,6 +443,26 @@ describe("decodeMergeRequestDiffsJson", () => {
     expect(result.rawCount).toBe(3);
     expect(result.truncated).toBe(false);
     expect(result.patch).toContain("src/2.ts");
+  });
+});
+
+describe("decodeTriggerJobChecksJson", () => {
+  it("reads a downstream failure GitLab was told to allow as neutral, not failure", () => {
+    const result = expectSuccess(
+      decodeTriggerJobChecksJson(
+        JSON.stringify([
+          { name: "e2e", allow_failure: true, downstream_pipeline: { status: "failed" } },
+          { name: "deploy", allow_failure: false, downstream_pipeline: { status: "running" } },
+          { name: 7 },
+        ]),
+      ),
+    );
+
+    expect(result.checks.map((check) => [check.name, check.status])).toEqual([
+      ["e2e", "neutral"],
+      ["deploy", "pending"],
+    ]);
+    expect(result.rawCount).toBe(3);
   });
 });
 
