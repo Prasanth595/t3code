@@ -215,3 +215,26 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
     expect(notification.close).toHaveBeenCalled();
   },
 );
+
+it("notifies for changes made while the environment was disconnected, once", async () => {
+  await using app = setup();
+  const asking = { id: "asking", hasPendingApprovals: true };
+  state.shells.set("one", shell({ id: "working" }, { id: "asking" }));
+  await app.render();
+  state.shells.set("one", shell({ id: "working" }, asking));
+  await app.render();
+  state.shells.set("one", { ...shell({ id: "working" }, asking), status: "cached" });
+  await app.render();
+  const completed = {
+    id: "working",
+    latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:05:00.000Z" },
+  };
+  state.shells.set("one", { ...shell(completed, asking), status: "synchronizing" });
+  await app.render();
+  state.shells.set("one", shell(completed, asking));
+  await app.render();
+  expect(TestNotification.sent.map(({ title }) => title)).toEqual([
+    "Approval needed",
+    "Thread completed",
+  ]);
+});

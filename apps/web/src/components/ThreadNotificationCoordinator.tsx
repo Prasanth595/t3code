@@ -121,10 +121,9 @@ function EnvironmentNotifications({
   const previous = useRef(new Map<ThreadId, NotificationState>());
 
   useEffect(() => {
-    if (threads === null) {
-      previous.current.clear();
-      return;
-    }
+    // Keep the last live baseline through a disconnect, so what changed meanwhile still
+    // notifies once the shell is live again, while alerts already raised stay quiet.
+    if (threads === null) return;
     const next = new Map<ThreadId, NotificationState>();
     const subagentRequests = pendingSubagentRequestsByThread(threads);
     for (const rawThread of threads) {
