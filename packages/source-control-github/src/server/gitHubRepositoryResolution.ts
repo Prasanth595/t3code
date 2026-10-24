@@ -1,4 +1,4 @@
-import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
+import { normalizeGitRemoteUrl, parseGitRemoteRepository } from "@t3tools/shared/git";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import { parseGitRemoteHost } from "@t3tools/source-control-core/shared/definition";
 import { definition } from "../shared/definition.ts";
@@ -23,7 +23,7 @@ export function parseFetchRemotes(
 /**
  * The repository `gh pr list` reads in a checkout, picked the way gh picks one without a prompt: the
  * remote `gh repo set-default` marked, else the first of upstream, github, origin (in any case), else
- * the only remote.
+ * the only remote. A remote with no host, such as a local path, is ignored as gh ignores it.
  *
  * Null whenever gh might weigh the remotes differently: a remote on another host or under an SSH alias,
  * more than one mark, or several remotes with none of those names.
@@ -36,6 +36,10 @@ export function selectGitHubBaseRepository(input: {
   const host = input.host.toLowerCase();
   const repositories = new Map<string, { readonly owner: string; readonly name: string }>();
   for (const remote of parseFetchRemotes(input.remotes)) {
+    // A userless SCP remote (`github.com:me/web`) has no host for parseGitRemoteHost, but gh reads one.
+    if (parseGitRemoteRepository(remote.url) === null && parseGitRemoteHost(remote.url) === null) {
+      continue;
+    }
     const [remoteHost, owner, name, ...rest] = normalizeGitRemoteUrl(remote.url).split("/");
     if (remoteHost !== host || !owner || !name || rest.length > 0) return null;
     repositories.set(remote.name, { owner, name });

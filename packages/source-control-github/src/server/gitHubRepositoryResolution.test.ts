@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   gitHubApiHostForRemote,
+  resolveGitHubRepository,
   selectGitHubBaseRepository,
 } from "./gitHubRepositoryResolution.ts";
 
@@ -31,6 +32,18 @@ describe("selectGitHubBaseRepository", () => {
       select({ remotes: fork, resolved: "remote.origin.gh-resolved acme/other" }),
       { owner: "acme", name: "other" },
     );
+    assert.deepStrictEqual(
+      select({
+        remotes: remotes(
+          ["origin", "github.com:me/web.git"],
+          ["upstream", "https://github.com/acme/web.git"],
+          ["local", "/tmp/local.git"],
+          ["file", "file:///tmp/local.git"],
+        ),
+        resolved: "remote.origin.gh-resolved base",
+      }),
+      { owner: "me", name: "web" },
+    );
     const partialClone = fork.replaceAll("(fetch)", "(fetch) [blob:none]");
     assert.deepStrictEqual(
       select({ remotes: partialClone, resolved: "remote.origin.gh-resolved base" }),
@@ -59,6 +72,15 @@ describe("selectGitHubBaseRepository", () => {
           ["mirror", "git@gitlab.com:me/web.git"],
         ),
       },
+      {
+        remotes: remotes(
+          ["origin", "git@github.com:me/web.git"],
+          ["mirror", "gitlab.com:me/web.git"],
+        ),
+      },
+      {
+        remotes: remotes(["origin", "git@github.com:me/web.git"], ["bad", "https://github.com/me"]),
+      },
       { remotes: remotes(["origin", "git@github-work:me/web.git"]) },
       {
         remotes: remotes(
@@ -76,6 +98,27 @@ describe("selectGitHubBaseRepository", () => {
     ]) {
       assert.strictEqual(select(input), null);
     }
+  });
+});
+
+describe("resolveGitHubRepository", () => {
+  it("keeps the remote gh marked as base when another remote is a local path", () => {
+    const remotes = [
+      ["origin", "https://github.com/me/web.git"],
+      ["upstream", "https://github.com/acme/web.git"],
+      ["container-use", "/tmp/local.git"],
+    ]
+      .flatMap(([name, url]) => [`${name}\t${url} (fetch)`, `${name}\t${url} (push)`])
+      .join("\n");
+    assert.deepStrictEqual(
+      resolveGitHubRepository({
+        remotes,
+        resolved: "remote.origin.gh-resolved base",
+        hostHint: undefined,
+        defaultHost: "github.com",
+      }).locator,
+      { host: "github.com", owner: "me", name: "web" },
+    );
   });
 });
 
