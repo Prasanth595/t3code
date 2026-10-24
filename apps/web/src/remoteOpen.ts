@@ -1,4 +1,10 @@
-import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
+import {
+  connectionRouteId,
+  connectionRouteKind,
+  connectionRoutes,
+  type ConnectionRoute,
+  type ConnectionTarget,
+} from "@t3tools/client-runtime/connection";
 import {
   REMOTE_CAPABLE_EDITOR_IDS,
   type EditorId,
@@ -14,7 +20,9 @@ import { useEffect, useState } from "react";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isLoopbackHostname } from "~/environments/primary/target";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentPresentations } from "~/state/presentation";
+import { environmentSession } from "~/state/session";
 
 export interface RemoteOpenHost {
   readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
@@ -51,12 +59,18 @@ function parseHostname(url: string): string | null {
 
 export function resolveRemoteOpenState(input: {
   readonly target: ConnectionTarget | null;
+  /** The saved route the client is connected through, which need not be the first one. */
+  readonly connectedRoute: ConnectionRoute | null;
   readonly sshTarget: { readonly alias: string; readonly username: string | null } | null;
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   readonly isDesktopRenderer: boolean;
 }): RemoteOpenState {
   const { target } = input;
   if (target === null) {
+    return LOCAL_EXEC;
+  }
+  // A saved route to a loopback address reaches a server on this same machine.
+  if (input.connectedRoute !== null && connectionRouteKind(input.connectedRoute) === "loopback") {
     return LOCAL_EXEC;
   }
   if (target._tag === "PrimaryConnectionTarget") {
@@ -108,7 +122,8 @@ function remoteOpenStatesEqual(previous: RemoteOpenState, next: RemoteOpenState)
 
 // The presentation changes with every server config push and reconnect. This
 // keeps the previous resolution while it is equal, so subscribers re-render only
-// when where files open actually changes.
+// when where files open actually changes. Between connections the route in use is
+// unknown, so the last resolution stands until a route connects again.
 const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): RemoteOpenResolution => {
     const presentation = get(environmentPresentations.presentationAtom(environmentId));
@@ -116,10 +131,22 @@ const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
     if (entry === null) {
       return UNRESOLVED_REMOTE_OPEN;
     }
+    const previous = Option.getOrNull(get.self<RemoteOpenResolution>());
+    const connection = Option.getOrNull(
+      get(environmentSession.preparedConnectionValueAtom(environmentId)),
+    );
+    if (connection === null && previous !== null && previous.isResolved) {
+      return previous;
+    }
+    const connectedRouteId = connection === null ? null : connectionRouteId(connection.target);
     const profile = Option.getOrNull(entry.profile);
     const next: RemoteOpenResolution = {
       state: resolveRemoteOpenState({
         target: entry.target,
+        connectedRoute:
+          connectionRoutes(entry).find(
+            (route) => connectionRouteId(route.target) === connectedRouteId,
+          ) ?? null,
         sshTarget:
           profile !== null && profile._tag === "SshConnectionProfile" ? profile.target : null,
         remoteOpenTargets: presentation?.serverConfig?.remoteOpenTargets,
@@ -127,7 +154,6 @@ const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
       }),
       isResolved: true,
     };
-    const previous = Option.getOrNull(get.self<RemoteOpenResolution>());
     return previous !== null &&
       previous.isResolved &&
       remoteOpenStatesEqual(previous.state, next.state)
@@ -146,6 +172,10 @@ export function useRemoteOpenResolution(environmentId: EnvironmentId | null): Re
 
 export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteOpenState {
   return useRemoteOpenResolution(environmentId).state;
+}
+
+export function readRemoteOpenState(environmentId: EnvironmentId): RemoteOpenState {
+  return appAtomRegistry.get(remoteOpenResolutionAtom(environmentId)).state;
 }
 
 const REMOTE_FALLBACK_EDITORS: ReadonlyArray<EditorId> = ["vscode"];

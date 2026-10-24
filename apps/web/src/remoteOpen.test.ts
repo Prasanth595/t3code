@@ -1,9 +1,12 @@
 import {
+  BearerConnectionProfile,
+  BearerConnectionTarget,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import { buildRemoteOpenUrl, EnvironmentId } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveRemoteOpenState } from "./remoteOpen";
@@ -18,6 +21,19 @@ const primaryTarget = (httpBaseUrl: string) =>
     wsBaseUrl: httpBaseUrl.replace("http", "ws"),
   });
 
+const bearerRoute = (httpBaseUrl: string) => ({
+  target: new BearerConnectionTarget({ environmentId, label: "sol", connectionId: "bearer-1" }),
+  profile: Option.some(
+    new BearerConnectionProfile({
+      connectionId: "bearer-1",
+      environmentId,
+      label: "sol",
+      httpBaseUrl,
+      wsBaseUrl: httpBaseUrl.replace("http", "ws"),
+    }),
+  ),
+});
+
 const TAILSCALE_TARGETS = [
   { kind: "tailscale", host: "sol.tail1234.ts.net" },
   { kind: "mdns", host: "sol.local" },
@@ -27,6 +43,7 @@ describe("resolveRemoteOpenState", () => {
   it("keeps exec behavior for a loopback primary target", () => {
     expect(
       resolveRemoteOpenState({
+        connectedRoute: null,
         target: primaryTarget("http://127.0.0.1:8000"),
         sshTarget: null,
         isDesktopRenderer: false,
@@ -35,9 +52,54 @@ describe("resolveRemoteOpenState", () => {
     ).toEqual({ mode: "local-exec" });
   });
 
+  it.each(["http://127.0.0.1:3773", "http://127.0.1.1:3773", "http://localhost:3773"])(
+    "keeps exec behavior when the route in use is a saved loopback route (%s)",
+    (httpBaseUrl) => {
+      // A browser on app.t3.codes can save T3 Connect first and a loopback address as another route.
+      expect(
+        resolveRemoteOpenState({
+          target: new RelayConnectionTarget({ environmentId, label: "sol" }),
+          connectedRoute: bearerRoute(httpBaseUrl),
+          sshTarget: null,
+          isDesktopRenderer: false,
+          remoteOpenTargets: TAILSCALE_TARGETS,
+        }),
+      ).toEqual({ mode: "local-exec" });
+    },
+  );
+
+  it("uses deep links when the route in use is a saved network route", () => {
+    expect(
+      resolveRemoteOpenState({
+        target: new RelayConnectionTarget({ environmentId, label: "sol" }),
+        connectedRoute: bearerRoute("http://192.168.1.20:3773"),
+        sshTarget: null,
+        isDesktopRenderer: false,
+        remoteOpenTargets: TAILSCALE_TARGETS,
+      }),
+    ).toEqual({
+      mode: "remote-links",
+      host: { kind: "tailscale", host: "sol.tail1234.ts.net" },
+    });
+  });
+
+  it("uses deep links for an SSH route even though it rides a loopback forward", () => {
+    const target = new SshConnectionTarget({ environmentId, label: "sol", connectionId: "ssh-1" });
+    expect(
+      resolveRemoteOpenState({
+        target,
+        connectedRoute: { target, profile: Option.none() },
+        sshTarget: { alias: "sol", username: null },
+        isDesktopRenderer: true,
+        remoteOpenTargets: TAILSCALE_TARGETS,
+      }).mode,
+    ).toBe("remote-links");
+  });
+
   it("uses deep links for a primary target reached over the network", () => {
     expect(
       resolveRemoteOpenState({
+        connectedRoute: null,
         target: primaryTarget("https://sol.tail1234.ts.net"),
         sshTarget: null,
         isDesktopRenderer: false,
@@ -54,6 +116,7 @@ describe("resolveRemoteOpenState", () => {
     // this machine because the desktop app manages its own primary backend.
     expect(
       resolveRemoteOpenState({
+        connectedRoute: null,
         target: primaryTarget("http://172.29.112.1:14369"),
         sshTarget: null,
         isDesktopRenderer: true,
@@ -64,6 +127,7 @@ describe("resolveRemoteOpenState", () => {
 
   it("leaves a bare desktop SSH alias for the editor to resolve through SSH config", () => {
     const state = resolveRemoteOpenState({
+      connectedRoute: null,
       target: new SshConnectionTarget({ environmentId, label: "sol", connectionId: "ssh-1" }),
       sshTarget: { alias: "sol", username: null },
       isDesktopRenderer: true,
@@ -94,6 +158,7 @@ describe("resolveRemoteOpenState", () => {
     { alias: "admin-user@server", username: "  " },
   ])("keeps one login username in editor links for $alias (username: '$username')", (sshTarget) => {
     const state = resolveRemoteOpenState({
+      connectedRoute: null,
       target: new SshConnectionTarget({ environmentId, label: "server", connectionId: "ssh-1" }),
       sshTarget,
       isDesktopRenderer: true,
@@ -116,6 +181,7 @@ describe("resolveRemoteOpenState", () => {
 
   it("uses the advertised login username in editor links over a relay", () => {
     const state = resolveRemoteOpenState({
+      connectedRoute: null,
       target: new RelayConnectionTarget({ environmentId, label: "server" }),
       sshTarget: null,
       isDesktopRenderer: false,
@@ -134,6 +200,7 @@ describe("resolveRemoteOpenState", () => {
     for (const remoteOpenTargets of [[], undefined] as const) {
       expect(
         resolveRemoteOpenState({
+          connectedRoute: null,
           target: new RelayConnectionTarget({ environmentId, label: "sol" }),
           sshTarget: null,
           isDesktopRenderer: false,
