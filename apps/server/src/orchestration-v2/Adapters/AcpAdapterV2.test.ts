@@ -3243,7 +3243,6 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-
   // Oracle: #15888 KillTask reports. Command completion must release the turn even
   // when the CLI keeps the prompt RPC and process alive. Kill calls stay visible.
   it.live.each([
