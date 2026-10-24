@@ -128,12 +128,14 @@ export const make = Effect.gen(function* () {
 
   // The shell runs only a regular file this user may execute. stat and access
   // both follow symlinks, so a link counts by what it points to.
-  const isExecutableFile = (target: string) =>
-    Effect.gen(function* () {
+  const isExecutableFile = Effect.fn("DesktopCliCommand.isExecutableFile")(
+    function* (target: string) {
       if ((yield* fs.stat(target)).type !== "File") return false;
       yield* Effect.tryPromise(() => NodeFSP.access(target, NodeFS.constants.X_OK));
       return true;
-    }).pipe(Effect.orElseSucceed(() => false));
+    },
+    Effect.orElseSucceed(() => false),
+  );
 
   const firstOnPath = Effect.gen(function* () {
     for (const directory of pathEntries(process.env.PATH, ":")) {
