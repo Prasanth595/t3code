@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import {
   collectAssistantCitations,
@@ -126,6 +126,24 @@ describe("promptStashStore", () => {
     expect(entries[0]?.id).toBe("overflow");
   });
 
+  it("keeps an entry another tab stashed after this tab loaded", () => {
+    writePromptStashStorageForTest(
+      JSON.stringify({
+        version: 2,
+        state: { entries: [makeEntry({ id: "other-tab" })] },
+      }),
+    );
+    // This tab loaded before the other tab's write, so its list is still empty.
+    usePromptStashStore.setState({ entries: [] });
+
+    usePromptStashStore.getState().stashEntry(makeEntry({ id: "this-tab" }));
+
+    expect(usePromptStashStore.getState().entries.map((entry) => entry.id)).toEqual([
+      "this-tab",
+      "other-tab",
+    ]);
+  });
+
   // regression: #4787 stashed prompts were lost when switching providers
   it("distinguishes a memory-only write (written, not durable) from a failed one", () => {
     const store = usePromptStashStore.getState();
@@ -225,6 +243,83 @@ describe("promptStashStore", () => {
     const entry = usePromptStashStore.getState().entries[0];
     expect(entry?.pendingImageCount).toBe(0);
     expect(entry?.unreadableImageNames).toHaveLength(2);
+
+    usePromptStashStore.getState().stashEntry(makeEntry({ id: "later" }));
+    expect(usePromptStashStore.getState().entries[1]).toEqual(entry);
+  });
+
+  it("keeps images storage rejected for this session and settles the stored entry", async () => {
+    // A localStorage that rejects large writes, as a full origin quota does.
+    const stored = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        if (value.length > 2_000) {
+          throw new DOMException("Quota exceeded", "QuotaExceededError");
+        }
+        stored.set(key, value);
+      },
+      removeItem: (key: string) => {
+        stored.delete(key);
+      },
+    });
+    vi.resetModules();
+    try {
+      const { usePromptStashStore: store } = await import("./promptStashStore");
+      const { stashEntry, finalizeEntryImages, takeEntry } = store.getState();
+      const bigImage = {
+        id: "big-img",
+        name: "big.png",
+        mimeType: "image/png",
+        sizeBytes: 5_000,
+        dataUrl: "x".repeat(5_000),
+      };
+      const rejectedImages = {
+        attachments: [bigImage],
+        droppedImageNames: [],
+        unreadableImageNames: [],
+      };
+
+      stashEntry({ ...makeEntry({ id: "rejected" }), pendingImageCount: 1 });
+      expect(finalizeEntryImages("rejected", rejectedImages)).toEqual({
+        attached: true,
+        durable: false,
+      });
+
+      // After a reload, and in other tabs, the entry reports the image missing.
+      expect(JSON.parse(stored.get(PROMPT_STASH_STORAGE_KEY) ?? "null")).toMatchObject({
+        state: {
+          entries: [
+            {
+              id: "rejected",
+              attachments: [],
+              droppedImageNames: ["big.png"],
+              pendingImageCount: 0,
+            },
+          ],
+        },
+      });
+
+      // A later write re-reads storage, yet this tab still holds the image.
+      stashEntry(makeEntry({ id: "later" }));
+      expect(store.getState().entries[1]).toMatchObject({
+        id: "rejected",
+        attachments: [{ name: "big.png" }],
+        pendingImageCount: 0,
+      });
+      expect(takeEntry("rejected").entry?.attachments).toEqual([bigImage]);
+
+      // An entry another tab already restored stays gone.
+      stashEntry({ ...makeEntry({ id: "restored-elsewhere" }), pendingImageCount: 1 });
+      finalizeEntryImages("restored-elsewhere", rejectedImages);
+      stored.set(
+        PROMPT_STASH_STORAGE_KEY,
+        JSON.stringify({ version: 2, state: { entries: [makeEntry({ id: "later" })] } }),
+      );
+      expect(takeEntry("restored-elsewhere").entry).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("ignores an unreadable v1 payload seeded under the current key", () => {
