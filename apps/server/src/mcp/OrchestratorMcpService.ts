@@ -441,6 +441,8 @@ function taskStatusForRun(
   switch (run === undefined ? undefined : runOutcome(run)) {
     case "queued":
       return "queued";
+    case "starting":
+      return "starting";
     case "waiting":
       return "waiting";
     case "completed":
@@ -453,7 +455,6 @@ function taskStatusForRun(
     case "interrupted":
       return "interrupted";
     case "preparing":
-    case "starting":
     case "running":
     case undefined:
       return "running";
@@ -1586,7 +1587,9 @@ const make = Effect.gen(function* () {
           ? taskStatusForRun(taskResultRun ?? childRun)
           : taskStatusForRun(taskResultRun ?? childRun) === "queued"
             ? "queued"
-            : "running";
+            : taskStatusForRun(taskResultRun ?? childRun) === "starting"
+              ? "starting"
+              : "running";
     const derivedResult =
       task.result !== null
         ? task.result
