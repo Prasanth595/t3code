@@ -2733,6 +2733,16 @@ export default function ChatView(props: ChatViewProps) {
         const next = logicalProjectEnvironments[(index + 1) % logicalProjectEnvironments.length];
         if (next) onEnvironmentChangeStable(next.environmentId);
       },
+      "composer.newWorktree": ({ event }) => {
+        if (
+          !isGitRepo ||
+          envLocked ||
+          multipleModelSelections !== null ||
+          (!isLocalDraftThread && !canOverrideServerThreadEnvMode)
+        )
+          return false;
+        if (!event.repeat) onEnvModeChangeStable("worktree");
+      },
       "thread.steerQueuedMessage": ({ event }) =>
         routeKind !== "draft" && queuedRunsControlRef.current?.steerNext(event.repeat) === true,
       "thread.editQueuedMessage": ({ event }) =>
