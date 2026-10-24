@@ -112,26 +112,36 @@ it.effect("leaves a newer service unchanged during onboarding without prompting"
   }),
 );
 
-const withoutTerminal = Effect.acquireRelease(
-  Effect.sync(() =>
-    [process.stdin, process.stdout].map((stream) => {
-      const descriptor = Object.getOwnPropertyDescriptor(stream, "isTTY");
-      Object.defineProperty(stream, "isTTY", { configurable: true, value: false });
-      return { stream, descriptor };
-    }),
-  ),
-  (saved) =>
-    Effect.sync(() => {
-      for (const { stream, descriptor } of saved) {
-        if (descriptor === undefined) Reflect.deleteProperty(stream, "isTTY");
-        else Object.defineProperty(stream, "isTTY", descriptor);
-      }
-    }),
-);
+const withTerminal = (isTTY: { readonly stdin: boolean; readonly stdout: boolean }) =>
+  Effect.acquireRelease(
+    Effect.sync(() =>
+      (
+        [
+          [process.stdin, isTTY.stdin],
+          [process.stdout, isTTY.stdout],
+        ] as const
+      ).map(([stream, value]) => {
+        const descriptor = Object.getOwnPropertyDescriptor(stream, "isTTY");
+        Object.defineProperty(stream, "isTTY", { configurable: true, value });
+        return { stream, descriptor };
+      }),
+    ),
+    (saved) =>
+      Effect.sync(() => {
+        for (const { stream, descriptor } of saved) {
+          if (descriptor === undefined) Reflect.deleteProperty(stream, "isTTY");
+          else Object.defineProperty(stream, "isTTY", descriptor);
+        }
+      }),
+  );
 
-it.effect("skips the onboarding service prompt when there is no terminal", () =>
+it.effect.each([
+  { label: "stdin and stdout are", stdin: false, stdout: false },
+  { label: "stdin is", stdin: false, stdout: true },
+  { label: "stdout is", stdin: true, stdout: false },
+])("skips the onboarding service prompt when $label not a terminal", (isTTY) =>
   Effect.gen(function* () {
-    yield* withoutTerminal;
+    yield* withTerminal(isTTY);
     const { service, installOptions } = makeTestService({
       ...status,
       installed: false,
