@@ -25,7 +25,7 @@ const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inlin
 export const sourceControlMediaResponse = Effect.fn(
   "SourceControlMediaResponse.sourceControlMediaResponse",
 )(function* (
-  asset: { readonly url: string; readonly cwd: string; readonly expiresAt: number },
+  asset: { readonly url: string; readonly expiresAt: number },
   requestHeaders: Record<string, string | undefined>,
 ) {
   const remainingSeconds = Math.floor((asset.expiresAt - (yield* Clock.currentTimeMillis)) / 1000);

@@ -6,6 +6,7 @@ import {
   parseChangeRequestPath,
   remoteWebOrigin,
 } from "@t3tools/source-control-core/shared/definition";
+import { azureDevOpsAvatarMediaUrl } from "./azureDevOpsAvatar.ts";
 import { icon } from "./icon.ts";
 
 // Azure DevOps Server runs on any hostname; its `_git` route identifies it.
@@ -145,4 +146,5 @@ export const definition = defineSourceControl({
     );
   },
   canReadChangeRequestOnHost: () => false,
+  mediaUrl: azureDevOpsAvatarMediaUrl,
 });
