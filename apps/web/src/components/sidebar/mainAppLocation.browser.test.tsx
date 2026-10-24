@@ -16,6 +16,23 @@ function LeaveUtilityPage() {
 }
 
 describe("leaving a utility page", () => {
+  it("preserves forward history when the remembered thread lies ahead", async () => {
+    await using screen = await render(<LeaveUtilityPage />, { router: "/env/thread-a" });
+    const router = screen.router!;
+
+    await act(() => router.navigate({ href: "/settings/general" }));
+    await act(() => router.navigate({ href: "/env/thread-b" }));
+    await act(() => router.navigate({ href: "/settings/appearance" }));
+    await act(() => router.history.back());
+    await act(() => router.history.back());
+    expect(router.state.location.pathname).toBe("/settings/general");
+
+    await screen.getByRole("button", { name: "Back to threads" }).click();
+    expect(router.state.location.pathname).toBe("/env/thread-b");
+    await act(() => router.history.forward());
+    expect(router.state.location.pathname).toBe("/settings/appearance");
+  });
+
   it("keeps the remembered entry when traversing past it without overwriting it", async () => {
     await using screen = await render(<LeaveUtilityPage />, { router: "/settings" });
     const router = screen.router!;

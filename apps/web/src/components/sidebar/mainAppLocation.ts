@@ -45,7 +45,7 @@ export function useNavigateToMainApp() {
       mainAppEntry?.historyIndex != null
         ? router.history.location.state.__TSR_index - mainAppEntry.historyIndex
         : 0;
-    if (stepsBack > 0) {
+    if (stepsBack !== 0) {
       router.history.go(-stepsBack);
       return;
     }
