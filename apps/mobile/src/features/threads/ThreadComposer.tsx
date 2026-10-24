@@ -463,8 +463,6 @@ export function ComposerSurface(props: {
   );
 }
 
-// useKeyboardState only flips isVisible on keyboardDidHide, after the hide animation; the will*
-// events let the card leave with the keyboard instead of after it.
 function useKeyboardShowing() {
   const [showing, setShowing] = useState(KeyboardController.isVisible);
   useEffect(() => {
