@@ -4,6 +4,7 @@ import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import { useEffect, useRef } from "react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
+import { useLiveRegion } from "../hooks/useLiveRegion";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { useQuietThreadShells } from "../state/entities";
 import { liveShellEnvironmentIdsAtom } from "../state/shell";
@@ -28,7 +29,7 @@ export function BackgroundThreadAnnouncer() {
   );
   const openThreadRef = resolveActiveThreadRouteRef(routeTarget, routeDraftThread);
   const openThreadKey = openThreadRef === null ? null : scopedThreadKey(openThreadRef);
-  const regionRef = useRef<HTMLDivElement>(null);
+  const { regionRef, announce } = useLiveRegion();
   const memoryRef = useRef<BackgroundThreadMemory>(new Map());
 
   useEffect(() => {
@@ -55,12 +56,8 @@ export function BackgroundThreadAnnouncer() {
       openThreadKey,
     );
     memoryRef.current = memory;
-    const region = regionRef.current;
-    if (region === null || announcement === null) return;
-    // Screen readers ignore a write that leaves the text unchanged, so a repeat
-    // gets a trailing non-breaking space to count as new.
-    region.textContent = region.textContent === announcement ? `${announcement} ` : announcement;
-  }, [threads, liveEnvironmentIds, openThreadKey]);
+    if (announcement !== null) announce(announcement);
+  }, [threads, liveEnvironmentIds, openThreadKey, announce]);
 
   // No role="status": Orca 50 maps it to a status bar in Chromium and drops its updates.
   return <div ref={regionRef} aria-live="polite" className="sr-only" />;
