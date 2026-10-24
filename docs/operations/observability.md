@@ -135,7 +135,7 @@ waiting. Read CPU together with page faults:
 
 On Linux, the `mainThread*` fields cover only the main thread, not the SQLite worker.
 `mainThreadBlockedMs` is busy time spent neither on a CPU nor waiting for one: a wait in the kernel.
-With a large `mainThreadReadMb`, that wait was the main thread reading from disk. Both cover the
+A large `mainThreadReadMb` suggests that wait was the main thread reading from disk. Both cover the
 window, not just the stall.
 
 `candidates` lists up to 3 spans that lasted at least as long as the stall, less the 1 s
