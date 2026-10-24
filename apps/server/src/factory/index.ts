@@ -59,11 +59,13 @@ import {
   abandonedItem,
   errorKind,
   gateQueued,
+  lastGoodCopy,
   plain,
   runPass,
   stuckItem,
   stuckLine,
   type BrokenThreadMemo,
+  type LastGood,
   type PassError,
   type PassWorld,
   type Repo,
@@ -107,6 +109,7 @@ import {
   makeGitHub,
   type GitHubError,
   type IssueSummary,
+  isNotReceived,
 } from "./tracker/github.ts";
 
 // server.ts imports this module before it builds a layer, so from here on a full disk under
@@ -166,6 +169,13 @@ const asPassError =
     message: `${prefix}${error.message}`,
   });
 
+/** The pass error of a failed tracker call, marked transient when GitHub never received it. */
+const asTrackerPassError = (error: GitHubError): PassError => ({
+  kind: "tracker",
+  message: error.message,
+  transient: isNotReceived(error),
+});
+
 const byNumber = (a: number, b: number) => a - b;
 
 /** The numbers of the issues nobody is assigned to, by number. */
@@ -218,6 +228,7 @@ const projectFromBase = Effect.fn("Factory.projectFromBase")(function* (
     Effect.mapError((error): ProjectReadError => ({
       kind: "config",
       message: `cannot read ${PROJECT_CONFIG_PATH} from GitHub: ${error.message}`,
+      transient: isNotReceived(error),
       errors: [
         {
           file: PROJECT_CONFIG_PATH,
@@ -371,6 +382,7 @@ export interface LiveShared {
   readonly stuckReads: Map<string, number>;
   readonly brokenThreads: BrokenThreadMemo;
   readonly configSkips: Map<string, number>;
+  readonly lastGood: Map<string, LastGood>;
 }
 
 /**
@@ -405,12 +417,13 @@ export const liveWorld = (
   gateRemoteBase?: string,
   onProject?: (repo: string, reading: RepoConfigReading) => void,
   // Built once per process by the factory, so a reload's new world goes on from the old one's.
-  { gating, claimMemo, stuckReads, brokenThreads, configSkips }: LiveShared = {
+  { gating, claimMemo, stuckReads, brokenThreads, configSkips, lastGood }: LiveShared = {
     gating: new Set(),
     claimMemo: new ClaimMemo(),
     stuckReads: new Map(),
     brokenThreads: { notFactory: new Set(), unsettled: new Map() },
     configSkips: new Map(),
+    lastGood: new Map(),
   },
 ): Omit<PassWorld, "watchedRepos" | "freeSpace"> => {
   const load = live.readLoad ?? readLoad;
@@ -573,12 +586,23 @@ export const liveWorld = (
           Effect.sync(() => onProject?.(watched.repo, { kind: "ok", project })),
         ),
         Effect.tapError((error) =>
-          Effect.sync(() => onProject?.(watched.repo, { kind: "errors", errors: error.errors })),
+          // A transient failure with a last good copy says nothing new about the config: the
+          // pass runs on that copy and the last reading stands. Without a copy the repo is
+          // skipped, and the reading says why.
+          lastGoodCopy(lastGood, watched.repo, "project", error) !== undefined
+            ? Effect.void
+            : Effect.sync(() =>
+                onProject?.(watched.repo, { kind: "errors", errors: error.errors }),
+              ),
         ),
-        Effect.mapError((error): PassError => ({ kind: error.kind, message: error.message })),
+        Effect.mapError((error): PassError => ({
+          kind: error.kind,
+          message: error.message,
+          ...(error.transient === undefined ? {} : { transient: error.transient }),
+        })),
       ),
     trackerUser: (watched) =>
-      withProcess(githubFor(watched).login()).pipe(Effect.mapError(asPassError("tracker"))),
+      withProcess(githubFor(watched).login()).pipe(Effect.mapError(asTrackerPassError)),
     unfinishedRuns: (only) => ledger(() => listUnfinishedRuns(dataDir, only)),
     readyIssues: (repo: Repo) =>
       withProcess(githubFor(repo.watched).listIssues("ready")).pipe(
@@ -689,6 +713,7 @@ export const liveWorld = (
       ledger(() => runsByThread(dataDir)).pipe(Effect.mapError(asPassError("ledger"))),
     brokenThreads,
     configSkips,
+    lastGood,
     archiveThread: (threadId) =>
       sessions.archive(threadId).pipe(Effect.mapError(asPassError("t3"))),
     nowMs: clock,
@@ -860,6 +885,7 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
     stuckReads: new Map(),
     brokenThreads: { notFactory: new Set(), unsettled: new Map() },
     configSkips: new Map(),
+    lastGood: new Map(),
   };
   // The threads of the unfinished runs, read at start and after every pass: a pass is what
   // launches and finishes sessions, so between passes the set does not change.

@@ -35,6 +35,7 @@ import {
   UNSETTLED_READ_EVERY_MS,
   runPass,
   type BrokenThreadMemo,
+  type LastGood,
   type Loaded,
   type PassError,
   type GateStart,
@@ -122,6 +123,10 @@ const NOTHING_SENT: ForwardOutcome = {
 class Fake implements PassWorld {
   projects: Record<string, ProjectConfig | string> = {};
   trackerUsers: Record<string, string | { error: string }> = {};
+  /** Repos whose project config or tracker login failure is one GitHub never received. */
+  transient = new Set<string>();
+  /** A login failure is never transient, whatever `transient` says for the config. */
+  loginHard = false;
   runs: Array<RunInfo> = [];
   runsError = false;
   ready: Answers<Array<number>> = {};
@@ -264,7 +269,11 @@ class Fake implements PassWorld {
     this.projected.push(watched.repo);
     const found = this.projects[watched.repo];
     if (typeof found === "string") {
-      return Effect.fail<PassError>({ kind: "config", message: found });
+      return Effect.fail<PassError>({
+        kind: "config",
+        message: found,
+        transient: this.transient.has(watched.repo),
+      });
     }
     return Effect.succeed(found ?? project());
   }
@@ -273,7 +282,11 @@ class Fake implements PassWorld {
     this.calls.push("tracker_user");
     const found = this.trackerUsers[watched.repo];
     if (typeof found === "object") {
-      return Effect.fail<PassError>({ kind: "tracker", message: found.error });
+      return Effect.fail<PassError>({
+        kind: "tracker",
+        message: found.error,
+        transient: this.transient.has(watched.repo) && !this.loginHard,
+      });
     }
     return Effect.succeed(found ?? "rawphp");
   }
@@ -527,6 +540,7 @@ class Fake implements PassWorld {
   sessionReads = 0;
   brokenThreads: BrokenThreadMemo = { notFactory: new Set(), unsettled: new Map() };
   configSkips = new Map<string, number>();
+  lastGood = new Map<string, LastGood>();
   /** Threads T3 refuses to archive. */
   archiveRefused: Array<string> = [];
   /** Each thread `archiveThread` archived, in order. */
@@ -904,6 +918,261 @@ describe("claiming new issues", () => {
       );
     }),
   );
+
+  describe("a repo whose config or login could not be re-read", () => {
+    const ITEM_ID = "config-not-loaded:rawphp/softfac";
+    const items = (fake: Fake) => fake.items.filter((item) => item.id === ITEM_ID);
+    const stale = (fake: Fake) => fake.events.filter((e) => e.event === "repo_config_stale");
+    const skipped = (fake: Fake) => fake.events.filter((e) => e.event === "repo_skipped");
+    const TLS = "net/http: TLS handshake timeout";
+
+    it.effect("a transient config failure after a good load runs on the last good copy", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.ready[REPO] = [1];
+        fake.pushStart(`${REPO}#1`, started(1));
+        fake.pushStart(`${REPO}#2`, started(2));
+        yield* pass(fake, [REPO], 3);
+        fake.ready[REPO] = [2];
+        fake.projects[REPO] = TLS;
+        fake.transient.add(REPO);
+        const { lines } = yield* pass(fake, [REPO], 3);
+        // The second pass started issue 2 on the config and login of the first.
+        assert.include(starts(fake), `start ${REPO}#2`);
+        assert.deepEqual(
+          stale(fake).map((e) => e.data),
+          [{ repo: REPO, what: "config", message: TLS }],
+        );
+        assert.deepEqual(skipped(fake), []);
+        assert.ok(
+          lines.some((l) =>
+            l.includes(`${REPO}: project config could not be re-read, using the last good copy`),
+          ),
+          lines.join("\n"),
+        );
+      }),
+    );
+
+    it.effect("a transient login failure after a good load runs on the last good login", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.ready[REPO] = [1];
+        fake.pushStart(`${REPO}#1`, started(1));
+        fake.pushStart(`${REPO}#2`, started(2));
+        yield* pass(fake, [REPO], 3);
+        fake.ready[REPO] = [2];
+        fake.trackerUsers[REPO] = { error: TLS };
+        fake.transient.add(REPO);
+        const { report } = yield* pass(fake, [REPO], 3);
+        assert.equal(report.errors, 0);
+        // The second pass started issue 2 on the config and login of the first.
+        assert.include(starts(fake), `start ${REPO}#2`);
+        assert.deepEqual(
+          stale(fake).map((e) => e.data),
+          [{ repo: REPO, what: "login", message: TLS }],
+        );
+        assert.deepEqual(skipped(fake), []);
+      }),
+    );
+
+    it.effect("a failure that is not transient skips the repo", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        fake.projects[REPO] = "invalid .dw/config.yml";
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(stale(fake), []);
+        assert.equal(skipped(fake).length, 1);
+      }),
+    );
+
+    it.effect("a config that fails for real is not brought back by a later blip", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        fake.projects[REPO] = "no .dw/config.yml on main";
+        yield* pass(fake, [REPO], 3);
+        assert.equal(skipped(fake).length, 1);
+        assert.equal(skipped(fake)[0]!.data.reason, "config-not-loaded");
+        fake.ready[REPO] = [2];
+        fake.pushStart(`${REPO}#2`, started(2));
+        fake.transient.add(REPO);
+        fake.projects[REPO] = TLS;
+        yield* pass(fake, [REPO], 3);
+        assert.equal(skipped(fake).length, 2);
+        assert.deepEqual(stale(fake), []);
+        assert.notInclude(starts(fake), `start ${REPO}#2`);
+      }),
+    );
+
+    it.effect("a login that fails for real is not brought back by a later blip", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        fake.trackerUsers[REPO] = { error: "HTTP 401: Bad credentials" };
+        const second = yield* pass(fake, [REPO], 3);
+        assert.equal(second.report.errors, 1);
+        assert.equal(errorEvents(fake).length, 1);
+        fake.transient.add(REPO);
+        fake.trackerUsers[REPO] = { error: TLS };
+        const third = yield* pass(fake, [REPO], 3);
+        assert.equal(third.report.errors, 1);
+        assert.equal(errorEvents(fake).length, 2);
+        assert.deepEqual(stale(fake), []);
+      }),
+    );
+
+    it.effect("three passes on a stale login raise the item on the third", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        fake.trackerUsers[REPO] = { error: TLS };
+        fake.transient.add(REPO);
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        const { report } = yield* pass(fake, [REPO], 3);
+        assert.equal(report.attention, 1);
+        assert.equal(stale(fake).length, 3);
+        assert.deepEqual(
+          items(fake).map((item) => item.message),
+          [
+            `${REPO}: project config or tracker login could not be re-read for 3 passes in a row, running on the last good copy; last error: ${TLS}`,
+          ],
+        );
+      }),
+    );
+
+    it.effect("a pass with both the config and the login stale counts once", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        fake.projects[REPO] = TLS;
+        fake.trackerUsers[REPO] = { error: TLS };
+        fake.transient.add(REPO);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(
+          stale(fake).map((e) => e.data.what),
+          ["config", "login"],
+        );
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        yield* pass(fake, [REPO], 3);
+        assert.equal(stale(fake).length, 6);
+        assert.equal(items(fake).length, 1);
+      }),
+    );
+
+    it.effect(
+      "a stale config followed by a login that fails for real still counts toward the attention item",
+      () =>
+        Effect.gen(function* () {
+          const fake = new Fake();
+          yield* pass(fake, [REPO], 3);
+          fake.projects[REPO] = TLS;
+          fake.trackerUsers[REPO] = { error: "HTTP 401: Bad credentials" };
+          fake.transient.add(REPO);
+          fake.loginHard = true;
+          for (let i = 0; i < 3; i += 1) {
+            const { report } = yield* pass(fake, [REPO], 3);
+            assert.equal(report.errors, 1);
+          }
+          assert.equal(stale(fake).length, 3);
+          assert.equal(errorEvents(fake).length, 3);
+          assert.equal(items(fake).length, 1);
+          assert.equal(
+            items(fake)[0]!.message,
+            `${REPO}: project config not loaded for 3 passes in a row, issues are not being picked up; last error: cannot read the tracker's login: HTTP 401: Bad credentials`,
+          );
+        }),
+    );
+
+    it.effect("a fresh config with a login that fails for real clears the item", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        fake.projects[REPO] = TLS;
+        fake.transient.add(REPO);
+        for (let i = 0; i < 3; i += 1) yield* pass(fake, [REPO], 3);
+        assert.equal(items(fake).length, 1);
+        delete fake.projects[REPO];
+        fake.transient.delete(REPO);
+        fake.trackerUsers[REPO] = { error: "HTTP 401: Bad credentials" };
+        const { report } = yield* pass(fake, [REPO], 3);
+        assert.equal(report.errors, 1);
+        assert.deepEqual(items(fake), []);
+      }),
+    );
+
+    it.effect("a transient failure with no earlier load skips the repo", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.projects[REPO] = TLS;
+        fake.transient.add(REPO);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(stale(fake), []);
+        assert.equal(skipped(fake).length, 1);
+        // A login with no earlier load fails the repo as it does today.
+        const other = new Fake();
+        other.trackerUsers[REPO] = { error: TLS };
+        other.transient.add(REPO);
+        const { report } = yield* pass(other, [REPO], 3);
+        assert.equal(report.errors, 1);
+        assert.deepEqual(stale(other), []);
+      }),
+    );
+
+    it.effect("three stale passes in a row raise the item, and the next good load clears it", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        fake.projects[REPO] = TLS;
+        fake.transient.add(REPO);
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        const { report } = yield* pass(fake, [REPO], 3);
+        assert.equal(report.attention, 1);
+        assert.equal(items(fake).length, 1);
+        assert.equal(
+          items(fake)[0]!.message,
+          `${REPO}: project config or tracker login could not be re-read for 3 passes in a row, running on the last good copy; last error: ${TLS}`,
+        );
+        delete fake.projects[REPO];
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        // The count starts over.
+        fake.projects[REPO] = TLS;
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+      }),
+    );
+
+    it.effect("a fresh config with a stale login keeps the fresh config for later", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        const changed = project();
+        fake.projects[REPO] = changed;
+        fake.trackerUsers[REPO] = { error: TLS };
+        fake.transient.add(REPO);
+        yield* pass(fake, [REPO], 3);
+        assert.strictEqual(fake.lastGood.get(REPO)?.project, changed);
+        assert.equal(stale(fake).length, 1);
+      }),
+    );
+
+    it.effect("a repo no longer watched loses its last good copy", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        assert.ok(fake.lastGood.has(REPO));
+        yield* pass(fake, [OTHER], 3);
+        assert.ok(!fake.lastGood.has(REPO));
+      }),
+    );
+  });
 
   describe("a repo whose config is not loaded pass after pass", () => {
     const ITEM_ID = "config-not-loaded:rawphp/softfac";
@@ -2111,6 +2380,47 @@ describe("the limit, said out loud", () => {
       fake.ready[REPO] = [1, 2];
       const { lines } = yield* pass(fake, [REPO], 5);
       assert.ok(!lines.some((l) => l.startsWith("limit reached")), lines.join("\n"));
+    }),
+  );
+});
+
+describe("a pass that has run long", () => {
+  /** A fake whose ready listing takes `ms`, so claiming starts that far into the pass. */
+  const slowListing = (ms: number) => {
+    const fake = new Fake();
+    fake.ready[REPO] = [1];
+    fake.pushStart(`${REPO}#1`, started(1));
+    const list = fake.readyIssues.bind(fake);
+    fake.readyIssues = (repo: Repo) => {
+      fake.now += ms;
+      return list(repo);
+    };
+    return fake;
+  };
+
+  it.effect("twenty minutes in, no claim is started and one line says so", () =>
+    Effect.gen(function* () {
+      const fake = slowListing(20 * 60_000);
+      const { report, lines } = yield* pass(fake, [REPO], 3);
+      assert.deepEqual(starts(fake), []);
+      assert.equal(report.claimed, 0);
+      assert.deepEqual(
+        lines.filter((l) => l.startsWith("claims stopped")),
+        ["claims stopped: the pass has run for 20m; the ready issues left wait for the next pass"],
+      );
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "claim_skipped"),
+        [{ event: "claim_skipped", data: { reason: "late" } }],
+      );
+    }),
+  );
+
+  it.effect("just short of twenty minutes, the claim is started", () =>
+    Effect.gen(function* () {
+      const fake = slowListing(20 * 60_000 - 1);
+      const { lines } = yield* pass(fake, [REPO], 3);
+      assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
+      assert.ok(!lines.some((l) => l.startsWith("claims stopped")), lines.join("\n"));
     }),
   );
 });

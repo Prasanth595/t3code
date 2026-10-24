@@ -4,6 +4,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Random from "effect/Random";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as NodeFS from "node:fs";
@@ -191,6 +192,21 @@ export const regateResultsComment = (
   baseSha: string,
 ): string => resultsComment("passed again", results, attempt, headSha, baseSha);
 
+/** How many times the fetch of a checkout is tried before its failure is returned. */
+const FETCH_ATTEMPTS = 3;
+/** The wait before the second and the third fetch, in milliseconds; each gets up to a second more. */
+const FETCH_RETRY_DELAYS_MS = [5_000, 15_000] as const;
+/**
+ * What git's stderr says when the network dropped the fetch: an HTTP/2 stream error, a TLS
+ * handshake that timed out, a name that did not resolve, a connection that failed or timed out,
+ * or one cut off mid-pack. Anything else (a ref the remote does not have, a refused login) is
+ * not a network problem and is returned at once. The match is what the retry log line names.
+ * `RPC failed` counts only with a curl code right after it: with an HTTP status in between
+ * (`RPC failed; HTTP 403 curl 22`) the server answered, and refused.
+ */
+const TRANSIENT_FETCH =
+  /Error in the HTTP2 framing layer|TLS handshake timeout|Could not resolve host|Failed to connect|Connection timed out|SSL_ERROR_SYSCALL|early EOF|RPC failed; curl \d+/;
+
 export interface GateOptions {
   /** Where repositories are fetched from: `<remoteBase>/<owner>/<name>.git`. Default `https://github.com`; tests pass `file:///…`. */
   readonly remoteBase?: string;
@@ -206,6 +222,8 @@ export interface GateOptions {
   readonly clock?: () => number;
   /** The most a git call may print, on stdout or on stderr. Default 1 MiB. */
   readonly gitTailBytes?: number;
+  /** Test only: the waits before the second and the third fetch, default 5 s and 15 s. */
+  readonly fetchRetryDelaysMs?: ReadonlyArray<number>;
   /** Test only: variables set on every git call after the others, so a test can give git another HOME or PATH. */
   readonly env?: Readonly<Record<string, string>>;
   /** Test only: the ledger's write and sync, so a test can fail an append. */
@@ -505,6 +523,7 @@ export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
   const gitTimeoutMs = options.gitTimeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
   const gitTailBytes = options.gitTailBytes ?? GIT_TAIL_BYTES;
   const checkoutTimeoutMs = options.checkoutTimeoutMs ?? DEFAULT_CHECKOUT_TIMEOUT_MS;
+  const fetchRetryDelaysMs = options.fetchRetryDelaysMs ?? FETCH_RETRY_DELAYS_MS;
   const fileTransport = remoteBase.startsWith("file://") ? "always" : "never";
   const hardening = [
     "core.fsmonitor=false",
@@ -616,8 +635,16 @@ export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
     yield* git(dir, { args: ["init", "--quiet", "--template="], timeoutMs: checkoutTimeoutMs });
     // The commits come into the new object store and nothing else changes: no ref, no
     // FETCH_HEAD, no tags, no submodules. The URL is the gate's, not git config's.
-    yield* git(dir, {
-      pre: ["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"],
+    // HTTP/1.1, because the HTTP/2 framing layer is what a flaky link breaks first.
+    const fetch = git(dir, {
+      pre: [
+        "-c",
+        "credential.helper=",
+        "-c",
+        "credential.helper=!gh auth git-credential",
+        "-c",
+        "http.version=HTTP/1.1",
+      ],
       args: [
         "fetch",
         "--no-tags",
@@ -630,6 +657,26 @@ export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
       timeoutMs: checkoutTimeoutMs,
       fetch: true,
     });
+    for (let tried = 1; ; tried += 1) {
+      const fetched = yield* Effect.result(fetch);
+      if (Result.isSuccess(fetched)) break;
+      const error = fetched.failure;
+      const reason =
+        error._tag === "WorkspaceFailedError" ? TRANSIENT_FETCH.exec(error.stderr)?.[0] : undefined;
+      if (
+        error._tag !== "WorkspaceFailedError" ||
+        reason === undefined ||
+        tried >= FETCH_ATTEMPTS
+      ) {
+        return yield* error;
+      }
+      const wait = fetchRetryDelaysMs[tried - 1] ?? 0;
+      const delayMs = wait + (yield* Random.nextIntBetween(0, Math.min(1000, wait)));
+      yield* Effect.logInfo(
+        `\`git ${error.args}\` attempt ${tried} of ${FETCH_ATTEMPTS} failed (${reason}); trying again in ${(delayMs / 1000).toFixed(1)} s`,
+      );
+      yield* Effect.sleep(delayMs);
+    }
     yield* git(dir, {
       args: ["checkout", "--quiet", "--detach", "--no-recurse-submodules", sha],
       timeoutMs: checkoutTimeoutMs,
