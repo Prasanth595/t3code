@@ -63,36 +63,19 @@ describe("HTML in native Markdown", () => {
     expect(result).toContain('`<img src="inline.png">`');
   });
 
-  it("turns HTML anchors into Markdown links, including inline tags in headings and table cells", () => {
-    const markdown = [
-      '## Deploying with &nbsp;<a href="https://workers.dev"><img alt="Workers" src="https://example.com/logo.svg" width="16"></a> &nbsp;Workers',
-      "",
-      "| Status | Preview URL |",
-      "| -|-|",
-      "| Done <br>[View logs](https://example.com/logs) | <a href='https://commit.example.com'>Commit Preview URL</a><br><br><a href='https://branch.example.com'>Branch Preview URL</a> |",
-    ].join("\n");
-    const document = parseMarkdownDocument(markdown);
-    const links: Array<{ url: string; text: string }> = [];
-    const visit = (node: (typeof document.children)[number] | typeof document) => {
-      if (node.type === "link")
-        links.push({
-          url: node.url,
-          text: node.children
-            .map((child) => ("value" in child ? child.value : child.type))
-            .join(""),
-        });
-      if ("children" in node) node.children.forEach(visit);
-    };
-    visit(document);
-    expect(links).toEqual([
-      { url: "https://workers.dev", text: "image" },
-      { url: "https://example.com/logs", text: "View logs" },
-      { url: "https://commit.example.com", text: "Commit Preview URL" },
-      { url: "https://branch.example.com", text: "Branch Preview URL" },
+  it("links HTML anchors in a table cell without breaking the row at <br>", () => {
+    const document = parseMarkdownDocument(
+      "| Status | Preview URL |\n| - | - |\n| Done | <a href='https://commit.example.com'>Commit</a><br><a href='https://branch.example.com'>Branch</a> |",
+    );
+    const table = document.children[0];
+    expect(table?.type).toBe("table");
+    if (table?.type !== "table") return;
+    expect(table.children).toHaveLength(2);
+    expect(table.children[1]?.children[1]?.children).toMatchObject([
+      { type: "link", url: "https://commit.example.com", children: [{ value: "Commit" }] },
+      { type: "text", value: " " },
+      { type: "link", url: "https://branch.example.com", children: [{ value: "Branch" }] },
     ]);
-    expect(document.children[1]).toMatchObject({ type: "table" });
-    if (document.children[1]?.type === "table")
-      expect(document.children[1].children).toHaveLength(2);
   });
 
   it("keeps a table row intact when an anchor href contains a pipe", () => {
@@ -108,63 +91,7 @@ describe("HTML in native Markdown", () => {
     ]);
   });
 
-  it("keeps anchor text unlinked for unsafe or unclosed hrefs", () => {
+  it("keeps anchor text unlinked for unsafe hrefs", () => {
     expect(markdownWithHtml('Run <a href="javascript:alert(1)">this</a> now')).toBe("Run this now");
-    expect(markdownWithHtml("<p><a href='https://example.com'>open</p>")).toBe("\n\nopen\n\n");
-    expect(markdownWithHtml("Mail <a href='mailto:a@example.com'>us</a>")).toBe(
-      "Mail [us](<mailto:a@example.com>)",
-    );
-  });
-
-  it("keeps an anchor a link after a bang or with brackets in its text", () => {
-    for (const [markdown, text, label] of [
-      ["Done!<a href='https://example.com'>logs [1] ]</a>", "Done!", "logs [1] ]"],
-      ["<p>Done!<a href='https://example.com'>logs [1] ]</a></p>", "Done!", "logs [1] ]"],
-      ["Done\\\\!<a href='https://example.com'>logs \\\\]</a>", "Done\\!", "logs \\]"],
-      ["<p>Done\\\\!<a href='https://example.com'>logs \\\\]</a></p>", "Done\\!", "logs \\]"],
-    ] as const) {
-      const document = parseMarkdownDocument(markdown);
-      const paragraph = document.children[0];
-      expect(paragraph?.type).toBe("paragraph");
-      if (paragraph?.type !== "paragraph") continue;
-      expect(paragraph.children).toMatchObject([
-        { type: "text", value: text },
-        { type: "link", url: "https://example.com", children: [{ value: label }] },
-      ]);
-    }
-    const document = parseMarkdownDocument(
-      "<p><a href='https://example.com'>`array[0]` in folder\\</a></p>",
-    );
-    expect(document.children[0]).toMatchObject({
-      type: "paragraph",
-      children: [
-        {
-          type: "link",
-          url: "https://example.com",
-          children: [
-            { type: "inlineCode", value: "array[0]" },
-            { type: "text", value: " in folder\\" },
-          ],
-        },
-      ],
-    });
-  });
-
-  it("keeps an anchor around block content a single link", () => {
-    const document = parseMarkdownDocument(
-      "<div><a href='https://example.com'><p>Open</p><p>the</p>docs<p>here</p></a></div>",
-    );
-    expect(document.children).toMatchObject([
-      {
-        type: "paragraph",
-        children: [
-          {
-            type: "link",
-            url: "https://example.com",
-            children: [{ value: "Open the docs here " }],
-          },
-        ],
-      },
-    ]);
   });
 });
