@@ -135,8 +135,12 @@ Unauthenticated: 401.
 | `attention`                                       | Issue closed under a building run; a run holds a slot with nothing to move it; a thread may need archiving by hand. | The run finishes, or the issue is claimed again. |
 | `attention` (id `worktree:<path>`)                | A pass archived the live threads left on a stopped session's worktree that is gone or has no `.git`.                | The issue is claimed again.                      |
 | `attention` (id `low-disk`)                       | Free space is below `min_free_gib`; no run.                                                                         | A pass finds it at or above, or reads none.      |
-| `attention` (id `config-not-loaded:<owner/name>`) | A repo's project config has not loaded for 3 passes in a row; no issue or run.                                      | A pass loads it.                                 |
+| `attention` (id `config-not-loaded:<owner/name>`) | A repo's project config has not loaded, or its config or login could not be re-read (stale), for 3 passes in a row. | A pass loads both.                               |
 | `config`                                          | The machine config fails to load.                                                                                   | It loads.                                        |
 | `pass-errors`                                     | 3 passes in a row fail.                                                                                             | A pass succeeds.                                 |
 
 Dismissed items stay hidden until they clear and are raised again.
+
+### Calls GitHub never received
+
+A `gh` call that fails because GitHub never received it (a TLS handshake or a dial that failed) is tried up to 5 times, waiting 2, 5, 15 and 30 s plus up to a second of jitter. If a repo's config or login read still fails that way and an earlier pass loaded one, the pass runs on that last good copy and records `repo_config_stale` (`repo`, `what`: `config` or `login`, `message`) instead of `repo_skipped`. A 404, a parse error, or no earlier copy still skips the repo. Each stale pass counts toward the `config-not-loaded` item above. The gate's fetch uses HTTP/1.1 and is tried up to 3 times (5 s, then 15 s, plus jitter) when git reports a network error.
