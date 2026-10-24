@@ -19,7 +19,7 @@ import { workspaceRoutesOf } from "../layout/workspace-overlay-routes";
 import type { WorkspaceSelections } from "../../persistence/mobile-preferences";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentPresentations } from "../../state/presentation";
-import { environmentThreadShells } from "../../state/threads";
+import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import {
   rememberedSettingsPage,
   workspaceSelectionsIn,
@@ -78,15 +78,16 @@ function environmentRemoved(environmentId: string) {
 
 /**
  * A remembered chat is gone once its environment was removed, or once that environment's
- * threads have loaded without it. Before they load there is nothing to contradict it.
+ * snapshot has loaded without it. Before it loads there is nothing to contradict it.
  */
 export const workspaceSelectionCheck: WorkspaceSelectionCheck = {
   thread: (selection) => {
     if (environmentRemoved(selection.environmentId)) return false;
-    const threads = appAtomRegistry.get(
-      environmentThreadShells.environmentThreadIndexAtom(selection.environmentId as EnvironmentId),
-    );
-    return threads.size === 0 || threads.has(selection.threadId as ThreadId);
+    const environmentId = selection.environmentId as EnvironmentId;
+    if (!appAtomRegistry.get(threadEnvironment.snapshotAtom(environmentId))) return true;
+    return appAtomRegistry
+      .get(environmentThreadShells.environmentThreadIndexAtom(environmentId))
+      .has(selection.threadId as ThreadId);
   },
   pullRequest: (selection) => !environmentRemoved(selection.environmentId),
 };

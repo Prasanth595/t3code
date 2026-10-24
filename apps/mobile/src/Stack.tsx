@@ -123,8 +123,12 @@ import { SettingsNotificationsRouteScreen } from "./features/settings/SettingsNo
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
 import { SettingsThreadsRouteScreen } from "./features/settings/SettingsThreadsRouteScreen";
 import { SettingsEnvironmentFilterProvider } from "./features/settings/settings-environment-filter";
-import { settingsOpenIn } from "./features/settings/settings-navigation";
-import { WORKSPACE_OVERLAY_ROUTES } from "./features/layout/workspace-overlay-routes";
+import { openSettings, settingsOpenIn } from "./features/settings/settings-navigation";
+import { DEFAULT_SETTINGS_PAGE } from "./features/workspace/workspace-tab-navigation";
+import {
+  isWorkspaceOverlayRoute,
+  registerPresentedRoutes,
+} from "./features/layout/workspace-overlay-routes";
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
 import {
   SettingsLegalDocumentCloseHeaderButton,
@@ -143,7 +147,6 @@ import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { HORIZONTAL_FORM_SHEET_OPTIONS, formSheetDetents } from "./native/sheet-surface";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
 import { useComposerAttachmentUploadWorker } from "./state/composer-attachment-uploads";
-import { useSelectWorkspaceTab } from "./features/workspace/useSelectWorkspaceTab";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -467,7 +470,7 @@ const SETTINGS_SCREENS = {
 const THREAD_LINKING_PREFIX = "threads/:environmentId/:threadId";
 
 function workspaceLocationFromState(state: NavigationState) {
-  const routes = state.routes.filter((route) => !WORKSPACE_OVERLAY_ROUTES.has(route.name));
+  const routes = state.routes.filter((route) => !isWorkspaceOverlayRoute(route.name));
   const effectiveState =
     routes.length > 0 && routes.length !== state.routes.length
       ? ({ ...state, routes, index: routes.length - 1 } as NavigationState)
@@ -502,7 +505,7 @@ function RootStackLayout(props: {
   const settingsOpen = settingsOpenIn(
     props.state.routes
       .slice(0, props.state.index + 1)
-      .filter((route) => !WORKSPACE_OVERLAY_ROUTES.has(route.name)),
+      .filter((route) => !isWorkspaceOverlayRoute(route.name)),
   );
   const draftRoute = props.state.routes.findLast((route) => route.name === "Thread");
   const draftParams = (
@@ -1012,15 +1015,29 @@ function GuardedScreenLayout(props: {
 
 function ScreenRenderFallback(props: RenderFailureProps & { readonly routeName: string }) {
   const navigation = useNavigation();
-  const selectTab = useSelectWorkspaceTab();
   const exit = navigation.canGoBack()
     ? { label: "Go back", onPress: () => navigation.goBack() }
     : props.routeName === "Home"
-      ? { label: "Open settings", onPress: () => selectTab("settings") }
+      ? // Home itself failed, and the Settings list renders inside it; open a Settings page.
+        {
+          label: "Open settings",
+          onPress: () => openSettings(navigation, DEFAULT_SETTINGS_PAGE),
+        }
       : { label: "Return home", onPress: () => navigation.dispatch(StackActions.replace("Home")) };
 
   return <RenderFailureView {...props} exit={exit} />;
 }
+
+registerPresentedRoutes(
+  Object.entries(RootStackConfig.config.screens ?? {}).flatMap(([name, screen]) => {
+    const options = (screen as { readonly options?: unknown }).options;
+    const presentation =
+      options && typeof options === "object"
+        ? (options as { readonly presentation?: string }).presentation
+        : undefined;
+    return presentation !== undefined && presentation !== "card" ? [name] : [];
+  }),
+);
 
 export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navigator }) {
   const { width, height } = useWindowDimensions();
