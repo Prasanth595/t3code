@@ -485,8 +485,8 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
           ) : (
             <div className="flex size-[192px] shrink-0 items-center justify-center self-center rounded-xl border border-border/50 p-4 sm:self-start">
               <p className="text-center text-2xs text-muted-foreground/70">
-                This address only works on this device. Choose a network address to pair another
-                device.
+                Not showing a QR code because this address only works on this device. Use a network
+                address instead, or copy the link to use it here.
               </p>
             </div>
           )}
