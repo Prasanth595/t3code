@@ -31,6 +31,23 @@ describe("GitLab change request URLs", () => {
     expect(parse("https://gitlab.com/t3code/-/merge_requests/12")).toBeNull();
   });
 
+  it("recognizes a merge request path only before any query or fragment", () => {
+    expect(
+      definition.isChangeRequestReference("https://gitlab.com/g/p?x=/-/merge_requests/5"),
+    ).toBe(false);
+    expect(definition.isChangeRequestReference("https://gitlab.com/g/p#/-/merge_requests/5")).toBe(
+      false,
+    );
+    expect(
+      definition.isChangeRequestReference(
+        "https://code.acme.test/a/b/c/-/merge_requests/7?tab=diffs",
+      ),
+    ).toBe(true);
+    expect(
+      definition.isChangeRequestReference("http://git.internal/a/b/c/-/merge_requests/7#note_1"),
+    ).toBe(true);
+  });
+
   it("builds merge request URLs below the repository", () => {
     expect(
       definition.changeRequestUrl({
