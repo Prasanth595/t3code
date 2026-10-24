@@ -42,6 +42,7 @@ import {
   type Comment,
   type GitHubError,
   type IssueDetail,
+  type OpenPullRequest,
   type PullRequest,
 } from "../tracker/github.ts";
 import {
@@ -265,6 +266,8 @@ const statusOf = (
 interface World {
   issue: IssueDetail;
   pr: PullRequest | null;
+  /** The open pull requests GitHub lists from each branch. */
+  onHead: Record<string, Array<OpenPullRequest>>;
   /** Read at each call, so a test can move the session on between two calls. */
   status: () => ThreadStatus | ThreadNotFoundError | SessionsError;
   thread: Thread | ThreadNotFoundError | SessionsError;
@@ -365,6 +368,7 @@ const rigFor = (
   const world: World = {
     issue: issueDetail("building", ["rawphp"]),
     pr: null,
+    onHead: {},
     status: () => statusOf("completed", DONE_MESSAGE),
     thread: { worktreePath: "/t3/wt", branch: "t3code/abc", archived: false },
     textCheck: "unchanged",
@@ -389,7 +393,10 @@ const rigFor = (
       return Effect.succeed(world.issue);
     },
     closedBy: () => Effect.succeed(null),
-    openPullRequestsOnHead: () => Effect.succeed([]),
+    openPullRequestsOnHead: (branch) => {
+      reads.push(`openPullRequestsOnHead ${branch}`);
+      return Effect.succeed(world.onHead[branch] ?? []);
+    },
     openPullRequestsClosing: () => Effect.succeed([]),
     pullRequest: (n) => {
       gh.push(`pullRequest ${n}`);
@@ -825,6 +832,33 @@ describe("interrupted: a resume", () => {
     }),
   );
 
+  it.effect("records the pull request a session that ended badly left on its branch", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.onHead = {
+        "t3code/abc": [
+          {
+            number: 12,
+            url: URL12,
+            headRef: "t3code/abc",
+            baseRef: "main",
+            crossRepository: false,
+            author: "rawphp",
+          },
+        ],
+      };
+      yield* failedAndSaid(rig);
+      clearCalls(rig);
+      const outcome = yield* decide(rig, lone());
+      const reason = joined("the session run ended as failed", "it crashed");
+      assert.deepStrictEqual(outcome, { kind: "stuck", reason });
+      assert.deepStrictEqual(
+        linesOf(rig),
+        stuckEvents([{ event: "pr_opened", data: { pr: 12, url: URL12 } }], reason),
+      );
+    }),
+  );
+
   it.effect("sends a cancelled session with T3 healthy to stuck as cancelled", () =>
     Effect.gen(function* () {
       const rig = rigFor();
@@ -966,6 +1000,52 @@ describe("interrupted: the cap", () => {
         kind: "stuck",
         reason: THREAD_GONE,
       });
+    }),
+  );
+
+  it.effect("used up records the pull request a gone thread left, by the ledger's branch", () =>
+    Effect.gen(function* () {
+      // The launch line named no branch; the stuck line of an earlier stop did.
+      const rig = rigFor([
+        ...STARTED.map((event) =>
+          event.event === "session_launched"
+            ? { event: "session_launched" as const, data: { ...event.data, branch: null } }
+            : event,
+        ),
+        {
+          event: "session_interrupted",
+          data: {
+            resumes: 1,
+            relaunch: false,
+            run_ordinal: 1,
+            branch: "t3code/left",
+            t3_error: null,
+            ended_in_pass: 2,
+          },
+        },
+        { event: "step_changed", data: { step: "interruption-sent 1" } },
+      ]);
+      withResumeLimit(rig, 1);
+      rig.world.onHead = {
+        "t3code/left": [
+          {
+            number: 12,
+            url: URL12,
+            headRef: "t3code/left",
+            baseRef: "main",
+            crossRepository: false,
+            author: "rawphp",
+          },
+        ],
+      };
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      assert.deepStrictEqual(yield* decide(rig, afterOutage()), {
+        kind: "stuck",
+        reason: THREAD_GONE,
+      });
+      assert.ok(rig.reads.includes("openPullRequestsOnHead t3code/left"), rig.reads.join("\n"));
+      assert.ok(linesOf(rig).some((line) => line.event === "pr_opened"));
     }),
   );
 });

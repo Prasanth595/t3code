@@ -3211,6 +3211,65 @@ describe("advance: the pull request a session leaves when it stops or asks", () 
     }),
   );
 
+  it.effect("is recorded at the time limit from the branch T3 made the worktree on", () =>
+    Effect.gen(function* () {
+      // The launch line recorded the worktree; the session pushed its own `t3/<hash>`.
+      const rig = rigFor(
+        STARTED.map((event) =>
+          event.event === "session_launched"
+            ? {
+                event: "session_launched" as const,
+                data: { ...event.data, worktree: LAUNCH_WORKTREE },
+              }
+            : event,
+        ),
+        { ms: startedAtT0 },
+      );
+      rig.world.thread = { worktreePath: LAUNCH_WORKTREE, branch: "t3code/abc", archived: false };
+      rig.world.onHead = { "t3/2e8db933": [draftOn("t3/2e8db933")] };
+      yield* stopAtTheLimit(rig);
+      assert.ok(linesOf(rig).some((line) => line.event === "pr_opened"));
+      assert.deepStrictEqual(rig.reads, [
+        "openPullRequestsOnHead t3code/abc",
+        "openPullRequestsOnHead t3/2e8db933",
+      ]);
+    }),
+  );
+
+  it.effect("is recorded when the run is stopped by hand", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, STOP_REQUESTED]);
+      rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "stuck", reason: STOPPED_BY_HAND });
+      assert.ok(linesOf(rig).some((line) => line.event === "pr_opened"));
+    }),
+  );
+
+  it.effect("is recorded when the watch stops the run on a changed text", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.textCheck = "changed";
+      rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
+      assert.strictEqual((yield* watch(rig.ctx, rig.run)).kind, "stopped");
+      assert.ok(linesOf(rig).some((line) => line.event === "pr_opened"));
+    }),
+  );
+
+  it.effect("is recorded when the reminder's thread is gone", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.onHead = { "t3code/abc": [draftOn("t3code/abc")] };
+      setEnded(rig, 1, WORKING_MESSAGE);
+      rig.world.sendFailure = {
+        error: new ThreadNotFoundError({ threadId: "thread-1" }),
+        delivered: false,
+      };
+      const outcome = yield* advanceIn(rig);
+      assert.strictEqual(outcome.kind, "stuck");
+      assert.ok(linesOf(rig).some((line) => line.event === "pr_opened"));
+    }),
+  );
+
   it.effect("is recorded once", () =>
     Effect.gen(function* () {
       const rig = rigFor([...STARTED, PR_OPENED]);

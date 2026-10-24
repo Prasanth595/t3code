@@ -2440,6 +2440,40 @@ describe("start: the resume onto an open pull request of an earlier attempt", ()
     }),
   );
 
+  it.effect("continues the newest attempt's pull request when two attempts recorded one each", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedEndedWithPr(dataDir, { outcome: "needs-info" });
+      // Attempt 2 recorded #13 on t3code/second.
+      const ledger = Ledger.create(dataDir, run7n(2), { clock: () => T0 - 900 });
+      try {
+        for (const { line, cause: why } of startedLinesOn("t3code/second")) {
+          ledger.append(line, why);
+        }
+        ledger.append(
+          {
+            event: "pr_opened",
+            data: { pr: 13, url: "https://github.com/rawphp/softfac/pull/13" },
+          },
+          makeCause("advance", "pr-opened"),
+        );
+        ledger.finish("stuck", null, null, makeCause("advance", "session-stuck"));
+      } finally {
+        ledger.close();
+      }
+      const { tracker, calls } = fakeTracker({
+        pulls: {
+          12: openDraft("t3code/abc"),
+          13: { ...openDraft("t3code/second"), number: 13 },
+        },
+      });
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assert.strictEqual(t3.launchRequests[0]!.baseRef, "t3code/second");
+      assert.deepStrictEqual(prLookups(calls), ["pullRequest 13"]);
+    }),
+  );
+
   it.effect(
     "passes over the ledger's pull request when it is not on this base, from a fork, or on a branch a command cannot be handed",
     () =>
