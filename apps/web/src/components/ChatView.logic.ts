@@ -966,7 +966,7 @@ export function recallCheckoutIsRepo(
     : sessionCheckoutIsRepo.get(checkoutIsRepoKey(environmentId, cwd));
 }
 
-type DraftSendState = {
+export type DraftSendState = {
   readonly sendInFlight: { current: boolean };
   readonly uncertainSubmissions: { current: Map<string, ThreadId> };
   consumers: number;
@@ -977,6 +977,10 @@ type DraftSendState = {
 // A route's entry is dropped once nothing holds it and neither is pending.
 const draftSendStateByRouteKey = new Map<string, DraftSendState>();
 
+/**
+ * The route's registered state, or a new one that only `retainDraftSendState`
+ * registers, so a render React abandons before commit leaves no entry behind.
+ */
 export function draftSendState(routeKey: string): DraftSendState {
   const existing = draftSendStateByRouteKey.get(routeKey);
   if (existing) return existing;
@@ -994,7 +998,6 @@ export function draftSendState(routeKey: string): DraftSendState {
     uncertainSubmissions: { current: new Map() },
     consumers: 0,
   };
-  draftSendStateByRouteKey.set(routeKey, state);
   return state;
 }
 

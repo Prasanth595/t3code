@@ -29,7 +29,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   boundAttachmentIds,
   type ComposerSendSnapshot,
-  draftSendState,
+  type DraftSendState,
   type makeThreadErrorSetter,
   releaseDraftSendStateIfIdle,
   retainDraftSendState,
@@ -48,6 +48,7 @@ import type { useLocalDispatchState } from "./useLocalDispatchState";
 interface MultipleModelSendInput {
   readonly environmentId: EnvironmentId;
   readonly routeThreadKey: string;
+  readonly routeSendState: DraftSendState;
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
   readonly draftId: DraftId | null;
   readonly composerDraftTarget: ComposerThreadTarget;
@@ -68,6 +69,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
   const {
     environmentId,
     routeThreadKey,
+    routeSendState,
     currentRouteThreadKeyRef,
     draftId,
     composerDraftTarget,
@@ -84,7 +86,6 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
   });
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const fanoutSelectionsAtom = draftFanoutSelectionsAtom(routeThreadKey);
-  const routeSendState = draftSendState(routeThreadKey);
   const { sendInFlight: sendInFlightRef, uncertainSubmissions: uncertainSubmissionsRef } =
     routeSendState;
 

@@ -15,13 +15,14 @@ import { newMessageId } from "~/lib/utils";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
-import { draftSendState, type makeThreadErrorSetter } from "../ChatView.logic";
+import type { DraftSendState, makeThreadErrorSetter } from "../ChatView.logic";
 import type { useTimelineFollow } from "./useTimelineFollow";
 import type { useUsageLimitsPanel } from "./useUsageLimitsPanel";
 
 interface ComposerResumeInput {
   readonly environmentId: EnvironmentId;
   readonly routeThreadKey: string;
+  readonly routeSendState: DraftSendState;
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
   readonly activeThread: EnvironmentThreadShell | undefined;
   readonly resumableRunId: RunId | null;
@@ -55,6 +56,7 @@ export function useComposerResume(input: ComposerResumeInput) {
   const {
     environmentId,
     routeThreadKey,
+    routeSendState,
     currentRouteThreadKeyRef,
     activeThread,
     resumableRunId,
@@ -83,7 +85,7 @@ export function useComposerResume(input: ComposerResumeInput) {
     () => new Set(),
   );
   const isResuming = resumingThreadKeys.has(routeThreadKey);
-  const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
+  const { sendInFlight: sendInFlightRef } = routeSendState;
 
   const onResume = async () => {
     if (

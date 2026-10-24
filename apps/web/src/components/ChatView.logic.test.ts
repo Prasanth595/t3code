@@ -697,6 +697,17 @@ describe("route send state", () => {
     expect(countDraftSendStatesForTests()).toBe(before);
   });
 
+  it("registers nothing for a render that never commits", () => {
+    const before = countDraftSendStatesForTests();
+    draftSendState("route-abandoned");
+    expect(countDraftSendStatesForTests()).toBe(before);
+
+    const committed = mountRoute("route-abandoned");
+    expect(draftSendState("route-abandoned")).toBe(committed.state);
+    committed.unmount();
+    expect(countDraftSendStatesForTests()).toBe(before);
+  });
+
   it("keeps the same state across a remount while a send is in flight", () => {
     const first = mountRoute("route-in-flight");
     first.state.sendInFlight.current = true;
