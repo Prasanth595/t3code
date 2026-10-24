@@ -280,34 +280,45 @@ export function useQueuedRunEdit(input: {
     );
   });
 
-  // Exit edit mode when the edited run leaves the queue (it started, or was
-  // cancelled from another client). A dirty edit moves into the thread's own
-  // draft when that draft is empty; otherwise it is dropped with a toast.
+  // Recover retained edits too: their run may have left the queue while this
+  // thread was unmounted. A dirty edit uses the same keep-or-discard path.
+  const runs = serverProjection?.runs;
   useEffect(() => {
-    if (editing === null || activeThreadId !== editing.threadId) return;
-    if (serverProjection === null) return;
-    const run = serverProjection.runs.find((candidate) => candidate.id === editing.runId);
-    if (run !== undefined && run.status === "queued") return;
-    const recovery = recoverQueuedMessageEdit({
-      editTarget: queuedEditDraftTarget(routeThreadRef, editing.runId),
-      threadTarget: threadDraftTarget,
-      originalText: editing.originalText,
-    });
-    if (recovery !== "clean") {
-      toastManager.add(
-        stackedThreadToast({
-          type: recovery === "kept" ? "info" : "warning",
-          title: "Queued message is no longer queued",
-          description:
-            recovery === "kept"
-              ? "Your unsaved edit was kept in the composer."
-              : "Your unsaved edit was discarded.",
-        }),
-      );
+    if (activeThreadId === null || runs === undefined) return;
+    const prefix = `queued-edit:${scopedThreadKey(routeThreadRef)}:`;
+    const queuedTargets = new Set(
+      runs
+        .filter((run) => run.status === "queued")
+        .map((run) => queuedEditDraftTarget(routeThreadRef, run.id)),
+    );
+    const drafts = useComposerDraftStore.getState().draftsByThreadKey;
+    for (const [key, draft] of Object.entries(drafts)) {
+      if (!key.startsWith(prefix) || draft.queuedMessageEdit === undefined) continue;
+      const editTarget = DraftId.make(key);
+      if (queuedTargets.has(editTarget)) continue;
+      const recovery = recoverQueuedMessageEdit({
+        editTarget,
+        threadTarget: threadDraftTarget,
+        originalText: draft.queuedMessageEdit.originalText,
+      });
+      if (recovery !== "clean") {
+        toastManager.add(
+          stackedThreadToast({
+            type: recovery === "kept" ? "info" : "warning",
+            title: "Queued message is no longer queued",
+            description:
+              recovery === "kept"
+                ? "Your unsaved edit was kept in the composer."
+                : "Your unsaved edit was discarded.",
+          }),
+        );
+      }
+      if (editing !== null && editTarget === queuedEditDraftTarget(routeThreadRef, editing.runId)) {
+        // oxlint-disable-next-line react/set-state-in-effect -- Leaving edit mode follows recovery and its notification after commit.
+        setEditing(null);
+      }
     }
-    // oxlint-disable-next-line react/set-state-in-effect -- Leaving edit mode follows the draft recovery and toast above, which must run once after commit.
-    setEditing(null);
-  }, [activeThreadId, editing, routeThreadRef, serverProjection, threadDraftTarget]);
+  }, [activeThreadId, editing, routeThreadRef, runs, threadDraftTarget]);
 
   /**
    * Saves the composer content into the queued message being edited. Reports

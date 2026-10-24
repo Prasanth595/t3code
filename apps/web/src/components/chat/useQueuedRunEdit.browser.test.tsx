@@ -1,10 +1,11 @@
 import { EnvironmentId, MessageId, RunId, ThreadId } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useRef } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { render } from "../../../test/render";
 import {
   partializeComposerDraftStoreState,
+  DraftId,
   useComposerDraftStore,
   useComposerThreadDraft,
 } from "../../composerDraftStore";
@@ -18,7 +19,13 @@ vi.mock(import("../../state/use-atom-command"), () => ({
 }));
 vi.mock(import("../../assets/assetUrls"), () => ({ useAssetUrls: () => [] }));
 
-function Editor({ text = "Original message" }: { readonly text?: string }) {
+function Editor({
+  text = "Original message",
+  queueState = null,
+}: {
+  readonly text?: string;
+  readonly queueState?: "queued" | "running" | "missing" | null;
+}) {
   const environmentId = EnvironmentId.make("environment:queue-edit");
   const threadId = ThreadId.make("thread:queue-edit");
   const threadRef = scopeThreadRef(environmentId, threadId);
@@ -28,7 +35,17 @@ function Editor({ text = "Original message" }: { readonly text?: string }) {
     routeThreadRef: threadRef,
     threadDraftTarget: threadRef,
     activeThreadId: threadId,
-    serverProjection: null,
+    // This hook only reads run membership and message context from the projection.
+    serverProjection:
+      queueState === null
+        ? null
+        : ({
+            runs:
+              queueState === "missing"
+                ? []
+                : [{ id: RunId.make("run:queued"), status: queueState }],
+            messages: [],
+          } as unknown as NonNullable<Parameters<typeof useQueuedRunEdit>[0]["serverProjection"]>),
     promptRef,
     composerRef: { current: null },
   });
@@ -73,11 +90,16 @@ function Editor({ text = "Original message" }: { readonly text?: string }) {
   );
 }
 
+function setup() {
+  commands.save.mockClear();
+  useComposerDraftStore.setState({ draftsByThreadKey: {}, draftThreadsByThreadKey: {} });
+}
+
 it.each(["Updated message", ""])(
   "restores the unsaved edit %j and attachment removals after leaving the thread",
   async (text) => {
-    commands.save.mockClear();
-    useComposerDraftStore.setState({ draftsByThreadKey: {}, draftThreadsByThreadKey: {} });
+    setup();
+    // Navigation is simulated by rerendering, without route consumers.
     await using screen = await render(<Editor />, { router: false });
     await screen.getByRole("textbox", { name: "Message" }).fill("Separate draft");
     await screen.getByRole("button", { name: "Edit queued message" }).click();
@@ -126,7 +148,8 @@ it.each(["Updated message", ""])(
 );
 
 it("reopens an untouched edit with the queued message saved by another client", async () => {
-  useComposerDraftStore.setState({ draftsByThreadKey: {}, draftThreadsByThreadKey: {} });
+  setup();
+  // Navigation is simulated by rerendering, without route consumers.
   await using screen = await render(<Editor />, { router: false });
   await screen.getByRole("button", { name: "Edit queued message" }).click();
   await screen.rerender(<div>Another thread</div>);
@@ -135,4 +158,90 @@ it("reopens an untouched edit with the queued message saved by another client", 
   await expect
     .element(screen.getByRole("textbox", { name: "Message" }))
     .toHaveValue("Updated message");
+});
+
+it.each(["running", "missing"] as const)(
+  "recovers a retained edit when its run became %s while the user was away",
+  async (queueState) => {
+    setup();
+    // Navigation is simulated by rerendering, without route consumers.
+    await using screen = await render(<Editor />, { router: false });
+    await screen.getByRole("button", { name: "Edit queued message" }).click();
+    await screen.getByRole("textbox", { name: "Message" }).fill("Keep this unsaved edit");
+    await screen.rerender(<div>Another thread</div>);
+    await screen.rerender(<Editor />);
+    await expect.element(screen.getByRole("textbox", { name: "Message" })).toHaveValue("");
+    await screen.rerender(<Editor queueState={queueState} />);
+    await expect
+      .element(screen.getByRole("textbox", { name: "Message" }))
+      .toHaveValue("Keep this unsaved edit");
+  },
+);
+
+it("keeps a separate composer draft and leaves other threads' retained edits alone", async () => {
+  setup();
+  const otherRef = scopeThreadRef(
+    EnvironmentId.make("environment:queue-edit"),
+    ThreadId.make("thread:other"),
+  );
+  const otherTarget = DraftId.make(`queued-edit:${scopedThreadKey(otherRef)}:run:other`);
+  const store = useComposerDraftStore.getState();
+  store.setPrompt(otherTarget, "Other thread edit");
+  store.setQueuedMessageEdit(otherTarget, {
+    messageId: MessageId.make("message:other"),
+    originalText: "Original",
+    removedAttachmentIds: [],
+  });
+  // Navigation is simulated by rerendering, without route consumers.
+  await using screen = await render(<Editor />, { router: false });
+  await screen.getByRole("textbox", { name: "Message" }).fill("Separate draft");
+  await screen.getByRole("button", { name: "Edit queued message" }).click();
+  await screen.getByRole("textbox", { name: "Message" }).fill("Unsaved edit");
+  await screen.rerender(<div>Another thread</div>);
+  await screen.rerender(<Editor queueState="running" />);
+  await expect
+    .element(screen.getByRole("textbox", { name: "Message" }))
+    .toHaveValue("Separate draft");
+  const editRef = scopeThreadRef(
+    EnvironmentId.make("environment:queue-edit"),
+    ThreadId.make("thread:queue-edit"),
+  );
+  expect(
+    store.getComposerDraft(DraftId.make(`queued-edit:${scopedThreadKey(editRef)}:run:queued`)),
+  ).toBeNull();
+  expect(store.getComposerDraft(otherTarget)?.prompt).toBe("Other thread edit");
+});
+
+it("retains the edit while its run is still queued", async () => {
+  setup();
+  // Navigation is simulated by rerendering, without route consumers.
+  await using screen = await render(<Editor queueState="queued" />, { router: false });
+  await screen.getByRole("button", { name: "Edit queued message" }).click();
+  await screen.getByRole("textbox", { name: "Message" }).fill("Still queued");
+  await screen.rerender(<div>Another thread</div>);
+  await screen.rerender(<Editor queueState="queued" />);
+  await expect.element(screen.getByRole("textbox", { name: "Message" })).toHaveValue("");
+  await screen.getByRole("button", { name: "Edit queued message" }).click();
+  await expect
+    .element(screen.getByRole("textbox", { name: "Message" }))
+    .toHaveValue("Still queued");
+});
+
+it("does not copy an untouched queued message back into the composer", async () => {
+  setup();
+  // Navigation is simulated by rerendering, without route consumers.
+  await using screen = await render(<Editor />, { router: false });
+  await screen.getByRole("button", { name: "Edit queued message" }).click();
+  await screen.rerender(<div>Another thread</div>);
+  await screen.rerender(<Editor queueState="running" />);
+  await expect.element(screen.getByRole("textbox", { name: "Message" })).toHaveValue("");
+  const ref = scopeThreadRef(
+    EnvironmentId.make("environment:queue-edit"),
+    ThreadId.make("thread:queue-edit"),
+  );
+  expect(
+    useComposerDraftStore
+      .getState()
+      .getComposerDraft(DraftId.make(`queued-edit:${scopedThreadKey(ref)}:run:queued`)),
+  ).toBeNull();
 });
