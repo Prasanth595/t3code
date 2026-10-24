@@ -26,7 +26,7 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const host = yield* Effect.acquireRelease(
             createMuseSdkHostEffect({ ...input, readOnly: true, startupTimeoutMs: 5_000 }),
-            (host) => Effect.promise(() => host.close()),
+            (host) => Effect.tryPromise(() => host.close()).pipe(Effect.ignore),
             { interruptible: true },
           );
           return host.initializeResult.museHome;
