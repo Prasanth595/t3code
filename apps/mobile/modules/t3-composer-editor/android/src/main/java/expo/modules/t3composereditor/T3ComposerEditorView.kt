@@ -21,6 +21,7 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.KeyEvent
 import android.view.ViewGroup
+import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputConnectionWrapper
@@ -664,8 +665,20 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
         afterLength: Int
       ): Boolean = deleteAdjacentChip(beforeLength, afterLength) ||
         super.deleteSurroundingTextInCodePoints(beforeLength, afterLength)
+      override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean =
+        interceptKeyboardPaste(text) || super.commitText(text, newCursorPosition)
     }
   }
+
+  // Keyboards insert clipboard text, such as Gboard's clipboard strip, with one commitText.
+  // A composed word or a single key is typing, which stays native even at the input limit.
+  private fun interceptKeyboardPaste(text: CharSequence?): Boolean = !readOnly &&
+    textPasteThresholdBytes > 0 &&
+    !text.isNullOrEmpty() &&
+    BaseInputConnection.getComposingSpanStart(editableText) < 0 &&
+    Character.codePointCount(text, 0, text.length) > 1 &&
+    interceptPaste(text.toString())
+
   override fun onSelectionChanged(selStart: Int, selEnd: Int) {
     super.onSelectionChanged(selStart, selEnd)
     selectionListener?.invoke(selStart, selEnd)
@@ -731,6 +744,10 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
   private fun pasteInterceptedText(clip: ClipData?, foldLargeText: Boolean = true): Boolean {
     val text = if (textPasteThresholdBytes > 0) clip?.plainText() else null
     if (text.isNullOrEmpty()) return false
+    return interceptPaste(text, foldLargeText)
+  }
+
+  private fun interceptPaste(text: String, foldLargeText: Boolean = true): Boolean {
     val start = minOf(selectionStart, selectionEnd).coerceIn(0, length())
     val end = maxOf(selectionStart, selectionEnd).coerceIn(start, length())
     val exceedsInputLimit = length().toLong() - (end - start) + text.length > maxInputChars
