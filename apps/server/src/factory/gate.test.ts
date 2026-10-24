@@ -4,12 +4,15 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import { describe } from "vite-plus/test";
 
 import {
+  FETCH_ATTEMPTS,
+  FETCH_RETRY_DELAYS_MS,
   FactoryGate,
   GateCommandSpawnError,
   GateRecordError,
@@ -2028,12 +2031,57 @@ describe("retrying a fetch the network dropped", () => {
   const options = (fake: FakeGit) =>
     fake.options({ remoteBase: "https://example.test", fetchRetryDelaysMs: [0, 0] });
 
-  it.live("a fetch that fails once on HTTP/2 framing is tried again and the checkout goes on", () =>
-    usingFakeGit("co-fetch-flaky", failingFetch(1, HTTP2_FRAMING), (fake) =>
+  // The issue pins this schedule: three fetches, waiting about 5 s and then about 15 s.
+  it("tries a fetch three times, waiting 5 s and then 15 s between", () => {
+    assert.strictEqual(FETCH_ATTEMPTS, 3);
+    assert.deepStrictEqual([...FETCH_RETRY_DELAYS_MS], [5_000, 15_000]);
+  });
+
+  // What the retry log line names is the first phrase of TRANSIENT_FETCH in the stderr.
+  const flaky = [
+    [HTTP2_FRAMING, "RPC failed"],
+    [
+      "fatal: unable to access 'https://github.com/x/y.git/': Could not resolve host: github.com",
+      "Could not resolve host",
+    ],
+    ["fatal: early EOF", "early EOF"],
+  ] as const;
+
+  for (const [stderr, phrase] of flaky) {
+    it.live(`a fetch that fails once on "${phrase}" is tried again, and the retry is logged`, () =>
+      usingFakeGit("co-fetch-flaky", failingFetch(1, stderr), (fake) =>
+        Effect.gen(function* () {
+          const logs: Array<string> = [];
+          const capture = Logger.make(({ message }) => {
+            logs.push(String(Array.isArray(message) ? message[0] : message));
+          });
+          const made = yield* checkoutWithFake(fake, options(fake)).pipe(
+            Effect.provide(Logger.layer([capture], { mergeWithExisting: false })),
+          );
+          assert.strictEqual(made.head, SOME_SHA);
+          assert.strictEqual(fake.file("count").trim(), "2");
+          const retries = logs.filter((line) => line.includes("attempt"));
+          assert.strictEqual(retries.length, 1, logs.join("\n"));
+          assert.match(
+            retries[0]!,
+            new RegExp(
+              `^\`git fetch .*\` attempt 1 of 3 failed \\(${phrase}\\); trying again in \\d+\\.\\d s$`,
+            ),
+          );
+        }),
+      ),
+    );
+  }
+
+  it.live("the wait before the second fetch is slept", () =>
+    usingFakeGit("co-fetch-wait", failingFetch(1, HTTP2_FRAMING), (fake) =>
       Effect.gen(function* () {
-        const made = yield* checkoutWithFake(fake, options(fake));
-        assert.strictEqual(made.head, SOME_SHA);
-        assert.strictEqual(fake.file("count").trim(), "2");
+        const started = yield* Clock.currentTimeMillis;
+        yield* checkoutWithFake(
+          fake,
+          fake.options({ remoteBase: "https://example.test", fetchRetryDelaysMs: [300, 0] }),
+        );
+        assert.isAtLeast((yield* Clock.currentTimeMillis) - started, 300);
       }),
     ),
   );
