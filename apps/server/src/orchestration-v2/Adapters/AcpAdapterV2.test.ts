@@ -2438,7 +2438,7 @@ describe("AcpAdapterV2", () => {
         cwd: process.cwd(),
       });
       const modelSelection = { instanceId, model: "default" } as const;
-      const sessionScope = yield* Scope.make();
+      const sessionScope = yield* Scope.fork(yield* Scope.Scope);
       const runtime = yield* adapter
         .openSession({
           threadId,
