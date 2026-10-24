@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off - Playwright callbacks run outside the Effect runtime.
 
 import {
-  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   type BrowserRecordingFrameRate,
+  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   type PreviewAutomationClickInput,
   type PreviewAutomationConsoleEntry,
   type PreviewAutomationDragInput,

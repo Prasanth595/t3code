@@ -1,4 +1,8 @@
-import { AuthPreviewOperateScope, type BrowserProfile } from "@t3tools/contracts";
+import {
+  AuthPreviewOperateScope,
+  type BrowserProfile,
+  type BrowserRecordingFrameRate,
+} from "@t3tools/contracts";
 import { useEffect } from "react";
 
 import { isElectron } from "~/env";
@@ -13,12 +17,15 @@ const selectProfiles = (settings: { readonly browserProfiles: ReadonlyArray<Brow
   settings.browserProfiles;
 const selectDefaultProfileId = (settings: { readonly browserDefaultProfileId: string }) =>
   settings.browserDefaultProfileId;
+const selectRecordingFrameRate = (settings: {
+  readonly browserRecordingFrameRate: BrowserRecordingFrameRate;
+}) => settings.browserRecordingFrameRate;
 
 export function BrowserProfileReporter() {
   const hydrated = useClientSettingsHydrated();
   const profiles = useClientSettings(selectProfiles);
   const defaultProfileId = useClientSettings(selectDefaultProfileId);
-  const recordingFrameRate = useClientSettings((settings) => settings.browserRecordingFrameRate);
+  const recordingFrameRate = useClientSettings(selectRecordingFrameRate);
   const { environments } = useEnvironments();
   const serverConfigs = useServerConfigs();
   const operable = useEnvironmentsWithScope(environments, AuthPreviewOperateScope);

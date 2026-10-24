@@ -5,7 +5,6 @@ import {
   BUILT_IN_BROWSER_PROFILES,
   DEFAULT_BROWSER_PROFILE_ID,
   DEFAULT_BROWSER_RECORDING_FRAME_RATE,
-  type BrowserRecordingFrameRate,
   FILL_PREVIEW_VIEWPORT,
   findBrowserProfile,
   INCOGNITO_BROWSER_PROFILE_ID,
@@ -1315,8 +1314,9 @@ const make = Effect.gen(function* () {
     readonly profiles: ReadonlyArray<BrowserProfile>;
     readonly defaultProfileId: string;
   } | null = null;
-  // Retain the last explicit preference even after its client disconnects.
-  let recordingFrameRate: BrowserRecordingFrameRate = DEFAULT_BROWSER_RECORDING_FRAME_RATE;
+  // Agent recordings encode here, so they need the client's Browser recording frame rate. The
+  // last report outlives the client, which lets agents record while no client is connected.
+  let recordingFrameRate = DEFAULT_BROWSER_RECORDING_FRAME_RATE;
 
   const reportProfiles: ServerBrowser["Service"]["reportProfiles"] = (input) =>
     Effect.sync(() => {
