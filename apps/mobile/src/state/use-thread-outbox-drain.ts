@@ -183,8 +183,11 @@ function findCreationProject(
   );
 }
 
+// A refused settings change stays refused under its command id, so each retry
+// needs its own, even after a remount: the server can refuse one while
+// background work runs.
 function settingsCommandId(message: QueuedThreadMessage, setting: string): CommandId {
-  return CommandId.make(`${message.commandId}:${setting}`);
+  return CommandId.make(`${message.commandId}:${setting}:${randomHex(8)}`);
 }
 
 export async function prepareQueuedMessageAttachments(

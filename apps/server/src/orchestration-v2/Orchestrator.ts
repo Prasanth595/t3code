@@ -917,6 +917,9 @@ function lastDeliveredRunForProviderThread(
   );
 }
 
+const BACKGROUND_WORK_REFUSAL =
+  "Background work is still running in this thread, and this change would end it. Try again once it finishes, or stop the thread first.";
+
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
   const checkpointService = yield* CheckpointServiceV2;
   const commandPolicy = yield* CommandPolicyV2;
@@ -1332,8 +1335,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : cause;
     const failure = makeProviderFailure({
       cause: failureCause,
+      // Orchestrator refusals carry their user-facing reason as text.
+      ...(typeof failureCause === "string" ? { message: failureCause } : {}),
       code: handoffUnsupported ? "context_handoff_unsupported" : "queued_start_failed",
-      class: handoffUnsupported ? "validation_error" : "unknown",
+      // Background work refuses only this start; the queue behind it may run.
+      class:
+        handoffUnsupported || failureCause === BACKGROUND_WORK_REFUSAL
+          ? "validation_error"
+          : "unknown",
     });
     yield* writeSystemEvents([
       ...(attempt !== undefined && rootNode !== undefined
@@ -1972,6 +1981,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           session.status !== "stopped" &&
           session.status !== "error",
       );
+      // Fails this run rather than holding the queue: nothing would restart it
+      // when the work ends, and the user can send again then (#16000).
+      if (
+        sessionsToDetach.length > 0 &&
+        (yield* hasLiveBackgroundWork(
+          threadId,
+          new Set(sessionsToDetach.map((session) => session.id)),
+        ))
+      ) {
+        return yield* backgroundWorkRefusal({ commandId, type: "message.dispatch" });
+      }
       yield* writeSystemEvents(
         [
           ...(selectionChanged
@@ -2650,6 +2670,53 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  const hasLiveBackgroundWork = Effect.fnUntraced(function* (
+    threadId: ThreadId,
+    sessionIds: ReadonlySet<ProviderSessionId>,
+  ) {
+    let providerThreads: ReadonlyArray<OrchestrationV2ProviderThread> | undefined;
+    for (const sessionId of sessionIds) {
+      const session = yield* providerSessions
+        .get(sessionId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      if (Option.isNone(session)) continue;
+      const { hasPendingBackgroundWork, hasPendingBackgroundWorkForThread, providerSession } =
+        session.value;
+      // A pooled session can serve other threads, so only this thread's work
+      // counts. An exclusive session is all this thread's: ask the whole
+      // session, because Claude's thread probe sees shells but not its
+      // native background Agents.
+      const pooled =
+        providerSession.capabilities.sessions.supportsMultipleProviderThreadsPerSession;
+      const probes =
+        hasPendingBackgroundWorkForThread === undefined ||
+        (!pooled && hasPendingBackgroundWork !== undefined)
+          ? hasPendingBackgroundWork === undefined
+            ? []
+            : [hasPendingBackgroundWork]
+          : (providerThreads ??= (yield* projectionStore.getThreadRecords(threadId, [
+              "providerThreads",
+            ])).providerThreads)
+              .filter((thread) => thread.providerSessionId === sessionId)
+              .map(hasPendingBackgroundWorkForThread);
+      for (const probe of probes) {
+        // A failed probe cannot confirm that the work ended.
+        if (yield* probe.pipe(Effect.catchCause(() => Effect.succeed(true)))) return true;
+      }
+    }
+    return false;
+  });
+
+  const backgroundWorkRefusal = (command: {
+    readonly commandId: CommandId;
+    readonly type: string;
+  }) =>
+    new OrchestratorDispatchError({
+      commandId: command.commandId,
+      commandType: command.type,
+      cause: BACKGROUND_WORK_REFUSAL,
+    });
+
   const dispatchThreadMutation = Effect.fn("orchestrationV2.dispatch.threadMutation")(function* (
     command: Extract<
       OrchestrationV2ServerCommand,
@@ -2989,6 +3056,43 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               .pipe(mapDispatchError(command));
           })
         : null;
+
+    // Settle joins archive here: both mean "done with this
+    // thread", so a live provider session must not keep running background
+    // work (PR monitors, dev servers, subagent fleets) after any of them
+    // lands. The settle guard above already rejects active or blocked runs,
+    // so for settle this only ever stops an idle session; commands are
+    // decided serially against the projection, so a turn start that
+    // re-engages the thread cannot race this detach.
+    const detachSessionIds = new Set(
+      command.type === "thread.archive" || command.type === "thread.settle"
+        ? (providerContext?.providerSessions ?? []).map((session) => session.id)
+        : command.type === "thread.metadata.update" &&
+            command.worktreePath !== undefined &&
+            command.worktreePath !== thread.worktreePath
+          ? (providerContext?.providerSessions ?? []).map((session) => session.id)
+          : command.type === "thread.runtime-mode.set"
+            ? (providerContext?.providerSessions ?? [])
+                .filter(
+                  (session) => !session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
+                )
+                .map((session) => session.id)
+            : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
+    );
+    // A settings change must not end the process running this thread's
+    // background agents and shells (#16000). Ask the live adapter: the
+    // projected roster is not authoritative while a turn runs. Archive and
+    // settle are deliberate ends, like Stop.
+    if (
+      command.type !== "thread.archive" &&
+      command.type !== "thread.settle" &&
+      detachSessionIds.size > 0 &&
+      (yield* hasLiveBackgroundWork(command.threadId, detachSessionIds).pipe(
+        mapDispatchError(command),
+      ))
+    ) {
+      return yield* backgroundWorkRefusal(command);
+    }
 
     const now = yield* DateTime.now;
     if (command.type === "thread.metadata.update" && command.limitRecovery != null) {
@@ -3699,28 +3803,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
 
-    // Settle joins archive here: both mean "done with this
-    // thread", so a live provider session must not keep running background
-    // work (PR monitors, dev servers, subagent fleets) after any of them
-    // lands. The settle guard above already rejects active or blocked runs,
-    // so for settle this only ever stops an idle session; commands are
-    // decided serially against the projection, so a turn start that
-    // re-engages the thread cannot race this detach.
-    const detachSessionIds = new Set(
-      command.type === "thread.archive" || command.type === "thread.settle"
-        ? (providerContext?.providerSessions ?? []).map((session) => session.id)
-        : command.type === "thread.metadata.update" &&
-            command.worktreePath !== undefined &&
-            command.worktreePath !== thread.worktreePath
-          ? (providerContext?.providerSessions ?? []).map((session) => session.id)
-          : command.type === "thread.runtime-mode.set"
-            ? (providerContext?.providerSessions ?? [])
-                .filter(
-                  (session) => !session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
-                )
-                .map((session) => session.id)
-            : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
-    );
     if (detachSessionIds.size > 0) {
       const liveSessions = (providerContext?.providerSessions ?? []).filter(
         (session) =>
@@ -5666,6 +5748,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           targetModelSelection: modelSelection,
         })
         .pipe(mapDispatchError(command))).transition.type === "restart_and_resume";
+    // Continuing the native thread on another account detaches the old
+    // session below, which would end its background work (#16000).
+    if (
+      canResumeAcrossInstances &&
+      activeProviderThread.providerSessionId !== null &&
+      (yield* hasLiveBackgroundWork(
+        command.threadId,
+        new Set([activeProviderThread.providerSessionId]),
+      ).pipe(mapDispatchError(command)))
+    ) {
+      return yield* backgroundWorkRefusal(command);
+    }
 
     if (
       pendingForkTransfer === undefined &&
