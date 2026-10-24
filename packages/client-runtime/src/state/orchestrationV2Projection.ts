@@ -15,8 +15,8 @@ export type ApplyOrchestrationV2ProjectionEventOptions = {
   readonly latestLocalTurnOrdinal?: number | null;
 };
 
-// Both sides are weak keys: comparison hints must not retain old streaming
-// arrays (and their text) for the lifetime of the thread.
+// Only this exact pair differs at one index. Both keys are weak so hints
+// neither retain streaming history nor apply to replacement snapshots.
 const arrayReplacements = new WeakMap<
   ReadonlyArray<unknown>,
   WeakMap<ReadonlyArray<unknown>, number>
@@ -197,19 +197,12 @@ function upsertVisibleTurnItem(
   if (
     previous !== undefined &&
     previous.visibility === next.visibility &&
-    previous.sourceThreadId === next.sourceThreadId &&
-    previous.sourceItemId === next.sourceItemId &&
-    previous.item === item
+    previous.sourceThreadId === next.sourceThreadId
   ) {
-    return rows;
-  }
-  if (
-    previous !== undefined &&
-    previous.visibility === next.visibility &&
-    previous.sourceThreadId === next.sourceThreadId &&
-    previous.item.ordinal === item.ordinal
-  ) {
-    return replaceProjectionArrayItem(rows, index, { ...next, position: previous.position });
+    if (previous.item === item) return rows;
+    if (previous.item.ordinal === item.ordinal) {
+      return replaceProjectionArrayItem(rows, index, { ...next, position: previous.position });
+    }
   }
   if (
     index === -1 &&
@@ -219,8 +212,8 @@ function upsertVisibleTurnItem(
     return rows;
   }
   // The item goes before the first later local row, as if its old row were
-  // removed first. One pass builds and renumbers the result: this runs for
-  // every streamed chunk of a thread that can hold thousands of rows.
+  // removed first. Inserts, reorders, and inherited-to-local changes need
+  // this ordering pass; replacements above preserve every other row.
   let insertion = rows.length;
   for (let candidate = 0; candidate < rows.length; candidate += 1) {
     const row = rows[candidate]!;

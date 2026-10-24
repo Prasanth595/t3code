@@ -289,6 +289,19 @@ it("matches full structure comparisons across streamed, batched, and reordered u
     projections.push(next);
   }
 
+  // A resumed snapshot can reuse item ids while changing a different row.
+  const snapshot = withoutHints(projections[1]!);
+  const resumed = replaceItem(snapshot, { ...reasoning, title: "Restored reasoning" });
+  const sibling = replaceItem(initial, { ...message, text: "Another stream" });
+  const reconnected = replaceItem(resumed, { ...message, text: "Resumed stream" });
+  for (const before of [initial, sibling, projections[1]!, resumed]) {
+    expect(sameThreadStructure(before, reconnected)).toBe(
+      sameThreadStructure(withoutHints(before), withoutHints(reconnected)),
+    );
+  }
+  expect(sameThreadStructure(sibling, reconnected)).toBe(false);
+  expect(sameThreadStructure(resumed, reconnected)).toBe(true);
+
   expect(consecutive).toEqual([true, true, false, true, false, true, false, false]);
   expect(sameThreadStructure(initial, projections[4]!)).toBe(false);
   expect(projections[5]!.visibleTurnItems.map((row) => [row.item.id, row.position])).toEqual([
