@@ -1,10 +1,16 @@
-import { EnvironmentId, PROVIDER_SEND_TURN_MAX_FILE_BYTES } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  getProviderAttachmentLimitError,
+  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { isFileAttachment, isImageAttachment } from "../../types";
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
 import {
   attachmentsToReleaseOnUploadCapabilityLoss,
   classifyComposerAttachmentFile,
+  composerFileAttachmentMimeType,
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
   normalizeComposerImageFileMimeType,
@@ -31,6 +37,22 @@ describe("composer attachment files", () => {
     );
 
     expect(attachments).toEqual(files.map(() => ({ kind: "file", bytes })));
+  });
+
+  it("keeps misleading DNG MIME labels out of downstream image detection and budgets", () => {
+    for (const type of ["image/png", "image/jpeg", "image/tiff", "image/dng", ""]) {
+      const attachment = {
+        type: "file" as const,
+        id: "raw",
+        name: "photo.DNG",
+        mimeType: composerFileAttachmentMimeType({ name: "photo.DNG", type }),
+        sizeBytes: 81 * 1024 * 1024,
+      };
+
+      expect(isImageAttachment(attachment)).toBe(false);
+      expect(isFileAttachment(attachment)).toBe(true);
+      expect(getProviderAttachmentLimitError([attachment])).toBeUndefined();
+    }
   });
 
   it("claims a captioned DNG paste even when its MIME is generic", () => {
