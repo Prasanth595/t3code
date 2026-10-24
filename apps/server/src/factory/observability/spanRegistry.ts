@@ -38,7 +38,11 @@ export interface SpanRegistry {
   end(id: number): void;
   /** Marks a span as a SQL statement, once its attributes say it is one. */
   markSql(id: number, query?: string): void;
-  /** Records which connection a SQL span ran on, once the client has acquired it. */
+  /**
+   * Records which connection a SQL span ran on, once the client has acquired it. A span started
+   * under it afterwards inherits the connection: a transaction's statements run on the
+   * transaction's connection, which the client names on the transaction span alone.
+   */
   markConnection(id: number, connection: SqlConnection): void;
   /**
    * The spans most likely to have blocked the loop in [windowStartMs, windowEndMs]. A synchronous
@@ -100,7 +104,16 @@ export const makeSpanRegistry = (options: SpanRegistryOptions = {}): SpanRegistr
         const oldest = open.keys().next();
         if (!oldest.done) open.delete(oldest.value);
       }
-      open.set(id, { id, name, kind, parentId, startMs: now(), endMs: undefined });
+      const connection = parentId === undefined ? undefined : open.get(parentId)?.connection;
+      open.set(id, {
+        id,
+        name,
+        kind,
+        ...(connection !== undefined && { connection }),
+        parentId,
+        startMs: now(),
+        endMs: undefined,
+      });
       return id;
     },
     end(id) {
@@ -175,6 +188,9 @@ export const makeSpanRegistry = (options: SpanRegistryOptions = {}): SpanRegistr
 const ATTR_DB_SYSTEM_NAME = "db.system.name";
 const ATTR_DB_QUERY_TEXT = "db.query.text";
 const ATTR_DB_CONNECTION = "db.connection";
+// effect's SqlClient opens this internal span around a transaction; the sqlite client names the
+// connection on it, and the statements inside use that connection without saying so.
+const TRANSACTION_SPAN = "sql.transaction";
 
 const isSqlConnection = (value: unknown): value is SqlConnection =>
   value === "reader" || value === "writer";
@@ -184,7 +200,8 @@ const isSqlConnection = (value: unknown): value is SqlConnection =>
  * span that sets `db.system.name` is a SQL statement (effect names those after the database, so
  * only the kind and attributes identify them), the `db.query.text` it sets next is kept for the
  * report, and the `db.connection` the sqlite client sets once it has a connection says whether
- * the statement ran on the main thread (writer) or the reader worker.
+ * the statement ran on the main thread (writer) or the reader worker. A transaction span carries
+ * that attribute for every statement inside it.
  */
 export const wrapTracer = (tracer: Tracer.Tracer, registry: SpanRegistry): Tracer.Tracer => {
   const ids = new WeakMap<object, number>();
@@ -199,14 +216,15 @@ export const wrapTracer = (tracer: Tracer.Tracer, registry: SpanRegistry): Trace
         registry.end(id);
         return end.call(this, endTime, exit);
       };
-      if (options.kind === "client") {
+      const client = options.kind === "client";
+      if (client || options.name === TRANSACTION_SPAN) {
         const attribute = span.attribute;
         span.attribute = function (key, value) {
-          if (key === ATTR_DB_SYSTEM_NAME) registry.markSql(id);
-          else if (key === ATTR_DB_QUERY_TEXT && typeof value === "string") {
-            registry.markSql(id, value);
-          } else if (key === ATTR_DB_CONNECTION && isSqlConnection(value)) {
+          if (key === ATTR_DB_CONNECTION && isSqlConnection(value)) {
             registry.markConnection(id, value);
+          } else if (client && key === ATTR_DB_SYSTEM_NAME) registry.markSql(id);
+          else if (client && key === ATTR_DB_QUERY_TEXT && typeof value === "string") {
+            registry.markSql(id, value);
           }
           return attribute.call(this, key, value);
         };
