@@ -31,7 +31,7 @@ import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/n
 import type { ReactNode } from "react";
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Keyboard, Platform, View, type ViewStyle } from "react-native";
-import { useKeyboardState } from "react-native-keyboard-controller";
+import { KeyboardController, KeyboardEvents } from "react-native-keyboard-controller";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { filePreviewGallery } from "../../lib/filePreviewGallery";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -469,6 +469,19 @@ export function ComposerSurface(props: {
   );
 }
 
+function useKeyboardShowing() {
+  const [showing, setShowing] = useState(KeyboardController.isVisible);
+  useEffect(() => {
+    const show = KeyboardEvents.addListener("keyboardWillShow", () => setShowing(true));
+    const hide = KeyboardEvents.addListener("keyboardWillHide", () => setShowing(false));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+  return showing;
+}
+
 /** Space below the composer pill, inside the bottom inset it is given. */
 export const THREAD_COMPOSER_BOTTOM_GUTTER = 6;
 
@@ -482,7 +495,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
-  const keyboardVisible = useKeyboardState((state) => state.isVisible);
+  const keyboardVisible = useKeyboardShowing();
   const pendingPastedTextAttachmentCountRef = useRef(0);
   const pendingNativeImagePasteCountRef = useRef(0);
   const [pendingPastedTextAttachmentCount, setPendingPastedTextAttachmentCount] = useState(0);
