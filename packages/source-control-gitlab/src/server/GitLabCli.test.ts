@@ -291,14 +291,22 @@ layer("GitLabCli.layer", (it) => {
         );
 
         const glab = yield* GitLabCli.GitLabCli;
-        const result = yield* glab
+        const error = yield* glab
           .getRepositoryCloneUrls({
             cwd: "/repo",
             repository: "https://example.com:8443/other/team/app.git",
           })
-          .pipe(Effect.result);
+          .pipe(Effect.flip);
 
-        assert.strictEqual(result._tag, "Failure");
+        assert.strictEqual(error._tag, "GitLabRepositoryPathMismatchError");
+        expect(mockedRun.mock.calls.filter(([input]) => input.args[0] === "api")).toEqual([
+          [
+            expect.objectContaining({
+              command: "glab",
+              args: ["api", "projects/other%2Fteam%2Fapp"],
+            }),
+          ],
+        ]);
       }),
   );
 
