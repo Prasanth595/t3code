@@ -416,6 +416,21 @@ it.effect("sends a self-hosted Bitbucket remote nowhere unless an API base url i
       );
     }
 
+    // An explicit repository does not let a self-hosted context reach the Cloud API.
+    const explicit = makeLayer({ response, env: cloudEnv });
+    const cloneUrls = yield* BitbucketApi.BitbucketApi.pipe(
+      Effect.flatMap((bitbucket) =>
+        bitbucket.getRepositoryCloneUrls({ cwd: "/repo", context, repository: "proj/repo" }),
+      ),
+      Effect.provide(explicit.layer),
+      Effect.result,
+    );
+    assert.deepStrictEqual(requestedUrls(explicit), []);
+    assert.strictEqual(
+      Result.isFailure(cloneUrls) && cloneUrls.failure._tag,
+      "BitbucketRepositoryRemoteNotFoundError",
+    );
+
     const cloud = makeLayer({ response, env: cloudEnv });
     yield* defaultBranch(cloud, false);
     assert.deepStrictEqual(requestedUrls(cloud), [

@@ -780,14 +780,14 @@ export const make = Effect.gen(function* () {
     readonly context?: SourceControlProvider.SourceControlProviderContext;
     readonly repository?: string;
   }) {
-    if (input.repository !== undefined) {
-      return yield* requireRepositoryLocator(input.repository);
-    }
-
     if (input.context?.provider.kind === "bitbucket" && !servesProvider(input.context.provider)) {
       // Falling back to another remote could act on a different repository.
       return yield* new BitbucketRepositoryRemoteNotFoundError({ cwd: input.cwd });
     }
+    if (input.repository !== undefined) {
+      return yield* requireRepositoryLocator(input.repository);
+    }
+
     const fromContext =
       input.context?.provider.kind === "bitbucket"
         ? parseBitbucketRemoteUrl(input.context.remoteUrl)
