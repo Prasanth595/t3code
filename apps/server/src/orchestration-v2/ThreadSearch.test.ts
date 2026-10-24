@@ -267,6 +267,48 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       assert.lengthOf((yield* search.search({ query: "renam ab" })).matches, 0);
     }),
   );
+
+  it.effect("indexes neither subagent messages nor rewrites that keep the text", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const project = ProjectId.make("project:search-index-writes");
+      const parent = ThreadId.make("thread:index-parent");
+      const subagent = ThreadId.make("thread:index-subagent");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(parent, project),
+          message(parent, "index-parent", "assistant", "parent answer"),
+          thread(subagent, project, { subagentOf: parent }),
+          message(subagent, "index-subagent", "assistant", "subagent answer"),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      const indexedThreads = sql<{ readonly threadId: string }>`
+        SELECT messages.thread_id AS "threadId"
+        FROM orchestration_v2_message_search AS search
+        INNER JOIN orchestration_v2_projection_messages AS messages
+          ON messages.rowid = search.rowid
+        WHERE messages.thread_id IN (${parent}, ${subagent})
+      `.pipe(Effect.map((rows) => rows.map((row) => row.threadId)));
+      assert.deepEqual(yield* indexedThreads, [parent]);
+
+      // total_changes counts trigger writes, so 1 means the index was untouched.
+      const changes = sql<{ readonly n: number }>`SELECT total_changes() AS n`.pipe(
+        Effect.map(([row]) => row?.n ?? 0),
+      );
+      const before = yield* changes;
+      yield* sql`
+        UPDATE orchestration_v2_projection_messages
+        SET payload_json = json_set(payload_json, '$.updatedAt', '2026-09-27T01:00:00.000Z')
+        WHERE message_id = 'index-parent'
+      `;
+      assert.strictEqual((yield* changes) - before, 1);
+      assert.deepEqual(yield* indexedThreads, [parent]);
+    }),
+  );
 });
 
 it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {

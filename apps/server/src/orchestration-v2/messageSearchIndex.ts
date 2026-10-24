@@ -4,9 +4,10 @@ import type * as SqlClient from "effect/sql/SqlClient";
 /**
  * The messages search indexes: finished, and either written by the user or
  * answered by an agent. User-role notices that agents or the system wrote
- * stay out. Migration 69's triggers, its backfill, the rebuild, and the scan
- * all use it; `row` names the message row (a table alias, or `new` in a
- * trigger).
+ * stay out. Subagent threads stay out too: search never shows them, and ACP
+ * subagents rewrite their whole finished answer on every streamed chunk.
+ * Migration 69's triggers, its backfill, the rebuild, and the scan all use
+ * it; `row` names the message row (a table alias, or `new` in a trigger).
  */
 export const indexedMessageCondition = (sql: SqlClient.SqlClient, row = "messages") =>
   sql.literal(`
@@ -17,6 +18,11 @@ export const indexedMessageCondition = (sql: SqlClient.SqlClient, row = "message
       ${row}.role = 'user'
       AND COALESCE(json_extract(${row}.payload_json, '$.createdBy'), 'user') = 'user'
     )
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM orchestration_v2_projection_threads AS subagent_threads
+    WHERE subagent_threads.thread_id = ${row}.thread_id
+      AND json_extract(subagent_threads.payload_json, '$.lineage.relationshipToParent') = 'subagent'
   )
 `);
 
@@ -42,15 +48,21 @@ export const rebuildMessageSearch = Effect.fn("MessageSearchIndex.rebuild")(func
     SELECT 1 FROM sqlite_master WHERE name = 'orchestration_v2_message_search'
   `;
   if (index.length === 0) return;
-  yield* sql`
-    INSERT INTO orchestration_v2_message_search (orchestration_v2_message_search)
-    VALUES ('delete-all')
-  `;
-  yield* sql`
-    INSERT INTO orchestration_v2_message_search (rowid, text)
-    SELECT messages.rowid, ${indexedMessageText(sql, "messages.payload_json")}
-    FROM orchestration_v2_projection_messages AS messages
-    WHERE ${indexedMessageCondition(sql)}
-      AND json_extract(messages.payload_json, '$.text') IS NOT NULL
-  `;
+  // One transaction: an interrupt between clear and refill would leave an
+  // empty index that nothing repairs, since search only checks the table exists.
+  yield* sql.withTransaction(
+    Effect.gen(function* () {
+      yield* sql`
+        INSERT INTO orchestration_v2_message_search (orchestration_v2_message_search)
+        VALUES ('delete-all')
+      `;
+      yield* sql`
+        INSERT INTO orchestration_v2_message_search (rowid, text)
+        SELECT messages.rowid, ${indexedMessageText(sql, "messages.payload_json")}
+        FROM orchestration_v2_projection_messages AS messages
+        WHERE ${indexedMessageCondition(sql)}
+          AND json_extract(messages.payload_json, '$.text') IS NOT NULL
+      `;
+    }),
+  );
 });

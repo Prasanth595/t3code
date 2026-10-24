@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Predicate from "effect/Predicate";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import {
@@ -30,7 +31,10 @@ export default Effect.gen(function* () {
 
   // Node and Electron bundle a SQLite with these options; a Node built against
   // an older system SQLite may lack them. Search then scans messages instead
-  // of failing to start.
+  // of failing to start. Only SQLITE_ERROR ("no such module", "no such
+  // tokenizer", "unrecognized option") means that: a full disk or I/O error
+  // fails the migration, so the next start retries instead of skipping the
+  // index for good.
   const created = yield* sql`
     CREATE VIRTUAL TABLE orchestration_v2_message_search USING fts5(
       text,
@@ -40,10 +44,14 @@ export default Effect.gen(function* () {
     )
   `.pipe(
     Effect.as(true),
-    Effect.catch((cause) =>
-      Effect.logWarning("Message search index unavailable; search will scan messages.", cause).pipe(
-        Effect.as(false),
-      ),
+    Effect.catchIf(
+      (cause) =>
+        Predicate.hasProperty(cause.reason.cause, "errcode") && cause.reason.cause.errcode === 1,
+      (cause) =>
+        Effect.logWarning(
+          "Message search index unavailable; search will scan messages.",
+          cause,
+        ).pipe(Effect.as(false)),
     ),
   );
   if (!created) return;
@@ -58,11 +66,20 @@ export default Effect.gen(function* () {
     END
   `;
   // Streaming deltas rewrite the row many times a second; skip them until the
-  // message settles. Deleting a rowid the index never held is a no-op.
+  // message settles. Upserts rewrite every column, so a finished message
+  // re-indexes only when what the index reads changed. Deleting a rowid the
+  // index never held is a no-op.
   yield* sql`
     CREATE TRIGGER orchestration_v2_message_search_update
     AFTER UPDATE OF payload_json, streaming, role ON orchestration_v2_projection_messages
-    WHEN old.streaming = 0 OR new.streaming = 0
+    WHEN (old.streaming = 0 OR new.streaming = 0)
+      AND (
+        old.streaming IS NOT new.streaming
+        OR old.role IS NOT new.role
+        OR json_extract(old.payload_json, '$.text') IS NOT json_extract(new.payload_json, '$.text')
+        OR json_extract(old.payload_json, '$.createdBy')
+          IS NOT json_extract(new.payload_json, '$.createdBy')
+      )
     BEGIN
       DELETE FROM orchestration_v2_message_search WHERE rowid = old.rowid AND old.streaming = 0;
       INSERT INTO orchestration_v2_message_search (rowid, text)
