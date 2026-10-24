@@ -1046,11 +1046,17 @@ export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
 /**
  * Keeps entry keys this build does not know. Writers send a whole entry built
  * from the one they read, so dropping them would let an older client or server
- * wipe overrides added after it was built.
+ * wipe overrides added after it was built. The type stays the known fields, so
+ * a misspelled key still fails to compile.
  */
 export const keepUnknownOverrideKeys = <Entry extends Schema.Struct<Schema.Struct.Fields>>(
   entry: Entry,
-) => Schema.StructWithRest(entry, [Schema.Record(Schema.String, Schema.Unknown)]);
+): Schema.Codec<
+  Entry["Type"],
+  Entry["Encoded"],
+  Entry["DecodingServices"],
+  Entry["EncodingServices"]
+> => Schema.StructWithRest(entry, [Schema.Record(Schema.String, Schema.Unknown)]);
 
 /**
  * Whether `null` is a stored override value for this key rather than "unset".

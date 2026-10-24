@@ -14,7 +14,7 @@ import {
   type ModelSelection,
   type ProjectId,
   type ProjectScopedServerSettingKey,
-  type ProjectSettingsOverrides,
+  ProjectSettingsOverrides,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -259,12 +259,27 @@ function mergeSettingsEntries<Value>(
   return Object.fromEntries(next);
 }
 
+const knownProjectOverrideKeys = new Set(Object.keys(ProjectSettingsOverrides.fields));
+
+function pickOverrideKeys(entry: ProjectSettingsOverrides | undefined, known: boolean) {
+  return Object.fromEntries(
+    Object.entries<unknown>(entry ?? {}).filter(
+      ([key]) => knownProjectOverrideKeys.has(key) === known,
+    ),
+  );
+}
+
 /**
  * `projectSettingsOverrides` entries otherwise replace whole (see the field's
  * doc comment in contracts), but `providerInstances` was added after clients
  * already round-trip a project's entry on every edit. A client built before
  * that addition sends an entry that never mentions the key, and a whole replace
  * would silently wipe it.
+ *
+ * Keys this build does not know are never taken from the patch, so a newer
+ * client sees its write dropped and warns that this server cannot apply it.
+ * Stored ones, left by a newer build in settings.json, stay until that build
+ * returns.
  */
 function mergeProjectSettingsOverridesPatch(
   current: Readonly<Record<string, ProjectSettingsOverrides>>,
@@ -278,7 +293,8 @@ function mergeProjectSettingsOverridesPatch(
     }
     const storedProviderInstances = current[projectId]?.providerInstances;
     next.set(projectId, {
-      ...entry,
+      ...pickOverrideKeys(current[projectId], false),
+      ...pickOverrideKeys(entry, true),
       ...(Object.hasOwn(entry, "providerInstances") || storedProviderInstances === undefined
         ? {}
         : { providerInstances: storedProviderInstances }),

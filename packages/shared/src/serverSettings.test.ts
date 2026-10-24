@@ -3,10 +3,13 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ServerSettings,
+  ServerSettingsPatch,
   UsageLimitSourceId,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 import { resolveServerBackgroundActivitySettings } from "./backgroundActivitySettings.ts";
 import { createModelSelection } from "./model.ts";
@@ -500,6 +503,27 @@ describe("serverSettings helpers", () => {
     expect(patched.projectSettingsOverrides[projectId]).toEqual({
       newWorktreesStartFromOrigin: false,
       providerInstances: { [instanceId]: { enabled: false } },
+    });
+  });
+
+  // regression: #18334 a newer client must still see this server drop a key it does not know
+  it("drops an override key this server does not know from a patch and keeps one it stored", () => {
+    const projectId = ProjectId.make("project-a");
+    const current = Schema.decodeUnknownSync(ServerSettings)({
+      projectSettingsFolded: true,
+      projectSettingsOverrides: {
+        [projectId]: { defaultAutoPull: true, addedByNewerServer: 3 },
+      },
+    });
+    const patch = Schema.decodeUnknownSync(ServerSettingsPatch)({
+      projectSettingsOverrides: {
+        [projectId]: { defaultAutoPull: false, addedByNewerServer: 4, addedByNewerClient: "x" },
+      },
+    });
+
+    expect(applyServerSettingsPatch(current, patch).projectSettingsOverrides[projectId]).toEqual({
+      defaultAutoPull: false,
+      addedByNewerServer: 3,
     });
   });
 
