@@ -10,6 +10,7 @@ import {
 } from "./logicalProject";
 import {
   buildPhysicalToLogicalProjectKeyMap,
+  buildSidebarProjectDisplayNameMap,
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
 } from "./sidebarProjectGrouping";
@@ -179,7 +180,44 @@ describe("environment grouping", () => {
       primary.id,
       remote.id,
     ]);
+    const displayNames = buildSidebarProjectDisplayNameMap(snapshots);
+    for (const project of [primary, duplicate, remote]) {
+      expect(displayNames.get(`${project.environmentId}:${project.id}`)).toBe(
+        snapshots[0]?.displayName,
+      );
+    }
   });
+
+  it.each(["repository", "separate"] as const)(
+    "labels every duplicate remote project ref in %s mode without crossing environments",
+    (sidebarProjectGroupingMode) => {
+      const remote = makeProject({
+        environmentId: remoteEnvironmentId,
+        title: "remote-title",
+        workspaceRoot: "/remote/repo",
+        updatedAt: "2026-01-02T00:00:00.000Z",
+      });
+      const duplicate = makeProject({
+        environmentId: remoteEnvironmentId,
+        id: ProjectId.make("duplicate"),
+        workspaceRoot: "/remote/repo/",
+      });
+      const local = makeProject({ title: "local-title" });
+      const groups = buildSidebarProjectSnapshots({
+        projects: [duplicate, local, remote],
+        settings: { ...defaultGroupingSettings, sidebarProjectGroupingMode },
+        primaryEnvironmentId,
+        resolveEnvironmentLabel: () => null,
+      });
+      const displayNames = buildSidebarProjectDisplayNameMap(groups);
+
+      expect(groups).toHaveLength(2);
+      expect(displayNames.get(`${duplicate.environmentId}:${duplicate.id}`)).toBe(remote.title);
+      expect(displayNames.get(`${remote.environmentId}:${remote.id}`)).toBe(remote.title);
+      expect(displayNames.get(`${local.environmentId}:${local.id}`)).toBe(local.title);
+      expect(displayNames.size).toBe(3);
+    },
+  );
 
   it("prefers the fresher project row when duplicate stale rows are ordered first", () => {
     const staleDuplicate = makeProject({
