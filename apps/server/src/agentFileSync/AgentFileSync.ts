@@ -102,6 +102,7 @@ export class AgentFileSync extends Context.Service<
     ) => Effect.Effect<AgentFileSyncBundle, AgentFileSyncError>;
     readonly preview: (
       input: AgentFileSyncPreviewInput,
+      previous?: AgentFileSyncBundle,
     ) => Effect.Effect<AgentFileSyncPreview, AgentFileSyncError>;
     readonly apply: <E = never, R = never>(
       input: AgentFileSyncApplyInput,
@@ -334,9 +335,30 @@ const make = Effect.gen(function* () {
       return { bundle: hash(encodeBundle(bundle)) === input.revision ? null : bundle };
     },
   );
-  const prepare = Effect.fn("AgentFileSync.prepare")(function* (input: AgentFileSyncPreviewInput) {
+  const prepare = Effect.fn("AgentFileSync.prepare")(function* (
+    input: AgentFileSyncPreviewInput,
+    previous?: AgentFileSyncBundle,
+  ) {
     if (Buffer.byteLength(encodeBundle(input.bundle)) > MAX_BYTES)
       return yield* new AgentFileSyncError({ reason: "limit" });
+    if (previous) {
+      if (previous.length !== input.bundle.length)
+        return yield* new AgentFileSyncError({ reason: "changed" });
+      for (const resource of input.bundle) {
+        const prior = previous.find((entry) => entry.path === resource.path);
+        if (!prior || prior.kind !== resource.kind)
+          return yield* new AgentFileSyncError({ reason: "changed", path: resource.path });
+        if (
+          prior.kind === "instructions" &&
+          resource.kind === "instructions" &&
+          (prior.sections.length !== resource.sections.length ||
+            prior.sections.some(
+              (section) => !resource.sections.some((other) => other.id === section.id),
+            ))
+        )
+          return yield* new AgentFileSyncError({ reason: "changed", path: resource.path });
+      }
+    }
     const base = yield* root(input);
     const changes: {
       resource: AgentFileSyncResource;
@@ -430,8 +452,8 @@ const make = Effect.gen(function* () {
     return `${contents.slice(0, 8000)}${contents.length > 8000 ? "\n… Skill instructions shortened" : ""}\n\nFiles\n${manifest.slice(0, 12000)}${manifest.length > 12000 ? "\n… File list shortened" : ""}`;
   };
   const preview: AgentFileSync["Service"]["preview"] = Effect.fn("AgentFileSync.preview")(
-    function* (input) {
-      const { changes } = yield* prepare(input);
+    function* (input, previous) {
+      const { changes } = yield* prepare(input, previous);
       return changes.map(({ resource, before, after, revision: version }) => ({
         path: resource.path,
         revision: version,
@@ -598,27 +620,9 @@ const make = Effect.gen(function* () {
     function* (input) {
       return yield* lock.withPermit(
         Effect.gen(function* () {
-          const { changes } = yield* prepare(input);
-          if (input.previous.length !== input.bundle.length)
-            return yield* new AgentFileSyncError({ reason: "changed" });
+          const { changes } = yield* prepare(input, input.previous);
           for (const change of changes) {
-            const previous = input.previous.find((entry) => entry.path === change.resource.path);
-            if (!previous || previous.kind !== change.resource.kind)
-              return yield* new AgentFileSyncError({
-                reason: "changed",
-                path: change.resource.path,
-              });
-            if (
-              previous.kind === "instructions" &&
-              change.resource.kind === "instructions" &&
-              (previous.sections.length !== change.resource.sections.length ||
-                previous.sections.some(
-                  (section) =>
-                    change.resource.kind === "instructions" &&
-                    !change.resource.sections.some((other) => other.id === section.id),
-                ))
-            )
-              return yield* new AgentFileSyncError({ reason: "changed", path: previous.path });
+            const previous = input.previous.find((entry) => entry.path === change.resource.path)!;
             if (change.revision === revision(change.after)) continue;
             if (previous.kind === "skill") {
               if (change.revision !== revision(destinationFiles(previous.files)))

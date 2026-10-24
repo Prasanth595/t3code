@@ -460,6 +460,53 @@ it.layer(NodeServices.layer)("sync subscriptions", (it) => {
       expect(yield* f.links.list).toHaveLength(1);
     }),
   );
+  it.effect.each(["empty", "resource", "section"] as const)(
+    "accepts a corrected refresh after rejecting changed %s identity",
+    (identity) =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const link = yield* f.subscribe();
+        const original = yield* f.fs.readFileString(f.path.join(f.directory, "AGENTS.md"));
+        const rejected: AgentFileSyncBundle =
+          identity === "empty"
+            ? []
+            : [
+                {
+                  kind: "instructions",
+                  path: identity === "resource" ? "CLAUDE.md" : "AGENTS.md",
+                  sections: [
+                    {
+                      id: identity === "section" ? "Other:0" : "Shared:0",
+                      title: "Shared",
+                      contents: "Rejected update",
+                    },
+                  ],
+                },
+              ];
+        const error = yield* f.links
+          .refresh({ id: link.id, generation: link.generation, bundle: rejected })
+          .pipe(Effect.flip);
+        expect(error.reason).toBe("changed");
+        expect((yield* f.links.list)[0]).toMatchObject({ paused: true, error: error.message });
+        expect(yield* f.fs.readFileString(f.path.join(f.directory, "AGENTS.md"))).toBe(original);
+        expect(yield* f.fs.exists(f.path.join(f.directory, "CLAUDE.md"))).toBe(false);
+        const restarted = yield* f.load;
+        yield* restarted.manage({ id: link.id, action: "resume" });
+        const resumed = (yield* restarted.list)[0]!;
+        yield* restarted.refresh({
+          id: link.id,
+          generation: resumed.generation,
+          bundle: bundle("Corrected update"),
+        });
+        expect((yield* restarted.list)[0]).toMatchObject({ paused: false, error: null });
+        expect(yield* f.fs.readFileString(f.path.join(f.directory, "AGENTS.md"))).toContain(
+          "Corrected update",
+        );
+        expect(f.writes.filter((key) => key.startsWith("agent-file-sync-pending-"))).toHaveLength(
+          1,
+        );
+      }),
+  );
   it.effect("recovers a pending baseline after failed publication when the source advances", () =>
     Effect.gen(function* () {
       const f = yield* fixture;

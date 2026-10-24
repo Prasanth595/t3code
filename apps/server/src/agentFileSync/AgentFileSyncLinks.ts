@@ -270,7 +270,7 @@ const make = Effect.gen(function* () {
           if (pending !== null) yield* removePending(job.id);
           if (input.bundle !== null) {
             yield* files
-              .preview({ ...job.scope, bundle: input.bundle })
+              .preview({ ...job.scope, bundle: input.bundle }, job.previous)
               .pipe(Effect.tapError((error) => pause(job, error)));
             yield* secrets
               .set(
