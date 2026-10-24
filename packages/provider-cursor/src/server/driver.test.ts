@@ -201,7 +201,9 @@ it.layer(layerTest)("CursorDriver", (it) => {
             ),
           ),
         );
-        expect((yield* recreated.snapshot.refresh).auth.status).toBe("authenticated");
+        const recreatedSnapshot = yield* recreated.snapshot.refresh;
+        expect(recreatedSnapshot.auth.status).toBe("authenticated");
+        expect(recreatedSnapshot.usageLimits?.windows[0]?.usedPercent).toBe(42);
         yield* instance.auth!.logout(Effect.void);
         expect(closed).toBe(1);
         expect((yield* instance.snapshot.getSnapshot).auth.status).toBe("unauthenticated");
