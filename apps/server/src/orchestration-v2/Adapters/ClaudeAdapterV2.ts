@@ -6390,6 +6390,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly context: ActiveClaudeTurnContext;
           readonly nativeItemId: string;
           readonly nativeRequestId: string;
+          readonly parentNodeId?: OrchestrationV2ExecutionNode["id"];
           readonly requestKind: OrchestrationV2RuntimeRequest["kind"];
           readonly prompt?: string;
           readonly presentation?: ReturnType<typeof claudeApprovalPresentation>;
@@ -6422,10 +6423,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             id: nodeId,
             threadId: input.context.input.threadId,
             runId: input.context.input.runId,
-            parentNodeId: idAllocator.derive.nodeFromProviderItem({
-              driver: CLAUDE_PROVIDER,
-              nativeItemId: input.nativeItemId,
-            }),
+            parentNodeId:
+              input.parentNodeId ??
+              idAllocator.derive.nodeFromProviderItem({
+                driver: CLAUDE_PROVIDER,
+                nativeItemId: input.nativeItemId,
+              }),
             rootNodeId: input.context.input.rootNodeId,
             kind: input.questions === undefined ? "approval_request" : "user_input_request",
             status: "waiting",
@@ -8855,6 +8858,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               context,
               nativeItemId: nativeRequestId,
               nativeRequestId,
+              // No tool node exists for a control request to hang under.
+              ...(options?.startToolCall === false
+                ? { parentNodeId: context.input.rootNodeId }
+                : {}),
               requestKind: "user_input",
               questions,
             });

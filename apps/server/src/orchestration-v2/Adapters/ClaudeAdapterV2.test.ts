@@ -3484,6 +3484,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ).pipe(Effect.forkScoped);
         const request = yield* Queue.take(harness.runtimeRequestReceipts);
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "node.updated" && event.node.id === request.runtimeRequest.nodeId
+              ? [event.node.parentNodeId]
+              : [],
+          ),
+          [NodeId.make("node-attempt-resume-dialog")],
+        );
         yield* harness.runtime.respondToRuntimeRequest({
           requestId: request.runtimeRequest.id,
           answers: {
