@@ -575,6 +575,8 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
   readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
+  /** Original user text for command recognition when `message.text` carries provider-bound decoration. */
+  readonly commandText?: string;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
 }
@@ -1623,7 +1625,7 @@ export const layer: Layer.Layer<
 
         const compact =
           input.message.attachments.length === 0 &&
-          input.message.text.trim().toLowerCase() === "/compact";
+          (input.commandText ?? input.message.text).trim().toLowerCase() === "/compact";
         const startTurn = compact
           ? (input.session.compactThread?.(turnInput) ??
             Effect.fail(

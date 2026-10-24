@@ -14,7 +14,7 @@ export interface ThreadMessageSender {
 }
 
 /** Collapse whitespace and strip header metacharacters so a title stays on one line. */
-export function sanitizeThreadTitle(title: string | undefined | null): string | undefined {
+function sanitizeThreadTitle(title: string | undefined | null): string | undefined {
   if (title === undefined || title === null) return undefined;
   const cleaned = title
     .replaceAll(/\s+/g, " ")
@@ -66,33 +66,37 @@ export function withThreadMessageProvenance(
  * Resolve the sender title and whether the sender is a delegated-task child of
  * the receiving thread. Any lookup failure degrades to the id-only header.
  */
-export const resolveThreadMessageSender = (input: {
-  readonly loadThread: (threadId: ThreadId) => Effect.Effect<
-    | {
-        readonly thread: {
-          readonly title: string;
-          readonly lineage: { readonly parentThreadId: ThreadId | null };
-        };
-      }
-    | undefined,
-    never
-  >;
-  readonly receiverThreadId: ThreadId;
-  readonly receiverChildThreadIds: ReadonlyArray<ThreadId>;
-  readonly message: MessageProvenanceFields;
-}): Effect.Effect<ThreadMessageSender> =>
-  input.message.senderThreadId === undefined
-    ? Effect.succeed({})
-    : input.loadThread(input.message.senderThreadId).pipe(
-        Effect.map((loaded) => {
-          const senderThreadId = input.message.senderThreadId;
-          if (senderThreadId === undefined) return {};
-          const isDelegatedTaskChild =
-            loaded?.thread.lineage.parentThreadId === input.receiverThreadId ||
-            input.receiverChildThreadIds.includes(senderThreadId);
-          return {
-            ...(loaded === undefined ? {} : { senderTitle: loaded.thread.title }),
-            isDelegatedTaskChild,
-          } satisfies ThreadMessageSender;
-        }),
-      );
+export const resolveThreadMessageSender = Effect.fn("orchestrationV2.resolveThreadMessageSender")(
+  function* (input: {
+    readonly loadThread: (threadId: ThreadId) => Effect.Effect<
+      | {
+          readonly thread: {
+            readonly title: string;
+            readonly lineage: {
+              readonly parentThreadId: ThreadId | null;
+              readonly relationshipToParent: "fork" | "subagent" | null;
+            };
+          };
+        }
+      | undefined,
+      never
+    >;
+    readonly receiverThreadId: ThreadId;
+    readonly receiverChildThreadIds: ReadonlyArray<ThreadId>;
+    readonly message: MessageProvenanceFields;
+  }) {
+    const senderThreadId = input.message.senderThreadId;
+    if (senderThreadId === undefined) return {};
+    const loaded = yield* input.loadThread(senderThreadId);
+    // Only a subagent of the receiver is its delegated task; an ordinary fork
+    // of the receiver shares the parent id but stays a plain thread.
+    const isDelegatedTaskChild =
+      (loaded?.thread.lineage.parentThreadId === input.receiverThreadId &&
+        loaded?.thread.lineage.relationshipToParent === "subagent") ||
+      input.receiverChildThreadIds.includes(senderThreadId);
+    return {
+      ...(loaded === undefined ? {} : { senderTitle: loaded.thread.title }),
+      isDelegatedTaskChild,
+    } satisfies ThreadMessageSender;
+  },
+);

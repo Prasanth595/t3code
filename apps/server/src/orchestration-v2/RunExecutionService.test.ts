@@ -1023,6 +1023,12 @@ it.effect(
         { text: " /compact ", attachments: [], expected: "compact" },
         { text: "/compact", attachments: [attachment], expected: "prompt" },
         { text: "Continue the work", attachments: [], expected: "prompt" },
+        {
+          text: "[T3 message from thread thread-sender-1, sent by an agent, not the user]\n/compact",
+          commandText: "/compact",
+          attachments: [],
+          expected: "compact",
+        },
       ];
       for (const [index, testCase] of cases.entries()) {
         const threadId = ThreadId.make(`thread:compact-routing:${index}`);
@@ -1061,6 +1067,7 @@ it.effect(
           attempt: { id: attemptId, providerTurnId: null } as OrchestrationV2RunAttempt,
           attemptId,
           providerTurnOrdinal: 1,
+          ...("commandText" in testCase ? { commandText: testCase.commandText } : {}),
           message: {
             messageId: MessageId.make(`message:compact-routing:${index}`),
             text: testCase.text,

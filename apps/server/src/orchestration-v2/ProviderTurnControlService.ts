@@ -357,25 +357,30 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
-          const sender = yield* resolveThreadMessageSender({
-            loadThread: (threadId) =>
-              projections.getThreadProjection(threadId).pipe(
-                Effect.map((senderProjection) => ({ thread: senderProjection.thread })),
-                Effect.catchCause(() => Effect.succeed(undefined)),
-              ),
-            receiverThreadId: input.threadId,
-            receiverChildThreadIds: yield* projections
-              .getThreadRecords(input.threadId, ["subagents"])
-              .pipe(
-                Effect.map((records) =>
-                  records.subagents.flatMap((subagent) =>
-                    subagent.childThreadId === null ? [] : [subagent.childThreadId],
-                  ),
-                ),
-                Effect.catchCause(() => Effect.succeed([] as ReadonlyArray<ThreadId>)),
-              ),
-            message,
-          });
+          // Provenance only decorates agent thread-sends; other messages
+          // skip the sender and subagent-records lookups entirely.
+          const sender =
+            message.createdBy !== "agent" || message.senderThreadId === undefined
+              ? {}
+              : yield* resolveThreadMessageSender({
+                  loadThread: (threadId) =>
+                    projections.getThreadProjection(threadId).pipe(
+                      Effect.map((senderProjection) => ({ thread: senderProjection.thread })),
+                      Effect.catchCause(() => Effect.succeed(undefined)),
+                    ),
+                  receiverThreadId: input.threadId,
+                  receiverChildThreadIds: yield* projections
+                    .getThreadRecords(input.threadId, ["subagents"])
+                    .pipe(
+                      Effect.map((records) =>
+                        records.subagents.flatMap((subagent) =>
+                          subagent.childThreadId === null ? [] : [subagent.childThreadId],
+                        ),
+                      ),
+                      Effect.catchCause(() => Effect.succeed([] as ReadonlyArray<ThreadId>)),
+                    ),
+                  message,
+                });
           yield* loaded.session.value
             .steerTurn({
               threadId: input.threadId,
