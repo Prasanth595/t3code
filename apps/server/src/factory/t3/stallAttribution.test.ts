@@ -223,8 +223,11 @@ describe("withStallAttribution", () => {
           );
           yield* Deferred.await(readerAcquired);
           // Inside a transaction the statement runs on the transaction's connection, which the
-          // client names on the sql.transaction span, not on the statement's. Most writes run so.
-          yield* sql.withTransaction(count(8_000_000, "writer_rows"));
+          // client names on the sql.transaction span, not on the statement's. Most writes run so,
+          // under a service span of their own.
+          yield* sql.withTransaction(
+            count(8_000_000, "writer_rows").pipe(Effect.withSpan("EventSink.commit")),
+          );
           yield* Fiber.join(reader);
           return yield* Deferred.await(warned);
         }).pipe(
@@ -237,6 +240,7 @@ describe("withStallAttribution", () => {
         );
         assert.include(warning, "sqlite[writer] (");
         assert.include(warning, "sqlite[reader] (");
+        assert.notInclude(warning, "EventSink.commit[");
 
         const record = stallRecords(logsDir).find((r) =>
           r.spans.some((span) => span.query?.includes("writer_rows")),

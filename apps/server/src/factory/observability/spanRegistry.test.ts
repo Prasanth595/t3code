@@ -123,18 +123,24 @@ describe("makeSpanRegistry.active", () => {
     ]);
   });
 
-  it("gives a SQL statement the connection of the transaction span it runs under", () => {
+  it("gives a SQL statement the connection of the transaction it runs in, through the spans between, and no other span", () => {
     const c = clock();
     const registry = makeSpanRegistry({ now: c.now });
     c.set(10);
     const tx = registry.start("sql.transaction", "span");
     registry.markConnection(tx, "writer");
     c.set(20);
-    const sql = registry.start("sqlite", "span", tx);
+    const repo = registry.start("EventSink.commit", "span", tx);
+    c.set(30);
+    const sql = registry.start("sqlite", "span", repo);
     registry.markSql(sql, "INSERT INTO t VALUES (1)");
+    c.set(40);
+    registry.start("decode rows", "span", repo);
     expect(registry.active(0, 100, 10).map((s) => [s.name, s.connection])).toEqual([
       ["sqlite", "writer"],
-      ["sql.transaction", "writer"],
+      ["decode rows", undefined],
+      ["EventSink.commit", undefined],
+      ["sql.transaction", undefined],
     ]);
   });
 
@@ -275,17 +281,18 @@ describe("wrapTracer", () => {
     expect(byName.get("sqlite 3")).toBeUndefined();
   });
 
-  it("takes the connection a sql.transaction span names, so its statements inherit it", () => {
+  it("takes the connection a sql.transaction span names, so the statements inside inherit it", () => {
     const { registry, tracer } = setup();
     const tx = tracer.span(spanOptions("sql.transaction", Option.some(parentSpan)));
     tx.attribute("db.connection", "writer");
-    const sql = tracer.span(spanOptions("sqlite", Option.some(tx), "client"));
+    const body = tracer.span(spanOptions("EventSink.commit", Option.some(tx)));
+    const sql = tracer.span(spanOptions("sqlite", Option.some(body), "client"));
     sql.attribute("db.system.name", "sqlite");
     const other = tracer.span(spanOptions("rpc.request", Option.some(parentSpan)));
     other.attribute("db.connection", "writer");
     const byName = new Map(registry.active(0, 10, 10).map((s) => [s.name, s.connection]));
-    expect(byName.get("sql.transaction")).toBe("writer");
     expect(byName.get("sqlite")).toBe("writer");
+    expect(byName.get("EventSink.commit")).toBeUndefined();
     expect(byName.get("rpc.request")).toBeUndefined();
   });
 
