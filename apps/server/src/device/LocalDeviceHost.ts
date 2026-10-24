@@ -667,10 +667,11 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     onPhase: (phase: "installing" | "starting", detail?: string) => Effect.Effect<void>,
   ): Effect.fn.Return<RunningHost, DeviceHost.DeviceHostError | NodeRuntimeUnavailableError> {
     const running = yield* Ref.get(runningRef);
+    // A dead hub's record stays until a replacement is published: the agent
+    // daemon outlives the hub, and close needs its endpoint if the restart fails.
     if (running) {
       const alive = yield* running.hub.child.isRunning.pipe(Effect.orElseSucceed(() => false));
       if (alive) return running;
-      yield* Ref.set(runningRef, null);
     }
     const nodePath = yield* resolveNodeExecutable("Local device support", hostEnvironment).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
@@ -713,7 +714,6 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       ]);
       const next: RunningHost = {
         hub,
-        // The agent daemon outlives the hub and still holds session claims.
         agentDevice: running?.agentDevice ?? null,
         helpers: {
           serveSimAxSettings: axExists ? candidate.serveSimAxSettings : null,

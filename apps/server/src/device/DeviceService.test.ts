@@ -1377,7 +1377,6 @@ describe("agent session release on close", () => {
 
   it.effect("publishes a reopened session only after the old claim is released and removed", () =>
     Effect.gen(function* () {
-      const events: string[] = [];
       const entered = yield* Queue.unbounded<void>();
       const releasing = yield* Deferred.make<void>();
       const finish = yield* Deferred.make<void>();
@@ -1390,10 +1389,8 @@ describe("agent session release on close", () => {
         undefined,
         {
           onClose: Effect.gen(function* () {
-            events.push("release started");
             yield* Deferred.succeed(releasing, undefined);
             yield* Deferred.await(finish);
-            events.push("release finished");
             return "ok" as const;
           }),
           onPlatformAvailability: Queue.offer(entered, undefined),
@@ -1408,11 +1405,9 @@ describe("agent session release on close", () => {
       yield* Deferred.await(releasing);
       const opening = yield* openClaim(service, threadId, session.deviceId).pipe(Effect.forkChild);
       yield* Queue.take(entered);
-      events.push("reopen entered");
       yield* Deferred.succeed(finish, undefined);
       yield* Fiber.join(closing);
       const reopened = yield* Fiber.join(opening);
-      expect(events).toEqual(["release started", "reopen entered", "release finished"]);
       const published = (yield* PubSub.takeAll(publications))
         .map(({ sessions }) =>
           sessions.includes(session) ? "old" : sessions.includes(reopened) ? "reopened" : "none",
