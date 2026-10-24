@@ -5,6 +5,7 @@ import type { MobileThemeAppearance } from "./mobileTheme";
 
 const SVG_DATA_URL_PREFIX = "data:image/svg+xml;base64,";
 const STYLE_ELEMENT_RE = /(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi;
+const CSS_COMMENT_RE = /\/\*[\s\S]*?\*\//g;
 const COLOR_SCHEME_MEDIA_RE = /@media\s*\(\s*prefers-color-scheme\s*:\s*(light|dark)\s*\)\s*\{/gi;
 const AT_RULE_BLOCK_RE = /@[^{};]*\{/g;
 const RULE_RE = /([^{}]*)\{([^{}]*)\}/g;
@@ -25,17 +26,21 @@ export function resolveProjectFaviconColorScheme(url: string, scheme: MobileThem
   if (Result.isFailure(decoded)) return url;
   const svg = decoded.success;
 
-  let rootColor: string | undefined;
+  let stylesheet = "";
   const styled = svg.replace(
     STYLE_ELEMENT_RE,
     (_match, open: string, css: string, close: string) => {
-      const resolvedCss = replaceBlocks(css, COLOR_SCHEME_MEDIA_RE, (match, body) =>
-        match[1]?.toLowerCase() === scheme ? body : "",
+      // Comments can hold braces or a commented-out `@media`, which the block matcher would count.
+      const resolvedCss = replaceBlocks(
+        css.replace(CSS_COMMENT_RE, ""),
+        COLOR_SCHEME_MEDIA_RE,
+        (match, body) => (match[1]?.toLowerCase() === scheme ? body : ""),
       );
-      rootColor = lastRootColor(resolvedCss) ?? rootColor;
+      stylesheet += `${resolvedCss}\n`;
       return `${open}${resolvedCss}${close}`;
     },
   );
+  const rootColor = lastRootColor(stylesheet);
   const resolved = rootColor === undefined ? styled : withRootColor(styled, rootColor);
   return resolved === svg ? url : `${SVG_DATA_URL_PREFIX}${Base64.encode(resolved)}`;
 }
@@ -82,7 +87,7 @@ function lastRootColor(css: string) {
   const topLevel = replaceBlocks(css, AT_RULE_BLOCK_RE, () => "");
   for (const [, selectors = "", declarations = ""] of topLevel.matchAll(RULE_RE)) {
     const targetsRoot = selectors
-      .replace(/<!\[CDATA\[|\]\]>|\/\*[\s\S]*?\*\//g, "")
+      .replace(/<!\[CDATA\[|\]\]>/g, "")
       .split(",")
       .some((selector) => /^(?::root|svg)$/i.test(selector.trim()));
     if (!targetsRoot) continue;

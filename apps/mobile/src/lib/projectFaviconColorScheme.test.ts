@@ -66,6 +66,25 @@ describe("resolveProjectFaviconColorScheme", () => {
     );
   });
 
+  it("keeps an important root color across style elements", () => {
+    const icon = `<svg xmlns="http://www.w3.org/2000/svg"><style>:root{color:#fff !important}</style><style>:root{color:#000}</style></svg>`;
+
+    expect(decode(resolveProjectFaviconColorScheme(svgDataUrl(icon), "dark"))).toBe(
+      `<svg color="#fff" xmlns="http://www.w3.org/2000/svg"><style>:root{color:#fff !important}</style><style>:root{color:#000}</style></svg>`,
+    );
+  });
+
+  it("ignores braces and color-scheme blocks inside CSS comments", () => {
+    const icon = `<svg xmlns="http://www.w3.org/2000/svg"><style>/* @media (prefers-color-scheme: dark) { */.a{fill:#000}/* } */@media (prefers-color-scheme: dark){/* } */.a{fill:#fff}}</style></svg>`;
+
+    expect(decode(resolveProjectFaviconColorScheme(svgDataUrl(icon), "light"))).toBe(
+      `<svg xmlns="http://www.w3.org/2000/svg"><style>.a{fill:#000}</style></svg>`,
+    );
+    expect(decode(resolveProjectFaviconColorScheme(svgDataUrl(icon), "dark"))).toBe(
+      `<svg xmlns="http://www.w3.org/2000/svg"><style>.a{fill:#000}.a{fill:#fff}</style></svg>`,
+    );
+  });
+
   it("colors the root element, not an svg tag in an earlier comment", () => {
     const icon = `<!-- <svg width="1"> --><SVG xmlns="http://www.w3.org/2000/svg"><style>:root{color:#fff}</style></SVG>`;
 
