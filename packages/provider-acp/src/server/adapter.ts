@@ -1306,7 +1306,8 @@ function acpSubagentHasPendingBackgroundWork(subagent: ActiveAcpSubagent): boole
 
 type AcpCarryoverSubagents = {
   readonly sessionId: string;
-  readonly rootTerminalStatus: "completed" | "interrupted" | "failed" | "cancelled";
+  /** The root's subscriber keeps ingesting, so late child terminals can still project. */
+  readonly projectsLateTerminals: boolean;
   readonly subagents: ReadonlyArray<ActiveAcpSubagent>;
 };
 
@@ -3365,6 +3366,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return false;
         };
 
+        const hasSurvivingBackgroundWork = (context: ActiveAcpTurn): boolean =>
+          [...context.toolCallIdsByBackgroundTaskId.values()].some((toolCallId) => {
+            const tool = context.tools.get(toolCallId);
+            const status = tool === undefined ? undefined : toolStatus(tool.status);
+            return status === "pending" || status === "running";
+          }) ||
+          [...context.subagents.values()].some((subagent) =>
+            acpSubagentStatusBlocksTurnSettlement(subagent.task.status),
+          );
+
         const rearmDeferredFinalize =
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(function* (context: ActiveAcpTurn) {
@@ -4681,7 +4692,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const rootTerminalCanStillProject =
               carryover !== null &&
               carryover.sessionId === (yield* Ref.get(activeSessionId)) &&
-              carryover.rootTerminalStatus === "completed";
+              carryover.projectsLateTerminals;
             const projectCarryover = rootTerminalCanStillProject;
             let carryoverTerminalized = false;
             if (
@@ -5674,7 +5685,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               project:
                 carryover !== null &&
                 carryover.sessionId === (yield* Ref.get(activeSessionId)) &&
-                carryover.rootTerminalStatus === "completed",
+                carryover.projectsLateTerminals,
             },
           );
         });
@@ -6958,6 +6969,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           context: ActiveAcpTurn,
           status: "completed" | "interrupted" | "failed" | "cancelled",
           failure?: OrchestrationV2ProviderFailure,
+          options?: { readonly childTurnsContinue?: boolean },
         ): Effect.fn.Return<void> {
           if (context.finalized) return;
           const settledStatus = context.interrupted ? "interrupted" : status;
@@ -7057,6 +7069,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             providerThread: updatedProviderThread,
           });
           const rootSessionId = yield* Ref.get(activeSessionId);
+          const childTurnsContinue =
+            settledStatus === "failed" &&
+            (options?.childTurnsContinue === true ||
+              (followsAgentWorkState &&
+                rootSessionId !== null &&
+                hasWorkingDescendant(rootSessionId)));
           yield* emitProviderEvent(
             settledStatus === "failed"
               ? {
@@ -7070,11 +7088,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     `terminal-failure:${context.providerTurnId}`,
                   ),
                   status: settledStatus,
-                  ...(followsAgentWorkState &&
-                  rootSessionId !== null &&
-                  hasWorkingDescendant(rootSessionId)
-                    ? { childTurnsContinue: true }
-                    : {}),
+                  ...(childTurnsContinue ? { childTurnsContinue: true } : {}),
                   failure: failure ?? makeProviderFailure({ class: "provider_error" }),
                   ...(context.providerRetry === undefined
                     ? {}
@@ -7103,7 +7117,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (sessionId !== null) {
               yield* Ref.set(carryoverSubagents, {
                 sessionId,
-                rootTerminalStatus: settledStatus,
+                projectsLateTerminals: settledStatus === "completed" || childTurnsContinue,
                 subagents: subagentsRequiringCarryover,
               });
             }
@@ -7578,13 +7592,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   Effect.gen(function* () {
                     if (context.finalized || followsAgentWorkState) return;
                     // ACP v2 reports a failed prompt as an idle `error`, not an RPC error.
-                    if (result.stopReason === "error" && !context.interrupted) {
-                      yield* terminalizeOpenForegroundTools(context, "failed");
-                      yield* finalizeTurn(context, "failed", idleErrorFailure(result.error));
-                      return;
-                    }
-                    const status =
-                      result.stopReason === "cancelled"
+                    const idleError = result.stopReason === "error" && !context.interrupted;
+                    const status = idleError
+                      ? "failed"
+                      : result.stopReason === "cancelled"
                         ? context.interrupted
                           ? "interrupted"
                           : "cancelled"
@@ -7596,6 +7607,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         if (completion === null) continue;
                         yield* finishRegisteredBackgroundTool({ taskId, ...completion });
                       }
+                    }
+                    if (idleError) {
+                      yield* terminalizeOpenForegroundTools(context, "failed");
+                      // Unlike an RPC failure, the agent survives an idle error, so its
+                      // background tools and subagents keep reporting to this run.
+                      yield* finalizeTurn(context, "failed", idleErrorFailure(result.error), {
+                        childTurnsContinue: hasSurvivingBackgroundWork(context),
+                      });
+                      return;
                     }
                     if (
                       flavor.deferFinalizeForBackgroundWork === true &&

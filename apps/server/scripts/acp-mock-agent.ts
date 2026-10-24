@@ -963,6 +963,48 @@ const program = Effect.gen(function* () {
       beginAcpMockPrompt(cancelledSessions, requestedSessionId);
       promptCount += 1;
       const idleError = process.env.T3_ACP_IDLE_ERROR;
+      if (idleError === "grok-background" && promptCount === 1) {
+        // The structured completion lands before the prompt settles, so it is buffered.
+        const taskId = "call-idle-error-background";
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: taskId,
+            title: "run_terminal_command",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: { command: "sleep 1; echo done" },
+          },
+        });
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: taskId,
+            status: "completed",
+            rawOutput: {
+              type: "BackgroundTaskStarted",
+              task_id: taskId,
+              task_type: "bash",
+              status: "running",
+              command: "sleep 1; echo done",
+            },
+          },
+        });
+        writeJsonRpcNotification("_x.ai/task_completed", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "task_completed",
+            task_snapshot: { task_id: taskId, kind: "bash", exit_code: 0, output: "done\n" },
+          },
+        });
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: { sessionUpdate: "state_update", state: "idle", stopReason: "error" },
+        });
+        return {};
+      }
       if (idleError !== undefined && promptCount === 1) {
         const toolCallId = "tool-call-idle-error-1";
         writeJsonRpcNotification("session/update", {
@@ -1020,6 +1062,22 @@ const program = Effect.gen(function* () {
               : {}),
           },
         });
+        // The agent outlives the failed prompt, so its subagent finishes afterwards.
+        yield* Effect.sleep("50 millis").pipe(
+          Effect.andThen(
+            Effect.sync(() =>
+              writeJsonRpcNotification("session/update", {
+                sessionId: requestedSessionId,
+                update: {
+                  sessionUpdate: "tool_call_update",
+                  toolCallId: "tool-call-idle-error-subagent",
+                  status: "completed",
+                },
+              }),
+            ),
+          ),
+          Effect.forkDetach,
+        );
         return {};
       }
       if (

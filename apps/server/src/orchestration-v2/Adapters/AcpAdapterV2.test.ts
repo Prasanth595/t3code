@@ -423,7 +423,7 @@ describe("AcpAdapterV2", () => {
                     prompt: "child work",
                     title: "child work",
                     model: null,
-                    status: "running",
+                    status: toolCall.status === "completed" ? "completed" : "running",
                     childSessionId,
                     result: null,
                     suppressNormalTool: true,
@@ -476,8 +476,24 @@ describe("AcpAdapterV2", () => {
         const failedEvents = yield* runTurn(1);
         const failed = failedEvents.at(-1);
         assert.equal(failed?.type, "turn.terminal");
-        if (failed?.type !== "turn.terminal") return;
-        assert.equal(failed.status, "failed");
+        if (failed?.type !== "turn.terminal" || failed.status !== "failed") {
+          return assert.fail("expected a failed terminal");
+        }
+        assert.isTrue(
+          failed.childTurnsContinue,
+          "the run keeps ingesting work that outlives the failed prompt",
+        );
+        const lateSubagent = yield* runtime.events.pipe(
+          Stream.filter(
+            (event) => event.type === "subagent.updated" && event.subagent.status === "completed",
+          ),
+          Stream.runHead,
+          Effect.timeoutOption("2 seconds"),
+        );
+        assert.isTrue(
+          Option.isSome(lateSubagent) && Option.isSome(lateSubagent.value),
+          "a subagent finishing after the failed prompt still reports to the run",
+        );
         assert.deepEqual(
           failed.failure,
           details === "details"
@@ -3207,6 +3223,72 @@ describe("AcpAdapterV2", () => {
         status: "running",
       });
       assert.isFalse(yield* hasPendingBackgroundWork);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("settles a Grok background command that completed before an ACP v2 idle error", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("grok-idle-error-background");
+      const adapter = yield* makeGrokAdapterV2({
+        instanceId,
+        settings: DEFAULT_GROK_SETTINGS,
+        environment: {},
+        hostPlatform: yield* HostProcess.Platform,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            environment: { T3_ACP_IDLE_ERROR: "grok-background" },
+          })(input).pipe(Effect.flatMap(makeXAiPromptCompletionRuntime)),
+      });
+      const threadId = ThreadId.make("grok-idle-error-background");
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("grok-idle-error-background"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+      );
+      const terminal = events.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" ? terminal.status : undefined, "failed");
+      const command = events.findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "call-idle-error-background",
+      );
+      assert.equal(
+        command?.type === "turn_item.updated" ? command.turnItem.status : undefined,
+        "completed",
+      );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
