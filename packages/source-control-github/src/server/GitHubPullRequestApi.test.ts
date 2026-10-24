@@ -3508,6 +3508,74 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  const threadInput = {
+    cwd: "/w",
+    repository: "acme/web",
+    host: "github.com",
+    number: 7,
+    threadId: "PRRT_1",
+  };
+  const threadScope = (threadPullRequestId: string) => ({
+    data: {
+      repository: { pullRequest: { id: "PR_7" } },
+      node: {
+        __typename: "PullRequestReviewThread",
+        id: "PRRT_1",
+        threadPullRequest: { id: threadPullRequestId },
+      },
+    },
+  });
+  const threadWrites = [
+    {
+      description: "reply to",
+      mutation: "AddReviewThreadReply",
+      write: (cli: GitHubPullRequestApi.GitHubPullRequestApi["Service"]) =>
+        cli.replyToReviewThread({ ...threadInput, body: "Done." }),
+    },
+    {
+      description: "resolve",
+      mutation: "ResolveReviewThread",
+      write: (cli: GitHubPullRequestApi.GitHubPullRequestApi["Service"]) =>
+        cli.setReviewThreadResolution({ ...threadInput, resolved: true }),
+    },
+    {
+      description: "unresolve",
+      mutation: "UnresolveReviewThread",
+      write: (cli: GitHubPullRequestApi.GitHubPullRequestApi["Service"]) =>
+        cli.setReviewThreadResolution({ ...threadInput, resolved: false }),
+    },
+  ];
+
+  it.effect.each(threadWrites)(
+    "confirms a review thread belongs to the named pull request, then goes on to $description it",
+    ({ mutation, write }) =>
+      Effect.gen(function* () {
+        route([SUBJECT_SCOPE_QUERY, threadScope("PR_7")]);
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+        yield* write(cli);
+
+        expect(variablesOf(SUBJECT_SCOPE_QUERY)).toEqual([
+          { owner: "acme", name: "web", number: 7, subjectId: "PRRT_1" },
+        ]);
+        expect(variablesOf(mutation)).toHaveLength(1);
+      }),
+  );
+
+  it.effect.each(threadWrites)(
+    "refuses to $description a review thread from another pull request",
+    ({ mutation, write }) =>
+      Effect.gen(function* () {
+        route([SUBJECT_SCOPE_QUERY, threadScope("PR_8")]);
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+        const error = yield* Effect.flip(write(cli));
+
+        assert.strictEqual(error._tag, "GitHubSubjectScopeError");
+        expect(variablesOf(mutation)).toEqual([]);
+      }),
+  );
+
   it.effect("stops GraphQL reads at the protected reserve until reset", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValue(
