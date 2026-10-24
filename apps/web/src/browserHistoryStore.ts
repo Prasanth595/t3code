@@ -1,4 +1,9 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  derivePhysicalProjectKey,
+  type ProjectGroupingSettings,
+} from "@t3tools/client-runtime/state/project-grouping";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -9,11 +14,6 @@ import { readPreparedConnection } from "~/state/session";
 
 import { isLocalLoopbackHost, normalizeHostname } from "./browser/browserTargetResolver";
 import { resolveStorage } from "./lib/storage";
-import {
-  deriveLogicalProjectKeyFromSettings,
-  derivePhysicalProjectKey,
-  type ProjectGroupingSettings,
-} from "./logicalProject";
 import { buildPhysicalToLogicalProjectKeyMap } from "./sidebarProjectGrouping";
 import type { Project } from "./types";
 
