@@ -9,6 +9,7 @@
  * `index.ts` builds the live one. Every line goes to `out` as it is decided. Each pass writes
  * `pass_started` first and `pass_finished` last to the machine log.
  */
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 
 import type { Attention, NewItem } from "./attention.ts";
@@ -27,6 +28,7 @@ import { overload, type Load, type Overload } from "./load.ts";
 import type { LedgerError } from "./ledger/errors.ts";
 import type { CauseStep, ErrorKind, MachineEvent } from "./ledger/events.ts";
 import { holdsSlot, type RunInfo } from "./ledger/listRuns.ts";
+import { PASS_TIMEOUT } from "./loop.ts";
 import { asciiLower, runIdToString, type RunId } from "./ledger/runId.ts";
 import { duration, formatTs } from "./ledger/time.ts";
 import type {
@@ -60,6 +62,24 @@ export interface PassError {
   /** True when the failure was one GitHub never received, so a later read may well succeed. */
   readonly transient?: boolean;
 }
+
+/** The project config and tracker login a repo last loaded. */
+export interface LastGood {
+  readonly project?: ProjectConfig | undefined;
+  readonly trackerUser?: string | undefined;
+}
+
+/**
+ * What a failed read of `what` falls back on: the last good copy when GitHub never received the
+ * call and an earlier pass loaded one that no failure since has dropped, else nothing.
+ */
+export const lastGoodCopy = <K extends keyof LastGood>(
+  lastGood: ReadonlyMap<string, LastGood>,
+  repo: string,
+  what: K,
+  error: { readonly transient?: boolean | undefined },
+): LastGood[K] | undefined =>
+  error.transient === true ? lastGood.get(asciiLower(repo))?.[what] : undefined;
 
 /** A watched repo with its project config and the login its tracker knows the factory by. */
 export interface Repo {
@@ -267,7 +287,7 @@ export interface PassWorld {
    * The project config and tracker login each repo last loaded, by lower-cased `owner/name`: what
    * a pass runs on when a re-read fails in a way that says GitHub never received the call.
    */
-  readonly lastGood: Map<string, { project?: ProjectConfig; trackerUser?: string }>;
+  readonly lastGood: Map<string, LastGood>;
   readonly nowMs: () => number;
   /** Writes one event to the machine log. */
   readonly record: (event: MachineEvent) => Effect.Effect<void, LedgerError>;
@@ -461,6 +481,12 @@ const prepareText = (text: string): string => {
   return sanitize(cut, true);
 };
 
+/**
+ * A pass this far in starts no more claims: `PASS_TIMEOUT` stops a pass wherever it is, and a
+ * claim cut short goes stuck. The margin covers one claim whose GitHub calls all retry.
+ */
+const CLAIM_CUTOFF_MS = Duration.toMillis(PASS_TIMEOUT) - 10 * 60_000;
+
 /** A pass in flight: the counts, the lines, and whether the machine log has failed once. */
 class Pass {
   readonly report: Report = { runs: 0, claimed: 0, errors: 0, attention: 0 };
@@ -468,6 +494,7 @@ class Pass {
   lowDisk = false;
   /** The load is above `max_load_per_core`: nothing is claimed. */
   highLoad = false;
+  readonly startedMs: number;
   private logFailed = false;
   private readonly world: PassWorld;
   private readonly out: (line: string) => void;
@@ -475,6 +502,7 @@ class Pass {
   constructor(world: PassWorld, out: (line: string) => void) {
     this.world = world;
     this.out = out;
+    this.startedMs = world.nowMs();
   }
 
   line(text: string): void {
@@ -963,7 +991,6 @@ const loadRepos = Effect.fn("Pass.loadRepos")(function* (
       world.configSkips.delete(key);
       continue;
     }
-    const entry = world.lastGood.get(key) ?? {};
     // The first failure this pass fell back on a last good copy for, if any.
     let staleMessage: string | null = null;
     const useStale = Effect.fn("Pass.useStale")(function* (
@@ -987,10 +1014,13 @@ const loadRepos = Effect.fn("Pass.loadRepos")(function* (
     if (loaded._tag === "Failure") {
       const failure = loaded.failure;
       const message = failure.message;
-      if (failure.transient === true && entry.project !== undefined) {
-        projectNow = entry.project;
+      const copy = lastGoodCopy(world.lastGood, watched.repo, "project", failure);
+      if (copy !== undefined) {
+        projectNow = copy;
         yield* useStale("config", message);
       } else {
+        // A config removed or broken on purpose must not come back on a later blip.
+        world.lastGood.set(key, { ...world.lastGood.get(key), project: undefined });
         pass.error(
           `${plain(watched.repo)}: project config not loaded, repo skipped: ${plain(message)}`,
         );
@@ -1004,17 +1034,18 @@ const loadRepos = Effect.fn("Pass.loadRepos")(function* (
       }
     } else {
       projectNow = loaded.success;
-      // Only a successful load replaces the last good copy.
-      world.lastGood.set(key, { ...entry, project: projectNow });
+      world.lastGood.set(key, { ...world.lastGood.get(key), project: projectNow });
     }
     const loginResult = yield* Effect.result(world.trackerUser(watched));
     let userNow: string;
     if (loginResult._tag === "Failure") {
       const failure = loginResult.failure;
-      if (failure.transient === true && entry.trackerUser !== undefined) {
-        userNow = entry.trackerUser;
+      const copy = lastGoodCopy(world.lastGood, watched.repo, "trackerUser", failure);
+      if (copy !== undefined) {
+        userNow = copy;
         yield* useStale("login", failure.message);
       } else {
+        world.lastGood.set(key, { ...world.lastGood.get(key), trackerUser: undefined });
         // A fresh config clears the count whatever became of the login, as it always has.
         if (staleMessage === null) yield* clearMiss(key);
         else
@@ -1037,7 +1068,7 @@ const loadRepos = Effect.fn("Pass.loadRepos")(function* (
       }
     } else {
       userNow = loginResult.success;
-      world.lastGood.set(key, { ...(world.lastGood.get(key) ?? {}), trackerUser: userNow });
+      world.lastGood.set(key, { ...world.lastGood.get(key), trackerUser: userNow });
     }
     // Counted like a skip when stale, so a read that keeps failing is still told to a person.
     if (staleMessage === null) yield* clearMiss(key);
@@ -1965,6 +1996,7 @@ const claim = Effect.fn("Pass.claim")(function* (
     queues.push({ repo, issues, held: 0 });
   }
   let active = count(known, queues);
+  let late = false;
   // A blocked issue takes no slot, so its repo stays the one with the fewest and its next
   // issue is tried.
   for (;;) {
@@ -1972,6 +2004,10 @@ const claim = Effect.fn("Pass.claim")(function* (
       .filter((q) => q.issues.length > 0)
       .reduce<Queue | null>((best, q) => (best === null || q.held < best.held ? q : best), null);
     if (queue === null) break;
+    if (world.nowMs() - pass.startedMs >= CLAIM_CUTOFF_MS) {
+      late = true;
+      break;
+    }
     const repo = queue.repo;
     const name = repo.watched.repo;
     const issue = queue.issues.shift()!;
@@ -2063,6 +2099,12 @@ const claim = Effect.fn("Pass.claim")(function* (
       `claims paused: by hand since ${formatTs(paused.sinceMs)}, for ${duration(Math.max(0, world.nowMs() - paused.sinceMs))}; no ready issue claimed`,
     );
     yield* pass.record({ event: "claim_skipped", data: { reason: "paused" } });
+  }
+  if (late) {
+    pass.line(
+      `claims stopped: the pass has run for ${duration(world.nowMs() - pass.startedMs)}; the ready issues left wait for the next pass`,
+    );
+    yield* pass.record({ event: "claim_skipped", data: { reason: "late" } });
   }
   if (left > 0) {
     pass.line(

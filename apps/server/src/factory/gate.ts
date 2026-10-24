@@ -201,9 +201,11 @@ const FETCH_RETRY_DELAYS_MS = [5_000, 15_000] as const;
  * handshake that timed out, a name that did not resolve, a connection that failed or timed out,
  * or one cut off mid-pack. Anything else (a ref the remote does not have, a refused login) is
  * not a network problem and is returned at once. The match is what the retry log line names.
+ * `RPC failed` counts only with a curl code right after it: with an HTTP status in between
+ * (`RPC failed; HTTP 403 curl 22`) the server answered, and refused.
  */
 const TRANSIENT_FETCH =
-  /Error in the HTTP2 framing layer|TLS handshake timeout|Could not resolve host|Failed to connect|Connection timed out|SSL_ERROR_SYSCALL|early EOF|RPC failed/;
+  /Error in the HTTP2 framing layer|TLS handshake timeout|Could not resolve host|Failed to connect|Connection timed out|SSL_ERROR_SYSCALL|early EOF|RPC failed; curl \d+/;
 
 export interface GateOptions {
   /** Where repositories are fetched from: `<remoteBase>/<owner>/<name>.git`. Default `https://github.com`; tests pass `file:///…`. */

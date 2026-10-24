@@ -46,7 +46,7 @@ import { makeCause, type CauseStep, type ErrorKind, type MachineEvent } from "./
 import { Ledger } from "./ledger/ledger.ts";
 import { listUnfinishedRuns, runsByThread } from "./ledger/listRuns.ts";
 import { readRun } from "./ledger/read.ts";
-import { asciiLower, runIdToString, type RunId } from "./ledger/runId.ts";
+import { runIdToString, type RunId } from "./ledger/runId.ts";
 import {
   MachineLog,
   serverStartsSince,
@@ -59,11 +59,13 @@ import {
   abandonedItem,
   errorKind,
   gateQueued,
+  lastGoodCopy,
   plain,
   runPass,
   stuckItem,
   stuckLine,
   type BrokenThreadMemo,
+  type LastGood,
   type PassError,
   type PassWorld,
   type Repo,
@@ -380,7 +382,7 @@ export interface LiveShared {
   readonly stuckReads: Map<string, number>;
   readonly brokenThreads: BrokenThreadMemo;
   readonly configSkips: Map<string, number>;
-  readonly lastGood: Map<string, { project?: ProjectConfig; trackerUser?: string }>;
+  readonly lastGood: Map<string, LastGood>;
 }
 
 /**
@@ -587,7 +589,7 @@ export const liveWorld = (
           // A transient failure with a last good copy says nothing new about the config: the
           // pass runs on that copy and the last reading stands. Without a copy the repo is
           // skipped, and the reading says why.
-          error.transient === true && lastGood.get(asciiLower(watched.repo))?.project !== undefined
+          lastGoodCopy(lastGood, watched.repo, "project", error) !== undefined
             ? Effect.void
             : Effect.sync(() =>
                 onProject?.(watched.repo, { kind: "errors", errors: error.errors }),

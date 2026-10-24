@@ -2030,16 +2030,18 @@ describe("retrying a fetch the network dropped", () => {
     fake.options({ remoteBase: "https://example.test", fetchRetryDelaysMs: [0, 0] });
   // What the retry log line names is the first phrase of TRANSIENT_FETCH in the stderr.
   const flaky = [
-    [HTTP2_FRAMING, "RPC failed"],
-    [
-      "fatal: unable to access 'https://github.com/x/y.git/': Could not resolve host: github.com",
-      "Could not resolve host",
-    ],
-    ["fatal: early EOF", "early EOF"],
-  ] as const;
+    { stderr: HTTP2_FRAMING, phrase: "RPC failed; curl 16" },
+    {
+      stderr:
+        "fatal: unable to access 'https://github.com/x/y.git/': Could not resolve host: github.com",
+      phrase: "Could not resolve host",
+    },
+    { stderr: "fatal: early EOF", phrase: "early EOF" },
+  ];
 
-  for (const [stderr, phrase] of flaky) {
-    it.live(`a fetch that fails once on "${phrase}" is tried again, and the retry is logged`, () =>
+  it.live.each(flaky)(
+    'a fetch that fails once on "$phrase" is tried again, and the retry is logged',
+    ({ stderr, phrase }) =>
       usingFakeGit("co-fetch-flaky", failingFetch(1, stderr), (fake) =>
         Effect.gen(function* () {
           const logs: Array<string> = [];
@@ -2061,8 +2063,7 @@ describe("retrying a fetch the network dropped", () => {
           );
         }),
       ),
-    );
-  }
+  );
 
   it.live("the wait before the second fetch is slept", () =>
     usingFakeGit("co-fetch-wait", failingFetch(1, HTTP2_FRAMING), (fake) =>
@@ -2074,6 +2075,19 @@ describe("retrying a fetch the network dropped", () => {
         );
         assert.isAtLeast((yield* Clock.currentTimeMillis) - started, 300);
       }),
+    ),
+  );
+
+  it.live("a fetch the server refused with an HTTP status is not tried again", () =>
+    usingFakeGit(
+      "co-fetch-403",
+      failingFetch(9, "error: RPC failed; HTTP 403 curl 22 The requested URL returned error: 403"),
+      (fake) =>
+        Effect.gen(function* () {
+          const error = yield* checkoutWithFake(fake, options(fake)).pipe(Effect.flip);
+          assert.include(expectFailed(error).stderr, "HTTP 403");
+          assert.strictEqual(fake.file("count").trim(), "1");
+        }),
     ),
   );
 

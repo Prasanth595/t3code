@@ -35,6 +35,7 @@ import {
   UNSETTLED_READ_EVERY_MS,
   runPass,
   type BrokenThreadMemo,
+  type LastGood,
   type Loaded,
   type PassError,
   type GateStart,
@@ -539,7 +540,7 @@ class Fake implements PassWorld {
   sessionReads = 0;
   brokenThreads: BrokenThreadMemo = { notFactory: new Set(), unsettled: new Map() };
   configSkips = new Map<string, number>();
-  lastGood = new Map<string, { project?: ProjectConfig; trackerUser?: string }>();
+  lastGood = new Map<string, LastGood>();
   /** Threads T3 refuses to archive. */
   archiveRefused: Array<string> = [];
   /** Each thread `archiveThread` archived, in order. */
@@ -985,44 +986,80 @@ describe("claiming new issues", () => {
       }),
     );
 
-    it.effect(
-      "a failure that is not transient keeps the last good config for a later stale pass",
-      () =>
-        Effect.gen(function* () {
-          const fake = new Fake();
-          yield* pass(fake, [REPO], 3);
-          fake.projects[REPO] = "HTTP 502: Bad Gateway";
-          yield* pass(fake, [REPO], 3);
-          assert.equal(skipped(fake).length, 1);
-          assert.equal(skipped(fake)[0]!.data.reason, "config-not-loaded");
-          fake.transient.add(REPO);
-          fake.projects[REPO] = TLS;
-          yield* pass(fake, [REPO], 3);
-          assert.equal(skipped(fake).length, 1);
-          assert.deepEqual(
-            stale(fake).map((e) => e.data),
-            [{ repo: REPO, what: "config", message: TLS }],
-          );
-        }),
-    );
-
-    it.effect("a login that fails for real keeps the last good login for a later stale pass", () =>
+    it.effect("a config that fails for real is not brought back by a later blip", () =>
       Effect.gen(function* () {
         const fake = new Fake();
         yield* pass(fake, [REPO], 3);
-        fake.trackerUsers[REPO] = { error: "HTTP 502: Bad Gateway" };
+        fake.projects[REPO] = "no .dw/config.yml on main";
+        yield* pass(fake, [REPO], 3);
+        assert.equal(skipped(fake).length, 1);
+        assert.equal(skipped(fake)[0]!.data.reason, "config-not-loaded");
+        fake.ready[REPO] = [2];
+        fake.pushStart(`${REPO}#2`, started(2));
+        fake.transient.add(REPO);
+        fake.projects[REPO] = TLS;
+        yield* pass(fake, [REPO], 3);
+        assert.equal(skipped(fake).length, 2);
+        assert.deepEqual(stale(fake), []);
+        assert.notInclude(starts(fake), `start ${REPO}#2`);
+      }),
+    );
+
+    it.effect("a login that fails for real is not brought back by a later blip", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        fake.trackerUsers[REPO] = { error: "HTTP 401: Bad credentials" };
         const second = yield* pass(fake, [REPO], 3);
         assert.equal(second.report.errors, 1);
         assert.equal(errorEvents(fake).length, 1);
         fake.transient.add(REPO);
         fake.trackerUsers[REPO] = { error: TLS };
         const third = yield* pass(fake, [REPO], 3);
-        assert.equal(third.report.errors, 0);
-        assert.equal(errorEvents(fake).length, 1);
+        assert.equal(third.report.errors, 1);
+        assert.equal(errorEvents(fake).length, 2);
+        assert.deepEqual(stale(fake), []);
+      }),
+    );
+
+    it.effect("three passes on a stale login raise the item on the third", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        fake.trackerUsers[REPO] = { error: TLS };
+        fake.transient.add(REPO);
+        yield* pass(fake, [REPO], 3);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        const { report } = yield* pass(fake, [REPO], 3);
+        assert.equal(report.attention, 1);
+        assert.equal(stale(fake).length, 3);
         assert.deepEqual(
-          stale(fake).map((e) => e.data),
-          [{ repo: REPO, what: "login", message: TLS }],
+          items(fake).map((item) => item.message),
+          [
+            `${REPO}: project config or tracker login could not be re-read for 3 passes in a row, running on the last good copy; last error: ${TLS}`,
+          ],
         );
+      }),
+    );
+
+    it.effect("a pass with both the config and the login stale counts once", () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        yield* pass(fake, [REPO], 3);
+        fake.projects[REPO] = TLS;
+        fake.trackerUsers[REPO] = { error: TLS };
+        fake.transient.add(REPO);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(
+          stale(fake).map((e) => e.data.what),
+          ["config", "login"],
+        );
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(items(fake), []);
+        yield* pass(fake, [REPO], 3);
+        assert.equal(stale(fake).length, 6);
+        assert.equal(items(fake).length, 1);
       }),
     );
 
@@ -2343,6 +2380,47 @@ describe("the limit, said out loud", () => {
       fake.ready[REPO] = [1, 2];
       const { lines } = yield* pass(fake, [REPO], 5);
       assert.ok(!lines.some((l) => l.startsWith("limit reached")), lines.join("\n"));
+    }),
+  );
+});
+
+describe("a pass that has run long", () => {
+  /** A fake whose ready listing takes `ms`, so claiming starts that far into the pass. */
+  const slowListing = (ms: number) => {
+    const fake = new Fake();
+    fake.ready[REPO] = [1];
+    fake.pushStart(`${REPO}#1`, started(1));
+    const list = fake.readyIssues.bind(fake);
+    fake.readyIssues = (repo: Repo) => {
+      fake.now += ms;
+      return list(repo);
+    };
+    return fake;
+  };
+
+  it.effect("twenty minutes in, no claim is started and one line says so", () =>
+    Effect.gen(function* () {
+      const fake = slowListing(20 * 60_000);
+      const { report, lines } = yield* pass(fake, [REPO], 3);
+      assert.deepEqual(starts(fake), []);
+      assert.equal(report.claimed, 0);
+      assert.deepEqual(
+        lines.filter((l) => l.startsWith("claims stopped")),
+        ["claims stopped: the pass has run for 20m; the ready issues left wait for the next pass"],
+      );
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "claim_skipped"),
+        [{ event: "claim_skipped", data: { reason: "late" } }],
+      );
+    }),
+  );
+
+  it.effect("just short of twenty minutes, the claim is started", () =>
+    Effect.gen(function* () {
+      const fake = slowListing(20 * 60_000 - 1);
+      const { lines } = yield* pass(fake, [REPO], 3);
+      assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
+      assert.ok(!lines.some((l) => l.startsWith("claims stopped")), lines.join("\n"));
     }),
   );
 });
