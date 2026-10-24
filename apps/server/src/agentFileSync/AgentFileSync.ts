@@ -406,13 +406,13 @@ const make = Effect.gen(function* () {
         }
         if (Buffer.byteLength(text) > MAX_FILE_BYTES)
           return yield* new AgentFileSyncError({ reason: "limit", path: resource.path });
-        after = [
+        after = destinationFiles([
           {
             path: "contents",
             data: Buffer.from(text).toString("base64"),
             mode: before?.[0]?.mode ?? 0o600,
           },
-        ];
+        ]);
       }
       changes.push({ resource, before, after, revision: revision(before) });
     }

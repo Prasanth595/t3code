@@ -184,6 +184,25 @@ it.layer(NodeServices.layer)("agent file sync", (it) => {
         expect(yield* f.fs.exists(f.path.join(f.target, "AGENTS.md"))).toBe(false);
       }),
   );
+  it.effect("normalizes new Windows instruction revisions before saving undo history", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const windowsFs = FileSystem.FileSystem.of({
+        ...fs,
+        chmod: (at, mode) => fs.chmod(at, mode & 0o200 ? 0o666 : 0o444),
+      });
+      const f = yield* fixture.pipe(
+        Effect.provideService(FileSystem.FileSystem, windowsFs),
+        Effect.provideService(HostProcess.Platform, "win32"),
+      );
+      const applied = yield* f.run(sectionBundle("Shared Windows rules"));
+      expect(applied.failures).toEqual([]);
+      expect((yield* fs.stat(f.path.join(f.target, "AGENTS.md"))).mode & 0o777).toBe(0o666);
+      const undone = yield* f.sync.undo({ undoId: applied.undoId! });
+      expect(undone.failures).toEqual([]);
+      expect(yield* fs.exists(f.path.join(f.target, "AGENTS.md"))).toBe(false);
+    }),
+  );
   it.effect("compares Windows skill permissions using its writable bit", () =>
     Effect.gen(function* () {
       const f = yield* fixture.pipe(Effect.provideService(HostProcess.Platform, "win32"));

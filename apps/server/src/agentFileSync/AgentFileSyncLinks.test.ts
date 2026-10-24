@@ -717,4 +717,21 @@ it.layer(NodeServices.layer)("sync subscriptions", (it) => {
         expect(yield* f.links.list).toHaveLength(2);
       }),
   );
+  it.effect("rolls back new Windows instruction files when subscription publication fails", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const windowsFs = FileSystem.FileSystem.of({
+        ...fs,
+        chmod: (at, mode) => fs.chmod(at, mode & 0o200 ? 0o666 : 0o444),
+      });
+      const f = yield* fixture.pipe(
+        Effect.provideService(FileSystem.FileSystem, windowsFs),
+        Effect.provideService(HostProcess.Platform, "win32"),
+      );
+      f.failWrites.add("agent-file-sync-links");
+      expect((yield* f.subscribe().pipe(Effect.flip)).reason).toBe("io");
+      expect(yield* fs.exists(f.path.join(f.directory, "AGENTS.md"))).toBe(false);
+      expect(yield* f.links.list).toEqual([]);
+    }),
+  );
 });
