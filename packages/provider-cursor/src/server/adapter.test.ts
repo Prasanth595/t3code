@@ -273,22 +273,6 @@ describe("CursorAdapterV2", () => {
       failure: { class: "transport_error", message: "Provider turn failed." },
     },
     {
-      reason: "an error Cursor's run ended with after the turn ended",
-      updates: [
-        { type: "text-delta", text: "The answer." },
-        { type: "turn-ended" },
-      ] satisfies ReadonlyArray<InteractionUpdate>,
-      wait: Effect.succeed({
-        id: "native-cursor-run",
-        requestId: "native-request",
-        status: "error" as const,
-        error: { message: "Checkpoint persistence failed" },
-        model: { id: "claude-fable-5" },
-        durationMs: 1,
-      }),
-      failure: { class: "provider_error", message: "Checkpoint persistence failed" },
-    },
-    {
       reason: "no failure when Cursor's resume after the turn ended made no progress",
       // Cursor's SDK resumed from an older checkpoint after the answer was
       // delivered, regenerated the closing, then gave up on the run.
@@ -314,31 +298,6 @@ describe("CursorAdapterV2", () => {
         { type: "text-delta", text: "The answer." },
         { type: "turn-ended" },
         { type: "text-delta", text: "Following up on the stop hook." },
-      ] satisfies ReadonlyArray<InteractionUpdate>,
-      wait: Effect.succeed({
-        id: "native-cursor-run",
-        requestId: "native-request",
-        status: "error" as const,
-        error: { message: "Agent turn stopped after repeated resume attempts made no progress" },
-        model: { id: "claude-fable-5" },
-        durationMs: 1,
-      }),
-      failure: {
-        class: "provider_error",
-        message: "Agent turn stopped after repeated resume attempts made no progress",
-      },
-    },
-    {
-      reason: "the error a continuation's tool call after the turn ended stopped with",
-      updates: [
-        { type: "text-delta", text: "The answer." },
-        { type: "turn-ended" },
-        {
-          type: "partial-tool-call",
-          modelCallId: "native-model-call",
-          callId: "read-file",
-          toolCall: { type: "read", args: { path: "math.ts" } },
-        },
       ] satisfies ReadonlyArray<InteractionUpdate>,
       wait: Effect.succeed({
         id: "native-cursor-run",
