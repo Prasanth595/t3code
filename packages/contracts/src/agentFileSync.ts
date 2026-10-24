@@ -38,7 +38,11 @@ export type AgentFileSyncBundle = typeof AgentFileSyncBundle.Type;
 export const AgentFileSyncCatalog = Schema.Struct({
   skills: Schema.Array(Schema.Struct({ path: Schema.String, name: Schema.String })),
   instructions: Schema.Array(
-    Schema.Struct({ path: Schema.String, sections: Schema.Array(AgentFileSyncSection) }),
+    Schema.Struct({
+      path: Schema.String,
+      contents: Schema.optionalKey(LimitedText),
+      sections: Schema.Array(AgentFileSyncSection),
+    }),
   ),
   warnings: Schema.Array(Schema.String),
 });

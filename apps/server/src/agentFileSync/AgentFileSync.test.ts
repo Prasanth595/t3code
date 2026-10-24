@@ -731,6 +731,27 @@ it.layer(NodeServices.layer)("agent file sync", (it) => {
       expect(yield* f.sync.preview({ bundle })).toHaveLength(106);
     }),
   );
+  it.effect(
+    "lists complete instruction files including inherited blocks without exporting them",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        yield* f.write(f.target, "AGENTS.md", "## Local\nKeep local rules.\n");
+        yield* f.run(sectionBundle("## Shared\nInherited rule.\n"));
+        const contents = yield* f.fs.readFileString(f.path.join(f.target, "AGENTS.md"));
+        const catalog = yield* f.sync.list({ cwd: f.target });
+        expect(catalog.instructions[0]).toEqual({
+          path: "AGENTS.md",
+          contents,
+          sections: [
+            { id: "Local:0", title: "Local", contents: "## Local\nKeep local rules.\n\n" },
+          ],
+        });
+        expect(
+          catalog.instructions[0]?.sections.some((section) => section.title === "Shared"),
+        ).toBe(false);
+      }),
+  );
   it.effect("personal sync uses the environment's home and never scans provider credentials", () =>
     Effect.gen(function* () {
       const f = yield* fixture;

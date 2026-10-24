@@ -300,7 +300,11 @@ const make = Effect.gen(function* () {
         warnings.push("Instruction inventory exceeds 4 MB.");
         break;
       }
-      instructions.push({ path: at, sections: instructionSections(contents).slice(0, 100) });
+      instructions.push({
+        path: at,
+        contents,
+        sections: instructionSections(contents).slice(0, 100),
+      });
     }
     return { skills, instructions, warnings };
   });

@@ -234,11 +234,14 @@ local work, resolve it yourself before automatic pulls can resume.
 
 ## Sync skills and instructions
 
-Open **Settings → Skills & instructions** on web or desktop. Choose a source machine,
-select complete skills and sections of `AGENTS.md` or `CLAUDE.md`, then choose the
-machines to receive them. Review the first change and enable automatic sync.
-**All projects** selects personal files; selecting a project selects its registered
-checkouts on your machines.
+Open **Settings → Skills & instructions** on web or desktop to browse an environment’s
+skills and `AGENTS.md`/`CLAUDE.md` files. **All projects** shows global files; a project
+shows its files alongside the global ones. Select an item to read its contents with
+line numbers, inspect its source, and see where it is shared.
+
+To share an item, open its sharing controls, choose the receiving environments,
+and review the first change before enabling automatic sync. Skills include the
+whole folder; instruction files let you choose individual sections.
 
 Sync runs while a web or desktop client is open, or the mobile app is in the
 foreground, and connects both machines. Offline machines catch up after reconnecting.
