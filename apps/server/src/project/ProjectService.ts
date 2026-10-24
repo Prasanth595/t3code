@@ -12,6 +12,7 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -150,6 +151,7 @@ export const make = Effect.gen(function* () {
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const fileSystem = yield* FileSystem.FileSystem;
   const projectLocks = yield* KeyedLock.make<ProjectId>();
   const workspaceLocks = yield* KeyedLock.make<string>();
 
@@ -210,6 +212,24 @@ export const make = Effect.gen(function* () {
         ),
       );
 
+  // Rows keep the path the user registered, but one folder reached through a
+  // symlink or junction is still one workspace, so ownership compares real paths.
+  const realPathOrSelf = (workspaceRoot: string) =>
+    fileSystem.realPath(workspaceRoot).pipe(Effect.orElseSucceed(() => workspaceRoot));
+
+  const findByWorkspaceRoot = Effect.fn("ProjectService.findByWorkspaceRoot")(function* (
+    workspaceRoot: string,
+    options?: { readonly includeDeleted?: boolean },
+  ) {
+    const rows = yield* projects.list(options);
+    const exact = rows.find((row) => row.workspaceRoot === workspaceRoot);
+    if (exact !== undefined) return Option.some(exact);
+    const realRoot = yield* realPathOrSelf(workspaceRoot);
+    return yield* Effect.findFirst(rows, (row) =>
+      realPathOrSelf(row.workspaceRoot).pipe(Effect.map((rowRoot) => rowRoot === realRoot)),
+    );
+  });
+
   const commit = Effect.fn("ProjectService.commit")(function* (command: ProjectCommand) {
     const { projectId } = command;
     const dispatchError = (cause: unknown) =>
@@ -221,9 +241,7 @@ export const make = Effect.gen(function* () {
         workspaceRoot === undefined
           ? undefined
           : Option.getOrUndefined(
-              yield* projects
-                .findActiveByWorkspaceRoot(workspaceRoot)
-                .pipe(Effect.mapError(dispatchError)),
+              yield* findByWorkspaceRoot(workspaceRoot).pipe(Effect.mapError(dispatchError)),
             );
       const now = yield* DateTime.now;
       const eventId = yield* idAllocator.allocate
@@ -258,7 +276,7 @@ export const make = Effect.gen(function* () {
         projectId,
         workspaceRoot === undefined
           ? planAndCommit
-          : workspaceLocks.withLock(workspaceRoot, planAndCommit),
+          : workspaceLocks.withLock(yield* realPathOrSelf(workspaceRoot), planAndCommit),
       )
       .pipe(Effect.mapError(dispatchError));
     if (receipt.projectId !== projectId || receipt.commandType !== command.type) {
@@ -309,17 +327,7 @@ export const make = Effect.gen(function* () {
     "ProjectService.getByWorkspaceRoot",
   )(function* (workspaceRoot, options) {
     const normalized = yield* normalizeWorkspaceRoot({ workspaceRoot });
-    const row = yield* (
-      options?.includeDeleted === true
-        ? projects
-            .list({ includeDeleted: true })
-            .pipe(
-              Effect.map((rows) =>
-                Option.fromUndefinedOr(rows.find((row) => row.workspaceRoot === normalized)),
-              ),
-            )
-        : projects.findActiveByWorkspaceRoot(normalized)
-    ).pipe(
+    const row = yield* findByWorkspaceRoot(normalized, options).pipe(
       Effect.mapError((cause) => new ProjectOperationError({ operation: "list-projects", cause })),
     );
     return Option.isNone(row) ? Option.none() : Option.some(yield* hydrate(row.value));
