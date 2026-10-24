@@ -198,13 +198,21 @@ const cancelBackgroundOnlyTask = (
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const eventSink = yield* EventSink.EventSinkV2;
         const parentThreadId = ThreadId.make("thread:task-cancel-parent");
+        // Read the cursor before forking: provider events offered right after a watch can
+        // commit before a live-tail subscriber has read its starting sequence.
         const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
-          orchestrator.streamDomainEvents.pipe(
-            Stream.filter(predicate),
-            Stream.take(1),
-            Stream.runDrain,
-            Effect.forkScoped,
+          eventSink.latestSequence().pipe(
+            Effect.flatMap((afterSequence) =>
+              eventSink.stream({ afterSequence }).pipe(
+                Stream.map((stored) => stored.event),
+                Stream.filter(predicate),
+                Stream.take(1),
+                Stream.runDrain,
+                Effect.forkScoped,
+              ),
+            ),
           );
         const turnRunning = () =>
           watch(
