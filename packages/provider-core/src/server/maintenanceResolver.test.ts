@@ -721,6 +721,12 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       expected: "1.1.0",
     },
     {
+      case: "npm 12's array-wrapped release",
+      stdout: '[\n  "1.1.0"\n]\n',
+      exitCode: 0,
+      expected: "1.1.0",
+    },
+    {
       case: "the npm fallback when the npm probe fails",
       stdout: "",
       exitCode: 1,

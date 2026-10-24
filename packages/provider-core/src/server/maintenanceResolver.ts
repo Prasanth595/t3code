@@ -424,7 +424,10 @@ const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion
   return nonEmptyString(listedEntries?.[0]?.dependencies?.[packageName]?.version);
 });
 
-const decodeNpmViewVersion = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.String));
+// npm 11 prints a single version as a string; npm 12 wraps it in an array.
+const decodeNpmViewVersion = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Union([Schema.String, Schema.Tuple([Schema.String])])),
+);
 
 // npm view reads the registry, scope and auth settings the update installs with,
 // so a mirror or private registry answers where registry.npmjs.org is blocked.
@@ -441,7 +444,8 @@ const resolveNpmGlobalLatestVersion = Effect.fn("resolveNpmGlobalLatestVersion")
     ["view", "--prefix", npmPrefix, "--json", `${packageName}@latest`, "version"],
     {},
   );
-  return viewed ? nonEmptyString(Option.getOrNull(decodeNpmViewVersion(viewed.trim()))) : null;
+  const version = viewed ? Option.getOrNull(decodeNpmViewVersion(viewed.trim())) : null;
+  return nonEmptyString(typeof version === "string" ? version : version?.[0]);
 });
 
 export const resolvePackageManagedProviderMaintenance = Effect.fn(
