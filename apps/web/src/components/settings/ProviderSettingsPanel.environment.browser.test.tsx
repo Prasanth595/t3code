@@ -325,4 +325,16 @@ describe("EnvironmentProviderSettings health check interval", () => {
       ),
     ).toEqual([120]);
   });
+
+  it("restores the saved interval when a cleared field loses focus", async () => {
+    await setup();
+    await using _screen = await render(panel());
+    const input = page.getByRole("textbox", { name: "Provider health check interval in seconds" });
+
+    await userEvent.type(input, "{Backspace}{Backspace}{Backspace}");
+    await userEvent.tab();
+
+    await expect.element(input).toHaveValue("300");
+    expect(state.updateSettings).not.toHaveBeenCalled();
+  });
 });
