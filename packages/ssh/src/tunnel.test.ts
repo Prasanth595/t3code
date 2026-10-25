@@ -510,19 +510,28 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
       const releaseFirst = yield* Deferred.make<void>();
       const releaseSecond = yield* Deferred.make<void>();
       const script = yield* fs.readFileString(launchScript);
+      const transferSite = 'if cmp -s "$PREVIOUS_STATE_DIR/active-runner.sh" "$RUNNER_FILE"; then';
+      const lockWaitSite = '  if [ "$LOCK_WAIT_COUNT" -ge 200 ]; then';
+      assert.include(
+        script,
+        transferSite,
+        "launch script is missing the transfer synchronization site",
+      );
+      assert.include(
+        script,
+        lockWaitSite,
+        "launch script is missing the lock-wait synchronization site",
+      );
       // Report lock contention while the first transfer is held, so the race
       // does not depend on subprocess scheduling.
       yield* fs.writeFileString(
         launchScript,
         script
           .replace(
-            'if cmp -s "$PREVIOUS_STATE_DIR/active-runner.sh" "$RUNNER_FILE"; then',
+            transferSite,
             'printf "transferring\\n"; read -r release; if cmp -s "$PREVIOUS_STATE_DIR/active-runner.sh" "$RUNNER_FILE"; then',
           )
-          .replace(
-            '  if [ "$LOCK_WAIT_COUNT" -ge 200 ]; then',
-            '  printf "waiting\\n"; if [ "$LOCK_WAIT_COUNT" -ge 200 ]; then',
-          ),
+          .replace(lockWaitSite, '  printf "waiting\\n"; if [ "$LOCK_WAIT_COUNT" -ge 200 ]; then'),
       );
       const first = yield* launch("first-alias", {
         onLine: (line) =>
