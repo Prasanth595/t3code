@@ -1597,12 +1597,18 @@ export function WorkspaceLargeTextPreview(props: {
   if (assetUrl._tag === "Success" && loaded?.revision !== contentRevision) {
     setLoaded({ revision: contentRevision, url: assetUrl.url });
   }
-  if (assetUrl._tag !== "Success" || loaded === null)
+  if (assetUrl._tag === "Failure")
     return (
-      <div className="p-6 text-xs text-muted-foreground">
-        {assetUrl._tag === "Failure" ? "Unable to load file preview." : "Loading…"}
-      </div>
+      <FileSurfaceFailure
+        message="Unable to load file preview."
+        onRetry={() => {
+          setRevision((value) => value + 1);
+          void refreshAssetUrl().catch(showError);
+        }}
+      />
     );
+  if (assetUrl._tag !== "Success" || loaded === null)
+    return <div className="p-6 text-xs text-muted-foreground">Loading…</div>;
   const src = `${loaded.url}${loaded.url.includes("?") ? "&" : "?"}revision=${encodeURIComponent(loaded.revision)}`;
   return (
     <>
