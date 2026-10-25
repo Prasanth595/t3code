@@ -11,7 +11,7 @@ const contextChipVariants = cva(
     defaultVariants: { kind: "neutral" },
     variants: {
       kind: {
-        neutral: "[--context-chip-accent:var(--foreground)]",
+        neutral: "[--context-chip-accent:currentColor]",
         image: "[--context-chip-accent:var(--context-chip-image)]",
         video: "[--context-chip-accent:var(--context-chip-video)]",
         file: "[--context-chip-accent:var(--context-chip-file)]",
@@ -30,7 +30,7 @@ const contextChipVariants = cva(
         citation: "[--context-chip-accent:var(--context-chip-citation)]",
       },
       state: {
-        unresolved: "data-[state=unresolved]:[--context-chip-accent:var(--foreground)]",
+        unresolved: "data-[state=unresolved]:[--context-chip-accent:currentColor]",
         invalid:
           "data-[state=invalid]:[--context-chip-accent:var(--context-chip-invalid,var(--destructive-foreground))]",
       },

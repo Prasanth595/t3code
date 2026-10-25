@@ -545,6 +545,28 @@ describe("theme files", () => {
 
 describe("context chip colors", () => {
   const toOklch = converter("oklch");
+  const toRgb = converter("rgb");
+  // Surfaces stay unrounded, as CSS paints them; the chip is the 8-bit hex the solver returns.
+  const paintedContrastRatio = (chip: string, surface: string, canvas: string) => {
+    const channels = (value: string) => {
+      const rgb = toRgb(value)!;
+      return [rgb.r, rgb.g, rgb.b].map((channel) => Math.min(1, Math.max(0, channel)));
+    };
+    const back = channels(canvas);
+    const alpha = toRgb(surface)!.alpha ?? 1;
+    const painted = channels(surface).map(
+      (channel, index) => back[index]! * (1 - alpha) + channel * alpha,
+    );
+    const luminance = (rgb: number[]) =>
+      rgb
+        .map((channel) =>
+          channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4,
+        )
+        .reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index]!, 0);
+    const first = luminance(channels(asHex(chip)));
+    const second = luminance(painted);
+    return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
+  };
   const palettes = [
     getStandardThemeColors("light"),
     getStandardThemeColors("dark"),
@@ -566,7 +588,7 @@ describe("context chip colors", () => {
           colors.surfaceRaised,
           colors.messageSurface,
         ]) {
-          expect(contrastRatio(chip, surface)).toBeGreaterThanOrEqual(5);
+          expect(paintedContrastRatio(chip, surface, colors.canvas)).toBeGreaterThanOrEqual(5);
         }
         const solved = toOklch(chip)!;
         if ((solved.c ?? 0) > 0.04) {
@@ -623,7 +645,7 @@ describe("context chip colors", () => {
         colors.surfaceRaised,
         colors.messageSurface,
       ]) {
-        expect(contrastRatio(invalid!, surface)).toBeGreaterThanOrEqual(5);
+        expect(paintedContrastRatio(invalid!, surface, colors.canvas)).toBeGreaterThanOrEqual(5);
       }
     }
   });

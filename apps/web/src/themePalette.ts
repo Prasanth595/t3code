@@ -471,9 +471,10 @@ function srgbChannelToLinear(channel: number): number {
   return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
 }
 
-function linearChannelToSrgb(channel: number): number {
+function linearChannelToSrgb(channel: number, round = true): number {
   const c = channel <= 0.0031308 ? channel * 12.92 : 1.055 * channel ** (1 / 2.4) - 0.055;
-  return Math.round(Math.min(1, Math.max(0, c)) * 255);
+  const srgb = Math.min(1, Math.max(0, c)) * 255;
+  return round ? Math.round(srgb) : srgb;
 }
 
 function themeRgbToOklch(color: ThemeRgbColor): ThemeOklch {
@@ -527,12 +528,12 @@ function mapThemeOklchToSrgbGamut(color: ThemeOklch): ThemeOklch {
   return { ...color, C: low };
 }
 
-function themeOklchToRgb(color: ThemeOklch): ThemeRgbColor {
+function themeOklchToRgb(color: ThemeOklch, round = true): ThemeRgbColor {
   const linear = oklchToRgbUnclamped(mapThemeOklchToSrgbGamut(color));
   return {
-    r: linearChannelToSrgb(linear.r),
-    g: linearChannelToSrgb(linear.g),
-    b: linearChannelToSrgb(linear.b),
+    r: linearChannelToSrgb(linear.r, round),
+    g: linearChannelToSrgb(linear.g, round),
+    b: linearChannelToSrgb(linear.b, round),
   };
 }
 
@@ -590,10 +591,14 @@ const CONTEXT_CHIP_MESSAGE_VARIABLE = "--context-chip-message";
 const CONTEXT_CHIP_INVALID_VARIABLE = "--context-chip-invalid";
 
 export function contextChipVariables(colors: ThemeColors): Readonly<Record<string, string>> {
-  const canvas = parseThemeRgbColor(colors.canvas, THEME_WHITE_FOREGROUND);
+  // CSS paints surfaces from their unrounded OKLCH, so measure them unrounded.
+  const parsedCanvas = parseThemeColor(colors.canvas);
+  const canvas = parsedCanvas ? themeOklchToRgb(parsedCanvas.color, false) : THEME_WHITE_FOREGROUND;
   const onCanvas = (value: string) => {
     const parsed = parseThemeColor(value);
-    return parsed ? mixThemeRgbColors(canvas, themeOklchToRgb(parsed.color), parsed.alpha) : canvas;
+    return parsed
+      ? mixThemeRgbColors(canvas, themeOklchToRgb(parsed.color, false), parsed.alpha)
+      : canvas;
   };
   const isDark = (color: ThemeRgbColor) => themeRelativeLuminance(color) < 0.179;
   const darkText = isDark(onCanvas(colors.text));
