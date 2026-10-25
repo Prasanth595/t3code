@@ -60,6 +60,32 @@ describe("markdownWithWindowsPathDestinations", () => {
     expect(document.children?.[0]?.children?.[0]?.attributes?.title).toBe("Shot");
   });
 
+  it.each([
+    { name: "JavaScript", parse: parseMarkdownDocument },
+    { name: "native", parse: nativeDocument },
+  ])(
+    "preserves linked HTML Windows images in tables through the $name parser",
+    async ({ parse }) => {
+      const document = await parse(
+        [
+          "| Preview | Status |",
+          "| - | - |",
+          String.raw`| <a href="https://example.com/?a=1&#124;2"><img src="C:\me\.t3\&amp;copy;.png"></a><br><img src="\\server\share\_shot.png"> | done |`,
+        ].join("\n"),
+      );
+
+      expect(destinations(document)).toEqual([
+        "https://example.com/?a=1%7C2",
+        String.raw`C:\me\.t3\&copy;.png`,
+        String.raw`\\server\share\_shot.png`,
+      ]);
+      const table = document.children?.[0];
+      expect(document.children).toHaveLength(1);
+      expect(table?.type.toLowerCase()).toBe("table");
+      expect(table).toMatchObject({ children: [{}, {}] });
+    },
+  );
+
   it("preserves HTML and inline-file destinations through native parsing", async () => {
     const document = await nativeDocument(
       [
