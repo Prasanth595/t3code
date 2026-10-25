@@ -47,11 +47,18 @@ export function shouldBundleCliDependency(id: string): boolean {
   return !isExternalCliDependency(id);
 }
 
+// Staged CLIs the server spawns but never imports; the install brings their dependencies.
+const CLI_SPAWNED_RUNTIME_PACKAGES = ["@earendil-works/pi-coding-agent"] as const;
+
 export function selectCliRuntimeExternalDependencies(
   dependencies: Readonly<Record<string, string>>,
 ): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(dependencies).filter(([name]) => isRuntimeExternalCliDependency(name)),
+    Object.entries(dependencies).filter(
+      ([name]) =>
+        isRuntimeExternalCliDependency(name) ||
+        CLI_SPAWNED_RUNTIME_PACKAGES.some((spawned) => spawned === name),
+    ),
   );
 }
 

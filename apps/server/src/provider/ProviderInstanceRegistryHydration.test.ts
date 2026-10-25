@@ -10,7 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceConfigMap } from "./ProviderInstanceRegistryHydration.ts";
 
 const projectId = ProjectId.make("project-a");
-const instanceId = ProviderInstanceId.make("codex_work");
+const instanceId = ProviderInstanceId.make("pi_work");
 
 function settingsWith(overrides: Partial<ServerSettings>): ServerSettings {
   return { ...DEFAULT_SERVER_SETTINGS, ...overrides };
@@ -20,7 +20,7 @@ describe("deriveProviderInstanceConfigMap", () => {
   it("turns a machine-disabled instance on when a project enables it", () => {
     const settings = settingsWith({
       providerInstances: {
-        [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: false },
+        [instanceId]: { driver: ProviderDriverKind.make("pi"), enabled: false },
       },
       projectSettingsOverrides: {
         [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
@@ -29,14 +29,14 @@ describe("deriveProviderInstanceConfigMap", () => {
 
     const merged = deriveProviderInstanceConfigMap(settings);
 
-    expect(merged[instanceId]).toEqual({ driver: ProviderDriverKind.make("codex"), enabled: true });
+    expect(merged[instanceId]).toEqual({ driver: ProviderDriverKind.make("pi"), enabled: true });
   });
 
   it("clears a nested config.enabled:false flag when a project enables the instance", () => {
     const settings = settingsWith({
       providerInstances: {
         [instanceId]: {
-          driver: ProviderDriverKind.make("codex"),
+          driver: ProviderDriverKind.make("pi"),
           config: { enabled: false },
         },
       },
@@ -48,7 +48,7 @@ describe("deriveProviderInstanceConfigMap", () => {
     const merged = deriveProviderInstanceConfigMap(settings);
 
     expect(merged[instanceId]).toEqual({
-      driver: ProviderDriverKind.make("codex"),
+      driver: ProviderDriverKind.make("pi"),
       enabled: true,
       config: { enabled: true },
     });
@@ -70,7 +70,7 @@ describe("deriveProviderInstanceConfigMap", () => {
   it("ignores a project override that disables an instance, leaving the machine's config in charge", () => {
     const settings = settingsWith({
       providerInstances: {
-        [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+        [instanceId]: { driver: ProviderDriverKind.make("pi"), enabled: true },
       },
       projectSettingsOverrides: {
         [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
@@ -80,5 +80,21 @@ describe("deriveProviderInstanceConfigMap", () => {
     const merged = deriveProviderInstanceConfigMap(settings);
 
     expect(merged[instanceId]).toBe(settings.providerInstances[instanceId]);
+  });
+
+  it("drops instances whose driver this build does not ship", () => {
+    const codexInstanceId = ProviderInstanceId.make("codex");
+    const settings = settingsWith({
+      providerInstances: {
+        [codexInstanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+      },
+    });
+
+    const merged = deriveProviderInstanceConfigMap(settings);
+
+    expect(merged[codexInstanceId]).toBeUndefined();
+    expect(merged[ProviderInstanceId.make("pi")]).toEqual({
+      driver: ProviderDriverKind.make("pi"),
+    });
   });
 });

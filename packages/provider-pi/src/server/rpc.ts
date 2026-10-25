@@ -19,6 +19,7 @@ import {
 } from "@t3tools/shared/toolOutput";
 
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
+import { resolvePiCommand } from "./bundledPi.ts";
 
 export class PiRpcError extends Schema.TaggedError<PiRpcError>()("PiRpcError", {
   operation: Schema.String,
@@ -174,14 +175,15 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
   const platform = yield* HostProcess.Platform;
   const scope = yield* Effect.scope;
 
-  const spawnCommand = yield* resolveSpawnCommand(options.command, [...options.args], {
-    env: options.env,
+  const piCommand = resolvePiCommand(options.command, options.args, options.env);
+  const spawnCommand = yield* resolveSpawnCommand(piCommand.command, [...piCommand.args], {
+    env: piCommand.env,
   }).pipe(Effect.mapError((cause) => new PiRpcError({ operation: "spawn", cause })));
   const child = yield* spawner
     .spawn(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-        env: options.env,
+        env: piCommand.env,
         extendEnv: false,
         shell: spawnCommand.shell,
         detached: platform !== "win32",
