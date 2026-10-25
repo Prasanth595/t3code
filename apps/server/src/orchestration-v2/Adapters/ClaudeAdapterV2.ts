@@ -10668,8 +10668,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 yield* Ref.get(pendingBackgroundTasksByNativeThread),
                 nativeThreadId,
               );
-              // Claude reaps a native subagent's shell tasks when it returns; marking them
-              // awaited cannot extend their lifetime. Still allow clearing an existing mark.
+              // Claude kills a foreground subagent's shell tasks on return; an awaited mark cannot keep them alive.
               const matched = [...new Set(taskIds)].filter((taskId) => {
                 const task = roster.get(taskId);
                 return (

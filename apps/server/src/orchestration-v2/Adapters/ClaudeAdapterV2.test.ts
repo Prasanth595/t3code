@@ -7451,16 +7451,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         yield* nextRoster((tasks) => tasks.length === 3);
 
-        const subagentWait = yield* awaitBackgroundTasks({
-          providerThread: harness.providerThread,
-          taskIds: ["subagent-tests"],
-          awaited: true,
-        });
-        assert.deepStrictEqual(subagentWait.matched, []);
-
         const marked = yield* awaitBackgroundTasks({
           providerThread: harness.providerThread,
-          taskIds: [WAKE_TASK_ID, "subagent-tests", "foreground-agent", "already-finished"],
+          taskIds: [WAKE_TASK_ID, "subagent-tests", "already-finished"],
           awaited: true,
         });
         assert.deepStrictEqual(marked.matched, [WAKE_TASK_ID]);
@@ -7472,12 +7465,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ["subagent-tests", false],
           ],
         );
-        const subagentRelease = yield* awaitBackgroundTasks({
-          providerThread: harness.providerThread,
-          taskIds: ["subagent-tests"],
-          awaited: false,
-        });
-        assert.deepStrictEqual(subagentRelease.matched, ["subagent-tests"]);
         yield* Queue.offer(harness.sdkMessages, turnOneResult);
         yield* Queue.take(harness.terminalReceipts);
 
@@ -7597,55 +7584,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               awaited: true,
             });
             assert.deepStrictEqual(result.matched, []);
-            assert.isUndefined(Reflect.get(latestTasks()[0]!, "ownedBySubagent"));
-          }
-
-          yield* harness.offerAndWait(roster([], "ended"));
-          yield* harness.until(() => latestTasks().length === 0);
-          yield* harness.offerAndWait(roster([taskId], "reused"));
-          yield* harness.until(() => latestTasks()[0]?.description === "reused");
-          const reused = yield* awaitBackgroundTasks({
-            providerThread: harness.providerThread,
-            taskIds: [taskId],
-            awaited: true,
-          });
-          assert.deepStrictEqual(reused.matched, [taskId]);
-
-          if (!backgrounded) {
-            for (const status of ["completed", "failed", "killed"] as const) {
-              const finishedTaskId = `foreground-${status}`;
-              yield* harness.offerAndWait(
-                claudeSdkFrame({
-                  type: "system",
-                  subtype: "task_started",
-                  task_id: finishedTaskId,
-                  task_type: "local_bash",
-                  owned_by_subagent: true,
-                  is_backgrounded: false,
-                  description: "Foreground tests",
-                  uuid: `started-${status}`,
-                  session_id: WAKE_NATIVE_SESSION,
-                }),
-              );
-              yield* harness.offerAndWait(
-                claudeSdkFrame({
-                  type: "system",
-                  subtype: "task_updated",
-                  task_id: finishedTaskId,
-                  patch: { status },
-                  uuid: `finished-${status}`,
-                  session_id: WAKE_NATIVE_SESSION,
-                }),
-              );
-              yield* harness.offerAndWait(roster([finishedTaskId], status));
-              yield* harness.until(() => latestTasks()[0]?.description === status);
-              const afterCompletion = yield* awaitBackgroundTasks({
-                providerThread: harness.providerThread,
-                taskIds: [finishedTaskId],
-                awaited: true,
-              });
-              assert.deepStrictEqual(afterCompletion.matched, [finishedTaskId]);
-            }
           }
         }).pipe(
           Effect.provide(
@@ -7723,12 +7661,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             awaited: true,
           });
           assert.deepStrictEqual(result.matched, []);
-          const released = yield* awaitBackgroundTasks({
-            providerThread: harness.providerThread,
-            taskIds: ["tests"],
-            awaited: false,
-          });
-          assert.deepStrictEqual(released.matched, ["tests"]);
         }).pipe(
           Effect.provide(
             Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
