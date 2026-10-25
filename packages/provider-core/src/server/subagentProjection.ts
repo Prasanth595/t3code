@@ -359,8 +359,10 @@ export const endRunlessRootTurns = Effect.fn("subagentProjection.endRunlessRootT
 >(input: {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
-  readonly projection: Pick<OrchestrationV2ThreadProjection, "nodes" | "turnItems"> &
-    Partial<Pick<OrchestrationV2ThreadProjection, "providerTurns">>;
+  readonly projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "nodes" | "providerTurns" | "turnItems"
+  >;
   readonly status: "completed" | "failed" | "interrupted" | "cancelled";
   readonly completedAt?: DateTime.Utc;
   readonly now: DateTime.Utc;
@@ -423,7 +425,7 @@ export const endRunlessRootTurns = Effect.fn("subagentProjection.endRunlessRootT
         },
       });
     }
-    for (const providerTurn of input.projection.providerTurns ?? []) {
+    for (const providerTurn of input.projection.providerTurns) {
       if (
         providerTurn.nodeId !== node.id ||
         providerTurn.runAttemptId !== null ||

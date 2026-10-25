@@ -2614,12 +2614,13 @@ it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as c
         );
         assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
         const repaired = finalEvents.find((event) => event.type === "provider-turn.updated");
-        assert.equal(repaired?.payload.id, ids.rootProviderTurnId);
-        assert.equal(
-          repaired?.payload.status,
-          failureMode === "interrupt-failure" ? "failed" : "interrupted",
-        );
-        assert.isNotNull(repaired?.payload.completedAt);
+        if (failureMode === "interrupt-failure") {
+          assert.isUndefined(repaired);
+        } else {
+          assert.equal(repaired?.payload.id, ids.rootProviderTurnId);
+          assert.equal(repaired?.payload.status, "interrupted");
+          assert.isNotNull(repaired?.payload.completedAt);
+        }
       }
     }),
 );

@@ -620,7 +620,7 @@ export const layer: Layer.Layer<
         readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
         readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
         readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
-        // Only when T3 ends the run itself: the provider never ends this turn.
+        // Root turn snapshot written with the run when T3 ends the run itself.
         readonly abandonedProviderTurn?: OrchestrationV2ProviderTurn;
         readonly terminal: ProviderTerminalEvent;
         readonly completedAt?: DateTime.Utc;
@@ -1480,9 +1480,7 @@ export const layer: Layer.Layer<
                 const providerThread = yield* Ref.get(latestProviderThread);
                 const routing = yield* Ref.get(eventRouting);
                 const rootProviderTurn = yield* Ref.get(latestRootProviderTurn);
-                // Stop background work too; the failed consumer cannot persist terminal
-                // events. The turn still ends with the run when the interrupt fails or a
-                // lost process never answers, so it cannot stay running.
+                // Stop background work too; the failed consumer cannot persist terminal events.
                 const abandonedProviderTurn =
                   routing.rootProviderTurnId !== null && !routing.rootTurnEnded
                     ? yield* input.session
@@ -1492,24 +1490,30 @@ export const layer: Layer.Layer<
                           requestRuntimeRestart: true,
                         })
                         .pipe(
-                          Effect.timeout("5 seconds"),
-                          Effect.as("interrupted" as const),
+                          Effect.as(true),
                           Effect.catchCauseIf(
                             (interruptCause) => !Cause.hasInterruptsOnly(interruptCause),
                             (interruptCause) =>
                               Effect.logWarning(
                                 "orchestration V2 failed to interrupt turn after ingestion failure",
                                 { runId: input.run.id, cause: interruptCause },
-                              ).pipe(Effect.as("failed" as const)),
+                              ).pipe(Effect.as(false)),
                           ),
                           // The snapshot is cached before it is published, so it may not be
-                          // stored. Replay a terminal snapshot as-is; only active turns end here.
-                          Effect.map((status) =>
+                          // stored: replay a terminal one as-is. An active turn whose interrupt
+                          // failed stays running so the next start retries the interrupt.
+                          Effect.map((interrupted) =>
                             rootProviderTurn === null
                               ? null
                               : isTerminalProviderTurnStatus(rootProviderTurn.status)
                                 ? rootProviderTurn
-                                : { ...rootProviderTurn, status, completedAt },
+                                : interrupted
+                                  ? {
+                                      ...rootProviderTurn,
+                                      status: "interrupted" as const,
+                                      completedAt,
+                                    }
+                                  : null,
                           ),
                         )
                     : null;
