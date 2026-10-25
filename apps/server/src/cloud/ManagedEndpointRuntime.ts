@@ -45,6 +45,7 @@ export type CloudManagedEndpointRuntimeStatus =
 
 /** What the running cloudflared reports about itself. `null` fields are not known yet. */
 export interface ConnectorFacts {
+  readonly pid: number;
   readonly readyConnections: number | null;
   /** The public tunnel hostname from the remote config cloudflared receives once it connects. */
   readonly hostname: string | null;
@@ -63,6 +64,8 @@ export class CloudManagedEndpointRuntime extends Context.Service<
     readonly readinessChanged: Stream.Stream<void>;
     readonly recoveryRequests: Stream.Stream<RelayManagedEndpointRuntimeConfig>;
     readonly requestRecovery: (config: RelayManagedEndpointRuntimeConfig) => Effect.Effect<void>;
+    /** Restarts the connector with this pid; ignored once it is no longer the active one. */
+    readonly restartConnector: (pid: number) => Effect.Effect<void>;
     readonly tunnelConnected: Stream.Stream<void>;
     readonly withLinkStateLock: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   }
@@ -720,6 +723,19 @@ export const make = Effect.gen(function* () {
       ),
   );
 
+  const restartConnector = Effect.fn("CloudManagedEndpointRuntime.restartConnector")(function* (
+    pid: number,
+  ) {
+    const active = yield* Ref.get(activeRef);
+    if (!active || Number(active.child.pid) !== pid) return;
+    yield* Effect.logWarning(
+      "Cloudflare has no live connection from the relay client; restarting it",
+      { pid, tunnelId: active.config.tunnelId, tunnelName: active.config.tunnelName },
+    );
+    // The supervisor starts the replacement with its usual crash-loop backoff.
+    yield* active.child.kill().pipe(Effect.ignore);
+  }, reconcileSemaphore.withPermits(1));
+
   const readMetrics = <S extends Schema.Decoder<unknown>>(url: string, schema: S) =>
     httpClient.get(url).pipe(
       Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
@@ -735,9 +751,10 @@ export const make = Effect.gen(function* () {
     if (!active || !(yield* active.child.isRunning.pipe(Effect.orElseSucceed(() => false)))) {
       return null;
     }
+    const pid = Number(active.child.pid);
     const protocol = yield* Ref.get(active.protocol);
     if (!(yield* Deferred.isDone(active.metricsAddress))) {
-      return { readyConnections: null, hostname: null, protocol } satisfies ConnectorFacts;
+      return { pid, readyConnections: null, hostname: null, protocol } satisfies ConnectorFacts;
     }
     const metricsUrl = `http://${yield* Deferred.await(active.metricsAddress)}`;
     const [ready, config] = yield* Effect.all(
@@ -748,6 +765,7 @@ export const make = Effect.gen(function* () {
       { concurrency: 2 },
     );
     return {
+      pid,
       readyConnections: ready?.readyConnections ?? null,
       hostname: config?.config.ingress?.find((rule) => rule.hostname)?.hostname ?? null,
       protocol,
@@ -760,6 +778,7 @@ export const make = Effect.gen(function* () {
     readinessChanged: Stream.fromQueue(readinessChanges),
     recoveryRequests: Stream.fromQueue(recoveryRequests),
     requestRecovery: (config) => Queue.offer(recoveryRequests, config).pipe(Effect.asVoid),
+    restartConnector,
     tunnelConnected: Stream.fromQueue(tunnelConnections),
     withLinkStateLock: linkStateSemaphore.withPermits(1),
   });

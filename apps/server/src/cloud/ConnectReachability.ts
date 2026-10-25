@@ -6,6 +6,7 @@ import {
   formatConnectReachable,
 } from "@t3tools/contracts";
 import { readTailscaleExitNode, type TailscaleExitNode } from "@t3tools/tailscale";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -31,6 +32,11 @@ const ENDPOINT_REQUEST_TIMEOUT = Duration.seconds(10);
 const READINESS_CHANGE_DEBOUNCE = Duration.seconds(3);
 // Readiness changes miss failures and recoveries past cloudflared (DNS, origin, edge errors).
 const RECHECK_INTERVAL = Duration.minutes(5);
+// cloudflared can keep reporting ready connections the edge already dropped, so its
+// own readiness watch never restarts it. A 530 can also be brief, so restart only once it
+// lasts, and wait longer after each restart that did not help.
+const DEAD_CONNECTOR_RESTART_AFTER = Duration.minutes(2);
+const DEAD_CONNECTOR_RESTART_AFTER_MAX = Duration.hours(1);
 
 export type EndpointProbe =
   | { readonly kind: "status"; readonly status: number }
@@ -206,6 +212,10 @@ const make = Effect.gen(function* () {
     Option.none<{ readonly order: number; readonly result: EnvironmentConnectReachability }>(),
   );
   const checkCounter = yield* Ref.make(0);
+  const deadConnectorRef = yield* Ref.make<{
+    readonly streak: { readonly pid: number; readonly since: number } | null;
+    readonly restartAfterMillis: number;
+  }>({ streak: null, restartAfterMillis: Duration.toMillis(DEAD_CONNECTOR_RESTART_AFTER) });
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const readExitNode = readTailscaleExitNode.pipe(
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -244,16 +254,60 @@ const make = Effect.gen(function* () {
     if (connector === null || (endpoint?.kind === "status" && endpoint.status === 200)) {
       return facts;
     }
+    // The classification ignores the TCP edge test while cloudflared has ready connections.
+    const connected = (connector.readyConnections ?? 0) > 0;
     const [edgeResults, exitNode] = yield* Effect.all(
       [
-        Effect.forEach(TUNNEL_EDGE_HOSTS, (host) => canOpenTcp(host, TUNNEL_EDGE_PORT), {
-          concurrency: "unbounded",
-        }),
+        connected
+          ? Effect.succeed(null)
+          : Effect.forEach(TUNNEL_EDGE_HOSTS, (host) => canOpenTcp(host, TUNNEL_EDGE_PORT), {
+              concurrency: "unbounded",
+            }),
         readExitNode,
       ],
       { concurrency: 2 },
     );
-    return { ...facts, edgeReachable: edgeResults.some(Boolean), exitNode };
+    return { ...facts, edgeReachable: edgeResults?.some(Boolean) ?? null, exitNode };
+  });
+
+  // Runs inside the check span; the runtime restart has its own.
+  const restartDeadConnector = Effect.fnUntraced(function* (
+    facts: ReachabilityFacts,
+    result: EnvironmentConnectReachability,
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    const { connector } = facts;
+    const dead =
+      result.status === "unreachable" &&
+      result.cause === "no_connector" &&
+      connector !== null &&
+      (connector.readyConnections ?? 0) > 0
+        ? connector
+        : null;
+    const restartPid = yield* Ref.modify(deadConnectorRef, (state) => {
+      if (result.status === "reachable") {
+        return [
+          null,
+          { streak: null, restartAfterMillis: Duration.toMillis(DEAD_CONNECTOR_RESTART_AFTER) },
+        ];
+      }
+      if (dead === null) return [null, { ...state, streak: null }];
+      if (state.streak?.pid !== dead.pid) {
+        return [null, { ...state, streak: { pid: dead.pid, since: now } }];
+      }
+      if (now - state.streak.since < state.restartAfterMillis) return [null, state];
+      return [
+        dead.pid,
+        {
+          streak: null,
+          restartAfterMillis: Math.min(
+            state.restartAfterMillis * 2,
+            Duration.toMillis(DEAD_CONNECTOR_RESTART_AFTER_MAX),
+          ),
+        },
+      ];
+    });
+    if (restartPid !== null) yield* runtime.restartConnector(restartPid);
   });
 
   const check = Effect.gen(function* () {
@@ -266,6 +320,7 @@ const make = Effect.gen(function* () {
         : [current, Option.some({ order, result })],
     );
     if (previous === null) return result;
+    yield* restartDeadConnector(facts, result);
     const changed = Option.match(previous, {
       onNone: () => true,
       onSome: ({ result: last }) =>
