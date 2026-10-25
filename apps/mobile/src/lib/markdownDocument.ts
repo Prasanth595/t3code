@@ -371,11 +371,13 @@ export function markdownWithBlockImages(markdown: string): string {
       const imageEnd = child.position?.end.offset;
       if (imageStart === undefined || imageEnd === undefined) continue;
       // Each break replaces the spaces, hard break and line prefix it lands on.
-      const before = /[ \t]*(?:\\?\r?\n[ \t>]*)?$/.exec(markdown.slice(start, imageStart))![0];
+      const before = /(?:^|[^ \t])([ \t]*(?:\\?\r?\n[ \t>]*)?)$/.exec(
+        markdown.slice(start, imageStart),
+      )![1]!;
       if (imageStart > previousEnd)
         edits.push({ start: imageStart - before.length, end: imageStart, content: paragraphBreak });
       if (imageEnd < end) {
-        const after = /^[ \t]*(?:\r?\n[ \t>]*)?/.exec(markdown.slice(imageEnd, end))![0];
+        const after = /^[ \t]*(?:\\?\r?\n[ \t>]*)?/.exec(markdown.slice(imageEnd, end))![0];
         previousEnd = imageEnd + after.length;
         edits.push({ start: imageEnd, end: previousEnd, content: paragraphBreak });
       }

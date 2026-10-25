@@ -9,6 +9,9 @@ describe("images inside running text", () => {
     expect(markdownWithBlockImages("Shots ![a](a.png) ![b][b]\n\n[b]: b.png")).toBe(
       "Shots\n\n![a](a.png)\n\n![b][b]\n\n[b]: b.png",
     );
+    expect(markdownWithBlockImages("Shots ![a](a.png)  \\\n![b](b.png)")).toBe(
+      "Shots\n\n![a](a.png)\n\n![b](b.png)",
+    );
   });
 
   it("keeps the new paragraphs inside lists and blockquotes", () => {
