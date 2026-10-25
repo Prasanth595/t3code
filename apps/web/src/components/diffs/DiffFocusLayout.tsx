@@ -184,6 +184,7 @@ export function DiffFocusLayout({
     // The root takes focus from clicks inside the shadow-rooted diff so its keys still reach here.
     <div
       tabIndex={-1}
+      data-owned-keys="jknp"
       className="flex min-h-0 flex-1 overflow-hidden outline-none"
       onKeyDown={onKeyDown}
     >
@@ -215,10 +216,10 @@ export function DiffFocusLayout({
                 role="option"
                 aria-selected={selected}
                 className={cn(
-                  "flex h-7 cursor-default items-center gap-2 px-3 text-xs [contain-intrinsic-size:auto_1.75rem] [content-visibility:auto]",
+                  "mx-1 flex h-7 cursor-default items-center gap-2 rounded-md px-2 text-xs [contain-intrinsic-size:auto_1.75rem] [content-visibility:auto]",
                   selected
-                    ? "bg-accent text-accent-foreground group-focus/list:bg-primary/15"
-                    : "hover:bg-accent/50",
+                    ? "bg-foreground/12 group-focus/list:bg-primary/25"
+                    : "hover:bg-foreground/7",
                 )}
                 onClick={() => navigation.selectFile(index)}
               >

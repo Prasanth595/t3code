@@ -55,6 +55,15 @@ function isSurfaceLauncherKey(key: string): boolean {
   return launcherKeys?.toLowerCase().includes(key.toLowerCase()) ?? false;
 }
 
+function isKeyOwnedByFocusedRegion(event: KeyboardEvent): boolean {
+  return event
+    .composedPath()
+    .some(
+      (target) =>
+        target instanceof Element && target.getAttribute("data-owned-keys")?.includes(event.key),
+    );
+}
+
 export function shouldRedirectInputToComposer(event: Event): boolean {
   if (event.defaultPrevented) return false;
   // Never persist or send secret-request typing through the composer.
@@ -71,6 +80,7 @@ export function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   if (event.key.length !== 1) return false;
   if (!shouldRedirectInputToComposer(event)) return false;
   if (isSurfaceLauncherKey(event.key)) return false;
+  if (isKeyOwnedByFocusedRegion(event)) return false;
 
   return true;
 }
