@@ -743,6 +743,21 @@ function AdaptiveWorkspaceLayoutContent(
     });
   };
 
+  // Rotating flips the overlay; until the new size reaches JS, predict the reset above.
+  const sidebarOverRotates =
+    nativeWorkspace && nativeMetrics?.hasHinge === true && layout.usesSplitView;
+  const sidebarInLandscape = primarySidebarPinned || primarySidebarPreferredVisible;
+  const sidebarInPortrait =
+    primarySidebarPinned ||
+    (baseLayout.primarySidebarOverlaysContent
+      ? overlaySidebar.visible
+      : isWorkspaceListPath(pathname));
+  const sidebarByOrientation = useMemo(
+    () =>
+      sidebarOverRotates ? { landscape: sidebarInLandscape, portrait: sidebarInPortrait } : null,
+    [sidebarInLandscape, sidebarInPortrait, sidebarOverRotates],
+  );
+
   const contextValue = {
     layout,
     panes,
@@ -762,6 +777,7 @@ function AdaptiveWorkspaceLayoutContent(
     setAuxiliaryPaneWidth,
     composerKeyboardActive,
     setComposerEditing,
+    sidebarByOrientation,
   };
 
   if (nativeWorkspace) {
