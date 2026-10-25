@@ -32,16 +32,27 @@ export async function startRunHook(command, cwd = process.cwd()) {
       if (typeof hook === "string") {
         const integration = await import(NodeURL.pathToFileURL(NodePath.resolve(root, hook)).href);
         const finish = await integration.default({ root });
-        return async () => {
-          try {
-            await finish?.();
-          } catch {
-            console.warn("[Vite+] Run hook failed to finish.");
-          }
-        };
+        return Object.assign(
+          async () => {
+            try {
+              await finish?.();
+            } catch {
+              console.warn("[Vite+] Run hook failed to finish.");
+            }
+          },
+          { remoteCache: finish?.remoteCache },
+        );
       }
       const parent = NodePath.dirname(root);
-      if (parent === root) return;
+      if (parent === root) {
+        // Vite forwards our CLI mode to tasks, including agents working in other projects.
+        if (
+          process.env.VP_T3_TASK_CACHE_MODE &&
+          process.env.VP_REMOTE_CACHE === process.env.VP_T3_TASK_CACHE_MODE
+        )
+          delete process.env.VP_REMOTE_CACHE;
+        return;
+      }
       root = parent;
     }
   } catch {

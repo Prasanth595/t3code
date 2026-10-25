@@ -1,43 +1,27 @@
 // @effect-diagnostics nodeBuiltinImport:off - runs inside Vite+ before project services start.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeURL from "node:url";
-import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
-import { observeSummaries } from "./telemetry.ts";
+import { remoteCacheUrl } from "./remoteCache.ts";
+import { flushTelemetry, observeSummaries } from "./telemetry.ts";
 
 export default function start({ root }: { readonly root: string }) {
-  const configured = JSON.parse(
-    NodeFS.readFileSync(NodePath.join(root, ".task-cache.json"), "utf8"),
-  );
-  if (!process.env.VP_REMOTE_CACHE_URL) {
-    try {
-      const credentials = JSON.parse(
-        NodeFS.readFileSync(
-          NodePath.join(NodeOS.homedir(), ".config/t3-task-cache/credentials.json"),
-          "utf8",
-        ),
-      );
-      const credential = credentials[configured.endpoint];
-      if (credential) {
-        const url = new URL(configured.endpoint);
-        url.username = credential.name;
-        url.password = credential.token;
-        process.env.VP_REMOTE_CACHE_URL = url.href;
-        process.env.VP_REMOTE_CACHE ||= "read-write";
-      }
-    } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-    }
-  }
-  if (!process.env.VP_REMOTE_CACHE_URL) return;
-  const endpoint = new URL(process.env.VP_REMOTE_CACHE_URL);
+  const url = remoteCacheUrl(root);
+  if (!url) return;
+  const endpoint = new URL(url);
   endpoint.username = "";
   endpoint.password = "";
-  if (process.env.T3_TASK_CACHE_TELEMETRY === "off") return;
-  const stop = observeSummaries(root, endpoint.href.replace(/\/$/, ""), process.env);
-  return () => {
+  const stop =
+    process.env.T3_TASK_CACHE_TELEMETRY === "off"
+      ? undefined
+      : observeSummaries(root, endpoint.href.replace(/\/$/, ""), process.env);
+  const finish = async () => {
+    if (!stop) return;
     stop();
+    // GitHub can terminate detached processes as soon as the final step exits.
+    if (process.env.GITHUB_ACTIONS === "true") {
+      await flushTelemetry();
+      return;
+    }
     // A transient flusher drains the durable queue without delaying tasks or Ctrl-C.
     const child = NodeChildProcess.spawn(
       process.execPath,
@@ -51,4 +35,5 @@ export default function start({ root }: { readonly root: string }) {
     child.on("error", () => {});
     child.unref();
   };
+  return Object.assign(finish, { remoteCache: process.env.VP_REMOTE_CACHE || "read-write" });
 }

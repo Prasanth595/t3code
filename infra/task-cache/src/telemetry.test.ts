@@ -120,8 +120,8 @@ it("excludes tasks that explicitly disable caching from the hit-rate denominator
   expect(
     summarize({
       tasks: [
-        { ...task({ Spawned: {} }), cache_status: "Disabled" },
-        { ...task({ Spawned: {} }), cache_status: { Miss: "changed" } },
+        task({ Spawned: { cache_status: "Disabled" } }),
+        task({ Spawned: { cache_status: { Miss: "changed" } } }),
       ],
     }),
   ).toEqual([{ package: "@team/server", task: "typecheck", source: "executed", savedMs: 0 }]);

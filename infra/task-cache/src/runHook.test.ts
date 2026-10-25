@@ -8,6 +8,7 @@ import { expect, it } from "vite-plus/test";
 
 it("uses one machine hook across fresh worktrees without modifying Vite+", async () => {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "task-cache-hook-"));
+  const unrelated = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "unrelated-project-"));
   const reports: { authorization: string | undefined; body: string }[] = [];
   let firstExit!: () => void;
   const firstExited = new Promise<void>((resolve) => {
@@ -23,6 +24,10 @@ it("uses one machine hook across fresh worktrees without modifying Vite+", async
           notified = resolve;
         });
   const server = NodeHttp.createServer(async (request, response) => {
+    if (!request.url?.endsWith("/telemetry")) {
+      response.writeHead(404).end();
+      return;
+    }
     let body = "";
     for await (const chunk of request) body += chunk;
     reports.push({ authorization: request.headers.authorization, body });
@@ -40,9 +45,8 @@ it("uses one machine hook across fresh worktrees without modifying Vite+", async
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Missing HTTP address");
     const runner = NodePath.join(root, "vite-plus");
-    const distribution = NodePath.resolve(
-      import.meta.dirname,
-      "../../../node_modules/vite-plus/dist",
+    const distribution = await NodeFSP.realpath(
+      NodePath.resolve(import.meta.dirname, "../../../node_modules/vite-plus/dist"),
     );
     await NodeFSP.cp(distribution, NodePath.join(runner, "dist"), { recursive: true });
     await NodeFSP.copyFile(
@@ -58,6 +62,10 @@ it("uses one machine hook across fresh worktrees without modifying Vite+", async
       NodePath.join(runner, "node_modules"),
     );
     const entrypoint = NodePath.join(runner, "dist/bin.js");
+    await NodeFSP.writeFile(
+      NodePath.join(unrelated, "package.json"),
+      JSON.stringify({ name: "unrelated", scripts: { build: 'node -e "console.log(7)"' } }),
+    );
     const endpoint = `http://127.0.0.1:${address.port}/projects/test`;
     await NodeFSP.writeFile(NodePath.join(root, ".task-cache.json"), JSON.stringify({ endpoint }));
     await NodeFSP.writeFile(
@@ -65,8 +73,24 @@ it("uses one machine hook across fresh worktrees without modifying Vite+", async
       JSON.stringify({
         name: "hook-fixture",
         private: true,
-        scripts: { build: 'node -e "console.log(42)"', fail: 'node -e "process.exit(7)"' },
+        scripts: {
+          build: `node build.cjs ${JSON.stringify(entrypoint)} ${JSON.stringify(unrelated)}`,
+          fail: 'node -e "process.exit(7)"',
+        },
       }),
+    );
+    await NodeFSP.writeFile(
+      NodePath.join(root, "build.cjs"),
+      'require("node:fs").writeFileSync("environment.json", JSON.stringify({url: process.env.VP_REMOTE_CACHE_URL ?? null, mode: process.env.VP_REMOTE_CACHE ?? null})); console.log(42); try {require("node:child_process").execFileSync(process.execPath, [process.argv[2], "run", "--no-cache", "build"], {cwd: process.argv[3], encoding:"utf8"})} catch (error) { throw new Error(error.stdout + error.stderr) }',
+    );
+    await NodeFSP.writeFile(
+      NodePath.join(root, "vite.config.ts"),
+      `import { remoteCacheUrl } from ${JSON.stringify(new URL("./remoteCache.ts", import.meta.url).href)}; export default {run:{cache:{scripts:true,remote:{url:remoteCacheUrl(import.meta.dirname)}}}};`,
+    );
+    await NodeFSP.mkdir(NodePath.join(root, ".config/t3-task-cache"), { recursive: true });
+    await NodeFSP.writeFile(
+      NodePath.join(root, ".config/t3-task-cache/credentials.json"),
+      JSON.stringify({ [endpoint]: { name: "maria", token: "secret" } }),
     );
     const configDirectory = NodePath.join(root, ".config/vite-plus");
     await NodeFSP.mkdir(configDirectory, { recursive: true });
@@ -78,7 +102,7 @@ it("uses one machine hook across fresh worktrees without modifying Vite+", async
       }),
     );
     const originalEntrypoint = await NodeFSP.readFile(entrypoint, "utf8");
-    const run = (task: string, cwd = root) =>
+    const run = (task: string, cwd = root, ci = false) =>
       new Promise<number | null>((resolve, reject) => {
         const child = NodeChildProcess.spawn(
           process.execPath,
@@ -88,9 +112,10 @@ it("uses one machine hook across fresh worktrees without modifying Vite+", async
             env: {
               ...process.env,
               HOME: root,
+              GITHUB_ACTIONS: ci ? "true" : undefined,
               NODE_OPTIONS: `--import=${new URL("./preload.mjs", import.meta.url).href}`,
-              VP_REMOTE_CACHE: "off",
-              VP_REMOTE_CACHE_URL: endpoint.replace("http://", "http://maria:secret@"),
+              VP_REMOTE_CACHE: undefined,
+              VP_REMOTE_CACHE_URL: undefined,
             },
             stdio: ["ignore", "ignore", "pipe"],
           },
@@ -108,6 +133,9 @@ it("uses one machine hook across fresh worktrees without modifying Vite+", async
       });
     expect(await run("build")).toBe(0);
     await report(1);
+    expect(
+      JSON.parse(await NodeFSP.readFile(NodePath.join(root, "environment.json"), "utf8")),
+    ).toMatchObject({ url: null });
     expect(firstDisconnected).toBe(false);
     expect(await run("build")).toBe(0);
     await report(2);
@@ -115,12 +143,14 @@ it("uses one machine hook across fresh worktrees without modifying Vite+", async
     await report(3);
     const secondWorktree = NodePath.join(root, "second-worktree");
     await NodeFSP.mkdir(secondWorktree);
-    for (const file of ["package.json", ".task-cache.json"])
+    for (const file of ["package.json", ".task-cache.json", "vite.config.ts", "build.cjs"])
       await NodeFSP.copyFile(NodePath.join(root, file), NodePath.join(secondWorktree, file));
     expect(await run("build", secondWorktree)).toBe(0);
     await report(4);
+    expect(await run("build", secondWorktree, true)).toBe(0);
+    expect(completedReports).toBe(5);
     expect(await NodeFSP.readFile(entrypoint, "utf8")).toBe(originalEntrypoint);
-    expect(reports).toHaveLength(4);
+    expect(reports).toHaveLength(5);
     expect(
       reports.every(
         (report) =>
@@ -131,12 +161,13 @@ it("uses one machine hook across fresh worktrees without modifying Vite+", async
     expect(events[0].tasks[0].source).toBe("executed");
     expect(events[1].tasks[0].source).toBe("local");
     expect(events[3].tasks[0].source).toBe("executed");
-    expect(new Set(events.map((event) => event.id)).size).toBe(4);
+    expect(new Set(events.map((event) => event.id)).size).toBe(5);
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     );
     await NodeFSP.rm(root, { recursive: true, force: true });
+    await NodeFSP.rm(unrelated, { recursive: true, force: true });
   }
 });
 
@@ -293,6 +324,10 @@ it("installs without masking .profile and configures CI through bash", async () 
     });
     expect(missing).toContain("missing preload is safe");
 
+    await NodeFSP.writeFile(
+      NodePath.join(home, ".bash_profile"),
+      '. "$HOME/.config/t3-task-cache/env"\n',
+    );
     await run(
       [
         process.execPath,
@@ -301,6 +336,7 @@ it("installs without masking .profile and configures CI through bash", async () 
       ],
       {},
     );
+    expect(await NodeFSP.readdir(home)).not.toContain(".bash_profile");
     expect(await NodeFSP.readdir(NodePath.join(home, ".local/share/t3-task-cache"))).toEqual([
       "preload.mjs",
     ]);

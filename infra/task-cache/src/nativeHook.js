@@ -10,7 +10,7 @@ export function patchNativeCli(source) {
     source
       .replace(
         start,
-        "\tconst finishRunHook = await startRunHook(command);\n\tlet exitCode;\n\ttry {\n\texitCode = await run({",
+        '\tconst finishRunHook = await startRunHook(command);\n\tif (finishRunHook?.remoteCache && !rustCliArgs.some((arg) => arg === "--remote-cache" || arg.startsWith("--remote-cache="))) { rustCliArgs.splice(1, 0, "--remote-cache", finishRunHook.remoteCache); process.env.VP_T3_TASK_CACHE_MODE = finishRunHook.remoteCache; }\n\tlet exitCode;\n\ttry {\n\texitCode = await run({',
       )
       .replace(end, end + "\n\t} finally {\n\t\tawait finishRunHook?.();\n\t}")
   );

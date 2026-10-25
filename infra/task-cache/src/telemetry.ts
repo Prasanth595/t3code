@@ -41,7 +41,6 @@ export function summarize(value: unknown): SummaryEvent["tasks"] {
       typeof task.result !== "object"
     )
       return [];
-    if ("cache_status" in task && task.cache_status === "Disabled") return [];
     let source: SummaryEvent["tasks"][number]["source"] = "executed";
     let savedMs = 0;
     if ("CacheHit" in task.result) {
@@ -60,6 +59,13 @@ export function summarize(value: unknown): SummaryEvent["tasks"] {
       savedMs = hit.saved_duration_ms;
     } else if ("RestoreFailed" in task.result) source = "failed";
     else if (!("Spawned" in task.result)) return [];
+    else if (
+      task.result.Spawned &&
+      typeof task.result.Spawned === "object" &&
+      "cache_status" in task.result.Spawned &&
+      task.result.Spawned.cache_status === "Disabled"
+    )
+      return [];
     return [
       {
         package: task.package_name.slice(0, 256),

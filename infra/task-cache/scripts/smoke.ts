@@ -11,25 +11,16 @@ const project = NodePath.join(import.meta.dirname, "../../..");
 const { endpoint } = JSON.parse(
   await NodeFSP.readFile(NodePath.join(project, ".task-cache.json"), "utf8"),
 );
-const credential = JSON.parse(
-  await NodeFSP.readFile(
-    NodePath.join(NodeOS.homedir(), ".config/t3-task-cache/credentials.json"),
-    "utf8",
-  ),
-)[endpoint];
-const url = new URL(endpoint);
-url.username = credential.name;
-url.password = credential.token;
 const env = {
   ...process.env,
   T3_TASK_CACHE_TELEMETRY: "off",
   VP_REMOTE_CACHE: "read-write",
-  VP_REMOTE_CACHE_URL: url.href,
+  VP_REMOTE_CACHE_URL: undefined,
 };
 const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-cache-probe-"));
 const name = `t3-cache-probe-${NodeCrypto.randomUUID()}`;
 
-async function run(directory: string) {
+async function run(directory: string, home = NodeOS.homedir()) {
   return new Promise<string>((resolve, reject) => {
     const child = NodeChildProcess.spawn(
       NodePath.join(project, "node_modules/.bin/vp"),
@@ -38,6 +29,7 @@ async function run(directory: string) {
         cwd: NodePath.join(root, directory),
         env: {
           ...env,
+          HOME: home,
           PATH: `${NodePath.join(project, "node_modules/.bin")}${NodePath.delimiter}${process.env.PATH}`,
         },
         stdio: ["ignore", "pipe", "pipe"],
@@ -69,7 +61,7 @@ try {
     await NodeFSP.writeFile(NodePath.join(cwd, ".task-cache.json"), JSON.stringify({ endpoint }));
     await NodeFSP.writeFile(
       NodePath.join(cwd, "vite.config.ts"),
-      `export default ${JSON.stringify({ run: { cache: { scripts: true, remote: { url: endpoint } } } })}`,
+      `import { remoteCacheUrl } from ${JSON.stringify(NodePath.join(project, "infra/task-cache/src/remoteCache.ts"))}; export default {run:{cache:{scripts:true,remote:{url:remoteCacheUrl(import.meta.dirname)}}}}`,
     );
     await NodeFSP.writeFile(
       NodePath.join(cwd, "package.json"),
@@ -81,12 +73,20 @@ try {
     );
     await NodeFSP.writeFile(
       NodePath.join(cwd, "build.cjs"),
-      'const fs=require("node:fs"); fs.writeFileSync("output.txt",fs.readFileSync("input.txt")); console.log("computed");',
+      'if(process.env.VP_REMOTE_CACHE_URL) throw new Error("Cache URL leaked into task environment"); const fs=require("node:fs"); fs.writeFileSync("output.txt",fs.readFileSync("input.txt")); console.log("computed");',
     );
     await NodeFSP.writeFile(NodePath.join(cwd, "input.txt"), "version-a");
   }
   console.log("First checkout:\n" + (await run("a")));
-  const second = await run("b");
+  const otherHome = NodePath.join(root, "other-developer");
+  await NodeFSP.mkdir(NodePath.join(otherHome, ".config/t3-task-cache"), { recursive: true });
+  await NodeFSP.writeFile(
+    NodePath.join(otherHome, ".config/t3-task-cache/credentials.json"),
+    JSON.stringify({
+      [endpoint]: { name: "other-developer", token: "public-reads-need-no-writer-token" },
+    }),
+  );
+  const second = await run("b", otherHome);
   console.log("Cold second checkout:\n" + second);
   if (!second.includes("remote cache hit"))
     throw new Error("Second checkout did not reuse the remote result.");

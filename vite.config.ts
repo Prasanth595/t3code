@@ -1,6 +1,7 @@
 import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
 import * as NodeURL from "node:url";
+import { remoteCacheUrl } from "./infra/task-cache/src/remoteCache.ts";
 
 const DOM_TEST_ENVIRONMENT_ALLOWLIST: Array<string> = [];
 
@@ -73,9 +74,10 @@ const RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS = {
 };
 
 // Vite+ supports remote configuration before its published types include it.
+const cacheUrl = remoteCacheUrl(import.meta.dirname);
 const taskCacheConfig = {
   scripts: false,
-  ...(process.env.VP_REMOTE_CACHE_URL ? { remote: { url: process.env.VP_REMOTE_CACHE_URL } } : {}),
+  ...(cacheUrl ? { remote: { url: cacheUrl } } : {}),
 };
 
 export default defineConfig({

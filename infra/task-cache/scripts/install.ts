@@ -28,7 +28,11 @@ if (process.argv.includes("--uninstall")) {
         .split("\n")
         .filter((line) => line !== sourceLine && line !== legacySourceLine)
         .join("\n");
-      if (next !== original) await NodeFSP.writeFile(path, next);
+      if (next !== original) {
+        if (!next.trim() && (file === ".bash_profile" || file === ".bash_login"))
+          await NodeFSP.unlink(path);
+        else await NodeFSP.writeFile(path, next);
+      }
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
@@ -210,6 +214,7 @@ await NodeFSP.mkdir(installed, { recursive: true });
 await NodeFSP.writeFile(NodePath.join(installed, "package.json"), '{"type":"module"}\n');
 for (const file of [
   "runHook.ts",
+  "remoteCache.ts",
   "flush.ts",
   "telemetry.ts",
   "nativeHook.js",
