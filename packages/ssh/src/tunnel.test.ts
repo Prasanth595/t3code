@@ -425,17 +425,36 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
         }
       }),
     );
-    const launch = (stateKey: string) =>
+    const launch = (
+      stateKey: string,
+      gate?: {
+        readonly onLine: (line: string) => Effect.Effect<void>;
+        readonly release: Effect.Effect<void>;
+      },
+    ) =>
       Effect.gen(function* () {
         const child = yield* spawner.spawn(
           ChildProcess.make("sh", [launchScript, stateKey], {
+            ...(gate
+              ? {
+                  stdin: Stream.fromEffect(
+                    gate.release.pipe(Effect.as(new TextEncoder().encode("go\n"))),
+                  ),
+                }
+              : {}),
             env: { PATH: process.env.PATH ?? "", HOME: home },
             extendEnv: false,
           }),
         );
         const [stdout, stderr, exitCode] = yield* Effect.all(
           [
-            child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+            child.stdout.pipe(
+              Stream.decodeText(),
+              Stream.splitLines,
+              Stream.tap((line) => gate?.onLine(line) ?? Effect.void),
+              Stream.map((line) => `${line}\n`),
+              Stream.mkString,
+            ),
             child.stderr.pipe(Stream.decodeText(), Stream.mkString),
             child.exitCode,
           ],
@@ -449,7 +468,7 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
           serverKind: string;
         };
       });
-    return { fs, stateDir, readManagedPid, launch };
+    return { fs, stateDir, readManagedPid, launch, launchScript };
   });
 
   it.live("keeps managing its server after the connection's state key changes", () =>
@@ -471,6 +490,57 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
       assert.notEqual(replacementPid, pid);
       assert.isFalse(isAlive(pid));
       assert.isTrue(isAlive(replacementPid));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("serializes two aliases claiming the same managed server", () =>
+    Effect.gen(function* () {
+      const { fs, stateDir, readManagedPid, launch, launchScript } = yield* prepareLaunch;
+      const launched = yield* launch("old-alias");
+      const pid = yield* readManagedPid("old-alias");
+      const firstAtTransfer = yield* Deferred.make<void>();
+      const secondProgress = yield* Deferred.make<"waiting" | "transferring">();
+      const releaseFirst = yield* Deferred.make<void>();
+      const releaseSecond = yield* Deferred.make<void>();
+      const script = yield* fs.readFileString(launchScript);
+      // Report lock contention while the first transfer is held, so the race
+      // does not depend on subprocess scheduling.
+      yield* fs.writeFileString(
+        launchScript,
+        script
+          .replace(
+            'if cmp -s "$PREVIOUS_STATE_DIR/active-runner.sh" "$RUNNER_FILE"; then',
+            'printf "transferring\\n"; read -r release; if cmp -s "$PREVIOUS_STATE_DIR/active-runner.sh" "$RUNNER_FILE"; then',
+          )
+          .replace(
+            '  if [ "$LOCK_WAIT_COUNT" -ge 200 ]; then',
+            '  printf "waiting\\n"; if [ "$LOCK_WAIT_COUNT" -ge 200 ]; then',
+          ),
+      );
+      const first = yield* launch("first-alias", {
+        onLine: (line) =>
+          line === "transferring"
+            ? Deferred.succeed(firstAtTransfer, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        release: Deferred.await(releaseFirst),
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(firstAtTransfer);
+      const second = yield* launch("second-alias", {
+        onLine: (line) =>
+          line === "waiting" || line === "transferring"
+            ? Deferred.succeed(secondProgress, line).pipe(Effect.asVoid)
+            : Effect.void,
+        release: Deferred.await(releaseSecond),
+      }).pipe(Effect.forkScoped);
+      assert.equal(yield* Deferred.await(secondProgress), "waiting");
+      yield* Deferred.succeed(releaseFirst, undefined);
+      assert.deepEqual(yield* Fiber.join(first), launched);
+      yield* Deferred.succeed(releaseSecond, undefined);
+      assert.deepEqual(yield* Fiber.join(second), launched);
+      assert.equal(yield* readManagedPid("second-alias"), pid);
+      assert.isFalse(yield* fs.exists(`${stateDir("first-alias")}/pid`));
+      assert.isFalse(yield* fs.exists(`${stateDir("old-alias")}/pid`));
+      assert.isTrue(isAlive(pid));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
