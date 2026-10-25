@@ -281,7 +281,11 @@ function ThreadNavigationSidebarPane(
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder(nowMinute, snoozeWakeTick);
-  const { layout: threadListV2Layout, items: threadListV2Items } = useThreadListV2({
+  const {
+    layout: threadListV2Layout,
+    items: threadListV2Items,
+    contentOnlyThreadKeys,
+  } = useThreadListV2({
     threads,
     pendingTasks,
     environmentId: options.selectedEnvironmentId,
@@ -435,7 +439,7 @@ function ThreadNavigationSidebarPane(
   // tap or by shortcut.
   const handleSelectThread = (thread: EnvironmentThreadShell) => {
     const key = threadSearchMatchKey({ environmentId: thread.environmentId, threadId: thread.id });
-    const messageId = threadListV2Layout.contentOnlyThreadKeys.has(key)
+    const messageId = contentOnlyThreadKeys.has(key)
       ? threadSearchMatchByKey.get(key)?.messageId
       : undefined;
     if (messageId) {
@@ -566,7 +570,7 @@ function ThreadNavigationSidebarPane(
             environmentMachine={machineByEnvironmentId.get(thread.environmentId)}
             searchMatch={
               // Only rows listed for their messages show one and open at it.
-              threadListV2Layout.contentOnlyThreadKeys.has(
+              contentOnlyThreadKeys.has(
                 threadSearchMatchKey({ environmentId: thread.environmentId, threadId: thread.id }),
               )
                 ? threadSearchMatchByKey.get(

@@ -449,7 +449,11 @@ export function HomeScreen(props: HomeScreenProps) {
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder(nowMinute, snoozeWakeTick);
-  const { layout: threadListV2Layout, items: threadListV2Items } = useThreadListV2({
+  const {
+    layout: threadListV2Layout,
+    items: threadListV2Items,
+    contentOnlyThreadKeys,
+  } = useThreadListV2({
     threads: props.threads,
     pendingTasks: props.pendingTasks,
     environmentId: props.selectedEnvironmentId,
@@ -490,7 +494,7 @@ export function HomeScreen(props: HomeScreenProps) {
   // tap or by shortcut.
   const selectThread = (thread: EnvironmentThreadShell) => {
     const key = threadSearchMatchKey({ environmentId: thread.environmentId, threadId: thread.id });
-    const messageId = threadListV2Layout.contentOnlyThreadKeys.has(key)
+    const messageId = contentOnlyThreadKeys.has(key)
       ? threadSearchMatchByKey.get(key)?.messageId
       : undefined;
     if (messageId) {
@@ -601,7 +605,7 @@ export function HomeScreen(props: HomeScreenProps) {
         environmentMachine={machineByEnvironmentId.get(thread.environmentId)}
         searchMatch={
           // Only rows listed for their messages show one and open at it.
-          threadListV2Layout.contentOnlyThreadKeys.has(
+          contentOnlyThreadKeys.has(
             threadSearchMatchKey({ environmentId: thread.environmentId, threadId: thread.id }),
           )
             ? threadSearchMatchByKey.get(

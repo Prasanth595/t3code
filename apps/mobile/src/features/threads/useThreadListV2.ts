@@ -11,6 +11,18 @@ import {
 } from "./threadListV2";
 import { computeThreadMoveAvailability } from "./threadOrder";
 
+/**
+ * Screens' select handlers read the content-only key set; a fresh one per list rebuild gave
+ * every row a new handler whenever any thread shell changed. Keyed by a string, the set keeps
+ * its identity until its keys change.
+ */
+function useKeySet(newlineSeparatedKeys: string): ReadonlySet<string> {
+  return useMemo(
+    () => new Set(newlineSeparatedKeys.length === 0 ? [] : newlineSeparatedKeys.split("\n")),
+    [newlineSeparatedKeys],
+  );
+}
+
 type LayoutInput = Parameters<typeof buildThreadListV2Items>[0];
 
 /**
@@ -90,6 +102,7 @@ export function useThreadListV2(input: {
     settledShelfExpanded: input.settledShelfExpanded,
     selectedThreadKey: input.selectedThreadKey,
   });
+  const contentOnlyThreadKeys = useKeySet([...layout.contentOnlyThreadKeys].sort().join("\n"));
   const scopedProjectKeys =
     input.projectRefs == null
       ? null
@@ -122,5 +135,5 @@ export function useThreadListV2(input: {
     moveAvailability,
     shelfPreferencesLoading: !input.shelfPreferencesLoaded,
   });
-  return { layout, items };
+  return { layout, items, contentOnlyThreadKeys };
 }
