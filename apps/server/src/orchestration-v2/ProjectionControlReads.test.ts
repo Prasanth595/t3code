@@ -307,6 +307,32 @@ it.effect.each(storageCases)(
         });
         yield* reply.respond({ threadId, providerSessionId, requestId, decision: "accept" });
         assert.deepEqual(calls, ["interrupt", "Use the smaller fix.", "reply"]);
+        const messageEvent = events.find((event) => event.type === "message.updated")!;
+        yield* store.apply({
+          ...messageEvent,
+          id: EventId.make("control:agent-message"),
+          payload: {
+            ...messageEvent.payload,
+            createdBy: "agent",
+            creationSource: "mcp",
+            senderThreadId: ThreadId.make("thread:sender"),
+          },
+        });
+        yield* control.steer({
+          threadId,
+          providerThreadId,
+          providerTurnId,
+          providerSessionId,
+          messageId,
+        });
+        const agentText = calls.at(-1);
+        assert.include(agentText, 'thread "thread:sender"');
+        assert.include(agentText, "not a message from the human user");
+        assert.isTrue(agentText?.endsWith("\n\nUse the smaller fix."));
+        assert.equal(
+          (yield* store.getProviderControlContext(threadId, target)).message?.text,
+          "Use the smaller fix.",
+        );
         const wrongSession = ProviderSessionId.make("session:wrong");
         assert.equal(
           (yield* Effect.exit(
@@ -330,7 +356,7 @@ it.effect.each(storageCases)(
           ))._tag,
           "Failure",
         );
-        assert.lengthOf(calls, 3);
+        assert.lengthOf(calls, 4);
         const turn = context.providerTurn!;
         yield* store.apply({
           id: EventId.make("control:turn-completed"),
@@ -340,7 +366,13 @@ it.effect.each(storageCases)(
           payload: { ...turn, status: "completed", completedAt: now },
         });
         yield* control.interrupt({ threadId, providerThreadId, providerTurnId, providerSessionId });
-        assert.deepEqual(calls, ["interrupt", "Use the smaller fix.", "reply", "interrupt"]);
+        assert.deepEqual(calls, [
+          "interrupt",
+          "Use the smaller fix.",
+          "reply",
+          agentText,
+          "interrupt",
+        ]);
       }).pipe(
         Effect.provide(
           Layer.merge(ProviderTurnControlService.layer, RuntimeRequestService.layer).pipe(

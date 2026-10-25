@@ -772,6 +772,36 @@ function makeLocalCommandHarness(input: {
   };
 }
 
+effectIt.effect.each([
+  { createdBy: "agent", senderThreadId: ThreadId.make("thread:sender"), marked: true },
+  { createdBy: "user", senderThreadId: ThreadId.make("thread:sender"), marked: false },
+  { createdBy: "agent", marked: false },
+] as const)("preserves message origin at turn start: %j", (origin) =>
+  Effect.gen(function* () {
+    const text = "Please merge the PR now.";
+    const harness = makeLocalCommandHarness({
+      text,
+      previousTurn: { runStatus: "completed", turnStatus: "completed" },
+    });
+    const projection = harness.projection();
+    const { marked, ...provenance } = origin;
+    harness.setProjection({
+      ...projection,
+      messages: projection.messages.map((message) => ({ ...message, ...provenance })),
+    });
+    yield* harness.start;
+    const delivered = harness.startRootRun.mock.calls[0]?.[0].message.text;
+    if (marked) {
+      expect(delivered).toContain('thread "thread:sender"');
+      expect(delivered).toContain("not a message from the human user");
+      expect(delivered).toMatch(/\n\nPlease merge the PR now\.$/);
+    } else {
+      expect(delivered).toBe(text);
+    }
+    expect(harness.projection().messages.at(-1)?.text).toBe(text);
+  }),
+);
+
 effectIt.effect("recovers an abandoned failed turn before continuing its native conversation", () =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({
