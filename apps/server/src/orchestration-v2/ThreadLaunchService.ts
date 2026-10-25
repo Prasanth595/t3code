@@ -283,6 +283,30 @@ const make = Effect.gen(function* () {
       });
   });
 
+  const hasNoCommitToCheckOut = Effect.fn("ThreadLaunchService.hasNoCommitToCheckOut")(
+    function* (
+      projectId: ProjectId,
+      strategy: Extract<ThreadLaunchWorkspaceStrategy, { readonly type: "worktree" }>,
+    ) {
+      const project = Option.getOrUndefined(yield* projects.getById(projectId));
+      if (project === undefined) return false;
+      const cwd = project.workspaceRoot;
+      // A base SHA can be checkoutable even when the repository has no refs.
+      if (
+        (yield* git.hasCommit({ cwd, refName: "HEAD" })) ||
+        (yield* git.hasCommit({ cwd, refName: strategy.baseRef })) ||
+        (yield* git.hasAnyRef(cwd))
+      )
+        return false;
+      // Provisioning fetches the base first, which may bring the first commit.
+      return !(
+        strategy.startFromOrigin === true &&
+        (yield* git.resolveWorktreeBaseRemote({ cwd, refName: strategy.baseRef })) !== null
+      );
+    },
+    Effect.orElseSucceed(() => false),
+  );
+
   const prepareInBackground = Effect.fn("ThreadLaunchService.prepareInBackground")(function* (
     input: PreparationInput,
     threadId: ThreadId,
@@ -801,11 +825,13 @@ const make = Effect.gen(function* () {
 
   const launch: ThreadLaunchService["Service"]["launch"] = Effect.fn("ThreadLaunchService.launch")(
     function* (request) {
-      // Scratch has no Git repository. Normalize before folder allocation so
-      // durable preparation and retries use the thread's own Scratch folder.
+      // Scratch has no Git repository, and `git worktree add` needs a commit to
+      // start from. Normalize before folder allocation so durable preparation
+      // and retries use the thread's own folder.
       const input: ThreadLaunchInput =
         request.workspaceStrategy.type === "worktree" &&
-        (yield* managedFolders.isScratchProject(request.projectId))
+        ((yield* managedFolders.isScratchProject(request.projectId)) ||
+          (yield* hasNoCommitToCheckOut(request.projectId, request.workspaceStrategy)))
           ? { ...request, workspaceStrategy: { type: "root" } }
           : request;
       yield* ProjectCloneTracker.rejectCommandsDuringClone(cloneTracker, {
