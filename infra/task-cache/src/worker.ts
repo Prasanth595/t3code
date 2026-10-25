@@ -42,7 +42,7 @@ export const layer = Worker.make(
       return Cache.Bindings.of({
         INDEX: yield* database.raw,
         ARTIFACTS: (yield* artifacts.raw) as unknown as ProtocolBindings["ARTIFACTS"],
-        GC_BATCH_SIZE: "16",
+        GC_BATCH_SIZE: "256",
         developerKeys: Redacted.value(developerKeys),
         readerKeys: Redacted.value(readerKeys),
         readLimit: yield* reads.raw,
@@ -76,9 +76,14 @@ export const layer = Worker.make(
         savingsLayer,
       ]),
     );
-    yield* Cloudflare.Workers.cron("*/5 * * * *", () =>
+    yield* Cloudflare.Workers.cron("* * * * *", () =>
       Cache.Cache.pipe(
-        Effect.flatMap((cache) => cache.cleanup),
+        Effect.flatMap((cache) =>
+          Effect.all([cache.cleanup, cache.cleanup, cache.cleanup, cache.cleanup], {
+            concurrency: 4,
+            discard: true,
+          }),
+        ),
         Effect.provide(runtime),
         Effect.orDie,
       ),
