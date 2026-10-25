@@ -379,6 +379,28 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     terminalCanvas.resetSelectionState()
   }
 
+  // Only acknowledge after layout and native parsing. JS retains a bounded
+  // offset cursor and retries from a snapshot if delivery was interrupted.
+  fun writeOutput(key: String, data: String, reset: Boolean): Boolean {
+    if (key != terminalKey || terminalHandle == 0L || isCleanedUp) return false
+    if (reset) {
+      destroyTerminal()
+      createTerminal()
+    }
+    val accepted = terminalHandle != 0L
+    if (accepted) {
+      if (data.isNotEmpty()) {
+        emitResponse(GhosttyBridge.nativeFeed(terminalHandle, data.toByteArray(Charsets.UTF_8)))
+        if (terminalCanvas.hasActiveSelection()) {
+          GhosttyBridge.nativeClearSelection(terminalHandle)
+          terminalCanvas.resetSelectionState()
+        }
+      }
+      renderSnapshot()
+    }
+    return accepted
+  }
+
   private fun feedPendingBuffer() {
     if (terminalHandle == 0L || initialBuffer == fedBuffer) return
     if (!initialBuffer.startsWith(fedBuffer)) {

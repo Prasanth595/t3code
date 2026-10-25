@@ -1,4 +1,4 @@
-import type { ComponentType } from "react";
+import type { ComponentType, Ref } from "react";
 import type { NativeSyntheticEvent, ViewProps } from "react-native";
 import { requireNativeView, requireOptionalNativeModule } from "expo";
 
@@ -21,7 +21,12 @@ interface TerminalResizeEvent {
   readonly rows: number;
 }
 
+export interface NativeTerminalSurfaceRef {
+  readonly writeOutput: (terminalKey: string, data: string, reset: boolean) => Promise<boolean>;
+}
+
 export interface NativeTerminalSurfaceProps extends ViewProps {
+  readonly ref?: Ref<NativeTerminalSurfaceRef>;
   readonly appearanceScheme?: "light" | "dark";
   readonly autoFocus?: boolean;
   readonly readOnly?: boolean;
@@ -95,4 +100,15 @@ export function getNativeTerminalHardwareKeyRevision(): number | null {
 
 export function hasNativeTerminalSurface() {
   return resolveNativeTerminalSurfaceView() !== null;
+}
+
+export function supportsNativeTerminalOutput(): boolean {
+  try {
+    return (
+      requireOptionalNativeModule<{ readonly outputRevision?: number }>(NATIVE_TERMINAL_MODULE_NAME)
+        ?.outputRevision === 1
+    );
+  } catch {
+    return false;
+  }
 }

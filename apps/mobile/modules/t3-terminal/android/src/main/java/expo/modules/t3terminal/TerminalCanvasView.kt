@@ -109,7 +109,7 @@ internal class TerminalCanvasView(context: Context) : View(context) {
   private val cursorBlink = object : Runnable {
     override fun run() {
       val currentFrame = frame ?: return
-      if (!currentFrame.cursorBlinking || !currentFrame.cursorVisible) return
+      if (!canAnimateCursor() || !currentFrame.cursorBlinking || !currentFrame.cursorVisible) return
       cursorOn = !cursorOn
       invalidate()
       postDelayed(this, 500)
@@ -168,12 +168,16 @@ internal class TerminalCanvasView(context: Context) : View(context) {
     updateCellMetrics()
   }
 
+  private fun canAnimateCursor() = isShown && windowVisibility == VISIBLE
+
   fun setFrame(value: TerminalFrame) {
     frame = value
     cursorOn = true
     updateSelectionEndpoints()
     removeCallbacks(cursorBlink)
-    if (value.cursorBlinking && value.cursorVisible) postDelayed(cursorBlink, 500)
+    if (canAnimateCursor() && value.cursorBlinking && value.cursorVisible) {
+      postDelayed(cursorBlink, 500)
+    }
     invalidate()
   }
 
@@ -272,6 +276,16 @@ internal class TerminalCanvasView(context: Context) : View(context) {
       }
       event.actionMasked == MotionEvent.ACTION_DOWN && grabHandleAt(event.x, event.y) -> true
       else -> gestureDetector.onTouchEvent(event) || super.onTouchEvent(event)
+    }
+  }
+
+  override fun onWindowVisibilityChanged(visibility: Int) {
+    super.onWindowVisibilityChanged(visibility)
+    removeCallbacks(cursorBlink)
+    removeCallbacks(flingRunnable)
+    scroller.forceFinished(true)
+    if (visibility == VISIBLE) {
+      frame?.let(::setFrame)
     }
   }
 

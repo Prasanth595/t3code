@@ -1,3 +1,4 @@
+import { useScreenActive } from "../../lib/use-screen-active";
 import * as Dialog from "../../components/ui/Dialog";
 import {
   AuthTerminalReadScope,
@@ -7,7 +8,10 @@ import {
   ThreadId,
   sessionGrantsScope,
 } from "@t3tools/contracts";
-import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
+import {
+  terminalOutputText,
+  type KnownTerminalSession,
+} from "@t3tools/client-runtime/state/terminal";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppBar } from "../../components/ui/AppBar";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
@@ -17,7 +21,7 @@ import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/ui/AppText";
 import { TerminalContextSheet } from "./TerminalContextSheet";
-import { hasNativeTerminalSurface } from "./nativeTerminalModule";
+import { hasNativeTerminalSurface, supportsNativeTerminalOutput } from "./nativeTerminalModule";
 import * as Clipboard from "expo-clipboard";
 import * as Schema from "effect/Schema";
 import {
@@ -449,13 +453,17 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   );
   const observingTerminal =
     !canOperateTerminal && canReadTerminal && selectedThread !== null && hasTerminalTarget;
+  const screenActive = useScreenActive();
+  const terminalVisible = Platform.OS !== "android" || screenActive;
   const terminal = useAttachedTerminalSession({
     environmentId: selectedThread?.environmentId ?? null,
-    terminal: canOperateTerminal
-      ? terminalAttachInput
-      : observingTerminal
-        ? { threadId: selectedThread.id, terminalId }
-        : null,
+    terminal: !terminalVisible
+      ? null
+      : canOperateTerminal
+        ? terminalAttachInput
+        : observingTerminal
+          ? { threadId: selectedThread.id, terminalId }
+          : null,
   });
   const terminalKey = selectedThread
     ? `${selectedThread.environmentId}:${selectedThread.id}:${terminalId}`
@@ -476,8 +484,13 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   if (lastBufferReplayKeyRef.current === null) {
     lastBufferReplayKeyRef.current = bufferReplayKey;
   }
+  const incrementalOutput = supportsNativeTerminalOutput();
+  const legacyBuffer = useMemo(
+    () => (incrementalOutput ? "" : terminalOutputText(terminal.output)),
+    [incrementalOutput, terminal.output],
+  );
   const terminalSurfaceBuffer = getTerminalSurfaceReplayBuffer({
-    buffer: terminal.buffer,
+    buffer: legacyBuffer,
     replayKey: bufferReplayKey,
     readyReplayKey: readyBufferReplayKey,
   });
@@ -488,7 +501,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   useEffect(() => {
     terminalDebugLog("surface:props", {
       terminalKey,
-      atomBufferLen: terminal.buffer.length,
+      atomBufferLen: legacyBuffer.length,
       surfaceBufferLen: terminalSurfaceBuffer.length,
       replayKey: bufferReplayKey,
       readyReplayKey: readyBufferReplayKey,
@@ -498,7 +511,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   }, [
     bufferReplayKey,
     readyBufferReplayKey,
-    terminal.buffer.length,
+    legacyBuffer.length,
     terminal.status,
     terminal.version,
     terminalKey,
@@ -511,11 +524,11 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       status: terminal.status,
       error: terminal.error,
       summary: terminal.summary?.cwd ?? null,
-      bufferLen: terminal.buffer.length,
+      bufferLen: legacyBuffer.length,
       version: terminal.version,
     });
   }, [
-    terminal.buffer.length,
+    legacyBuffer.length,
     terminal.error,
     terminal.status,
     terminal.summary?.cwd,
@@ -524,16 +537,16 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   ]);
 
   useEffect(() => {
-    if (terminal.buffer.length === 0 || firstNonEmptyBufferLoggedRef.current) {
+    if (legacyBuffer.length === 0 || firstNonEmptyBufferLoggedRef.current) {
       return;
     }
     firstNonEmptyBufferLoggedRef.current = true;
     terminalDebugLog("session:first-nonempty-buffer", {
       terminalKey,
-      length: terminal.buffer.length,
-      preview: terminal.buffer.slice(0, 160),
+      length: legacyBuffer.length,
+      preview: legacyBuffer.slice(0, 160),
     });
-  }, [terminal.buffer, terminal.buffer.length, terminalKey]);
+  }, [legacyBuffer, legacyBuffer.length, terminalKey]);
   const cwd = terminal.summary?.cwd ?? selectedThreadProject?.workspaceRoot ?? null;
   const serverConfigs = useServerConfigs();
   const hostOs =
@@ -1241,26 +1254,31 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                     backgroundColor: terminalTheme.background,
                   }}
                 />
-                <TerminalSurface
-                  autoFocus={canOperateTerminal && terminalAutoFocus}
-                  readOnly={!canOperateTerminal}
-                  buffer={terminal.version === 0 ? null : terminalSurfaceBuffer}
-                  fontSize={fontSize}
-                  isRunning={isRunning}
-                  keyboardFocusRequest={keyboardFocusRequest}
-                  captureRequest={captureRequest}
-                  onCapture={(text) => {
-                    setCaptureRequest(0);
-                    if (text.trim()) setCapturedOutput(text);
-                    else
-                      Dialog.alert("No terminal output", "There is no visible output to attach.");
-                  }}
-                  onInput={handleInput}
-                  onResize={handleResize}
-                  style={{ flex: 1 }}
-                  terminalKey={terminalKey}
-                  theme={terminalTheme}
-                />
+                {terminalVisible ? (
+                  <TerminalSurface
+                    autoFocus={canOperateTerminal && terminalAutoFocus}
+                    readOnly={!canOperateTerminal}
+                    buffer={terminal.version === 0 ? null : terminalSurfaceBuffer}
+                    output={incrementalOutput && terminal.version > 0 ? terminal.output : null}
+                    fontSize={fontSize}
+                    isRunning={isRunning}
+                    keyboardFocusRequest={keyboardFocusRequest}
+                    captureRequest={captureRequest}
+                    onCapture={(text) => {
+                      setCaptureRequest(0);
+                      if (text.trim()) setCapturedOutput(text);
+                      else
+                        Dialog.alert("No terminal output", "There is no visible output to attach.");
+                    }}
+                    onInput={handleInput}
+                    onResize={handleResize}
+                    style={{ flex: 1 }}
+                    terminalKey={terminalKey}
+                    theme={terminalTheme}
+                  />
+                ) : (
+                  <View style={{ flex: 1 }} />
+                )}
               </View>
 
               {Platform.OS === "android" && !keyboardState.isVisible ? (

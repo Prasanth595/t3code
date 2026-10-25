@@ -1,4 +1,6 @@
-import { memo, useCallback, useEffect, useRef } from "react";
+import type { TerminalOutputState } from "@t3tools/client-runtime/state/terminal";
+import { createNativeTerminalOutputWriter } from "./nativeTerminalOutput";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   Pressable,
   ScrollView,
@@ -15,6 +17,7 @@ import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   getNativeTerminalHardwareKeyRevision,
+  type NativeTerminalSurfaceRef,
   resolveNativeTerminalSurfaceView,
 } from "./nativeTerminalModule";
 import {
@@ -37,6 +40,7 @@ interface TerminalResizeEvent {
 interface TerminalSurfaceProps extends ViewProps {
   readonly terminalKey: string;
   readonly buffer: string | null;
+  readonly output?: TerminalOutputState | null;
   readonly fontSize?: number;
   readonly isRunning: boolean;
   readonly readOnly?: boolean;
@@ -196,6 +200,26 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
   const { onInput, onResize } = props;
   const NativeTerminalSurfaceView = resolveNativeTerminalSurfaceView();
   const hasNativeSurface = Boolean(NativeTerminalSurfaceView);
+  const nativeRef = useRef<NativeTerminalSurfaceRef>(null);
+  const writerRef = useRef<ReturnType<typeof createNativeTerminalOutputWriter> | null>(null);
+  const [layoutRevision, setLayoutRevision] = useState(0);
+  useEffect(() => {
+    const writer = createNativeTerminalOutputWriter(
+      (data, reset) =>
+        nativeRef.current?.writeOutput(props.terminalKey, data, reset) ?? Promise.resolve(false),
+    );
+    writerRef.current = writer;
+    return () => {
+      writer.dispose();
+      writerRef.current = null;
+    };
+  }, [props.terminalKey]);
+  useEffect(() => {
+    if (!props.output) return;
+    void writerRef.current?.update(props.output).catch((error) => {
+      console.warn("Native terminal output could not be delivered", error);
+    });
+  }, [props.output, props.terminalKey, layoutRevision]);
 
   useEffect(() => {
     terminalDebugLog("native:surface", {
@@ -220,6 +244,7 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
   );
   const handleNativeResize = useCallback(
     (event: NativeSyntheticEvent<TerminalResizeEvent>) => {
+      setLayoutRevision((revision) => revision + 1);
       onResize({
         cols: event.nativeEvent.cols,
         rows: event.nativeEvent.rows,
@@ -232,6 +257,7 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
     return (
       <View style={props.style}>
         <NativeTerminalSurfaceView
+          ref={nativeRef}
           appearanceScheme={themeAppearance}
           autoFocus={!props.readOnly && (props.autoFocus ?? true)}
           readOnly={props.readOnly ?? false}
