@@ -1533,6 +1533,7 @@ it.effect.each([
   { outcome: "completed", delegated: true, queued: "cancelled follow-up", released: false },
   { outcome: "failed", delegated: true, queued: "held follow-up", released: true },
   { outcome: "completed", delegated: true, queued: "failed monitor", released: true },
+  { outcome: "failed", delegated: true, queued: "cancelled behind held monitor", released: true },
 ] as const)(
   "releases the session only when a delegated task ends completed or failed ($outcome, delegated: $delegated, queued: $queued)",
   ({ outcome, delegated, queued, released }) =>
@@ -1713,9 +1714,33 @@ it.effect.each([
               yield* worker.drain();
               return providerSessionId;
             });
-          if (queued === "held monitor") {
+          if (queued === "held monitor" || queued === "cancelled behind held monitor") {
             // The task's provider failure holds this wake, which has not started when the task releases.
             yield* queueMonitorWake("held-monitor");
+          }
+          if (queued === "cancelled behind held monitor") {
+            // A message cancelled while queued never starts, so the resumed wake keeps the lower ordinal.
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("queue-session-release-cancelled"),
+              threadId,
+              messageId: MessageId.make("message:session-release-cancelled"),
+              text: "Then summarize",
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            yield* worker.drain();
+            yield* orchestrator.dispatch({
+              type: "queued-run.cancel",
+              commandId: CommandId.make("cancel-session-release-queued"),
+              threadId,
+              runId: (yield* orchestrator.getThreadProjection(threadId)).runs.findLast(
+                (run) => run.status === "queued",
+              )!.id,
+            });
+            yield* worker.drain();
           }
           if (queued === "monitor" || queued === "monitor again" || queued === "held follow-up") {
             // The wake queues behind the task's turn, so it is pending or running when the task finalizes.
@@ -1810,7 +1835,7 @@ it.effect.each([
             // A later non-task run is not the interrupted task's end, so it releases nothing.
             assert.equal(yield* finishLaterRun(queueMonitorWake("later-run")), providerSessionId);
           }
-          if (queued === "held monitor") {
+          if (queued === "held monitor" || queued === "cancelled behind held monitor") {
             // Resuming starts the held wake, which reattaches the released session.
             assert.isFalse(yield* sessions.isLive(providerSessionId));
             const heldRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
@@ -1920,27 +1945,34 @@ it.effect.each([
                               ["failed", false],
                               ["completed", false],
                             ]
-                          : queued === "failed monitor"
+                          : queued === "cancelled behind held monitor"
                             ? [
-                                ["completed", false],
                                 ["failed", false],
+                                ["completed", false],
+                                ["cancelled", false],
                               ]
-                            : queued === "interrupted follow-up" || queued === "cancelled follow-up"
+                            : queued === "failed monitor"
                               ? [
                                   ["completed", false],
-                                  [
-                                    queued === "interrupted follow-up"
-                                      ? "interrupted"
-                                      : "cancelled",
-                                    false,
-                                  ],
-                                  ["completed", false],
+                                  ["failed", false],
                                 ]
-                              : [
-                                  ["completed", false],
-                                  ["completed", false],
-                                  ["running", false],
-                                ],
+                              : queued === "interrupted follow-up" ||
+                                  queued === "cancelled follow-up"
+                                ? [
+                                    ["completed", false],
+                                    [
+                                      queued === "interrupted follow-up"
+                                        ? "interrupted"
+                                        : "cancelled",
+                                      false,
+                                    ],
+                                    ["completed", false],
+                                  ]
+                                : [
+                                    ["completed", false],
+                                    ["completed", false],
+                                    ["running", false],
+                                  ],
             );
           }
           assert.equal(yield* sessions.isLive(providerSessionId), !released);
