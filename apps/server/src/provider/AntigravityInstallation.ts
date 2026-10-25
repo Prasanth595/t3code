@@ -249,11 +249,10 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     } satisfies AntigravityExecutable;
   });
 
-  // A Windows launcher script runs the ACP executable from elsewhere, so the
-  // helper that matches it sits beside that executable, not the script. Only a
-  // plain wrapper is followed: setup lines (`set`, `echo`, comments) and lines
-  // that start with one literal or `%~dp0`-relative executable path. Any other
-  // line could run a different release, so it keeps the same-directory rule.
+  // A launcher runs the ACP executable from elsewhere, so the matching helper
+  // sits beside that executable, not the script. Only a plain wrapper counts:
+  // setup lines, then one literal or `%~dp0` path; any other line could run a
+  // different release, so it keeps the same-directory rule.
   const launcherTarget = Effect.fn("AntigravityInstallation.launcherTarget")(function* (
     launcher: string,
   ) {
