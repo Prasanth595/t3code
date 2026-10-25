@@ -1529,6 +1529,13 @@ describe("PullRequestSyncReactor", () => {
       linked: [124],
     },
     {
+      name: "a Codex script quoted in pieces around a heredoc",
+      input:
+        "/bin/zsh -lc \"cat > /tmp/body.md <<'EOF'\nSet the \"'`hidden`'\" flag.\nEOF\ngh pr create --fill --body-file /tmp/body.md\"",
+      output: "https://github.com/owner/repository/pull/62\n",
+      linked: [62],
+    },
+    {
       name: "an older pull request read in the same command",
       input: "gh pr view 120 --json url --jq .url && gh pr create --fill",
       output:
@@ -1565,6 +1572,19 @@ describe("PullRequestSyncReactor", () => {
       name: "a create command quoted in another program's query",
       input: `sqlite3 audit.db "select output from items where input like '%gh pr create%'"`,
       output: "https://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
+      name: "a create command with a separator inside quotes",
+      input: "echo 'example: gh pr create; gh pr create --fill' && gh pr view --json url --jq .url",
+      output: "https://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
+      name: "more URLs than create commands",
+      input: "gh pr view --json url --jq .url && gh pr create --fill",
+      output:
+        "https://github.com/owner/repository/pull/120\nhttps://github.com/owner/repository/pull/124",
       linked: [],
     },
     {

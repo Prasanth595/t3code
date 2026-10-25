@@ -58,22 +58,33 @@ const CREATE_COMMANDS = sourceControlDefinitions.definitions.flatMap(
   ({ changeRequestCreateCommand: command }) =>
     command === undefined
       ? []
-      : [{ command, run: new RegExp(COMMAND_START + command.source, "u") }],
+      : [{ command, run: new RegExp(COMMAND_START + command.source, "gu") }],
 );
-const runsChangeRequestCreateCommand = (script: string) =>
-  CREATE_COMMANDS.some(({ run }) => run.test(script));
+const createCommandCount = (code: string) =>
+  CREATE_COMMANDS.reduce((count, { run }) => count + [...code.matchAll(run)].length, 0);
 
-// Codex runs each command as `/bin/zsh -lc "<script>"`.
-const SHELL_WRAPPER = /^\s*(?:\S*\/)?(?:ba|z|da|k)?sh\s+-l?c\s+(["'])([\s\S]*)\1\s*$/u;
-// A heredoc body is text a command writes, such as a pull request body, not commands it runs.
+// Codex runs each command as `/bin/zsh -lc <script>`, quoting the script in pieces such as
+// `"a "'`b`'" c"`.
+const SHELL_WRAPPER = /^\s*(?:\S*\/)?(?:ba|z|da|k)?sh\s+-l?c\s+(?=["'])([\s\S]*)$/u;
+const SHELL_WORD_PIECE = /"((?:\\[\s\S]|[^"\\])*)"|'([^']*)'|\\([\s\S])|(\S)/gu;
+// Heredoc bodies, quoted strings and comments are text a command carries, not commands it runs.
 const HEREDOC_BODY = /<<-?[ \t]*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?(?:\n[ \t]*\2[ \t]*(?=\n|$)|$)/gu;
+const QUOTED_OR_COMMENT = /'[^']*'|"(?:\\[\s\S]|[^"\\])*"|(?<=^|\s)#[^\n]*/gmu;
 const COMMAND_SEPARATOR = /&&|\|\||[;|\n]/u;
 const URL_LINE = /^[ \t]*(https?:\/\/\S+)[ \t]*$/gmu;
 
-function shellScript(input: string): string {
-  const [, quote, script] = SHELL_WRAPPER.exec(input) ?? [];
-  if (script === undefined) return input;
-  return quote === '"' ? script.replace(/\\(["\\$`])/gu, "$1") : script;
+/** The commands a shell input runs, without the text it carries. */
+function shellCode(input: string): string {
+  const [, wrapped] = SHELL_WRAPPER.exec(input) ?? [];
+  const script =
+    wrapped === undefined
+      ? input
+      : Array.from(
+          wrapped.matchAll(SHELL_WORD_PIECE),
+          ([, double, single, escaped, bare]) =>
+            double?.replace(/\\(["\\$`])/gu, "$1") ?? single ?? escaped ?? bare,
+        ).join("");
+  return script.replace(HEREDOC_BODY, "<<").replace(QUOTED_OR_COMMENT, "''");
 }
 
 type CommandExecution = Extract<OrchestrationV2TurnItem, { readonly type: "command_execution" }>;
@@ -81,26 +92,28 @@ type CommandExecution = Extract<OrchestrationV2TurnItem, { readonly type: "comma
 /**
  * The change requests a shell command opened: URLs on lines of their own in the output of a
  * command that runs a host's create command. One the command also names, as `gh pr view 12`
- * does, existed before it ran.
+ * does, existed before it ran. More URLs than create commands means something else printed
+ * some, such as `gh pr list`, so none are taken.
  */
 function changeRequestsCreatedBy(input: string, output: string) {
   if (!CREATE_COMMANDS.some(({ command }) => command.test(input))) return [];
-  const script = shellScript(input).replace(HEREDOC_BODY, "<<");
-  if (!runsChangeRequestCreateCommand(script)) return [];
-  const otherCommands = script
+  const code = shellCode(input);
+  const creates = createCommandCount(code);
+  if (creates === 0) return [];
+  const otherCommands = code
     .split(COMMAND_SEPARATOR)
-    .filter((part) => !runsChangeRequestCreateCommand(part))
+    .filter((part) => createCommandCount(part) === 0)
     .join("\n");
   const created = new Map<string, ThreadPullRequestKey & { readonly url: string }>();
   for (const [, url = ""] of output.matchAll(URL_LINE)) {
     const link = sourceControlDefinitions.parseChangeRequestUrl(url)?.link;
     if (link === undefined) continue;
-    const named = new RegExp(`(?:^|(?<=[\\s#/=('"]))${link.number}(?=$|[\\s'");&|/])`, "u");
+    const named = new RegExp(`(?:^|(?<=[\\s#/=(]))${link.number}(?=$|[\\s);&|/])`, "u");
     if (named.test(otherCommands)) continue;
     const key = normalizeThreadPullRequestKey(link);
     created.set(threadPullRequestKeyOf(key), { ...key, url });
   }
-  return [...created.values()];
+  return created.size > creates ? [] : [...created.values()];
 }
 
 const isPullRequestProviderError = Schema.is(PullRequestProviderError);
