@@ -165,45 +165,48 @@ async function downloadAssets({ token, appUrl, build, signingKey, apkName, split
   const piecesDirectory = path.join(directory, "pieces");
   fs.mkdirSync(piecesDirectory);
   const downloaded = new Set();
-  for (const { name, pieces } of splitSets) {
-    for (const { downloadId, fileName } of pieces) {
-      if (downloaded.has(fileName)) continue;
-      await download({
-        token,
-        appUrl,
-        build,
-        downloadId,
-        filePath: path.join(piecesDirectory, fileName),
-      });
-      downloaded.add(fileName);
+  try {
+    for (const { name, pieces } of splitSets) {
+      for (const { downloadId, fileName } of pieces) {
+        if (downloaded.has(fileName)) continue;
+        await download({
+          token,
+          appUrl,
+          build,
+          downloadId,
+          filePath: path.join(piecesDirectory, fileName),
+        });
+        downloaded.add(fileName);
+      }
+      const setPath = path.join(directory, name);
+      execFileSync(
+        "zip",
+        [
+          "-q",
+          "-j",
+          "-9",
+          setPath,
+          ...pieces.map(({ fileName }) => path.join(piecesDirectory, fileName)),
+        ],
+        { stdio: "inherit" },
+      );
+      assets.push(setPath);
     }
-    const setPath = path.join(directory, name);
-    execFileSync(
-      "zip",
-      [
-        "-q",
-        "-j",
-        "-9",
-        setPath,
-        ...pieces.map(({ fileName }) => path.join(piecesDirectory, fileName)),
-      ],
-      { stdio: "inherit" },
-    );
-    assets.push(setPath);
+  } catch (error) {
+    console.warn(`Skipping split APK sets: ${error.message}`);
+    return assets.slice(0, 1);
   }
   return assets;
 }
 
-function isPublished(release, names) {
-  return (
-    release &&
-    !release.isDraft &&
-    names.every((name) =>
-      release.assets.some(
-        (asset) => asset.name === name && asset.state === "uploaded" && asset.size > 0,
-      ),
-    )
+function isUploaded(release, name) {
+  return release?.assets.some(
+    (asset) => asset.name === name && asset.state === "uploaded" && asset.size > 0,
   );
+}
+
+function isPublished(release, names) {
+  return release && !release.isDraft && names.every((name) => isUploaded(release, name));
 }
 
 function publishBeta(tag, assetPaths, notes, title) {
@@ -229,7 +232,9 @@ function publishBeta(tag, assetPaths, notes, title) {
       notes,
     );
   }
-  gh("release", "upload", tag, ...assetPaths, "--clobber");
+  // --clobber deletes an asset before replacing it, so leave complete ones alone.
+  const missing = assetPaths.filter((assetPath) => !isUploaded(release, path.basename(assetPath)));
+  if (missing.length > 0) gh("release", "upload", tag, ...missing, "--clobber");
   gh(
     "release",
     "edit",
