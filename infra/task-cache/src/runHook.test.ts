@@ -102,7 +102,8 @@ it("uses one machine hook across fresh worktrees without modifying Vite+", async
         child.once("error", reject);
         child.once("close", (code) => {
           firstExit();
-          code !== 0 && task !== "fail" ? reject(new Error(stderr)) : resolve(code);
+          if (code !== 0 && task !== "fail") reject(new Error(stderr));
+          else resolve(code);
         });
       });
     expect(await run("build")).toBe(0);
@@ -404,5 +405,32 @@ it("does not send an old endpoint's token after changing the URL interactively",
       server.close((error) => (error ? reject(error) : resolve())),
     );
     await NodeFSP.rm(root, { recursive: true, force: true });
+  }
+});
+
+it("rejects non-loopback HTTP before transmitting a setup credential", async () => {
+  const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "task-cache-http-"));
+  try {
+    const output = await new Promise<string>((resolve) => {
+      NodeChildProcess.execFile(
+        process.execPath,
+        [NodePath.join(import.meta.dirname, "../scripts/install.ts"), "--non-interactive"],
+        {
+          env: {
+            ...process.env,
+            HOME: home,
+            NODE_OPTIONS: "",
+            T3_CACHE_SETUP_URL: "http://cache.invalid/projects/test",
+            T3_CACHE_SETUP_NAME: "maria",
+            T3_CACHE_SETUP_TOKEN: "test-credential-that-must-not-be-transmitted",
+          },
+        },
+        (_error, stdout, stderr) => resolve(stdout + stderr),
+      );
+    });
+    expect(output).toContain("Use an HTTPS cache endpoint");
+    expect(await NodeFSP.readdir(home)).toEqual([]);
+  } finally {
+    await NodeFSP.rm(home, { recursive: true, force: true });
   }
 });

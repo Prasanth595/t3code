@@ -135,13 +135,21 @@ if (!name || !token || !/^[a-z0-9-]{1,64}$/.test(name) || token.length < 32)
   throw new Error("A valid developer name and credential token are required.");
 const url = new URL(endpoint);
 if (
-  !["http:", "https:"].includes(url.protocol) ||
+  (url.protocol !== "https:" &&
+    !(
+      url.protocol === "http:" &&
+      (url.hostname === "localhost" ||
+        /^127(?:\.\d{1,3}){3}$/.test(url.hostname) ||
+        url.hostname === "[::1]")
+    )) ||
   url.username ||
   url.password ||
   url.search ||
   url.hash
 )
-  throw new Error("Use a cache endpoint without embedded credentials, query, or fragment.");
+  throw new Error(
+    "Use an HTTPS cache endpoint without embedded credentials, query, or fragment (HTTP is only allowed on loopback).",
+  );
 endpoint = url.href.replace(/\/$/, "");
 const response = await fetch(`${endpoint}/telemetry`, {
   method: "POST",

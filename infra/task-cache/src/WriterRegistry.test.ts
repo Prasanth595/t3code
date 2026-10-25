@@ -205,3 +205,37 @@ it.effect("refuses to initialize a missing writer registry implicitly", () =>
     expect(yield* fs.exists(`${home}/.config/t3-task-cache/writers.json`)).toBe(false);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("keeps existing authorization if credential publication fails", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const home = yield* fs.makeTempDirectoryScoped();
+    const state = `${home}/.config/t3-task-cache`;
+    yield* fs.makeDirectory(state, { recursive: true });
+    const original = '{"maria":"old-digest"}';
+    yield* fs.writeFileString(`${state}/writers.json`, original);
+    const error = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method: "rename",
+    });
+    const result = yield* WriterRegistry.WriterRegistry.pipe(
+      Effect.flatMap((registry) => registry.update("maria", false, "https://cache.example")),
+      Effect.provide(
+        WriterRegistry.layer.pipe(
+          Layer.provide([
+            ConfigProvider.layer(ConfigProvider.fromUnknown({ HOME: home })),
+            Layer.succeed(FileSystem.FileSystem, {
+              ...fs,
+              rename: (from, to) =>
+                to === `${state}/maria.json` ? Effect.fail(error) : fs.rename(from, to),
+            }),
+          ]),
+        ),
+      ),
+      Effect.exit,
+    );
+    expect(Exit.isFailure(result)).toBe(true);
+    expect(yield* fs.readFileString(`${state}/writers.json`)).toBe(original);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

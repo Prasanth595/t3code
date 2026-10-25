@@ -53,7 +53,9 @@ const make = Effect.gen(function* () {
     return yield* decodeWriters(yield* fs.readFileString(`${state}/writers.json`));
   });
 
-  const save = Effect.fn("TaskCache.save")(function* (name: string, value: string) {
+  const save = Effect.fn("TaskCache.save")(function* (
+    entries: ReadonlyArray<readonly [string, string]>,
+  ) {
     yield* fs.makeDirectory(state, { recursive: true, mode: 0o700 });
     yield* Effect.scoped(
       Effect.gen(function* () {
@@ -61,9 +63,11 @@ const make = Effect.gen(function* () {
           directory: state,
           prefix: ".writer-",
         });
-        const temporary = `${directory}/${name}.json`;
-        yield* fs.writeFileString(temporary, value + "\n", { mode: 0o600 });
-        yield* fs.rename(temporary, `${state}/${name}.json`);
+        for (const [name, value] of entries)
+          yield* fs.writeFileString(`${directory}/${name}.json`, value + "\n", { mode: 0o600 });
+        // The registry is the authorization commit point and must publish last.
+        for (const [name] of entries)
+          yield* fs.rename(`${directory}/${name}.json`, `${state}/${name}.json`);
       }),
     );
   });
@@ -106,9 +110,11 @@ const make = Effect.gen(function* () {
         else {
           writers[name] = hex(yield* crypto.digest("SHA-256", new TextEncoder().encode(token)));
         }
-        yield* save("writers", yield* encodeWriters(writers));
+        const entries: Array<readonly [string, string]> = [];
         if (!revoke && endpoint)
-          yield* save(name, yield* encodeCredential({ endpoint, name, token }));
+          entries.push([name, yield* encodeCredential({ endpoint, name, token })]);
+        entries.push(["writers", yield* encodeWriters(writers)]);
+        yield* save(entries);
         return revoke ? undefined : `${state}/${name}.json`;
       }),
     );
