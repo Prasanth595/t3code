@@ -48,15 +48,9 @@ function preservesNativeSyntax(text: string): boolean {
   return mention !== null && mention.index === 0 && mention[1] === "";
 }
 
-// Skill parsers accept any currency sigil. A word joiner keeps the title from matching.
+// Pi treats any $token as a skill, including digits. A word joiner after every currency sigil keeps the title from matching.
 function neutralizeSkillIntroducers(text: string): string {
-  return text.replace(new RegExp(SKILL_MENTION_PATTERN.source, "gu"), (match, lead: string) => {
-    const rest = match.slice(lead.length);
-    const currency = rest.codePointAt(0);
-    if (currency === undefined) return match;
-    const currencyText = String.fromCodePoint(currency);
-    return `${lead}${currencyText}\u2060${rest.slice(currencyText.length)}`;
-  });
+  return text.replace(/\p{Sc}/gu, "$&\u2060");
 }
 
 function senderName(title: string | undefined, senderThreadId: ThreadId): string {

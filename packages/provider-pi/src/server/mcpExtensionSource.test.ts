@@ -5,7 +5,10 @@ import * as NodeOS from "node:os";
 import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
 import { assert, describe, it } from "@effect/vitest";
+import { ThreadId } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 
+import { providerTextForTurn } from "../../../../apps/server/src/orchestration-v2/agentSendProvenance.ts";
 import { PI_T3_MCP_EXTENSION_SOURCE } from "./mcpExtensionSource.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 
@@ -519,4 +522,35 @@ describe("Pi skill references", () => {
       await NodeFSP.rm(directory, { recursive: true });
     }
   });
+
+  it.each(["deploy", "25", "123", "deploy.v2"])(
+    "does not load skill %s from the sender title",
+    async (name) => {
+      const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "pi-title-skill-"));
+      try {
+        const path = NodePath.join(directory, "SKILL.md");
+        await NodeFSP.writeFile(path, "TITLE_SKILL_INSTRUCTIONS");
+        const hook = await loadInputHook([
+          { name: `skill:${name}`, source: "skill", sourceInfo: { path } },
+        ]);
+        const body = "The review is complete.";
+        assert.isUndefined(await hook({ text: body }, { ui: { notify: assert.fail } }));
+        const text = await Effect.runPromise(
+          providerTextForTurn({
+            text: body,
+            createdBy: "agent",
+            senderThreadId: ThreadId.make("thread:title-skill"),
+            readSenderTitle: () => Effect.succeed(`Review $${name} job`),
+            readReceiverSubagents: () => Effect.succeed([]),
+          }),
+        );
+        assert.isUndefined(await hook({ text }, { ui: { notify: assert.fail } }));
+        const requested = await hook({ text: `Use $${name} now` }, { ui: { notify: assert.fail } });
+        assert.include(requested?.text ?? "", `Use $${name} now`);
+        assert.include(requested?.text ?? "", "TITLE_SKILL_INSTRUCTIONS");
+      } finally {
+        await NodeFSP.rm(directory, { recursive: true });
+      }
+    },
+  );
 });
