@@ -222,4 +222,38 @@ describe("DesktopApplicationMenu", () => {
       assert.equal(yield* Deferred.await(selectedAction), "main-reload");
     }),
   );
+
+  it.effect("keeps mod+w from closing the last window on Windows and Linux", () =>
+    Effect.gen(function* () {
+      for (const platform of ["linux", "win32"] as const) {
+        const selectedAction = yield* Deferred.make<string>();
+        const applicationMenuTemplate =
+          yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+
+        yield* configureMenu(selectedAction, applicationMenuTemplate, { platform });
+
+        const template = yield* Deferred.await(applicationMenuTemplate);
+        const windowMenu = template.find((item) => item.role === "windowMenu");
+        // Electron's default Window submenu has a Close role bound to mod+w.
+        if (!Array.isArray(windowMenu?.submenu)) {
+          throw new Error(`Expected an explicit Window submenu on ${platform}.`);
+        }
+        const close = windowMenu.submenu.find((item) => item.label === "Close");
+        assert.isUndefined(close?.role);
+        assert.isUndefined(close?.accelerator);
+        if (typeof close?.click !== "function") {
+          throw new Error("Expected Close menu item to have a click handler.");
+        }
+
+        let closed = false;
+        const window = {
+          close: () => {
+            closed = true;
+          },
+        } as Electron.BrowserWindow;
+        close.click({} as Electron.MenuItem, window, {} as KeyboardEvent);
+        assert.isTrue(closed);
+      }
+    }),
+  );
 });
