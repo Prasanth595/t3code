@@ -1056,6 +1056,31 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("reads merge permissions without reading the trigger jobs", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            mergeRequestJson({
+              head_pipeline: { id: 31, project_id: 12, status: "success" },
+              user: { can_merge: false },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const permissions = yield* cli.getMergeRequestPermissions({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(permissions).toEqual({ viewerCanMerge: false });
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+    }),
+  );
+
   it.effect("reads who has access to the project and who is already on the merge request", () =>
     Effect.gen(function* () {
       mockedExecute

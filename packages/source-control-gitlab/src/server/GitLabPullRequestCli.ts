@@ -238,6 +238,12 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly number: number;
     }) => Effect.Effect<GitLabMergeRequestDetail, GitLabPullRequestCliError>;
 
+    readonly getMergeRequestPermissions: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly number: number;
+    }) => Effect.Effect<{ readonly viewerCanMerge: boolean }, GitLabPullRequestCliError>;
+
     readonly listNotes: (input: {
       readonly cwd: string;
       readonly repository: string;
@@ -1180,6 +1186,10 @@ export const make = Effect.gen(function* () {
           : { ...detail, checks: [...detail.checks, ...downstream] };
       },
     ),
+
+    // Runs before every write and picker, so it skips the trigger job read the checks need.
+    getMergeRequestPermissions: (input) =>
+      mergeRequestDetail(input).pipe(Effect.map(({ viewerCanMerge }) => ({ viewerCanMerge }))),
 
     listNotes: (input) => notesPage({ ...input, page: 1, collected: [] }),
 
