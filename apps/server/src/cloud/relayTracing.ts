@@ -28,4 +28,5 @@ export const layerServerRelayBroker = relayLayer({
   serviceName: "t3code-server",
   runtime: "node",
   client: "environment-server",
+  component: "relay-broker",
 });
