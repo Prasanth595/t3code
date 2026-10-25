@@ -35,6 +35,7 @@ describe("images inside running text", () => {
       ["---", "\\---"],
       ["***", "\\***"],
       ["*emphasis* x", "*emphasis* x"],
+      ["Hello\n2. x", "Hello\n2. x"],
     ]) {
       expect(markdownWithBlockImages(`See ![a](a.png) ${suffix}`)).toBe(
         `See\n\n![a](a.png)\n\n${escaped}`,

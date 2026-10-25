@@ -349,7 +349,8 @@ export function markdownWithTableBreaks(markdown: string): string {
 }
 
 // Matches up to where a backslash escapes a heading, quote, list or thematic break marker.
-const BLOCK_MARKER = /^(?:\d{1,9}(?=[.)])|(?=[#>+-]|\*[ \t]|([*_])(?:[ \t]*\1){2,}[ \t]*$))/m;
+const BLOCK_MARKER =
+  /^(?:\d{1,9}(?=[.)])|(?=[#>+-]|\*[ \t]|([*_])(?:[ \t]*\1){2,}[ \t]*(?:\r?\n|$)))/;
 
 /** md4c draws an image that follows text on its line as a 20pt glyph; give each its own paragraph. */
 export function markdownWithBlockImages(markdown: string): string {
