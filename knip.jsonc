@@ -30,7 +30,8 @@
         "sign-macos.ts",
         "verify-windows-desktop-artifact.ts",
       ],
-      "ignoreDependencies": ["esbuild"],
+      // mobile-e2e.ts runs agent-device by its bin path.
+      "ignoreDependencies": ["esbuild", "agent-device"],
       // The `t3` npm package's files: copied into the package, never imported.
       // knip-schemas.test.ts writes a throwaway project to .knip-test-*, which a
       // knip run beside it in check:changed must not report.
