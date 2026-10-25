@@ -405,9 +405,18 @@ export const make = Effect.gen(function* () {
   const startedAt = (yield* DateTime.now).epochMilliseconds;
   const activeSnapshotPublishedRef = yield* Ref.make(false);
   const catchUpRequests = yield* Queue.dropping<void>(1);
-  const publishedStateByThreadRef = yield* Ref.make(
-    new Map<ThreadId, { readonly identity: string; readonly updatedAt: string }>(),
-  );
+  const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
+  // Android keys alerts by phase and time, so a child's wait must never reuse an
+  // earlier alert time. Kept across clears, tombstones and relinks for that reason.
+  const latestAlertAtByThread = new Map<ThreadId, DateTime.Utc>();
+  const recordAlertAt = (threadId: ThreadId, updatedAt: string) => {
+    const previous = latestAlertAtByThread.get(threadId);
+    const next = DateTime.makeUnsafe(updatedAt);
+    latestAlertAtByThread.set(
+      threadId,
+      previous === undefined ? next : DateTime.max(previous, next),
+    );
+  };
   const subagentRequests = new Map<ThreadId, SubagentRequest>();
   let subagentRequestChangeOrder = 0;
   // Environments that never publish skip the extra shell read while paused.
@@ -582,14 +591,13 @@ export const make = Effect.gen(function* () {
     });
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
-    const previousPublication = publishedStateByThread.get(threadId);
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
       !publishedStateByThread.has(threadId)
     ) {
       if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) return;
     }
-    if (previousPublication?.identity === publishIdentity) {
+    if (publishedStateByThread.get(threadId) === publishIdentity) {
       // Clear moot deadlines so later transient nulls cannot skip their deferral window.
       publishConfirmDeadlines.delete(threadId);
       heldCompletions.delete(threadId);
@@ -606,7 +614,7 @@ export const make = Effect.gen(function* () {
     // alerts on every move into completed.
     const requiresConfirmation =
       (snapshot.state === null &&
-        previousPublication?.identity !== agentAwarenessPublishIdentity(null)) ||
+        publishedStateByThread.get(threadId) !== agentAwarenessPublishIdentity(null)) ||
       snapshot.state?.phase === "completed";
     if (requiresConfirmation) {
       if (snapshot.state?.phase === "completed") heldCompletions.add(threadId);
@@ -657,13 +665,11 @@ export const make = Effect.gen(function* () {
           reason: unsettled.reason,
         }).pipe(withRelayClientTracing);
         hasPublished = true;
+        recordAlertAt(threadId, completion.updatedAt);
         heldCompletions.delete(threadId);
         publishConfirmDeadlines.set(threadId, nowMs + 5_000);
         yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
-          new Map(publishedStates).set(threadId, {
-            identity: agentAwarenessPublishIdentity(completion),
-            updatedAt: completion.updatedAt,
-          }),
+          new Map(publishedStates).set(threadId, agentAwarenessPublishIdentity(completion)),
         );
         yield* schedulePublishConfirm(threadId);
         return;
@@ -686,19 +692,18 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    // Android keys alerts by phase and time. A newer parent can mask several
-    // child requests, so advance their alert time from the last publication.
-    // Deriving it from the successful publication keeps retries identical.
+    // A newer parent can mask several child requests, so advance their alert
+    // time past every earlier one. Only successful publishes move it, so
+    // retries stay identical.
+    const latestAlertAt = latestAlertAtByThread.get(threadId);
     const state =
-      snapshot.state !== null && snapshot.subagentWait !== null && previousPublication !== undefined
+      snapshot.state !== null && snapshot.subagentWait !== null && latestAlertAt !== undefined
         ? {
             ...snapshot.state,
             updatedAt: DateTime.formatIso(
               DateTime.max(
                 DateTime.makeUnsafe(snapshot.state.updatedAt),
-                DateTime.add(DateTime.makeUnsafe(previousPublication.updatedAt), {
-                  milliseconds: 1,
-                }),
+                DateTime.add(latestAlertAt, { milliseconds: 1 }),
               ),
             ),
           }
@@ -709,17 +714,15 @@ export const make = Effect.gen(function* () {
       reason: snapshot.reason,
     }).pipe(withRelayClientTracing);
     hasPublished = true;
+    if (state !== null) recordAlertAt(threadId, state.updatedAt);
     publishConfirmDeadlines.delete(threadId);
     heldCompletions.delete(threadId);
     yield* Ref.update(publishedStateByThreadRef, (publishedStates) => {
       const nextPublishedStates = new Map(publishedStates);
-      if (state === null) {
+      if (snapshot.state === null) {
         nextPublishedStates.delete(threadId);
       } else {
-        nextPublishedStates.set(threadId, {
-          identity: publishIdentity,
-          updatedAt: state.updatedAt,
-        });
+        nextPublishedStates.set(threadId, publishIdentity);
       }
       return nextPublishedStates;
     });

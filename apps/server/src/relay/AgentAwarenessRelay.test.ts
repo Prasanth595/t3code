@@ -448,6 +448,43 @@ describe("AgentAwarenessRelay", () => {
       }),
   );
 
+  it.effect("gives a child's next wait a new alert time after the parent republishes", () =>
+    Effect.gen(function* () {
+      const shells = yield* Ref.make(
+        new Map<ThreadId, OrchestrationV2ThreadShell>([
+          [THREAD_ID, shell({ updatedAt: DateTime.makeUnsafe("2026-09-04T12:10:00.000Z") })],
+          [CHILD_THREAD_ID, waitingChild({ pendingRuntimeRequest: null })],
+        ]),
+      );
+      const setChild = (next: OrchestrationV2ThreadShell) =>
+        Ref.update(shells, (current) => new Map(current).set(CHILD_THREAD_ID, next));
+      const { relay, publications } = yield* makeTestRelay({
+        readShell: (threadId) =>
+          Ref.get(shells).pipe(Effect.map((current) => current.get(threadId) ?? null)),
+      });
+      yield* relay.publishThread(THREAD_ID);
+      yield* setChild(waitingChild());
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      yield* setChild(waitingChild({ pendingRuntimeRequest: null }));
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      yield* setChild(
+        waitingChild({
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("child-request-2"),
+            kind: "command",
+            createdAt: DateTime.makeUnsafe(NOW),
+          },
+        }),
+      );
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      assert.deepStrictEqual(
+        publications.map(({ state }) => state?.phase),
+        ["running", "waiting_for_approval", "running", "waiting_for_approval"],
+      );
+      assert.notEqual(publications[3]?.state?.updatedAt, publications[1]?.state?.updatedAt);
+    }),
+  );
+
   it.effect("announces equal-timestamp child requests in request-change order", () =>
     Effect.gen(function* () {
       const secondChildId = ThreadId.make("relay-second-child-thread");
