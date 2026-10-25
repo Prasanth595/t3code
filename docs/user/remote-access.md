@@ -241,6 +241,10 @@ reports what it would change.
 The browser always runs in Chrome's sandbox. Where you cannot change the host,
 set `T3CODE_SERVER_BROWSER_SANDBOX=0` for the environment to run without it.
 
+Where `t3 browser setup` cannot install libraries, such as on NixOS, point
+`T3CODE_PREVIEW_BROWSER_PATH` at a `chrome-headless-shell` the host provides.
+T3 then uses it instead of downloading its own.
+
 ## Connect an outside agent
 
 Claude Code, Codex, ChatGPT and other agents T3 Code did not start can drive

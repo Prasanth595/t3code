@@ -140,6 +140,8 @@ export interface PreviewBrowserOptions {
   readonly release?: PreviewBrowserRelease | null;
   /** How long a caller waits on an install in progress. Provider tool calls time out near 60s. */
   readonly wait?: Duration.Input;
+  /** A headless shell the host provides, such as a distribution package; nothing is downloaded. */
+  readonly executablePath?: string;
 }
 
 const DOWNLOAD_TIMEOUT = "15 minutes";
@@ -160,6 +162,12 @@ type InstallState =
 export const makePreviewBrowser = Effect.fn("PreviewBrowser.make")(function* (
   options: PreviewBrowserOptions,
 ) {
+  if (options.executablePath !== undefined) {
+    return PreviewBrowser.of({
+      executable: Effect.succeed(options.executablePath),
+      installed: Effect.succeedSome(options.executablePath),
+    });
+  }
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const http = yield* HttpClient.HttpClient;
@@ -439,6 +447,10 @@ export const layer = Layer.effect(
   PreviewBrowser,
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    return yield* makePreviewBrowser({ baseDir: config.baseDir });
+    const executablePath = (yield* HostProcess.Environment).T3CODE_PREVIEW_BROWSER_PATH;
+    return yield* makePreviewBrowser({
+      baseDir: config.baseDir,
+      ...(executablePath ? { executablePath } : {}),
+    });
   }),
 );

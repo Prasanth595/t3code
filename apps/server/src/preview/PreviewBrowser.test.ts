@@ -78,6 +78,7 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
     readonly body?: Stream.Stream<Uint8Array>;
     readonly wait?: Duration.Input;
     readonly unsupported?: boolean;
+    readonly executablePath?: string;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -100,6 +101,7 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
           sha256,
         },
     ...(options.wait === undefined ? {} : { wait: options.wait }),
+    ...(options.executablePath === undefined ? {} : { executablePath: options.executablePath }),
   }).pipe(
     Effect.provideService(HostProcess.Platform, hostPlatform),
     Effect.provideService(HostProcess.Architecture, "x64"),
@@ -196,6 +198,17 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
       expect(yield* fs.exists(path.join(baseDir, "tools", "chrome-headless-shell", "escape"))).toBe(
         false,
       );
+    }),
+  );
+
+  it.effect("uses a host-provided browser without downloading one", () =>
+    Effect.gen(function* () {
+      const executablePath = "/opt/browser/chrome-headless-shell";
+      const { browser, requests } = yield* makeHarness({ unsupported: true, executablePath });
+
+      expect(yield* browser.executable).toBe(executablePath);
+      expect(yield* browser.installed).toEqual(Option.some(executablePath));
+      expect(requests).toEqual([]);
     }),
   );
 });
