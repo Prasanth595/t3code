@@ -1659,19 +1659,20 @@ it.effect.each([
               yield* worker.drain();
               yield* Fiber.join(ended);
             });
-          const queueNotification = (id: string, kind: "monitor" | "command") =>
+          // Other provider wakes, such as a finished command, start a follow-up task instead.
+          const queueMonitorWake = (id: string) =>
             Effect.gen(function* () {
               yield* orchestrator.dispatch({
                 type: "message.dispatch",
                 commandId: CommandId.make(`queue-session-release-${id}`),
                 threadId,
                 messageId: MessageId.make(`message:session-release-${id}`),
-                text: kind === "monitor" ? "A monitor reported new output." : "A command finished.",
+                text: "A monitor reported new output.",
                 attachments: [],
                 notification: {
-                  source: { kind },
+                  source: { kind: "monitor" },
                   outcome: "updated",
-                  summary: kind === "monitor" ? "Monitor updated" : "Command finished",
+                  summary: "Monitor updated",
                 },
                 dispatchMode: { type: "queue_after_active" },
                 createdBy: "agent",
@@ -1696,11 +1697,11 @@ it.effect.each([
             });
           if (queued === "held monitor") {
             // The task's provider failure holds this wake, which has not started when the task releases.
-            yield* queueNotification("held-monitor", "monitor");
+            yield* queueMonitorWake("held-monitor");
           }
           if (queued === "monitor" || queued === "monitor again" || queued === "held follow-up") {
             // The wake queues behind the task's turn, so it is pending or running when the task finalizes.
-            yield* queueNotification("monitor", "monitor");
+            yield* queueMonitorWake("monitor");
             const monitorRunning = yield* turnRunning();
             yield* finishTurn("completed");
             yield* worker.drain();
@@ -1783,16 +1784,13 @@ it.effect.each([
           if (queued === "monitor again") {
             // A second wake reattaches the released session, which its end must release again.
             assert.equal(
-              yield* finishLaterRun(queueNotification("monitor-again", "monitor")),
+              yield* finishLaterRun(queueMonitorWake("monitor-again")),
               providerSessionId,
             );
           }
           if (queued === "later run") {
             // A later non-task run is not the interrupted task's end, so it releases nothing.
-            assert.equal(
-              yield* finishLaterRun(queueNotification("later-run", "command")),
-              providerSessionId,
-            );
+            assert.equal(yield* finishLaterRun(queueMonitorWake("later-run")), providerSessionId);
           }
           if (queued === "held monitor") {
             // Resuming starts the held wake, which reattaches the released session.
@@ -1838,7 +1836,7 @@ it.effect.each([
             yield* finishTurn(queued === "interrupted follow-up" ? "interrupted" : "cancelled");
             // A later non-task run is not the ended follow-up's end, so it releases nothing.
             assert.equal(
-              yield* finishLaterRun(queueNotification("after-follow-up", "command")),
+              yield* finishLaterRun(queueMonitorWake("after-follow-up")),
               providerSessionId,
             );
           }
