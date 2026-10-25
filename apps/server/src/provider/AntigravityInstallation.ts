@@ -44,7 +44,8 @@ const VALIDATION_TIMEOUT = "90 seconds";
 const FREE_SPACE_MARGIN = 256 * 1024 * 1024;
 const RECORD_MAX_BYTES = 8 * 1024;
 const RELEASE_RECORD = ".install-complete.json";
-const LAUNCHER_TARGET = /"([^"\r\n]*agy_acp_server\.exe)"|([^\s"&|<>()@]*agy_acp_server\.exe)/giu;
+const LAUNCHER_COMMAND =
+  /^[\s@]*(?:"([^"]*agy_acp_server\.exe)"|([^\s"&|<>()@]*agy_acp_server\.exe)(?=[\s&|<>()]|$))/iu;
 
 const ReleaseId = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
 const ActiveRelease = Schema.Struct({ releaseId: ReleaseId });
@@ -248,14 +249,18 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
 
   // A Windows launcher script runs the ACP executable from elsewhere, so the
   // helper that matches it sits beside that executable, not the script. Only a
-  // script naming exactly one literal or `%~dp0`-relative path is followed.
+  // script whose command lines start with exactly one literal or `%~dp0`-relative
+  // path is followed. A path that `rem`, `echo` or another command only mentions
+  // may not be what runs.
   const launcherTarget = Effect.fn("AntigravityInstallation.launcherTarget")(function* (
     launcher: string,
   ) {
     if (platform !== "win32" || !/\.(?:bat|cmd)$/iu.test(launcher)) return null;
     const contents = yield* fs.readFileString(launcher);
     const targets = new Set<string>();
-    for (const match of contents.matchAll(LAUNCHER_TARGET)) {
+    for (const line of contents.split(/\r?\n/u)) {
+      const match = LAUNCHER_COMMAND.exec(line);
+      if (!match) continue;
       const target = (match[1] ?? match[2] ?? "").replace(
         /%~dp0/giu,
         `${path.dirname(launcher)}${path.sep}`,

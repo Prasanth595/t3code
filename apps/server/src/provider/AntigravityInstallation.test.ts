@@ -692,11 +692,22 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
 
       const ambiguous = yield* writeLauncher(
         "ambiguous.cmd",
-        `if defined AGY_OLD ("${managed.executablePath}") else "${runtimeExecutable}"`,
+        `"${managed.executablePath}" --version\r\n"${runtimeExecutable}"`,
       );
       expect(yield* installation.resolve(ambiguous).pipe(Effect.flip)).toMatchObject({
         operation: "resolve",
       });
+
+      for (const [name, launch] of [
+        ["comment.cmd", `rem Previous runtime: "${runtimeExecutable}"\r\n"%AGY_TARGET%"`],
+        ["label-comment.cmd", `:: "${runtimeExecutable}"\r\n"%AGY_TARGET%"`],
+        ["echo.cmd", `echo "${runtimeExecutable}"`],
+      ] as const) {
+        const mentionOnly = yield* writeLauncher(name, launch);
+        expect(yield* installation.resolve(mentionOnly).pipe(Effect.flip)).toMatchObject({
+          operation: "resolve",
+        });
+      }
     }),
   );
 
