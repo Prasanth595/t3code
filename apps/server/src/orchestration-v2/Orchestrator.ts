@@ -11046,10 +11046,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     )
                   )
                     return;
-                  // Each started run reattaches the same session id, so each gets its own receipt.
-                  // Held work that has not started yet must not spend its run's receipt here.
+                  // Each run that set out to start can reattach the same session id, so each gets
+                  // its own receipt. A run that failed before starting still has its prompt, which
+                  // also orders queue resumes. Held work must not spend its run's receipt here.
+                  const unstartedRunIds = child.runs
+                    .filter((run) => run.status !== "queued" && run.startedAt === null)
+                    .map((run) => run.id);
+                  const promptedRunIds = new Set(
+                    unstartedRunIds.length === 0
+                      ? []
+                      : (yield* projectionStore.getThreadRecords(childThreadId, ["turnItems"], {
+                          turnItemTypes: ["user_message", "notification"],
+                          turnItemRunIds: unstartedRunIds,
+                        })).turnItems.map((item) => item.runId),
+                  );
                   const attachedRun = child.runs
-                    .filter((run) => run.startedAt !== null)
+                    .filter((run) => run.startedAt !== null || promptedRunIds.has(run.id))
                     .toSorted((a, b) => b.ordinal - a.ordinal)[0];
                   yield* Effect.forEach(
                     child.providerSessions.filter(

@@ -46,7 +46,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
-import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.1-codex" };
@@ -1425,6 +1425,7 @@ const makeSessionAdapter = (cwd: string) => {
     readonly providerSessionId: ProviderSessionId;
     readonly events: Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>;
   }> = [];
+  let threadLoadsFail = false;
   const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
     instanceId,
     driver,
@@ -1452,24 +1453,37 @@ const makeSessionAdapter = (cwd: string) => {
           },
           events: Stream.fromQueue(events),
           ensureThread: ({ threadId }) =>
-            Effect.succeed({
-              id: ProviderThreadId.make(`provider-thread:${threadId}`),
-              driver,
-              providerInstanceId: instanceId,
-              providerSessionId: input.providerSessionId,
-              appThreadId: threadId,
-              ownerNodeId: null,
-              nativeThreadRef: { driver, nativeId: `native:${threadId}`, strength: "strong" },
-              nativeConversationHeadRef: null,
-              status: "idle",
-              firstRunOrdinal: null,
-              lastRunOrdinal: null,
-              handoffIds: [],
-              forkedFrom: null,
-              createdAt: now,
-              updatedAt: now,
-            }),
-          resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
+            threadLoadsFail
+              ? Effect.fail(
+                  new ProviderAdapter.ProviderAdapterEnsureThreadError({ driver, threadId }),
+                )
+              : Effect.succeed({
+                  id: ProviderThreadId.make(`provider-thread:${threadId}`),
+                  driver,
+                  providerInstanceId: instanceId,
+                  providerSessionId: input.providerSessionId,
+                  appThreadId: threadId,
+                  ownerNodeId: null,
+                  nativeThreadRef: { driver, nativeId: `native:${threadId}`, strength: "strong" },
+                  nativeConversationHeadRef: null,
+                  status: "idle",
+                  firstRunOrdinal: null,
+                  lastRunOrdinal: null,
+                  handoffIds: [],
+                  forkedFrom: null,
+                  createdAt: now,
+                  updatedAt: now,
+                }),
+          resumeThread: ({ providerThread }) =>
+            threadLoadsFail
+              ? Effect.fail(
+                  new ProviderAdapter.ProviderAdapterResumeThreadError({
+                    driver,
+                    providerSessionId: input.providerSessionId,
+                    providerThreadId: providerThread.id,
+                  }),
+                )
+              : Effect.succeed(providerThread),
           startTurn: (turn) =>
             Effect.gen(function* () {
               turns.push({ turn, providerSessionId: input.providerSessionId, events });
@@ -1498,7 +1512,10 @@ const makeSessionAdapter = (cwd: string) => {
         };
       }),
   };
-  return { adapter, turns };
+  const failThreadLoads = () => {
+    threadLoadsFail = true;
+  };
+  return { adapter, turns, failThreadLoads };
 };
 
 it.effect.each([
@@ -1515,13 +1532,14 @@ it.effect.each([
   { outcome: "completed", delegated: true, queued: "interrupted follow-up", released: false },
   { outcome: "completed", delegated: true, queued: "cancelled follow-up", released: false },
   { outcome: "failed", delegated: true, queued: "held follow-up", released: true },
+  { outcome: "completed", delegated: true, queued: "failed monitor", released: true },
 ] as const)(
   "releases the session only when a delegated task ends completed or failed ($outcome, delegated: $delegated, queued: $queued)",
   ({ outcome, delegated, queued, released }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("delegated-session-release");
-        const { adapter: sessionAdapter, turns } = makeSessionAdapter(cwd);
+        const { adapter: sessionAdapter, turns, failThreadLoads } = makeSessionAdapter(cwd);
         const sessionModelSelection = {
           instanceId: sessionAdapter.instanceId,
           model: "claude-test",
@@ -1840,6 +1858,31 @@ it.effect.each([
               providerSessionId,
             );
           }
+          if (queued === "failed monitor") {
+            // The wake reopens the released session, then fails before its turn starts.
+            assert.isFalse(yield* sessions.isLive(providerSessionId));
+            failThreadLoads();
+            const attached = yield* next(
+              (event) => event.type === "provider-session.attached" && event.threadId === threadId,
+            );
+            const failed = yield* next(
+              (event) =>
+                event.type === "run.updated" &&
+                event.threadId === threadId &&
+                event.payload.status === "failed",
+            );
+            yield* queueMonitorWake("failed-monitor");
+            // The worker makes five start attempts; each retry waits out a backoff under 1 s.
+            for (let attempt = 1; attempt < 5; attempt += 1) {
+              yield* TestClock.adjust("1 second");
+              yield* worker.drain();
+            }
+            yield* Fiber.join(attached);
+            const failedRun = Option.getOrThrow(yield* Fiber.join(failed));
+            assert.isTrue(failedRun.type === "run.updated" && failedRun.payload.startedAt === null);
+            yield* orchestrator.recoverDelegatedTask(threadId, failedRun.runId!);
+            yield* worker.drain();
+          }
 
           const child = yield* orchestrator.getThreadProjection(threadId);
           if (queued !== "none") {
@@ -1877,20 +1920,27 @@ it.effect.each([
                               ["failed", false],
                               ["completed", false],
                             ]
-                          : queued === "interrupted follow-up" || queued === "cancelled follow-up"
+                          : queued === "failed monitor"
                             ? [
                                 ["completed", false],
-                                [
-                                  queued === "interrupted follow-up" ? "interrupted" : "cancelled",
-                                  false,
-                                ],
-                                ["completed", false],
+                                ["failed", false],
                               ]
-                            : [
-                                ["completed", false],
-                                ["completed", false],
-                                ["running", false],
-                              ],
+                            : queued === "interrupted follow-up" || queued === "cancelled follow-up"
+                              ? [
+                                  ["completed", false],
+                                  [
+                                    queued === "interrupted follow-up"
+                                      ? "interrupted"
+                                      : "cancelled",
+                                    false,
+                                  ],
+                                  ["completed", false],
+                                ]
+                              : [
+                                  ["completed", false],
+                                  ["completed", false],
+                                  ["running", false],
+                                ],
             );
           }
           assert.equal(yield* sessions.isLive(providerSessionId), !released);
