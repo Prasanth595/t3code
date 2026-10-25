@@ -2,6 +2,7 @@ import {
   CommandId,
   IDLE_COMPACTION_TEXT,
   MessageId,
+  type OrchestrationV2Run,
   resolveIdleCompaction,
   resolveProjectProviderInstanceEnabled,
   type RunId,
@@ -18,6 +19,8 @@ import * as ServerSettings from "../serverSettings.ts";
 import { idleCompactionWindow } from "./IdleCompaction.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+
+const IDLE_COMPACTION_MESSAGE_PREFIX = "idle-compact:";
 
 /**
  * Beta: when a run completes on a Claude instance set to compact before the
@@ -69,7 +72,7 @@ export const make = Effect.gen(function* () {
           type: "message.dispatch",
           // One compaction per completed run, even across duplicate events.
           commandId: CommandId.make(`server:idle-compact:${threadId}:${runId}`),
-          messageId: MessageId.make(`idle-compact:${threadId}:${runId}`),
+          messageId: MessageId.make(`${IDLE_COMPACTION_MESSAGE_PREFIX}${threadId}:${runId}`),
           threadId,
           text: IDLE_COMPACTION_TEXT,
           attachments: [],
@@ -87,13 +90,55 @@ export const make = Effect.gen(function* () {
       ),
   );
 
+  const markSeenIfCaughtUp = Effect.fn("IdleCompactionService.markSeenIfCaughtUp")(
+    function* (run: OrchestrationV2Run) {
+      if (run.completedAt === null || !run.userMessageId.startsWith(IDLE_COMPACTION_MESSAGE_PREFIX))
+        return;
+      const { thread, runs } = yield* projections.getThreadRecords(run.threadId, ["runs"]);
+      const previous = runs.reduce<OrchestrationV2Run | null>(
+        (latest, candidate) =>
+          candidate.ordinal < run.ordinal && (latest === null || candidate.ordinal > latest.ordinal)
+            ? candidate
+            : latest,
+        null,
+      );
+      if (
+        thread.lastVisitedAt === null ||
+        previous?.completedAt == null ||
+        DateTime.isGreaterThan(previous.completedAt, thread.lastVisitedAt)
+      )
+        return;
+      yield* orchestrator.dispatch({
+        type: "thread.visit",
+        commandId: CommandId.make(`server:idle-compact-visit:${run.threadId}:${run.id}`),
+        threadId: run.threadId,
+        visitedAt: DateTime.formatIso(run.completedAt),
+        opened: false,
+      });
+    },
+    (effect, run) =>
+      effect.pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("idle compaction visit skipped", { threadId: run.threadId, cause }),
+        ),
+      ),
+  );
+
   const start = Effect.fn("IdleCompactionService.start")(function* () {
     // Keyed by thread: a newer completed run replaces the waiting timer.
     const timers = yield* FiberMap.make<ThreadId>();
     yield* forkParked(
       Stream.runForEach(orchestrator.streamDomainEvents, (event) =>
         event.type === "run.updated" && event.payload.status === "completed"
-          ? FiberMap.run(timers, event.threadId, compactWhenDue(event.threadId, event.payload.id))
+          ? markSeenIfCaughtUp(event.payload).pipe(
+              Effect.andThen(
+                FiberMap.run(
+                  timers,
+                  event.threadId,
+                  compactWhenDue(event.threadId, event.payload.id),
+                ),
+              ),
+            )
           : Effect.void,
       ),
     );
