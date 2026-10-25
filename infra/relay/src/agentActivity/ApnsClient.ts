@@ -119,13 +119,10 @@ function liveActivityAlertPayload(alert: ApnsLiveActivityAlert) {
   };
 }
 
-// The sanitizer caps text by characters, so five rows of multibyte titles
-// still overflow APNs' 4 KB limit and every update is rejected. Like
-// fitFcmData on Android, shorten titles and alert text until the encoded
-// payload fits; the card clips each title to one line anyway. Deep links and
-// ids can't be shortened, so when the shortest text still overflows, drop the
-// lowest-priority row (the aggregate lists them last) and fit the rest again
-// instead of sending a payload APNs rejects.
+// Text caps count characters, so multibyte titles can overflow APNs' 4 KB
+// limit. Shorten titles and alert text until the encoded payload fits. Links
+// and ids can't shrink, so if the shortest text still overflows, drop the last
+// (lowest-priority) row and fit again.
 function makeLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLiveActivityRequest {
   let request = buildLiveActivityRequest(input);
   const state = input.state;
