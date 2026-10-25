@@ -68,6 +68,7 @@ import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnection
 import { TerminalSurface, type TerminalSurfaceHandle } from "./NativeTerminalSurface";
 import { getMobileTerminalTheme } from "./terminalTheme";
 import { terminalDebugLog } from "./terminalDebugLog";
+import { useTerminalExitNavigation } from "./useTerminalExitNavigation";
 import {
   useInitialTerminalLaunchLocation,
   takePendingTerminalLaunch,
@@ -450,34 +451,15 @@ function ThreadTerminal(props: {
         : null) ?? { cols: DEFAULT_TERMINAL_COLS, rows: DEFAULT_TERMINAL_ROWS },
   );
   const [pasteSession] = useState(createTerminalPasteSession);
-  const navigateAwayAfterExit = () => {
-    const fallbackTerminalId = previousLiveTerminalId({
-      sessions: readLiveTerminalSessions(selectedThread.environmentId, selectedThread.id),
-      exitedTerminalId: terminalId,
-    });
-    // This screen's navigation targets its own route, so an exit while another
-    // screen is on top replaces or removes this one without moving focus.
-    if (fallbackTerminalId !== null) {
-      navigation.dispatch(
-        StackActions.replace("ThreadTerminal", {
-          environmentId: String(selectedThread.environmentId),
-          threadId: String(selectedThread.id),
-          terminalId: fallbackTerminalId,
-        }),
-      );
-      return;
-    }
-    if (navigation.canGoBack()) {
-      navigation.goBack();
-      return;
-    }
-    navigation.dispatch(
-      StackActions.replace("Thread", {
-        environmentId: String(selectedThread.environmentId),
-        threadId: String(selectedThread.id),
+  const exitNavigation = useTerminalExitNavigation({
+    environmentId: String(selectedThread.environmentId),
+    threadId: String(selectedThread.id),
+    readFallbackTerminalId: () =>
+      previousLiveTerminalId({
+        sessions: readLiveTerminalSessions(selectedThread.environmentId, selectedThread.id),
+        exitedTerminalId: terminalId,
       }),
-    );
-  };
+  });
   const [terminalSessionDriver] = useState(() =>
     terminalEnvironment.createSession({
       target: {
@@ -489,8 +471,11 @@ function ThreadTerminal(props: {
       initialInput: pendingLaunch?.initialInput,
       canOperate: () =>
         readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope),
-      onExit: navigateAwayAfterExit,
-      onLiveChange: (live) => pasteSession.reset(live),
+      onExit: exitNavigation.exited,
+      onLiveChange: (live) => {
+        if (live) exitNavigation.restarted();
+        pasteSession.reset(live);
+      },
       debugLog: terminalDebugLog,
     }),
   );

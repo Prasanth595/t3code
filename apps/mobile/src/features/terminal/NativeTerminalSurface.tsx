@@ -214,6 +214,7 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
   const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
   const { onInput, onResize } = props;
   const NativeTerminalSurfaceView = resolveNativeTerminalSurfaceView();
+  const hasNativeSurface = Boolean(NativeTerminalSurfaceView);
   const streaming = supportsNativeTerminalOutput();
   const nativeRef = useRef<NativeTerminalSurfaceHandle>(null);
   const writerRef = useRef<ReturnType<typeof createTerminalOutputWriter> | null>(null);
@@ -237,6 +238,15 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
     });
   }, [nativeReady, props.output, streaming]);
 
+  useEffect(() => {
+    terminalDebugLog("native:surface", {
+      terminalKey: props.terminalKey,
+      native: hasNativeSurface,
+      hardwareKeyRevision: getNativeTerminalHardwareKeyRevision(),
+      bufferLen: props.buffer.length,
+      isRunning: props.isRunning,
+    });
+  }, [hasNativeSurface, props.buffer.length, props.isRunning, props.terminalKey]);
   const handleNativeInput = useCallback(
     (event: NativeSyntheticEvent<TerminalInputEvent>) => {
       if (!props.isRunning || props.readOnly) {
@@ -261,21 +271,9 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
     [onResize],
   );
 
-  const terminalKey = props.terminalKey;
-  const logNativeMount = useCallback(
-    (node: unknown) => {
-      if (node === null) return;
-      terminalDebugLog("native:surface", {
-        terminalKey,
-        hardwareKeyRevision: getNativeTerminalHardwareKeyRevision(),
-      });
-    },
-    [terminalKey],
-  );
-
   if (NativeTerminalSurfaceView) {
     return (
-      <View ref={logNativeMount} style={props.style}>
+      <View style={props.style}>
         <NativeTerminalSurfaceView
           ref={nativeRef}
           appearanceScheme={themeAppearance}

@@ -189,7 +189,7 @@ it("does not reopen an ended shell after a viewer is granted operate", () => {
   expect(of("open")).toEqual([]);
 });
 
-it("reopens on grant when the viewer never received a snapshot", () => {
+it("does not reopen on grant when the viewer had no snapshot yet", () => {
   const { attached, flush, access, emit, mount, of } = setup();
   access.canOperate = false;
   const unmountViewer = mount({ kind: "observing" });
@@ -198,7 +198,7 @@ it("reopens on grant when the viewer never received a snapshot", () => {
   flush();
   mount(attached);
   emit({ status: "exited", version: 1 });
-  expect(of("open")).toHaveLength(1);
+  expect(of("open")).toEqual([]);
 });
 
 it("leaves a shell that exited after operate was revoked mid-run", () => {

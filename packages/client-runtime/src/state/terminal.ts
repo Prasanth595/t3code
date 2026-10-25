@@ -148,7 +148,7 @@ export const INITIAL_TERMINAL_LIFECYCLE: TerminalLifecycleState = {
 };
 
 export type TerminalLifecycleEvent =
-  /** A viewer without operate permission received a snapshot of this terminal. */
+  /** A viewer without operate permission is following this terminal. */
   | { readonly type: "observed" }
   | { readonly type: "detached"; readonly canOperate: boolean }
   | {
@@ -388,11 +388,12 @@ export function createTerminalSession(
       const registry = get.registry;
       // `subscribe`, not `get`: a rebuild would resubscribe on every output chunk.
       if (mode.kind === "observing") {
+        // Viewing read-only counts as observed before the first snapshot lands, so
+        // a grant that arrives early still leaves the ended shell's history alone.
         get.subscribe(
           atoms.observe({ environmentId, input: { threadId, terminalId } }),
-          (result) => {
-            const buffer = Option.getOrUndefined(AsyncResult.value(result));
-            if (buffer === undefined || buffer.version === 0 || options.canOperate()) return;
+          () => {
+            if (options.canOperate()) return;
             lifecycle = transitionTerminalLifecycle(lifecycle, { type: "observed" }).state;
           },
           { immediate: true },
