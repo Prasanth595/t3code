@@ -108,6 +108,13 @@ export function useRetainedValue<T>(key: string | null, value: T | null): T | nu
   return key !== null && retained?.key === key ? retained.value : null;
 }
 
+// A known non-repository cwd means the stored checkout was removed; unknown status keeps it.
+export function withoutRemovedCheckout<
+  T extends { branch: string | null; worktreePath: string | null },
+>(thread: T, gitStatus: { readonly isRepo: boolean } | null): T {
+  return gitStatus?.isRepo === false ? { ...thread, branch: null, worktreePath: null } : thread;
+}
+
 // Sortable owns drag transforms; replaying committed order would animate drops twice.
 export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
   args.isSorting ? defaultAnimateLayoutChanges(args) : false;

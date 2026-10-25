@@ -104,6 +104,8 @@ import {
   useOrchestrationCommand,
 } from "../state/use-orchestration-command";
 import { previewEnvironment } from "../state/preview";
+import { vcsEnvironment } from "../state/vcs";
+import { useEnvironmentQuery } from "../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import {
   legacyProjectCwdPreferenceKey,
@@ -198,9 +200,11 @@ import {
   orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
+  useRetainedValue,
   useSidebarRowSubscriptionLease,
   useThreadJumpHintVisibility,
   ThreadStatusPill,
+  withoutRemovedCheckout,
 } from "./Sidebar.logic";
 import { sortThreads } from "../lib/threadSort";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
@@ -461,6 +465,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     thread.pullRequests,
     thread.branchPullRequest,
   );
+  const gitStatus = useEnvironmentQuery(
+    leaseLiveStatus && thread.worktreePath !== null
+      ? vcsEnvironment.status({
+          environmentId: thread.environmentId,
+          input: { cwd: thread.worktreePath, includeRemote: false },
+        })
+      : null,
+  );
+  const visibleGitStatus = useRetainedValue(
+    JSON.stringify([thread.environmentId, thread.worktreePath]),
+    gitStatus.data,
+  );
+  const checkoutThread = withoutRemovedCheckout(thread, visibleGitStatus);
   const pr = linkedPullRequestStatus?.pr ?? null;
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
   // Hooks must precede this ref's plain uses for the compiler to cache it.
@@ -779,7 +796,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               </TooltipPopup>
             </Tooltip>
           )}
-          <ThreadWorktreeIndicator thread={thread} />
+          <ThreadWorktreeIndicator thread={checkoutThread} />
           <ThreadTerminalStatusButton
             threadRef={threadRef}
             terminalIds={runningTerminalIds}
