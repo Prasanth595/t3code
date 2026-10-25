@@ -14,7 +14,7 @@ import * as Path from "effect/Path";
 import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { Argument, Command } from "effect/cli";
+import { Argument, Command, Flag } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -148,13 +148,31 @@ const collect = <E>(stream: Stream.Stream<Uint8Array, E>) =>
       (a, b) => a + b,
     ),
   );
+/** Gradle needs the SDK location; fall back to Android Studio's default install like the device host does. */
+const androidSdk = Effect.gen(function* () {
+  const environment = yield* HostProcess.Environment;
+  const configured = environment.ANDROID_HOME?.trim() || environment.ANDROID_SDK_ROOT?.trim();
+  if (configured) return configured;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const home = environment.HOME ?? environment.USERPROFILE ?? "";
+  const defaults = [
+    path.join(home, "Library/Android/sdk"),
+    path.join(home, "Android/Sdk"),
+    path.join(environment.LOCALAPPDATA ?? path.join(home, "AppData/Local"), "Android/Sdk"),
+  ];
+  for (const sdk of defaults) {
+    if (yield* fs.exists(sdk).pipe(Effect.orElseSucceed(() => false))) return sdk;
+  }
+  return undefined;
+});
+
 export const resolveAdb = Effect.gen(function* () {
   if (yield* isCommandAvailable("adb")) return "adb";
-  const environment = yield* HostProcess.Environment;
   const path = yield* Path.Path;
   const executable = (yield* HostProcess.Platform) === "win32" ? "adb.exe" : "adb";
-  for (const sdk of [environment.ANDROID_SDK_ROOT, environment.ANDROID_HOME]) {
-    if (!sdk) continue;
+  const sdk = yield* androidSdk;
+  if (sdk) {
     const candidate = path.join(sdk, "platform-tools", executable);
     if (yield* isCommandAvailable(candidate)) return candidate;
   }
@@ -179,12 +197,14 @@ const command = Effect.fn("nativeClient.command")(function* (
   const environment = yield* HostProcess.Environment;
   const log = inherit ? yield* BuildLog : null;
   const spawn = yield* resolveSpawnCommand(program === "adb" ? yield* resolveAdb : program, args);
+  const sdk = yield* androidSdk;
   const child = yield* spawner.spawn(
     ChildProcess.make(spawn.command, spawn.args, {
       shell: spawn.shell,
       cwd: cwd ?? (yield* roots).mobile,
       env: {
         ...environment,
+        ...(sdk ? { ANDROID_HOME: sdk } : {}),
         APP_VARIANT: "development",
         MOBILE_VERSION_POLICY: "appVersion",
         T3CODE_IOS_PERSONAL_TEAM: "0",
@@ -260,7 +280,8 @@ const resolveDevice = Effect.fn("nativeClient.resolveDevice")(function* (
   if (platform === "ios") {
     if ((yield* HostProcess.Platform) !== "darwin")
       return yield* new NativeClientError({
-        message: "Run iOS installs on the Mac that hosts the simulator.",
+        message:
+          "Run iOS installs on the Mac that hosts the simulator. For a simulator on another device host, use --artifact.",
       });
     // The shared iOS client is an arm64 simulator build; Intel simulators cannot run it.
     if ((yield* HostProcess.Architecture) !== "arm64")
@@ -311,12 +332,15 @@ const resolveDevice = Effect.fn("nativeClient.resolveDevice")(function* (
     return yield* ready.length === 0
       ? new NativeClientError({
           message:
-            "No Android emulator or phone is connected. Open one with device_open, or start an emulator.",
+            "No Android emulator or phone is connected here. Open one with device_open. For a device on another device host, use --artifact --abi <abi>.",
         })
       : choose(ready, "Several Android devices are connected. Pick one:");
   const selected = device[0];
   if (!selected)
-    return yield* choose(ready, `Android device ${requested} is not connected. Ready:`);
+    return yield* choose(
+      ready,
+      `Android device ${requested} is not connected here. For a device on another device host, use --artifact --abi <abi>. Ready here:`,
+    );
   if (selected.state === "unauthorized")
     return yield* new NativeClientError({
       message: `Unlock ${selected.label} and accept the USB debugging prompt, then run this again.`,
@@ -738,6 +762,14 @@ export const resolveArtifact = Effect.fn("nativeClient.resolveArtifact")(functio
       return { ...artifact, source: "remote" as const, buildMs: yield* readBuildMs(directory) };
     }
   }
+  // The shared iOS client is an arm64 simulator build, so only Apple silicon Macs can produce it.
+  const canBuild =
+    platform === "android" ||
+    ((yield* HostProcess.Platform) === "darwin" && (yield* HostProcess.Architecture) === "arm64");
+  if (!canBuild)
+    return yield* new NativeClientError({
+      message: `No cached client for ${key}, and this machine cannot build it. Run vp run mobile:install ios --artifact on an Apple silicon Mac with this checkout once, or test on Android.`,
+    });
   const log = yield* BuildLog;
   yield* Console.error(
     `No cached client for ${key}. Building it once for every machine (5-15 min)${log ? `. Log: ${log}` : ""}`,
@@ -830,26 +862,105 @@ const reportTelemetry = Effect.fn("nativeClient.reportTelemetry")(
   (effect) => effect.pipe(Effect.timeout("5 seconds"), Effect.ignore),
 );
 
+/** Build output goes to a dated file so the one-line JSON result stays readable. */
+const buildLog = Effect.fn("nativeClient.buildLog")(function* (
+  home: string,
+  platform: NativePlatform,
+  started: number,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  if ((yield* HostProcess.Environment).T3_NATIVE_CLIENT_VERBOSE === "1") return null;
+  const logs = path.join(home, ".cache/t3code/native-clients/logs");
+  yield* fs.makeDirectory(logs, { recursive: true });
+  yield* prune(logs, "");
+  const stamp = DateTime.formatIso(DateTime.makeUnsafe(started)).replaceAll(":", "-");
+  return path.join(logs, `${stamp}-${platform}.log`);
+});
+
+const androidAbis = ["arm64-v8a", "x86_64"] as const;
+
+/** Resolves the client file without a local device, for AgentDevice to upload to another device host. */
+const printArtifact = Effect.fn("nativeClient.printArtifact")(function* (
+  home: string,
+  platform: NativePlatform,
+  requestedAbi: (typeof androidAbis)[number] | undefined,
+  started: number,
+) {
+  const abi = platform === "ios" ? null : requestedAbi;
+  if (abi === undefined)
+    return yield* new NativeClientError({
+      message:
+        "Pass --abi arm64-v8a for a phone or an emulator on an Apple silicon Mac, or --abi x86_64 for an emulator on a Linux or Intel host.",
+    });
+  const task = abi ? `native-client:android-${abi}` : `native-client:${platform}`;
+  const current = yield* fingerprint(platform);
+  const artifact = yield* resolveArtifact(home, platform, abi, current).pipe(
+    Effect.provideService(BuildLog, yield* buildLog(home, platform, started)),
+    Effect.tapError(() => reportTelemetry(home, task, "failed", 0)),
+  );
+  yield* reportTelemetry(
+    home,
+    task,
+    artifact.source === "build" ? "executed" : artifact.source,
+    artifact.source === "build" ? 0 : artifact.buildMs,
+  );
+  yield* Console.error(
+    `Next: run the AgentDevice command from device_open: install ${bundleId} ${artifact.file} <target args>`,
+  );
+  yield* Console.log(
+    yield* encodeOutput({ artifact: artifact.file, source: artifact.source, fingerprint: current }),
+  );
+});
+
 const main = Command.make(
   "mobile-native-client",
   {
     mode: Argument.Literals("mode", ["check", "ensure"]),
     platform: Argument.Literals("platform", ["ios", "android"]),
     device: Argument.String("device").pipe(Argument.optional),
+    artifact: Flag.Boolean("artifact").pipe(
+      Flag.withDescription(
+        "Print the client file for this checkout instead of installing it, for a device on another host.",
+      ),
+      Flag.withDefault(false),
+    ),
+    abi: Flag.Literals("abi", androidAbis).pipe(
+      Flag.withDescription("Android ABI of the target device, required with --artifact."),
+      Flag.optional,
+    ),
   },
-  Effect.fn("nativeClient.main")(function* ({ mode, platform, device: requested }) {
+  Effect.fn("nativeClient.main")(function* ({
+    mode,
+    platform,
+    device: requested,
+    artifact,
+    abi: requestedAbi,
+  }) {
     const started = yield* Clock.currentTimeMillis;
-    const target = yield* resolveDevice(platform, Option.getOrUndefined(requested));
-    const device = target.id;
-    yield* Console.error(`Device: ${target.label} (${device})`);
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
     const environment = yield* HostProcess.Environment;
     const home = environment.HOME ?? environment.USERPROFILE;
     if (!home)
       return yield* new NativeClientError({
         message: "HOME or USERPROFILE must be set to store native client records.",
       });
+    if (Option.isSome(requestedAbi) && !(artifact && platform === "android"))
+      return yield* new NativeClientError({
+        message: "--abi only applies to vp run mobile:install android --artifact.",
+      });
+    if (artifact) {
+      if (mode === "check" || Option.isSome(requested))
+        return yield* new NativeClientError({
+          message:
+            "--artifact takes no device id and runs with ensure: vp run mobile:install <platform> --artifact",
+        });
+      return yield* printArtifact(home, platform, Option.getOrUndefined(requestedAbi), started);
+    }
+    const target = yield* resolveDevice(platform, Option.getOrUndefined(requested));
+    const device = target.id;
+    yield* Console.error(`Device: ${target.label} (${device})`);
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const cache = path.join(home, ".cache/t3code/native-clients");
     const recordPath = path.join(cache, platform, `${yield* digest(device)}.json`);
     // An iOS simulator build is arm64 for every device; an APK carries only the device's own ABI.
@@ -908,13 +1019,8 @@ const main = Command.make(
       process.exitCode = status === "compatible" ? 0 : 2;
       return;
     }
-    const logs = path.join(cache, "logs");
-    yield* fs.makeDirectory(logs, { recursive: true });
-    yield* prune(logs, "");
-    const stamp = DateTime.formatIso(DateTime.makeUnsafe(started)).replaceAll(":", "-");
-    const log = path.join(logs, `${stamp}-${platform}.log`);
     const result = yield* ensureClient(operations).pipe(
-      Effect.provideService(BuildLog, environment.T3_NATIVE_CLIENT_VERBOSE === "1" ? null : log),
+      Effect.provideService(BuildLog, yield* buildLog(home, platform, started)),
       Effect.tapError(() => reportTelemetry(home, task, "failed", 0)),
     );
     if (result.installed && result.source)

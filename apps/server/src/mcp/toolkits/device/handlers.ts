@@ -56,8 +56,8 @@ export function agentDeviceQuickStart(
     `  ${executable} screenshot /tmp/shot.png ${target}        # or call device_screenshot`,
     `  ${executable} install <app> <path-to-.app-or-.apk> ${target}`,
     `Prefer snapshot refs over coordinates. Run ${executable} help for workflow guides and ${executable} <command> --help for flags.`,
-    "Prefer agent-device for driving this device. simctl, adb, and xcrun remain available for anything it does not cover.",
-    "For remote hosts, arrange builds, app installation, and any Metro reverse forwarding yourself. T3 provides discovery, streaming, and control only.",
+    "Prefer agent-device for driving this device. On local hosts, simctl, adb, and xcrun remain available for anything it does not cover.",
+    "For remote hosts, build apps here and install them with this command; it uploads local files. The device reaches Metro and your backend over the network, not localhost. T3 provides discovery, streaming, and control only, and the host id is not an SSH target.",
     "Keep the returned --config and --session flags on every command. Other hosts can be used concurrently; opening one does not switch these commands.",
     platformNotes,
   ].join("\n");
