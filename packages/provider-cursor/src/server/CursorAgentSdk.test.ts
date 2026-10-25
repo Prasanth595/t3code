@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
@@ -52,7 +53,7 @@ const cursorSdkMock = vi.hoisted(() => {
       };
     },
   );
-  const create = vi.fn(async () => ({
+  const create = vi.fn(async (_options: { readonly local?: { readonly store?: unknown } }) => ({
     agentId: "agent-cursor-agent-sdk-test",
     send,
     close: agentClose,
@@ -72,18 +73,26 @@ const cursorSdkMock = vi.hoisted(() => {
     runOperations.push("agent.cancelRun");
     staleRunActive = false;
   });
+  const listMessages = vi.fn(async (_agentId: string, _options: unknown) => []);
+  const storeDispose = vi.fn(async () => {});
+  const store = { dispose: storeDispose };
+  const storeOpen = vi.fn(async (_options: unknown) => store);
 
   return {
     agentClose,
     cancelRun,
     closeExecutionOrder,
     create,
+    listMessages,
     listRuns,
     resume,
     runOperations,
     runCancel,
     runWait,
     send,
+    store,
+    storeDispose,
+    storeOpen,
     setAgentCloseFailure: (failure: unknown) => {
       agentCloseFailure = failure;
     },
@@ -100,11 +109,13 @@ vi.mock("./sdk.ts", () => ({
     listRuns: cursorSdkMock.listRuns,
     cancelRun: cursorSdkMock.cancelRun,
     messages: {
-      list: vi.fn(async () => []),
+      list: cursorSdkMock.listMessages,
     },
   },
   createAgentPlatform: vi.fn(),
-  SqliteLocalAgentStore: { open: vi.fn() },
+  getDefaultSdkStateRoot: () =>
+    "C:\\Users\\dev\\.cursor\\projects\\C-work-repo\\sdk-agent-store\\0123abcd",
+  SqliteLocalAgentStore: { open: cursorSdkMock.storeOpen },
 }));
 
 const layerTest = CursorAgentSdk.layer.pipe(
@@ -130,6 +141,9 @@ const layerTest = CursorAgentSdk.layer.pipe(
   Layer.provide(CursorSdk.layer),
   Layer.provide(NodeServices.layer),
 );
+
+const layerOn = (platform: NodeJS.Platform) =>
+  layerTest.pipe(Layer.provide(Layer.succeed(HostProcess.Platform, platform)));
 
 describe("CursorAgentSdkRunner", () => {
   it.effect("retries a resumed send after cancelling its abandoned local run", () =>
@@ -170,6 +184,55 @@ describe("CursorAgentSdkRunner", () => {
           cwd: process.cwd(),
         },
       ]);
-    }).pipe(Effect.provide(layerTest)),
+    }).pipe(Effect.provide(layerOn("linux"))),
+  );
+
+  // regression: #19112 per-agent store.db paths past MAX_PATH never opened on Windows
+  it.effect("shares one namespaced agent store per Windows workspace", () =>
+    Effect.gen(function* () {
+      cursorSdkMock.create.mockClear();
+      cursorSdkMock.listMessages.mockClear();
+      cursorSdkMock.storeOpen.mockClear();
+      cursorSdkMock.storeDispose.mockClear();
+      const cwd = "C:\\work\\repo";
+
+      yield* Effect.gen(function* () {
+        const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+        for (const id of ["first", "second"]) {
+          const session = yield* runner.open({
+            operation: "create",
+            options: { model: { id: "default" }, mode: "agent", local: { cwd } },
+            threadId: ThreadId.make(`thread-cursor-agent-sdk-store-${id}`),
+            providerSessionId: ProviderSessionId.make(
+              `provider-session-cursor-agent-sdk-store-${id}`,
+            ),
+          });
+          yield* session.listMessages;
+          yield* session.close;
+        }
+        assert.strictEqual(cursorSdkMock.storeDispose.mock.calls.length, 0);
+      }).pipe(Effect.provide(layerOn("win32")));
+
+      assert.deepStrictEqual(cursorSdkMock.storeOpen.mock.calls, [
+        [
+          {
+            workspaceRef: cwd,
+            stateRoot: String.raw`\\?\C:\Users\dev\.cursor\projects\C-work-repo\sdk-agent-store\0123abcd`,
+          },
+        ],
+      ]);
+      assert.deepStrictEqual(
+        cursorSdkMock.create.mock.calls.map(([options]) => options.local?.store),
+        [cursorSdkMock.store, cursorSdkMock.store],
+      );
+      assert.deepStrictEqual(
+        cursorSdkMock.listMessages.mock.calls.map(([, options]) => options),
+        [
+          { runtime: "local", cwd, store: cursorSdkMock.store },
+          { runtime: "local", cwd, store: cursorSdkMock.store },
+        ],
+      );
+      assert.strictEqual(cursorSdkMock.storeDispose.mock.calls.length, 1);
+    }),
   );
 });
