@@ -50,6 +50,7 @@ import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import * as WorkflowApprovalGate from "./WorkflowApprovalGate.ts";
 
 const driver = ProviderDriverKind.make("codex");
 const rootAppThread = (id: ThreadId) =>
@@ -62,6 +63,23 @@ const layerTurnItemPositionsTest = Layer.mock(TurnItemPositionStore.TurnItemPosi
   allocate: () => Effect.succeed(1),
 });
 
+// The real gate: turn start asks it about every message. A thread it has not seen reads as
+// having no persisted request, so only what turn start recorded can arm it.
+const layerWorkflowApprovalGateTest = WorkflowApprovalGate.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.mock(ProjectionStore.ProjectionStoreV2)({
+        getThreadRecords: () =>
+          Effect.succeed({
+            thread: { lineage: { relationshipToParent: null } },
+            runs: [],
+            turnItems: [],
+          } as never),
+      }),
+      ServerSettings.layerTest(),
+    ),
+  ),
+);
 const layerRunExecutionTest = RunExecutionService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -69,6 +87,7 @@ const layerRunExecutionTest = RunExecutionService.layer.pipe(
       PreviewAgentActivity.layer,
       Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
       layerTurnItemPositionsTest,
+      layerWorkflowApprovalGateTest,
       Layer.mock(EventSink.EventSinkV2)({}),
       IdAllocator.layer,
       Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
@@ -898,6 +917,7 @@ it.effect("passes the thread's MCP app context to the provider under a safe key"
               captureBaseline: () => Effect.void,
             }),
             layerTurnItemPositionsTest,
+            layerWorkflowApprovalGateTest,
             Layer.mock(EventSink.EventSinkV2)({}),
             IdAllocator.layer,
             Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
@@ -927,6 +947,7 @@ it.effect("fails the run when its ownership check cannot be read before calling 
           PreviewAgentActivity.layer,
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
           layerTurnItemPositionsTest,
+          layerWorkflowApprovalGateTest,
           Layer.mock(EventSink.EventSinkV2)({
             writeIfRunCurrent: (input) =>
               Ref.update(writes, (current) => [...current, ...input.events]).pipe(
@@ -1140,6 +1161,7 @@ it.effect("starts the provider when checkpoint baseline capture fails", () =>
               ),
           }),
           layerTurnItemPositionsTest,
+          layerWorkflowApprovalGateTest,
           Layer.mock(EventSink.EventSinkV2)({
             writeWithEffects: (input) =>
               Ref.update(writes, (current) => [
@@ -1255,6 +1277,7 @@ it.effect.each(["failure", "interruption", "stale-attempt", "start-guard"] as co
                 scenario === "start-guard" ? Effect.void : Effect.die("not reached"),
             }),
             layerTurnItemPositionsTest,
+            layerWorkflowApprovalGateTest,
             Layer.mock(EventSink.EventSinkV2)({
               writeIfRunCurrent: (input) =>
                 Effect.gen(function* () {
@@ -1425,6 +1448,7 @@ it.effect("ingests new member threads of an owned child after the root turn term
           PreviewAgentActivity.layer,
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
           layerTurnItemPositionsTest,
+          layerWorkflowApprovalGateTest,
           Layer.mock(EventSink.EventSinkV2)({
             write: () => Effect.succeed([]),
             writeWithEffects: (input) =>
@@ -1675,6 +1699,7 @@ it.effect("ends a nested native subagent and its thread when the root run is int
           PreviewAgentActivity.layer,
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
           layerTurnItemPositionsTest,
+          layerWorkflowApprovalGateTest,
           Layer.mock(EventSink.EventSinkV2)({
             write: () => Effect.succeed([]),
             writeWithEffects: (input) =>
@@ -2021,6 +2046,7 @@ it.effect(
               captureBaseline: () => Effect.void,
             }),
             layerTurnItemPositionsTest,
+            layerWorkflowApprovalGateTest,
             Layer.mock(EventSink.EventSinkV2)({
               write: () => Effect.succeed([]),
               writeWithEffects: (input) =>
@@ -3236,6 +3262,84 @@ it.effect("never starts a workflow from anything but a person's new message", ()
   }),
 );
 
+it.effect("arms the approval gate for a person's workflow request and for nothing else", () =>
+  Effect.gen(function* () {
+    const armedBy = (input: Partial<Parameters<typeof providerTextsFor>[0]> & { key: string }) =>
+      Effect.gen(function* () {
+        const key = input.key;
+        const refused = yield* Ref.make<ReadonlyArray<string>>([]);
+        yield* captureRootRunTermination({
+          messageText: "Run it as a workflow",
+          settings: { ultracode: "off" },
+          ...input,
+          shouldFinalizeRun: () => Effect.succeed(true),
+          events: (ids) => Stream.make(rootTerminalEvent(ids, "completed")),
+          afterTurn: (gate) =>
+            gate.requireNoRequest(backgroundScenarioIds(key).threadId).pipe(
+              Effect.catchTags({
+                WorkflowApprovalRequiredError: (error) =>
+                  Ref.update(refused, (reasons) => [...reasons, error.reason]),
+              }),
+            ),
+        });
+        return yield* Ref.get(refused);
+      });
+    assert.deepEqual(
+      yield* armedBy({ key: "gate-request" }),
+      ["script-not-allowed"],
+      "a person's request arms the gate",
+    );
+    assert.deepEqual(
+      yield* armedBy({ key: "gate-plain", messageText: "Audit the parser" }),
+      [],
+      "a plain message leaves it open",
+    );
+    // The same messages the note refuses: the gate reads the same provenance and attempt facts.
+    const threadId = ThreadId.make("thread:gate-refused");
+    const ignored: ReadonlyArray<Partial<Parameters<typeof providerTextsFor>[0]>> = [
+      { messageAuthor: { createdBy: "agent", creationSource: "mcp" } },
+      { messageAuthor: { createdBy: "agent", creationSource: "server" } },
+      { messageAuthor: { createdBy: "system", creationSource: "server" } },
+      // The server's own message for the user's approval is not a typed request.
+      { messageAuthor: { createdBy: "user", creationSource: "server" } },
+      {
+        messageAuthor: {
+          createdBy: "user",
+          creationSource: "web",
+          scheduledTaskId: "task-1" as never,
+        },
+      },
+      {
+        messageAuthor: { createdBy: "user", creationSource: "mobile", senderThreadId: threadId },
+      },
+      {
+        appThreadLineage: {
+          parentThreadId: threadId,
+          relationshipToParent: "subagent",
+          rootThreadId: threadId,
+        },
+      },
+      { attemptReason: "steering_restart" },
+      { restartContinuationOfRunId: RunId.make("run:gate-earlier") },
+    ];
+    for (const [index, input] of ignored.entries()) {
+      assert.deepEqual(
+        yield* armedBy({ key: `gate-ignored-${index}`, ...input }),
+        [],
+        JSON.stringify(input),
+      );
+    }
+    // Words the person only pasted as context do not arm it.
+    assert.deepEqual(
+      yield* armedBy({
+        key: "gate-context",
+        messageText: 'Look at this\n\n<t3_context version="1">\nthe workflow log\n</t3_context>',
+        typedText: "Look at this",
+      }),
+      [],
+    );
+  }),
+);
 it.effect("reads the typed words, not the context projected into the provider text", () =>
   Effect.gen(function* () {
     const projected = 'Look at this\n\n<t3_context version="1">\nthe workflow log\n</t3_context>';
@@ -3312,6 +3416,10 @@ function captureRootRunTermination(input: {
   readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
   readonly attemptReason?: OrchestrationV2RunAttempt["reason"];
   readonly restartContinuationOfRunId?: RunId;
+  /** Runs after the turn, against the same approval gate turn start used. */
+  readonly afterTurn?: (
+    gate: WorkflowApprovalGate.WorkflowApprovalGate["Service"],
+  ) => Effect.Effect<void>;
 }) {
   return Effect.gen(function* () {
     const ids = backgroundScenarioIds(input.key);
@@ -3518,9 +3626,10 @@ function captureRootRunTermination(input: {
       );
       yield* input.afterStart?.(ingestionDone) ?? Effect.void;
       yield* Deferred.await(ingestionDone);
+      yield* input.afterTurn?.(yield* WorkflowApprovalGate.WorkflowApprovalGate) ?? Effect.void;
       const activity = yield* PreviewAgentActivity.PreviewAgentActivity;
       return !(yield* activity.active(ids.threadId));
-    }).pipe(Effect.provide(layerTest));
+    }).pipe(Effect.provide(layerTest.pipe(Layer.provideMerge(layerWorkflowApprovalGateTest))));
 
     return {
       previewActivityEnded,
@@ -3881,6 +3990,7 @@ function runBackgroundItemScenario(
           Layer.succeed(PreviewAgentActivity.PreviewAgentActivity, previewActivity),
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
           layerTurnItemPositionsTest,
+          layerWorkflowApprovalGateTest,
           Layer.mock(EventSink.EventSinkV2)({
             write: () => Effect.succeed([]),
             writeWithEffects: (input) =>
