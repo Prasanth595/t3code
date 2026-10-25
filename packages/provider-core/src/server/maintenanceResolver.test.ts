@@ -157,7 +157,7 @@ function miseSpawner(
       stdout = `${answers.which}\n`;
     } else if (args[0] === "latest" && typeof latest === "string") {
       stdout = latest === "hang" ? "" : `${latest}\n`;
-    } else if (args[0] === "latest") {
+    } else if (args[0] === "latest" && typeof latest !== "string") {
       stdout = latest.stdout ?? "";
       exitCode = latest.exitCode ?? 0;
     } else if (args[0] === "ls") {

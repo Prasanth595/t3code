@@ -89,6 +89,8 @@ export interface PackageManagedProviderMaintenanceDefinition {
     readonly requiresCommandPath?: boolean;
     readonly env?: NodeJS.ProcessEnv;
   } | null;
+  /** The mise registry tool that installs this provider; unset keeps mise installs manual-only. */
+  readonly miseTool?: string;
 }
 
 const NpmLatestVersionResponse = Schema.Struct({
@@ -232,10 +234,18 @@ function isYarnGlobalCommandPath(commandPath: string): boolean {
   return /\/yarn\/(?:data\/)?global\/node_modules\//.test(normalizeCommandPath(commandPath));
 }
 
-/** Version-manager installs are pinned in its config, so updating them means editing that. */
+/** npm globals under mise's own Node belong to npm, which proves their prefix. */
 function isMiseCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
-  return normalized.includes("/mise/installs/") || normalized.includes("/mise/shims/");
+  return (
+    (normalized.includes("/mise/installs/") && !normalized.includes("/mise/installs/node/")) ||
+    normalized.includes("/mise/shims/")
+  );
+}
+
+/** A mise shim is a link to mise itself, wherever mise keeps its data. */
+function isMiseExecutablePath(commandPath: string): boolean {
+  return /(?:^|\/)mise(?:\.exe)?$/.test(normalizeCommandPath(commandPath));
 }
 
 const winGetClaudeCommandPath =
@@ -417,6 +427,120 @@ const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion
   return nonEmptyString(listedEntries?.[0]?.dependencies?.[packageName]?.version);
 });
 
+const MiseInstall = Schema.Struct({
+  install_path: Schema.String,
+  requested_version: Schema.optional(Schema.NullOr(Schema.String)),
+  active: Schema.optional(Schema.Boolean),
+});
+const decodeMiseToolInstalls = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Array(MiseInstall)),
+);
+const decodeMiseInstalls = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Array(MiseInstall))),
+);
+
+/** The installs `mise ls --json --installed <tool>` lists, refusing any other tool's. */
+function miseToolInstalls(
+  listing: string,
+  miseTool: string,
+): ReadonlyArray<typeof MiseInstall.Type> {
+  const installs = decodeMiseToolInstalls(listing);
+  if (Option.isSome(installs)) return installs.value;
+  const byTool = Option.getOrUndefined(decodeMiseInstalls(listing));
+  return byTool && Object.keys(byTool).every((tool) => tool === miseTool)
+    ? (byTool[miseTool] ?? [])
+    : [];
+}
+
+/**
+ * Null when mise does not own the executable. Mise must prove the rest: `mise which` runs it from
+ * an active install of `miseTool` requested as `latest`; anything else stays manual-only, so T3
+ * Code never edits mise config. `miseTool` is the driver's fixed name, never mise's own output.
+ */
+export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMaintenance")(
+  function* (
+    owner: { readonly provider: ProviderDriverKind; readonly packageName: string | null },
+    miseTool: string | undefined,
+    context: ProviderMaintenanceResolutionContext,
+  ) {
+    const commandPaths = [context.resolvedCommandPath, context.realCommandPath];
+    const isShim = isMiseExecutablePath(context.realCommandPath);
+    const isMise = isShim || commandPaths.some(isMiseCommandPath);
+    if (!isMise && !(yield* isMiseWrapperScript(context))) return null;
+    const manual = (installPath: string) =>
+      makeManualOnlyProviderMaintenanceCapabilities({ ...owner, installPath });
+    const commandName = normalizeCommandPath(context.resolvedCommandPath)
+      .split("/")
+      .at(-1)
+      ?.replace(/\.(?:exe|cmd|bat|ps1)$/, "");
+    // A shim runs whatever mise resolves for its own name, which must be the mapped tool's.
+    if (!isMise || !miseTool || (isShim && commandName !== miseTool)) {
+      return manual(context.realCommandPath);
+    }
+
+    const fileSystem = yield* FileSystem.FileSystem;
+    const realPath = (target: string) =>
+      fileSystem.realPath(target).pipe(Effect.orElseSucceed(() => target));
+    const misePath =
+      (yield* resolveCommandPath("mise", { env: context.env })) ??
+      (isShim ? context.realCommandPath : null);
+    if (!misePath) return manual(context.realCommandPath);
+    const which = nonEmptyString(yield* runProbe(misePath, ["which", miseTool], context.env));
+    const binaryPath = which ? yield* realPath(which) : null;
+    // Through a shim T3 Code runs whatever mise resolves; otherwise mise must resolve this binary.
+    if (
+      !binaryPath ||
+      (!isShim &&
+        normalizeCommandPath(binaryPath) !== normalizeCommandPath(context.realCommandPath))
+    ) {
+      return manual(binaryPath ?? context.realCommandPath);
+    }
+    const listing = yield* runProbe(
+      misePath,
+      ["ls", "--json", "--installed", miseTool],
+      context.env,
+    );
+    const candidates = listing
+      ? miseToolInstalls(listing, miseTool).filter(
+          (install) => install.active === true && install.requested_version === "latest",
+        )
+      : [];
+    const installPaths = yield* Effect.forEach(candidates, (install) =>
+      realPath(install.install_path),
+    );
+    const binary = normalizeCommandPath(binaryPath);
+    if (
+      !installPaths.some((installPath) =>
+        binary.startsWith(`${normalizeCommandPath(installPath).replace(/\/+$/, "")}/`),
+      )
+    ) {
+      return manual(binaryPath);
+    }
+    const args = ["upgrade", miseTool];
+    const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
+    return makeProviderMaintenanceCapabilities({
+      ...owner,
+      updateExecutable: misePath,
+      updateArgs: args,
+      updateLockKey: "mise",
+      updateCommand: ["mise", ...args].join(" "),
+      platform: context.platform,
+      // Mise read its config from this environment, so the upgrade runs in it too.
+      env: context.env,
+      // Settings such as `minimum_release_age` can hold mise behind the registry,
+      // so only mise can say what it installs. It may go to the network, so ask lazily.
+      latestVersion: null,
+      lookupLatestVersion: runProbe(misePath, ["latest", miseTool], context.env).pipe(
+        Effect.map((latest) => {
+          const version = nonEmptyString(latest);
+          return version && /^\S+$/.test(version) ? version : null;
+        }),
+        Effect.provideContext(services),
+      ),
+    });
+  },
+);
+
 export const resolvePackageManagedProviderMaintenance = Effect.fn(
   "resolvePackageManagedProviderMaintenance",
 )(function* (
@@ -445,6 +569,13 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     return manual;
   }
 
+  const mise = yield* resolveMiseProviderMaintenance(
+    { provider: definition.provider, packageName },
+    definition.miseTool,
+    context,
+  );
+  if (mise) return mise;
+
   const nativeUpdate = definition.nativeUpdate;
   const native = nativeUpdate
     ? makeProviderMaintenanceCapabilities({
@@ -457,13 +588,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
         ...(nativeUpdate.env ? { env: nativeUpdate.env } : {}),
       })
     : manual;
-  // A native-looking launcher can still delegate to a mise-owned install.
-  if (
-    nativeUpdate?.isCommandPath &&
-    commandPaths.some(nativeUpdate.isCommandPath) &&
-    !commandPaths.some(isMiseCommandPath) &&
-    !(yield* isMiseWrapperScript(context))
-  ) {
+  if (nativeUpdate?.isCommandPath && commandPaths.some(nativeUpdate.isCommandPath)) {
     return native;
   }
   // A `node_modules` path not proven below belongs to another package or a
@@ -551,14 +676,6 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   }
 
   const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);
-  if (
-    commandPaths.some(isMiseCommandPath) ||
-    // Mise shims resolve to the version manager's keg, not the provider's.
-    (homebrew?.kind === "formula" && homebrew.name.toLowerCase() === "mise") ||
-    (yield* isMiseWrapperScript(context))
-  ) {
-    return manual;
-  }
   if (homebrew) {
     return (
       (yield* resolveHomebrewProviderMaintenance(
