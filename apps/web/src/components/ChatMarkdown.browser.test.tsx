@@ -2,6 +2,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { type ReactElement } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { commands, page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
 import "../index.css";
@@ -72,6 +73,7 @@ vi.mock(import("../hooks/useSettings"), async (original) => {
 });
 
 import ChatMarkdown from "./ChatMarkdown";
+import { TooltipScrollDismissArea } from "./ui/tooltip";
 
 function setup() {
   settingsOverrides.mathRenderingEnabled = false;
@@ -226,6 +228,56 @@ describe("ChatMarkdown workspace file opens", () => {
 
     expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/elsewhere/b.md", 9);
     expect(workspaceSearch).toHaveBeenCalledOnce();
+  });
+});
+
+describe("ChatMarkdown file path tooltips", () => {
+  it("stays open while the pointer selects the path, then closes when it leaves", async () => {
+    setup();
+    await using screen = await renderText("[notes](/tmp/project/docs/deeply/nested/notes.md)");
+    await userEvent.hover(screen.container.querySelector(".chat-markdown-file-link")!);
+    const path = page.getByText("/tmp/project/docs/deeply/nested/notes.md");
+    await expect.element(path).toBeVisible();
+
+    // Forced so the pointer lands where the user would put it even if the popup ignores it.
+    await userEvent.tripleClick(path, { force: true });
+    expect(window.getSelection()?.toString().trim()).toBe(
+      "/tmp/project/docs/deeply/nested/notes.md",
+    );
+    await expect.element(path).toBeVisible();
+
+    await commands.resetPointer();
+    await expect.element(path).not.toBeInTheDocument();
+  });
+
+  it("stays open while its long path scrolls, then closes when the timeline scrolls", async () => {
+    setup();
+    const longPath = `/tmp/project/${"deeply/nested/".repeat(20)}notes.md`;
+    await using screen = await render(
+      <TooltipScrollDismissArea className="h-20 overflow-y-auto">
+        <ChatMarkdown cwd="/tmp/project" text={`[notes](${longPath})`} />
+        <div className="h-96" />
+      </TooltipScrollDismissArea>,
+    );
+    const area = screen.container.firstElementChild as HTMLElement;
+    const trigger = area.querySelector<HTMLElement>(".chat-markdown-file-link")!;
+    await userEvent.hover(trigger);
+    const path = page.getByText(longPath);
+    await expect.element(path).toBeVisible();
+
+    const scrollOnce = async (element: HTMLElement, scroll: () => void) => {
+      const scrolled = new Promise((resolve) =>
+        element.addEventListener("scroll", resolve, { once: true }),
+      );
+      scroll();
+      await scrolled;
+    };
+    const pathScroller = path.element().closest<HTMLElement>(".overflow-x-auto")!;
+    await scrollOnce(pathScroller, () => (pathScroller.scrollLeft = 80));
+    expect(trigger).toHaveAttribute("data-popup-open");
+
+    await scrollOnce(area, () => (area.scrollTop = 40));
+    await expect.element(path).not.toBeInTheDocument();
   });
 });
 
