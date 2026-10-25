@@ -11,10 +11,9 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
-import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AppState } from "react-native";
+import { AppState, Platform } from "react-native";
 
 import * as MobileStorage from "../persistence/mobile-storage";
 import {
@@ -50,10 +49,16 @@ export const layerReporter = Layer.effectDiscard(
       Effect.orElseSucceed(() => "ephemeral-mobile-client"),
     );
     const reportRequests = yield* Queue.sliding<void>(1);
-    const requestReport = () => Queue.offerUnsafe(reportRequests, undefined);
     let appState = AppState.currentState;
+    const requestReport = () => {
+      if (Platform.OS !== "android" || appState === "active")
+        Queue.offerUnsafe(reportRequests, undefined);
+    };
 
     const report = Effect.gen(function* () {
+      // Closing the Android transport ends its lease. Do not queue new RPCs
+      // while hidden; the server TTL handles a process killed before cleanup.
+      if (Platform.OS === "android" && appState !== "active") return;
       const observedAtMs = yield* Clock.currentTimeMillis;
       const active = appState === "active";
       const entries = yield* SubscriptionRef.get(registry.entries);
@@ -110,8 +115,20 @@ export const layerReporter = Layer.effectDiscard(
       Stream.runForEach(() => report),
       Effect.forkScoped,
     );
-    yield* Effect.sync(requestReport).pipe(
-      Effect.repeat(Schedule.spaced(`${REPORT_INTERVAL_MS} millis`)),
+    yield* Stream.callback<boolean>((queue) =>
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          Queue.offerUnsafe(queue, Platform.OS !== "android" || AppState.currentState === "active");
+          return AppState.addEventListener("change", (state) =>
+            Queue.offerUnsafe(queue, Platform.OS !== "android" || state === "active"),
+          );
+        }),
+        (subscription) => Effect.sync(() => subscription.remove()),
+      ).pipe(Effect.asVoid),
+    ).pipe(
+      Stream.changes,
+      Stream.switchMap((active) => (active ? Stream.tick(REPORT_INTERVAL_MS) : Stream.empty)),
+      Stream.runForEach(() => Effect.sync(requestReport)),
       Effect.forkScoped,
     );
   }),

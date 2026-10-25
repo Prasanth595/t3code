@@ -55,6 +55,7 @@ const BETTER_ROUTE_COOLDOWN_MS = 300_000;
 
 interface SupervisorIntent {
   readonly desired: boolean;
+  readonly suspended: boolean;
   readonly network: NetworkStatus;
 }
 
@@ -257,6 +258,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
   const initialIntent: SupervisorIntent = {
     desired: options?.initiallyDesired ?? false,
+    suspended: yield* wakeups.suspended ?? Effect.succeed(false),
     network: yield* connectivity.status,
   };
   const intent = yield* Ref.make(initialIntent);
@@ -264,7 +266,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const resetRetryState = yield* Ref.make(false);
   const probeUnanswered = yield* Ref.make(false);
   const state = yield* SubscriptionRef.make<SupervisorConnectionState>(
-    !initialIntent.desired
+    !initialIntent.desired || initialIntent.suspended
       ? availableState(initialIntent, 0)
       : initialIntent.network === "offline"
         ? offlineState(initialIntent, 0, 0, null)
@@ -323,6 +325,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const checkBetterRoutes = Effect.fnUntraced(function* (
     lease: ConnectionDriver.EnvironmentConnectionLease,
   ) {
+    const active = yield* SubscriptionRef.get(session);
+    if (Option.isNone(active) || active.value !== lease.session) return;
     const latest = yield* Ref.get(currentEntry);
     const current = yield* routeIndex(lease);
     if (current <= 0) return;
@@ -521,6 +525,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         case "BetterRouteAvailable":
           break;
         case "Wakeup":
+          if (next.reason === "application-suspended") {
+            return false;
+          }
           if (next.reason === "application-active-reconnect") {
             return true;
           }
@@ -540,7 +547,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     next: SupervisorSignal,
     lease: ConnectionDriver.EnvironmentConnectionLease,
   ) {
-    if (next._tag === "DisconnectRequested") {
+    if (
+      next._tag === "DisconnectRequested" ||
+      (next._tag === "Wakeup" && next.reason === "application-suspended")
+    ) {
       return "end" as const;
     }
     if (next._tag === "BetterRouteAvailable") {
@@ -591,6 +601,12 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const monitorConnectedLease = Effect.fnUntraced(function* (
     lease: ConnectionDriver.EnvironmentConnectionLease,
   ) {
+    yield* Queue.take(betterRouteChecks).pipe(
+      Effect.flatMap(checkBetterRoutes),
+      Effect.forever,
+      Effect.forkScoped,
+    );
+
     // A probe answers an explicit retry here, so the retry must not also reset
     // the backoff of a later, unrelated failure.
     const takeSignal = Queue.take(signals).pipe(
@@ -889,7 +905,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         pendingRetry = Option.none();
       }
       const currentIntent = yield* Ref.get(intent);
-      if (!currentIntent.desired) {
+      if (!currentIntent.desired || currentIntent.suspended) {
         resetRetryLadder();
         latestFailure = null;
         yield* clearLease;
@@ -1002,12 +1018,20 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     Effect.forkScoped,
   );
   yield* wakeups.changes.pipe(
-    Stream.runForEach((reason) => signal({ _tag: "Wakeup", reason })),
-    Effect.forkScoped,
-  );
-  yield* Queue.take(betterRouteChecks).pipe(
-    Effect.flatMap(checkBetterRoutes),
-    Effect.forever,
+    Stream.runForEach((reason) =>
+      Ref.update(intent, (current) => ({
+        ...current,
+        suspended:
+          reason === "application-suspended"
+            ? true
+            : reason === "application-active-initial" ||
+                reason === "application-active" ||
+                reason === "application-active-probe" ||
+                reason === "application-active-reconnect"
+              ? false
+              : current.suspended,
+      })).pipe(Effect.andThen(signal({ _tag: "Wakeup", reason }))),
+    ),
     Effect.forkScoped,
   );
   yield* run().pipe(Effect.forkScoped);

@@ -1,8 +1,11 @@
 import * as Context from "effect/Context";
+import type * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as Stream from "effect/Stream";
 
 export type ConnectionWakeup =
+  | "application-active-initial"
+  | "application-suspended"
   | "application-active"
   | "application-active-probe"
   | "application-active-reconnect"
@@ -30,6 +33,7 @@ export class ConnectionWakeups extends Context.Service<
   ConnectionWakeups,
   {
     readonly changes: Stream.Stream<ConnectionWakeup>;
+    readonly suspended?: Effect.Effect<boolean>;
   }
 >()("@t3tools/client-runtime/connection/wakeups/ConnectionWakeups") {}
 

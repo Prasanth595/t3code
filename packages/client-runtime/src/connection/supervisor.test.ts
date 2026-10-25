@@ -1,9 +1,17 @@
-import { AuthStandardClientScopes, EnvironmentId, type ServerConfig } from "@t3tools/contracts";
+import {
+  AuthStandardClientScopes,
+  EnvironmentId,
+  type ServerConfig,
+  type TerminalEvent,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import { subscribe } from "../rpc/client.ts";
 import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -148,6 +156,8 @@ const eventuallyState = Effect.fn("TestConnectionHarness.eventuallyState")(funct
 
 const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?: {
   readonly networkStatus?: NetworkStatus;
+  readonly suspended?: boolean;
+  readonly client?: (attempt: number) => WsRpcProtocolClient;
   readonly prepare?: (
     attempt: number,
     target: ConnectionTarget,
@@ -203,7 +213,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
 
     const session = yield* Effect.acquireRelease(
       Effect.succeed({
-        client: TEST_RPC_CLIENT,
+        client: options?.client?.(attempt) ?? TEST_RPC_CLIENT,
         initialConfig:
           options?.initialConfig?.(attempt) ??
           Effect.die(new Error("Initial config is not used by supervisor tests.")),
@@ -239,6 +249,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
     Layer.succeed(
       ConnectionWakeups.ConnectionWakeups,
       ConnectionWakeups.ConnectionWakeups.of({
+        suspended: Effect.succeed(options?.suspended ?? false),
         changes: SubscriptionRef.changes(wakeups).pipe(
           Stream.drop(1),
           Stream.map((event) => event.reason),
@@ -280,6 +291,111 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
 });
 
 describe("EnvironmentSupervisor", () => {
+  it.effect("detaches mounted subscribers while hidden and receives only the resumed session", () =>
+    Effect.gen(function* () {
+      const opened = yield* Queue.unbounded<number>();
+      const closed = yield* Queue.unbounded<number>();
+      const received = yield* Queue.unbounded<TerminalEvent>();
+      const first = yield* Queue.unbounded<TerminalEvent>();
+      const second = yield* Queue.unbounded<TerminalEvent>();
+      const harness = yield* makeHarness({
+        client: (attempt) =>
+          ({
+            [WS_METHODS.subscribeTerminalEvents]: () =>
+              Stream.fromQueue(attempt === 1 ? first : second).pipe(
+                Stream.onStart(Queue.offer(opened, attempt)),
+                Stream.ensuring(Queue.offer(closed, attempt)),
+              ),
+          }) as unknown as WsRpcProtocolClient,
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+      yield* subscribe(WS_METHODS.subscribeTerminalEvents, {}).pipe(
+        Stream.runForEach((event) => Queue.offer(received, event)),
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkScoped,
+      );
+      expect(yield* Queue.take(opened)).toBe(1);
+      yield* harness.wake("application-suspended");
+      expect(yield* Queue.take(closed)).toBe(1);
+      // Values arriving on the disposed native transport cannot reach observers.
+      const stale: TerminalEvent = {
+        type: "output",
+        threadId: "thread",
+        terminalId: "terminal",
+        data: "stale",
+      };
+      const fresh: TerminalEvent = { ...stale, data: "fresh" };
+      yield* Queue.offer(first, stale);
+      yield* harness.wake("application-active-probe");
+      expect(yield* Queue.take(opened)).toBe(2);
+      yield* Queue.offer(second, fresh);
+      expect(yield* Queue.take(received)).toBe(fresh);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reconciles an initially suspended supervisor after foregrounding during setup", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ suspended: true });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+      yield* TestClock.adjust("1 millis");
+      yield* harness.wake("application-active-initial");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not open or retry while the application is suspended", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ suspended: true });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(0);
+      yield* supervisor.retryNow;
+      yield* harness.wake("network-changed");
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(0);
+      yield* harness.wake("application-active-probe");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("releases a background session and resumes once without changing user intent", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.wake("application-suspended");
+      yield* TestClock.adjust("1 millis");
+      expect(Option.isNone(yield* SubscriptionRef.get(supervisor.session))).toBe(true);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      yield* harness.wake("credentials-changed");
+      yield* harness.setNetworkStatus("offline");
+      yield* harness.setNetworkStatus("online");
+      yield* supervisor.connect;
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      yield* harness.wake("application-active-probe");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      yield* supervisor.disconnect;
+      yield* awaitState(supervisor.state, (state) => state.phase === "available");
+      yield* harness.wake("application-suspended");
+      yield* harness.wake("application-active-probe");
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("does not attempt a connection until it is desired", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
