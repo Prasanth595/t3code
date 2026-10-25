@@ -746,7 +746,10 @@ function AdaptiveWorkspaceLayoutContent(
   // Rotating flips the overlay; until the new size reaches JS, predict the reset above.
   const sidebarOverRotates =
     nativeWorkspace && nativeMetrics?.hasHinge === true && layout.usesSplitView;
-  const sidebarInLandscape = primarySidebarPinned || primarySidebarPreferredVisible;
+  // The current orientation's panes already account for an inspector that needs the sidebar's room.
+  const sidebarInLandscape = baseLayout.primarySidebarOverlaysContent
+    ? primarySidebarPinned || primarySidebarPreferredVisible
+    : panes.primarySidebarVisible;
   const sidebarInPortrait =
     primarySidebarPinned ||
     (baseLayout.primarySidebarOverlaysContent
