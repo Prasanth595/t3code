@@ -2,10 +2,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   AuthSessionId,
+  CommandId,
   EnvironmentId,
   ProjectId,
   ThreadId,
   WS_METHODS,
+  WsProjectsMutateRpc,
   WsSubscribeServerConfigRpc,
   type OrchestrationV2StoredEvent,
   type OrchestrationProjectShell,
@@ -14,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -534,6 +537,79 @@ it.effect(
       ),
       Effect.scoped,
     ),
+);
+
+it.effect("projects.mutate tells the client which project already owns the folder", () =>
+  Effect.gen(function* () {
+    const conflict = new ProjectService.ProjectConflictError({
+      projectId: ProjectId.make("project:alias"),
+      workspaceRoot: "/srv/link/app",
+      conflictingProjectId: ProjectId.make("project:owner"),
+    });
+    const exits = yield* Queue.unbounded<Exit.Exit<unknown, unknown>>();
+    const mutateRpcServices = Layer.mergeAll(
+      layerUnusedConfigRpcServices,
+      Layer.mock(ProjectService.ProjectService)({ create: () => Effect.fail(conflict) }),
+      Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({ enqueueCommand: (effect) => effect }),
+      Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+      Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+      Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+    );
+    const server = yield* RpcServer.makeNoSerialization(RpcGroup.make(WsProjectsMutateRpc), {
+      ...WS_RPC_SERVER_OPTIONS,
+      onFromServer: (response) =>
+        response._tag === "Exit" ? Queue.offer(exits, response.exit) : Effect.void,
+    }).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("mutate-test"),
+            subject: "mutate-test",
+            method: "browser-session-cookie",
+            scopes: [],
+          },
+          {},
+          {},
+          yield* PreviewAutomationBroker.PreviewAutomationBroker,
+          yield* ServerBrowser.ServerBrowser,
+        ).pipe(Layer.provide(mutateRpcServices)),
+      ),
+    );
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("mutate"),
+      tag: WS_METHODS.projectsMutate,
+      payload: {
+        type: "project.create",
+        commandId: CommandId.make("command:project:alias"),
+        projectId: conflict.projectId,
+        title: "app",
+        workspaceRoot: conflict.workspaceRoot,
+      },
+      headers: Headers.empty,
+    });
+    const exit = yield* Queue.take(exits);
+    assert.isTrue(Exit.isFailure(exit));
+    if (!Exit.isFailure(exit)) return;
+    const [error] = exit.cause.reasons.flatMap((reason) =>
+      reason._tag === "Fail" ? [reason.error] : [],
+    );
+    assert.equal((error as { message?: unknown } | undefined)?.message, conflict.message);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
+  ),
 );
 
 // Compaction keeps the oldest and newest event per message, so a cursor older
