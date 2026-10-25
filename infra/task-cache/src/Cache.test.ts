@@ -285,3 +285,40 @@ it.effect("keeps artifacts private and limits CI reader credentials to reads", (
     ),
   ),
 );
+
+it.effect("rejects anonymous and invalid Basic requests before admission", () =>
+  Effect.gen(function* () {
+    const cache = yield* Cache.Cache;
+    for (const operation of ["store", "telemetry", "fetch"]) {
+      for (const authorization of [undefined, `Basic ${btoa("attacker:invalid")}`]) {
+        const response = yield* cache.handle(
+          new Request(`https://cache.example/projects/t3code/${operation}`, {
+            method: "POST",
+            headers: authorization ? { authorization } : {},
+          }),
+          { waitUntil: () => {} },
+        );
+        expect(response.status).toBe(authorization ? 403 : 401);
+      }
+    }
+  }).pipe(
+    Effect.provide(
+      Cache.layer.pipe(
+        Layer.provide([
+          Layer.succeed(Cache.Bindings, {
+            developerKeys: "{}",
+            readerKeys: "{}",
+          } as Cache.Bindings["Service"]),
+          Layer.succeed(Admission.Admission, {
+            withPermit: () => Effect.die("Unauthenticated request reached admission"),
+          }),
+          Layer.succeed(Savings.Savings, {
+            record: () => Effect.void,
+            emitTotals: () => Effect.void,
+            cleanup: Effect.void,
+          }),
+        ]),
+      ),
+    ),
+  ),
+);

@@ -39,7 +39,7 @@ Uninstall with `bash infra/task-cache/install.sh --uninstall`, then restart exis
 
 Explicit environment settings take precedence: `VP_REMOTE_CACHE_URL` may contain the URL-encoded developer name and token as HTTP Basic credentials, and `VP_REMOTE_CACHE=read-write` enables uploads. These can be supplied by a secret manager instead of saved credentials. Do not put credentials in shell command history or commit them. Use separate writer names for separate people. Repeating `add-writer` rotates the token; `revoke-writer <name>` removes it. Deploy again to apply either change.
 
-Our repository’s CI explicitly installs the Vite+ hook. Same-repository PR and default-branch push jobs read and write; fork PRs receive no cache credentials and run normally without remote caching. All artifact reads require authentication, including downloads by blob ID. Trusted maintainers automatically upload artifacts that other authenticated maintainers and CI consume. Deployment credentials are never needed on contributor machines or CI runners.
+Our repository’s CI explicitly installs the Vite+ hook. Same-repository PRs targeting `main` and default-branch push jobs read and write. PRs targeting other branches read only; fork PRs receive no cache credentials and run normally without remote caching. All artifact reads require authentication, including downloads by blob ID. Trusted maintainers automatically upload artifacts that other authenticated maintainers and CI consume. Deployment credentials are never needed on contributor machines or CI runners.
 
 ## Verify
 

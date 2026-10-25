@@ -90,14 +90,25 @@ const make = Effect.gen(function* () {
       const operation = route?.[1] ?? "unknown";
       const writing = operation === "store";
       yield* Effect.annotateCurrentSpan({
-        "cache.operation": operation?.startsWith("blob/") ? "blob" : (operation ?? "unknown"),
+        "cache.operation": operation.startsWith("blob/") ? "blob" : operation,
       });
       if (
         !route ||
         url.search ||
-        request.method !== (operation?.startsWith("blob/") ? "GET" : "POST")
+        request.method !== (operation.startsWith("blob/") ? "GET" : "POST")
       ) {
         return yield* new CacheError({ status: 404, reason: "unknown_route" });
+      }
+      if (!request.headers.has("authorization"))
+        return yield* new CacheError({ status: 401, reason: "missing_identity" });
+      const developer = yield* developerIdentity(request, bindings.developerKeys);
+      if (writing || operation === "telemetry") {
+        if (developer === null)
+          return yield* new CacheError({ status: 403, reason: "invalid_identity" });
+      } else {
+        const reader = developer ?? (yield* developerIdentity(request, bindings.readerKeys));
+        if (typeof reader !== "string")
+          return yield* new CacheError({ status: 403, reason: "read_denied" });
       }
       return yield* admission
         .withPermit(
@@ -130,23 +141,10 @@ const make = Effect.gen(function* () {
                   ),
                 ),
               );
-              if (!writing && operation !== "telemetry") {
-                const developer = yield* developerIdentity(request, bindings.developerKeys);
-                const reader =
-                  developer ?? (yield* developerIdentity(request, bindings.readerKeys));
-                if (typeof reader !== "string")
-                  return yield* new CacheError({
-                    status: request.headers.has("authorization") ? 403 : 401,
-                    reason: "read_denied",
-                  });
-                yield* checkLimit(operation);
-              }
+              if (!writing && operation !== "telemetry") yield* checkLimit(operation);
               const scope = yield* protocol(() => getScope(bindings.INDEX, "t3code", stats));
               if (operation === "telemetry") {
-                const developer = yield* developerIdentity(request, bindings.developerKeys);
-                if (developer === null)
-                  return yield* new CacheError({ status: 403, reason: "invalid_identity" });
-                let identity = developer;
+                let identity = developer ?? undefined;
                 if (identity === undefined) {
                   identity = yield* protocol(() => authorizeTelemetry(request, scope, keys));
                 }
@@ -177,8 +175,7 @@ const make = Effect.gen(function* () {
                 return new Response(null, { status: 204 });
               }
               if (writing) {
-                const developer = yield* developerIdentity(request, bindings.developerKeys);
-                if (developer === null || (developer !== undefined && !scope.writes_enabled)) {
+                if (developer !== undefined && !scope.writes_enabled) {
                   return yield* new CacheError({ status: 403, reason: "developer_write_denied" });
                 }
                 const now = yield* Clock.currentTimeMillis;
