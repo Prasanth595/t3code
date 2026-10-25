@@ -14,13 +14,13 @@ it.effect(
       try {
         sqlite.exec(
           NodeFS.readFileSync(
-            new URL("./telemetry-migrations/0001_savings.sql", import.meta.url),
+            new URL("../telemetry-migrations/0001_savings.sql", import.meta.url),
             "utf8",
           ),
         );
         sqlite.exec(
           NodeFS.readFileSync(
-            new URL("./telemetry-migrations/0002_unspecified_tier.sql", import.meta.url),
+            new URL("../telemetry-migrations/0002_unspecified_tier.sql", import.meta.url),
             "utf8",
           ),
         );

@@ -5,8 +5,8 @@
   "scripts": {
     "test": "vp test run --config ../../vite.config.ts --dir .",
     "typecheck": "tsc --noEmit",
-    "smoke": "node smoke.ts",
-    "deploy": "node manage.ts deploy",
+    "smoke": "node src/smoke.ts",
+    "deploy": "node src/manage.ts deploy",
     "install:launcher": "node install.mjs"
   },
   "dependencies": {

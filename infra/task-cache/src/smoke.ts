@@ -8,7 +8,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { cacheEnvironment } from "./vp.ts";
 
-const project = NodePath.join(import.meta.dirname, "../..");
+const project = NodePath.join(import.meta.dirname, "../../..");
 const env = cacheEnvironment(project, process.env);
 if (env.VP_REMOTE_CACHE !== "read-write") throw new Error("Import a writer credential first.");
 const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-cache-probe-"));

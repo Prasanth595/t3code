@@ -24,10 +24,10 @@ if (process.argv[2]) {
 const bin = NodePath.join(NodeOS.homedir(), ".local/share/t3-task-cache/bin");
 NodeFS.mkdirSync(bin, { recursive: true });
 const installed = NodePath.join(NodePath.dirname(bin), "vp.ts");
-NodeFS.copyFileSync(NodePath.join(import.meta.dirname, "vp.ts"), installed);
+NodeFS.copyFileSync(NodePath.join(import.meta.dirname, "src/vp.ts"), installed);
 NodeFS.chmodSync(installed, 0o755);
 NodeFS.copyFileSync(
-  NodePath.join(import.meta.dirname, "launcher-telemetry.ts"),
+  NodePath.join(import.meta.dirname, "src/launcher-telemetry.ts"),
   NodePath.join(NodePath.dirname(bin), "launcher-telemetry.ts"),
 );
 if (!NodeFS.existsSync(NodePath.join(bin, "vp")))

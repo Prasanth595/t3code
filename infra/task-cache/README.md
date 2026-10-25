@@ -11,7 +11,7 @@ Vite+ 1.3 includes an experimental remote client even though its TypeScript conf
 Install dependencies with `vp install`, then authenticate with Alchemy's Cloudflare profile. Alternatively, provide `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` through your environment. Alchemy stores deployment state remotely with `Cloudflare.state()`.
 
 ```sh
-node infra/task-cache/manage.ts deploy
+node infra/task-cache/src/manage.ts deploy
 ```
 
 The management CLI reads writer digests from `~/.config/t3-task-cache/writers.json` and supplies them as a redacted Worker secret. Preserve that file to administer existing writers. Deployment uses the `prod` stage and the existing endpoint in `.task-cache.json`. The CLI loads the pinned TypeScript protocol dependency through `tsx` for Alchemy's deployment-time evaluation.
@@ -21,7 +21,7 @@ The production database's existing `scopes` and `deployment` records control rep
 ## Add a contributor or machine
 
 ```sh
-node infra/task-cache/manage.ts add-writer maria
+node infra/task-cache/src/manage.ts add-writer maria
 ```
 
 This redeploys the secret, then writes `~/.config/t3-task-cache/maria.json`. Transfer that file through a private channel. The recipient runs:
@@ -37,7 +37,7 @@ CI installs the launcher through `setup-ci-deps`; default-branch push jobs uploa
 ## Verify
 
 ```sh
-node infra/task-cache/smoke.ts
+node infra/task-cache/src/smoke.ts
 vp run --filter @t3tools/task-cache test
 vp run --filter @t3tools/task-cache typecheck
 ```

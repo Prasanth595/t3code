@@ -45,18 +45,19 @@ const save = Effect.fn("TaskCache.save")(function* (name: string, value: string)
 const deploy = Effect.fn("TaskCache.deploy")(function* (writers: Record<string, string>) {
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const root = path.resolve(source, "..");
   const command = ChildProcess.make(
     process.execPath,
     [
       "--import",
       import.meta.resolve("tsx"),
-      path.join(source, "node_modules/alchemy/bin/alchemy.js"),
+      path.join(root, "node_modules/alchemy/bin/alchemy.js"),
       "deploy",
       "--stage",
       "prod",
     ],
     {
-      cwd: source,
+      cwd: root,
       env: { DEVELOPER_KEYS: yield* encodeWriters(writers) },
       extendEnv: true,
       stdin: "inherit",
