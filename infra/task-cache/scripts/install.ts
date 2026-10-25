@@ -1,0 +1,204 @@
+/* oxlint-disable t3code/no-global-process-runtime -- Standalone setup must run before workspace dependencies are installed. */
+// @effect-diagnostics nodeBuiltinImport:off - standalone bootstrap also runs before dependencies are installed.
+// @effect-diagnostics globalConsole:off globalFetch:off globalDate:off - interactive setup and endpoint verification.
+import * as NodeCrypto from "node:crypto";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeReadlinePromises from "node:readline/promises";
+import { patchNativeCli } from "../src/nativeHook.ts";
+
+const home = NodeOS.homedir();
+const root = NodePath.resolve(import.meta.dirname, "../../..");
+const state = NodePath.join(home, ".config/t3-task-cache");
+const nonInteractive = process.argv.includes("--non-interactive");
+const { endpoint: defaultEndpoint } = JSON.parse(
+  await NodeFSP.readFile(NodePath.join(root, ".task-cache.json"), "utf8"),
+);
+let credentials: Record<string, { name: string; token: string }> = {};
+try {
+  credentials = JSON.parse(
+    await NodeFSP.readFile(NodePath.join(state, "credentials.json"), "utf8"),
+  );
+} catch (error) {
+  if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+}
+const prompt = NodeReadlinePromises.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+});
+let endpoint = process.env.T3_CACHE_SETUP_URL || defaultEndpoint;
+let name = process.env.T3_CACHE_SETUP_NAME || credentials[endpoint]?.name;
+let token = process.env.T3_CACHE_SETUP_TOKEN || credentials[endpoint]?.token;
+try {
+  if (!nonInteractive) {
+    endpoint = (await prompt.question(`Cache URL [${endpoint}]: `)).trim() || endpoint;
+    name = (await prompt.question(`Developer name${name ? ` [${name}]` : ""}: `)).trim() || name;
+    prompt.close();
+    if (!token || endpoint !== defaultEndpoint || name !== credentials[endpoint]?.name) {
+      if (!process.stdin.isTTY)
+        throw new Error("Use T3_CACHE_SETUP_TOKEN for non-interactive setup.");
+      process.stdout.write("Credential token (hidden): ");
+      process.stdin.setRawMode(true);
+      process.stdin.resume();
+      token = await new Promise<string>((resolve, reject) => {
+        let value = "";
+        const data = (chunk: Buffer) => {
+          for (const character of chunk.toString()) {
+            if (character === "\u0003") {
+              cleanup();
+              reject(new Error("Cancelled"));
+              return;
+            }
+            if (character === "\r" || character === "\n") {
+              cleanup();
+              resolve(value);
+              return;
+            }
+            if (character === "\u007f") value = value.slice(0, -1);
+            else value += character;
+          }
+        };
+        const cleanup = () => {
+          process.stdin.off("data", data);
+          process.stdin.setRawMode(false);
+          process.stdin.pause();
+          process.stdout.write("\n");
+        };
+        process.stdin.on("data", data);
+      });
+    }
+  }
+} finally {
+  prompt.close();
+}
+if (!name || !token || !/^[a-z0-9-]{1,64}$/.test(name) || token.length < 32)
+  throw new Error("A valid developer name and credential token are required.");
+const url = new URL(endpoint);
+if (
+  !["http:", "https:"].includes(url.protocol) ||
+  url.username ||
+  url.password ||
+  url.search ||
+  url.hash
+)
+  throw new Error("Use a cache endpoint without embedded credentials, query, or fragment.");
+endpoint = url.href.replace(/\/$/, "");
+const response = await fetch(`${endpoint}/telemetry`, {
+  method: "POST",
+  headers: {
+    Authorization: `Basic ${Buffer.from(`${name}:${token}`).toString("base64")}`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    id: NodeCrypto.randomBytes(32).toString("hex"),
+    recordedAt: Date.now(),
+    host: NodeOS.hostname(),
+    platform: NodeOS.platform(),
+    arch: NodeOS.arch(),
+    ci: false,
+    runId: "setup",
+    tasks: [],
+  }),
+  signal: AbortSignal.timeout(10_000),
+});
+await response.body?.cancel();
+if (!response.ok)
+  throw new Error(`Credential verification failed (${response.status}); nothing was installed.`);
+
+const candidates = [NodePath.join(root, "node_modules/vite-plus/dist/bin.js")];
+for (const directory of [
+  process.env.VITE_PLUS_HOME,
+  NodePath.join(home, ".vite-plus/current"),
+  NodePath.join(home, ".local/share/vite-plus/current"),
+]) {
+  if (directory) candidates.push(NodePath.join(directory, "node_modules/vite-plus/dist/bin.js"));
+}
+for (let index = 0; index < process.argv.length; index++) {
+  if (process.argv[index] === "--entrypoint") {
+    const entrypoint = process.argv[++index];
+    if (!entrypoint) throw new Error("Missing --entrypoint path");
+    candidates.push(entrypoint);
+  }
+}
+const targets = new Map<string, { original: string; patched: string }>();
+for (const candidate of candidates) {
+  try {
+    const path = await NodeFSP.realpath(candidate);
+    const original = await NodeFSP.readFile(path, "utf8");
+    targets.set(path, { original, patched: patchNativeCli(original) });
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  }
+}
+if (!targets.size) throw new Error("Install Vite+ before installing its telemetry hook.");
+const hook = await NodeFSP.readFile(
+  NodePath.join(root, "node_modules/vite-plus/dist/run-hook.js"),
+  "utf8",
+);
+const installed = NodePath.join(home, ".local/share/t3-task-cache");
+await NodeFSP.mkdir(installed, { recursive: true });
+for (const file of ["runHook.ts", "telemetry.ts"])
+  await NodeFSP.copyFile(
+    NodePath.join(import.meta.dirname, "../src", file),
+    NodePath.join(installed, file),
+  );
+const hookConfig = NodePath.join(home, ".config/vite-plus/run-hook.json");
+await NodeFSP.mkdir(NodePath.dirname(hookConfig), { recursive: true });
+await NodeFSP.writeFile(
+  hookConfig,
+  JSON.stringify({
+    rootMarker: ".task-cache.json",
+    module: NodePath.join(installed, "runHook.ts"),
+  }),
+);
+for (const [path, { original, patched }] of targets) {
+  if (original !== patched) {
+    await NodeFSP.writeFile(`${path}.before-task-cache`, original, { flag: "wx" }).catch(
+      (error) => {
+        if (error.code !== "EEXIST") throw error;
+      },
+    );
+    await NodeFSP.writeFile(path, patched);
+  }
+  await NodeFSP.writeFile(NodePath.join(NodePath.dirname(path), "run-hook.js"), hook);
+}
+await NodeFSP.mkdir(state, { recursive: true, mode: 0o700 });
+credentials[endpoint] = { name, token };
+await NodeFSP.writeFile(NodePath.join(state, "credentials.json"), JSON.stringify(credentials), {
+  mode: 0o600,
+});
+await NodeFSP.chmod(NodePath.join(state, "credentials.json"), 0o600);
+
+// Remove only the PATH integration installed by the previous task-cache bootstrap.
+for (const file of [".profile", ".bashrc", ".bash_profile", ".zshenv", ".zshrc"]) {
+  const path = NodePath.join(home, file);
+  try {
+    const original = await NodeFSP.readFile(path, "utf8");
+    const cleaned = original
+      .split("\n")
+      .filter((line) => line !== '. "$HOME/.config/t3-task-cache/env"')
+      .join("\n");
+    if (cleaned !== original) await NodeFSP.writeFile(path, cleaned);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  }
+}
+for (const file of ["vp", "vpr"]) {
+  const path = NodePath.join(home, ".local/share/t3-task-cache/bin", file);
+  try {
+    if ((await NodeFSP.readlink(path)) === "../vp.ts") await NodeFSP.unlink(path);
+  } catch (error) {
+    if (
+      !(
+        error instanceof Error &&
+        "code" in error &&
+        ["ENOENT", "EINVAL"].includes(String(error.code))
+      )
+    )
+      throw error;
+  }
+}
+console.log(
+  `Verified credentials and installed telemetry hooks in ${targets.size} Vite+ entrypoints. Global executables and PATH are unchanged. Open a fresh shell if the old launcher was active.`,
+);

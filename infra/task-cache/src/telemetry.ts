@@ -1,6 +1,6 @@
 /* oxlint-disable t3code/no-global-process-runtime -- This bootstrap runs before dependencies are installed. */
 // @effect-diagnostics globalDate:off globalFetch:off - bootstrap has no Effect dependencies.
-// @effect-diagnostics nodeBuiltinImport:off - dependency-free launcher installed outside the checkout.
+// @effect-diagnostics nodeBuiltinImport:off - standalone collector installed outside the checkout.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -188,7 +188,19 @@ export async function flushTelemetry(home = NodeOS.homedir(), env = process.env)
       const path = NodePath.join(queue, file);
       const { endpoint, event } = JSON.parse(NodeFS.readFileSync(path, "utf8"));
       const url = new URL(endpoint);
-      const credential = credentials[endpoint];
+      const configured = env.VP_REMOTE_CACHE_URL ? new URL(env.VP_REMOTE_CACHE_URL) : undefined;
+      const configuredEndpoint = configured && new URL(configured.href);
+      if (configuredEndpoint) {
+        configuredEndpoint.username = "";
+        configuredEndpoint.password = "";
+      }
+      const credential =
+        configured?.username && configuredEndpoint?.href.replace(/\/$/, "") === endpoint
+          ? {
+              name: decodeURIComponent(configured.username),
+              token: decodeURIComponent(configured.password),
+            }
+          : credentials[endpoint];
       let authorization: string;
       if (credential)
         authorization = `Basic ${Buffer.from(`${credential.name}:${credential.token}`).toString("base64")}`;

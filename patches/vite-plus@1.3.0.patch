@@ -1,0 +1,76 @@
+diff --git a/dist/bin.js b/dist/bin.js
+index 21f0755ddc205194d9d54aa92bd861fff40c2a7c..2c455d3355eb8e9bce9619c1721bd6dbd81debf4 100644
+--- a/dist/bin.js
++++ b/dist/bin.js
+@@ -1,3 +1,4 @@
++import { startRunHook } from "./run-hook.js";
+ import { t as documentationUrl$1 } from "./documentation-DqcZSthV.js";
+ import { t as renderCliDoc } from "./help-BmKpeOP9.js";
+ import { c as warnMsg, i as log, n as errorMsg, o as printHeader, t as accent } from "./terminal-MKGAuy-p.js";
+@@ -1862,7 +1863,10 @@ else try {
+ 		log(`Skipped initialization: '${accent(initInspection.configKey)}' already exists in '${accent(path.basename(initInspection.existingViteConfigPath))}'.`);
+ 		process.exit(0);
+ 	}
+-	const exitCode = await run({
++	const finishRunHook = await startRunHook(command);
++	let exitCode;
++	try {
++	exitCode = await run({
+ 		nodeExecPath: process.execPath,
+ 		lint,
+ 		pack,
+@@ -1880,6 +1884,9 @@ else try {
+ 		explicitChdir,
+ 		args: rustCliArgs
+ 	});
++	} finally {
++		await finishRunHook?.();
++	}
+ 	let finalExitCode = exitCode;
+ 	if (exitCode === 0) try {
+ 		const result = await applyToolInitConfigToViteConfig(command, args.slice(1));
+diff --git a/dist/run-hook.js b/dist/run-hook.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..865782eca391b6e073a47cbfdeae2d32810ddd9f
+--- /dev/null
++++ b/dist/run-hook.js
+@@ -0,0 +1,39 @@
++import { readFile, access } from 'node:fs/promises';
++import os from 'node:os';
++import path from 'node:path';
++import { pathToFileURL } from 'node:url';
++
++async function readJson(file) {
++  try { return JSON.parse(await readFile(file, 'utf8')); }
++  catch (error) { if (error.code !== 'ENOENT') throw error; }
++}
++
++// Optional repository integration; never changes the task runner's exit status.
++export async function startRunHook(command, cwd = process.cwd()) {
++  if (command !== 'run') return;
++  try {
++    const configured = await readJson(path.join(os.homedir(), '.config/vite-plus/run-hook.json'));
++    let root = cwd;
++    while (true) {
++      const manifest = await readJson(path.join(root, 'package.json'));
++      let hook = manifest?.vitePlus?.runHook;
++      if (!hook && configured?.rootMarker && configured?.module) {
++        try { await access(path.join(root, configured.rootMarker)); hook = configured.module; }
++        catch (error) { if (error.code !== 'ENOENT') throw error; }
++      }
++      if (typeof hook === 'string') {
++        const integration = await import(pathToFileURL(path.resolve(root, hook)).href);
++        const finish = await integration.default({ root });
++        return async () => {
++          try { await finish?.(); }
++          catch { console.warn('[Vite+] Run hook failed to finish.'); }
++        };
++      }
++      const parent = path.dirname(root);
++      if (parent === root) return;
++      root = parent;
++    }
++  } catch {
++    console.warn('[Vite+] Run hook failed to start.');
++  }
++}

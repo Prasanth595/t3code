@@ -4,7 +4,7 @@
 
 The Worker uses Effect services for request handling, developer authentication, bounded concurrency, deadlines, and cleanup. The pinned [upstream protocol package](https://github.com/voidzero-dev/vite-plus-remote-cache-cloudflare/tree/5b06c2c10d84ea441735ba07c46f6d1b7cb2ff3b) supplies the experimental wire format, streaming upload, GitHub OIDC validation, and atomic D1 publication. Keeping that adapter preserves compatibility with existing cache entries.
 
-Vite+ 1.3 includes an experimental remote client even though its TypeScript configuration and CLI help omit it. The small dependency-free launcher supplies `VP_REMOTE_CACHE_URL` and `VP_REMOTE_CACHE`. It leaves projects without `.task-cache.json` alone. Commands keep using the project's installed Vite+ binary.
+Vite+ 1.3 includes an experimental remote client even though its TypeScript configuration and CLI help omit it. The native client reads `run.cache.remote.url`, `VP_REMOTE_CACHE_URL`, and `VP_REMOTE_CACHE`. A small patch to the Vite+ JavaScript entrypoint invokes an optional repository hook before and after the native task runner. The global executable and PATH are unchanged. The hook loads saved credentials only when no explicit URL is supplied, and exports native task summaries. Projects without `.task-cache.json` are unaffected.
 
 ## Deploy
 
@@ -28,12 +28,14 @@ node infra/task-cache/scripts/manage.ts add-writer maria
 This updates the local writer registry and writes `~/.config/t3-task-cache/maria.json`. Run `alchemy deploy --stage prod` from `infra/task-cache` to apply the registry, then transfer that file through a private channel. The recipient runs:
 
 ```sh
-bash infra/task-cache/install.sh /path/to/maria.json
+bash infra/task-cache/install.sh
 ```
 
-The installer adds the launcher to shell startup files after Vite+'s environment setup. Existing shells should run `source ~/.config/t3-task-cache/env` once. Use separate writer names for separate people. Repeating `add-writer` rotates the token; `revoke-writer <name>` removes that writer from the local registry. Deploy again to apply either change. Never commit or attach credential files to an issue or PR.
+The installer prompts for the endpoint, developer name, and token (hidden), verifies authentication with an empty telemetry report, and saves credentials with mode `0600`. It patches the project and global fallback JavaScript entrypoints, keeping a backup of each modified entrypoint. Unsupported entrypoint shapes fail before patching. Rerunning setup is idempotent and updates the hook. It also removes the old PATH wrapper integration if present.
 
-CI installs the launcher through `setup-ci-deps`; default-branch push jobs upload with GitHub OIDC, and PR jobs read. Deployment credentials are never needed on contributor machines or CI runners. Reads are public, as in the upstream service. Trusted writers can publish artifacts that developers and CI consume.
+Explicit environment settings take precedence: `VP_REMOTE_CACHE_URL` may contain the URL-encoded developer name and token as HTTP Basic credentials, and `VP_REMOTE_CACHE=read-write` enables uploads. These can be supplied by a secret manager instead of saved credentials. Do not put credentials in shell command history or commit them. Use separate writer names for separate people. Repeating `add-writer` rotates the token; `revoke-writer <name>` removes it. Deploy again to apply either change.
+
+CI gets the Vite+ hook through the pinned package patch; default-branch push jobs upload with GitHub OIDC, and PR jobs read. Deployment credentials are never needed on contributor machines or CI runners. Reads are public, as in the upstream service. Trusted writers can publish artifacts that developers and CI consume.
 
 ## Verify
 
@@ -56,10 +58,10 @@ The smoke check uploads a unique fixture, restores its output into a cold second
 
 Alchemy also owns the `t3-task-cache-traces` Axiom dataset, its ingest-only Worker token, a savings dashboard, and a separate retained D1 database for lifetime counters. Deployment needs an Axiom Alchemy profile or `AXIOM_TOKEN`/`AXIOM_ORG_ID` as well as Cloudflare credentials. Contributor machines never receive the Axiom token.
 
-Both `vp run` and its `vpr` shortcut use the launcher. The launcher observes Vite+'s atomic `last-summary.json` files, including nested runs. It reports package/task names, confirmed local and remote hits, avoided task runtime, developer identity, host, OS/architecture, and CI run ID. It does not send commands, arguments, source paths, environment variables, or task output. Developer identity comes from the authenticated cache writer; CI uses GitHub's verified OIDC actor. PR telemetry authorization does not grant artifact uploads. Fork jobs without an OIDC token cannot report.
+Both `vp run` and its `vpr` shortcut invoke the hook. The hook observes Vite+'s atomic `last-summary.json` files, including nested runs. It reports package/task names, confirmed local and remote hits, avoided task runtime, developer identity, host, OS/architecture, and CI run ID. It does not send commands, arguments, source paths, environment variables, or task output. Developer identity comes from the authenticated cache writer; CI uses GitHub's verified OIDC actor. PR telemetry authorization does not grant artifact uploads. Fork jobs without an OIDC token cannot report.
 
-Reports spool locally and retry on subsequent commands. Interactive commands flush in a detached process; CI flushes before exiting. Queues retain at most 2,000 reports, each sent with a three-second timeout and a 15-second budget per flush. Stable report IDs and transactional D1 receipts prevent duplicate lifetime increments. Receipts expire after 31 days; accepted reports must be less than 30 days old. Lifetime totals survive raw trace expiration and are re-exported hourly, including inactive developers and hosts. Collection starts when the new launcher is installed; existing cache history is not backfilled.
+Reports spool locally and retry on subsequent commands. The completion hook flushes before the native CLI exits, including failed runs. Collection or export failures never change the task exit status. No background service is installed. Queues retain at most 2,000 reports, each sent with a three-second timeout and a 15-second budget per flush. Stable report IDs and transactional D1 receipts prevent duplicate lifetime increments. Receipts expire after 31 days; accepted reports must be less than 30 days old. Lifetime totals survive raw trace expiration and are re-exported hourly, including inactive developers and hosts. Collection starts when the hook is installed; existing cache history is not backfilled.
 
 **Saved time means historical task execution time avoided.** It is useful as a compute proxy, but it is not measured CPU time, money saved, or elapsed developer waiting time. Parallel tasks can overlap, and cache lookup/restore overhead is not subtracted. Failed restores contribute no savings. Older Vite+ versions omit the hit source; their confirmed savings are counted under an explicit unspecified tier. Native summary collection is best-effort: interrupted runs or summaries overwritten before observation can be missing. The experimental Vite+ summary schema is tested here and must be checked when upgrading Vite+.
 
-Host labels use `~/.agents/MACHINE` when present, otherwise the hostname. GitHub-hosted runners use their runner OS/architecture class to avoid a new lifetime series for every ephemeral VM. Set `T3_TASK_CACHE_HOST` to override the label, or `T3_TASK_CACHE_TELEMETRY=off` to opt out while retaining remote caching. Re-run the installer to update an existing machine's launcher.
+Host labels use `~/.agents/MACHINE` when present, otherwise the hostname. GitHub-hosted runners use their runner OS/architecture class to avoid a new lifetime series for every ephemeral VM. Set `T3_TASK_CACHE_HOST` to override the label, or `T3_TASK_CACHE_TELEMETRY=off` to opt out while retaining remote caching. Re-run the installer to update an existing machine's hook.

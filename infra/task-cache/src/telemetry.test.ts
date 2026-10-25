@@ -3,7 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { expect, it, vi } from "vite-plus/test";
-import { flushTelemetry, observeSummaries, summarize } from "./launcherTelemetry.ts";
+import { flushTelemetry, observeSummaries, summarize } from "./telemetry.ts";
 
 const task = (result: unknown) => ({
   package_name: "@team/server",
