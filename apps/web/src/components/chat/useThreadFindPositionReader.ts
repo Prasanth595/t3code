@@ -1,4 +1,4 @@
-import { useLayoutEffect } from "react";
+import { useImperativeHandle } from "react";
 import type { RunId } from "@t3tools/contracts";
 import type { TimelineEntry } from "../../session-logic";
 import {
@@ -7,11 +7,12 @@ import {
   type TimelineLatestRun,
 } from "./MessagesTimeline.logic";
 import type { ThreadFindPositionReader } from "./threadFind";
+import { attachThreadFindTimeline, type ThreadFindTimeline } from "./threadFindStore";
 import { readThreadFindPosition } from "./threadFindPosition";
 
-/** Publishes how to read the find position of the timeline's current viewport. */
+/** Hands thread find how to read the find position of this timeline's viewport. */
 export function useThreadFindPositionReader({
-  findPositionReaderRef,
+  threadKey,
   timelineViewportElement,
   findFoldRunIds,
   timelineEntries,
@@ -22,7 +23,7 @@ export function useThreadFindPositionReader({
   rows,
   contentInsetEndAdjustment,
 }: {
-  readonly findPositionReaderRef: React.RefObject<ThreadFindPositionReader | null> | undefined;
+  readonly threadKey: string;
   readonly timelineViewportElement: HTMLDivElement | null;
   readonly findFoldRunIds: ReadonlyMap<string, RunId> | null;
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
@@ -33,8 +34,11 @@ export function useThreadFindPositionReader({
   readonly rows: MessagesTimelineRow[];
   readonly contentInsetEndAdjustment: number;
 }) {
-  useLayoutEffect(() => {
-    if (!findPositionReaderRef || !timelineViewportElement) return;
+  useImperativeHandle<
+    ThreadFindTimeline | null,
+    ThreadFindTimeline | null
+  >(attachThreadFindTimeline, () => {
+    if (!timelineViewportElement) return null;
     const read: ThreadFindPositionReader = (query) => {
       const foldRunIds =
         findFoldRunIds ??
@@ -81,15 +85,12 @@ export function useThreadFindPositionReader({
         contentInsetEndAdjustment,
       );
     };
-    findPositionReaderRef.current = read;
-    return () => {
-      if (findPositionReaderRef.current === read) findPositionReaderRef.current = null;
-    };
+    return { threadKey, readPosition: read };
   }, [
     contentInsetEndAdjustment,
     findFoldRunIds,
-    findPositionReaderRef,
     isWorking,
+    threadKey,
     latestRun,
     rows,
     runlessWorkActive,
