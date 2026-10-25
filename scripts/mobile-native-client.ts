@@ -262,6 +262,11 @@ const resolveDevice = Effect.fn("nativeClient.resolveDevice")(function* (
       return yield* new NativeClientError({
         message: "Run iOS installs on the Mac that hosts the simulator.",
       });
+    // The shared iOS client is an arm64 simulator build; Intel simulators cannot run it.
+    if ((yield* HostProcess.Architecture) !== "arm64")
+      return yield* new NativeClientError({
+        message: "mobile:install needs an Apple silicon Mac. Use vp run ios:dev on Intel Macs.",
+      });
     const listing = yield* decodeSimulators(
       yield* command("xcrun", ["simctl", "list", "devices", "available", "--json"]),
     );
