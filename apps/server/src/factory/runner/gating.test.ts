@@ -2921,7 +2921,6 @@ describe("gate: the decision that the gate passed is in the ledger", () => {
   );
 });
 
-/** The commit the checks are read for is the one that was gated. */
 /** The `checks_read` line of a read on `sha`, the first gate's head unless said otherwise. */
 const checksRead = (pairs: ReadonlyArray<readonly [string, string]>, sha = HEAD): Line => ({
   event: "checks_read",
@@ -4569,6 +4568,72 @@ describe("regate: a re-gate pass waits for the required checks", () => {
       }),
   );
 
+  it.effect("a head pushed while the checks ran is gated fresh and leaves a reviewer's draft", () =>
+    Effect.gen(function* () {
+      const rig = yield* prOpenRun();
+      rig.project = { ...rig.project, requiredChecks: ["gate"] };
+      scriptChecks(rig, [["pending"], ["passed"]]);
+      headMoved(rig);
+      assert.deepStrictEqual(yield* regateStep(rig), { kind: "checks-pending" });
+      // A reviewer converted the pull request to a draft and pushed another commit.
+      rig.gh.pr = { ...rig.gh.pr!, headSha: OTHER_HEAD, isDraft: true };
+      rig.gh.world.prReady = false;
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* regateStep(rig), { kind: "passed", pr: 12 });
+      // The new head's gate resumed nothing, so its pass sets nothing again.
+      assert.ok(!rig.gh.calls.includes("markPrReady 12"), rig.gh.calls.join("; "));
+      assert.isFalse(rig.gh.world.prReady);
+      assert.deepStrictEqual(againComments(rig), [againComment(3, BASE, OTHER_HEAD.slice(0, 7))]);
+    }),
+  );
+
+  it.effect("the re-gate checks timeout survives a failure of each call", () =>
+    gateCrashMatrix(
+      "regate-checks-timeout",
+      () =>
+        Effect.map(prOpenRun(), (rig) => {
+          rig.project = { ...rig.project, requiredChecks: ["gate"] };
+          withLimits(rig, { checksMinutes: 10 });
+          // The check finishes only after the wait ran out: a timed-out read on record stands,
+          // and the stuck decision it began is finished rather than judged again.
+          scriptChecks(rig, [["pending"], ["pending"], ["passed"]]);
+          headMoved(rig);
+          setNow(rig, 1_000);
+          return rig;
+        }),
+      { kind: "stuck", reason: "the required checks did not finish within 10 minutes" },
+      { at: -1, on: "issue" },
+      // A recovery that waits the limit out again ends later on the clock: the summary's time
+      // is not what is compared.
+      (events) =>
+        settledLedger(events).map((e) =>
+          e.event === "finished"
+            ? { ...e, data: { ...(e.data as Record<string, unknown>), total_ms: 0 } }
+            : e,
+        ),
+      {
+        ...REGATE_DRIVERS,
+        first: (rig) =>
+          Effect.gen(function* () {
+            const pending = yield* regateStep(rig);
+            if (pending.kind !== "checks-pending") return pending;
+            setNow(rig, 1_000 + 600_000);
+            return yield* regateStep(rig);
+          }),
+        // A recovery that gates afresh records a new pass, so its wait starts again and runs
+        // out one call later.
+        again: (rig) =>
+          Effect.gen(function* () {
+            setNow(rig, 1_000 + 600_000);
+            const step = yield* regateStep(rig);
+            if (step.kind !== "checks-pending") return step;
+            setNow(rig, 1_000 + 2 * 600_000);
+            return yield* regateStep(rig);
+          }),
+      },
+    ),
+  );
+
   it.effect("the re-gate pass with required checks survives a failure of each call", () =>
     gateCrashMatrix(
       "regate-checks-pass",
@@ -5810,6 +5875,44 @@ describe("regate: a failed regate cut short and then passing", () => {
         assert.strictEqual(rig.gh.world.prComments.length, 2, label);
       }
     }),
+  );
+
+  it.effect(
+    "a stuck path cut short after the draft, then a resumed pass whose checks pass later, makes the pr ready again",
+    () =>
+      Effect.gen(function* () {
+        const setup = () =>
+          Effect.map(prOpenRun(), (rig) => {
+            rig.project = { ...rig.project, requiredChecks: ["gate"] };
+            withLimits(rig, { gateRetries: 0 });
+            baseAndHeadMoved(rig);
+            passThenFail(rig);
+            scriptChecks(rig, [["pending"], ["passed"]]);
+            return rig;
+          });
+        // The failed re-gate has no retry left: its stuck path drafts the pull request, then the
+        // call dies on the next GitHub call, before the stuck line is written.
+        const probe = yield* setup();
+        assert.strictEqual((yield* regateStep(probe)).kind, "stuck");
+        const drafted = probe.gh.calls.indexOf("markPrDraft 12");
+        assert.ok(drafted >= 0, probe.gh.calls.join("; "));
+        const rig = yield* setup();
+        rig.gh.failAt = drafted + 1;
+        assert.strictEqual((yield* Effect.result(regateIn(rig)))._tag, "Failure");
+        assert.isFalse(rig.gh.world.prReady);
+        rig.gh.failAt = null;
+        // The commands pass now; the checks are still pending, so nothing is set right yet.
+        rig.ws.script = (_, commands) => passing(commands);
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* regateStep(rig), { kind: "checks-pending" });
+        assert.isFalse(rig.gh.world.prReady);
+        // The ledger says a resumed call recorded the pass: once its checks pass, the ready
+        // state the cut-short stuck path undid is set again.
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* regateStep(rig), { kind: "passed", pr: 12 });
+        assert.ok(rig.gh.calls.includes("markPrReady 12"), rig.gh.calls.join("; "));
+        assertReadyAndPrOpen(rig, "late green");
+      }),
   );
 
   it.effect("the pass after a cut short failure survives a failure of each call", () =>
