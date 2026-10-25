@@ -31,7 +31,8 @@ const contextChipVariants = cva(
       },
       state: {
         unresolved: "data-[state=unresolved]:[--context-chip-accent:var(--foreground)]",
-        invalid: "data-[state=invalid]:[--context-chip-accent:var(--destructive-foreground)]",
+        invalid:
+          "data-[state=invalid]:[--context-chip-accent:var(--context-chip-invalid,var(--destructive-foreground))]",
       },
     },
   },

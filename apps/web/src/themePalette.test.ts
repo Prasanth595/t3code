@@ -5,6 +5,7 @@ import { BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
 import { CONTEXT_CHIP_ACCENTS, contextChipColorVariable } from "./lib/contextChipAccents";
 
 import {
+  applyThemePalette,
   contextChipVariables,
   getThemeColorsForMode,
   getThemeModes,
@@ -572,6 +573,57 @@ describe("context chip colors", () => {
           const drift = Math.abs((((solved.h ?? 0) - toOklch(accent)!.h! + 540) % 360) - 180);
           expect(drift).toBeLessThan(4);
         }
+      }
+    }
+  });
+
+  it("reads at 5:1 on the standard surfaces as index.css paints them", () => {
+    const painted = {
+      light: ["#fcfcfc", "#ffffff", "#ebebed"],
+      dark: ["#0a0a0a", "#111111", "#141414"],
+    } as const;
+    const properties = new Map<string, string>();
+    vi.stubGlobal("window", { localStorage: { getItem: () => null } });
+    vi.stubGlobal("document", {
+      documentElement: {
+        dataset: {},
+        style: {
+          setProperty: (name: string, value: string) => properties.set(name, value),
+          removeProperty: (name: string) => properties.delete(name),
+        },
+      },
+    });
+    invalidateCustomThemes();
+    try {
+      for (const appearance of ["light", "dark"] as const) {
+        applyThemePalette("system", appearance);
+        for (const kind of Object.keys(CONTEXT_CHIP_ACCENTS) as Array<
+          keyof typeof CONTEXT_CHIP_ACCENTS
+        >) {
+          for (const surface of painted[appearance]) {
+            expect(
+              contrastRatio(properties.get(contextChipColorVariable(kind))!, surface),
+            ).toBeGreaterThanOrEqual(5);
+          }
+        }
+      }
+    } finally {
+      vi.unstubAllGlobals();
+      invalidateCustomThemes();
+    }
+  });
+
+  it("solves the invalid state's error color to 5:1 on every chip surface", () => {
+    for (const colors of palettes) {
+      const invalid = contextChipVariables(colors)["--context-chip-invalid"];
+      expect(invalid).toBeDefined();
+      for (const surface of [
+        colors.canvas,
+        colors.surface,
+        colors.surfaceRaised,
+        colors.messageSurface,
+      ]) {
+        expect(contrastRatio(invalid!, surface)).toBeGreaterThanOrEqual(5);
       }
     }
   });

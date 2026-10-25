@@ -314,6 +314,17 @@ export function getStandardThemeColors(appearance: ThemeAppearance): ThemeColors
   return (standardLightThemeColors ??= decodeThemeColors(T3_CODE_LIGHT_THEME_COLORS));
 }
 
+// index.css paints the light bubble a step darker than the shared palette mobile uses.
+const STANDARD_WEB_PAINTED_COLORS: Record<ThemeAppearance, Partial<ThemeColors>> = {
+  light: { messageSurface: "#ebebed" },
+  dark: {},
+};
+
+/** The standard theme as index.css paints it, for solves that measure the page. */
+export function getStandardPaintedThemeColors(appearance: ThemeAppearance): ThemeColors {
+  return { ...getStandardThemeColors(appearance), ...STANDARD_WEB_PAINTED_COLORS[appearance] };
+}
+
 type ThemeRgbColor = {
   r: number;
   g: number;
@@ -576,6 +587,7 @@ export function readableThemeColorOn(color: string, surface: string, minContrast
 
 const CONTEXT_CHIP_CONTRAST = 5;
 const CONTEXT_CHIP_MESSAGE_VARIABLE = "--context-chip-message";
+const CONTEXT_CHIP_INVALID_VARIABLE = "--context-chip-invalid";
 
 export function contextChipVariables(colors: ThemeColors): Readonly<Record<string, string>> {
   const canvas = parseThemeRgbColor(colors.canvas, THEME_WHITE_FOREGROUND);
@@ -588,18 +600,24 @@ export function contextChipVariables(colors: ThemeColors): Readonly<Record<strin
   const messageMatchesCanvas = isDark(onCanvas(colors.messageForeground)) === darkText;
   const surfaces = [canvas, onCanvas(colors.surface), onCanvas(colors.surfaceRaised)];
   if (messageMatchesCanvas) surfaces.push(onCanvas(colors.messageSurface));
-  const variables: Record<string, string> = Object.fromEntries(
-    (Object.entries(CONTEXT_CHIP_ACCENTS) as Array<[ContextChipAccentKind, string]>).map(
-      ([kind, accent]) => {
-        const solved = solveOklchLightness(
-          parseThemeColor(accent)!.color,
-          surfaces,
-          CONTEXT_CHIP_CONTRAST,
-          darkText ? "darker" : "lighter",
-        );
-        return [contextChipColorVariable(kind), themeRgbToHexColor(themeOklchToRgb(solved))];
-      },
+  const accents: Array<[string, string]> = [
+    ...(Object.entries(CONTEXT_CHIP_ACCENTS) as Array<[ContextChipAccentKind, string]>).map(
+      ([kind, accent]): [string, string] => [contextChipColorVariable(kind), accent],
     ),
+    [CONTEXT_CHIP_INVALID_VARIABLE, colors.errorForeground],
+  ];
+  const variables: Record<string, string> = Object.fromEntries(
+    accents.flatMap(([variable, accent]) => {
+      const parsed = parseThemeColor(accent);
+      if (!parsed) return [];
+      const solved = solveOklchLightness(
+        parsed.color,
+        surfaces,
+        CONTEXT_CHIP_CONTRAST,
+        darkText ? "darker" : "lighter",
+      );
+      return [[variable, themeRgbToHexColor(themeOklchToRgb(solved))]];
+    }),
   );
   if (!messageMatchesCanvas) variables[CONTEXT_CHIP_MESSAGE_VARIABLE] = colors.messageForeground;
   return variables;
@@ -608,6 +626,7 @@ export function contextChipVariables(colors: ThemeColors): Readonly<Record<strin
 function applyContextChipVariables(root: HTMLElement, colors: ThemeColors): void {
   const variables = contextChipVariables(colors);
   root.style.removeProperty(CONTEXT_CHIP_MESSAGE_VARIABLE);
+  root.style.removeProperty(CONTEXT_CHIP_INVALID_VARIABLE);
   for (const [variable, value] of Object.entries(variables)) {
     root.style.setProperty(variable, value);
   }
@@ -1519,7 +1538,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   for (const variable of Object.values(APP_THEME_VARIABLES)) {
     root.style.removeProperty(variable);
   }
-  applyContextChipVariables(root, getStandardThemeColors(appearance ?? "light"));
+  applyContextChipVariables(root, getStandardPaintedThemeColors(appearance ?? "light"));
 }
 
 export function resolveThemeAppearance(
