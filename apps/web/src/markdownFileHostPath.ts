@@ -42,7 +42,7 @@ export function markdownFileCopyPaths(
     fullPath,
     relativePath: formatFilePathPosition({
       ...meta,
-      path: workspaceRelativeFilePath(hostPath.absolutePath, cwd) ?? meta.filePath,
+      path: workspaceRelativeFilePath(hostPath.absolutePath, cwd) ?? hostPath.absolutePath,
     }),
   };
 }

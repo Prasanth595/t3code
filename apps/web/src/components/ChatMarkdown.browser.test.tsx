@@ -10,15 +10,25 @@ import { filesystemEnvironment } from "../state/filesystem";
 import { useRightPanelStore } from "../rightPanelStore";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 
-const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
+const { workspaceSearch, filesystemMetadata, chipMetadata } = vi.hoisted(() => ({
   workspaceSearch: vi.fn(),
   filesystemMetadata: vi.fn(),
+  chipMetadata: new Map<string, AsyncResult.AsyncResult<{ kind: "file" } | null>>(),
 }));
 vi.mock(import("../state/use-atom-query-runner"), async (original) => ({
   ...(await original()),
   useAtomQueryRunner: ((family: unknown) =>
     family === filesystemEnvironment.getMetadata ? filesystemMetadata : workspaceSearch) as never,
 }));
+// What each chip already fetched about its own path; unset paths have not loaded.
+vi.mock(import("../hooks/useFileMetadata"), async (original) => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    ...(await original()),
+    fileMetadataAtom: ((_environmentId: unknown, path: string) =>
+      Atom.make(chipMetadata.get(path) ?? AsyncResult.initial())) as never,
+  };
+});
 
 // Atoms derived from the server config run in the real registry over a missing config.
 vi.mock(import("../state/server"), async (original) => {
@@ -78,6 +88,15 @@ function setup() {
   renderDiagram.mockReset();
   workspaceSearch.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
   filesystemMetadata.mockReset().mockResolvedValue(AsyncResult.success({ entries: [null] }));
+  chipMetadata.clear();
+}
+
+function fileChip(container: HTMLElement, label: string) {
+  const chip = [...container.querySelectorAll<HTMLElement>(".chat-markdown-file-link")].find(
+    (element) => element.textContent === label,
+  );
+  if (!chip) throw new Error(`No file chip labelled ${label}`);
+  return chip;
 }
 
 function renderText(text: string, props: Partial<Parameters<typeof ChatMarkdown>[0]> = {}) {
@@ -226,6 +245,105 @@ describe("ChatMarkdown workspace file opens", () => {
 
     expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/elsewhere/b.md", 9);
     expect(workspaceSearch).toHaveBeenCalledOnce();
+  });
+
+  it("opens a path relative to a folder the reply names when the workspace root lacks it", async () => {
+    setup();
+    chipMetadata.set("/tmp/work/phase2/A-findings.md", AsyncResult.success(null));
+    filesystemMetadata.mockResolvedValue(
+      AsyncResult.success({ entries: [null, { kind: "file" }] }),
+    );
+    const message = (folders: string) => (
+      <ChatMarkdown
+        cwd="/tmp/work"
+        threadRef={threadRef}
+        text={`Everything is in ${folders}.\n\n- \`phase2/A-findings.md\`: raw audit`}
+      />
+    );
+    await using screen = await render(message("`/tmp/work/backend/.notes/audit/`"));
+    using openFile = vi
+      .spyOn(useRightPanelStore.getState(), "openFile")
+      .mockImplementation(() => {});
+    await act(async () => fileChip(screen.container, "A-findings.md").click());
+
+    await vi.waitFor(() =>
+      expect(openFile).toHaveBeenLastCalledWith(
+        threadRef,
+        "backend/.notes/audit/phase2/A-findings.md",
+        undefined,
+      ),
+    );
+    expect(filesystemMetadata).toHaveBeenCalledExactlyOnceWith({
+      environmentId: threadRef.environmentId,
+      input: {
+        paths: [
+          "/tmp/work/phase2/A-findings.md",
+          "/tmp/work/backend/.notes/audit/phase2/A-findings.md",
+        ],
+      },
+    });
+    expect(workspaceSearch).not.toHaveBeenCalled();
+
+    // Both named folders hold the path, so guessing could open the wrong one.
+    filesystemMetadata.mockResolvedValue(
+      AsyncResult.success({ entries: [null, { kind: "file" }, { kind: "file" }] }),
+    );
+    await screen.rerender(
+      message("`/tmp/work/backend/.notes/audit/` and `/tmp/work/frontend/.notes/audit/`"),
+    );
+    await act(async () => fileChip(screen.container, "A-findings.md").click());
+    await vi.waitFor(() =>
+      expect(openFile).toHaveBeenLastCalledWith(threadRef, "phase2/A-findings.md", undefined),
+    );
+  });
+
+  it("opens the one nested repository file a repository-relative path names", async () => {
+    setup();
+    chipMetadata.set("/tmp/work/infra/main.tf", AsyncResult.success({ kind: "file" }));
+    chipMetadata.set("/tmp/work/tests/sandbox/test_real.py", AsyncResult.success(null));
+    chipMetadata.set("/tmp/work/docs/guide.md", AsyncResult.success(null));
+    const files = (...paths: Array<string>) =>
+      AsyncResult.success({
+        entries: paths.map((path) => ({ path, kind: "file" })),
+        truncated: false,
+      });
+    workspaceSearch.mockImplementation(async ({ input }: { input: { query: string } }) =>
+      input.query === "tests/sandbox/test_real.py"
+        ? files("backend/tests/sandbox/test_real.py", "backend/tests/sandbox/test_real_more.py")
+        : files("backend/docs/guide.md", "frontend/docs/guide.md"),
+    );
+    await using screen = await renderText(
+      "Changed `infra/main.tf` and `notes/todo.md`, skipped `tests/sandbox/test_real.py`, kept `docs/guide.md`.",
+      { cwd: "/tmp/work", threadRef },
+    );
+    using openFile = vi
+      .spyOn(useRightPanelStore.getState(), "openFile")
+      .mockImplementation(() => {});
+    const { container } = screen;
+
+    // A file the root has, or one whose metadata has not loaded, opens without waiting.
+    await act(async () => fileChip(container, "main.tf").click());
+    expect(openFile).toHaveBeenLastCalledWith(threadRef, "infra/main.tf", undefined);
+    await act(async () => fileChip(container, "todo.md").click());
+    expect(openFile).toHaveBeenLastCalledWith(threadRef, "notes/todo.md", undefined);
+    expect(filesystemMetadata).not.toHaveBeenCalled();
+    expect(workspaceSearch).not.toHaveBeenCalled();
+
+    await act(async () => fileChip(container, "test_real.py").click());
+    await vi.waitFor(() =>
+      expect(openFile).toHaveBeenLastCalledWith(
+        threadRef,
+        "backend/tests/sandbox/test_real.py",
+        undefined,
+      ),
+    );
+
+    // Two repositories hold this path, so guessing could open the wrong file.
+    await act(async () => fileChip(container, "guide.md").click());
+    await vi.waitFor(() =>
+      expect(openFile).toHaveBeenLastCalledWith(threadRef, "docs/guide.md", undefined),
+    );
+    expect(openFile).toHaveBeenCalledTimes(4);
   });
 });
 

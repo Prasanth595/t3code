@@ -1,4 +1,8 @@
-import { buildFileLinkParentSuffixByPath, fileLinkLabel } from "@t3tools/shared/fileLinks";
+import {
+  buildFileLinkParentSuffixByPath,
+  fileLinkLabel,
+  resolvePathLinkTarget,
+} from "@t3tools/shared/fileLinks";
 import {
   isWindowsDrivePathHref,
   normalizeMarkdownLinkDestination,
@@ -6,11 +10,18 @@ import {
   extractMarkdownLinkHrefs,
   inlineCodeFilePathCandidate,
 } from "@t3tools/shared/markdownLinks";
-import { isHostPath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
+import {
+  isHostPath,
+  isNetworkPath,
+  normalizeProjectPathForComparison,
+  resolveWorkspaceFilePath,
+  workspaceRelativeFilePath,
+} from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import {
   AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
+  FILESYSTEM_METADATA_BATCH_LIMIT,
   SOURCE_CONTROL_MEDIA_ASSET,
 } from "@t3tools/contracts";
 import {
@@ -18,7 +29,7 @@ import {
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
   CHAT_MARKDOWN_REHYPE_PLUGINS,
 } from "@t3tools/shared/markdownPipeline";
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   encodeComposerContextClipboardHtml,
@@ -165,11 +176,15 @@ import { filesystemEnvironment } from "../state/filesystem";
 import {
   claimWorkspaceBasenameLookup,
   needsWorkspaceBasenameLookup,
+  nestedWorkspaceLookupPath,
+  pickNestedWorkspaceMatch,
   pickStrippedWorkspaceMatch,
   pickWorkspaceBasenameMatch,
   stripRepeatedWorkspacePrefix,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
+import { FileMetadataThreadContext } from "../hooks/FileMetadataThreadProvider";
+import { fileMetadataAtom } from "../hooks/useFileMetadata";
 import { resolvePullRequestPreviewTarget } from "@t3tools/client-runtime/change-request-links";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
@@ -494,6 +509,8 @@ function useChatMarkdownState({
     reportFailure: false,
     refresh: true,
   });
+  const registry = use(RegistryContext);
+  const fileMetadataThread = use(FileMetadataThreadContext);
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
@@ -736,6 +753,74 @@ function useChatMarkdownState({
       openPreview,
     });
   };
+  // Acts only on the chip's settled metadata, so a click never waits on the
+  // network unless the chip already knows its root path is missing.
+  const isMissingNestedPath = (fileLinkMeta: MarkdownFileLinkMeta) => {
+    if (
+      environmentId === null ||
+      fileLinkMeta.workspaceLookupPath === null ||
+      nestedWorkspaceLookupPath(fileLinkMeta.workspaceLookupPath) === null
+    ) {
+      return false;
+    }
+    const atom = fileMetadataAtom(
+      environmentId,
+      fileLinkMeta.filePath,
+      undefined,
+      fileMetadataThread,
+      readEnvironmentScope(environmentId, AuthFilesystemReadScope),
+    );
+    if (atom === null) return false;
+    const known = registry.get(atom);
+    return known._tag === "Success" && !known.waiting && known.value === null;
+  };
+  const findNestedWorkspaceFile = async (
+    fileLinkMeta: MarkdownFileLinkMeta,
+    workspaceRoot: string,
+    lookupEnvironmentId: EnvironmentId,
+  ) => {
+    const nestedPath = nestedWorkspaceLookupPath(fileLinkMeta.workspaceLookupPath ?? "");
+    if (nestedPath === null || !isMissingNestedPath(fileLinkMeta)) return null;
+    // Keyed like the metadata cache, so one Windows folder spelled two ways stays one candidate.
+    const seen = new Set([normalizeProjectPathForComparison(fileLinkMeta.filePath)]);
+    const candidates = [
+      ...markdownFileLinkMetaByHref.values(),
+      ...inlineCodeFileLinkMetaByText.values(),
+    ]
+      .filter((meta) => meta.workspaceLookupPath === null)
+      .map((meta) => resolvePathLinkTarget(nestedPath, meta.filePath))
+      .filter((path) => {
+        const key = normalizeProjectPathForComparison(path);
+        if (path.length > 512 || isNetworkPath(path) || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, FILESYSTEM_METADATA_BATCH_LIMIT - 1);
+    // The chip's answer can predate the file, so the root path is checked again.
+    const metadata = await getFilesystemMetadata({
+      environmentId: lookupEnvironmentId,
+      input: { paths: [fileLinkMeta.filePath, ...candidates] },
+    });
+    if (metadata._tag !== "Success" || metadata.value.entries[0] !== null) return null;
+    const named = candidates.filter(
+      (_, index) => (metadata.value.entries[index + 1] ?? null) !== null,
+    );
+    if (named.length > 1) return null;
+    if (named[0] !== undefined)
+      return workspaceRelativeFilePath(named[0], workspaceRoot) ?? named[0];
+    const result = await searchProjectEntries({
+      environmentId: lookupEnvironmentId,
+      input: {
+        cwd: workspaceRoot,
+        query: nestedPath,
+        limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
+        kind: "file",
+      },
+    });
+    return result._tag === "Success"
+      ? pickNestedWorkspaceMatch(nestedPath, workspaceRoot, result.value.entries)
+      : null;
+  };
   const findWorkspaceFileMatch = async (fileLinkMeta: MarkdownFileLinkMeta) => {
     const workspaceRelativePath = fileLinkMeta.workspaceLookupPath;
     if (
@@ -750,7 +835,9 @@ function useChatMarkdownState({
     const strippedPath = isBasename
       ? null
       : stripRepeatedWorkspacePrefix(workspaceRelativePath, cwd);
-    if (!isBasename && strippedPath === null) return null;
+    if (!isBasename && strippedPath === null) {
+      return findNestedWorkspaceFile(fileLinkMeta, cwd, environmentId);
+    }
     const result = await searchProjectEntries({
       environmentId,
       input: {
@@ -765,7 +852,7 @@ function useChatMarkdownState({
       return pickWorkspaceBasenameMatch(workspaceRelativePath, result.value.entries);
     }
     const match = pickStrippedWorkspaceMatch(strippedPath, cwd, result.value.entries);
-    if (match === null) return null;
+    if (match === null) return findNestedWorkspaceFile(fileLinkMeta, cwd, environmentId);
     // Search can be truncated or still scanning, so it cannot rule out the
     // literal path. Check the host before redirecting to the stripped match.
     const metadata = await getFilesystemMetadata({
@@ -784,7 +871,8 @@ function useChatMarkdownState({
       fileLinkMeta.workspaceLookupPath === null ||
       !cwd ||
       (!needsWorkspaceBasenameLookup(panelPath) &&
-        stripRepeatedWorkspacePrefix(panelPath, cwd) === null)
+        stripRepeatedWorkspacePrefix(panelPath, cwd) === null &&
+        !isMissingNestedPath(fileLinkMeta))
     ) {
       openAt(panelPath);
       return;

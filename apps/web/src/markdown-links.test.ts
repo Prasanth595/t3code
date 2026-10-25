@@ -110,4 +110,19 @@ describe("chat file chip paths", () => {
       relativePath: "src/discord/events/user.ts:261:7",
     });
   });
+
+  it("copies the matched file when it sits outside the workspace", async () => {
+    const meta = resolveMarkdownFileLinkMeta("phase2/A-findings.md", "/Users/alice/work");
+    if (!meta) throw new Error("Expected a file link");
+    const hostPath = await resolveMarkdownFileHostPath({
+      meta,
+      cwd: "/Users/alice/work",
+      findWorkspaceMatch: async () => "/tmp/audit/phase2/A-findings.md",
+    });
+
+    expect(markdownFileCopyPaths(meta, hostPath, "/Users/alice/work")).toEqual({
+      fullPath: "/tmp/audit/phase2/A-findings.md",
+      relativePath: "/tmp/audit/phase2/A-findings.md",
+    });
+  });
 });

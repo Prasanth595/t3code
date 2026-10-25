@@ -65,16 +65,45 @@ export function stripRepeatedWorkspacePrefix(relativePath: string, cwd: string):
   return null;
 }
 
+function workspacePathKey(cwd: string) {
+  const caseInsensitive = isWindowsAbsolutePath(cwd);
+  return (path: string) => {
+    const normalized = path.replaceAll("\\", "/");
+    return caseInsensitive ? normalized.toLowerCase() : normalized;
+  };
+}
+
 export function pickStrippedWorkspaceMatch(
   strippedPath: string,
   cwd: string,
   entries: ReadonlyArray<WorkspaceEntryCandidate>,
 ): string | null {
-  const caseInsensitive = isWindowsAbsolutePath(cwd);
-  const key = (path: string) => {
-    const normalized = path.replaceAll("\\", "/");
-    return caseInsensitive ? normalized.toLowerCase() : normalized;
-  };
+  const key = workspacePathKey(cwd);
   const files = entries.filter((entry) => entry.kind === "file");
   return files.find((entry) => key(entry.path) === key(strippedPath))?.path ?? null;
+}
+
+// Agents write paths relative to the nested repository or folder they worked in.
+export function nestedWorkspaceLookupPath(relativePath: string): string | null {
+  const path = relativePath.trim().replace(/^\.[\\/]/, "");
+  const segments = path.split(/[\\/]/);
+  return segments.length > 1 &&
+    !isAbsolutePath(path) &&
+    !path.startsWith("~") &&
+    !segments.includes("..")
+    ? path
+    : null;
+}
+
+export function pickNestedWorkspaceMatch(
+  nestedPath: string,
+  cwd: string,
+  entries: ReadonlyArray<WorkspaceEntryCandidate>,
+): string | null {
+  const key = workspacePathKey(cwd);
+  const suffix = `/${key(nestedPath)}`;
+  const matches = entries.filter(
+    (entry) => entry.kind === "file" && key(entry.path).endsWith(suffix),
+  );
+  return matches.length === 1 ? (matches[0]?.path ?? null) : null;
 }
