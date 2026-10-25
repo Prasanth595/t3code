@@ -351,7 +351,7 @@ export function markdownWithTableBreaks(markdown: string): string {
 /** md4c draws an image that follows text on its line as a 20pt glyph; give each its own paragraph. */
 export function markdownWithBlockImages(markdown: string): string {
   if (!markdown.includes("![")) return markdown;
-  const edits: Array<{ offset: number; content: string }> = [];
+  const edits: Array<{ start: number; end: number; content: string }> = [];
   const visit = (node: MarkdownNode) => {
     if (!("children" in node)) return;
     if (node.type !== "paragraph") return node.children.forEach(visit);
@@ -361,21 +361,29 @@ export function markdownWithBlockImages(markdown: string): string {
     // Container markers become spaces, except ">", so the new paragraphs stay in the list or quote.
     const markers = markdown
       .slice(markdown.lastIndexOf("\n", start - 1) + 1, start)
+      .replace(/\[[ xX]\]\s*$/, "")
       .replace(/[^>\s]/g, " ");
     const paragraphBreak = `\n${markers.trimEnd()}\n${markers}`;
+    let previousEnd = start;
     for (const child of node.children) {
-      if (child.type !== "image") continue;
+      if (child.type !== "image" && child.type !== "imageReference") continue;
       const imageStart = child.position?.start.offset;
       const imageEnd = child.position?.end.offset;
-      if (imageStart !== undefined && imageStart > start)
-        edits.push({ offset: imageStart, content: paragraphBreak });
-      if (imageEnd !== undefined && imageEnd < end)
-        edits.push({ offset: imageEnd, content: paragraphBreak });
+      if (imageStart === undefined || imageEnd === undefined) continue;
+      // Each break replaces the spaces, hard break and line prefix it lands on.
+      const before = /[ \t]*(?:\\?\r?\n[ \t>]*)?$/.exec(markdown.slice(start, imageStart))![0];
+      if (imageStart > previousEnd)
+        edits.push({ start: imageStart - before.length, end: imageStart, content: paragraphBreak });
+      if (imageEnd < end) {
+        const after = /^[ \t]*(?:\r?\n[ \t>]*)?/.exec(markdown.slice(imageEnd, end))![0];
+        previousEnd = imageEnd + after.length;
+        edits.push({ start: imageEnd, end: previousEnd, content: paragraphBreak });
+      }
     }
   };
   visit(parser.parse(markdown));
   for (const edit of edits.reverse())
-    markdown = markdown.slice(0, edit.offset) + edit.content + markdown.slice(edit.offset);
+    markdown = markdown.slice(0, edit.start) + edit.content + markdown.slice(edit.end);
   return markdown;
 }
 
