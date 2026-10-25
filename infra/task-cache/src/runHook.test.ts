@@ -66,6 +66,13 @@ it("uses one machine hook across fresh worktrees without modifying Vite+", async
       NodePath.join(unrelated, "package.json"),
       JSON.stringify({ name: "unrelated", scripts: { build: 'node -e "console.log(7)"' } }),
     );
+    const nested = NodePath.join(root, "nested");
+    await NodeFSP.mkdir(nested);
+    await NodeFSP.writeFile(
+      NodePath.join(nested, "package.json"),
+      JSON.stringify({ name: "nested", scripts: { build: 'node -e "console.log(8)"' } }),
+    );
+    await NodeFSP.writeFile(NodePath.join(nested, "pnpm-workspace.yaml"), "packages: []\n");
     const endpoint = `http://127.0.0.1:${address.port}/projects/test`;
     await NodeFSP.writeFile(NodePath.join(root, ".task-cache.json"), JSON.stringify({ endpoint }));
     await NodeFSP.writeFile(
@@ -76,12 +83,13 @@ it("uses one machine hook across fresh worktrees without modifying Vite+", async
         scripts: {
           build: `node build.cjs ${JSON.stringify(entrypoint)} ${JSON.stringify(unrelated)}`,
           fail: 'node -e "process.exit(7)"',
+          nested: `node ${JSON.stringify(entrypoint)} -C ${JSON.stringify(nested)} run --no-cache build`,
         },
       }),
     );
     await NodeFSP.writeFile(
       NodePath.join(root, "build.cjs"),
-      'require("node:fs").writeFileSync("environment.json", JSON.stringify({url: process.env.VP_REMOTE_CACHE_URL ?? null, mode: process.env.VP_REMOTE_CACHE ?? null})); console.log(42); try {require("node:child_process").execFileSync(process.execPath, [process.argv[2], "run", "--no-cache", "build"], {cwd: process.argv[3], encoding:"utf8"})} catch (error) { throw new Error(error.stdout + error.stderr) }',
+      'require("node:fs").writeFileSync("environment.json", JSON.stringify({url: process.env.VP_REMOTE_CACHE_URL ?? null, mode: process.env.VP_REMOTE_CACHE ?? null})); console.log(42); try {for (const cwd of process.argv.slice(3)) require("node:child_process").execFileSync(process.execPath, [process.argv[2], "run", "--no-cache", "build"], {cwd, encoding:"utf8"})} catch (error) { throw new Error(error.stdout + error.stderr) }',
     );
     await NodeFSP.writeFile(
       NodePath.join(root, "vite.config.ts"),
@@ -102,24 +110,20 @@ it("uses one machine hook across fresh worktrees without modifying Vite+", async
       }),
     );
     const originalEntrypoint = await NodeFSP.readFile(entrypoint, "utf8");
-    const run = (task: string, cwd = root, ci = false) =>
+    const run = (task: string, cwd = root, ci = false, cache = "--cache") =>
       new Promise<number | null>((resolve, reject) => {
-        const child = NodeChildProcess.spawn(
-          process.execPath,
-          [entrypoint, "run", "--cache", task],
-          {
-            cwd,
-            env: {
-              ...process.env,
-              HOME: root,
-              GITHUB_ACTIONS: ci ? "true" : undefined,
-              NODE_OPTIONS: `--import=${new URL("./preload.mjs", import.meta.url).href}`,
-              VP_REMOTE_CACHE: undefined,
-              VP_REMOTE_CACHE_URL: undefined,
-            },
-            stdio: ["ignore", "ignore", "pipe"],
+        const child = NodeChildProcess.spawn(process.execPath, [entrypoint, "run", cache, task], {
+          cwd,
+          env: {
+            ...process.env,
+            HOME: root,
+            GITHUB_ACTIONS: ci ? "true" : undefined,
+            NODE_OPTIONS: `--import=${new URL("./preload.mjs", import.meta.url).href}`,
+            VP_REMOTE_CACHE: undefined,
+            VP_REMOTE_CACHE_URL: undefined,
           },
-        );
+          stdio: ["ignore", "ignore", "pipe"],
+        });
         let stderr = "";
         child.stderr.on("data", (chunk) => {
           stderr += chunk;
@@ -150,6 +154,8 @@ it("uses one machine hook across fresh worktrees without modifying Vite+", async
     expect(await run("build", secondWorktree, true)).toBe(0);
     expect(completedReports).toBe(5);
     expect(await NodeFSP.readFile(entrypoint, "utf8")).toBe(originalEntrypoint);
+    expect(await run("nested", root, false, "--no-cache")).toBe(0);
+    expect(await run("build", nested)).toBe(0);
     expect(reports).toHaveLength(5);
     expect(
       reports.every(
@@ -376,6 +382,13 @@ it("does not send an old endpoint's token after changing the URL interactively",
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Missing HTTP address");
+    const nested = NodePath.join(root, "nested");
+    await NodeFSP.mkdir(nested);
+    await NodeFSP.writeFile(
+      NodePath.join(nested, "package.json"),
+      JSON.stringify({ name: "nested", scripts: { build: 'node -e "console.log(8)"' } }),
+    );
+    await NodeFSP.writeFile(NodePath.join(nested, "pnpm-workspace.yaml"), "packages: []\n");
     const endpoint = `http://127.0.0.1:${address.port}/projects/test`;
     const scripts = NodePath.join(root, "infra/task-cache/scripts");
     await NodeFSP.mkdir(scripts, { recursive: true });

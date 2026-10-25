@@ -8,9 +8,6 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 const project = NodePath.join(import.meta.dirname, "../../..");
-const { endpoint } = JSON.parse(
-  await NodeFSP.readFile(NodePath.join(project, ".task-cache.json"), "utf8"),
-);
 const env = {
   ...process.env,
   T3_TASK_CACHE_TELEMETRY: "off",
