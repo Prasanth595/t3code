@@ -4655,6 +4655,51 @@ describe("regate: a re-gate pass waits for the required checks", () => {
   );
 
   it.effect(
+    "a recorded failed read with a retry left relaunches for it even once the head moved",
+    () =>
+      Effect.gen(function* () {
+        const setup = () =>
+          Effect.map(prOpenRun(), (rig) => {
+            rig.project = { ...rig.project, requiredChecks: ["gate"] };
+            scriptChecks(rig, [["failed"], ["passed"]]);
+            headMoved(rig);
+            return rig;
+          });
+        // The failed read is recorded and the call dies on the next GitHub call, before the
+        // relaunch is decided.
+        const probe = yield* setup();
+        assert.deepStrictEqual(yield* regateStep(probe), { kind: "sent-back", attempt: 2 });
+        const read = probe.gh.calls.indexOf(`checks ${PUSHED} gate`);
+        assert.ok(read >= 0, probe.gh.calls.join("; "));
+        const rig = yield* setup();
+        rig.gh.failAt = read + 1;
+        assert.strictEqual((yield* Effect.result(regateIn(rig)))._tag, "Failure");
+        assert.deepStrictEqual(eventsOf(rig, "checks_read"), [
+          checksRead([["gate", "failed"]], PUSHED),
+        ]);
+        assert.deepStrictEqual(eventsOf(rig, "regate_relaunching"), []);
+        rig.gh.failAt = null;
+        // A commit is pushed meanwhile. The read on record is the decision: the session is
+        // relaunched for the failure it names, from the branch as it is now, and the new head
+        // is not gated on its own.
+        rig.gh.pr = { ...rig.gh.pr!, headSha: OTHER_HEAD };
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* regateStep(rig), { kind: "sent-back", attempt: 2 });
+        assert.deepStrictEqual(rig.ws.calls, []);
+        assert.deepStrictEqual(eventsOf(rig, "checks_read"), [
+          checksRead([["gate", "failed"]], PUSHED),
+        ]);
+        assert.ok(
+          rig.t3.launches[0]!.message.includes(
+            `A required check did not pass on commit ${PUSHED_SHORT}`,
+          ),
+          rig.t3.launches[0]!.message,
+        );
+        assertRelaunched(rig);
+      }),
+  );
+
+  it.effect(
     "a failed-checks stuck path cut short after the draft is finished even once the head moved",
     () =>
       Effect.gen(function* () {
