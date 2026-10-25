@@ -66,6 +66,7 @@ import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
+import { readableProviderErrorMessage } from "./providerErrorMessage.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
@@ -859,7 +860,19 @@ function providerRef(nativeId: string, strength: "strong" | "weak" = "strong") {
 function openCodeErrorMessage(event: Extract<OpenCodeEvent, { type: "session.error" }>): string {
   const error = event.properties.error;
   if (error === undefined) return "OpenCode session failed without an error payload.";
-  return recordString(error.data, "message") ?? error.name;
+  const message = recordString(error.data, "message");
+  const statusCode = recordValue(error.data, "statusCode");
+  const responseBody = recordString(error.data, "responseBody");
+  const readable = readableProviderErrorMessage({
+    message,
+    statusCode: typeof statusCode === "number" ? statusCode : undefined,
+    responseBody,
+  });
+  if (message !== undefined && readable === message) return message;
+  if (message === undefined && responseBody === undefined && typeof statusCode !== "number") {
+    return error.name;
+  }
+  return readable;
 }
 
 function terminalStatusForError(

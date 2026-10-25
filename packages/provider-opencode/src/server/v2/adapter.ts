@@ -57,6 +57,7 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as OpenCode2Client from "./OpenCode2Client.ts";
 import * as OpenCode2Server from "./OpenCode2Server.ts";
 import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
+import { readableProviderErrorMessage } from "../providerErrorMessage.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
@@ -1108,7 +1109,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           retryDelayMs: Math.max(0, Math.trunc(delayMs)),
         },
         failure: makeProviderFailure({
-          message: error.message,
+          message: readableProviderErrorMessage({
+            message: error.message,
+            statusCode: error.status,
+            responseBody: error.response?.body,
+          }),
           code: error.type,
           class: "provider_error",
           retryable: true,
@@ -2183,7 +2188,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         case "session.execution.interrupted":
           return yield* endExecution(state, turn, { status: "interrupted" });
         case "session.execution.failed": {
-          const { type, message, status } = event.data.error;
+          const { type, message, status, response } = event.data.error;
           // OpenCode types an empty balance as provider.quota too, but it answers
           // that with HTTP 402 and it never resets. Usage windows and budgets are 429.
           const usageLimit =
@@ -2191,7 +2196,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return yield* endExecution(state, turn, {
             status: "failed",
             failure: makeProviderFailure({
-              message,
+              message: readableProviderErrorMessage({
+                message,
+                statusCode: status,
+                responseBody: response?.body,
+              }),
               code: type,
               class: usageLimit ? "usage_limit" : "provider_error",
             }),
