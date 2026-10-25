@@ -629,7 +629,8 @@ resource attributes, such as `OTEL_RESOURCE_ATTRIBUTES=deployment.environment.na
 
 Each process reports its own build, not the one it talks to: the server, the desktop main process,
 the UI, and the mobile app each carry `t3code.release.channel` (`dev`, `stable`, `nightly`, or
-`preview`, from their own version; desktop PR builds count as `preview`) and
+`preview`, from their own version; desktop PR builds count as `preview`, and a server not built by a
+release workflow reports `dev`) and
 `deployment.environment.name` (`development`, `production`, or `staging` for `preview`). On the server and the desktop main process either key in
 `OTEL_RESOURCE_ATTRIBUTES` wins. The UI and mobile app never read that variable: Vercel PR previews
 set `VITE_RELEASE_CHANNEL=preview` because their `APP_VERSION` must stay comparable with the
