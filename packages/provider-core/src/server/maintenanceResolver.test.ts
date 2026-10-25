@@ -185,17 +185,41 @@ function miseSpawner(
   });
 }
 
-/** A mise binary on its own PATH dir and an install of `package-tool` 1.0.0 in its data dir. */
+/**
+ * A mise binary on its own PATH dir and an install of `package-tool` 1.0.0 in its data dir,
+ * with the `latest` link mise keeps pointing at the newest install.
+ */
 function miseFixture(
   tempDir: string,
-  options: { readonly misePresent?: boolean; readonly tool?: string } = {},
+  options: {
+    readonly misePresent?: boolean;
+    readonly tool?: string;
+    readonly dataDir?: string;
+  } = {},
 ) {
   const miseBinDir = NodePath.join(tempDir, "mise-bin");
   const misePath = NodePath.join(miseBinDir, "mise");
   if (options.misePresent !== false) writeExecutable(misePath);
-  const installPath = NodePath.join(tempDir, "mise", "installs", "package-tool", "1.0.0");
-  const binaryPath = NodePath.join(installPath, "bin", "package-tool");
-  writeExecutable(binaryPath);
+  const toolDir = NodePath.join(
+    options.dataDir ?? NodePath.join(tempDir, "mise"),
+    "installs",
+    "package-tool",
+  );
+  const latestDir = NodePath.join(toolDir, "latest");
+  let installPath = "";
+  let binaryPath = "";
+  /** Installs `version` and points `latest` at it, as `mise upgrade` does. */
+  const install = (version: string) => {
+    installPath = NodePath.join(toolDir, version);
+    binaryPath = NodePath.join(installPath, "bin", "package-tool");
+    writeExecutable(binaryPath);
+    if (symlinksSupported) {
+      NodeFS.rmSync(latestDir, { force: true });
+      NodeFS.symlinkSync(installPath, latestDir);
+    }
+    return binaryPath;
+  };
+  install("1.0.0");
   const installed = (
     install: { readonly requested_version?: string; readonly active?: boolean } = {},
   ) => ({
@@ -203,7 +227,16 @@ function miseFixture(
       { install_path: installPath, requested_version: "latest", active: true, ...install },
     ],
   });
-  return { miseBinDir, misePath, binaryPath, installed };
+  return {
+    miseBinDir,
+    misePath,
+    get binaryPath() {
+      return binaryPath;
+    },
+    latestBinaryPath: NodePath.join(latestDir, "bin", "package-tool"),
+    install,
+    installed,
+  };
 }
 
 /** A mise shim: a link named for the tool that points at mise itself. */
@@ -1191,17 +1224,21 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
   );
 
   it.effect.each([
-    { name: "an install", via: "install" },
+    { name: "its latest link", via: "latest" },
+    { name: "a latest link in a custom data dir", via: "latest", dataDir: "data" },
     { name: "a shim", via: "shim" },
   ])(
-    "upgrades the mapped mise tool for $name requested as latest",
+    "upgrades the mapped mise tool through $name requested as latest",
     (fixture) =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-mise-upgrade");
-        const mise = miseFixture(tempDir);
+        const mise = miseFixture(
+          tempDir,
+          fixture.dataDir ? { dataDir: NodePath.join(tempDir, fixture.dataDir) } : {},
+        );
         const binaryPath =
-          fixture.via === "install"
-            ? mise.binaryPath
+          fixture.via === "latest"
+            ? mise.latestBinaryPath
             : linkShim(tempDir, mise.misePath, "package-tool");
         const spawned: Array<ReadonlyArray<string>> = [];
 
@@ -1227,6 +1264,34 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     { skip: !symlinksSupported || windowsHost },
   );
 
+  it.effect.skipIf(!symlinksSupported || windowsHost)(
+    "launches the upgraded version through mise's latest link",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-mise-upgraded");
+        const mise = miseFixture(tempDir);
+        const resolve = () =>
+          resolveProviderMaintenanceCapabilitiesEffect(miseToolUpdate, {
+            binaryPath: mise.latestBinaryPath,
+            env: { PATH: mise.miseBinDir },
+          }).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              miseSpawner({ which: mise.binaryPath, installed: mise.installed() }, []),
+            ),
+          );
+        expect((yield* resolve()).update).toMatchObject({ args: ["upgrade", "package-tool"] });
+
+        const upgraded = mise.install("1.1.0");
+        NodeFS.rmSync(NodePath.join(tempDir, "mise", "installs", "package-tool", "1.0.0"), {
+          recursive: true,
+        });
+
+        expect(NodeFS.realpathSync(mise.latestBinaryPath)).toBe(NodeFS.realpathSync(upgraded));
+        expect((yield* resolve()).update).toMatchObject({ args: ["upgrade", "package-tool"] });
+      }),
+  );
+
   it.effect.each([
     { name: "a pinned version", installed: { requested_version: "1.0.0" } },
     { name: "an inactive install", installed: { active: false } },
@@ -1235,6 +1300,8 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     { name: "an install without mise on PATH", misePresent: false },
     { name: "a provider with no mise tool", definition: "unmapped" },
     { name: "a mise x wrapper", via: "wrapper" },
+    { name: "a fixed version path", via: "versioned" },
+    { name: "a version mise activate put on PATH", via: "activated" },
   ] as const)(
     "leaves $name manual-only",
     (fixture) =>
@@ -1244,8 +1311,14 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           misePresent: !("misePresent" in fixture),
           tool: "tool" in fixture ? fixture.tool : "package-tool",
         });
-        let binaryPath = mise.binaryPath;
-        if ("via" in fixture) {
+        let binaryPath = symlinksSupported ? mise.latestBinaryPath : mise.binaryPath;
+        let path = mise.miseBinDir;
+        if ("via" in fixture && fixture.via === "versioned") {
+          binaryPath = mise.binaryPath;
+        } else if ("via" in fixture && fixture.via === "activated") {
+          binaryPath = "package-tool";
+          path = [NodePath.dirname(mise.binaryPath), mise.miseBinDir].join(NodePath.delimiter);
+        } else if ("via" in fixture) {
           binaryPath = NodePath.join(tempDir, "bin", "package-tool");
           NodeFS.mkdirSync(NodePath.dirname(binaryPath), { recursive: true });
           NodeFS.writeFileSync(
@@ -1261,7 +1334,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           "definition" in fixture ? packageToolUpdate : miseToolUpdate,
-          { binaryPath, env: { PATH: mise.miseBinDir } },
+          { binaryPath, env: { PATH: path } },
         ).pipe(
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
@@ -1312,7 +1385,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       }),
   );
 
-  it.effect.skipIf(windowsHost)(
+  it.effect.skipIf(!symlinksSupported || windowsHost)(
     "asks mise for its latest release only while update checks are enabled",
     () =>
       Effect.gen(function* () {
@@ -1320,7 +1393,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         const mise = miseFixture(tempDir);
         const spawned: Array<ReadonlyArray<string>> = [];
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(miseToolUpdate, {
-          binaryPath: mise.binaryPath,
+          binaryPath: mise.latestBinaryPath,
           env: { PATH: mise.miseBinDir },
         }).pipe(
           Effect.provideService(
@@ -1360,6 +1433,45 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       ),
   );
 
+  it.effect.skipIf(!symlinksSupported || windowsHost)(
+    "keeps each mise environment's latest release apart",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-mise-latest-env");
+        const mise = miseFixture(tempDir);
+        const advise = (env: NodeJS.ProcessEnv, latest: string) =>
+          resolveProviderMaintenanceCapabilitiesEffect(miseToolUpdate, {
+            binaryPath: mise.latestBinaryPath,
+            env: { PATH: mise.miseBinDir, ...env },
+          }).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              miseSpawner({ which: mise.binaryPath, latest, installed: mise.installed() }, []),
+            ),
+            Effect.flatMap((capabilities) =>
+              enrichProviderSnapshotWithVersionAdvisory(
+                installedPackageToolProvider,
+                capabilities,
+                {
+                  enableProviderUpdateChecks: true,
+                },
+              ),
+            ),
+            Effect.map((snapshot) => snapshot.versionAdvisory?.latestVersion),
+          );
+
+        expect(yield* advise({ MISE_MINIMUM_RELEASE_AGE: "7d" }, "1.1.0")).toBe("1.1.0");
+        expect(yield* advise({}, "1.2.0")).toBe("1.2.0");
+        expect(yield* advise({ MISE_MINIMUM_RELEASE_AGE: "7d" }, "1.2.0")).toBe("1.1.0");
+      }).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("mise answers for its own installs")),
+        ),
+      ),
+  );
+
   it.effect.each([
     { name: "fails", latest: { exitCode: 1 } },
     { name: "prints nothing", latest: { stdout: "" } },
@@ -1371,7 +1483,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         const tempDir = yield* makeTempDir("t3-mise-latest-unknown");
         const mise = miseFixture(tempDir);
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(miseToolUpdate, {
-          binaryPath: mise.binaryPath,
+          binaryPath: mise.latestBinaryPath,
           env: { PATH: mise.miseBinDir },
         }).pipe(
           Effect.provideService(
@@ -1402,7 +1514,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           HttpClient.make(() => Effect.die("an offline mise must not fall back to npm")),
         ),
       ),
-    { skip: windowsHost },
+    { skip: !symlinksSupported || windowsHost },
   );
 
   it.effect.skipIf(!symlinksSupported)("updates Yarn global installs with yarn", () =>

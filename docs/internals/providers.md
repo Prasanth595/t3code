@@ -89,11 +89,14 @@ symlinks there. Volta is proven by its `volta-shim` link plus the package's imag
 nothing is proven, the provider's own updater (`claude update`, `codex update`, `opencode upgrade`,
 `pi update --self`, `grok update`) runs instead, because each one detects its installer itself;
 the runner's version check catches an updater that exits 0 without updating. Mise is checked
-first, since a `mise x` wrapper can sit at a native installer's path. Each driver names its fixed
-mise tool; mise must resolve the binary with `mise which` and list it in an active install of that
-tool requested as `latest`, which gets `mise upgrade <tool>`. Everything else mise touches (pinned
-tools, wrappers, OpenCode 1.x, whose mise tool crosses into 2.x) stays manual-only, so T3 Code never
-edits mise config. `mise latest` supplies the version, because settings such as
+first, since a `mise x` wrapper can sit at a native installer's path, and `MISE_DATA_DIR` can put
+installs anywhere, so `mise which` is asked whenever mise is on `PATH`. Each driver names its fixed
+mise tool; mise must resolve the binary and list it in an active install of that tool requested as
+`latest`, which gets `mise upgrade <tool>`. T3 Code keeps launching the configured path, so that
+path must be a shim or under the tool's `latest` link, which the upgrade repoints: a version
+directory (including one `mise activate` put on `PATH`) would keep running the old binary until mise
+prunes it. Everything else mise touches (fixed version paths, pinned tools, wrappers, OpenCode 1.x,
+whose mise tool crosses into 2.x) stays manual-only, so T3 Code never edits mise config. `mise latest` supplies the version, because settings such as
 `minimum_release_age` can hold mise behind npm. A Grok cask whose Homebrew prefix
 cannot be verified also stays manual-only: `grok update` would install a second copy. npm updates pin `--prefix` because the
 `npm` on `PATH` can belong to a different Node than the one that owns the provider. Homebrew
