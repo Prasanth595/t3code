@@ -52,11 +52,9 @@ const ENDED_RUN_ERRORS: Partial<Record<OrchestrationV2RunStatus, string>> = {
 const settled = (run: SettledRun | null) => (run === null ? [] : [run]);
 
 /**
- * Follows dispatched scheduled runs to their end. The dispatch stamps a message
- * id on the run's user message, the only handle available before the run
- * exists, so a run is found by it and then followed by run id. Kept in memory:
- * a restart ends every provider turn, and startup recovery records the rows it
- * leaves behind as interrupted.
+ * A run is found by the message id its dispatch stamps (the only handle before the run
+ * exists), then followed by run id. In memory only: a restart ends every provider turn,
+ * and startup recovery records the rows it leaves behind as interrupted.
  */
 export function makeTrackedRuns() {
   const runs = new Map<MessageId, TrackedRun>();
