@@ -4,23 +4,31 @@ import type { AssistantCitationRequest } from "./AssistantCitationSource";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 import type { RememberedTimelinePosition } from "./timelineScrollAnchoring";
 
+// A streaming reply moves the end every frame, so the target may never hold
+// still. Past this many frames the list's own end maintenance takes over.
+const SETTLE_MAX_FRAMES = 60;
+
 /**
  * Index and end scrolling start from estimated row sizes, so they can stop
  * short of a tall row. Corrects against the DOM until the viewport holds the
- * target for two layout frames; resolves false when the target disappears.
+ * target for two layout frames, or the frame budget runs out; resolves false
+ * when cancelled or the target disappears.
  */
 export function settleListScroll(
-  list: LegendListRef,
+  list: Pick<LegendListRef, "getScrollableNode" | "scrollToOffset">,
   target: (element: HTMLElement) => number | undefined,
   isCancelled: () => boolean,
 ): Promise<boolean> {
   return new Promise((resolve) => {
     let stableFrames = 0;
+    let frames = 0;
     const reconcile = () => {
       if (isCancelled()) return resolve(false);
       const element = list.getScrollableNode();
       const offset = element ? target(element) : undefined;
       if (!element || offset === undefined) return resolve(false);
+      frames += 1;
+      if (frames > SETTLE_MAX_FRAMES) return resolve(true);
       if (Math.abs(element.scrollTop - offset) > 1) {
         stableFrames = 0;
         void list.scrollToOffset({ offset, animated: false }).then(() => {
