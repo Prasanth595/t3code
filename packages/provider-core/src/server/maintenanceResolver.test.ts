@@ -733,7 +733,8 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-npm-latest");
         const npmBinDir = NodePath.join(tempDir, "npm-bin");
-        writeExecutable(NodePath.join(npmBinDir, "npm"));
+        const npmPath = NodePath.join(npmBinDir, "npm");
+        writeExecutable(npmPath);
         const link = linkIntoPackage(tempDir, "package-tool", [
           "lib",
           "node_modules",
@@ -750,8 +751,8 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
             stdoutSpawner(
-              (_command, args) => {
-                probes.push(args);
+              (command, args) => {
+                probes.push([command, ...args]);
                 return fixture.stdout;
               },
               () => fixture.exitCode,
@@ -772,9 +773,18 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
             HttpClient.make(() => Effect.die("the npm version is already cached")),
           ),
         );
-        // The update installs into this prefix, so the lookup reads the same global npmrc.
+        // The deferred lookup keeps the resolution-time PATH, and the update's prefix
+        // makes npm read the same global npmrc and ignore the server cwd's project npmrc.
         expect(probes).toEqual([
-          ["view", "--prefix", tempDir, "--json", "@example/package-tool@latest", "version"],
+          [
+            npmPath,
+            "view",
+            "--prefix",
+            tempDir,
+            "--json",
+            "@example/package-tool@latest",
+            "version",
+          ],
         ]);
         expect(provider.versionAdvisory).toMatchObject({
           status: "behind_latest",
