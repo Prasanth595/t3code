@@ -491,6 +491,20 @@ describe("orchestrator MCP toolkit", () => {
           expect(finalProjection.runs.find((run) => run.id === queuedFollowup.runId)?.status).toBe(
             "completed",
           );
+          for (const body of [delegatedPrompt, cancellationPrompt, queuedFollowupPrompt]) {
+            expect(finalProjection.messages.find((message) => message.text === body)).toMatchObject(
+              {
+                text: body,
+                createdBy: "agent",
+                senderThreadId: parentThreadId,
+              },
+            );
+          }
+          expect(
+            finalProjection.messages.some((message) =>
+              message.text.startsWith("Agent-authored message"),
+            ),
+          ).toBe(false);
           expect(
             finalProjection.turnItems.find(
               (item) =>

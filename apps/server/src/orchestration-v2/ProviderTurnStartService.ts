@@ -1031,8 +1031,10 @@ export const layer: Layer.Layer<
           text: message.text,
           records: message.context?.records ?? [],
         }),
+        attachments: message.attachments,
         createdBy: message.createdBy,
         senderThreadId: message.senderThreadId,
+        restartContinuation: run.restartContinuationOfRunId !== undefined,
         readSenderTitle: (senderThreadId) =>
           projectionStore.getThread(senderThreadId).pipe(Effect.map((thread) => thread.title)),
         readReceiverSubagents: () => Effect.succeed(projection.subagents),

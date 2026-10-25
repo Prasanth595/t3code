@@ -1,6 +1,7 @@
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
+import { codexGoalRoute, type CodexGoalCommand } from "./CodexGoalCommand.ts";
 import {
   mcpToolPresentation,
   type McpToolPresentation,
@@ -881,31 +882,7 @@ const isTerminalProviderTurn = (turn: OrchestrationV2ProviderTurn): boolean =>
     turn.status === "failed" ||
     turn.status === "cancelled");
 
-export type CodexGoalCommand =
-  | { readonly type: "show" }
-  | { readonly type: "clear" }
-  | { readonly type: "pause" }
-  | { readonly type: "resume" }
-  | { readonly type: "set"; readonly objective: string };
-
-function parseCodexGoalCommand(text: string): CodexGoalCommand | null {
-  const match = /^\/goal(?:\s+([\s\S]*))?$/u.exec(text.trim());
-  if (match === null) return null;
-  const argument = (match[1] ?? "").trim();
-  switch (argument.toLowerCase()) {
-    case "":
-    case "edit":
-      return { type: "show" };
-    case "clear":
-      return { type: "clear" };
-    case "pause":
-      return { type: "pause" };
-    case "resume":
-      return { type: "resume" };
-    default:
-      return { type: "set", objective: argument };
-  }
-}
+export type { CodexGoalCommand } from "./CodexGoalCommand.ts";
 
 type CodexThreadGoal = CodexSchema.V2ThreadGoalUpdatedNotification["goal"];
 
@@ -6754,11 +6731,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             ),
           ),
           startTurn: (turnInput) => {
-            const goalCommand =
-              turnInput.message.attachments.length === 0 &&
-              turnInput.restartContinuationOfRunId === undefined
-                ? parseCodexGoalCommand(turnInput.message.text)
-                : null;
+            const goalCommand = codexGoalRoute(
+              turnInput.message.text,
+              turnInput.message.attachments,
+              turnInput.restartContinuationOfRunId !== undefined,
+            );
             if (goalCommand !== null) return runGoalCommand(turnInput, goalCommand);
             return Effect.gen(function* () {
               yield* startNativeTurn(

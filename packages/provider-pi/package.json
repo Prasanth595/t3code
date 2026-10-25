@@ -15,6 +15,10 @@
       "types": "./src/server.ts",
       "import": "./src/server.ts"
     },
+    "./server/commands": {
+      "types": "./src/server/commands.ts",
+      "import": "./src/server/commands.ts"
+    },
     "./server/usage": {
       "types": "./src/server/usage.ts",
       "import": "./src/server/usage.ts"

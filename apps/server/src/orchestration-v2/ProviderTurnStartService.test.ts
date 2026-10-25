@@ -284,6 +284,7 @@ function makeLocalCommandHarness(input: {
   readonly subagents?: OrchestrationV2ThreadProjection["subagents"];
   readonly senderTitles?: Readonly<Record<string, string>>;
   readonly senderLookupFails?: boolean;
+  readonly handlePromptCommand?: boolean;
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
@@ -635,15 +636,17 @@ function makeLocalCommandHarness(input: {
       : Effect.void,
   );
   const tryHandlePromptCommand = vi.fn(() =>
-    input.logoutFailure === undefined
-      ? Effect.succeed(true)
-      : Effect.fail(
-          new ProviderSetupError({
-            instanceId: oldInstanceId,
-            operation: "logout",
-            detail: input.logoutFailure,
-          }),
-        ),
+    input.handlePromptCommand === false
+      ? Effect.succeed(false)
+      : input.logoutFailure === undefined
+        ? Effect.succeed(true)
+        : Effect.fail(
+            new ProviderSetupError({
+              instanceId: oldInstanceId,
+              operation: "logout",
+              detail: input.logoutFailure,
+            }),
+          ),
   );
   const writeIfRunCurrent = vi.fn(({ events: incoming, activeAttemptId, expectedStatus }) =>
     "writeFailure" in input
@@ -1345,5 +1348,29 @@ effectIt.effect.each([
 
     expect(harness.projection().messages.at(-1)?.text).toBe(agentSendBody);
     expect(harness.startRootRun.mock.calls[0]?.[0].message.text).toBe(input.expected);
+  }),
+);
+
+effectIt.effect.each([
+  { text: "/compact", label: "an agent /compact still compacts" },
+  { text: "/goal x", label: "an agent /goal x still routes" },
+])("assembles provider text so $label", ({ text }) =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text,
+      previousMessages: ["Earlier turn"],
+      previousTurn: settledPreviousTurn,
+      createdBy: "agent",
+      creationSource: "mcp",
+      senderThreadId: childThreadId,
+      senderTitles: { [childThreadId]: "Review the PR" },
+      handlePromptCommand: false,
+    });
+
+    yield* harness.start;
+
+    expect(harness.projection().messages.at(-1)?.text).toBe(text);
+    expect(harness.startRootRun.mock.calls[0]?.[0].message.text).toBe(text);
+    expect(harness.tryHandlePromptCommand).toHaveBeenCalled();
   }),
 );
