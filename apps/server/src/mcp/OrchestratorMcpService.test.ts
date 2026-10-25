@@ -326,7 +326,7 @@ describe("OrchestratorMcpService", () => {
       });
       const childProjection = () =>
         ({
-          thread: { id: childThreadId },
+          thread: { id: childThreadId, title: "Child task" },
           runs: [childRun()],
           contextTransfers: [],
           messages: [],
