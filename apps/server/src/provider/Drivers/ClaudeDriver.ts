@@ -177,6 +177,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     // Only a successful probe replaces these, so a failed one never sends turns back to slugs
     // the backend rejects.
     const claudeCodeModels = yield* Ref.make<ReadonlyArray<ClaudeCodeReportedModel>>([]);
+    const routedModelCatalog = Effect.zipWith(
+      modelCatalog,
+      Ref.get(claudeCodeModels),
+      withClaudeCodeModelRoutes,
+    );
     const orchestrationAdapter = yield* createClaudeAdapterV2(
       {
         instanceId,
@@ -188,7 +193,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       },
       {
         scopedLimitNames,
-        claudeCodeModels,
+        modelCatalog: routedModelCatalog,
         onUsageLimits: (update) => snapshot.applyUsageLimits(update),
       },
     ).pipe(
@@ -205,7 +210,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     const textGeneration = yield* makeClaudeTextGeneration(
       effectiveConfig,
       processEnv,
-      Effect.zipWith(modelCatalog, Ref.get(claudeCodeModels), withClaudeCodeModelRoutes),
+      routedModelCatalog,
     );
 
     // Per-instance capabilities cache: keyed on binary + resolved HOME so

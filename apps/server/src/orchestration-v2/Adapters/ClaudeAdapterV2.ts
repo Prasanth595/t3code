@@ -148,12 +148,10 @@ import {
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   resolveClaudeCatalogContextWindowTokens,
-  type ClaudeCodeReportedModel,
   type ClaudeModelCatalog,
   getClaudeCatalogModelCapabilities,
   resolveClaudeModelSlug,
   scopeClaudeModelCatalog,
-  withClaudeCodeModelRoutes,
 } from "../../provider/ClaudeModelCatalog.ts";
 import {
   boundProviderEventForLogging,
@@ -3915,8 +3913,11 @@ export interface ClaudeAdapterV2Options {
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
-  /** Claude Code's model list from the provider probe, so turns send ids it accepts. */
-  readonly claudeCodeModels?: Ref.Ref<ReadonlyArray<ClaudeCodeReportedModel>>;
+  /**
+   * The instance's model catalog with Claude Code's reported model ids, read per turn so turns
+   * send ids its backend accepts. Defaults to the bundled catalog.
+   */
+  readonly modelCatalog?: Effect.Effect<ClaudeModelCatalog>;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   readonly continuationRequests?: {
     readonly offer: (
@@ -9227,11 +9228,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : { allowedTools: queryPolicy.allowedTools }),
           });
           const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
-          const modelCatalog = adapterOptions.claudeCodeModels
-            ? withClaudeCodeModelRoutes(
-                BUNDLED_CLAUDE_MODEL_CATALOG,
-                yield* Ref.get(adapterOptions.claudeCodeModels),
-              )
+          const modelCatalog = adapterOptions.modelCatalog
+            ? yield* adapterOptions.modelCatalog
             : BUNDLED_CLAUDE_MODEL_CATALOG;
           const compiledSelection = compileClaudeModelSelection(
             turnInput.modelSelection,
@@ -10535,10 +10533,7 @@ export type ClaudeAdapterV2DriverEnv =
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
   function* (
     input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
-    hooks: Pick<
-      ClaudeAdapterV2Options,
-      "scopedLimitNames" | "claudeCodeModels" | "onUsageLimits"
-    > = {},
+    hooks: Pick<ClaudeAdapterV2Options, "scopedLimitNames" | "modelCatalog" | "onUsageLimits"> = {},
   ) {
     const { instanceId, environment, enabled, config } = input;
     const fileSystem = yield* FileSystem.FileSystem;

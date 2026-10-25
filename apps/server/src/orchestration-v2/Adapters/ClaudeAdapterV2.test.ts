@@ -86,7 +86,13 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
-import type { ClaudeCodeReportedModel } from "../../provider/ClaudeModelCatalog.ts";
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  type ClaudeModelCatalog,
+  resolveClaudeModelCatalog,
+  withClaudeCodeModelRoutes,
+} from "../../provider/ClaudeModelCatalog.ts";
+import { resolveProviderCatalog } from "../../provider/ModelManifest.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -2156,7 +2162,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly freshQueueOnReopen?: boolean;
     readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
     readonly allocateSessionId?: Effect.Effect<string>;
-    readonly claudeCodeModels?: Ref.Ref<ReadonlyArray<ClaudeCodeReportedModel>>;
+    readonly modelCatalog?: Effect.Effect<ClaudeModelCatalog>;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2215,7 +2221,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         path: yield* Path.Path,
         crypto: yield* Crypto.Crypto,
         idAllocator,
-        ...(options?.claudeCodeModels ? { claudeCodeModels: options.claudeCodeModels } : {}),
+        ...(options?.modelCatalog ? { modelCatalog: options.modelCatalog } : {}),
         continuationRequests: {
           offer: (request) =>
             Effect.sync(() => {
@@ -3244,8 +3250,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   it.effect("sends the model id Claude Code reported for the selected catalog model", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const claudeCodeModels = yield* Ref.make<ReadonlyArray<ClaudeCodeReportedModel>>([]);
-        const harness = yield* makeWakeHarnessWithOptions({ claudeCodeModels });
+        const modelCatalog = yield* Ref.make(BUNDLED_CLAUDE_MODEL_CATALOG);
+        const harness = yield* makeWakeHarnessWithOptions({ modelCatalog: Ref.get(modelCatalog) });
         const now = yield* DateTime.now;
         const turn = (ordinal: number, model: string) =>
           makeClaudeTestTurnInput({
@@ -3258,20 +3264,41 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             providerTurnOrdinal: ordinal,
             modelSelection: { instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID, model },
           });
-        // Bedrock with ANTHROPIC_DEFAULT_*_MODEL set, as Claude Code 2.1.310 reports it.
-        yield* Ref.set(claudeCodeModels, [
-          { value: "default", resolvedModel: "global.anthropic.claude-opus-5-5" },
-          { value: "sonnet", resolvedModel: "global.anthropic.claude-sonnet-5-5[1m]" },
-          { value: "opus", resolvedModel: "global.anthropic.claude-opus-5-5" },
-          { value: "haiku", resolvedModel: "global.anthropic.claude-haiku-5-5" },
-        ]);
+        // Models the live manifest delivers after a release, so the bundled catalog lacks them.
+        const manifestCatalog = resolveClaudeModelCatalog(
+          resolveProviderCatalog(
+            {
+              version: 1,
+              currentModels: {},
+              providers: {
+                claudeAgent: {
+                  profiles: {},
+                  models: [
+                    { slug: "claude-haiku-6", name: "Claude Haiku 6", status: "current" },
+                    { slug: "claude-sonnet-6", name: "Claude Sonnet 6", status: "current" },
+                  ],
+                },
+              },
+            },
+            ProviderDriverKind.make("claudeAgent"),
+          ) ?? undefined,
+        );
+        // The probe reports Bedrock with ANTHROPIC_DEFAULT_*_MODEL set after the adapter starts.
+        yield* Ref.set(
+          modelCatalog,
+          withClaudeCodeModelRoutes(manifestCatalog, [
+            { value: "default", resolvedModel: "global.anthropic.claude-sonnet-6" },
+            { value: "sonnet", resolvedModel: "global.anthropic.claude-sonnet-6" },
+            { value: "haiku", resolvedModel: "global.anthropic.claude-haiku-6" },
+          ]),
+        );
 
-        yield* harness.runtime.startTurn(turn(1, "claude-haiku-5-5"));
+        yield* harness.runtime.startTurn(turn(1, "claude-haiku-6"));
         assert.equal(harness.getOpenedOptions()?.model, "haiku");
         yield* harness.offerAndWait(turnOneResult);
         yield* Queue.take(harness.terminalReceipts);
 
-        yield* harness.runtime.startTurn(turn(2, "claude-sonnet-5-5"));
+        yield* harness.runtime.startTurn(turn(2, "claude-sonnet-6"));
         assert.deepEqual(harness.liveSelectionChanges[0], { model: "sonnet" });
       }).pipe(
         Effect.provide(
