@@ -172,22 +172,34 @@ export const make = Effect.gen(function* () {
         yield* Effect.logInfo("Agent scopes are off: no systemd user manager");
         return undefined;
       }
-      const limits = agentSliceMemoryLimits(NodeOS.totalmem());
-      const limited = yield* run(systemctl, [
-        "--user",
-        "set-property",
-        "--runtime",
-        AGENT_SLICE,
-        `MemoryHigh=${limits.high}`,
-        `MemoryMax=${limits.max}`,
-      ]);
-      if (limited._tag === "None" || limited.value.code !== 0) {
-        yield* Effect.logWarning("Could not set memory limits on the agents slice", {
-          stderr: limited._tag === "Some" ? limited.value.stderr.trim() : undefined,
-        });
+      const memoryPolicy = hostEnvironment.T3CODE_AGENT_SLICE_MEMORY_POLICY;
+      if (
+        memoryPolicy !== undefined &&
+        memoryPolicy !== "automatic" &&
+        memoryPolicy !== "host-managed"
+      ) {
+        yield* Effect.logWarning("Unknown agent slice memory policy; using automatic limits");
+      }
+      const limits =
+        memoryPolicy === "host-managed" ? undefined : agentSliceMemoryLimits(NodeOS.totalmem());
+      if (limits !== undefined) {
+        const limited = yield* run(systemctl, [
+          "--user",
+          "set-property",
+          "--runtime",
+          AGENT_SLICE,
+          `MemoryHigh=${limits.high}`,
+          `MemoryMax=${limits.max}`,
+        ]);
+        if (limited._tag === "None" || limited.value.code !== 0) {
+          yield* Effect.logWarning("Could not set memory limits on the agents slice", {
+            stderr: limited._tag === "Some" ? limited.value.stderr.trim() : undefined,
+          });
+        }
       }
       yield* Effect.logInfo("Agent scopes are on", {
         slice: AGENT_SLICE,
+        memoryPolicy: limits === undefined ? "host-managed" : "automatic",
         ...limits,
         oomPolicy: supportsOomPolicy,
       });
