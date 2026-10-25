@@ -1105,6 +1105,110 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  // regression: #22331 a steer sent while a foreground subagent ran was never answered
+  it.effect("moves a foreground subagent to the background so the parent answers a steer", () =>
+    Effect.gen(function* () {
+      const call = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-fg" };
+      const steerId = "msg_recorded_steer";
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.tool.input.started", { ...call, name: "subagent" }),
+        event("session.tool.called", {
+          ...call,
+          name: "subagent",
+          input: { description: "Sleep", prompt: "sleep" },
+          executed: false,
+        }),
+        event("session.created", childCreated(CHILD)),
+        event("session.tool.progress", {
+          ...call,
+          metadata: { sessionID: CHILD, status: "running" },
+        }),
+        event("session.execution.started", { sessionID: CHILD }),
+        out("session.prompt", {
+          sessionID: SESSION,
+          id: steerId,
+          text: "<any>",
+          delivery: "steer",
+        }),
+        replyData("session.prompt", {
+          id: steerId,
+          sessionID: SESSION,
+          time: { created: 1790656601500 },
+          type: "user",
+          payload: { text: "Also say STEERED." },
+          delivery: "steer",
+        }),
+        out("session.background", { sessionID: SESSION }),
+        reply("session.background", null),
+        // Event order follows an OpenCode 2.1.4 capture, with shortened ids and texts.
+        returnedRunning(call.id),
+        event("session.inbox.enqueued", {
+          inboxID: "msg_backgrounded",
+          sessionID: SESSION,
+          item: {
+            type: "synthetic",
+            payload: {
+              text: "User requested that active blocking work be moved to the background.",
+            },
+            delivery: "steer",
+          },
+        }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: steerId }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_backgrounded" }),
+        event("session.text.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_assistant_answer",
+          ordinal: 0,
+          text: "STEERED",
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const attached = yield* Deferred.make<void>();
+      const answered = yield* Deferred.make<void>();
+      const ended = yield* Deferred.make<string>();
+      const sleep: Array<string> = [];
+      yield* runtime.events.pipe(
+        Stream.tap((event) => {
+          if (event.type === "subagent.updated" && event.subagent.title === "Sleep") {
+            sleep.push(event.subagent.status);
+            if (event.subagent.childThreadId !== null) return Deferred.succeed(attached, undefined);
+          }
+          if (
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text === "STEERED"
+          ) {
+            return Deferred.succeed(answered, undefined);
+          }
+          if (event.type === "turn.terminal") return Deferred.succeed(ended, event.status);
+          return Effect.void;
+        }),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      yield* Deferred.await(attached);
+      yield* runtime.steerTurn({
+        threadId,
+        runId: RunId.make("run:opencode2-adapter"),
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        message: {
+          ...turnInput(thread).message,
+          messageId: MessageId.make("message:opencode2-adapter:steer"),
+          text: "Also say STEERED.",
+        },
+      });
+      assert.equal(yield* Deferred.await(ended), "completed");
+      yield* Deferred.await(answered);
+      assert.equal(sleep.at(-1), "running");
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped),
+  );
+
   const MIDDLE = "ses_middle0000000000000000000";
   const DEEP = "ses_grandchild00000000000000";
   const toolOf = (session: string, id: string) => ({

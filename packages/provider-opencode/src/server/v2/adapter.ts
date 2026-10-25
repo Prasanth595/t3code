@@ -3684,6 +3684,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 ),
               ),
             );
+          // A foreground subagent holds the steer until it returns; backgrounding it lets the parent answer now.
+          const blocked = [...state.calls.values()].some(
+            (call) => call.turn === turn && !call.background && call.status === "running",
+          );
+          if (blocked && turn.steers.has(inboxID)) {
+            yield* client.session
+              .background({ sessionID: Session.ID.make(sessionId) })
+              .pipe(Effect.ignore({ log: true }));
+          }
         },
         (effect, steerInput) =>
           effect.pipe(
