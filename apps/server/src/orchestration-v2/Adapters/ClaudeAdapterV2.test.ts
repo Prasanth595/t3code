@@ -6976,6 +6976,79 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("keeps awaited background task marks when /clear adopts a new session", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-clear-awaited-task"),
+            text: "Wait for the background task.",
+            attachments: [],
+          }),
+        );
+        const nextThread = Effect.fn("nextAwaitedThread")(function* (
+          nativeId: string,
+          awaited?: boolean,
+        ) {
+          while (true) {
+            const { providerThread } = yield* Queue.take(harness.providerThreadReceipts);
+            const task = providerThread.pendingBackgroundTasks?.find(
+              (task) => task.taskId === WAKE_TASK_ID,
+            );
+            if (
+              providerThread.nativeThreadRef?.nativeId === nativeId &&
+              task !== undefined &&
+              (awaited === undefined || task.awaited === awaited)
+            )
+              return providerThread;
+          }
+        });
+        const roster = (sessionId: string, uuid: string) =>
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [{ task_id: WAKE_TASK_ID, task_type: "local_bash", description: "test task" }],
+            session_id: sessionId,
+            uuid,
+          });
+        yield* harness.offerAndWait(
+          roster(WAKE_NATIVE_SESSION, "00000000-0000-4000-8000-000000000610"),
+        );
+        yield* nextThread(WAKE_NATIVE_SESSION);
+        yield* harness.runtime.awaitBackgroundTasks!({
+          providerThread: harness.providerThread,
+          taskIds: [WAKE_TASK_ID],
+          awaited: true,
+        });
+        yield* nextThread(WAKE_NATIVE_SESSION, true);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            session_id: "cleared-awaited-session",
+            uuid: "00000000-0000-4000-8000-000000000611",
+          }),
+        );
+        yield* nextThread("cleared-awaited-session");
+        yield* harness.offerAndWait(
+          roster("cleared-awaited-session", "00000000-0000-4000-8000-000000000612"),
+        );
+        const updated = yield* nextThread("cleared-awaited-session");
+        assert.isTrue(
+          updated.pendingBackgroundTasks?.find((task) => task.taskId === WAKE_TASK_ID)?.awaited,
+        );
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect("holds only the background tasks the agent marks awaited, until they end", () =>
     Effect.scoped(
       Effect.gen(function* () {

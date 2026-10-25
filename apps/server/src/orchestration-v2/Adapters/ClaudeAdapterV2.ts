@@ -4513,6 +4513,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // /clear replaces the transcript, not the live process and its background routing.
           yield* Ref.update(lastTurnRouteByNativeThread, rekey);
           yield* Ref.update(pendingBackgroundTasksByNativeThread, rekey);
+          yield* Ref.update(awaitedBackgroundTasksByNativeThread, rekey);
           yield* Ref.update(wakeEligibleBackgroundTasksByNativeThread, rekey);
           yield* Ref.update(opaqueBackgroundTaskReplayTombstonesByNativeThread, rekey);
           // Claude keys its task store by session unless CLAUDE_CODE_TASK_LIST_ID is set, so
