@@ -11,6 +11,7 @@ import { runDoctor } from "./doctor.ts";
 import { DatabaseMaintenance } from "../persistence/DatabaseMaintenance.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { acquireServerOwnership } from "../serverOwnership.ts";
+import { makePersistedServerRuntimeState } from "../serverRuntimeState.ts";
 
 // An empty home, so no boot service unit installed on this machine is read.
 const layerHost = Layer.mergeAll(
@@ -25,7 +26,7 @@ const layerHost = Layer.mergeAll(
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 it.effect(
-  "--fix reclaims space with the service paused and the home locked, keeps the V1 database, and --dry-run changes nothing",
+  "--fix locks the home while the service is paused, names a server that holds it, keeps the V1 database, and --dry-run changes nothing",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -95,10 +96,20 @@ it.effect(
       ]);
 
       calls.length = 0;
+      const state = yield* makePersistedServerRuntimeState({
+        config: { host: undefined, devUrl: undefined },
+        port: 3773,
+      });
       const refused = yield* Effect.scoped(
-        acquireServerOwnership(serverRuntimeStatePath).pipe(Effect.andThen(doctor(false))),
+        acquireServerOwnership(serverRuntimeStatePath).pipe(
+          Effect.tap((owner) => owner.publish(state)),
+          Effect.andThen(doctor(false)),
+        ),
       ).pipe(Effect.flip);
-      assert.equal(refused._tag, "DatabaseInUseError");
+      assert.equal(
+        refused.message,
+        `Stop T3 Code server process ${state.pid}, which the background service did not start, before repairing the database.`,
+      );
       assert.deepEqual(calls, ["pause", "resume"]);
     }).pipe(Effect.provide(layerHost)),
 );
