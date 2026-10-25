@@ -3,7 +3,6 @@ import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { resolveScratchProjectScopeKey } from "@t3tools/client-runtime/state/project-grouping";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import { computeThreadMoveAvailability } from "./threadOrder";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -41,6 +40,7 @@ import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
+import { useThreadListV2 } from "./useThreadListV2";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { requestThreadMessageJump } from "./threadMessageJump";
 import { useThreadListSearchMatches } from "./useThreadListSearchMatches";
@@ -72,12 +72,8 @@ import {
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
 import type { ThreadPrPresentation } from "../../state/thread-pr-presentation";
 import {
-  buildThreadListV2Items,
-  getThreadListV2OrderedSection,
-  buildThreadListV2ListItems,
   isThreadListV2ListItem,
   threadListV2ListItemsAreEqual,
-  threadListInboxReturns,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   type ThreadListV2ListItem,
@@ -190,7 +186,6 @@ function ThreadNavigationSidebarPane(
   // This map reaches LegendList's extraData, which re-renders every row whenever it changes
   // identity; the hook keeps it stable.
   const threadSearchMatchByKey = useThreadListSearchMatches(threads, threadSearch);
-  const matchedThreadKeys = new Set(threadSearchMatchByKey.keys());
   const projectScopeKey = options.selectedProjectKey;
   const resolvedProjectKey = resolveScratchProjectScopeKey(projectScopeKey, projects, {
     sidebarProjectGroupingMode: options.projectGroupingMode,
@@ -232,14 +227,6 @@ function ThreadNavigationSidebarPane(
   const selectedProjectScope =
     projectScopes.find((scope) => scope.key === resolvedProjectKey) ?? null;
   const selectedProjectKey = selectedProjectScope?.key ?? null;
-  const selectedProjectRefs =
-    selectedProjectScope === null
-      ? null
-      : new Set(
-          selectedProjectScope.projectRefs.map((projectRef) =>
-            scopedProjectKey(projectRef.environmentId, projectRef.projectId),
-          ),
-        );
   const projectByKey = useMemo(() => {
     const map = new Map<string, EnvironmentProject>();
     for (const project of projects) {
@@ -292,52 +279,32 @@ function ThreadNavigationSidebarPane(
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
   const pendingOrder = usePendingThreadOrder(nowMinute, snoozeWakeTick);
-  // Compute move availability once per section to avoid quadratic planner work on each minute tick.
-  const threadMoveAvailability = (() => {
-    const sectionAvailability = (section: "pinned" | "active") =>
-      computeThreadMoveAvailability({
-        allThreads: threads,
-        section,
-        pendingOrder,
-        reorderableEnvironmentIds:
-          section === "pinned" ? pinReorderEnvironmentIds : activeReorderEnvironmentIds,
-        ordered: getThreadListV2OrderedSection({
-          threads,
-          section,
-          pendingOrder,
-          now,
-          settlementEnvironmentIds,
-          snoozeEnvironmentIds,
-          queuedThreadKeys,
-        }),
-      });
-    return new Map([
-      ...sectionAvailability("pinned"),
-      ...(workingShelfEnabled ? [] : sectionAvailability("active")),
-    ]);
-  })();
-  const threadListV2Layout = (() => {
-    threadListInboxReturns.observe(workingShelfEnabled ? threads : null);
-    return buildThreadListV2Items({
-      pendingOrder,
-      threads: threads.filter((thread) => thread.archivedAt === null),
-      environmentId: options.selectedEnvironmentId,
-      projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
-      searchQuery: props.searchQuery,
-      matchedThreadKeys,
-      settlementEnvironmentIds,
-      snoozeEnvironmentIds,
-      queuedThreadKeys,
-      settledLimit: settledVisibleCount,
-      now,
-      workingShelfEnabled,
-      workingShelfExpanded,
-      inboxReturnAt: threadListInboxReturns.returnedAt,
-      snoozedShelfExpanded,
-      settledShelfExpanded,
-      selectedThreadKey: props.selectedThreadKey ?? null,
-    });
-  })();
+  const {
+    layout: threadListV2Layout,
+    items: threadListV2Items,
+    contentOnlyThreadKeys,
+  } = useThreadListV2({
+    threads,
+    pendingTasks,
+    environmentId: options.selectedEnvironmentId,
+    projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
+    searchQuery: props.searchQuery,
+    searchMatches: threadSearchMatchByKey,
+    settlementEnvironmentIds,
+    snoozeEnvironmentIds,
+    pinReorderEnvironmentIds,
+    activeReorderEnvironmentIds,
+    queuedThreadKeys,
+    settledLimit: settledVisibleCount,
+    now,
+    pendingOrder,
+    shelfPreferencesLoaded,
+    workingShelfEnabled,
+    workingShelfExpanded,
+    snoozedShelfExpanded,
+    settledShelfExpanded,
+    selectedThreadKey: props.selectedThreadKey ?? null,
+  });
   const nextSnoozeWakeAt = threadListV2Layout.nextSnoozeWakeAt;
   useEffect(() => {
     if (nextSnoozeWakeAt === null) return;
@@ -351,46 +318,17 @@ function ThreadNavigationSidebarPane(
     return () => clearTimeout(id);
     // snoozeWakeTick re-arms clamped timers even when the wake date exceeds 32-bit setTimeout and stays unchanged.
   }, [nextSnoozeWakeAt, snoozeWakeTick]);
-  const listItems = ((): readonly SidebarListItem[] => {
-    const v2SearchQuery = props.searchQuery.trim().toLocaleLowerCase();
-    const v2PendingTasks = pendingTasks.filter(
-      (pendingTask) =>
-        (options.selectedEnvironmentId === null ||
-          pendingTask.environmentId === options.selectedEnvironmentId) &&
-        (selectedProjectRefs === null ||
-          selectedProjectRefs.has(
-            scopedProjectKey(pendingTask.environmentId, pendingTask.projectId),
-          )) &&
-        (v2SearchQuery.length === 0 ||
-          pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
-    );
-    const items: SidebarListItem[] = buildThreadListV2ListItems({
-      items: threadListV2Layout.items,
-      pendingTasks: v2PendingTasks,
-      workingCount: threadListV2Layout.workingCount,
-      workingShelfExpanded,
-      workingShelfHeaderIndex: threadListV2Layout.workingShelfHeaderIndex,
-      snoozedCount: threadListV2Layout.snoozedCount,
-      snoozedShelfExpanded,
-      snoozedShelfHeaderIndex: threadListV2Layout.snoozedShelfHeaderIndex,
-      settledCount: threadListV2Layout.settledCount,
-      settledShelfExpanded,
-      settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
-      snoozeLabelNow: `${nowMinute}:00.000Z`,
-      snoozeEnvironmentIds,
-      queuedThreadKeys,
-      moveAvailability: threadMoveAvailability,
-      shelfPreferencesLoading: !shelfPreferencesLoaded,
-    });
-    if (settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0) {
-      items.push({
-        type: "v2-show-more",
-        key: "v2-show-more",
-        hiddenCount: threadListV2Layout.hiddenSettledCount,
-      });
-    }
-    return items;
-  })();
+  const listItems: readonly SidebarListItem[] =
+    settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0
+      ? [
+          ...threadListV2Items,
+          {
+            type: "v2-show-more",
+            key: "v2-show-more",
+            hiddenCount: threadListV2Layout.hiddenSettledCount,
+          },
+        ]
+      : threadListV2Items;
   const listMenuActions = [
     {
       id: "environment",
@@ -493,7 +431,7 @@ function ThreadNavigationSidebarPane(
   // tap or by shortcut.
   const handleSelectThread = (thread: EnvironmentThreadShell) => {
     const key = threadSearchMatchKey({ environmentId: thread.environmentId, threadId: thread.id });
-    const messageId = threadListV2Layout.contentOnlyThreadKeys.has(key)
+    const messageId = contentOnlyThreadKeys.has(key)
       ? threadSearchMatchByKey.get(key)?.messageId
       : undefined;
     if (messageId) {
@@ -620,7 +558,7 @@ function ThreadNavigationSidebarPane(
             environmentMachine={machineByEnvironmentId.get(thread.environmentId)}
             searchMatch={
               // Only rows listed for their messages show one and open at it.
-              threadListV2Layout.contentOnlyThreadKeys.has(
+              contentOnlyThreadKeys.has(
                 threadSearchMatchKey({ environmentId: thread.environmentId, threadId: thread.id }),
               )
                 ? threadSearchMatchByKey.get(
