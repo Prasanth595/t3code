@@ -381,7 +381,9 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
     messageText: string,
     expectedStatus = "completed",
     reopen = false,
+    interactionMode: "default" | "plan" = "default",
   ) {
+    const turnRuntimePolicy = { ...runtimePolicy, interactionMode };
     if (reopen) {
       const nativeSessionId = providerThread.nativeThreadRef?.nativeId;
       if (nativeSessionId == null) return yield* Effect.die("Expected a persisted native session");
@@ -390,7 +392,7 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
       providerThread = yield* session.runtime.resumeThread({
         providerThread,
         modelSelection,
-        runtimePolicy,
+        runtimePolicy: turnRuntimePolicy,
       });
     }
     const { runtime } = session;
@@ -399,7 +401,7 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
         threadId,
         providerThread,
         instanceId,
-        runtimePolicy,
+        runtimePolicy: turnRuntimePolicy,
         now,
         ordinal: ++ordinal,
         messageText,
@@ -1045,6 +1047,25 @@ describe("AcpAdapterV2", () => {
         "Build should restore the native mode that T3 temporarily replaced for Plan",
       );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live.each([false, true])(
+    "invalidates old instructions after a failed mode change (reopen: %s)",
+    (reopen) =>
+      Effect.gen(function* () {
+        const runTurn = yield* makeInstructionCompactionHarness({
+          T3_ACP_FAIL_PROMPT_ORDINAL: "2",
+        });
+        assert.include(
+          (yield* runTurn("Plan first.", "completed", false, "plan"))[0]?.text ?? "",
+          "T3 Code interaction mode: Plan",
+        );
+        yield* runTurn("Implement now.", "failed");
+        assert.include(
+          (yield* runTurn("Plan again.", "completed", reopen, "plan"))[0]?.text ?? "",
+          "T3 Code interaction mode: Plan",
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.live("records instructions before ACP work-state completion ends the run", () =>

@@ -7559,6 +7559,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return;
             }
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
+            if (promptParts?.instructionState !== undefined) {
+              yield* recordInstructions(context, null);
+              yield* Ref.update(promptInstructionStates, (current) => {
+                const updated = new Map(current);
+                updated.delete(requestedSessionId);
+                return updated;
+              });
+            }
             yield* runtime.prompt({ prompt: promptParts!.prompt }).pipe(
               Effect.tap(() =>
                 Ref.update(promptInstructionStates, (current) => {
