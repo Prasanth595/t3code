@@ -201,6 +201,31 @@ describe("threadHistoryPaging", () => {
     );
   });
 
+  it("honors a stricter maxTurnItems on human-turn windows", () => {
+    const items = Array.from({ length: 60 }, (_, index) => makeRow(index));
+    items[0] = {
+      ...items[0]!,
+      item: {
+        ...items[0]!.item,
+        type: "user_message",
+        createdBy: "user",
+        creationSource: "web",
+        inputIntent: "turn_start",
+        messageId: MessageId.make("stricter-turn-limit"),
+        text: "Continue",
+        attachments: [],
+      },
+    } as OrchestrationV2ProjectedTurnItem;
+
+    const recent = selectRecentTimelineWindow({
+      items,
+      snapshotSequence: 1,
+      policy: { ...THREAD_HISTORY_PAGE_POLICY, maxItems: 100, maxTurnItems: 20 },
+    });
+
+    expect(recent.items).toHaveLength(20);
+  });
+
   it("keeps background turns with user turns, with main's 150-turn fan-out ceiling", () => {
     const items = Array.from({ length: 161 }, (_, turn) => {
       const row = makeRow(turn * 2);
@@ -271,7 +296,12 @@ describe("threadHistoryPaging", () => {
       inRun(run * 4 + 2, run, notification(`Steer ${run}`)),
       inRun(run * 4 + 3, run),
     ]).flat();
-    const policy = { ...THREAD_HISTORY_PAGE_POLICY, maxItems: 1_000, maxEncodedBytes: 10_000_000 };
+    const policy = {
+      ...THREAD_HISTORY_PAGE_POLICY,
+      maxItems: 1_000,
+      maxTurnItems: 1_000,
+      maxEncodedBytes: 10_000_000,
+    };
     const first = selectRecentTimelineWindow({ items, snapshotSequence: 1, policy });
     expect(first.items).toHaveLength(150 * 4 - 1);
     expect(first.items[0]?.sourceItemId).toBe(`item-${11 * 4 + 1}`);

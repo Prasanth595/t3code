@@ -218,12 +218,16 @@ function selectOlderTimelinePage<Row extends HistoryRow>(input: {
   const turnLimit = candidates.some((row) => isThreadHistoryUserTurn(row.item))
     ? policy.maxUserTurns
     : undefined;
+  const maxItems =
+    turnLimit === undefined
+      ? policy.maxItems
+      : Math.min(policy.maxItems, policy.maxTurnItems ?? policy.maxItems);
   for (let index = end - 1; index >= 0; index -= 1) {
     const row = input.items[index]!;
     const rowBytes = rowCost(row);
     if (
       selected.length > 0 &&
-      (selected.length >= policy.maxItems ||
+      (selected.length >= maxItems ||
         encodedBytes + rowBytes > policy.maxEncodedBytes ||
         (turnLimit !== undefined &&
           (userTurns >= turnLimit || rawTurns >= THREAD_HISTORY_MAX_RAW_TURNS)))
@@ -238,7 +242,7 @@ function selectOlderTimelinePage<Row extends HistoryRow>(input: {
   // Inside a turn longer than the window, no selected row starts a user turn.
   // Later pages and the snapshot query see only such rows and use `maxItems`,
   // so this page uses it too.
-  if (userTurns === 0) selected.splice(policy.maxItems);
+  if (userTurns === 0) selected.splice(maxItems);
   selected.reverse();
 
   const oldest = selected[0];
