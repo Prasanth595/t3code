@@ -1751,6 +1751,7 @@ function isSilentRunForShell(
   projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems">,
 ): boolean {
   return (
+    run.status !== "failed" &&
     projection.messages.some(
       (message) => message.id === run.userMessageId && idleCompactionOf(message) !== undefined,
     ) &&
@@ -5769,7 +5770,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const isSilentShellRun = (alias: string) => {
       const run = sql.literal(alias);
       return sql`(
-        EXISTS (
+        ${run}.status <> 'failed'
+        AND EXISTS (
           SELECT 1 FROM orchestration_v2_projection_messages prompt
           WHERE prompt.message_id = json_extract(${run}.payload_json, '$.userMessageId')
             AND ${isIdleCompactionMessage("prompt")}

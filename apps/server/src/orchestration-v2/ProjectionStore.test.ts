@@ -3310,6 +3310,23 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           silent ? hidden : visible,
         ]);
 
+        // A run that fails outright, e.g. on a provider error, needs the user too.
+        const running = (yield* projectionStore.getThreadProjection(threadId)).runs[0]!;
+        const setRunStatus = (status: "failed" | "running") =>
+          projectionStore.apply({
+            id: EventId.make(`event:projection-shell-silent:${key}:run-${status}`),
+            type: "run.updated",
+            threadId,
+            occurredAt: now,
+            payload: { ...running, status, completedAt: status === "failed" ? now : null },
+          });
+        yield* setRunStatus("failed");
+        assert.deepStrictEqual(
+          (yield* presented).map((shell) => shell.latestRunId),
+          [runId, runId],
+        );
+        yield* setRunStatus("running");
+
         // Claude can finish the run successfully even when its /compact failed.
         yield* projectionStore.apply({
           id: EventId.make(`event:projection-shell-silent:${key}:failure`),
