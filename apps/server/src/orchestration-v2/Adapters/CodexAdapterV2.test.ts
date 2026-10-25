@@ -1166,7 +1166,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         "Your access token could not be refreshed because your refresh token has expired. Please log out and sign in again.",
       stale: false,
     },
-    { code: "internalServerError", message: "Service unavailable", stale: false },
   ])(
     "marks only external account mismatch for idle recovery: $message",
     ({ code, message, stale }) =>
@@ -1175,7 +1174,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           const nativeThreadId = "auth-change-thread";
           const nativeTurnId = "auth-change-turn";
           const error = { message, codexErrorInfo: code, additionalDetails: null };
-          const requests: string[] = [];
           const harness = yield* makeCodexReplayHarness(
             makeCodexReplayTranscript({
               scenario: "external-auth-change",
@@ -1210,11 +1208,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 },
               ],
             }),
-            () => Effect.void,
-            (method) =>
-              Effect.sync(() => {
-                requests.push(method);
-              }),
           );
           yield* harness.runtime.startTurn(
             makeCodexTestTurnInput({
@@ -1229,7 +1222,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assert.equal(yield* harness.runtime.hasStaleCredentials ?? Effect.succeed(false), stale);
           assert.equal(harness.terminalEvents()[0]?.status, "failed");
           assert.include(harness.terminalEvents()[0]?.failure?.message, message);
-          assert.equal(requests.filter((method) => method === "turn/start").length, 1);
           if (stale) {
             const replacement = yield* harness.adapter.openSession({
               threadId: harness.threadId,

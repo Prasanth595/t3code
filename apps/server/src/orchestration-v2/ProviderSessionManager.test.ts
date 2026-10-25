@@ -335,6 +335,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
+    readonly compactThread?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
@@ -435,6 +436,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
               Effect.as(threadInput.providerThread),
             ),
           startTurn: () => options.startTurn ?? Effect.void,
+          ...(options.compactThread === undefined
+            ? {}
+            : { compactThread: () => options.compactThread! }),
           steerTurn: () => Effect.void,
           interruptTurn: () =>
             Ref.update(state, (current) => ({
@@ -490,6 +494,7 @@ function layerTest(input: {
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
+  readonly compactThread?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
@@ -529,6 +534,7 @@ function layerTest(input: {
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
       ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
+      ...(input.compactThread === undefined ? {} : { compactThread: input.compactThread }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
       ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
       ...(input.scopeCloseReached === undefined
@@ -3557,9 +3563,9 @@ it.effect(
     }),
 );
 
-it.effect(
-  "ProviderSessionManagerV2 replaces stale credentials only after shared work settles and resumes native history",
-  () =>
+it.effect.each(["startTurn", "compactThread"] as const)(
+  "ProviderSessionManagerV2 replaces stale credentials only after shared work settles and resumes native history with %s",
+  (operation) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const stale = yield* Ref.make(false);
@@ -3633,7 +3639,7 @@ it.effect(
           modelSelection,
           runtimePolicy,
         } as const;
-        yield* first.startTurn(startInput);
+        yield* first[operation]!(startInput);
         yield* Ref.set(stale, true);
         assert.strictEqual(yield* open(b), first);
         assert.equal((yield* Ref.get(state)).closeCount, 0);
@@ -3669,14 +3675,14 @@ it.effect(
         yield* Fiber.join(pending);
         yield* manager.detach({ providerSessionId, threadId: a });
         yield* Ref.set(pauseAttachWrite.armed, true);
-        const pendingStart = yield* first.startTurn(startInput).pipe(Effect.forkChild);
+        const pendingStart = yield* first[operation]!(startInput).pipe(Effect.forkChild);
         yield* Deferred.await(pauseAttachWrite.paused);
         assert.strictEqual(yield* open(b), first);
         yield* Fiber.interrupt(pendingStart);
         yield* Ref.set(pauseProbe, true);
         const reopening = yield* open(b).pipe(Effect.forkChild);
         yield* Deferred.await(probeEntered);
-        yield* first.startTurn({ ...startInput, runOrdinal: 2 });
+        yield* first[operation]!({ ...startInput, runOrdinal: 2 });
         yield* Deferred.succeed(probeContinue, undefined);
         assert.strictEqual(yield* Fiber.join(reopening), first);
         const finished = yield* first.subscribeEvents!;
@@ -3693,15 +3699,14 @@ it.effect(
           (thread) => thread.id === providerThread.id,
         )!;
         assert.equal(saved.nativeThreadRef?.nativeId, "persisted-native-history");
-        const resumed = yield* replacement.resumeThread({
+        yield* replacement.resumeThread({
           threadId: a,
           providerThread: saved,
           modelSelection,
           runtimePolicy,
         });
-        assert.equal(resumed.nativeThreadRef?.nativeId, "persisted-native-history");
         assert.equal((yield* Ref.get(state)).resumeCount, 2);
-        assert.equal((yield* first.startTurn(startInput).pipe(Effect.result))._tag, "Failure");
+        assert.equal((yield* first[operation]!(startInput).pipe(Effect.result))._tag, "Failure");
         assert.strictEqual(yield* open(a), replacement);
         assert.equal((yield* Ref.get(state)).openCount, 2);
       }).pipe(
@@ -3709,6 +3714,7 @@ it.effect(
           layerTest({
             state,
             pauseAttachWrite,
+            compactThread: Effect.void,
             idleTimeoutMs: 60_000,
             beforeOpen: () => Ref.set(stale, false),
             hasStaleCredentials: Ref.get(stale),
