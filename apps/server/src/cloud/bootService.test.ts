@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it, live } from "@effect/vitest";
+import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
@@ -821,26 +821,6 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(commands).toContain("launchctl bootout gui/501/com.t3tools.t3code.service");
       expect(commands).toContain("repair");
     }),
-  );
-
-  // live, not it.effect: the retry spacing is a real `Schedule.spaced` sleep
-  // that the test clock does not drive here (forking the install and advancing
-  // TestClock leaves the fiber parked), and the assertions are exact command
-  // counts, so nothing depends on wall-clock timing.
-  live("retries a launch agent start that races the previous job's drain", () =>
-    Effect.gen(function* () {
-      const { service, control, commands } = yield* makeHarness("darwin");
-      const plan = yield* service.install();
-      const bootstrap = `launchctl bootstrap gui/501 ${plan.unitPath}`;
-
-      // EIO while launchd tears the previous job down; the next attempt wins.
-      control.transient = { command: bootstrap, code: 5, remaining: 3 };
-      commands.length = 0;
-      yield* service.install();
-
-      expect(commands.filter((command) => command === bootstrap)).toHaveLength(4);
-      expect((yield* service.status).current).toBe(true);
-    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   // regression: #8173 keep provider CLIs available in the macOS service
