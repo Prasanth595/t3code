@@ -244,7 +244,7 @@ function pullRequestMarkdownContext(
 ) {
   return {
     autolinks: changeRequestReferenceAutolinker(detail),
-    resolveLinks: changeRequestLinkResolver(detail),
+    resolveUrl: changeRequestLinkResolver(detail),
     threadRef,
   };
 }

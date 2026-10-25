@@ -34,7 +34,7 @@ import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText"
 const AutolinksContext = createContext<((text: string) => ReadonlyArray<ReferenceAutolink>) | null>(
   null,
 );
-const LinkResolverContext = createContext<((text: string) => string) | null>(null);
+const LinkResolverContext = createContext<((url: string) => string) | null>(null);
 
 export function PullRequestMarkdownRepository(props: {
   /** The change request the markdown belongs to, whose host decides what its text links. */
@@ -51,7 +51,7 @@ export function PullRequestMarkdownRepository(props: {
         : changeRequestReferenceAutolinker({ provider, url }),
     [provider, url],
   );
-  const resolveLinks = useMemo(
+  const resolveUrl = useMemo(
     () =>
       provider === undefined || url === undefined
         ? null
@@ -70,7 +70,7 @@ export function PullRequestMarkdownRepository(props: {
   );
   return (
     <AutolinksContext value={autolinks}>
-      <LinkResolverContext value={resolveLinks}>
+      <LinkResolverContext value={resolveUrl}>
         <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
       </LinkResolverContext>
     </AutolinksContext>
@@ -108,19 +108,7 @@ export function PullRequestMarkdown(props: {
   readonly markdown: string;
   readonly imageGroupMarkdown?: string;
 }) {
-  const resolveLinks = useContext(LinkResolverContext);
-  const markdown = useMemo(
-    () => resolveLinks?.(props.markdown) ?? props.markdown,
-    [resolveLinks, props.markdown],
-  );
-  const imageGroupMarkdown = useMemo(
-    () =>
-      props.imageGroupMarkdown === undefined
-        ? markdown
-        : (resolveLinks?.(props.imageGroupMarkdown) ?? props.imageGroupMarkdown),
-    [resolveLinks, props.imageGroupMarkdown, markdown],
-  );
-  const segments = useMemo(() => splitPullRequestBody(markdown), [markdown]);
+  const segments = useMemo(() => splitPullRequestBody(props.markdown), [props.markdown]);
   return (
     <View style={{ gap: 12 }}>
       {segments.map((segment) =>
@@ -128,7 +116,7 @@ export function PullRequestMarkdown(props: {
           <PullRequestMarkdownContent
             key={segment.id}
             markdown={segment.text}
-            imageGroupMarkdown={imageGroupMarkdown}
+            imageGroupMarkdown={props.imageGroupMarkdown ?? props.markdown}
           />
         ) : (
           <PullRequestMedia key={segment.id} url={segment.url} kind={segment.media} />
@@ -143,33 +131,37 @@ function PullRequestMarkdownContent(props: {
   readonly imageGroupMarkdown?: string;
 }) {
   const autolinks = useContext(AutolinksContext);
+  const resolveUrl = useContext(LinkResolverContext);
   const mediaContext = useContext(PullRequestMediaContext);
   const markdown = useMemo(
     () => linkReferenceAutolinks(props.markdown, autolinks),
     [props.markdown, autolinks],
   );
   const openPullRequest = useOpenPullRequest();
+  // The native renderer hands back each destination as written, so a relative upload resolves here.
+  const resolve = useCallback((href: string) => resolveUrl?.(href) ?? href, [resolveUrl]);
   const openLink = useCallback(
     (href: string) => {
-      void openPullRequest(href);
+      void openPullRequest(resolve(href));
     },
-    [openPullRequest],
+    [openPullRequest, resolve],
   );
   const gallery = useMemo<FilePreviewItem[]>(
     () =>
       markdownImageSources(props.imageGroupMarkdown ?? props.markdown)
+        .map(resolve)
         .filter(
           (uri) =>
             /^https?:\/\//i.test(uri) &&
             videoMimeType({ name: uri.split(/[?#]/)[0] ?? uri, mimeType: "" }) === null,
         )
         .map((uri) => pullRequestImageSource(uri, mediaContext)),
-    [props.markdown, props.imageGroupMarkdown, mediaContext],
+    [props.markdown, props.imageGroupMarkdown, mediaContext, resolve],
   );
   const [preview, setPreview] = useState<FilePreviewSource | null>(null);
   const renderImage = useCallback<MarkdownImageRenderer>(
-    (image) => <MarkdownImage href={image.href} alt={image.alt} onPreview={setPreview} />,
-    [],
+    (image) => <MarkdownImage href={resolve(image.href)} alt={image.alt} onPreview={setPreview} />,
+    [resolve],
   );
   const styles = useMarkdownPreviewStyles();
   return (
@@ -179,7 +171,7 @@ function PullRequestMarkdownContent(props: {
         textStyle={styles.nativeTextStyle}
         onLinkPress={openLink}
         renderImage={renderImage}
-        onImagePress={(href) => setPreview(pullRequestImageSource(href, mediaContext))}
+        onImagePress={(href) => setPreview(pullRequestImageSource(resolve(href), mediaContext))}
       />
       <FilePreviewModal source={preview} onRequestClose={() => setPreview(null)} />
     </FilePreviewGallery>

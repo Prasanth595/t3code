@@ -245,11 +245,11 @@ export interface SourceControlDefinition {
     repositoryUrl: string,
   ) => ReadonlyArray<ReferenceAutolink>;
   /**
-   * `markdown` with the links this host's editor writes relative to its own server made absolute,
-   * read against the change request at `changeRequestUrl`. Absent for a host whose bodies link
-   * absolutely.
+   * The absolute URL for a link destination this host's editor writes relative to its own server,
+   * read against the change request at `changeRequestUrl`, or null for any other destination.
+   * Absent for a host whose bodies link absolutely.
    */
-  readonly resolveRelativeLinks?: (markdown: string, changeRequestUrl: string) => string;
+  readonly resolveRelativeUrl?: (url: string, changeRequestUrl: string) => string | null;
   /** Where the host lists a change request's checks. Absent means the change request's own page. */
   readonly changeRequestChecksUrl?: (changeRequestUrl: string) => string;
   /**

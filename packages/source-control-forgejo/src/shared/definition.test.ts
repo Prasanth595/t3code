@@ -133,8 +133,8 @@ describe("Forgejo change request host", () => {
 describe("Forgejo uploads", () => {
   const uuid = "8e603325-bb2b-4e32-a9bc-f1fa20b6c40b";
   const media = (url: string) => definition.mediaUrl(new URL(url));
-  const resolve = (markdown: string, changeRequestUrl: string) =>
-    definition.resolveRelativeLinks(markdown, changeRequestUrl);
+  const resolve = (url: string, changeRequestUrl: string) =>
+    definition.resolveRelativeUrl(url, changeRequestUrl);
 
   it("fetches an upload from the server that serves it, under its mount or a repository", () => {
     expect(media(`https://git.example.test:3000/attachments/${uuid}?download=1#top`)).toEqual({
@@ -160,44 +160,19 @@ describe("Forgejo uploads", () => {
   });
 
   it("links a pasted upload on the server of its change request, below the server's mount", () => {
-    const body = [
-      `![shot](/attachments/${uuid})`,
-      `<img width="300" alt="shot" src="/attachments/${uuid}">`,
-      `![shot](</attachments/${uuid}> "title")`,
-      `![kept](https://cdn.example.test/attachments/${uuid})`,
-    ].join("\n");
-    expect(resolve(body, "https://git.example.test/git/team/repo/pulls/7")).toBe(
-      [
-        `![shot](https://git.example.test/git/attachments/${uuid})`,
-        `<img width="300" alt="shot" src="https://git.example.test/git/attachments/${uuid}">`,
-        `![shot](<https://git.example.test/git/attachments/${uuid}> "title")`,
-        `![kept](https://cdn.example.test/attachments/${uuid})`,
-      ].join("\n"),
+    expect(resolve(`/attachments/${uuid}`, "https://git.example.test/git/team/repo/pulls/7")).toBe(
+      `https://git.example.test/git/attachments/${uuid}`,
     );
-    expect(resolve(`![shot](attachments/${uuid})`, "https://codeberg.org/team/repo/pulls/7")).toBe(
-      `![shot](https://codeberg.org/attachments/${uuid})`,
+    expect(resolve(`attachments/${uuid}`, "https://codeberg.org/team/repo/issues/7")).toBe(
+      `https://codeberg.org/attachments/${uuid}`,
     );
-    expect(resolve(`![shot](/attachments/${uuid})`, "not a url")).toBe(
-      `![shot](/attachments/${uuid})`,
-    );
-  });
-
-  it("keeps an upload link written as code or escaped as it was written", () => {
-    const pasted = `![shot](/attachments/${uuid})`;
-    const literal = [
-      "```md",
-      pasted,
-      "```",
-      "",
-      `    ${pasted}`,
-      "",
-      `Paste writes \`${pasted}\` or \`\`<img src="/attachments/${uuid}">\`\`.`,
-      `\\[shot\\](/attachments/${uuid}) and &lt;img src="/attachments/${uuid}"&gt;`,
-    ];
-    const body = [pasted, ...literal, `- list\n    ${pasted}`].join("\n");
-    const resolved = `![shot](https://git.example.test/attachments/${uuid})`;
-    expect(resolve(body, "https://git.example.test/team/repo/pulls/7")).toBe(
-      [resolved, ...literal, `- list\n    ${resolved}`].join("\n"),
-    );
+    for (const url of [
+      `https://cdn.example.test/attachments/${uuid}`,
+      `/attachments/${uuid}/extra`,
+      "/team/repo/pulls/8",
+    ]) {
+      expect(resolve(url, "https://git.example.test/team/repo/pulls/7"), url).toBeNull();
+    }
+    expect(resolve(`/attachments/${uuid}`, "not a url")).toBeNull();
   });
 });
