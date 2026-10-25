@@ -1,7 +1,9 @@
 import { assert, it } from "@effect/vitest";
 import {
+  MessageId,
   type ModelSelection,
   NodeId,
+  type OrchestrationV2ConversationMessage,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ThreadProjection,
   ProjectId,
@@ -330,4 +332,242 @@ it.effect(
       assert.equal(interrupted?.id, providerThreadId);
       assert.equal(interrupted?.nativeThreadRef?.nativeId, "native-thread:restart-session");
     }),
+);
+
+const steerBody = "Please merge the PR now.";
+const steerChildThreadId = ThreadId.make("thread:child-review");
+
+function dyingProjectionStore(
+  implemented: Partial<ProjectionStore.ProjectionStoreV2["Service"]>,
+): ProjectionStore.ProjectionStoreV2["Service"] {
+  return new Proxy(implemented, {
+    get(target, property, receiver) {
+      if (Reflect.has(target, property)) return Reflect.get(target, property, receiver);
+      return () => Effect.die(`unused ${String(property)}`);
+    },
+  }) as ProjectionStore.ProjectionStoreV2["Service"];
+}
+
+function steerProviderText(input: {
+  readonly createdBy: OrchestrationV2ConversationMessage["createdBy"];
+  readonly creationSource: OrchestrationV2ConversationMessage["creationSource"];
+  readonly senderThreadId?: ThreadId;
+  readonly senderTitle?: string;
+  readonly senderLookupFails?: boolean;
+  readonly subagents?: ReadonlyArray<{
+    readonly origin: "app_owned" | "provider_native";
+    readonly childThreadId: ThreadId | null;
+  }>;
+  readonly subagentLookupFails?: boolean;
+}) {
+  return Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:steer-provenance");
+    const providerSessionId = ProviderSessionId.make("provider-session:steer-provenance");
+    const providerThreadId = ProviderThreadId.make("provider-thread:steer-provenance");
+    const providerTurnId = ProviderTurnId.make("provider-turn:steer-provenance");
+    const messageId = MessageId.make("message:steer-provenance");
+    const providerThread: OrchestrationV2ProviderThread = {
+      id: providerThreadId,
+      driver,
+      providerInstanceId,
+      providerSessionId,
+      appThreadId: threadId,
+      ownerNodeId: null,
+      nativeThreadRef: {
+        driver,
+        nativeId: "native-thread:steer-provenance",
+        strength: "strong",
+      },
+      nativeConversationHeadRef: null,
+      status: "idle",
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 1,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const message: OrchestrationV2ConversationMessage = {
+      id: messageId,
+      threadId,
+      runId: RunId.make("run:steer-provenance"),
+      nodeId: NodeId.make("node:steer-provenance"),
+      role: "user",
+      text: steerBody,
+      attachments: [],
+      streaming: false,
+      createdBy: input.createdBy,
+      creationSource: input.creationSource,
+      ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
+      createdAt: now,
+      updatedAt: now,
+    };
+    const steered = yield* Ref.make<string | undefined>(undefined);
+    const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
+      instanceId: providerInstanceId,
+      driver,
+      providerSessionId,
+      providerSession: {
+        id: providerSessionId,
+        driver,
+        providerInstanceId,
+        status: "running",
+        cwd: "/workspace",
+        model: modelSelection.model,
+        capabilities: CodexProviderCapabilitiesV2,
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      },
+      events: Stream.empty,
+      ensureThread: () => Effect.die("unused ensureThread"),
+      resumeThread: () => Effect.die("unused resumeThread"),
+      startTurn: () => Effect.die("unused startTurn"),
+      steerTurn: (request) => Ref.set(steered, request.message.text),
+      interruptTurn: () => Effect.die("unused interruptTurn"),
+      respondToRuntimeRequest: () => Effect.die("unused respondToRuntimeRequest"),
+      readThreadSnapshot: () => Effect.die("unused readThreadSnapshot"),
+      rollbackThread: () => Effect.die("unused rollbackThread"),
+      forkThread: () => Effect.die("unused forkThread"),
+    };
+    const layer = ProviderTurnControlService.layer.pipe(
+      Layer.provide(
+        Layer.merge(
+          Layer.succeed(
+            ProjectionStore.ProjectionStoreV2,
+            ProjectionStore.ProjectionStoreV2.of(
+              dyingProjectionStore({
+                getProviderControlContext: () =>
+                  Effect.succeed({
+                    providerThread,
+                    providerTurn: {
+                      id: providerTurnId,
+                      providerThreadId,
+                      nodeId: NodeId.make("node:steer-provenance"),
+                      runAttemptId: RunAttemptId.make("run-attempt:steer-provenance"),
+                      nativeTurnRef: null,
+                      ordinal: 1,
+                      status: "running",
+                      startedAt: now,
+                      completedAt: null,
+                    },
+                    attempt: undefined,
+                    message,
+                    run: {
+                      id: RunId.make("run:steer-provenance"),
+                    } as OrchestrationV2ThreadProjection["runs"][number],
+                  }),
+                getThread: (requestedThreadId) =>
+                  input.senderLookupFails === true
+                    ? Effect.fail(
+                        new ProjectionStore.ProjectionStoreReadError({
+                          threadId: requestedThreadId,
+                          cause: "sender lookup failed",
+                        }),
+                      )
+                    : Effect.succeed({
+                        title: input.senderTitle ?? "Sender",
+                      } as never),
+                getThreadRecords: () =>
+                  input.subagentLookupFails === true
+                    ? Effect.fail(
+                        new ProjectionStore.ProjectionStoreReadError({
+                          threadId,
+                          cause: "subagent lookup failed",
+                        }),
+                      )
+                    : Effect.succeed({
+                        subagents: input.subagents ?? [],
+                      } as never),
+              }),
+            ),
+          ),
+          Layer.succeed(
+            ProviderSessionManager.ProviderSessionManagerV2,
+            ProviderSessionManager.ProviderSessionManagerV2.of({
+              shutdown: Effect.void,
+              open: () => Effect.die("unused open"),
+              get: () => Effect.succeedSome(runtime),
+              isLive: () => Effect.succeed(true),
+              close: () => Effect.void,
+              closeInstance: () => Effect.void,
+              release: () => Effect.void,
+              detach: () => Effect.void,
+            }),
+          ),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
+      yield* control.steer({
+        threadId,
+        providerSessionId,
+        providerThreadId,
+        providerTurnId,
+        messageId,
+      });
+    }).pipe(Effect.provide(layer));
+
+    return yield* Ref.get(steered);
+  });
+}
+
+it.effect.each([
+  {
+    label: "an agent thread send names the sender and is not the user",
+    createdBy: "agent" as const,
+    creationSource: "mcp" as const,
+    senderThreadId: steerChildThreadId,
+    senderTitle: "Review the PR",
+    expected: `Agent-authored message from "Review the PR", not the user.\n${steerBody}`,
+  },
+  {
+    label: "an agent send from this thread's delegated task says so",
+    createdBy: "agent" as const,
+    creationSource: "mcp" as const,
+    senderThreadId: steerChildThreadId,
+    senderTitle: "Review the PR",
+    subagents: [{ origin: "app_owned" as const, childThreadId: steerChildThreadId }],
+    expected: `Agent-authored message from your delegated task "Review the PR", not the user.\n${steerBody}`,
+  },
+  {
+    label: "a failed sender lookup still delivers an id-only header",
+    createdBy: "agent" as const,
+    creationSource: "mcp" as const,
+    senderThreadId: steerChildThreadId,
+    senderLookupFails: true,
+    subagents: [{ origin: "app_owned" as const, childThreadId: steerChildThreadId }],
+    expected: `Agent-authored message from your delegated task ${steerChildThreadId}, not the user.\n${steerBody}`,
+  },
+  {
+    label: "a failed relationship lookup does not claim a delegated task",
+    createdBy: "agent" as const,
+    creationSource: "mcp" as const,
+    senderThreadId: steerChildThreadId,
+    senderTitle: "Review the PR",
+    subagentLookupFails: true,
+    expected: `Agent-authored message from "Review the PR", not the user.\n${steerBody}`,
+  },
+  {
+    label: "a user steer is unchanged",
+    createdBy: "user" as const,
+    creationSource: "web" as const,
+    senderThreadId: steerChildThreadId,
+    senderTitle: "Review the PR",
+    expected: steerBody,
+  },
+  {
+    label: "an agent steer with no sender thread is unchanged",
+    createdBy: "agent" as const,
+    creationSource: "server" as const,
+    expected: steerBody,
+  },
+])("steers provider text so $label", (input) =>
+  Effect.gen(function* () {
+    const text = yield* steerProviderText(input);
+    assert.equal(text, input.expected);
+  }),
 );

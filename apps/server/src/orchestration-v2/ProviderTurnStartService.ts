@@ -31,6 +31,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
+import { providerTextForTurn } from "./agentSendProvenance.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
@@ -1025,9 +1026,16 @@ export const layer: Layer.Layer<
       const routableSubagents = projection.subagents.filter((subagent) =>
         RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
-      const userText = projectComposerContextForProvider({
-        text: message.text,
-        records: message.context?.records ?? [],
+      const userText = yield* providerTextForTurn({
+        text: projectComposerContextForProvider({
+          text: message.text,
+          records: message.context?.records ?? [],
+        }),
+        createdBy: message.createdBy,
+        senderThreadId: message.senderThreadId,
+        readSenderTitle: (senderThreadId) =>
+          projectionStore.getThread(senderThreadId).pipe(Effect.map((thread) => thread.title)),
+        readReceiverSubagents: () => Effect.succeed(projection.subagents),
       });
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
       const noteContinuation = isRestartNoteContinuation(

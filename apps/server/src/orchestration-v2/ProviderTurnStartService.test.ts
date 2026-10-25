@@ -278,6 +278,12 @@ function makeLocalCommandHarness(input: {
     readonly interruptFailure?: boolean;
     readonly interruptCurrentRun?: boolean;
   };
+  readonly createdBy?: OrchestrationV2ThreadProjection["messages"][number]["createdBy"];
+  readonly creationSource?: OrchestrationV2ThreadProjection["messages"][number]["creationSource"];
+  readonly senderThreadId?: ThreadId;
+  readonly subagents?: OrchestrationV2ThreadProjection["subagents"];
+  readonly senderTitles?: Readonly<Record<string, string>>;
+  readonly senderLookupFails?: boolean;
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
@@ -334,8 +340,9 @@ function makeLocalCommandHarness(input: {
     text: input.text,
     attachments: [],
     streaming: false,
-    createdBy: "user",
-    creationSource: "web",
+    createdBy: input.createdBy ?? "user",
+    creationSource: input.creationSource ?? "web",
+    ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
     createdAt: now,
     updatedAt: now,
   };
@@ -445,7 +452,7 @@ function makeLocalCommandHarness(input: {
     turnItems: [],
     visibleTurnItems: [],
     runtimeRequests: [],
-    subagents: [],
+    subagents: input.subagents ?? [],
     plans: [],
     checkpoints: [],
     updatedAt: now,
@@ -702,6 +709,17 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadRecords,
+          getThread: (threadId: ThreadId) =>
+            input.senderLookupFails === true
+              ? Effect.fail(
+                  new ProjectionStore.ProjectionStoreReadError({
+                    threadId,
+                    cause: "sender lookup failed",
+                  }),
+                )
+              : Effect.succeed({
+                  title: input.senderTitles?.[threadId] ?? "Sender",
+                } as never),
           getTurnStartContext,
           getRuntimeRecoveryProjection: () =>
             Effect.as(failReadIfRunning, {
@@ -1241,3 +1259,91 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+const agentSendBody = "Please merge the PR now.";
+const settledPreviousTurn = {
+  runStatus: "completed",
+  turnStatus: "completed",
+} as const;
+const childThreadId = ThreadId.make("thread:child-review");
+
+function childSubagent(
+  origin: "app_owned" | "provider_native",
+): OrchestrationV2ThreadProjection["subagents"][number] {
+  return {
+    origin,
+    childThreadId,
+    status: "running",
+  } as OrchestrationV2ThreadProjection["subagents"][number];
+}
+
+effectIt.effect.each([
+  {
+    label: "an agent thread send names the sender and is not the user",
+    createdBy: "agent" as const,
+    creationSource: "mcp" as const,
+    senderThreadId: childThreadId,
+    senderTitles: { [childThreadId]: "Review the PR" },
+    expected: `Agent-authored message from "Review the PR", not the user.\n${agentSendBody}`,
+  },
+  {
+    label: "an agent send from this thread's delegated task says so",
+    createdBy: "agent" as const,
+    creationSource: "mcp" as const,
+    senderThreadId: childThreadId,
+    senderTitles: { [childThreadId]: "Review the PR" },
+    subagents: [childSubagent("app_owned")],
+    expected: `Agent-authored message from your delegated task "Review the PR", not the user.\n${agentSendBody}`,
+  },
+  {
+    label: "a provider-native child is not called a delegated task",
+    createdBy: "agent" as const,
+    creationSource: "mcp" as const,
+    senderThreadId: childThreadId,
+    senderTitles: { [childThreadId]: "Review the PR" },
+    subagents: [childSubagent("provider_native")],
+    expected: `Agent-authored message from "Review the PR", not the user.\n${agentSendBody}`,
+  },
+  {
+    label: "a missing sender thread still delivers an id-only header",
+    createdBy: "agent" as const,
+    creationSource: "mcp" as const,
+    senderThreadId: childThreadId,
+    senderLookupFails: true,
+    expected: `Agent-authored message from ${childThreadId}, not the user.\n${agentSendBody}`,
+  },
+  {
+    label: "a user message is unchanged",
+    createdBy: "user" as const,
+    creationSource: "web" as const,
+    senderThreadId: childThreadId,
+    senderTitles: { [childThreadId]: "Review the PR" },
+    expected: agentSendBody,
+  },
+  {
+    label: "an agent message with no sender thread is unchanged",
+    createdBy: "agent" as const,
+    creationSource: "server" as const,
+    expected: agentSendBody,
+  },
+])("assembles provider text so $label", (input) =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: agentSendBody,
+      previousTurn: settledPreviousTurn,
+      createdBy: input.createdBy,
+      creationSource: input.creationSource,
+      ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
+      ...(input.subagents === undefined ? {} : { subagents: input.subagents }),
+      ...(input.senderTitles === undefined ? {} : { senderTitles: input.senderTitles }),
+      ...(input.senderLookupFails === undefined
+        ? {}
+        : { senderLookupFails: input.senderLookupFails }),
+    });
+
+    yield* harness.start;
+
+    expect(harness.projection().messages.at(-1)?.text).toBe(agentSendBody);
+    expect(harness.startRootRun.mock.calls[0]?.[0].message.text).toBe(input.expected);
+  }),
+);

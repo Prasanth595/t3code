@@ -17,6 +17,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { providerTextForTurn } from "./agentSendProvenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
@@ -345,6 +346,20 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
+          const text = yield* providerTextForTurn({
+            text: projectComposerContextForProvider({
+              text: message.text,
+              records: message.context?.records ?? [],
+            }),
+            createdBy: message.createdBy,
+            senderThreadId: message.senderThreadId,
+            readSenderTitle: (senderThreadId) =>
+              projections.getThread(senderThreadId).pipe(Effect.map((thread) => thread.title)),
+            readReceiverSubagents: () =>
+              projections
+                .getThreadRecords(input.threadId, ["subagents"])
+                .pipe(Effect.map((records) => records.subagents)),
+          });
           yield* loaded.session.value
             .steerTurn({
               threadId: input.threadId,
@@ -353,10 +368,7 @@ export const layer: Layer.Layer<
               providerTurnId: loaded.providerTurn.id,
               message: {
                 messageId: message.id,
-                text: projectComposerContextForProvider({
-                  text: message.text,
-                  records: message.context?.records ?? [],
-                }),
+                text,
                 attachments: message.attachments,
                 createdBy: message.createdBy,
                 creationSource: message.creationSource,
