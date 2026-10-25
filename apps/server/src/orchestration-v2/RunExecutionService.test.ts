@@ -2788,12 +2788,47 @@ it.effect("keeps completed runs completed when pull request refresh fails", () =
   }),
 );
 
+it.effect("finalizes with a provider snapshot already persisted by a skipped event write", () =>
+  Effect.gen(function* () {
+    const { finalEvents } = yield* captureRootRunTermination({
+      key: "skipped-provider-thread-persist",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.make(
+          {
+            type: "provider_thread.updated",
+            driver,
+            providerThread: {
+              id: ids.providerThreadId,
+              driver,
+              nativeThreadRef: { driver, nativeId: "adopted-session", strength: "strong" },
+            } as unknown as OrchestrationV2ProviderThread,
+          } as ProviderAdapter.ProviderAdapterV2Event,
+          rootTerminalEvent(ids, "completed"),
+        ),
+      persistEvent: (event, persist) =>
+        event.type === "provider_thread.updated"
+          ? Effect.succeed({
+              storedEvents: [],
+              persistedProviderThread: event.providerThread,
+            })
+          : persist(true).pipe(Effect.map((storedEvents) => ({ storedEvents }))),
+    });
+    assert.equal(
+      finalEvents.find((event) => event.type === "provider-thread.updated")?.payload.nativeThreadRef
+        ?.nativeId,
+      "adopted-session",
+    );
+  }),
+);
+
 function captureRootRunTermination(input: {
   readonly key: string;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
   readonly rejectTerminalWrite?: boolean;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly seedOpenSubagent?: boolean;
+  readonly persistEvent?: ProviderAdapter.ProviderAdapterV2EventSubscription["persistEvent"];
   readonly events?: (
     ids: BackgroundScenarioIds,
   ) => Stream.Stream<
@@ -2943,6 +2978,7 @@ function captureRootRunTermination(input: {
             close: Deferred.succeed(ingestionDone, undefined).pipe(
               Effect.andThen(input.onSubscriptionClose ?? Effect.void),
             ),
+            ...(input.persistEvent === undefined ? {} : { persistEvent: input.persistEvent }),
           }),
           startTurn: input.startTurn ?? (() => Effect.void),
           interruptTurn: input.interruptTurn ?? (() => Effect.void),

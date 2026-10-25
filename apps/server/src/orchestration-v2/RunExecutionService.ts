@@ -1394,6 +1394,7 @@ export const layer: Layer.Layer<
                 yield* Ref.set(latestRootProviderTurn, event.providerTurn);
               }
               let storedEventCount = 0;
+              let persistedProviderThread: OrchestrationV2ProviderThread | undefined;
               const deliveredEvent = filterAssistantEvent(
                 event,
                 DateTime.toEpochMillis(yield* DateTime.now),
@@ -1441,14 +1442,17 @@ export const layer: Layer.Layer<
                           }
                       : {}),
                   });
-                const storedEvents = yield* eventSubscription.persistEvent === undefined
-                  ? persist(true)
-                  : eventSubscription.persistEvent(event, persist);
-                storedEventCount = storedEvents.length;
+                const persisted: ProviderAdapter.ProviderAdapterV2PersistEventResult =
+                  yield* eventSubscription.persistEvent === undefined
+                    ? persist(true).pipe(Effect.map((storedEvents) => ({ storedEvents })))
+                    : eventSubscription.persistEvent(event, persist);
+                storedEventCount = persisted.storedEvents.length;
+                persistedProviderThread = persisted.persistedProviderThread;
                 if (
                   isRootProviderThreadUpdate &&
                   rootTerminalAlreadySeen &&
-                  storedEventCount === 0
+                  storedEventCount === 0 &&
+                  persisted.persistedProviderThread === undefined
                 ) {
                   yield* Ref.set(providerThreadOwnerLost, true);
                 }
@@ -1467,8 +1471,15 @@ export const layer: Layer.Layer<
                 reservedHeldTurnItemIds.add(event.turnItem.id);
               }
               if (event.type === "provider_thread.updated") {
-                if (event.providerThread.id === input.providerThread.id && storedEventCount > 0) {
-                  yield* Ref.set(latestProviderThread, event.providerThread);
+                if (event.providerThread.id === input.providerThread.id) {
+                  // A skipped write (already persisted during release) still reports the
+                  // committed snapshot; a rejected write must not move the session forward.
+                  const providerThread =
+                    persistedProviderThread ??
+                    (storedEventCount > 0 ? event.providerThread : undefined);
+                  if (providerThread !== undefined) {
+                    yield* Ref.set(latestProviderThread, providerThread);
+                  }
                 }
               }
               if (

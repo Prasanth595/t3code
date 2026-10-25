@@ -502,6 +502,13 @@ export interface ProviderAdapterV2ForkThreadInput {
   readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
 }
 
+export interface ProviderAdapterV2PersistEventResult {
+  readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
+  // Set when the snapshot is already persisted, so a skipped write still lets
+  // consumers (finalization) use the committed provider thread.
+  readonly persistedProviderThread?: OrchestrationV2ProviderThread;
+}
+
 export interface ProviderAdapterV2EventSubscription {
   readonly events: Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
   readonly close: Effect.Effect<void>;
@@ -513,7 +520,7 @@ export interface ProviderAdapterV2EventSubscription {
     persist: (
       snapshotCurrent: boolean,
     ) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, E, R>,
-  ) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, E, R>;
+  ) => Effect.Effect<ProviderAdapterV2PersistEventResult, E, R>;
 }
 
 export interface ProviderAdapterV2HistoricalContext {

@@ -1902,27 +1902,42 @@ export const layerWithOptions = (
             ProviderAdapter.ProviderAdapterV2EventSubscription["persistEvent"]
           > = (event, persist) =>
             event.type !== "provider_thread.updated" || entry === undefined
-              ? persist(true)
+              ? persist(true).pipe(Effect.map((storedEvents) => ({ storedEvents })))
               : Effect.gen(function* () {
                   const current = (yield* Ref.get(sessions)).get(
                     sessionKey(entry.runtime.providerSessionId),
                   );
                   const latest = entry.latestThreadUpdates.get(event.providerThread.id);
                   const delivery = entry.threadUpdateDeliveries.get(event);
-                  if (delivery?.received === true) return [];
+                  if (delivery?.received === true) {
+                    // The release path may persist the update before this subscriber reads it.
+                    // Report the committed snapshot so finalization cannot emit the old session.
+                    return {
+                      storedEvents: [],
+                      ...(current?.runtime === entry.runtime && latest?.received === true
+                        ? { persistedProviderThread: latest.event.providerThread }
+                        : {}),
+                    };
+                  }
                   const snapshotCurrent =
                     current?.runtime === entry.runtime &&
                     (latest?.event === event || latest?.received !== true);
                   const stored = yield* persist(snapshotCurrent);
+                  const persistedSnapshot = stored.some(
+                    (record) => record.event.type === "provider-thread.updated",
+                  );
                   if (
                     delivery !== undefined &&
-                    (stored.some((record) => record.event.type === "provider-thread.updated") ||
+                    (persistedSnapshot ||
                       (event.retainedNativeTurnIds !== undefined && stored.length > 0))
                   ) {
                     delivery.received = true;
                   }
                   if (delivery?.received === true) entry.pendingRewinds.delete(event);
-                  return stored;
+                  return {
+                    storedEvents: stored,
+                    ...(persistedSnapshot ? { persistedProviderThread: event.providerThread } : {}),
+                  };
                 }).pipe(entry.requestEventPermit.withPermits(1));
           const discardEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
             entry === undefined || event.type !== "provider_thread.updated"
