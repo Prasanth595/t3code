@@ -59,7 +59,7 @@ const command = Command.make("task-cache").pipe(
   Command.withSubcommands([
     Command.make(
       "add-writer",
-      { name, newRegistry: Flag.Boolean("new-registry") },
+      { name, newRegistry: Flag.Boolean("new-registry").pipe(Flag.withDefault(false)) },
       ({ name, newRegistry }) => updateWriter(name, false, newRegistry),
     ),
     Command.make("revoke-writer", { name }, ({ name }) => updateWriter(name, true)),
