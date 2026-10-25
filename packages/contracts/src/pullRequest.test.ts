@@ -5,9 +5,10 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   PullRequestDetail,
   PullRequestListResult,
-  pullRequestHostOf,
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
+
+const decodeListResult = Schema.decodeSync(PullRequestListResult);
 
 const decodeDetail = Schema.decodeUnknownSync(Schema.toCodecJson(PullRequestDetail));
 
@@ -71,27 +72,7 @@ describe("PullRequestListResult", () => {
     };
     const codec = Schema.toCodecJson(PullRequestListResult);
     expect(Schema.decodeSync(codec)(Schema.encodeUnknownSync(codec)(result))).toStrictEqual(result);
-    expect(
-      Schema.decodeUnknownSync(PullRequestListResult)(LIST_RESULT).entries[0]?.viewer,
-    ).toBeUndefined();
-  });
-  it("separates Forgejo HTTP ports while preserving other provider host identities", () => {
-    const identity = {
-      canonicalKey: "forge.example/team/repo",
-      locator: { remoteUrl: "http://forge.example:3000/team/repo.git" },
-    };
-    expect(pullRequestHostOf(identity, SourceControlProviderKind.make("forgejo"))).toBe(
-      "forge.example:3000",
-    );
-    expect(pullRequestHostOf(identity, SourceControlProviderKind.make("gitlab"))).toBe(
-      "forge.example",
-    );
-    expect(
-      pullRequestHostOf(
-        { ...identity, locator: { remoteUrl: "ssh://git@forge.example:2222/team/repo.git" } },
-        SourceControlProviderKind.make("forgejo"),
-      ),
-    ).toBe("forge.example");
+    expect(decodeListResult(LIST_RESULT).entries[0]?.viewer).toBeUndefined();
   });
   /**
    * The RPC builds this codec at call time, so a shape it cannot lower — an open-keyed record

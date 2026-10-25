@@ -13,9 +13,9 @@ import {
   type SourceControlProviderDiscoveryItem,
 } from "@t3tools/contracts";
 import type {} from "@t3tools/contracts";
-import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 
 import * as BuiltInDrivers from "./builtInDrivers.ts";
+import { sourceControlDefinitions } from "./sourceControlDefinitions.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
   probeSourceControlProvider,
@@ -24,7 +24,6 @@ import {
   type UnknownRemoteVerdict,
 } from "@t3tools/source-control-core/server/discovery";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
-import { resolveSshRemoteUrl } from "@t3tools/source-control-core/server/sshRemote";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -75,9 +74,7 @@ function unsupportedProvider(
 ): SourceControlProvider.SourceControlProvider["Service"] {
   return SourceControlProvider.SourceControlProvider.of({
     kind,
-    // A remote on a host no provider recognizes (or no remote at all) has no change
-    // requests T3 could know about. Answering with none keeps the status poller from
-    // failing, and warning, on every refresh of such a repository.
+    // Unknown hosts have no readable change requests; return none to avoid poll warnings on every refresh.
     listChangeRequests: (input) =>
       kind === "unknown"
         ? Effect.succeed([])
@@ -141,12 +138,11 @@ function selectProviderContext(
   remotes: ReadonlyArray<{
     readonly name: string;
     readonly url: string;
-    readonly resolvedUrl?: string;
   }>,
 ): SourceControlProvider.SourceControlProviderContext | null {
   const candidates: Array<SourceControlProvider.SourceControlProviderContext> = [];
   for (const remote of remotes) {
-    const provider = detectSourceControlProviderFromRemoteUrl(remote.resolvedUrl ?? remote.url);
+    const provider = sourceControlDefinitions.recognizeRemote(remote.url);
     if (provider) {
       candidates.push({
         provider,
@@ -164,10 +160,7 @@ function selectProviderContext(
   );
 }
 
-/**
- * `cwd` is left out because it only matters when a probe fails there, and a failed probe
- * is not kept. Equality ignores `lookup`, so this is not a `Data.Class`.
- */
+// Failed probes are not cached, so cwd is irrelevant; equality ignores lookup, unlike Data.Class.
 class UnknownRemoteLookup {
   readonly key: string;
   readonly lookup: Effect.Effect<UnknownRemoteVerdict>;
@@ -237,7 +230,7 @@ function bindProviderContext(
   });
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWithProviders")(
   function* (registrations: ReadonlyArray<SourceControlProviderRegistration>) {
     const config = yield* ServerConfig.ServerConfig;
@@ -306,14 +299,7 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
               }),
           ),
         );
-        const resolvedRemotes = yield* Effect.forEach(remotes.remotes, (remote) =>
-          resolveSshRemoteUrl({ remoteUrl: remote.url, cwd, process }).pipe(
-            Effect.map((resolvedUrl) => ({ ...remote, resolvedUrl })),
-          ),
-        );
-        const context = selectProviderContext(resolvedRemotes);
-
-        return yield* refineContext(cwd, context);
+        return yield* refineContext(cwd, selectProviderContext(remotes.remotes));
       },
     );
 
@@ -326,33 +312,10 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       timeToLive: (exit) => (Exit.isSuccess(exit) ? PROVIDER_DETECTION_CACHE_TTL : Duration.zero),
     });
 
-    const resolveHandle: SourceControlProviderRegistry["Service"]["resolveHandle"] = (input) => {
-      const requestedContext = input.context;
-      return (
-        requestedContext === undefined
-          ? Cache.get(providerContextCache, input.cwd)
-          : (requestedContext.requestedHost === undefined
-              ? resolveSshRemoteUrl({
-                  remoteUrl: requestedContext.remoteUrl,
-                  cwd: input.cwd,
-                  process,
-                })
-              : Effect.succeed(requestedContext.remoteUrl)
-            ).pipe(
-              Effect.flatMap((url) =>
-                refineContext(
-                  input.cwd,
-                  url === requestedContext.remoteUrl
-                    ? requestedContext
-                    : {
-                        ...requestedContext,
-                        provider:
-                          detectSourceControlProviderFromRemoteUrl(url) ??
-                          requestedContext.provider,
-                      },
-                ),
-              ),
-            )
+    const resolveHandle: SourceControlProviderRegistry["Service"]["resolveHandle"] = (input) =>
+      (input.context === undefined
+        ? Cache.get(providerContextCache, input.cwd)
+        : refineContext(input.cwd, input.context)
       ).pipe(
         Effect.map((context) => {
           const kind = context?.provider.kind ?? SourceControlProviderKind.make("unknown");
@@ -363,14 +326,13 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
           } satisfies SourceControlProviderHandle;
         }),
       );
-    };
 
     return SourceControlProviderRegistry.of({
       resolveLink: (input) => {
         if (input.url.protocol !== "https:" || input.url.username || input.url.password) {
           return undefined;
         }
-        const kind = detectSourceControlProviderFromRemoteUrl(input.url.href)?.kind;
+        const kind = sourceControlDefinitions.recognizeRemote(input.url.href)?.kind;
         return kind ? providers.get(kind)?.resolveLink?.(input) : undefined;
       },
       get,
@@ -390,17 +352,15 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
   },
 );
 
-export const make = Effect.gen(function* () {
-  const drivers = yield* Effect.forEach(BuiltInDrivers.BUILT_IN_SOURCE_CONTROL_DRIVERS, (driver) =>
-    driver.make.pipe(
-      Effect.map((instance): SourceControlProviderRegistration => ({
-        kind: driver.kind,
-        provider: instance.sourceControl,
-        discovery: instance.discovery,
-      })),
-    ),
+const make = Effect.gen(function* () {
+  const drivers = yield* BuiltInDrivers.SourceControlDrivers;
+  return yield* makeWithProviders(
+    drivers.map(({ driver, instance }): SourceControlProviderRegistration => ({
+      kind: driver.kind,
+      provider: instance.sourceControl,
+      discovery: instance.discovery,
+    })),
   );
-  return yield* makeWithProviders(drivers);
 });
 
 export const layer = Layer.effect(SourceControlProviderRegistry, make);

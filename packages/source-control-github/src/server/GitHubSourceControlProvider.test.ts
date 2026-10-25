@@ -84,10 +84,6 @@ const node = (number: number, headRefName: string, owner = "acme") => ({
   headRepositoryOwner: { __typename: "User", login: owner },
 });
 
-/**
- * One GraphQL request as the fake GitHub saw it. An aliased batch is split back into its
- * lookups, each with its own variables, in order.
- */
 interface GraphQlCall {
   readonly host: string;
   readonly operationName: string;
@@ -95,17 +91,12 @@ interface GraphQlCall {
   readonly lookups: ReadonlyArray<Readonly<Record<string, unknown>>>;
 }
 
-/**
- * What GitHub answers for one lookup: the `repository` it reads, or a whole HTTP response for the
- * request (a refusal, a rate limit).
- */
 type GraphQlAnswer = unknown;
 type GraphQlRespond = (
   lookup: Readonly<Record<string, unknown>>,
   call: GraphQlCall,
 ) => GraphQlAnswer | Response;
 
-/** GitHub's GraphQL endpoint for the generated reads: answers each lookup with `respond`. */
 function graphQlHttp(respond: GraphQlRespond, calls: Array<GraphQlCall>) {
   return HttpClient.make((request) =>
     Effect.sync(() => {
@@ -157,16 +148,10 @@ function graphQlHttp(respond: GraphQlRespond, calls: Array<GraphQlCall>) {
   );
 }
 
-/**
- * The provider over a mocked GitHubRest, git driver and process. `remotes` is what
- * `git remote -v` prints; `git` records every driver call. GraphQL reads go over HTTP to
- * `graphql`, through the real request policy; `graphqlCalls` records each request.
- */
 function harness(input: {
   readonly remotes: string;
   readonly api?: Partial<GitHubRest.GitHubRest["Service"]>;
   readonly graphql?: GraphQlRespond;
-  /** The credential a GraphQL read is sent with; github.com's token by default. */
   readonly credential?: (
     host: string,
   ) => Effect.Effect<
@@ -258,8 +243,6 @@ function harness(input: {
   return { layer, git, graphqlCalls };
 }
 
-/** The provider context for a checkout whose remote is on `host`. */
-/** The provider over a mocked GitHubRest, for reads that never touch the checkout. */
 const makeProvider = (api: Partial<GitHubRest.GitHubRest["Service"]>) =>
   GitHubSourceControlProvider.make.pipe(Effect.provide(harness({ remotes: "", api }).layer));
 
@@ -309,6 +292,7 @@ describe("GitHubSourceControlProvider repository resolution", () => {
     const hosts: string[] = [];
     const { layer } = harness({
       remotes: remotesOutput(["origin", remoteUrl]),
+      sshHostname: "github.com",
       api: {
         rest: (input) =>
           Effect.sync(() => {
@@ -854,13 +838,15 @@ it.effect.each(["pull", "issues"])(
         title: "Pairing expiry",
         body: "Preserve remote access",
       });
-      assert.strictEqual(
-        provider.resolveLink?.({
-          cwd: "/unrelated",
-          url: new URL("https://github.com/owner/repo"),
-        }),
-        undefined,
-      );
+      for (const url of [
+        "https://github.com/owner/repo",
+        "https://github.attacker.test/owner/repo/issues/42",
+      ]) {
+        assert.strictEqual(
+          provider.resolveLink?.({ cwd: "/unrelated", url: new URL(url) }),
+          undefined,
+        );
+      }
     }),
 );
 
@@ -1215,7 +1201,7 @@ it.effect("records the API host in repository identities while keeping the SSH l
     const provider = yield* GitHubSourceControlProvider.make;
     const identity = {
       canonicalKey: "github.com-work/acme/web",
-      provider: "github",
+      provider: SourceControlProviderKind.make("github"),
       rootPath: "/work repo",
       displayName: "acme/web",
       locator: {
@@ -1312,3 +1298,81 @@ it.effect("checks out the matching SSH alias remote instead of an unrelated orig
     });
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("says a GH_REPO naming an unparseable host targets no remote rather than failing", () => {
+  const { layer } = harness({
+    remotes: remotesOutput(["upstream", "git@github.com:acme/web.git"]),
+    resolved: "",
+    api: {},
+  });
+  return Effect.gen(function* () {
+    const provider = yield* GitHubSourceControlProvider.make;
+    const targets = yield* provider.createsChangeRequestsIn!({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: SourceControlProviderKind.make("github"),
+          name: "GitHub",
+          baseUrl: "https://github.com",
+        },
+        remoteName: "upstream",
+        remoteUrl: "git@github.com:acme/web.git",
+      },
+      repository: "acme/web",
+    });
+    assert.isFalse(targets);
+  }).pipe(
+    Effect.provide(layer),
+    Effect.provideService(HostProcess.Environment, { GH_REPO: "bad host/acme/web" }),
+  );
+});
+
+it.effect.each([
+  ["github-work", "github.com", "github.com"],
+  ["review-alias", "ssh.github.com", "github.com"],
+  ["github-work", "gitlab.example.com", null],
+] as const)(
+  "resolves the web host of %s through the provider hook (%s)",
+  ([alias, hostname, expected]) => {
+    const { layer } = harness({ remotes: "", api: {}, sshHostname: hostname });
+    return Effect.gen(function* () {
+      const provider = yield* GitHubSourceControlProvider.make;
+      const host = yield* provider.resolveRemoteWebHost!({
+        cwd: "/repo",
+        context: {
+          ...githubContext(alias),
+          remoteUrl: `git@${alias}:acme/web.git`,
+          requestedHost: "github.com",
+        },
+        resolveContext: () => Effect.die("The GitHub hook reads SSH configuration directly"),
+      });
+      assert.strictEqual(host, expected);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect.each(["git@github.com-work:me/web.git", "ssh://git@review-alias:22/me/web.git"])(
+  "honors a marked alias origin over upstream after SSH resolution (%s)",
+  (remoteUrl) => {
+    const { layer } = harness({
+      remotes: remotesOutput(
+        ["origin", remoteUrl],
+        ["upstream", "https://github.com/acme/web.git"],
+      ),
+      resolved: "remote.origin.gh-resolved base",
+      sshHostname: "github.com",
+      graphql: (lookup) => {
+        assert.strictEqual(lookup.owner, "me");
+        return { pullRequests: { nodes: [node(7, "feature")] } };
+      },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitHubSourceControlProvider.make;
+      const pending = yield* provider
+        .listChangeRequests({ cwd: "/repo", headSelector: "feature", state: "open" })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("50 millis");
+      assert.strictEqual((yield* Fiber.join(pending))[0]?.number, 7);
+    }).pipe(Effect.provide(layer));
+  },
+);
