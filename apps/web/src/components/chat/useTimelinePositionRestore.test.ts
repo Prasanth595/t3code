@@ -18,11 +18,14 @@ describe("settleListScroll", () => {
       },
     };
 
-    const settled = settleListScroll(list, measuredEndOffset, () => false);
+    let settled = false;
+    void settleListScroll(list, measuredEndOffset, () => false).then(() => {
+      settled = true;
+    });
     await vi.advanceTimersByTimeAsync(5_000);
     vi.useRealTimers();
     vi.unstubAllGlobals();
 
-    expect(await Promise.race([settled, Promise.resolve("still settling")])).toBe(true);
+    expect(settled).toBe(true);
   });
 });

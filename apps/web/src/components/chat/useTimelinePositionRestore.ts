@@ -11,24 +11,23 @@ const SETTLE_MAX_FRAMES = 60;
 /**
  * Index and end scrolling start from estimated row sizes, so they can stop
  * short of a tall row. Corrects against the DOM until the viewport holds the
- * target for two layout frames, or the frame budget runs out; resolves false
- * when cancelled or the target disappears.
+ * target for two layout frames, the frame budget runs out, the caller cancels,
+ * or the target disappears.
  */
 export function settleListScroll(
   list: Pick<LegendListRef, "getScrollableNode" | "scrollToOffset">,
   target: (element: HTMLElement) => number | undefined,
   isCancelled: () => boolean,
-): Promise<boolean> {
+): Promise<void> {
   return new Promise((resolve) => {
     let stableFrames = 0;
     let frames = 0;
     const reconcile = () => {
-      if (isCancelled()) return resolve(false);
+      if (isCancelled()) return resolve();
       const element = list.getScrollableNode();
       const offset = element ? target(element) : undefined;
-      if (!element || offset === undefined) return resolve(false);
       frames += 1;
-      if (frames > SETTLE_MAX_FRAMES) return resolve(true);
+      if (!element || offset === undefined || frames > SETTLE_MAX_FRAMES) return resolve();
       if (Math.abs(element.scrollTop - offset) > 1) {
         stableFrames = 0;
         void list.scrollToOffset({ offset, animated: false }).then(() => {
@@ -37,7 +36,7 @@ export function settleListScroll(
         return;
       }
       stableFrames += 1;
-      if (stableFrames >= 2) resolve(true);
+      if (stableFrames >= 2) resolve();
       else requestAnimationFrame(reconcile);
     };
     requestAnimationFrame(reconcile);
@@ -144,37 +143,31 @@ export function useTimelinePositionRestore({
     void Promise.resolve(scrolling).then(async () => {
       if (cancelled) return;
       if (settlesAtEnd) {
-        if (await settleListScroll(list, measuredEndOffset, () => cancelled)) {
-          onPositioned(listIdentityKey);
-        }
-        return;
+        await settleListScroll(list, measuredEndOffset, () => cancelled);
+      } else if (position?.atEnd === false && index >= 0) {
+        // Keep the saved row mounted until its measured position and the DOM agree.
+        await settleListScroll(
+          list,
+          (element) => {
+            const state = list.getState();
+            const rowIndex = state.indexByKey(position.rowId);
+            const row = rowIndex === undefined ? undefined : state.elementAtIndex(rowIndex);
+            if (!row) return undefined;
+            return Math.max(
+              0,
+              Math.min(
+                element.scrollTop +
+                  row.getBoundingClientRect().top -
+                  element.getBoundingClientRect().top +
+                  position.offsetWithinRow,
+                measuredEndOffset(element),
+              ),
+            );
+          },
+          () => cancelled,
+        );
       }
-      if (position?.atEnd !== false || index < 0) {
-        onPositioned(listIdentityKey);
-        return;
-      }
-      // Keep the saved row mounted until its measured position and the DOM agree.
-      const settled = await settleListScroll(
-        list,
-        (element) => {
-          const state = list.getState();
-          const rowIndex = state.indexByKey(position.rowId);
-          const row = rowIndex === undefined ? undefined : state.elementAtIndex(rowIndex);
-          if (!row) return undefined;
-          return Math.max(
-            0,
-            Math.min(
-              element.scrollTop +
-                row.getBoundingClientRect().top -
-                element.getBoundingClientRect().top +
-                position.offsetWithinRow,
-              measuredEndOffset(element),
-            ),
-          );
-        },
-        () => cancelled,
-      );
-      if (settled) onPositioned(listIdentityKey);
+      if (!cancelled) onPositioned(listIdentityKey);
     });
     return () => {
       cancelled = true;
