@@ -47,7 +47,10 @@ export const resolveBootServiceLogPath = Effect.fn("cloud.boot_service.resolve_l
     if ((yield* HostProcess.Platform) !== "darwin") {
       return path.join(logsDir, BOOT_SERVICE_LOG_FILE);
     }
-    const homeDir = yield* Config.String("HOME").pipe(Config.withDefault(""));
+    const homeDir =
+      (yield* Config.String("HOME").pipe(Config.withDefault(""))) ||
+      (yield* HostProcess.HomeDirectory);
+    if (homeDir === "") return path.join(logsDir, BOOT_SERVICE_LOG_FILE);
     // launchd opens these before t3 runs and may lack access to an external T3 home.
     return path.join(homeDir, "Library", "Logs", "T3Code", BOOT_SERVICE_LOG_FILE);
   },
