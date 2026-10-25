@@ -81,12 +81,13 @@ const make = Effect.gen(function* () {
         // Exclusive creation coordinates separate management processes as well as fibers.
         yield* Effect.acquireRelease(
           fs.makeDirectory(`${state}/writers.lock`).pipe(
-            Effect.mapError(
-              () =>
-                new ManagementError({
-                  message:
-                    "Writer registry is locked by another update. Retry after it completes; remove writers.lock only if that process has stopped.",
-                }),
+            Effect.mapError((error) =>
+              error.reason._tag === "AlreadyExists"
+                ? new ManagementError({
+                    message:
+                      "Writer registry is locked by another update. Retry after it completes; remove writers.lock only if that process has stopped.",
+                  })
+                : error,
             ),
           ),
           () => fs.remove(`${state}/writers.lock`, { recursive: true }).pipe(Effect.orDie),

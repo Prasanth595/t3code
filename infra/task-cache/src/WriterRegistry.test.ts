@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
+import * as PlatformError from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -153,5 +154,36 @@ it.effect("keeps the committed registry intact if a replacement write fails", ()
     expect(Exit.isFailure(result)).toBe(true);
     expect(yield* fs.readFileString(`${state}/writers.json`)).toBe(original);
     expect(yield* fs.exists(`${state}/writers.lock`)).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("preserves filesystem errors when acquiring the registry lock", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const home = yield* fs.makeTempDirectoryScoped();
+    const denied = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method: "makeDirectory",
+    });
+    const error = yield* WriterRegistry.WriterRegistry.pipe(
+      Effect.flatMap((registry) => registry.update("theo", false, "https://cache.example")),
+      Effect.provide(
+        WriterRegistry.layer.pipe(
+          Layer.provide([
+            ConfigProvider.layer(ConfigProvider.fromUnknown({ HOME: home })),
+            Layer.succeed(FileSystem.FileSystem, {
+              ...fs,
+              makeDirectory: (path, options) =>
+                path.endsWith("writers.lock")
+                  ? Effect.fail(denied)
+                  : fs.makeDirectory(path, options),
+            }),
+          ]),
+        ),
+      ),
+      Effect.flip,
+    );
+    expect(error).toBe(denied);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
