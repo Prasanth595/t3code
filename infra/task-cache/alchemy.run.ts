@@ -5,6 +5,8 @@ import * as Layer from "effect/Layer";
 import { Observability } from "./src/observability.ts";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
+import * as Secrets from "alchemy/Secrets";
+import { WriterSecrets } from "./src/writers.ts";
 import workerLayer, { Worker } from "./src/worker.ts";
 
 export default Alchemy.Stack(
@@ -12,6 +14,7 @@ export default Alchemy.Stack(
   {
     providers: Axiom.providers().pipe(Layer.provideMerge(Cloudflare.providers())),
     state: Cloudflare.state(),
+    secrets: [Secrets.DotEnv(), Secrets.ProcessEnv(), WriterSecrets],
   },
   Effect.gen(function* () {
     const worker = yield* Worker;

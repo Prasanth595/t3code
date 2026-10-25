@@ -6,8 +6,9 @@
     "test": "vp test run --config ../../vite.config.ts --dir .",
     "typecheck": "tsc --noEmit",
     "smoke": "node src/smoke.ts",
-    "deploy": "node src/manage.ts deploy",
-    "install:launcher": "node install.mjs"
+    "deploy": "bun alchemy deploy --stage prod",
+    "install:launcher": "node install.mjs",
+    "writers": "node src/manage.ts"
   },
   "dependencies": {
     "@voidzero-dev/vite-plus-remote-cache-cloudflare": "https://codeload.github.com/voidzero-dev/vite-plus-remote-cache-cloudflare/tar.gz/5b06c2c10d84ea441735ba07c46f6d1b7cb2ff3b",
@@ -16,10 +17,10 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260601.1",
+    "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
-    "tsx": "4.23.15",
     "typescript": "catalog:",
     "vite-plus": "catalog:"
   }

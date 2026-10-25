@@ -11,10 +11,11 @@ Vite+ 1.3 includes an experimental remote client even though its TypeScript conf
 Install dependencies with `vp install`, then authenticate with Alchemy's Cloudflare profile. Alternatively, provide `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` through your environment. Alchemy stores deployment state remotely with `Cloudflare.state()`.
 
 ```sh
-node infra/task-cache/src/manage.ts deploy
+cd infra/task-cache
+bun alchemy deploy --stage prod
 ```
 
-The management CLI reads writer digests from `~/.config/t3-task-cache/writers.json` and supplies them as a redacted Worker secret. Preserve that file to administer existing writers. Deployment uses the `prod` stage and the existing endpoint in `.task-cache.json`. The CLI loads the pinned TypeScript protocol dependency through `tsx` for Alchemy's deployment-time evaluation.
+The stack reads writer digests from `~/.config/t3-task-cache/writers.json` and supplies them as a redacted Worker secret. Preserve that file to administer existing writers. Deployment uses the `prod` stage and the existing endpoint in `.task-cache.json`. Bun handles the pinned upstream package's TypeScript source directly. An explicit `DEVELOPER_KEYS` environment variable overrides the local registry, including on deployment hosts without that file. Deployment fails when neither source exists, so a missing local file cannot silently revoke existing writers.
 
 The production database's existing `scopes` and `deployment` records control repository access, quotas, and retention. Adopting it does not overwrite those policies. Provisioning a separate cache requires its own repository policy; a new empty database does not grant uploads.
 
@@ -24,13 +25,13 @@ The production database's existing `scopes` and `deployment` records control rep
 node infra/task-cache/src/manage.ts add-writer maria
 ```
 
-This redeploys the secret, then writes `~/.config/t3-task-cache/maria.json`. Transfer that file through a private channel. The recipient runs:
+This updates the local writer registry and writes `~/.config/t3-task-cache/maria.json`. Run `bun alchemy deploy --stage prod` from `infra/task-cache` to apply the registry, then transfer that file through a private channel. The recipient runs:
 
 ```sh
 bash infra/task-cache/install.sh /path/to/maria.json
 ```
 
-The installer adds the launcher to shell startup files after Vite+'s environment setup. Existing shells should run `source ~/.config/t3-task-cache/env` once. Use separate writer names for separate people. Repeating `add-writer` rotates the token; `revoke-writer <name>` redeploys without that writer. Never commit or attach credential files to an issue or PR.
+The installer adds the launcher to shell startup files after Vite+'s environment setup. Existing shells should run `source ~/.config/t3-task-cache/env` once. Use separate writer names for separate people. Repeating `add-writer` rotates the token; `revoke-writer <name>` removes that writer from the local registry. Deploy again to apply either change. Never commit or attach credential files to an issue or PR.
 
 CI installs the launcher through `setup-ci-deps`; default-branch push jobs upload with GitHub OIDC, and PR jobs read. Deployment credentials are never needed on contributor machines or CI runners. Reads are public, as in the upstream service. Trusted writers can publish artifacts that developers and CI consume.
 
