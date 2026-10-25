@@ -2123,12 +2123,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const transitionEndFollow = (event: ThreadFeedLiveFollowEvent) => {
     setEndFollow(resolveThreadFeedLiveFollow(endFollowEnabledRef.current, event));
   };
-  // A width change re-wraps every row at once, and LegendList re-measures them over the next
-  // commits. Its end threshold and MVCP only see the new geometry, so the reader's place is
-  // taken before any row lands: the end while following, otherwise the row under the header.
-  // On iOS, LegendList keeps that place in the same commit as every re-measure. Android's
-  // list moves only while its MVCP is on, which following turns off, so it restores after.
-  // undefined: no reflow. null: a reflow with nothing to restore.
+  // Capture the reader's anchor before width reflow; LegendList thresholds see only new geometry.
+  // iOS preserves it during re-measures. Android restores after because following disables MVCP.
+  // undefined means no reflow; null means reflow with nothing to restore.
   const reflowAnchorRef = useRef<ThreadFeedReflowAnchor | null | undefined>(undefined);
   const reflowAnchorsSizeChanges = Platform.OS === "ios";
   const [reflowFollowsEnd, setReflowFollowsEnd] = useState(false);

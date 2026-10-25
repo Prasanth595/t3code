@@ -419,11 +419,8 @@ const SETTINGS_SCREENS = {
       title: "Diagnostics",
     },
   }),
-  // Its params are a tap-time snapshot, not a stable resource address: `now` is the wall-clock
-  // of the tap, `environmentIds` is the usage screen's local filter selection, and the window
-  // id/kind identify freshly aggregated pools. React Navigation round-trips non-path params
-  // through the URL as query strings, so a path here would bake in a permanently stale
-  // timestamp and filter.
+  // These params snapshot the tap time, local filters, and freshly aggregated pools.
+  // A linking path would round-trip them as URL query strings and preserve stale values.
   SettingsUsageAccount: createNativeStackScreen({
     screen: UsageLimitAccountScreen,
     options: { ...SETTINGS_PAGE_OPTIONS, title: "Account" },

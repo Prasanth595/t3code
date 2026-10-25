@@ -1,9 +1,7 @@
 // Run with: node packages/source-control-github/scripts/measure-pr-preview.ts owner/repo 123 456
-// Numbers form a session with shared repository-permission caches. Browser and
-// service caches are excluded. Uses real GitHub reads, without a server or database.
-// Requests are counted at the HTTP client. A GraphQL request's cost is how far it moved GitHub's
-// `x-ratelimit-used` for the `graphql` resource, which is approximate when anything else spends
-// the same token's quota while this runs.
+// Real GitHub reads share repository-permission caches, excluding browser and service caches.
+// HTTP client request counts are exact; GraphQL cost uses changes in `x-ratelimit-used`,
+// which are approximate when other clients spend the same token's quota.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
