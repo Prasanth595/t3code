@@ -191,16 +191,17 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           isCollapsed ? "Show the question and its options" : "Hide the question and its options"
         }
         data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
-        className="px-2"
+        className="px-4 pt-1.5"
       >
         <ComposerBanner.Content>
-          <span className="shrink-0 font-medium text-muted-foreground">
-            {activeQuestion.header}
-          </span>
+          <span className="shrink-0 text-muted-foreground">{activeQuestion.header}</span>
           {isCollapsed ? (
-            <span className="min-w-0 flex-1 truncate text-secondary-label">
-              {activeQuestion.question}
-            </span>
+            <>
+              <ComposerBanner.Separator />
+              <span className="min-w-0 flex-1 truncate text-secondary-label">
+                {activeQuestion.question}
+              </span>
+            </>
           ) : null}
         </ComposerBanner.Content>
         <ComposerBanner.Actions className="gap-0">
@@ -234,12 +235,12 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       </CollapsibleTrigger>
       <CollapsiblePanel>
         <ComposerBanner.Scroll>
-          <ComposerBanner.Body className="ps-4 pe-2 pb-1 wrap-anywhere sm:ps-3.5">
+          <ComposerBanner.Body className="ps-6 pe-4 pb-1 wrap-anywhere sm:ps-5.5">
             <ChatMarkdown
               text={activeQuestion.question}
               cwd={cwd}
               threadRef={threadRef}
-              className="pt-0.5 text-foreground/85"
+              className="pt-2 text-foreground/85"
             />
             {/* Rows span the header row's width so the radios align with the question text and the shortcut column sits under the dismiss button. */}
             <div className="-ms-2 mt-1.5 sm:-ms-1.5">
