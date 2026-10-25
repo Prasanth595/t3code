@@ -87,6 +87,17 @@ export interface Relaunch {
   readonly message: string;
 }
 
+/**
+ * `seen` as the `gate-passed` step of a new pass leaves it: no read of the checks, since one in
+ * the ledger was about the pass before. For a pass recorded in this call, which `seen` predates.
+ */
+export const withoutCheckReads = (seen: Seen): Seen => ({
+  ...seen,
+  checksPassed: null,
+  checksFailed: null,
+  checksTimedOut: null,
+});
+
 /** The gate attempt a re-gate relaunch fixes; `null` for a feedback relaunch, which is no attempt. */
 export const regateAttempt = (relaunch: Relaunch): number | null =>
   relaunch.fixes.kind === "regate" ? relaunch.fixes.attempt : null;

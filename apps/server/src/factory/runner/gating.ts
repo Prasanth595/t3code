@@ -74,6 +74,7 @@ import {
   pendingRelaunch,
   readProgress,
   regateAttempt,
+  withoutCheckReads,
   type Moved,
   type PassRecord,
   type Relaunch,
@@ -899,8 +900,7 @@ const buildingMode = (
               })
             : Effect.void,
         passed: (pass) => {
-          // `seen` was read before this pass: a read of the checks in it was about an earlier one.
-          const unread: Seen = { ...seen, checksPassed: null, checksFailed: null };
+          const unread = withoutCheckReads(seen);
           if (checksWanted(ctx, unread, pass.sha)) {
             return awaitChecks(ctx, out, run, unread, at, pass, { threadId, pr });
           }
@@ -1559,7 +1559,12 @@ export const regate = (ctx: GateContext, run: RunId): Effect.Effect<Regated, Gat
             const step = yield* finishRegatePass(ctx, out, issue, at, pass, last.pr, reassert);
             return { step, moved: seen.regateMoved };
           }
-          if (pull.headSha.toLowerCase() !== pass.sha) {
+          // A wait that ran out is a stuck decision on record, and the call that wrote it may
+          // have drafted the pull request before it died: it is finished whatever the head holds
+          // now (`decideChecks`). A failed read is a decision only once a relaunch records it,
+          // which `owedRegateSend` and the relaunch entry recover.
+          const timedOut = seen.checksTimedOut !== null && seen.checksTimedOut.sha === pass.sha;
+          if (pull.headSha.toLowerCase() !== pass.sha && !timedOut) {
             // No check on another commit says anything about this pass, and nothing of it is
             // posted: the new head is what the pull request holds now.
             movedOn = pull;
@@ -1660,8 +1665,9 @@ export const regate = (ctx: GateContext, run: RunId): Effect.Effect<Regated, Gat
         at,
         readyMode(ctx, out, run, seen, at, {
           // A head that moved on during the checks wait is gated fresh: nothing of an earlier
-          // call is resumed, so nothing is set again when it passes.
-          resumed: entry.kind === "resume" && movedOn === null,
+          // call is resumed, so nothing is set again when it passes, unless the pass it leaves
+          // behind still owed that repair (`Seen.regatePassReassert`), which carries over.
+          resumed: entry.kind === "resume" && (movedOn === null || seen.regatePassReassert),
           pr: last.pr,
           prUrl: last.url,
         }),
