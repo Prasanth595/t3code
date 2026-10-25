@@ -181,8 +181,9 @@ describe("createThreadFamilyAtoms", () => {
         expect(threadFamilyRead(registry.get(family))).toBe("failed");
         expect(mergedIds()).toEqual(["parent"]);
 
-        yield* Queue.offer(replies, Effect.succeed({ snapshotSequence: 5, threads: [child] }));
         families.refresh(registry, TARGET.environmentId, parent.id);
+        expect(threadFamilyRead(registry.get(family))).toBe("pending");
+        yield* Queue.offer(replies, Effect.succeed({ snapshotSequence: 5, threads: [child] }));
         yield* settle;
         expect(threadFamilyRead(registry.get(family))).toBe("settled");
         expect(mergedIds()).toEqual(["parent", "idle-child"]);

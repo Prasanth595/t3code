@@ -30,8 +30,10 @@ export type ThreadFamilyRead = "pending" | "failed" | "settled";
 export function threadFamilyRead(
   result: AsyncResult.AsyncResult<OrchestrationV2ThreadFamily, unknown>,
 ): ThreadFamilyRead {
+  // A failure whose retry is in flight is pending, so callers do not restart that retry.
+  if (result.waiting) return "pending";
   if (AsyncResult.isFailure(result)) return "failed";
-  return AsyncResult.isSuccess(result) && !result.waiting ? "settled" : "pending";
+  return AsyncResult.isSuccess(result) ? "settled" : "pending";
 }
 
 /**
