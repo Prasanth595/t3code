@@ -255,6 +255,40 @@ it("installs without masking .profile and configures CI through bash", async () 
     const output = await run(["bash", "-c", 'printf "%s" "$NODE_OPTIONS"'], { BASH_ENV: bashEnv });
     expect(output).toContain("--import=file:");
     expect(output).toContain("/infra/task-cache/src/preload.mjs");
+    await NodeFSP.rm(NodePath.join(home, ".local/share/t3-task-cache/preload.mjs"));
+    const missing = await run(["bash", "-c", `node -e 'console.log("missing preload is safe")'`], {
+      BASH_ENV: NodePath.join(home, ".config/t3-task-cache/env"),
+    });
+    expect(missing).toContain("missing preload is safe");
+
+    await run(
+      [
+        process.execPath,
+        NodePath.join(import.meta.dirname, "../scripts/install.ts"),
+        "--uninstall",
+      ],
+      {},
+    );
+    expect(await NodeFSP.readdir(NodePath.join(home, ".local/share/t3-task-cache"))).toEqual([
+      "preload.mjs",
+    ]);
+    expect(await NodeFSP.readFile(NodePath.join(home, ".profile"), "utf8")).not.toContain(
+      "t3-task-cache/env",
+    );
+    expect(await NodeFSP.readdir(NodePath.join(home, ".config/t3-task-cache"))).not.toContain(
+      "credentials.json",
+    );
+    const remaining = await run(
+      [
+        process.execPath,
+        "--import",
+        NodePath.join(home, ".local/share/t3-task-cache/preload.mjs"),
+        "-e",
+        'console.log("node survives uninstall")',
+      ],
+      {},
+    );
+    expect(remaining).toContain("node survives uninstall");
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
@@ -285,8 +319,8 @@ it("does not send an old endpoint's token after changing the URL interactively",
       NodePath.join(scripts, "install.ts"),
     );
     await NodeFSP.copyFile(
-      NodePath.join(import.meta.dirname, "nativeHook.ts"),
-      NodePath.join(root, "infra/task-cache/src/nativeHook.ts"),
+      NodePath.join(import.meta.dirname, "nativeHook.js"),
+      NodePath.join(root, "infra/task-cache/src/nativeHook.js"),
     );
     await NodeFSP.mkdir(NodePath.join(root, ".config/t3-task-cache"), { recursive: true });
     await NodeFSP.writeFile(

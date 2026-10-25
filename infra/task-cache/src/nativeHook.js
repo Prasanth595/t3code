@@ -1,4 +1,5 @@
-export function patchNativeCli(source: string) {
+/** @param {string} source */
+export function patchNativeCli(source) {
   if (source.includes('import { startRunHook } from "./run-hook.js";')) return source;
   const start = "\tconst exitCode = await run({";
   const end = "\t\targs: rustCliArgs\n\t});";

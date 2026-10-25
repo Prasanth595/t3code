@@ -16,6 +16,7 @@ export const savingsQuery = (
     `| extend a = ['attributes.custom']`,
     `| extend event_id = tostring(a['cache.event_id']), developer = tostring(a['developer.id']), host = tostring(['attributes.host.name']), ci = tobool(a['ci']), unspecified_ms = coalesce(tolong(a['cache.unspecified_saved_ms']), 0), unspecified_hits = coalesce(tolong(a['cache.unspecified_hits']), 0), local_ms = tolong(a['cache.local_saved_ms']), remote_ms = tolong(a['cache.remote_saved_ms']), local_hits = tolong(a['cache.local_hits']), remote_hits = tolong(a['cache.remote_hits']), executed = tolong(a['cache.executed']), restore_failures = tolong(a['cache.restore_failures'])`,
     `| summarize arg_max(_time, unspecified_ms, unspecified_hits, local_ms, remote_ms, local_hits, remote_hits, executed, restore_failures${lifetime ? "" : ", developer, host, ci"}) by ${lifetime ? "developer, host, ci, platform = tostring(a['host.os']), arch = tostring(['attributes.host.arch'])" : "event_id"}`,
+    `| where local_hits + remote_hits + unspecified_hits + executed + restore_failures > 0`,
     `| summarize saved_task_hours = sum(local_ms + remote_ms + unspecified_ms) / 3600000.0, remote_saved_hours = sum(remote_ms) / 3600000.0, local_saved_hours = sum(local_ms) / 3600000.0, unspecified_saved_hours = sum(unspecified_ms) / 3600000.0, unspecified_hits = sum(unspecified_hits), local_hits = sum(local_hits), remote_hits = sum(remote_hits), executed = sum(executed), restore_failures = sum(restore_failures)${group ? ` by ${group}` : ""}`,
   ].join("\n");
 

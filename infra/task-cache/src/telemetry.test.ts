@@ -115,3 +115,48 @@ it("skips unauthenticated endpoints without consuming the delivery budget", asyn
     NodeFS.rmSync(home, { recursive: true, force: true });
   }
 });
+
+it("excludes tasks that explicitly disable caching from the hit-rate denominator", () => {
+  expect(
+    summarize({
+      tasks: [
+        { ...task({ Spawned: {} }), cache_status: "Disabled" },
+        { ...task({ Spawned: {} }), cache_status: { Miss: "changed" } },
+      ],
+    }),
+  ).toEqual([{ package: "@team/server", task: "typecheck", source: "executed", savedMs: 0 }]);
+});
+
+it("drops revoked credentials and continues delivering other queued endpoints", async () => {
+  const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "cache-revoked-"));
+  try {
+    const queue = NodePath.join(home, ".cache/t3-task-cache/telemetry");
+    const state = NodePath.join(home, ".config/t3-task-cache");
+    NodeFS.mkdirSync(queue, { recursive: true });
+    NodeFS.mkdirSync(state, { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(state, "credentials.json"),
+      JSON.stringify({
+        "https://revoked.example": { name: "a", token: "old" },
+        "https://current.example": { name: "a", token: "new" },
+      }),
+    );
+    for (const [file, endpoint] of [
+      ["a.json", "https://revoked.example"],
+      ["b.json", "https://current.example"],
+    ])
+      NodeFS.writeFileSync(
+        NodePath.join(queue, file!),
+        JSON.stringify({ endpoint, event: { id: file } }),
+      );
+    using request = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(null, { status: 403 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await flushTelemetry(home, {});
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(NodeFS.readdirSync(queue)).toEqual([]);
+  } finally {
+    NodeFS.rmSync(home, { recursive: true, force: true });
+  }
+});

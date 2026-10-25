@@ -41,6 +41,7 @@ export function summarize(value: unknown): SummaryEvent["tasks"] {
       typeof task.result !== "object"
     )
       return [];
+    if ("cache_status" in task && task.cache_status === "Disabled") return [];
     let source: SummaryEvent["tasks"][number]["source"] = "executed";
     let savedMs = 0;
     if ("CacheHit" in task.result) {
@@ -169,7 +170,11 @@ export async function flushTelemetry(home = NodeOS.homedir(), env = process.env)
   try {
     const files = NodeFS.readdirSync(queue)
       .filter((file) => file.endsWith(".json"))
-      .sort();
+      .sort(
+        (a, b) =>
+          NodeFS.statSync(NodePath.join(queue, a)).mtimeMs -
+          NodeFS.statSync(NodePath.join(queue, b)).mtimeMs,
+      );
     // Bound disk use while offline. Unsent events retry on the next invocation.
     for (const file of files.slice(0, Math.max(0, files.length - 2000)))
       NodeFS.rmSync(NodePath.join(queue, file), { force: true });
@@ -227,8 +232,7 @@ export async function flushTelemetry(home = NodeOS.homedir(), env = process.env)
         signal: AbortSignal.timeout(3000),
       });
       await response.body?.cancel();
-      if (response.ok || response.status === 400 || response.status === 413)
-        NodeFS.unlinkSync(path);
+      if (response.ok || [400, 401, 403, 413].includes(response.status)) NodeFS.unlinkSync(path);
       else return;
     }
   } catch {

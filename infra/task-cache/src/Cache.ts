@@ -81,7 +81,9 @@ const make = Effect.gen(function* () {
       );
       const operation = route?.[1];
       const writing = operation === "store";
-      yield* Effect.annotateCurrentSpan({ "cache.operation": operation ?? "unknown" });
+      yield* Effect.annotateCurrentSpan({
+        "cache.operation": operation?.startsWith("blob/") ? "blob" : (operation ?? "unknown"),
+      });
       const allowed = yield* protocol(() =>
         (writing ? bindings.storeLimit : bindings.readLimit).limit({
           key: route
@@ -157,6 +159,7 @@ const make = Effect.gen(function* () {
                 const summary = yield* decodeSummary(new TextDecoder().decode(bytes)).pipe(
                   Effect.mapError(() => new CacheError({ status: 400, reason: "invalid_summary" })),
                 );
+                if (summary.tasks.length === 0) return new Response(null, { status: 204 });
                 const now = yield* Clock.currentTimeMillis;
                 if (summary.recordedAt > now + 60_000 || summary.recordedAt < now - 30 * 86400_000)
                   return yield* new CacheError({ status: 400, reason: "summary_expired" });

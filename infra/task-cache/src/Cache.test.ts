@@ -143,3 +143,48 @@ it.effect("gives telemetry a rate-limit budget separate from artifact downloads"
     ),
   );
 });
+
+it.effect("authenticates setup probes without recording empty savings", () => {
+  const record = vi.fn(() => Effect.void);
+  const emitTotals = vi.fn(() => Effect.void);
+  return Effect.gen(function* () {
+    const cache = yield* Cache.Cache;
+    const response = yield* cache.handle(
+      new Request("https://cache.example/projects/t3code/telemetry", {
+        method: "POST",
+        headers: {
+          authorization: `Basic ${btoa("julius:fixture-token-012345678901234567890123456789")}`,
+        },
+        body: JSON.stringify({
+          id: "a".repeat(64),
+          recordedAt: 0,
+          host: "setup-host",
+          platform: "linux",
+          arch: "x64",
+          ci: false,
+          runId: "setup",
+          tasks: [],
+        }),
+      }),
+      { waitUntil: () => {} },
+    );
+    expect(response.status).toBe(204);
+    expect(record).not.toHaveBeenCalled();
+    expect(emitTotals).not.toHaveBeenCalled();
+  }).pipe(
+    Effect.provide(
+      Cache.layer.pipe(
+        Layer.provide([
+          Layer.succeed(Cache.Bindings, {
+            developerKeys: JSON.stringify({
+              julius: "210eb3d2c67a7207923e1999751300a87a2dd22839b258b80c3d805a6fe64984",
+            }),
+            readLimit: { limit: async () => ({ success: true }) },
+          } as unknown as Cache.Bindings["Service"]),
+          Admission.layer,
+          Layer.succeed(Savings.Savings, { record, emitTotals, cleanup: Effect.void }),
+        ]),
+      ),
+    ),
+  );
+});

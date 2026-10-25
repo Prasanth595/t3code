@@ -1,5 +1,5 @@
 import { expect, it } from "vite-plus/test";
-import { patchNativeCli } from "./nativeHook.ts";
+import { patchNativeCli } from "./nativeHook.js";
 
 it("wraps the native runner in a finally hook and patches only once", () => {
   const original =

@@ -7,12 +7,60 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeReadlinePromises from "node:readline/promises";
-import { patchNativeCli } from "../src/nativeHook.ts";
+import { patchNativeCli } from "../src/nativeHook.js";
 
 const home = NodeOS.homedir();
 const root = NodePath.resolve(import.meta.dirname, "../../..");
 const state = NodePath.join(home, ".config/t3-task-cache");
 const nonInteractive = process.argv.includes("--non-interactive");
+const installed = NodePath.join(home, ".local/share/t3-task-cache");
+const hookConfig = NodePath.join(home, ".config/vite-plus/run-hook.json");
+const legacySourceLine = '. "$HOME/.config/t3-task-cache/env"';
+const sourceLine =
+  '[ ! -r "$HOME/.config/t3-task-cache/env" ] || . "$HOME/.config/t3-task-cache/env"';
+const profiles = [".profile", ".bashrc", ".bash_profile", ".bash_login", ".zshenv", ".zshrc"];
+if (process.argv.includes("--uninstall")) {
+  for (const file of profiles) {
+    const path = NodePath.join(home, file);
+    try {
+      const original = await NodeFSP.readFile(path, "utf8");
+      const next = original
+        .split("\n")
+        .filter((line) => line !== sourceLine && line !== legacySourceLine)
+        .join("\n");
+      if (next !== original) await NodeFSP.writeFile(path, next);
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+  }
+  try {
+    const config = JSON.parse(await NodeFSP.readFile(hookConfig, "utf8"));
+    if (config.module === NodePath.join(installed, "runHook.ts")) await NodeFSP.unlink(hookConfig);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  }
+  await NodeFSP.rm(NodePath.join(state, "credentials.json"), { force: true });
+  await NodeFSP.rm(NodePath.join(state, "env"), { force: true });
+  await NodeFSP.rm(NodePath.join(home, ".cache/t3-task-cache/telemetry"), {
+    recursive: true,
+    force: true,
+  });
+  // Existing shells still import this path until restarted; leave a harmless loader for them.
+  await NodeFSP.mkdir(installed, { recursive: true });
+  await NodeFSP.writeFile(
+    NodePath.join(installed, "preload.mjs"),
+    "// Task cache uninstalled. Safe for shells opened before uninstall.\n",
+  );
+  for (const file of await NodeFSP.readdir(installed)) {
+    if (file !== "preload.mjs")
+      await NodeFSP.rm(NodePath.join(installed, file), { recursive: true, force: true });
+  }
+  console.log(
+    "Task cache uninstalled. Restart existing shells and agents to clear their inherited preload.",
+  );
+  process.exit(0);
+}
+
 const { endpoint: defaultEndpoint } = JSON.parse(
   await NodeFSP.readFile(NodePath.join(root, ".task-cache.json"), "utf8"),
 );
@@ -129,19 +177,25 @@ for (const candidate of candidates) {
   try {
     const path = await NodeFSP.realpath(candidate);
     const original = await NodeFSP.readFile(path, "utf8");
-    targets.set(path, { original, patched: patchNativeCli(original) });
+    const backup = await NodeFSP.readFile(`${path}.before-task-cache`, "utf8").catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return undefined;
+        throw error;
+      },
+    );
+    if (backup && (original === backup || original === patchNativeCli(backup)))
+      targets.set(path, { original: backup, patched: original });
   } catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
   }
 }
-if (!targets.size) throw new Error("Install Vite+ before installing its telemetry hook.");
-const installed = NodePath.join(home, ".local/share/t3-task-cache");
+
 await NodeFSP.mkdir(installed, { recursive: true });
 await NodeFSP.writeFile(NodePath.join(installed, "package.json"), '{"type":"module"}\n');
 for (const file of [
   "runHook.ts",
   "telemetry.ts",
-  "nativeHook.ts",
+  "nativeHook.js",
   "nativeRunHook.js",
   "preload.mjs",
 ])
@@ -149,7 +203,6 @@ for (const file of [
     NodePath.join(import.meta.dirname, "../src", file),
     NodePath.join(installed, file),
   );
-const hookConfig = NodePath.join(home, ".config/vite-plus/run-hook.json");
 await NodeFSP.mkdir(NodePath.dirname(hookConfig), { recursive: true });
 await NodeFSP.writeFile(
   hookConfig,
@@ -158,15 +211,19 @@ await NodeFSP.writeFile(
     module: NodePath.join(installed, "runHook.ts"),
   }),
 );
-for (const [path, { original, patched }] of targets) {
-  try {
-    const backup = await NodeFSP.readFile(`${path}.before-task-cache`, "utf8");
-    if (original === patchNativeCli(backup) && original === patched)
-      await NodeFSP.writeFile(path, backup);
-  } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-  }
+for (const [path, { original }] of targets) {
+  await NodeFSP.writeFile(path, original);
+  await NodeFSP.rm(`${path}.before-task-cache`, { force: true });
+  await NodeFSP.rm(NodePath.join(NodePath.dirname(path), "run-hook.js"), { force: true });
 }
+for (const file of [
+  "nativeHook.ts",
+  "launcher-telemetry.ts",
+  "launcherTelemetry.ts",
+  "vp.ts",
+  "bin",
+])
+  await NodeFSP.rm(NodePath.join(installed, file), { recursive: true, force: true });
 await NodeFSP.mkdir(state, { recursive: true, mode: 0o700 });
 credentials[endpoint] = { name, token };
 await NodeFSP.writeFile(NodePath.join(state, "credentials.json"), JSON.stringify(credentials), {
@@ -179,16 +236,17 @@ const preload = NodeURL.pathToFileURL(NodePath.join(installed, "preload.mjs")).h
 await NodeFSP.writeFile(
   environmentFile,
   [
+    `if [ -r "${NodePath.join(installed, "preload.mjs")}" ]; then`,
     `case " \${NODE_OPTIONS-} " in`,
     `  *" --import=${preload} "*) ;;`,
     `  *) export NODE_OPTIONS="\${NODE_OPTIONS:+$NODE_OPTIONS }--import=${preload}" ;;`,
     `esac`,
+    `fi`,
     "",
   ].join("\n"),
   { mode: 0o600 },
 );
-const sourceLine = '. "$HOME/.config/t3-task-cache/env"';
-for (const file of [".profile", ".bashrc", ".bash_profile", ".bash_login", ".zshenv", ".zshrc"]) {
+for (const file of profiles) {
   const path = NodePath.join(home, file);
   let original = "";
   try {
@@ -199,10 +257,17 @@ for (const file of [".profile", ".bashrc", ".bash_profile", ".bash_login", ".zsh
   if (file === ".bash_profile" || file === ".bash_login") {
     if (!original) continue;
     // Earlier installers created a profile that masks the user’s existing login profile.
-    if (file === ".bash_profile" && original.trim() === sourceLine) {
+    if (file === ".bash_profile" && [sourceLine, legacySourceLine].includes(original.trim())) {
       await NodeFSP.unlink(path);
       continue;
     }
+  }
+  if (original.split("\n").includes(legacySourceLine)) {
+    original = original
+      .split("\n")
+      .filter((line) => line !== legacySourceLine)
+      .join("\n");
+    await NodeFSP.writeFile(path, original);
   }
   if (!original.split("\n").includes(sourceLine))
     await NodeFSP.appendFile(path, `\n${sourceLine}\n`);

@@ -5,7 +5,7 @@ if (
   typeof NodeModule.registerHooks === "function" &&
   Number(process.versions.node.split(".")[0]) >= 24
 ) {
-  const { patchNativeCli } = await import("./nativeHook.ts");
+  const { patchNativeCli } = await import("./nativeHook.js");
   const hookUrl = new URL("./nativeRunHook.js", import.meta.url).href;
   NodeModule.registerHooks({
     load(url, context, nextLoad) {
