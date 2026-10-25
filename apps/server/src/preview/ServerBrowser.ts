@@ -2395,8 +2395,9 @@ const make = Effect.gen(function* () {
     broadcastViewport(tab);
     yield* Effect.promise(() => startScreencast(1));
     // An idle page does not repaint for a new screencast, so the viewer
-    // starts from a still unless a live frame beat it.
-    if (!screencastStarted) yield* Effect.promise(pushStill);
+    // starts from a still unless a live frame beat it. Not awaited: the
+    // viewer's socket must open even while the page is not answering.
+    if (!screencastStarted) void pushStill();
     return {
       output,
       input: (raw: unknown) =>

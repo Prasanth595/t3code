@@ -110,6 +110,8 @@ function offerDownload(download: PreviewStreamDownload) {
 }
 
 const MAX_REFUSALS = 3;
+// Longer than the stream client's reconnect backoff, so a brief link drop still recovers silently.
+const FIRST_FRAME_TIMEOUT_MS = 30_000;
 
 export function PreviewStreamWebView(
   props: Omit<PreviewStreamConfiguration, "access"> &
@@ -296,6 +298,16 @@ function PreviewStreamDocumentView({
     const timer = setTimeout(bootstrapTimedOut, 15_000);
     return () => clearTimeout(timer);
   }, [started]);
+  // A responsive page sends a still right after the socket opens, so a long wait without any
+  // frame means the page is not answering, not that the link is slow.
+  const pageUnresponsive = useEffectEvent(() =>
+    fail("The page is not responding. Reconnect to try again."),
+  );
+  useEffect(() => {
+    if (!started || status !== "connecting") return;
+    const timer = setTimeout(pageUnresponsive, FIRST_FRAME_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [started, status]);
   const source = useMemo(
     () => ({
       html: previewStreamDocument(configuration, previewStreamScript),

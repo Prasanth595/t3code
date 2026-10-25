@@ -599,6 +599,36 @@ it.live("enforces provider ownership and explicit targets when a session has mul
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a viewer attaches while the page is not answering its still capture", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const context = contexts[0]!;
+      const capture = Promise.withResolvers<Record<string, unknown>>();
+      // The viewer's still captures on its own session, which a hung page never answers.
+      const newCDPSession = context.newCDPSession;
+      context.newCDPSession = async (target) => {
+        context.newCDPSession = newCDPSession;
+        const session = await newCDPSession(target);
+        const send = session.send.getMockImplementation()!;
+        session.send.mockImplementation((method, input) =>
+          method === "Page.captureScreenshot" ? capture.promise : send(method, input),
+        );
+        return session;
+      };
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, false));
+      const outputs = yield* Queue.takeAll(viewer.output);
+      expect(outputs).toContainEqual(expect.objectContaining({ _tag: "viewport" }));
+      expect(outputs).toContainEqual(expect.objectContaining({ _tag: "control" }));
+      expect(outputs.some((output) => output._tag === "frame")).toBe(false);
+      capture.resolve({ data: "ZnJhbWU=" });
+      let output = yield* Queue.take(viewer.output);
+      while (output._tag !== "frame") output = yield* Queue.take(viewer.output);
+      expect(output.data).toEqual(Buffer.from("frame"));
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("streams to a read-only viewer without allowing takeover, input, or viewport changes", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -617,7 +647,9 @@ it.live("streams to a read-only viewer without allowing takeover, input, or view
         yield* viewer.input(message);
       expect(page.setViewportSize).not.toHaveBeenCalled();
       expect(session.send.mock.calls.some(([method]) => method.startsWith("Input."))).toBe(false);
-      const outputs = yield* Queue.takeAll(viewer.output);
+      const outputs: Array<ServerBrowser.ServerBrowserViewerOutput> = [];
+      do outputs.push(yield* Queue.take(viewer.output));
+      while (!outputs.some((output) => output._tag === "frame"));
       expect(outputs).toContainEqual(
         expect.objectContaining({ _tag: "frame", data: Buffer.from("frame") }),
       );
