@@ -159,7 +159,6 @@ export function ProviderInstanceIcon(props: {
   readonly displayName: string;
   readonly accentColor?: string;
   readonly showBadge?: boolean;
-  /** Defaults to the screen surface; pass a color only where the badge sits on another surface. */
   readonly surfaceColor?: string;
 }) {
   const accentColor = normalizeProviderAccentColor(props.accentColor);

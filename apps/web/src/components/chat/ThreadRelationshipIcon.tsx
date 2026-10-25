@@ -79,7 +79,6 @@ export function ThreadRelationshipIcon({
       <span
         className={cn(
           "absolute size-2 rounded-full border-2 border-card",
-          // The account badge owns the bottom-right corner, as everywhere else.
           showInstanceBadge ? "-left-1 -top-1" : "-bottom-1 -right-1",
           status === "running" ||
             status === "in_progress" ||
