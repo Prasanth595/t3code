@@ -191,6 +191,13 @@ describe("V2 storage cleanup eligibility", () => {
     },
     { name: "not yet armed by the recovery worker", armed: false, resetIn: DAY_MS, idle: false },
     {
+      name: "not yet armed, auto-resume after reset",
+      armed: false,
+      autoResumeSetting: true,
+      resetIn: -1_000,
+      idle: false,
+    },
+    {
       name: "not armed with recovery settings off",
       armed: false,
       settingsOff: true,
@@ -199,7 +206,16 @@ describe("V2 storage cleanup eligibility", () => {
     },
   ])(
     "treats a usage-limited thread $name as idle: $idle",
-    ({ autoResume = false, snooze = false, armed = true, settled, settingsOff, resetIn, idle }) => {
+    ({
+      autoResume = false,
+      snooze = false,
+      armed = true,
+      autoResumeSetting = false,
+      settled,
+      settingsOff,
+      resetIn,
+      idle,
+    }) => {
       const runId = RunId.make("run-1");
       const resetAt = DateTime.formatIso(at(resetIn));
       expect(
@@ -213,7 +229,7 @@ describe("V2 storage cleanup eligibility", () => {
             limitRecovery: armed ? { runId, resetAt, autoResume, snooze } : null,
           },
           NOW_MS,
-          { autoResumeLimitedThreads: false, snoozeLimitedThreads: !settingsOff },
+          { autoResumeLimitedThreads: autoResumeSetting, snoozeLimitedThreads: !settingsOff },
         ),
       ).toBe(idle);
     },
