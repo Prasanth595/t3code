@@ -178,10 +178,11 @@ export async function flushTelemetry(home = NodeOS.homedir(), env = process.env)
       ? JSON.parse(NodeFS.readFileSync(credentialsFile, "utf8"))
       : {};
     const deadline = Date.now() + 15_000;
+    const skipped = new Set<string>();
     // Re-scan between sends so a concurrent command's final summary joins this flush.
     for (let sent = 0; sent < 100 && Date.now() < deadline; sent++) {
       const file = NodeFS.readdirSync(queue)
-        .filter((entry) => entry.endsWith(".json"))
+        .filter((entry) => entry.endsWith(".json") && !skipped.has(entry))
         .sort()[0];
       if (!file) break;
       const path = NodePath.join(queue, file);
@@ -201,7 +202,10 @@ export async function flushTelemetry(home = NodeOS.homedir(), env = process.env)
         if (!response.ok) return;
         const token = (await response.json()) as { value: string };
         authorization = `Bearer ${token.value}`;
-      } else return;
+      } else {
+        skipped.add(file);
+        continue;
+      }
       url.pathname = `${url.pathname.replace(/\/$/, "")}/telemetry`;
       const response = await fetch(url, {
         method: "POST",

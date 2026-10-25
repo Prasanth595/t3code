@@ -6,6 +6,8 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Redacted from "effect/Redacted";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { WriterSecrets } from "./writers.ts";
 
 const readKeys = Config.Redacted("DEVELOPER_KEYS").pipe(Effect.provide(WriterSecrets));
@@ -43,5 +45,32 @@ it.effect("fails instead of deploying an empty registry when credentials are mis
       Effect.exit,
     );
     expect(Exit.isFailure(result)).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("rejects reserved writer names without modifying credential stores", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const home = yield* fs.makeTempDirectoryScoped();
+    const state = `${home}/.config/t3-task-cache`;
+    yield* fs.makeDirectory(state, { recursive: true });
+    const writers = '{"maria":"digest"}';
+    const credentials = '{"https://cache.example":{"name":"maria","token":"secret"}}';
+    yield* fs.writeFileString(`${state}/writers.json`, writers);
+    yield* fs.writeFileString(`${state}/credentials.json`, credentials);
+    for (const name of ["writers", "credentials"]) {
+      const code = yield* spawner.exitCode(
+        ChildProcess.make("node", [`${import.meta.dirname}/manage.ts`, "add-writer", name], {
+          env: { HOME: home },
+          extendEnv: true,
+          stdout: "ignore",
+          stderr: "ignore",
+        }),
+      );
+      expect(code).not.toBe(0);
+      expect(yield* fs.readFileString(`${state}/writers.json`)).toBe(writers);
+      expect(yield* fs.readFileString(`${state}/credentials.json`)).toBe(credentials);
+    }
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

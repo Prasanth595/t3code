@@ -82,3 +82,34 @@ it("deduplicates shared summaries and retries delivery without credentials in qu
     NodeFS.rmSync(root, { recursive: true, force: true });
   }
 });
+
+it("skips an unauthenticated endpoint without blocking later queued events", async () => {
+  const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "cache-queue-"));
+  const endpoint = "https://cache.example/projects/t3code";
+  try {
+    const queue = NodePath.join(home, ".cache/t3-task-cache/telemetry");
+    NodeFS.mkdirSync(queue, { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(queue, "a.json"),
+      JSON.stringify({ endpoint: "https://old.example/projects/t3code", event: { id: "old" } }),
+    );
+    NodeFS.writeFileSync(
+      NodePath.join(queue, "b.json"),
+      JSON.stringify({ endpoint, event: { id: "current" } }),
+    );
+    NodeFS.mkdirSync(NodePath.join(home, ".config/t3-task-cache"), { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(home, ".config/t3-task-cache/credentials.json"),
+      JSON.stringify({ [endpoint]: { name: "alice", token: "secret-token" } }),
+    );
+    using request = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 204 }));
+    await flushTelemetry(home, {});
+    expect(NodeFS.readdirSync(queue)).toEqual(["a.json"]);
+    expect(request).toHaveBeenCalledOnce();
+    expect(request.mock.calls[0]![0].toString()).toBe(`${endpoint}/telemetry`);
+  } finally {
+    NodeFS.rmSync(home, { recursive: true, force: true });
+  }
+});

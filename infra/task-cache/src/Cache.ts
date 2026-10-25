@@ -205,6 +205,7 @@ export const layer = Layer.effect(
                 );
                 if (!selected)
                   return yield* new CacheError({ status: 404, reason: "blob_missing" });
+                stats.r2_operations++;
                 const object = yield* protocol(() => bindings.ARTIFACTS.get(selected.blob_object));
                 if (!object) return yield* new CacheError({ status: 404, reason: "blob_missing" });
                 if (object.size !== selected.blob_size)

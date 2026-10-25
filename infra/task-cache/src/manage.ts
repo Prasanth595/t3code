@@ -28,7 +28,7 @@ const save = Effect.fn("TaskCache.save")(function* (name: string, value: string)
 
 const name = Argument.String("name").pipe(Argument.withDescription("Lowercase writer name"));
 const updateWriter = Effect.fn("TaskCache.updateWriter")(function* (name: string, revoke: boolean) {
-  if (!/^[a-z0-9-]{1,64}$/.test(name))
+  if (!/^(?!writers$|credentials$)[a-z0-9-]{1,64}$/.test(name))
     return yield* new ManagementError({ message: "Invalid writer name." });
   const fs = yield* FileSystem.FileSystem;
   const state = yield* stateDirectory;
