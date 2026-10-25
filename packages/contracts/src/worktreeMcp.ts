@@ -12,7 +12,8 @@ export const WorktreeMcpHandoffInput = Schema.Struct({
   ),
   startFromOrigin: Schema.optional(
     Schema.Boolean.annotate({
-      description: "True: fetch, start from the remote ref. Default: server setting.",
+      description:
+        "True: fetch, start from the remote ref; check `startedFromOrigin`. Default: server setting.",
     }),
   ),
   runSetupScript: Schema.optional(
