@@ -11,6 +11,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -346,6 +347,72 @@ it.effect(
         assert.isNull(byId.get(id)?.next_run_at);
       }
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("retains evaluation causes when enabling an unevaluable custom schedule", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const now = "2026-09-09T12:00:00.000Z";
+    yield* TestClock.setTime(Date.parse(now));
+    const schedules = [
+      { format: "cron", expression: "0 0 31 2 *" },
+      { format: "rrule", expression: "RRULE:FREQ=INVALID" },
+    ];
+    for (const schedule of schedules) {
+      yield* insertRow(
+        sql,
+        {
+          id: `unevaluable-${schedule.format}`,
+          next: null,
+          enabled: 0,
+          status: "never",
+          scheduleJson: JSON.stringify({
+            type: "custom",
+            ...schedule,
+            timeZone: "UTC",
+            startAt: "2026-01-01T00:00:00.000Z",
+          }),
+        },
+        now,
+      );
+    }
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      for (const schedule of schedules) {
+        const id = ScheduledTaskId.make(`unevaluable-${schedule.format}`);
+        const error = yield* service.setEnabled({ id, enabled: true }).pipe(Effect.flip);
+        assert.equal(error.message, "Could not evaluate custom schedule.");
+        assert.equal(error.taskId, id);
+        assert(Cause.isUnknownError(error.cause));
+        assert.instanceOf(error.cause.cause, Error);
+      }
+      const { tasks } = yield* service.list();
+      assert.equal(tasks.length, 2);
+      for (const task of tasks) {
+        assert.isFalse(task.enabled);
+        assert.isNull(task.nextRunAt);
+        assert.equal(task.lastRunStatus, "never");
+      }
+    }).pipe(
+      Effect.provide(
+        ScheduledTaskService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              NodeCrypto.layer,
+              Scheduler.layer,
+              Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+              Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                namedProjectsRoot: "/projects",
+                isScratchProject: () => Effect.succeed(false),
+              }),
+              Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+              Layer.mock(SecretRequests.SecretRequests)({}),
+            ),
+          ),
+        ),
+      ),
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
 it.effect(

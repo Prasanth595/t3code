@@ -296,7 +296,7 @@ const normalizeCustom = (...args: Parameters<typeof normalizeCustomSchedule>) =>
 function nextRunAt(
   task: Pick<ScheduledTask, "enabled" | "schedule">,
   from: DateTime.DateTime,
-): Effect.Effect<{ nextRunAt: string | null; error: string | null }> {
+): Effect.Effect<{ nextRunAt: string | null; error: string | null; cause?: unknown }> {
   if (!task.enabled) return Effect.succeed({ nextRunAt: null, error: null });
   return Effect.try(() => {
     const next = nextScheduledRunAt(task.schedule, from);
@@ -314,6 +314,7 @@ function nextRunAt(
             Effect.as({
               nextRunAt: null,
               error: `Could not evaluate schedule: ${errorMessage(cause)}`,
+              cause,
             }),
           )
         : Effect.succeed({ nextRunAt: null, error: null }),
@@ -1196,7 +1197,11 @@ export const layer = Layer.effect(
               ? DateTime.addDuration(now, -1)
               : now,
           );
-      if (next.error !== null) return yield* taskError(next.error, { taskId: id });
+      if (next.error !== null)
+        return yield* taskError("Could not evaluate custom schedule.", {
+          taskId: id,
+          cause: next.cause,
+        });
       const task: ScheduledTask = {
         id,
         title: input.title,
@@ -1231,7 +1236,11 @@ export const layer = Layer.effect(
       if (existing.enabled === input.enabled) return { task: existing };
       const now = yield* localNow;
       const next = yield* nextRunAt({ enabled: input.enabled, schedule: existing.schedule }, now);
-      if (next.error !== null) return yield* taskError(next.error, { taskId: input.id });
+      if (next.error !== null)
+        return yield* taskError("Could not evaluate custom schedule.", {
+          taskId: input.id,
+          cause: next.cause,
+        });
       // RETURNING so a task deleted between the load and this UPDATE is a
       // visible not-found error, not a false success.
       const updated = yield* sql<{ task_id: string }>`
