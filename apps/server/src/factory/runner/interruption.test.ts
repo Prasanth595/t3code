@@ -1,12 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - the tests read the bytes of real run files.
 /**
- * Interruptions and relaunches, ported from softfac's `runner/tests/interruption.rs` and
- * `runner/tests/stop.rs`: `advance` says a session that ended `failed` or `cancelled`, or whose
- * thread is gone, ended badly and writes nothing; `interrupted` decides whether that was an
- * interruption (a resume into the same thread, or a relaunch from the run's branch) or a stop.
- * Left out, for the issue that owns them (#24): everything in `interruption.rs` that reads pull
- * request feedback into a paused thread (`paused_with_pr` and the `feedback_forwarding` and
- * owed-feedback tests after it).
+ * Interruptions and relaunches, ported from softfac's `runner/tests/interruption.rs` and `stop.rs`:
+ * `advance` says a session that ended `failed` or `cancelled`, or whose thread is gone, ended
+ * badly; `interrupted` decides whether that was an interruption (a resume or a relaunch) or a stop.
+ * Left out: everything in `interruption.rs` that reads pull request feedback into a paused thread.
  */
 import * as NodeFS from "node:fs";
 

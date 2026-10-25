@@ -1,30 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - a gate lock is a file, checked the way gate.ts makes it.
 /**
- * The claim: takes a `ready` issue to `factory:triage` with a run file. Ported from softfac's
- * `runner/start.rs`, through the launch of the `/factory` session and the move to
- * `factory:building`.
- *
- * Before anything is claimed, a fresh start asks GitHub who applied the `factory:ready` label and
- * who edited the issue text since, and builds only when an instructor applied the label and
- * every edit after that moment was an instructor's. Otherwise the issue goes back to
- * `factory:proposed` with one fixed comment and the call is `refused`, with no run and no
- * ledger. The comment is posted before the label moves, so a label call that fails leaves the
- * issue `ready` and the next pass posts the comment again: at-least-once, which beats a
- * relabelled issue with no explanation. A refusal is commented once per label.
- *
- * A new attempt first finishes every older unfinished run of the issue in the ledger, so a run
- * a person has moved on from stops being polled. A closed issue is never claimed: its unfinished
- * runs are abandoned instead, each with its session archived (see `abandonClosed`).
- *
- * The session is launched under a command id derived from the run, after the ledger says a
- * launch is about to be sent, so a launch that fails on our side is found again by sending the
- * same id. The issue text is checked again once the session exists: a change stops the run and
- * archives the session.
- *
- * Calling `start` again resumes; `resume` does only that. An issue in `triage` whose only
- * assignee is the factory's own user is an interrupted start, and every step goes on from what
- * the ledger records. A run with no record of what approved it cannot be confirmed, so it fails
- * closed and goes `stuck` (no session was launched, as the record is written first).
+ * The claim: takes a `ready` issue to `factory:triage` with a run file, launches the `/factory`
+ * session and moves the issue to `factory:building`. A fresh start builds only when an instructor
+ * applied `factory:ready` and every later edit was an instructor's; otherwise it is `refused`, with
+ * a comment posted before the label goes back to `factory:proposed`. Calling it again resumes.
  */
 import * as NodeFS from "node:fs";
 
@@ -198,11 +177,10 @@ export type StartOutcome =
   /** The issue went to `stuck`. */
   | { readonly kind: "stuck"; readonly run: RunId; readonly reason: string }
   /**
-   * The issue is closed and a person closed it: its unfinished runs are finished and their
-   * sessions archived. `mayHaveSession` names the runs that sent a launch the ledger never got a
-   * thread for: a session may exist that this could not archive. `error` is why a later run could
-   * not be ended after earlier ones were, which the next call tries again; the runs it names are
-   * finished, so this is the only time they are named.
+   * The issue is closed and a person closed it: its unfinished runs are finished and their sessions
+   * archived. `mayHaveSession` names runs that sent a launch the ledger never got a thread for, so
+   * a session may exist that this could not archive. `error` is why a later run could not be ended
+   * after earlier ones were; the next call tries again, and the runs it names are finished.
    */
   | {
       readonly kind: "abandoned";
@@ -280,14 +258,10 @@ const closed = (issue: number): StartOutcome => ({
 });
 
 /**
- * What `start` does with a closed issue: every unfinished run of it that a person's closing ended
- * is abandoned (see `abandon`), oldest first, so a run stops being polled and its session stops.
- * Nothing is claimed or written on GitHub. A run in `pr-open` or `stuck` has nothing left to
- * write and is left alone, as is a run whose own merged pull request closed the issue: `advance`
- * or `gate` ends that one. While the gate of any of those runs is running, none of them is
- * touched (`GateRunningError`). With no run to abandon the issue is `skipped` as closed. A run
- * that cannot be ended stops the walk: with no run ended before it that is the error, and after
- * one it is `abandoned` with the error, so the runs already finished are still named.
+ * What `start` does with a closed issue: every unfinished run that a person's closing ended is
+ * abandoned (see `abandon`), oldest first, and nothing is claimed or written on GitHub. A run in
+ * `pr-open` or `stuck`, or one whose own merged pull request closed the issue, is left alone. While
+ * any such run's gate is running none is touched (`GateRunningError`).
  */
 const abandonClosed = Effect.fn("RunnerStart.abandonClosed")(function* (
   ctx: StartContext,
@@ -393,18 +367,10 @@ const startFresh = Effect.fn("RunnerStart.startFresh")(function* (
 });
 
 /**
- * What to do about a claim call that returned `error`: GitHub can apply the edit and still
- * answer with an error, which leaves the issue in `factory:triage` with no assignee, where no
- * pass looks for it. The issue is read again. If the claim is whole, or only the assignee is
- * missing, it is finished and the run may begin. An issue with no single factory label (the new
- * one added and the old one not yet removed, or neither) counts as claimed: moving it to
- * `factory:triage` leaves it one label. If it cannot be finished, the issue loses our assignee
- * and goes to `factory:proposed`, in that order, so a failure in between leaves a `triage`
- * issue with no assignee, which the pass moves to `proposed`, and never a `proposed` issue with
- * an assignee. When both worked, the cut-short comment is posted (a comment that fails is
- * ignored) and a line in the machine log says `released`. Either way the original `error` is
- * the answer. If nothing changed, or another person has the issue, or it is closed, or it
- * cannot be read, nothing is written and `error` is the answer, as it was before.
+ * What to do about a claim call that returned `error`: GitHub can apply the edit and still answer
+ * with an error, leaving the issue in `factory:triage` with no assignee, where no pass looks. The
+ * issue is read again. A whole claim, or one only missing the assignee, is finished. Otherwise it
+ * loses our assignee before it goes to `factory:proposed`, so it is never `proposed` and assigned.
  */
 const repairClaim = Effect.fn("RunnerStart.repairClaim")(function* (
   ctx: StartContext,
@@ -489,11 +455,10 @@ export const newestSays = <C extends { readonly body: string; readonly createdAt
 ): newest is C => newest !== null && newest.body === text && isUtcSecond(newest.createdAt);
 
 /**
- * Whether the issue's newest factory comment already says this refusal for the label it was
- * judged on: it says the same text and is newer than the label event (a comment from before the
- * label was about an earlier refusal). A refusal without a label time is matched on text alone,
- * for a comment under an hour old by the context's clock. A comment whose time is not GitHub's
- * form never counts.
+ * Whether the issue's newest factory comment already says this refusal for the label it was judged
+ * on: same text, and newer than the label event (an older comment was about an earlier refusal). A
+ * refusal without a label time is matched on text alone, for a comment under an hour old by the
+ * context's clock. A comment whose time is not GitHub's form never counts.
  */
 const alreadySaid = (
   ctx: StartContext,
@@ -578,12 +543,10 @@ const resumeStart = Effect.fn("RunnerStart.resumeStart")(function* (
 });
 
 /**
- * Records the claim the tracker call has made (assign, and label `triage`), then goes on from
- * what the ledger shows: launch the session, look at the issue text once more, move the issue
- * to `building`. A run with no record of what approved it cannot be confirmed, so it fails
- * closed. The record is written before any launch, so with no session in the ledger either, no
- * launch was ever sent, and there is nothing to archive. `project` is the T3 project found
- * before the claim; `undefined` on a resume, which looks it up only if it has to launch.
+ * Records the claim the tracker call has made, then goes on from the ledger: launch the session,
+ * look at the issue text once more, move the issue to `building`. A run with no record of what
+ * approved it fails closed. The record is written before any launch, so with no session in the
+ * ledger no launch was sent. `project` is `undefined` on a resume.
  */
 const begin = Effect.fn("RunnerStart.begin")(function* (
   ctx: StartContext,
@@ -621,11 +584,10 @@ const begin = Effect.fn("RunnerStart.begin")(function* (
     yield* goStuck(ctx, issue, out, at, "approval-unconfirmed", { reason: CANNOT_CONFIRM });
     return { kind: "stuck", run, reason: CANNOT_CONFIRM };
   }
-  // A launch that is not in the ledger may still have started a thread: the call can fail on
-  // our side after T3 acted. Launching again under the same command id either starts the
-  // session or returns the thread T3 already started. The text is looked at after the launch
-  // and never before it: skipping the launch for a changed text could leave such a thread
-  // running with nobody to stop it.
+  // A launch not in the ledger may still have started a thread: the call can fail on our side after
+  // T3 acted. Launching again under the same command id starts the session or returns the thread T3
+  // already started. The text is looked at after the launch, never before: skipping the launch for
+  // a changed text could leave such a thread running with nobody to stop it.
   let threadId = seen.threadId;
   if (threadId === null) {
     const launched = yield* launchSession(ctx, issue, detail, run, out, seen, project);
@@ -674,25 +636,10 @@ type Launch =
   | { readonly ok: false; readonly detail: string; readonly reason?: string };
 
 /**
- * Sends the launch: `launch-sending` is written once per run, before the first call, so a
- * launch that fails on our side is known to have been sent. The command id comes from the run,
- * so sending it again returns the thread T3 already made. In-process, every failure of the call
- * is T3's answer after the request went out: it is final, and a session may exist. A launch that
- * was never sent (no project) says so only when an earlier pass did send one.
- *
- * What the launch starts from is decided once, before the first call (`resumeFrom`, which asks
- * GitHub), and the step records it: `launch-sending` for a start from `base`,
- * `launch-sending resumed-from <branch>` for a resume, after a
- * `launch-pull-request <branch> <url>` step when it continues an earlier attempt's open pull
- * request. A call sent again reuses the recorded decision and asks GitHub nothing, so every
- * request under the one command id is the same request, the one T3 acted on, and the ledger's
- * `resumed_from` says what the thread T3 answers with was really made from.
- *
- * The run's base is the issue's `## Base` when it names a branch, else `factory.base` (see
- * `runBase`), decided once like the resume: a named base is in the `launch-base <branch>` step
- * before `launch-sending`, and a call sent again reads it from there. The `session_launched`
- * line records the base for every later pass. A plain start from a named base starts from its
- * tip on `origin`.
+ * Sends the launch. `launch-sending` is written once per run before the first call, so a launch
+ * that fails on our side is known to have been sent; the run's command id makes a resend return the
+ * thread T3 already made. What the launch starts from (`resumeFrom`) and the run's base are decided
+ * once and recorded in steps, so every resend is the same request.
  */
 const launchSession = Effect.fn("RunnerStart.launchSession")(function* (
   ctx: StartContext,
@@ -840,10 +787,9 @@ export const previousRun = Effect.fn("RunnerStart.previousRun")(function* (
 
 /**
  * What a launch continues from, with the run its `session_launched` line names as `resumed_from`:
- * the earlier attempt whose branch it continues, or, for an open pull request, this run itself,
- * as a re-gate's session names it, so the line reads the same on every machine, whether or not
- * the attempt that opened the pull request left a ledger here. Either way the session pushes to
- * that branch (`Seen.resumedFrom`).
+ * the earlier attempt whose branch it continues, or, for an open pull request, this run itself, as
+ * a re-gate's session names it, so the line reads the same on every machine. Either way the session
+ * pushes to that branch (`Seen.resumedFrom`).
  */
 type Resumed = EarlierRunResume | (ExistingPrResume & { readonly run: RunId });
 
@@ -869,21 +815,10 @@ const recordedResume = Effect.fn("RunnerStart.recordedResume")(function* (
 });
 
 /**
- * What the new attempt `run` continues from. First the issue's open pull request, when an earlier
- * attempt left one (`existingPullRequest`): whatever ended that attempt, and whether or not the
- * issue text changed since, the pull request is the work, and a start from `base` beside it
- * would open a second one. Then, when the attempt before `run` stopped at its time limit or was
- * relaunched after an interruption and the work it left can be found: the earlier run and the
- * branch its session worked on (see `continuation`). Null for a plain start from `base`: a
- * first attempt, a run that stopped for another reason or recorded no branch, one whose branch is
- * not a plain ref name, one whose issue text was edited or renamed since the earlier run's
- * approval (the earlier work was built on other words), or one whose branch GitHub does not have.
- *
- * `origin` is the only source of the work: the branch must be there (`branchTip`, a commit, or an
- * open pull request on it), never in a worktree or the local clone, so a resume on another
- * machine of the fleet works the same. A lookup that fails in any other way, of the text or of
- * the branch, is an error: nothing is launched, the issue stays in `triage`, and the next pass
- * asks again.
+ * What the new attempt `run` continues from. First the issue's open pull request, if an earlier
+ * attempt left one (`existingPullRequest`): it is the work, and a start from `base` beside it would
+ * open a second. Then the branch of an attempt that hit its time limit or was relaunched (see
+ * `continuation`). Null is a plain start from `base`. `origin` is the only source of the work.
  */
 const resumeFrom = Effect.fn("RunnerStart.resumeFrom")(function* (
   ctx: StartContext,
@@ -914,15 +849,9 @@ const resumeFrom = Effect.fn("RunnerStart.resumeFrom")(function* (
 
 /**
  * The open pull request an earlier attempt of the issue left, if any, and its branch. The ledger
- * first: the newest `pr_opened`, then the newest `pr_left`, of each of the `earlier` runs, newest
- * attempt first, when GitHub
- * still has that pull request open in this repo onto `base` on a branch a session can be told to
- * push to (`isResumablePull`; a pull request the ledger names was bound to its session when it
- * was written, so nothing asks who opened it). Then GitHub, for an attempt on another machine or
- * a ledger that never recorded one: the newest open pull request that says it closes the issue
- * (the receipt starts with `Closes #n`) by the factory's own login, resumable the same way. GitHub
- * links that only for a pull request onto its default branch, so a run on another base is found
- * through the ledger alone. Null when there is none.
+ * first (newest `pr_opened`, then `pr_left`, of each `earlier` run) when GitHub still has it open
+ * in this repo onto `base` on a branch a session can push to (`isResumablePull`). Then the newest
+ * open one by the factory's login that closes the issue, which GitHub links only onto the default.
  */
 const existingPullRequest = Effect.fn("RunnerStart.existingPullRequest")(function* (
   ctx: StartContext,
@@ -979,20 +908,10 @@ const runBase = Effect.fn("RunnerStart.runBase")(function* (
 });
 
 /**
- * What the attempt before the new one left for it, from its ledger: the branch its session worked
- * on and why the next attempt continues from it. Null when it left nothing to continue from: it
- * did not stop at its time limit and was not relaunched, or it recorded no branch. A launch sent
- * again reads it too, so the words of both sends are the same.
- *
- * A time-limit stop (its `stuck` line has the reason `time-limit`) wins over a relaunch. Its
- * branch is the one on the `session_launched` line, or, as that line is written when T3 answers
- * the launch and usually before the worktree exists, the one the `stuck` line recorded from the
- * thread. A relaunch's branch is the one on its newest `session_interrupted` line, when that is a
- * relaunch (`Seen.interruption`). After either comes the branch the attempt itself resumed from
- * (`Seen.resumedFrom`), for the caller to take when origin lacks the first: a resumed session is
- * told to push there, so T3's own branch may never reach origin, while one a version before the
- * push words launched pushed T3's branch. An attempt that finished as `needs-info` left nothing to continue from,
- * whatever it did before: its questions end it, and the next attempt starts from base.
+ * What the attempt before the new one left to continue from: its session's branch, then its own
+ * `resumedFrom` for when origin lacks the first (a resumed session pushes there). Null unless it
+ * hit its time limit (which wins) or was relaunched, and after `needs-info`: its questions end it.
+ * A time-limit branch is the `session_launched` line's, else the `stuck` line's.
  */
 const continuation = (
   entries: ReadonlyArray<Entry>,

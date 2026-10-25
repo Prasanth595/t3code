@@ -8,12 +8,10 @@ import * as Schema from "effect/Schema";
 import * as NodeChildProcess from "node:child_process";
 
 /**
- * Runs commands the way softfac does: a known environment, a hard time limit
- * that kills the whole process tree, and only the end of the output kept.
- *
- * POSIX only: it relies on /bin/sh, process groups and negative-pid kill.
- * `ProcessRunner` cannot do this (see factory/docs/design.md, open question 2),
- * so this module uses `node:child_process` directly and imports no T3 code.
+ * Runs commands the way softfac does: a known environment, a hard time limit that kills the whole
+ * process tree, and only the end of the output kept. POSIX only: relies on /bin/sh, process groups
+ * and negative-pid kill. `ProcessRunner` cannot do this (see factory/docs/design.md, open question
+ * 2), so this imports no T3 code.
  */
 
 /**

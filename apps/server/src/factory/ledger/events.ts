@@ -43,13 +43,10 @@ export type CheckRead = { readonly name: string; readonly state: string };
 export type ResumedFrom = { readonly run: string; readonly branch: string };
 
 /**
- * Something that happened in a run, as `{ event, data }`. A field that softfac omits when it is
- * absent is optional here and left out of the line when `undefined`; every other field is
- * written, as `null` when softfac writes `null`. No event holds a token. Two kinds of field do
- * hold text the factory sent elsewhere, written as given, not cleaned or cut: the `questions`
- * of `questions_posted` (what was posted to the issue), and the `message` of
- * `regate_relaunching`, `feedback_relaunching` and `feedback_forwarding` (what was sent to the
- * agent session).
+ * Something that happened in a run, as `{ event, data }`. Fields softfac omits when absent are
+ * optional and left out of the line when `undefined`; the rest are written, `null` where softfac
+ * writes `null`. No event holds a token. `questions` and the `message` of `regate_relaunching`,
+ * `feedback_relaunching` and `feedback_forwarding` hold text sent elsewhere, written as given.
  */
 export type RunEvent =
   | { readonly event: "claimed"; readonly data: { machine: string; github_user: string } }

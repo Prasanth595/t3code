@@ -23,11 +23,9 @@ export interface HandPause {
 }
 
 /**
- * The pause on disk. The file is a pause whenever it is a regular file, whatever it holds: a
- * file that is missing, a symlink or a FIFO is no pause. A text that is not a time falls back to
- * the modification time, and to 0 when that cannot be read either. A file that is there but
- * cannot be opened (its mode, a disk error, no file descriptors left) is a pause: a person who
- * made it meant claims to stop.
+ * The pause on disk: any regular file is a pause, whatever it holds; a missing file, symlink or
+ * FIFO is none. Unparseable text falls back to the mtime, then to 0. A file that exists but cannot
+ * be opened is still a pause: a person made it to stop claims.
  */
 export const loadHandPause = (dataDir: string): HandPause | null => {
   const path = NodePath.join(dataDir, PAUSE_FILE);

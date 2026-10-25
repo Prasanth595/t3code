@@ -134,11 +134,10 @@ export interface ThreadStatus extends Thread {
 }
 
 /**
- * Whether `branch` is the temporary `t3/<hex>` branch T3 made the worktree at
- * `worktreePath` on. T3 can rename the thread's branch after launch while the
- * session pushes the one it started on. T3 names a new worktree's folder after
- * that branch, `/` written `-`, and its record of the folder is one the
- * session cannot change, unlike the branch git has checked out there.
+ * Whether `branch` is the temporary `t3/<hex>` branch T3 made the worktree at `worktreePath`
+ * on. T3 can rename the thread's branch after launch while the session pushes the one it
+ * started on. T3 names the folder after that branch (`/` written `-`), and its record of the
+ * folder cannot be changed by the session, unlike the checked-out branch.
  */
 export const isLaunchBranch = (branch: string, worktreePath: string | null): boolean =>
   worktreePath !== null &&
@@ -337,12 +336,10 @@ export class FactorySessions extends Context.Service<
       threadId: string,
     ) => Effect.Effect<Thread, ThreadNotFoundError | SessionsError>;
     /**
-     * Sends a follow-up message into the thread. T3 decides delivery: it starts
-     * a run when the thread is idle, steers the message into an active run
-     * when the provider supports it, and queues it otherwise. `commandId`
-     * names the message like a launch's does: sent again after a failure, T3
-     * keeps one message. A message T3 refused stays refused under its id, and
-     * fails as `MessageRejectedError`.
+     * Sends a follow-up message into the thread. T3 decides delivery: starts a run when idle,
+     * steers into an active run if the provider supports it, else queues. `commandId` names the
+     * message like a launch's: resent after a failure, T3 keeps one message. A refused message
+     * stays refused under its id, as `MessageRejectedError`.
      */
     readonly send: (
       threadId: string,
@@ -357,17 +354,10 @@ export class FactorySessions extends Context.Service<
      */
     readonly archive: (threadId: string) => Effect.Effect<void, SessionsError>;
     /**
-     * Removes a thread's worktree from disk with git and keeps its branch.
-     * Every live thread still on it, such as a subagent sharing the session's
-     * checkout, is archived first; when they cannot be read or archived, the
-     * call fails as an `archive` before git runs, so no live thread is left on
-     * a half-removed folder and the caller can try again. Any later failure is
-     * a `remove-worktree`. A
-     * worktree already gone counts as removed. `path` must be absolute. When
-     * git takes the worktree off the clone's list but cannot empty its
-     * directory, the call deletes the rest itself over about 10 s. It deletes
-     * no directory git did not just take off the list: one a stopped removal
-     * left behind (a restart mid-wait) fails, naming the path, for a person.
+     * Removes a thread's worktree with git and keeps its branch. Live threads still on it (a
+     * subagent sharing the checkout) are archived first, failing as `archive` before git runs; a
+     * later failure is `remove-worktree`. A worktree already gone is removed; `path` is absolute.
+     * A folder git just unlisted is emptied over about 10 s; any other leftover fails for a person.
      */
     readonly removeWorktree: (path: string) => Effect.Effect<void, SessionsError>;
     /**
@@ -720,10 +710,8 @@ export const make = Effect.gen(function* () {
 export const layer = Layer.effect(FactorySessions, make);
 
 /**
- * `layer` with the projection store it reads provided: `server.ts` has the
- * project store, the launch and management services and git in scope where
- * the factory is merged in, but not the projection store, which upstream
- * provides to each worker that reads it. It is the same layer `server.ts`
- * provides everywhere else, memoized with it.
+ * `layer` with the projection store provided: `server.ts` has everything else in scope where
+ * the factory is merged in, but upstream provides the projection store to each worker that
+ * reads it. Same layer `server.ts` provides elsewhere, memoized with it.
  */
 export const layerLive = layer.pipe(Layer.provide(ProjectionStore.layer));

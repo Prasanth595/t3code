@@ -310,11 +310,10 @@ const MOVED_WORDS: Record<Moved, string> = {
 };
 
 /**
- * The run's line when the re-gate of its `pr-open` pull request, started in the background, has
- * ended; null for a quiet one, which says nothing. A pass or a failure starts with what started the
- * re-gate: the pull request's head moved, the head and the base branch, a conflict GitHub reported,
- * a re-gate an earlier version began, or (when no pass was on record to compare with) that there
- * was none.
+ * The run's line when the background re-gate of its `pr-open` pull request has ended; null for a
+ * quiet one. A pass or failure starts with what started the re-gate: the head moved, the head and
+ * base, a reported conflict, a re-gate an earlier version began, or no pass on record to compare
+ * with.
  */
 export const regateWords = (
   run: string,
@@ -632,12 +631,10 @@ export const liveWorld = (
         })),
         Effect.mapError(asPassError("tracker")),
       ),
-    // The comment first, then the label, as a refusal does: a label call that fails leaves the
-    // issue where a later pass finds it again. The comment counts as already posted, as
-    // `alreadySaid` counts a refusal, only when it is the issue's newest factory comment and was
-    // created after the label event that began this claim; an older one explained an earlier
-    // claim. A label time that cannot be read posts the comment: at-least-once beats an
-    // unexplained move.
+    // Comment first, then label, as a refusal does: a failed label call leaves the issue where a
+    // later pass finds it again. The comment counts as already posted only when it is the issue's
+    // newest factory comment and newer than the label event that began this claim. An unreadable
+    // label time posts it: at-least-once beats an unexplained move.
     releaseClaim: (repo: Repo, issue: number, from: State) => {
       const gh = githubFor(repo.watched);
       return tracker(

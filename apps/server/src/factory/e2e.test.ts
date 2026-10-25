@@ -1,15 +1,9 @@
 // @effect-diagnostics globalDate:off - the fake GitHub formats its stamps as GitHub does.
 /**
- * One issue through the whole loop, with nothing faked but GitHub and the provider: the real
- * factory runtime (pass, claim, start, building, gate, ledger), the real orchestration layers
- * with the Claude replay transcript standing in for the model, a real git clone with a real
- * worktree, and the gate run for real in a fresh checkout of a bare file:// remote. `gh` is an
- * in-memory GitHub that answers by argv, so the labels, comments and pull request the factory
- * writes can be read back.
- *
- * The expected labels and ledger lines are written out below from softfac's lifecycle.md
- * ("From ready to building", "The gate", "When it passes") and the runner tests, not read back
- * from the code under test.
+ * One issue through the whole loop, faking only the provider (the Claude replay transcript) and
+ * GitHub (`gh` answers by argv from memory, so what the factory writes can be read back). The
+ * runtime, orchestration, git worktree and gate are real. Expected labels and ledger lines come
+ * from softfac's lifecycle.md and runner tests, not from the code under test.
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";

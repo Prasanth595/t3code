@@ -1,13 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - the tests read the bytes of real run files and the gate's real checkout directories.
 /**
- * The gate of a building run, ported from softfac's `runner/tests.rs` sections "gate: the
- * session's PR becomes ready, or it does not", "gate: a failed attempt goes back into the
- * session", "gate: the retries run out", "gate: every call can fail, and the gate is called
- * again", "gate: the base branch moves" and "gate: the decision that the gate passed is in the
- * ledger" and "gate: required CI checks". Left out, for the issues that own them: the re-gate of a
- * `pr-open` pull request and the legacy worktree sweep (#23), and the `.dw/config.yml` refusal of a
- * repo with `project_config` (the fork has none). The end of a run from #20 (a closed issue, a
- * stop by hand) is at the end of the file. The results comment's own tests are in `gate.test.ts`.
+ * The gate of a building run, ported from softfac's `runner/tests.rs` gate sections. Left out: the
+ * re-gate of a `pr-open` pull request, the legacy worktree sweep, and the `.dw/config.yml` refusal
+ * of a repo with `project_config` (the fork has none). The end of a run (a closed issue, a stop by
+ * hand) is at the end of the file. The results comment's tests are in `gate.test.ts`.
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -2316,10 +2312,9 @@ interface MatrixDrivers {
 
 /**
  * Runs `gate` once uninterrupted, then once per call with that call failing (GitHub's before and
- * after its effect, T3's, the gate's), and after each failure calls the loop's recovery with every
- * call working. Every recovery must end with the same step, GitHub state and ledger, save the
- * allowed repeats: a command line twice in one attempt, and one more copy of a comment whose
- * answer was lost. Every message into the session has one command id.
+ * after its effect, T3's, the gate's), then runs the loop's recovery with every call working. Each
+ * recovery must end with the same step, GitHub state and ledger, save the allowed repeats (a
+ * command line twice, a comment whose answer was lost); every session message has one command id.
  */
 const gateCrashMatrix = (
   name: string,
@@ -4020,12 +4015,10 @@ describe("gate: waiting for the run a forwarded message starts", () => {
   );
 });
 
-//
 // Ported from softfac's `runner/tests.rs` sections "regate: a pull request that is ready for
 // review" and "last_pass: what the pass reads before it starts `softfac gate`". Not ported, for
-// the issues that own them: instructor feedback (#24), interruptions and the time limit of a
-// relaunched session (#25), required checks (#26), and the tests of an older build's ledger
-// (`as_the_old_numbering_left_it`, `as_an_older_build_left_it`, `half_applied_failure`).
+// the issues that own them: instructor feedback, interruptions and the time limit of a relaunched
+// session, required checks, and the tests of an older build's ledger.
 
 const PUSHED = "7e6d5c4b3a291807f6e5d4c3b2a190817263a4b5";
 const PUSHED_SHORT = "7e6d5c4";

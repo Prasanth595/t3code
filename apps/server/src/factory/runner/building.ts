@@ -1,18 +1,8 @@
 /**
- * The steps that work a building run, ported from softfac's `runner/building.rs`: `advance`
- * reads how the session ended and moves the issue on, `watch` stops a run whose issue text was
- * changed by someone who is not an instructor, `forward` sends the session an instructor's
- * comments and edits of the issue body, `timeLimit` stops a run that took too long. The rest of
- * `building.rs` (review feedback) belongs to later issues; the gate
- * itself is `gating.ts`. `advance` also ends a run whose pull request was merged
- * or closed, whose issue a person closed, or that an operator stopped by hand (#20). A session
- * that ended `failed` or `cancelled`, or whose thread is gone, is reported by `advance` and decided
- * by `interrupted` (an interruption, resumed in its thread or relaunched from its branch, or a
- * stop).
- *
- * Each step reads the ledger first and does only what it does not record, so calling it again
- * resumes whatever an earlier call left half done. A failure of the tracker or of T3 is an
- * error, with nothing final written, and the next call decides again.
+ * The steps that work a building run: `advance` moves the issue on once the session ends, `watch`
+ * stops a run whose issue text a non-instructor edited, `forward` sends instructor feedback,
+ * `timeLimit` enforces the time limit. Each step reads the ledger first and does only what it does
+ * not record, so calling it again resumes. A tracker or T3 failure leaves nothing final written.
  */
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -249,11 +239,10 @@ export interface Evidence {
    */
   readonly t3Starts: ReadonlyArray<number>;
   /**
-   * When those servers began shutting down, oldest first: the machine log's `server_stopping`
-   * lines each start of the last day follows, whatever their age. A shutdown marks every running turn `cancelled` about then, so a run
-   * that ended between a stop and the next start was cut off by that restart, however long the
-   * server stayed down. A stop whose line was never written (a crash, a power cut) has no entry,
-   * and the start's grace stands in for it.
+   * When those servers began shutting down, oldest first: the `server_stopping` lines of the
+   * machine log that each start of the last day follows. A shutdown marks running turns
+   * `cancelled`, so a run that ended between a stop and the next start was cut off by that restart.
+   * A stop with no line (crash, power cut) has no entry; the start's grace stands in.
    */
   readonly t3Stops: ReadonlyArray<number>;
 }
@@ -270,12 +259,10 @@ const t3Started = (ms: number): string =>
 const RESTART_GRACE_MS = 10 * 60 * 1000;
 
 /**
- * The server start that cut the session's run off, or null: the run began before it (a run the
- * stop cancelled while it was still being prepared counts from its request) and ended
- * at or after the stop that start follows, with the grace before either. The stop is the newest
- * `server_stopping` after the start before it; a start with none uses its own time. The oldest
- * such start is the one the run's end matches, so a server started again before any pass decided
- * the run still names the right one.
+ * The server start that cut the session's run off, or null: the run began before it and ended at or
+ * after the stop that start follows, with the grace before either. A run cancelled while still
+ * being prepared counts from its request. The stop is the newest `server_stopping` after the
+ * previous start; a start with none uses its own time. The oldest matching start wins.
  */
 const cutByRestart = (
   status: ThreadStatus,
@@ -464,12 +451,10 @@ const relaunchDecided = (seen: Seen): boolean =>
   seen.interruption !== null && seen.interruption.relaunch;
 
 /**
- * Whether the session's latest run ended badly, as of now: its status is `failed`, `cancelled`
- * or `rolled_back`, nothing is still owed a newer run (see `sessionBusy`), and its last message
- * has no `FACTORY-DONE` line. The one place that says so, for `advance` (which reports it) and
- * `interrupted` (which decides it, and looks again because the thread may have moved on).
- * `what` is set when the pass may call it an interruption: `failed` or `cancelled`, and only with
- * an ordinal to wait for a newer run by. A `rolled_back` run is a stop with no second look.
+ * Whether the session's latest run ended badly, as of now: `failed`, `cancelled` or `rolled_back`,
+ * nothing owed a newer run (see `sessionBusy`), and no `FACTORY-DONE` in its last message. `what`
+ * is set when the pass may call it an interruption: `failed` or `cancelled` with an ordinal to wait
+ * for a newer run by. A `rolled_back` run is a stop with no second look.
  */
 const endedBadlyNow = (
   seen: Seen,
@@ -548,13 +533,10 @@ export interface EarlierAttempts {
 const NO_EARLIER: EarlierAttempts = { branches: [], prs: [] };
 
 /**
- * Binds a pull request to a run: it exists, is in this repo and not a fork, merges into `base`,
- * and has as its head the session's own `branch`, the branch it `resumedFrom`, the branch T3
- * made its `worktreePath` on, or a branch an earlier attempt of the issue worked on; or it is a
- * pull request an earlier attempt recorded (`earlier`). The text came from a session that issue
- * text can steer, so it must not be able to name someone else's pull request. Whether it is a
- * draft is asked after, so only a bound one is ever put back to draft. `resumedFrom` is the
- * branch a relaunched session was started from: its pull request is the session's too.
+ * Binds a pull request to a run: it is in this repo, not a fork, merges into `base`, and its head
+ * is the session's `branch`, its `resumedFrom`, T3's `worktreePath` branch or an earlier attempt's
+ * branch, or an earlier attempt recorded it (`earlier`). The text comes from a session that issue
+ * text can steer, so it must not be able to name someone else's pull request.
  */
 export const checkBinding = (
   pull: PullRequest | null,
@@ -600,45 +582,10 @@ const stuckOutcome = (stop: Stop): AdvanceOutcome => ({
 });
 
 /**
- * Reads how the run's session ended and moves the issue on.
- *
- * While the run is active this writes nothing. Once it has ended, the last line of its last
- * message decides: a draft pull request that is open, on the session's own branch, is ready for
- * the gate; questions go on the issue and end the run; anything else sends the issue to `stuck`,
- * after the session's thread is archived (so a session that is still working stops with it; the
- * draft pull request, if any, is not touched).
- *
- * A run that ended on its own with no result line gets one fixed reminder before the factory
- * gives up: the session may have ended a turn while a subagent was still working. The step
- * `result-line-reminding <k>` (`k` is the run's ordinal) is written first. It records that a
- * send is owed and is the wait marker too: the session counts as working until a run newer than
- * `k` has ended. Then the message is sent under `softfac:<run>:remind:<k>`, then
- * `result-line-reminded` is written. A run that ended as failed, interrupted or cancelled, a run
- * with no ordinal, and a result line that is present but unusable get no reminder.
- *
- * Calling `advance` again resumes whatever an earlier call or `start` left half done, judging by
- * the ledger: a launch whose `building` label is missing gets it (once `start` has looked at the
- * issue text again after the launch; until then `advance` reports `running` and leaves it to
- * `start`), a stuck decision already in the ledger is carried out without asking T3 and without
- * a second comment, and questions already posted are not posted again. A run whose
- * `state_changed` to `needs-info` is written has nothing left on GitHub: the thread is archived,
- * the worktree removed and the run finished. Comments are at-least-once; everything else
- * happens once.
- *
- * A pull request that was merged or closed ends the run (`ended`): the thread is archived and the
- * run finished with `pr_end`, with nothing written on GitHub; for a run in `pr-open` that is all
- * `advance` does. An issue a person closed ends it too (`abandoned`), as does the run's own merged
- * pull request closing it, unless a gate pass is recorded, which the gate finishes. An operator's
- * stop (`stop_requested`) sends the run to `stuck` as stopped by hand, whatever the session is
- * doing and without reading it.
- *
- * A run that ended `failed` or `cancelled` with no `FACTORY-DONE` line, and a thread T3 no longer
- * has, are `ended-badly` with nothing written: the pass decides about them together, with what the
- * machine log says of T3 (`interrupted`). A `rolled_back` run, and a failed or cancelled one with
- * no ordinal to wait for a newer run by, go `stuck` at once. A `session_interrupted` line with no
- * `interruption-sent <n>` step is a resume cut short, sent again here (see `interrupted`), and a
- * relaunch decided in the ledger is finished here whatever else is true of the run
- * (`relaunched`).
+ * Reads how the run's session ended and moves the issue on; writes nothing while it is active. The
+ * last result line decides: an open draft pull request on the session's branch goes to the gate,
+ * questions go on the issue, anything else is `stuck` (no result line gets one reminder first).
+ * Repeat calls resume from the ledger; comments are at-least-once, everything else happens once.
  */
 export const advance = (
   ctx: InterruptContext,
@@ -748,11 +695,10 @@ export const advance = (
       if (status === null) return { kind: "ended-badly", what: "thread-gone" } as const;
       const message = status.lastAssistantMessage;
       const result = parseSessionResult(ctx.repo, message ?? undefined);
-      // A `session_interrupted` line with no `interruption-sent <n>` after it is a resume cut short
-      // before its send or its step, as for the reminder below: if the thread already has a run
-      // newer than the one that ended, the message arrived and only the step is written;
-      // otherwise the send is made again, under the same command id. A thread T3 no longer has
-      // is the thread-gone case.
+      // A `session_interrupted` line with no `interruption-sent <n>` is a resume cut short. If the
+      // thread already has a run newer than the one that ended, the message arrived and only the
+      // step is written; otherwise the send is repeated under the same command id. A thread T3 no
+      // longer has is the thread-gone case.
       const owedResume = seen.interruption;
       if (owedResume !== null && !owedResume.relaunch && !owedResume.sent) {
         const arrived =
@@ -989,22 +935,10 @@ const threadPlace = (ctx: BuildingContext, seen: Seen): Effect.Effect<ThreadPlac
 };
 
 /**
- * Records the pull request a session leaves open when its run ends short of the gate (it stops,
- * asks questions, ends badly, loses its thread, is stopped by hand or by the watch, or passes its
- * time limit), as a `pr_left` line, so the next attempt continues it instead of opening another
- * (`start`'s `resumeFrom`). The session did not report it, so it is not a `pr_opened` line: the
- * run keeps its slot and its time limit, and a later report of the same pull request is recorded
- * as one. GitHub is asked by branch (`openPullRequestsOnHead`), never by the pull request's text,
- * so a run on any base is found, on every branch the session may have pushed: the thread's
- * (`place`), the `t3/<hex>` branch T3 made its worktree on, which the session may have pushed
- * when T3 renamed the thread's, and the branch a resumed session was told to push to
- * (`Seen.resumedFrom`). Only the factory's own, in this repo, onto the run's base, on a branch a
- * session can be told to push to. Written once per pull request. A stop runs it once the session
- * is stopped (`goStuck`'s `afterStop`), so a GitHub outage never keeps a session working. A read
- * that fails is written as an `error` line and the stop goes on without the record: after the
- * archive the next pass would not take the same exit (an archived thread reads as gone), so it
- * cannot be asked again. The next attempt still finds a pull request onto the default branch by
- * its closing reference (`start`'s `existingPullRequest`).
+ * Records the pull request a session leaves open short of the gate as `pr_left`, so the next
+ * attempt continues it (`start`'s `resumeFrom`); not `pr_opened`, so the run keeps its slot. Asked
+ * by branch, never by its text, after the stop, so an outage never keeps a session working. A
+ * failed read is an `error` line and is not retried: the archived thread reads as gone.
  */
 const recordLeftPullRequest = Effect.fn("RunnerBuilding.recordLeftPullRequest")(function* (
   ctx: BuildingContext,
@@ -1047,12 +981,10 @@ const recordLeftPullRequest = Effect.fn("RunnerBuilding.recordLeftPullRequest")(
 });
 
 /**
- * Gives back an issue that an older version's `answer` claimed for a run now left in
- * `needs-info`: that step set `factory:building` and assigned the machine's user before it wrote
- * its `state_changed` marker, so a crash between the two leaves the issue claimed with no
- * unfinished run. Only that exact shape is touched: the label is `factory:building` and the
- * machine's user is the only assignee. Any other label or assignee is a person's, and is left
- * alone. Both calls are safe to repeat. `read` is the issue as this step already read it, if it did.
+ * Gives back an issue that an older version's `answer` claimed for a run now left in `needs-info`:
+ * it set `factory:building` and the machine's user before writing `state_changed`, so a crash
+ * between left the issue claimed with no unfinished run. Only that exact shape is touched (label
+ * `factory:building`, the machine's user the only assignee); anything else is a person's.
  */
 const releaseOldClaim = Effect.fn("RunnerBuilding.releaseOldClaim")(function* (
   ctx: BuildingContext,
@@ -1088,14 +1020,10 @@ const endNeedsInfo = Effect.fn("RunnerBuilding.endNeedsInfo")(function* (
 });
 
 /**
- * Sends the session its one reminder to end with a result line, and records that it was sent.
- * `k` is the ordinal of the run that ended without one, and the command id is
- * `softfac:<run>:remind:<k>`: a send repeated after a crash is the same command, and a lost step
- * that meets a newer run with no result line is a new one for that run, so the worst case is a
- * second reminder and never a hang. The caller has written `result-line-reminding <k>`, which is
- * also the wait marker; `result-line-reminded` is written last. T3 not having the thread is
- * `"gone"`. A refusal is final, since T3 keeps it under the command id and a resend would fail
- * the same way: it is returned for the caller to end the run with.
+ * Sends the session its one reminder to end with a result line, and records it. `k` is the ordinal
+ * of the run that ended without one. The command id `softfac:<run>:remind:<k>` makes a repeat after
+ * a crash the same command, so the worst case is a second reminder, never a hang. T3 not having the
+ * thread is `"gone"`; a refusal is final (T3 keeps it under the command id) and is returned.
  */
 const sendReminder = Effect.fn("RunnerBuilding.sendReminder")(function* (
   ctx: BuildingContext,
@@ -1135,11 +1063,10 @@ const refusedStop = (
 };
 
 /**
- * Why the issue text no longer stands for a building run, or `null` when it does. A run with no
- * `approved` step has no moment to read since, so it fails closed without a read; otherwise the
- * histories of every rename and body edit since the recorded approval must be an instructor's.
- * A history that cannot be judged counts as changed. A read that fails is an error, never an
- * answer.
+ * Why the issue text no longer stands for a building run, or `null`. A run with no `approved` step
+ * fails closed without a read; otherwise every rename and body edit since the approval must be an
+ * instructor's. A history that cannot be judged counts as changed; a failed read is an error, never
+ * an answer.
  */
 export const textStop = Effect.fn("RunnerBuilding.textStop")(function* (
   ctx: BuildingContext,
@@ -1159,19 +1086,10 @@ export const textStop = Effect.fn("RunnerBuilding.textStop")(function* (
 });
 
 /**
- * Stops a building run whose issue text was changed by someone who is not an instructor, or whose
- * history of edits cannot be judged. The session's thread is archived first, then the run goes
- * `stuck` through the stuck path (the draft pull request, if any, is not touched).
- *
- * A read that fails is an error, never a stop and never a pass. Nothing is written when the text
- * is unchanged, and no step records that a check passed: the text is read again on every call,
- * since an edit can come at any time. An archive that fails is an error with nothing written, so
- * the next call decides and archives again.
- *
- * A run that is finished, has no session, is not `building`, or has a stuck or questions
- * decision not yet committed makes no call (`skipped`: `advance` finishes those). A run of
- * another repo is an error. There is no loop or timer: the caller decides how often to call it,
- * and it should call `watch` before `advance` on a `building` run.
+ * Stops a building run whose issue text a non-instructor changed, or whose edit history cannot be
+ * judged: the thread is archived, then the run goes `stuck`. Nothing is written when the text is
+ * unchanged, and no step records a pass, since an edit can come at any time. A failed read or
+ * archive is an error with nothing written. Call it before `advance`; it has no loop or timer.
  */
 export const watch = Effect.fn("RunnerBuilding.watch")(function* (
   ctx: BuildingContext,
@@ -1235,13 +1153,10 @@ export const gateSendPending = (seen: Seen): boolean =>
 const sinceRunStart = (firstMs: number): string => `${formatTs(firstMs).slice(0, 19)}Z`;
 
 /**
- * What `forward` still has to send from one read of the instructors' activity: the comments the
- * ledger has no `comment_forwarded` for, oldest first and each id once, and the body edit whose
- * time has no `body-edit-forwarded` step. A comment the issue was told about as dropped, or that went
- * to the session as instructor feedback, is never
- * sent later, whatever a later read says: the instructor was asked to post it again. A body edit
- * time that is not GitHub's form is refused before anything is sent or written: it ends up in the
- * ledger and in a command id.
+ * What `forward` still has to send from one read of the instructors' activity: comments with no
+ * `comment_forwarded` in the ledger, oldest first and each id once, and the body edit whose time
+ * has no `body-edit-forwarded` step. A comment already dropped or sent as feedback is never sent
+ * later. A body edit time not in GitHub's form is refused before anything is sent or written.
  */
 const unsent = Effect.fn("RunnerBuilding.unsent")(function* (seen: Seen, activity: Activity) {
   const edit = activity.bodyEdit;
@@ -1334,49 +1249,10 @@ const tellIssue = (
   );
 
 /**
- * Sends the session the instructors' new comments and their edit of the issue body, once each.
- * Activity is read from the run's first ledger line on (`sinceRunStart`), never from a moving
- * cursor, and what the ledger already holds (`comment_forwarded` by comment id, the
- * `body-edit-forwarded <edited_at>` step) is not sent again, so every call is safe to repeat. The
- * comments go in oldest first, then the edit, which may be the same text the comments came
- * after. A comment goes under the command id `softfac:<run>:comment:<id>` and then
- * `comment_forwarded` is written; an edit under `softfac:<run>:body:<edited_at>`, then its step.
- * A send that fails (transport, timeout) fails the call, what was sent stays recorded, and the
- * rest goes in on the next call under the same ids; a send T3 refuses is final (T3 keeps the
- * refusal under the command id), so the item is dropped: the call goes on with the rest, the
- * issue is told once in the factory's fixed words (`comment-dropped <id>` / `body-edit-dropped
- * <edited_at>` after the comment), a refused item is not counted as sent, and a `forward-wait`
- * that nothing sent under is cancelled with `forward-wait-cancelled <k>`.
- *
- * A session that is idle (its latest run ended, or it has none) starts a new run when it gets a
- * message, so `forward-wait <k>` (`k` the ordinal of the run that ended) is written before the
- * first send: the session counts as working until a run newer than `k` has ended, and `advance`
- * and the gate wait for it instead of judging the old run again. A session that is working has
- * the message steered into its run, which needs no marker. The status is read only when there is
- * something to send.
- *
- * Until a send under the marker goes in, each further send writes the marker again before it, and
- * a refusal is recorded at once (`comment-refused <id>`, `body-edit-refused <edited_at>`). Both
- * lines name the send's T3 command id in their cause. The ledger then proves a marker started no
- * run when a refusal names every send under it (`Seen.refusedForwardWait`). T3 keeps one result
- * per command id, so the refusal of a resend also answers for a send whose outcome was lost to a
- * crash or a transport failure. A marker that a crashed call left proven is cancelled at the start
- * of the next call, with or without anything to send. A send no refusal names may have gone in,
- * so its marker keeps waiting.
- *
- * The read also lists the instructors' comments it could not forward (`Activity.dropped`). After
- * the sends, each one the ledger has no `comment-dropped <id>` step for, and that was not
- * forwarded earlier, gets one comment on the issue in the factory's own fixed words (a link to
- * the comment, nothing quoted), then the step. A call that skips the run, or finds the thread
- * gone, reports nothing.
- *
- * `forward` changes no state, and it has no loop or timer: the caller decides how often to call
- * it, and should not gate in a pass where it sent something. A run that is finished, has no
- * session, is not `building` (or has a gate pass, a stuck or questions decision not yet
- * committed, or a stop by hand), or whose gate send is pending makes no call (`skipped`). A
- * closed issue ends the run, as for `advance`, when a person closed it (`abandoned`: the thread
- * is archived, the ledger finished, nothing written on GitHub); the run's own merge is left to
- * `advance`. A thread T3 no longer has is `no-thread`. A run of another repo is an error.
+ * Sends the session the instructors' new comments and body edit, once each. The ledger
+ * (`comment_forwarded`, `body-edit-forwarded <edited_at>`) says what is sent and each send has a
+ * stable command id, so repeats are safe. A send T3 refuses is final: the item is dropped and the
+ * issue told once. An idle session starts a run on a message, so `forward-wait <k>` comes first.
  */
 export const forward = (
   ctx: BuildingContext,
@@ -1562,25 +1438,10 @@ const branchOf = (ctx: BuildingContext, threadId: string): Effect.Effect<string 
   );
 
 /**
- * Stops a run that has worked for longer than `limits.minutes`.
- *
- * The time counted is what the run spent in `triage` and `building`, from the ledger: the time a
- * ready pull request waited in `pr-open` is left out (such a run is not limited at all). A run
- * past the limit has its session's thread read for its branch and then archived (archiving a
- * thread whose run is active stops that run), then goes `stuck` through the stuck path with the
- * fixed reason `the run passed its time limit`, released and finished. When the thread has a
- * branch, the stuck line and the comment name it; a thread that cannot be read, or has no branch,
- * changes nothing. A run still in `triage` that never sent a launch has nothing to archive.
- *
- * A run that is finished, past `building`, in `needs-info`, or has a stuck or questions decision
- * not yet committed is skipped. So is a run whose session reported its pull request since it
- * last entered `building` (`pr-reported`): the session's work is done and waits for the gate, and
- * that wait is not the build's time. So is a run whose launch was sent with no session recorded
- * (`launch-unrecorded`): the session may be running, and only `resume` can name it, so the call
- * after `resume` stops it with its thread. A run of another repo is an error. The pull request
- * the session leaves is recorded once the session is stopped (`recordLeftPullRequest`). There is
- * no loop or timer: the caller decides how often to call it, and it should call it first for a
- * run in `triage` or `building`, and skip the run's other steps when it stops.
+ * Stops a run that has worked longer than `limits.minutes`, counting `triage` and `building` time
+ * from the ledger; time waiting in `pr-open` is left out. The thread is archived and the run goes
+ * `stuck` with the reason `the run passed its time limit`. Skipped: `pr-reported` since entering
+ * `building`, and `launch-unrecorded` (only `resume` can name that session).
  */
 export const timeLimit = Effect.fn("RunnerBuilding.timeLimit")(function* (
   ctx: BuildingContext,
@@ -1706,31 +1567,10 @@ const resumesUsed = Effect.fn("RunnerBuilding.resumesUsed")(function* (
 });
 
 /**
- * Decides what a session that ended badly (`advance` said `ended-badly`) is: an interruption or a
- * stop.
- *
- * It is an interruption when `evidence` shows one (T3 Code was in trouble in the last ten
- * minutes, or another session ended badly in the same pass) and the run has resumes left
- * (`limits.interruptionResumes`, shared by resumes and relaunches, and carried over a relaunch).
- * Otherwise the issue goes `stuck` exactly as `advance` once decided: `the session run ended as
- * <failed|cancelled>` with the session's message, or `the T3 thread no longer exists`. A run that
- * ended `interrupted` is paused (`advance`) and never reaches this function.
- *
- * The ledger and the thread are read again here: the status may have moved on since `advance`
- * looked, and then nothing is done (`unchanged`). So may a stop by hand, which wins over any
- * evidence at every step.
- *
- * A resume writes `session_interrupted` (with the T3 error, the count and the branch) first, then
- * sends the fixed message into the same thread under `softfac:<run>:interrupted:<n>`, then writes
- * the step `interruption-sent <n>`. The line is also the wait marker, so `advance` waits for a run
- * newer than the one that ended; if the send or the step is lost, `advance` sends again. A send
- * that fails is an error (the next pass sends again), except that T3 not having the thread is the
- * thread-gone case.
- *
- * A thread that is gone (not found, or archived) is relaunched: `session_interrupted` with
- * `relaunch` is written, then `carryOutRelaunch` finishes this run without `stuck` and starts the
- * next attempt from the run's branch. A run with no recorded approval cannot be relaunched, since
- * the new attempt could not confirm the issue text, and goes `stuck`.
+ * Decides whether a session that ended badly (`advance` said `ended-badly`) was an interruption or
+ * a stop. An interruption needs `evidence` (T3 trouble in the last ten minutes, or another bad end
+ * this pass) and resumes left (`limits.interruptionResumes`, shared with relaunches); else `stuck`.
+ * A gone thread is relaunched, unless no approval is recorded. A stop by hand wins.
  */
 export const interrupted = Effect.fn("RunnerBuilding.interrupted")(function* (
   ctx: InterruptContext,
@@ -1856,14 +1696,10 @@ export const interrupted = Effect.fn("RunnerBuilding.interrupted")(function* (
 });
 
 /**
- * The branch the work of a run whose thread is lost is on, for the relaunch to continue from, read
- * before the decision is written. In order: the pull request's branch for a session that pushes
- * there and not to T3's own branch (`regateBranch`); the newest branch the ledger names (a launch line usually has none, as it is written
- * before the worktree exists); the branch the thread itself reports, which T3 keeps for an
- * archived thread (one it does not know gives nothing); the head branch of the run's own pull
- * request, when that is a plain ref name and not a fork's. `null` starts the next attempt from
- * `base`. A read that fails, other than T3 not knowing the thread, is an error with nothing
- * written, and the next pass reads again.
+ * The branch a lost thread's work is on, for the relaunch to continue from, read before the
+ * decision is written. In order: the pull request's branch for a session that pushes there
+ * (`regateBranch`); the newest branch the ledger names; the archived thread's branch; the run's own
+ * pull request head if a plain ref name. `null` starts from `base`.
  */
 const relaunchBranchOf = Effect.fn("RunnerBuilding.relaunchBranchOf")(function* (
   ctx: BuildingContext,
@@ -1890,11 +1726,9 @@ const relaunchBranchOf = Effect.fn("RunnerBuilding.relaunchBranchOf")(function* 
 
 /**
  * A relaunch was decided and cut short after the next attempt's ledger was made, and then the
- * operator stopped this run: the stop wins (`advance`), so that ledger, which `resume` never began
- * (no claim, no state), is finished too. Left unfinished it would count as an active run and hold
- * a slot until a person ended it. A next attempt that has begun is a run of its own and is left
- * alone: that is answered `true`, and the issue is its from then on. Safe to repeat: this run
- * stays `building` until its own end has run.
+ * operator stopped this run: the stop wins, so that ledger, which `resume` never began, is finished
+ * too, or it would hold a slot as an active run. A next attempt that has begun is a run of its own
+ * and is left alone (answered `true`). Safe to repeat.
  */
 const endUnbegunRelaunch = Effect.fn("RunnerBuilding.endUnbegunRelaunch")(function* (
   ctx: InterruptContext,
@@ -1944,12 +1778,9 @@ const carryStopToNext = Effect.fn("RunnerBuilding.carryStopToNext")(function* (
 
 /**
  * Carries out a relaunch the ledger holds the decision for, in an order a crash can be picked up
- * from: the next attempt's ledger first, with the same `approved <labeled_at>` step as this run's
- * (so the approval and the text checks carry over), then the issue's label back to `triage` (it
- * stays assigned to the factory's user, which is the shape `resume` goes on from; not when the
- * next attempt has already been claimed), then this run's worktree removed and the run finished
- * without a stuck label or comment, and last `resume` for the issue. Every part is safe to
- * repeat, so `advance` calls it again for a run that has the decision and is not finished.
+ * from: the next attempt's ledger (same `approved <labeled_at>` step), the issue's label back to
+ * `triage` (not if the next attempt is already claimed), this run's worktree removed and the run
+ * finished without a stuck label, then `resume`. Every part is safe to repeat.
  */
 const carryOutRelaunch = Effect.fn("RunnerBuilding.carryOutRelaunch")(function* (
   ctx: InterruptContext,
