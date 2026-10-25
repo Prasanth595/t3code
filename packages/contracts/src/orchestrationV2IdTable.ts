@@ -2,23 +2,9 @@ import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";
 
 /**
- * Opt-in wire form for snapshot-shaped responses. Stored IDs are long nested
- * composites (about 40% of cold-open JSON), and the same few repeat on every
- * row, item, and node. In this form each ID field on a record holds an index
- * into one `ids` table, so the client parses each distinct ID once and every
- * field shares that string.
- *
- * The rule is part of the wire contract, so old and new peers must agree:
- * records are the elements of the container's top-level arrays, its top-level
- * objects, and each record's `item`. ID slots are keys named `id`, `*Id`, and
- * `*Ids`. In an ID slot every string or number is a table index, so a number
- * there is never ambiguous.
- *
- * The server opts a response in by setting `idTable: true` on the value. The
- * codec builds the table on encode and resolves it on decode; decoded values
- * never carry the marker. `ids` is reserved at the top level of these
- * responses. Changing the rule needs a new opt-in: a new query value such as
- * `compactIds=2` over HTTP, a new `accept*` key over WS.
+ * Opt-in wire form: on each record (top-level array element, top-level object, or `item`), values
+ * under `id`, `*Id`, and `*Ids` index the response's `ids` table. Both peers must apply this exact
+ * rule; changing it needs a new opt-in (`compactIds=2`, or a new `accept*` key over WS).
  */
 type JsonObject = { [key: string]: unknown };
 
