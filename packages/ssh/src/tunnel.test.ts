@@ -561,6 +561,7 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
     return {
       fs,
       home,
+      fakeServer,
       stateDir,
       readManagedPid,
       run,
@@ -688,6 +689,58 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
         }
         assert.isFalse(yield* fs.exists(lockPath));
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("kills an unidentifiable new server that ignores graceful shutdown", () =>
+    Effect.gen(function* () {
+      const { fs, fakeServer, run, stateDir, writeVariant, lockPath } = yield* prepareLaunch;
+      let launchedPid: number | undefined;
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          if (launchedPid !== undefined && isAlive(launchedPid))
+            process.kill(launchedPid, "SIGKILL");
+        }),
+      );
+      yield* fs.writeFileString(
+        fakeServer,
+        `${FAKE_SERVER}
+process.on("SIGTERM", () => {});
+server.on("listening", () => process.stdout.end("ready\\n"));
+`,
+      );
+      const ready = yield* Deferred.make<void>();
+      const script = yield* writeVariant("stubborn-unidentified-server", [
+        ['>>"$LOG_FILE" 2>&1 < /dev/null &', '2>"$LOG_FILE" < /dev/null &'],
+        [
+          '  REMOTE_PID="$!"',
+          `  REMOTE_PID="$!"
+  printf 'launched:%s\\n' "$REMOTE_PID"
+  read -r release
+  process_start() { return 1; }`,
+        ],
+        ["    WAIT_COUNT=$((WAIT_COUNT + 1))\n    sleep 0.1", "    WAIT_COUNT=20"],
+      ]);
+      const result = yield* run(
+        "alias",
+        {
+          onLine: (line) =>
+            Effect.gen(function* () {
+              if (line.startsWith("launched:"))
+                launchedPid = Number(line.slice("launched:".length));
+              if (line === "ready") yield* Deferred.succeed(ready, undefined);
+            }),
+          release: Deferred.await(ready),
+        },
+        script,
+      );
+      assert.equal(result.exitCode, 1, result.stderr);
+      if (launchedPid === undefined) assert.fail("the launch did not report its spawned PID");
+      assert.isFalse(isAlive(launchedPid), "the failed launch left its server running");
+      for (const file of ["pid", "port", "managed", "process-start"]) {
+        assert.isFalse(yield* fs.exists(`${stateDir("alias")}/${file}`), file);
+      }
+      assert.isFalse(yield* fs.exists(lockPath));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.live("does not take over a server whose recorded process identity differs", () =>

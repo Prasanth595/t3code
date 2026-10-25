@@ -705,6 +705,11 @@ wait_for_pid_exit() {
     WAIT_COUNT=$((WAIT_COUNT + 1))
     sleep 0.1
   done
+  # An unreaped child cannot have its PID reused, even without an identity record.
+  if [ "\${2:-}" = "child" ] && server_running "$PID_TO_WAIT"; then
+    kill -KILL "$PID_TO_WAIT" 2>/dev/null || true
+    wait "$PID_TO_WAIT" 2>/dev/null || true
+  fi
   if server_running "$PID_TO_WAIT"; then
     printf 'Remote T3 server with PID %s did not stop. Its ownership files were kept.\\n' "$PID_TO_WAIT" >&2
     exit 1
@@ -876,15 +881,15 @@ if [ -z "$REMOTE_PORT" ]; then
   fi
   nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
-  rm -f "$PID_FILE" "$MANAGED_FILE"
   if ! REMOTE_PROCESS_START="$(process_start "$REMOTE_PID")" || [ -z "$REMOTE_PROCESS_START" ]; then
     printf "Failed to record the remote T3 server's process identity.\\n" >&2
-    rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$PROCESS_START_FILE"
     kill "$REMOTE_PID" 2>/dev/null || true
-    wait_for_pid_exit "$REMOTE_PID"
+    wait_for_pid_exit "$REMOTE_PID" child
     wait "$REMOTE_PID" 2>/dev/null || true
+    rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$PROCESS_START_FILE"
     exit 1
   fi
+  rm -f "$PID_FILE" "$MANAGED_FILE"
   printf '%s\\n' "$REMOTE_PROCESS_START" >"$PROCESS_START_FILE"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
