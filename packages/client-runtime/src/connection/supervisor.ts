@@ -40,6 +40,9 @@ import {
 
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 300_000;
+// A recently working host may be restarting; keep retries short while it recovers.
+const RECONNECT_RETRY_MAX_DELAY_MS = 5_000;
+const RECONNECT_RETRY_WINDOW_MS = 120_000;
 // A cold server with a large database can take longer than 15 seconds to
 // answer, and that is not a reason to drop a working connection.
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
@@ -124,8 +127,8 @@ export interface EnvironmentSupervisorOptions {
   }) => Effect.Effect<Option.Option<ConnectionCatalogEntry>>;
 }
 
-function retryDelayMs(failureCount: number, random: number): number {
-  const ceiling = Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * 2 ** (failureCount + 1));
+function retryDelayMs(failureCount: number, random: number, maxDelayMs: number): number {
+  const ceiling = Math.min(maxDelayMs, RETRY_BASE_DELAY_MS * 2 ** (failureCount + 1));
   return Math.round(ceiling / 2 + (ceiling / 2) * random);
 }
 
@@ -881,6 +884,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       pendingRetry = Option.none();
     };
     let replacing = false;
+    let reconnectUntil = 0;
 
     for (;;) {
       if (yield* Ref.getAndSet(resetRetryState, false)) {
@@ -890,6 +894,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       }
       const currentIntent = yield* Ref.get(intent);
       if (!currentIntent.desired) {
+        reconnectUntil = 0;
         resetRetryLadder();
         latestFailure = null;
         yield* clearLease;
@@ -922,6 +927,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         // reports no failure until it fails itself.
         latestFailure = null;
         if (outcome.stable) {
+          reconnectUntil = (yield* Clock.currentTimeMillis) + RECONNECT_RETRY_WINDOW_MS;
           resetRetryLadder();
         }
       }
@@ -964,7 +970,12 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       }
 
       failureCount += 1;
-      const delayMs = retryDelayMs(failureCount - 1, yield* Random.next);
+      const now = yield* Clock.currentTimeMillis;
+      const delayMs = retryDelayMs(
+        failureCount - 1,
+        yield* Random.next,
+        now < reconnectUntil ? RECONNECT_RETRY_MAX_DELAY_MS : RETRY_MAX_DELAY_MS,
+      );
       pendingRetry = Option.map(attemptSpan, (previousAttempt) => ({
         previousAttempt,
         failureCount,
@@ -980,7 +991,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         attempt,
         generation,
         lastFailure: latestFailure,
-        retryAt: (yield* Clock.currentTimeMillis) + delayMs,
+        retryAt: now + delayMs,
       });
       const applicationActivated = yield* waitForRetrySignal(delayMs);
       if (applicationActivated) {
