@@ -9,15 +9,16 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
-import * as Effect from "effect/Effect";
 
 import {
   makeProviderFailure,
   makeProviderFailureTurnItem,
   MAX_PROVIDER_FAILURE_MESSAGE_LENGTH,
+  nativeSessionInvalidatedByProviderFailure,
+  NATIVE_SESSION_STALLED_FAILURE_CODE,
+  providerFailureInvalidatesNativeSession,
   ContextHandoffBudgetError,
 } from "./failure.ts";
-import * as IdAllocator from "./IdAllocator.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 it("redacts credentials and URL secrets from provider failures", () => {
@@ -174,42 +175,92 @@ it("does not serialize arbitrary provider causes", () => {
   });
 });
 
-it.effect("keys terminal failure items by provider turn across retries and fallback paths", () =>
-  Effect.gen(function* () {
-    const idAllocator = yield* IdAllocator.IdAllocatorV2;
-    const driver = ProviderDriverKind.make("codex");
-    const runId = RunId.make("run:provider-failure-id");
-    const base = {
-      idAllocator,
-      driver,
-      threadId: ThreadId.make("thread:provider-failure-id"),
-      runId,
-      nodeId: NodeId.make("node:provider-failure-id"),
-      providerThreadId: ProviderThreadId.make("provider-thread:provider-failure-id"),
-      itemOrdinal: 101,
-      failure: makeProviderFailure({ message: "Provider failed" }),
-      occurredAt: DateTime.makeUnsafe("2026-06-22T12:00:00.000Z"),
-    } as const;
-    const firstTurnId = ProviderTurnId.make("provider-turn:provider-failure-id:first");
-    const secondTurnId = ProviderTurnId.make("provider-turn:provider-failure-id:second");
+it("marks only stalled native-session failures for replacement", () => {
+  assert.isTrue(
+    providerFailureInvalidatesNativeSession(
+      makeProviderFailure({ code: NATIVE_SESSION_STALLED_FAILURE_CODE }),
+    ),
+  );
+  assert.isFalse(
+    providerFailureInvalidatesNativeSession(makeProviderFailure({ code: "api_error_529" })),
+  );
+  assert.isFalse(providerFailureInvalidatesNativeSession(makeProviderFailure({})));
+});
 
-    const firstAttempt = makeProviderFailureTurnItem({
-      ...base,
-      providerTurnId: firstTurnId,
-    });
-    const retriedAttempt = makeProviderFailureTurnItem({
-      ...base,
-      providerTurnId: secondTurnId,
-    });
-    const ingestorFallback = makeProviderFailureTurnItem({
-      ...base,
-      runId: null,
-      nodeId: null,
-      providerTurnId: firstTurnId,
-    });
+it("keys terminal failure items by provider turn across retries and fallback paths", () => {
+  const driver = ProviderDriverKind.make("codex");
+  const runId = RunId.make("run:provider-failure-id");
+  const base = {
+    driver,
+    threadId: ThreadId.make("thread:provider-failure-id"),
+    runId,
+    nodeId: NodeId.make("node:provider-failure-id"),
+    providerThreadId: ProviderThreadId.make("provider-thread:provider-failure-id"),
+    itemOrdinal: 101,
+    failure: makeProviderFailure({ message: "Provider failed" }),
+    occurredAt: DateTime.makeUnsafe("2026-06-22T12:00:00.000Z"),
+  } as const;
+  const firstTurnId = ProviderTurnId.make("provider-turn:provider-failure-id:first");
+  const secondTurnId = ProviderTurnId.make("provider-turn:provider-failure-id:second");
 
-    assert.notEqual(firstAttempt.id, retriedAttempt.id);
-    assert.equal(firstAttempt.id, ingestorFallback.id);
-    assert.equal(firstAttempt.ordinal, 101);
-  }).pipe(Effect.provide(IdAllocator.layer)),
-);
+  const firstAttempt = makeProviderFailureTurnItem({
+    ...base,
+    providerTurnId: firstTurnId,
+  });
+  const retriedAttempt = makeProviderFailureTurnItem({
+    ...base,
+    providerTurnId: secondTurnId,
+  });
+  const ingestorFallback = makeProviderFailureTurnItem({
+    ...base,
+    runId: null,
+    nodeId: null,
+    providerTurnId: firstTurnId,
+  });
+
+  assert.notEqual(firstAttempt.id, retriedAttempt.id);
+  assert.equal(firstAttempt.id, ingestorFallback.id);
+  assert.equal(firstAttempt.ordinal, 101);
+});
+
+it("invalidates only the native session that produced a stalled failure", () => {
+  const providerThreadId = ProviderThreadId.make("provider-thread:stalled-native-session");
+  const runId = RunId.make("run:stalled-native-session");
+  const turnItem = makeProviderFailureTurnItem({
+    driver: ProviderDriverKind.make("claudeAgent"),
+    threadId: ThreadId.make("thread:stalled-native-session"),
+    runId,
+    nodeId: NodeId.make("node:stalled-native-session"),
+    providerThreadId,
+    providerTurnId: ProviderTurnId.make("provider-turn:stalled-native-session"),
+    itemOrdinal: 1,
+    failure: makeProviderFailure({ code: NATIVE_SESSION_STALLED_FAILURE_CODE }),
+    occurredAt: DateTime.makeUnsafe("2026-10-25T08:00:00.000Z"),
+  });
+  const input = {
+    providerThreadId,
+    nativeThreadId: "native-session-a",
+    attempts: [{ runId, providerThreadId, nativeThreadId: "native-session-a" }],
+    turnItems: [turnItem],
+  };
+
+  assert.isTrue(nativeSessionInvalidatedByProviderFailure(input));
+  assert.isFalse(
+    nativeSessionInvalidatedByProviderFailure({
+      ...input,
+      nativeThreadId: "native-session-b",
+    }),
+  );
+  assert.isFalse(
+    nativeSessionInvalidatedByProviderFailure({
+      ...input,
+      attempts: [
+        {
+          runId: RunId.make("run:other"),
+          providerThreadId,
+          nativeThreadId: "native-session-a",
+        },
+      ],
+    }),
+  );
+});

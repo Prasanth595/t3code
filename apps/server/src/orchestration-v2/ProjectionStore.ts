@@ -1,4 +1,5 @@
 import { pendingGuestMessageCount } from "@t3tools/contracts";
+import { NATIVE_SESSION_STALLED_FAILURE_CODE } from "@t3tools/provider-core/server/failure";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
@@ -4456,6 +4457,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND item.status IN ('pending', 'running', 'waiting')
                       AND item.run_id IS NOT NULL
                   )
+                  OR run.run_id IN (
+                    SELECT item.run_id FROM orchestration_v2_projection_turn_items AS item
+                    WHERE item.thread_id = ${threadId}
+                      AND item.type = 'error'
+                      AND item.status = 'failed'
+                      AND item.run_id IS NOT NULL
+                      AND json_extract(item.payload_json, '$.failure.code') = ${NATIVE_SESSION_STALLED_FAILURE_CODE}
+                  )
                 )
               ORDER BY run.ordinal ASC
             `,
@@ -4467,6 +4476,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   SELECT run_id FROM orchestration_v2_projection_runs
                   WHERE thread_id = ${threadId}
                     AND status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+                  UNION
+                  SELECT item.run_id FROM orchestration_v2_projection_turn_items AS item
+                  WHERE item.thread_id = ${threadId}
+                    AND item.type = 'error'
+                    AND item.status = 'failed'
+                    AND item.run_id IS NOT NULL
+                    AND json_extract(item.payload_json, '$.failure.code') = ${NATIVE_SESSION_STALLED_FAILURE_CODE}
                 )
               ORDER BY attempt.run_id ASC, attempt.attempt_ordinal ASC
             `,
@@ -4634,23 +4650,32 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             sql<PayloadRow>`
               SELECT item.payload_json FROM orchestration_v2_projection_turn_items AS item
               WHERE item.thread_id = ${threadId}
-                AND item.status IN ('pending', 'running', 'waiting')
                 AND (
-                  item.run_id IN (
-                    SELECT run_id FROM orchestration_v2_projection_runs
-                    WHERE thread_id = ${threadId}
-                      AND status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
-                  )
-                  OR item.type IN ('command_execution', 'dynamic_tool', 'subagent')
-                  OR (
-                    item.run_id IS NULL
-                    AND item.node_id IN (
-                      SELECT node_id FROM orchestration_v2_projection_nodes
-                      WHERE thread_id = ${threadId}
-                        AND run_id IS NULL
-                        AND kind = 'root_turn'
-                        AND status IN ('pending', 'running', 'waiting')
+                  (
+                    item.status IN ('pending', 'running', 'waiting')
+                    AND (
+                      item.run_id IN (
+                        SELECT run_id FROM orchestration_v2_projection_runs
+                        WHERE thread_id = ${threadId}
+                          AND status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+                      )
+                      OR item.type IN ('command_execution', 'dynamic_tool', 'subagent')
+                      OR (
+                        item.run_id IS NULL
+                        AND item.node_id IN (
+                          SELECT node_id FROM orchestration_v2_projection_nodes
+                          WHERE thread_id = ${threadId}
+                            AND run_id IS NULL
+                            AND kind = 'root_turn'
+                            AND status IN ('pending', 'running', 'waiting')
+                        )
+                      )
                     )
+                  )
+                  OR (
+                    item.type = 'error'
+                    AND item.status = 'failed'
+                    AND json_extract(item.payload_json, '$.failure.code') = ${NATIVE_SESSION_STALLED_FAILURE_CODE}
                   )
                 )
               ORDER BY item.ordinal ASC, item.turn_item_id ASC

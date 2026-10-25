@@ -12,6 +12,8 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
+  RunAttemptId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -30,6 +32,11 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import {
+  makeProviderFailure,
+  makeProviderFailureTurnItem,
+  NATIVE_SESSION_STALLED_FAILURE_CODE,
+} from "@t3tools/provider-core/server/failure";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
 
@@ -366,6 +373,92 @@ it.effect("selects unfinished recovery work without reading settled thread histo
       queued,
       ThreadId.make("thread:recovery:settled-599"),
     ]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("retains stalled native-session evidence for the next run", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const threadId = yield* createThread("stalled-native-session");
+    const previousRootNodeId = NodeId.make("node:recovery:stalled-native-session");
+    const previousAttemptId = RunAttemptId.make("attempt:recovery:stalled-native-session");
+    const providerThreadId = ProviderThreadId.make(
+      "provider-thread:recovery:stalled-native-session",
+    );
+    const providerTurnId = ProviderTurnId.make("provider-turn:recovery:stalled-native-session");
+    const previousRunId = yield* createRun(threadId, "failed", {
+      rootNodeId: previousRootNodeId,
+      activeAttemptId: previousAttemptId,
+      providerThreadId,
+      completedAt: now,
+    });
+    yield* projections.apply({
+      id: EventId.make("event:recovery:stalled-native-session:attempt"),
+      type: "run-attempt.created",
+      threadId,
+      runId: previousRunId,
+      nodeId: previousRootNodeId,
+      driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id: previousAttemptId,
+        nativeThreadId: "native:recovery:stalled-native-session",
+        runId: previousRunId,
+        attemptOrdinal: 1,
+        rootNodeId: previousRootNodeId,
+        providerInstanceId,
+        providerThreadId,
+        providerTurnId,
+        reason: "initial",
+        status: "failed",
+        startedAt: now,
+        completedAt: now,
+      },
+    });
+    const stalledFailure = makeProviderFailureTurnItem({
+      driver,
+      threadId,
+      runId: previousRunId,
+      nodeId: previousRootNodeId,
+      providerThreadId,
+      providerTurnId,
+      itemOrdinal: 1,
+      failure: makeProviderFailure({
+        class: "transport_error",
+        code: NATIVE_SESSION_STALLED_FAILURE_CODE,
+        retryable: true,
+      }),
+      occurredAt: now,
+    });
+    yield* projections.apply({
+      id: EventId.make("event:recovery:stalled-native-session:error"),
+      type: "turn-item.updated",
+      threadId,
+      runId: previousRunId,
+      nodeId: previousRootNodeId,
+      driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload: stalledFailure,
+    });
+    yield* createRun(threadId, "starting", {
+      ordinal: 2,
+      providerThreadId,
+      completedAt: null,
+    });
+
+    const recovery = yield* projections.getRuntimeRecoveryProjection(threadId);
+
+    assert.deepEqual(
+      recovery.attempts.map((attempt) => attempt.id),
+      [previousAttemptId],
+    );
+    assert.deepEqual(
+      recovery.turnItems.map((item) => item.id),
+      [stalledFailure.id],
+    );
   }).pipe(Effect.provide(layerTest)),
 );
 

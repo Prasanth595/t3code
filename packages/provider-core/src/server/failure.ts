@@ -3,6 +3,7 @@ import type {
   OrchestrationV2ProviderFailure,
   OrchestrationV2ProviderFailureClass,
   OrchestrationV2ProviderRetry,
+  OrchestrationV2RunAttempt,
   OrchestrationV2TurnItem,
   ProviderDriverKind,
   ProviderThreadId,
@@ -28,6 +29,7 @@ export class ContextHandoffBudgetError extends Schema.TaggedError<ContextHandoff
 
 export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
+export const NATIVE_SESSION_STALLED_FAILURE_CODE = "native_session_stalled";
 
 const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
 
@@ -227,6 +229,39 @@ export function makeProviderFailure(input: {
       ? { resetAt: DateTime.formatIso(DateTime.makeUnsafe(input.resetAt)) }
       : {}),
   };
+}
+
+export function providerFailureInvalidatesNativeSession(
+  failure: OrchestrationV2ProviderFailure,
+): boolean {
+  return failure.code === NATIVE_SESSION_STALLED_FAILURE_CODE;
+}
+
+export function nativeSessionInvalidatedByProviderFailure(input: {
+  readonly providerThreadId: ProviderThreadId;
+  readonly nativeThreadId: string;
+  readonly attempts: ReadonlyArray<
+    Pick<OrchestrationV2RunAttempt, "nativeThreadId" | "providerThreadId" | "runId">
+  >;
+  readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
+}): boolean {
+  const invalidatedRunIds = new Set(
+    input.turnItems.flatMap((item) =>
+      item.type === "error" &&
+      item.status === "failed" &&
+      item.providerThreadId === input.providerThreadId &&
+      item.runId !== null &&
+      providerFailureInvalidatesNativeSession(item.failure)
+        ? [item.runId]
+        : [],
+    ),
+  );
+  return input.attempts.some(
+    (attempt) =>
+      attempt.providerThreadId === input.providerThreadId &&
+      attempt.nativeThreadId === input.nativeThreadId &&
+      invalidatedRunIds.has(attempt.runId),
+  );
 }
 
 export function makeProviderFailureTurnItem(input: {

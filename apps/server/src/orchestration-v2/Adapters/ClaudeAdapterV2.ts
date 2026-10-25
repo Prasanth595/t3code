@@ -176,6 +176,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   makeProviderFailure,
   makeProviderRetryTurnItem,
+  NATIVE_SESSION_STALLED_FAILURE_CODE,
 } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
@@ -312,6 +313,7 @@ const WORKFLOW_MEMBER_TRANSCRIPT_FLUSH_MS = 500;
 // A steer waits at most this long, from its request, for its foreground
 // subagents to move to the background before it is sent.
 const BACKGROUND_MOVE_TIMEOUT_MS = 5_000;
+const CLAUDE_STALLED_PHASE_TIMEOUT = "2 minutes";
 
 const CLAUDE_GROUP_WATCH_SCRIPT = [
   "{ trap '' TERM; read -r _ <&3; kill -TERM 0; sleep 5; kill -KILL 0; } </dev/null >/dev/null 2>&1 &",
@@ -3477,6 +3479,13 @@ interface ActiveClaudeTurnContext {
   nativeWakeStarted: boolean;
   gatedFramesBeforeEcho: number;
   readonly heldRootFrames: Array<SDKMessage>;
+  stalledPhase: ClaudeStalledPhase | null;
+}
+
+type ClaudeStalledPhaseKind = "compaction" | "request";
+
+interface ClaudeStalledPhase {
+  readonly kind: ClaudeStalledPhaseKind;
 }
 
 interface ActiveClaudeProviderRetry {
@@ -3519,6 +3528,10 @@ interface ClaudeLiveQueryContext {
   receivedInit: boolean;
   permissionMode: PermissionMode;
   stopping: boolean;
+  terminalFailure: OrchestrationV2ProviderFailure | undefined;
+  // Registry entries still running when this process opened. Their process
+  // is gone and never reports their end; any later task_started replaces the
+  // entry, so an entry still in this set runs nowhere.
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
 }
 
@@ -7031,10 +7044,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ...(interrupted
                 ? {}
                 : {
-                    failure: makeProviderFailure({
-                      cause: cause === undefined ? undefined : Cause.squash(cause),
-                      class: "transport_error",
-                    }),
+                    failure:
+                      closedQuery.terminalFailure ??
+                      makeProviderFailure({
+                        cause: cause === undefined ? undefined : Cause.squash(cause),
+                        class: "transport_error",
+                      }),
                   }),
             });
           } else {
@@ -8724,6 +8739,98 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ),
           );
 
+        const stalledPhaseFailure = (kind: ClaudeStalledPhaseKind) =>
+          makeProviderFailure({
+            class: "transport_error",
+            code: NATIVE_SESSION_STALLED_FAILURE_CODE,
+            message:
+              kind === "compaction"
+                ? "Claude context compaction made no progress for two minutes. T3 closed the stalled session; the next turn will continue in a fresh Claude session."
+                : "Claude returned no model or tool activity for two minutes. T3 closed the stalled session; the next turn will continue in a fresh Claude session.",
+            retryable: true,
+          });
+
+        const closeStalledQuery = Effect.fn("ClaudeAdapterV2.closeStalledQuery")(function* (
+          context: ActiveClaudeTurnContext,
+          liveQuery: ClaudeLiveQueryContext,
+          phase: ClaudeStalledPhase,
+        ) {
+          if (
+            (yield* Ref.get(activeTurn)) !== context ||
+            (yield* Ref.get(queryContext)) !== liveQuery ||
+            context.stalledPhase !== phase
+          ) {
+            return;
+          }
+          context.stalledPhase = null;
+          liveQuery.terminalFailure = stalledPhaseFailure(phase.kind);
+          yield* Effect.logWarning("orchestration-v2.claude-stalled-phase-timeout", {
+            providerSessionId: input.providerSessionId,
+            providerThreadId: context.input.providerThread.id,
+            providerTurnId: context.providerTurnId,
+            nativeThreadId: context.nativeThreadId,
+            phase: phase.kind,
+          });
+          const closed = yield* liveQuery.query.close.pipe(
+            Effect.ignore,
+            Effect.andThen(Deferred.await(liveQuery.closed)),
+            Effect.timeoutOption("10 seconds"),
+          );
+          if (Option.isSome(closed)) return;
+
+          yield* Effect.logWarning("orchestration-v2.claude-stalled-query-close-timeout", {
+            providerSessionId: input.providerSessionId,
+            providerThreadId: context.input.providerThread.id,
+            providerTurnId: context.providerTurnId,
+            nativeThreadId: context.nativeThreadId,
+            phase: phase.kind,
+          });
+          const ownsLiveQuery = yield* Ref.modify(queryContext, (current) =>
+            current?.query === liveQuery.query ? [true, null] : [false, current],
+          );
+          if (ownsLiveQuery) {
+            yield* finalizeActiveTurnAfterQueryExit(liveQuery);
+            yield* endSubagentCallsOfClosedQuery(liveQuery.nativeThreadId, "failed");
+          }
+          yield* Deferred.succeed(liveQuery.closed, undefined);
+        });
+
+        // This runs for every SDK frame, including streaming events; avoid a span per frame.
+        const observeClaudeStalledPhase = Effect.fnUntraced(function* (observation: {
+          readonly query: ClaudeAgentSdkQuerySession;
+          readonly message: SDKMessage;
+        }) {
+          const context = yield* Ref.get(activeTurn);
+          const liveQuery = yield* Ref.get(queryContext);
+          if (context === null || liveQuery?.query !== observation.query) return;
+          const message = observation.message;
+          const kind: ClaudeStalledPhaseKind | null =
+            message.type === "system" &&
+            message.subtype === "status" &&
+            message.status === "compacting"
+              ? "compaction"
+              : (message.type === "system" &&
+                    message.subtype === "status" &&
+                    message.status === "requesting") ||
+                  (message.type === "system" && message.subtype === "api_retry")
+                ? "request"
+                : null;
+          if (kind === null) {
+            if (message.type === "rate_limit_event") return;
+            context.stalledPhase = null;
+            return;
+          }
+          if (context.stalledPhase?.kind === kind) return;
+
+          const phase: ClaudeStalledPhase = { kind };
+          context.stalledPhase = phase;
+          yield* Effect.sleep(CLAUDE_STALLED_PHASE_TIMEOUT).pipe(
+            Effect.andThen(closeStalledQuery(context, liveQuery, phase)),
+            Effect.forkIn(sessionScope),
+          );
+        });
+
+        // Gives held root output to the pending prompt turn.
         const releaseHeldRootFrames = Effect.fnUntraced(function* (
           context: ActiveClaudeTurnContext,
         ) {
@@ -8743,6 +8850,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly message: SDKMessage;
         }) {
           const message = input.message;
+          yield* observeClaudeStalledPhase(input);
           const context = yield* Ref.get(activeTurn);
           const liveQuery = yield* Ref.get(queryContext);
           if (
@@ -9413,6 +9521,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             receivedInit: false,
             permissionMode: queryOptions.permissionMode,
             stopping: false,
+            terminalFailure: undefined,
             subagentsFromEarlierProcesses: new Set(
               [...(yield* Ref.get(sessionSubagentsByTaskId)).values()].filter(
                 (subagent) => subagent.task.status === "running",
@@ -9580,6 +9689,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               nativeWakeStarted: false,
               gatedFramesBeforeEcho: 0,
               heldRootFrames: [],
+              stalledPhase: null,
             };
             const attachTurn = Effect.gen(function* () {
               querySession.lastTurn = context;

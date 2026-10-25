@@ -50,6 +50,7 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import {
   knownProviderFailureMessage,
   makeProviderFailure,
+  nativeSessionInvalidatedByProviderFailure,
 } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
@@ -530,9 +531,11 @@ export const layer: Layer.Layer<
           runs: current.runs,
           turnItems: current.turnItems,
         });
-      const inheritedBackgroundTurnItems = yield* projectionStore
-        .getRuntimeRecoveryProjection(projection.thread.id)
-        .pipe(Effect.map(selectInheritedBackgroundItems));
+      const runtimeRecoveryProjection = yield* projectionStore.getRuntimeRecoveryProjection(
+        projection.thread.id,
+      );
+      const inheritedBackgroundTurnItems =
+        selectInheritedBackgroundItems(runtimeRecoveryProjection);
       const providerSessionId = providerThread.providerSessionId;
       const runControls = makeRunControls({
         threadId: projection.thread.id,
@@ -751,15 +754,26 @@ export const layer: Layer.Layer<
             handoff.delivery?.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
             handoff.delivery?.status === "pending",
         );
+        const providerNativeThreadId = providerThread.nativeThreadRef?.nativeId;
+        const invalidatedNativeSession =
+          providerNativeThreadId != null &&
+          nativeSessionInvalidatedByProviderFailure({
+            providerThreadId: providerThread.id,
+            nativeThreadId: providerNativeThreadId,
+            attempts: runtimeRecoveryProjection.attempts,
+            turnItems: runtimeRecoveryProjection.turnItems,
+          });
         const resumed = yield* Effect.result(
-          uncertainDelivery
+          uncertainDelivery || invalidatedNativeSession
             ? Effect.fail(
                 new ProviderAdapter.ProviderAdapterTurnStartError({
                   driver: session.driver,
                   threadId: projection.thread.id,
                   providerThreadId: providerThread.id,
                   runId,
-                  cause: "Uncertain native history injection",
+                  cause: uncertainDelivery
+                    ? "Uncertain native history injection"
+                    : "Native provider session invalidated after a stalled turn",
                 }),
               )
             : session.resumeThread({
@@ -777,7 +791,11 @@ export const layer: Layer.Layer<
           driver: session.driver,
           providerThreadId: providerThread.id,
           runId,
-          reason: uncertainDelivery ? "uncertain_history_delivery" : "resume_failed",
+          reason: uncertainDelivery
+            ? "uncertain_history_delivery"
+            : invalidatedNativeSession
+              ? "native_session_invalidated"
+              : "resume_failed",
           errorTag: resumed.failure._tag,
         });
         const replacement = yield* loadFromProvider(

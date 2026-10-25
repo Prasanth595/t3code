@@ -3579,6 +3579,176 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect.each([{ status: "compacting" }, { status: "requesting" }] as const)(
+    "terminalizes a stalled Claude $status phase and marks its session invalid",
+    (input) =>
+      Effect.gen(function* () {
+        const closeRequested = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) =>
+            Deferred.succeed(closeRequested, undefined).pipe(
+              Effect.andThen(Queue.shutdown(sdkMessages)),
+            ),
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-claude-stalled-${input.status}`),
+            text: input.status === "compacting" ? "/compact" : "Continue.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "status",
+            status: input.status,
+            uuid: `status-${input.status}`,
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+
+        yield* TestClock.adjust("2 minutes");
+        yield* Deferred.await(closeRequested);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        if (terminal.status === "failed") {
+          assert.equal(terminal.failure.code, "native_session_stalled");
+          assert.equal(terminal.failure.retryable, true);
+        }
+        assert.lengthOf(harness.terminalEvents(), 1);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            TestClock.layer(),
+          ),
+        ),
+      ),
+  );
+
+  it.effect("does not let rate-limit telemetry extend a stalled request deadline", () =>
+    Effect.gen(function* () {
+      const closeRequested = yield* Deferred.make<void>();
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: (sdkMessages) =>
+          Deferred.succeed(closeRequested, undefined).pipe(
+            Effect.andThen(Queue.shutdown(sdkMessages)),
+          ),
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-stalled-through-rate-limit-event"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "status",
+          status: "requesting",
+          uuid: "status-requesting-before-rate-limit-event",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* TestClock.adjust("1 minute");
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "rate_limit_event",
+          rate_limit_info: { status: "allowed" },
+          uuid: "00000000-0000-4000-8000-0000000002f3",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+
+      yield* TestClock.adjust("1 minute");
+      assert.isTrue(yield* Deferred.isDone(closeRequested));
+      yield* Deferred.await(closeRequested);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status === "failed") {
+        assert.equal(terminal.failure.code, "native_session_stalled");
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          TestClock.layer(),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps a completed Claude compaction from tripping the stall timeout", () =>
+    Effect.gen(function* () {
+      const closeRequested = yield* Deferred.make<void>();
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: () => Deferred.succeed(closeRequested, undefined),
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-completed-compaction-timeout"),
+          text: "/compact",
+          attachments: [],
+        }),
+      );
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "status",
+          status: "compacting",
+          uuid: "status-completing-compaction",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* TestClock.adjust("1 minute");
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "compact_boundary",
+          compact_metadata: { trigger: "manual", pre_tokens: 1500, post_tokens: 400 },
+          uuid: "00000000-0000-4000-8000-0000000002f1",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* TestClock.adjust("2 minutes");
+      assert.isFalse(yield* Deferred.isDone(closeRequested));
+      yield* harness.offerAndWait(
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-0000000002f2",
+          result: "Compacted conversation.",
+        }),
+      );
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "completed");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          TestClock.layer(),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["completed", "interrupted"] as const)(
     "projects Claude thinking blocks when %s",
     (status) =>

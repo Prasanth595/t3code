@@ -39,6 +39,11 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import {
+  makeProviderFailure,
+  makeProviderFailureTurnItem,
+  NATIVE_SESSION_STALLED_FAILURE_CODE,
+} from "@t3tools/provider-core/server/failure";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -270,6 +275,7 @@ function makeLocalCommandHarness(input: {
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
   readonly failReadsAfterRunning?: boolean;
+  readonly stalledNativeSession?: boolean;
   readonly previousTurn?: {
     readonly runStatus: "failed" | "completed";
     readonly turnStatus: "running" | "completed" | "interrupted";
@@ -678,15 +684,21 @@ function makeLocalCommandHarness(input: {
           m.role === "user" &&
           (m.text.trim().toLowerCase() !== "/compact" || m.attachments.length > 0),
       ),
+      turnItems: projection.turnItems.filter((item) => item.runId === runId),
     }),
   );
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
-          prepareProviderHandoff: () => Effect.die("history read must fail first"),
+        input.stalledNativeSession === true
+          ? ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer))
+          : Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
+              prepareProviderHandoff: () => Effect.die("history read must fail first"),
+            }),
+        Layer.mock(EventSink.EventSinkV2)({
+          write: () => Effect.succeed([]),
+          writeIfRunCurrent,
         }),
-        Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
         layerWorktreeLocation(input.worktreesDir),
         input.fileSystem === undefined
@@ -704,21 +716,58 @@ function makeLocalCommandHarness(input: {
           getThreadRecords,
           getTurnStartContext,
           getRuntimeRecoveryProjection: () =>
-            Effect.as(failReadIfRunning, {
-              ...projection,
-              hasConversation: projection.messages.some(
-                (m) =>
-                  m.role === "user" &&
-                  (m.text.trim().toLowerCase() !== "/compact" || m.attachments.length > 0),
-              ),
-            }),
-          getTurnStartHistory: () =>
-            Effect.fail(
-              new ProjectionStore.ProjectionStoreReadError({
-                threadId,
-                cause: input.historyReadFailureAfterFallback,
-              }),
+            Effect.as(
+              failReadIfRunning,
+              (() => {
+                if (input.stalledNativeSession !== true) return projection;
+                const stalledRunIds = new Set(
+                  projection.turnItems.flatMap((item) =>
+                    item.type === "error" &&
+                    item.status === "failed" &&
+                    item.runId !== null &&
+                    item.failure.code === NATIVE_SESSION_STALLED_FAILURE_CODE
+                      ? [item.runId]
+                      : [],
+                  ),
+                );
+                const activeRunIds = new Set(
+                  projection.runs.flatMap((candidate) =>
+                    candidate.status === "queued" ||
+                    candidate.status === "preparing" ||
+                    candidate.status === "starting" ||
+                    candidate.status === "running" ||
+                    candidate.status === "waiting"
+                      ? [candidate.id]
+                      : [],
+                  ),
+                );
+                return {
+                  ...projection,
+                  attempts: projection.attempts.filter(
+                    (attempt) =>
+                      activeRunIds.has(attempt.runId) || stalledRunIds.has(attempt.runId),
+                  ),
+                  turnItems: projection.turnItems.filter(
+                    (item) =>
+                      item.status === "pending" ||
+                      item.status === "running" ||
+                      item.status === "waiting" ||
+                      (item.type === "error" &&
+                        item.status === "failed" &&
+                        item.failure.code === NATIVE_SESSION_STALLED_FAILURE_CODE),
+                  ),
+                };
+              })(),
             ),
+          getTurnStartHistory: () =>
+            input.stalledNativeSession === true
+              ? Effect.succeed(projection.turnItems)
+              : Effect.fail(
+                  new ProjectionStore.ProjectionStoreReadError({
+                    threadId,
+                    cause: input.historyReadFailureAfterFallback,
+                  }),
+                ),
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
           open,
@@ -790,6 +839,88 @@ effectIt.effect("recovers an abandoned failed turn before continuing its native 
     expect(harness.startRootRun).toHaveBeenCalledOnce();
     expect(harness.startRootRun.mock.calls[0]?.[0].providerThread.nativeThreadRef?.nativeId).toBe(
       "existing-native-conversation",
+    );
+  }),
+);
+
+effectIt.effect("starts a fresh native session after a previous run stalled", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      stalledNativeSession: true,
+      previousTurn: { runStatus: "failed", turnStatus: "completed" },
+    });
+    const projection = harness.projection();
+    const previousRun = projection.runs.find((candidate) => candidate.ordinal === 1)!;
+    const currentAttempt = projection.attempts[0]!;
+    const providerThread = projection.providerThreads[0]!;
+    const previousProviderTurn = projection.providerTurns[0]!;
+    const previousAttempt: OrchestrationV2ThreadProjection["attempts"][number] = {
+      ...currentAttempt,
+      id: RunAttemptId.make("previous-failed-attempt"),
+      runId: previousRun.id,
+      rootNodeId: previousProviderTurn.nodeId,
+      providerThreadId: providerThread.id,
+      providerTurnId: previousProviderTurn.id,
+      status: "failed",
+      nativeThreadId: "existing-native-conversation",
+      startedAt: projection.updatedAt,
+      completedAt: projection.updatedAt,
+    };
+    const stalledFailure = makeProviderFailureTurnItem({
+      driver: providerThread.driver,
+      threadId: projection.thread.id,
+      runId: previousRun.id,
+      nodeId: previousRun.rootNodeId,
+      providerThreadId: providerThread.id,
+      providerTurnId: previousProviderTurn.id,
+      itemOrdinal: 1,
+      failure: makeProviderFailure({
+        class: "transport_error",
+        code: NATIVE_SESSION_STALLED_FAILURE_CODE,
+        retryable: true,
+      }),
+      occurredAt: projection.updatedAt,
+    });
+    harness.setProjection({
+      ...projection,
+      attempts: [previousAttempt, ...projection.attempts],
+      turnItems: [stalledFailure],
+    });
+
+    const resumeThread = vi.fn(() => Effect.succeed(providerThread));
+    const ensureThread = vi.fn(
+      ({ existingProviderThread }: ProviderAdapter.ProviderAdapterV2EnsureThreadInput) =>
+        Effect.succeed({
+          ...existingProviderThread,
+          nativeThreadRef: {
+            driver: providerThread.driver,
+            nativeId: "fresh-native-conversation",
+            strength: "strong" as const,
+          },
+        }),
+    );
+    const open = harness.open.getMockImplementation()!;
+    harness.open.mockImplementation(() =>
+      open().pipe(
+        Effect.map((session) => ({ ...(session as object), ensureThread, resumeThread }) as never),
+      ),
+    );
+
+    yield* harness.start;
+
+    expect(resumeThread).not.toHaveBeenCalled();
+    expect(ensureThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        existingProviderThread: expect.objectContaining({ nativeThreadRef: null }),
+      }),
+    );
+    expect(harness.startRootRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerThread: expect.objectContaining({
+          nativeThreadRef: expect.objectContaining({ nativeId: "fresh-native-conversation" }),
+        }),
+      }),
     );
   }),
 );
