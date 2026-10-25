@@ -728,6 +728,8 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  // The subagent helpers below are untraced: they run per event inside
+  // publishThreadUnsafe, whose span already covers them.
   const findTopLevelThreadId = Effect.fnUntraced(function* (child: OrchestrationV2ThreadShell) {
     const seen = new Set<ThreadId>([child.id]);
     let current: OrchestrationV2ThreadShell | null = child;
