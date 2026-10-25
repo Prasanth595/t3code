@@ -261,7 +261,7 @@ describe("claudeRateLimitEventToUpdate", () => {
   });
 
   it("reads every window from a setup-token event that has no top-level utilization", () => {
-    // Captured from `claude -p --output-format stream-json` under CLAUDE_CODE_OAUTH_TOKEN (#24114).
+    // Captured from `claude -p --output-format stream-json` under CLAUDE_CODE_OAUTH_TOKEN.
     const event = {
       status: "allowed",
       rateLimitType: "five_hour",
