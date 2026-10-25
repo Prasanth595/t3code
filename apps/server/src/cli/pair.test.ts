@@ -506,6 +506,53 @@ describe("auth scope options", () => {
 
 class AuthRoutesApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.auth) {}
 
+// Serves the auth routes with their own session store, as a separate server
+// process would, and watches that store for the event that closes a session's
+// open WebSockets. Watching the event rather than awaitInvalidation matters:
+// its database read could see the CLI's write and finish without the event.
+const serveAuthRoutesWithWatchedSession = (baseDir: string) =>
+  Effect.gen(function* () {
+    const config = yield* resolveCliAuthConfig({ baseDir: Option.some(baseDir) }, Option.none());
+    const services = yield* Layer.build(
+      HttpRouter.serve(
+        HttpApiBuilder.layer(AuthRoutesApi).pipe(
+          Layer.provide(AuthHttp.layer),
+          Layer.provide(AuthHttp.layerAuthenticatedAuth),
+        ),
+        { disableListenLog: true, disableLogger: true },
+      ).pipe(
+        Layer.provideMerge(EnvironmentAuth.layerRuntime),
+        Layer.provideMerge(ServerConfig.layer(config)),
+        Layer.provideMerge(NodeHttpServer.layerTest),
+      ),
+    );
+    const origin = HttpServer.formatAddress(Context.get(services, HttpServer.HttpServer).address);
+    const sessions = Context.get(services, SessionStore.SessionStore);
+    const session = yield* sessions.issue({
+      subject: "cli-issued-session",
+      client: { label: "revoke-test", deviceType: "bot" },
+    });
+    const removed = yield* Deferred.make<void>();
+    yield* sessions.streamChanges.pipe(
+      Stream.filter(
+        (change) => change.type === "clientRemoved" && change.sessionId === session.sessionId,
+      ),
+      Stream.runHead,
+      Effect.andThen(Deferred.succeed(removed, undefined)),
+      Effect.forkScoped({ startImmediately: true }),
+    );
+    const persistRunningServer = Effect.gen(function* () {
+      yield* persistServerRuntimeState({
+        path: config.serverRuntimeStatePath,
+        state: yield* makePersistedServerRuntimeState({
+          config: { host: "127.0.0.1", devUrl: undefined },
+          port: Number(new URL(origin).port),
+        }),
+      });
+    });
+    return { config, session, removed, persistRunningServer };
+  });
+
 describe("auth session revoke", () => {
   // Open WebSockets wait on the running server's in-memory revocation signal,
   // which a database-only revoke from the CLI never reaches.
@@ -514,52 +561,38 @@ describe("auth session revoke", () => {
       const baseDir = NodeFS.mkdtempSync(
         NodePath.join(NodeOS.tmpdir(), "t3-cli-auth-revoke-test-"),
       );
-      const config = yield* resolveCliAuthConfig({ baseDir: Option.some(baseDir) }, Option.none());
-      const services = yield* Layer.build(
-        HttpRouter.serve(
-          HttpApiBuilder.layer(AuthRoutesApi).pipe(
-            Layer.provide(AuthHttp.layer),
-            Layer.provide(AuthHttp.layerAuthenticatedAuth),
-          ),
-          { disableListenLog: true, disableLogger: true },
-        ).pipe(
-          Layer.provideMerge(EnvironmentAuth.layerRuntime),
-          Layer.provideMerge(ServerConfig.layer(config)),
-          Layer.provideMerge(NodeHttpServer.layerTest),
-        ),
-      );
-      const origin = HttpServer.formatAddress(Context.get(services, HttpServer.HttpServer).address);
-      yield* persistServerRuntimeState({
-        path: config.serverRuntimeStatePath,
-        state: yield* makePersistedServerRuntimeState({
-          config: { host: "127.0.0.1", devUrl: undefined },
-          port: Number(new URL(origin).port),
-        }),
-      });
-      const sessions = Context.get(services, SessionStore.SessionStore);
-      const session = yield* sessions.issue({
-        subject: "cli-issued-session",
-        client: { label: "revoke-test", deviceType: "bot" },
-      });
-      // The server closes a session's open WebSockets on this event. Watch the
-      // event rather than awaitInvalidation, whose database read could see the
-      // CLI's write and finish without it.
-      const removed = yield* Deferred.make<void>();
-      yield* sessions.streamChanges.pipe(
-        Stream.filter(
-          (change) => change.type === "clientRemoved" && change.sessionId === session.sessionId,
-        ),
-        Stream.runHead,
-        Effect.andThen(Deferred.succeed(removed, undefined)),
-        Effect.forkScoped({ startImmediately: true }),
-      );
+      const server = yield* serveAuthRoutesWithWatchedSession(baseDir);
+      yield* server.persistRunningServer;
 
       const output = yield* captureStdout(
-        runCli(["auth", "session", "revoke", session.sessionId, "--base-dir", baseDir]),
+        runCli(["auth", "session", "revoke", server.session.sessionId, "--base-dir", baseDir]),
       );
 
-      assert.include(output, `Revoked session ${session.sessionId}.`);
-      assert.isTrue(yield* Deferred.isDone(removed));
+      assert.include(output, `Revoked session ${server.session.sessionId}.`);
+      assert.isTrue(yield* Deferred.isDone(server.removed));
+    }).pipe(Effect.scoped, Effect.provide(layerCliRuntime)),
+  );
+
+  it.effect("ends open connections when retried after a database-only revoke", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-auth-revoke-retry-test-"),
+      );
+      const server = yield* serveAuthRoutesWithWatchedSession(baseDir);
+      const revoke = provideCliTestLayers(
+        runCli(["auth", "session", "revoke", server.session.sessionId, "--base-dir", baseDir]),
+      );
+      yield* persistServerRuntimeState({
+        path: server.config.serverRuntimeStatePath,
+        state: { ...baseState, pid: process.pid, origin: "http://127.0.0.1:1" },
+      });
+      yield* revoke;
+      assert.isFalse(yield* Deferred.isDone(server.removed));
+
+      yield* server.persistRunningServer;
+      yield* revoke;
+
+      assert.isTrue(yield* Deferred.isDone(server.removed));
     }).pipe(Effect.scoped, Effect.provide(layerCliRuntime)),
   );
 
