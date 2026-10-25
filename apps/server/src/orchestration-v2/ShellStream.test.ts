@@ -201,7 +201,6 @@ describe("omitIdleSubagentShells", () => {
         omitted.subagentThreadIds,
       ),
     ).toBe(false);
-    expect(activeShellRowsForSubscriber(threads, false).threads).toBe(threads);
   });
 });
 

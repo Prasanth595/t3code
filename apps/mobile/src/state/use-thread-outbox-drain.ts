@@ -7,6 +7,7 @@ import {
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import { threadFamilyRead, type ThreadFamilyRead } from "@t3tools/client-runtime/state/threads";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import {
   AuthOrchestrationOperateScope,
@@ -56,7 +57,6 @@ import { removeThreadOutboxMessage } from "./thread-outbox-removal";
 import {
   isQueuedThreadCreationSendable,
   resolveThreadOutboxDeliveryAction,
-  type ThreadOutboxFamilyRead,
   resolveThreadOutboxDispatchStep,
   resolveThreadOutboxFailureAction,
   resolveQueuedThreadSettings,
@@ -1170,7 +1170,7 @@ export function useThreadOutboxDrain(): void {
         continue;
       }
 
-      const thread = findThread(threads, nextQueuedMessage);
+      let thread = findThread(threads, nextQueuedMessage);
       if (thread && scopedThreadKey(thread.environmentId, thread.id) !== threadKey) {
         continue;
       }
@@ -1181,7 +1181,7 @@ export function useThreadOutboxDrain(): void {
       );
       const shellStatus = shellStatuses.get(nextQueuedMessage.environmentId) ?? "empty";
       const serverConfig = serverConfigs.get(nextQueuedMessage.environmentId);
-      let familyRead: ThreadOutboxFamilyRead | undefined;
+      let familyRead: ThreadFamilyRead | undefined;
       if (
         thread === undefined &&
         creation === undefined &&
@@ -1199,14 +1199,25 @@ export function useThreadOutboxDrain(): void {
             ),
           );
         }
-        const family = appAtomRegistry.get(
-          threadFamilies.familyAtom(nextQueuedMessage.environmentId, nextQueuedMessage.threadId),
+        familyRead = threadFamilyRead(
+          appAtomRegistry.get(
+            threadFamilies.familyAtom(nextQueuedMessage.environmentId, nextQueuedMessage.threadId),
+          ),
         );
-        familyRead = AsyncResult.isFailure(family)
-          ? "failed"
-          : AsyncResult.isSuccess(family) && !family.waiting
-            ? "settled"
-            : "pending";
+        if (familyRead === "settled") {
+          // The rows from this render can lag the family that just settled; decide from the
+          // merged rows as they are now.
+          thread = findThread(
+            appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
+            nextQueuedMessage,
+          );
+        } else if (familyRead === "failed") {
+          threadFamilies.refresh(
+            appAtomRegistry,
+            nextQueuedMessage.environmentId,
+            nextQueuedMessage.threadId,
+          );
+        }
       }
       const deliveryAction = resolveThreadOutboxDeliveryAction({
         isCreation: creation !== undefined,

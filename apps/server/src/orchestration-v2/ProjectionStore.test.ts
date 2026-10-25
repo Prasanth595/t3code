@@ -1117,45 +1117,47 @@ it.effect.each([
     const projectId = ProjectId.make("project:family");
     const worktreePath = "/repo/.t3/worktrees/family";
     const id = (name: string) => ThreadId.make(`thread:family:${name}`);
-    const createThread = (input: {
+    const payloadOf = (input: {
       readonly name: string;
       readonly parent?: string;
       readonly root?: string;
       readonly worktreePath?: string;
       readonly archived?: boolean;
     }) =>
+      ({
+        createdBy: "user",
+        creationSource: input.parent === undefined ? "web" : "mcp",
+        id: id(input.name),
+        projectId,
+        title: input.name,
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: input.worktreePath ?? null,
+        activeProviderThreadId: null,
+        lineage: {
+          parentThreadId: input.parent === undefined ? null : id(input.parent),
+          relationshipToParent: input.parent === undefined ? null : "subagent",
+          rootThreadId: id(input.root ?? input.name),
+        },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: input.archived === true ? now : null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      }) as const;
+    const createThread = (input: Parameters<typeof payloadOf>[0]) =>
       store.apply({
         id: EventId.make(`event:family:${input.name}`),
         type: "thread.created",
         threadId: id(input.name),
         occurredAt: now,
-        payload: {
-          createdBy: "user",
-          creationSource: input.parent === undefined ? "web" : "mcp",
-          id: id(input.name),
-          projectId,
-          title: input.name,
-          providerInstanceId,
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: input.worktreePath ?? null,
-          activeProviderThreadId: null,
-          lineage: {
-            parentThreadId: input.parent === undefined ? null : id(input.parent),
-            relationshipToParent: input.parent === undefined ? null : "subagent",
-            rootThreadId: id(input.root ?? input.name),
-          },
-          forkedFrom: null,
-          createdAt: now,
-          updatedAt: now,
-          archivedAt: input.archived === true ? now : null,
-          settledOverride: null,
-          settledAt: null,
-          lastVisitedAt: null,
-          deletedAt: null,
-        },
+        payload: payloadOf(input),
       });
     yield* createThread({ name: "root", worktreePath });
     yield* createThread({ name: "child", parent: "root", root: "root", worktreePath });
@@ -1179,6 +1181,15 @@ it.effect.each([
       onWorktree.threads.map((thread) => thread.id),
       [id("root"), id("child"), id("other-child")],
     );
+    // A fork keeps its deleted source's root, so the deleted root still names the live tree.
+    yield* store.apply({
+      id: EventId.make("event:family:root-deleted"),
+      type: "thread.deleted",
+      threadId: id("root"),
+      occurredAt: now,
+      payload: { ...payloadOf({ name: "root", worktreePath }), deletedAt: now },
+    });
+    assert.sameMembers([...(yield* family(id("root")))], [id("child"), id("grandchild")]);
   }).pipe(Effect.provide(layer)),
 );
 

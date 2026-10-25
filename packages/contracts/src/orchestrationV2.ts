@@ -3351,7 +3351,8 @@ export type OrchestrationV2GetThreadFamilyInput = typeof OrchestrationV2GetThrea
 
 /**
  * The active subagent threads that share the requested thread's `lineage.rootThreadId`: its whole
- * subagent tree, in any run state. An unknown or deleted thread has an empty family.
+ * subagent tree, in any run state. An unknown thread has an empty family; a deleted one still
+ * names its root.
  */
 export const OrchestrationV2ThreadFamily = Schema.Struct({
   snapshotSequence: NonNegativeInt,

@@ -539,7 +539,7 @@ describe("environment shell synchronization", () => {
         omitIdleSubagents: true,
       });
       expect(yield* Ref.get(loadOptions)).toEqual([{ omitIdleSubagents: true }]);
-      const loaded = Option.getOrThrow(yield* stateWhere((state) => state.generation === 1));
+      const loaded = Option.getOrThrow(yield* stateWhere((state) => state.generation > 0));
       expect(loaded.removedAt.size).toBe(0);
 
       const gone = ThreadId.make("thread-gone");
@@ -556,14 +556,16 @@ describe("environment shell synchronization", () => {
       });
       const removed = Option.getOrThrow(yield* stateWhere((state) => state.removedAt.size > 0));
       // An enrichment refresh is not authoritative.
-      expect(removed.generation).toBe(1);
+      expect(removed.generation).toBe(loaded.generation);
       expect(removed.removedAt.get(gone)).toBe(2);
 
       yield* Queue.offer(events, {
         kind: "snapshot",
         snapshot: { ...LIVE_SHELL_SNAPSHOT, snapshotSequence: 5 },
       });
-      const reset = Option.getOrThrow(yield* stateWhere((state) => state.generation === 2));
+      const reset = Option.getOrThrow(
+        yield* stateWhere((state) => state.generation > loaded.generation),
+      );
       expect(reset.removedAt.size).toBe(0);
     }),
   );

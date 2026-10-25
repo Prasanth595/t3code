@@ -13,13 +13,26 @@ import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type * as EnvironmentRegistry from "../connection/registry.ts";
-import { request } from "../rpc/client.ts";
+import { EnvironmentRpcUnavailableError, request } from "../rpc/client.ts";
 import { arrayElementsEqual } from "./entities.ts";
 import { createEnvironmentQueryAtomFamily, selectEnvironmentQueryData } from "./runtime.ts";
 import type { EnvironmentShellState } from "./shell.ts";
 
 const EMPTY_FAMILY: OrchestrationV2ThreadFamily = { snapshotSequence: 0, threads: [] };
 const EMPTY_MOUNTS: ReadonlyMap<ThreadId, number> = new Map();
+// Generation 0 is the cached shell from before this session's first authoritative snapshot. A read
+// for it would be thrown away once that snapshot lands, so it waits instead.
+const AWAITING_AUTHORITATIVE_SHELL = AsyncResult.initial<never, never>(true);
+
+/** Whether a family read can decide anything yet. Only a settled read can prove a thread is gone. */
+export type ThreadFamilyRead = "pending" | "failed" | "settled";
+
+export function threadFamilyRead(
+  result: AsyncResult.AsyncResult<OrchestrationV2ThreadFamily, unknown>,
+): ThreadFamilyRead {
+  if (AsyncResult.isFailure(result)) return "failed";
+  return AsyncResult.isSuccess(result) && !result.waiting ? "settled" : "pending";
+}
 
 /**
  * Family rows the shell does not have. A shell row is at least as new as any family copy, since
@@ -57,8 +70,13 @@ export function createThreadFamilyAtoms<R, ER, E>(
     environmentId: EnvironmentId,
   ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentShellState, E>>,
 ) {
-  const shellStateValue = (get: Atom.AtomContext, environmentId: EnvironmentId) =>
-    Option.getOrNull(AsyncResult.value(get(shellStateAtom(environmentId))));
+  const shellStateValue = (state: AsyncResult.AsyncResult<EnvironmentShellState, E>) =>
+    Option.getOrNull(AsyncResult.value(state));
+  const generationAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => shellStateValue(get(shellStateAtom(environmentId)))?.generation ?? 0).pipe(
+      Atom.withLabel(`environment-shell-generation:${environmentId}`),
+    ),
+  );
 
   // The generation is part of the key, so a read from before the latest authoritative snapshot is
   // never used again, even while a new read is pending or failed.
@@ -72,31 +90,45 @@ export function createThreadFamilyAtoms<R, ER, E>(
     }) {
       const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
       const session = yield* SubscriptionRef.get(supervisor.session);
-      const supported =
-        Option.isSome(session) &&
-        (yield* session.value.initialConfig.pipe(
-          Effect.map((config) => config.shellThreadFamilies === true),
-          Effect.orElseSucceed(() => false),
-        ));
+      if (Option.isNone(session)) {
+        return yield* new EnvironmentRpcUnavailableError({
+          environmentId: supervisor.target.environmentId,
+          message: "The environment has no session.",
+        });
+      }
+      // A config failure fails the read: an empty family would read as "the thread is gone".
+      const config = yield* session.value.initialConfig;
       // Servers without families send every child in the shell, so absent means gone.
-      if (!supported) return EMPTY_FAMILY;
+      if (config.shellThreadFamilies !== true) return EMPTY_FAMILY;
       return yield* request(ORCHESTRATION_V2_WS_METHODS.getThreadFamily, {
         threadId: input.threadId,
       });
     }),
   });
+  const queryFor = (environmentId: EnvironmentId, threadId: ThreadId, generation: number) =>
+    familyQueryAtom({ environmentId, input: { threadId, generation } });
 
   const familyAtom = Atom.family((key: string) => {
     const [environmentId, threadId] = JSON.parse(key) as [EnvironmentId, ThreadId];
-    return Atom.make((get) =>
-      get(
-        familyQueryAtom({
-          environmentId,
-          input: { threadId, generation: shellStateValue(get, environmentId)?.generation ?? 0 },
-        }),
-      ),
-    ).pipe(Atom.withLabel(`environment-thread-family:${key}`));
+    return Atom.make((get) => {
+      const generation = get(generationAtom(environmentId));
+      return generation === 0
+        ? AWAITING_AUTHORITATIVE_SHELL
+        : get(queryFor(environmentId, threadId, generation));
+    }).pipe(Atom.withLabel(`environment-thread-family:${key}`));
   });
+  const familyKey = (environmentId: EnvironmentId, threadId: ThreadId) =>
+    JSON.stringify([environmentId, threadId]);
+
+  /** Reads the current generation's family again, so a failed read does not last the session. */
+  const refresh = (
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+  ) => {
+    const generation = registry.get(generationAtom(environmentId));
+    if (generation !== 0) registry.refresh(queryFor(environmentId, threadId, generation));
+  };
 
   const mountsAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make(EMPTY_MOUNTS).pipe(
@@ -112,10 +144,14 @@ export function createThreadFamilyAtoms<R, ER, E>(
     threadId: ThreadId,
   ): (() => void) => {
     const atom = mountsAtom(environmentId);
-    registry.set(
-      atom,
-      new Map(registry.get(atom)).set(threadId, (registry.get(atom).get(threadId) ?? 0) + 1),
-    );
+    const mounts = registry.get(atom);
+    registry.set(atom, new Map(mounts).set(threadId, (mounts.get(threadId) ?? 0) + 1));
+    // Mounting again after a failure retries instead of keeping the failure until reconnect.
+    if (
+      threadFamilyRead(registry.get(familyAtom(familyKey(environmentId, threadId)))) === "failed"
+    ) {
+      refresh(registry, environmentId, threadId);
+    }
     let released = false;
     return () => {
       if (released) return;
@@ -130,35 +166,49 @@ export function createThreadFamilyAtoms<R, ER, E>(
 
   const snapshotAtom = Atom.family((environmentId: EnvironmentId) => {
     let previous: {
-      readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
-      readonly extras: ReadonlyArray<OrchestrationV2ThreadShell>;
-      readonly merged: ReadonlyArray<OrchestrationV2ThreadShell>;
+      readonly snapshot: OrchestrationV2ShellSnapshot;
+      readonly removedAt: ReadonlyMap<ThreadId, number>;
+      readonly families: ReadonlyArray<OrchestrationV2ThreadFamily>;
+      readonly merged: OrchestrationV2ShellSnapshot;
     } | null = null;
     return Atom.make((get): OrchestrationV2ShellSnapshot | null => {
-      const state = shellStateValue(get, environmentId);
+      const state = shellStateValue(get(shellStateAtom(environmentId)));
       const snapshot = state === null ? null : Option.getOrNull(state.snapshot);
       const mounts = get(mountsAtom(environmentId));
       if (snapshot === null || state === null || mounts.size === 0) return snapshot;
-      const extras = threadFamilyRowsMissingFromShell({
-        shellThreads: snapshot.threads,
-        removedAt: state.removedAt,
-        families: [...mounts.keys()].flatMap((threadId) => {
-          const family = selectEnvironmentQueryData(
-            get(familyAtom(JSON.stringify([environmentId, threadId]))),
-          );
-          return family === null ? [] : [family];
-        }),
+      const families = [...mounts.keys()].flatMap((threadId) => {
+        const family = selectEnvironmentQueryData(
+          get(familyAtom(familyKey(environmentId, threadId))),
+        );
+        return family === null ? [] : [family];
       });
-      if (extras.length === 0) return snapshot;
-      // Keep the merged array while neither part changed, so thread lists skip their rebuild.
-      if (
-        previous === null ||
-        previous.threads !== snapshot.threads ||
-        !arrayElementsEqual(previous.extras, extras)
-      ) {
-        previous = { threads: snapshot.threads, extras, merged: [...snapshot.threads, ...extras] };
+      // Most shell updates move only the cursor. With the same rows, removals and families, keep
+      // the merged rows so thread lists skip their rebuild.
+      const unchanged =
+        previous !== null &&
+        previous.snapshot.threads === snapshot.threads &&
+        previous.removedAt === state.removedAt &&
+        arrayElementsEqual(previous.families, families);
+      if (unchanged && previous !== null && previous.snapshot === snapshot) return previous.merged;
+      let merged: OrchestrationV2ShellSnapshot;
+      if (unchanged && previous !== null) {
+        merged =
+          previous.merged === previous.snapshot
+            ? snapshot
+            : { ...snapshot, threads: previous.merged.threads };
+      } else {
+        const extras = threadFamilyRowsMissingFromShell({
+          shellThreads: snapshot.threads,
+          removedAt: state.removedAt,
+          families,
+        });
+        merged =
+          extras.length === 0
+            ? snapshot
+            : { ...snapshot, threads: [...snapshot.threads, ...extras] };
       }
-      return { ...snapshot, threads: previous.merged };
+      previous = { snapshot, removedAt: state.removedAt, families, merged };
+      return merged;
     }).pipe(Atom.withLabel(`environment-snapshot-with-families:${environmentId}`));
   });
 
@@ -167,7 +217,8 @@ export function createThreadFamilyAtoms<R, ER, E>(
     snapshotAtom,
     /** The current generation's family read, for decisions that need a settled answer. */
     familyAtom: (environmentId: EnvironmentId, threadId: ThreadId) =>
-      familyAtom(JSON.stringify([environmentId, threadId])),
+      familyAtom(familyKey(environmentId, threadId)),
     mount,
+    refresh,
   };
 }

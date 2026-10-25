@@ -46,8 +46,9 @@ export interface EnvironmentShellState {
   readonly status: EnvironmentShellStatus;
   readonly error: Option.Option<string>;
   /**
-   * Counts authoritative snapshots (not enrichment refreshes). Thread families read for an older
-   * generation may miss changes from before the latest snapshot, so they are read again.
+   * Changes with each authoritative snapshot (not enrichment refreshes); 0 until the first one.
+   * Thread families read for an older generation may miss changes from before the latest snapshot,
+   * so they are read again.
    */
   readonly generation: number;
   /** Sequences of the thread removals applied since the latest authoritative snapshot. */
@@ -55,6 +56,8 @@ export interface EnvironmentShellState {
 }
 
 const EMPTY_REMOVALS: ReadonlyMap<ThreadId, number> = new Map();
+// Shared by every shell state, so a rebuilt one never reuses a generation another already used.
+let lastShellGeneration = 0;
 
 export const EMPTY_SHELL_STATE: EnvironmentShellState = {
   snapshot: Option.none(),
@@ -236,7 +239,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         snapshot: Option.some(nextSnapshot),
         status: waiting ? "synchronizing" : "live",
         error: Option.none(),
-        generation: authoritative ? next.generation + 1 : next.generation,
+        generation: authoritative ? ++lastShellGeneration : next.generation,
         removedAt: authoritative
           ? EMPTY_REMOVALS
           : removal === null
