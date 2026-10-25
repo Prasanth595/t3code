@@ -54,9 +54,17 @@ const make = Effect.gen(function* () {
 
   const save = Effect.fn("TaskCache.save")(function* (name: string, value: string) {
     yield* fs.makeDirectory(state, { recursive: true, mode: 0o700 });
-    const file = `${state}/${name}.json`;
-    yield* fs.writeFileString(file, value + "\n", { mode: 0o600 });
-    yield* fs.chmod(file, 0o600);
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const directory = yield* fs.makeTempDirectoryScoped({
+          directory: state,
+          prefix: ".writer-",
+        });
+        const temporary = `${directory}/${name}.json`;
+        yield* fs.writeFileString(temporary, value + "\n", { mode: 0o600 });
+        yield* fs.rename(temporary, `${state}/${name}.json`);
+      }),
+    );
   });
 
   const updateWriter = Effect.fn("TaskCache.updateWriter")(function* (
@@ -67,16 +75,35 @@ const make = Effect.gen(function* () {
     if (!isWriterName(name)) return yield* new ManagementError({ message: "Invalid writer name." });
     if (!revoke && !endpoint)
       return yield* new ManagementError({ message: "A deployed cache endpoint is required." });
-    const exists = yield* fs.exists(`${state}/writers.json`);
-    const writers = { ...(exists || revoke ? yield* readWriters() : {}) };
-    const token = hex(yield* crypto.randomBytes(32));
-    if (revoke) delete writers[name];
-    else {
-      writers[name] = hex(yield* crypto.digest("SHA-256", new TextEncoder().encode(token)));
-    }
-    yield* save("writers", yield* encodeWriters(writers));
-    if (!revoke && endpoint) yield* save(name, yield* encodeCredential({ endpoint, name, token }));
-    return revoke ? undefined : `${state}/${name}.json`;
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* fs.makeDirectory(state, { recursive: true, mode: 0o700 });
+        // Exclusive creation coordinates separate management processes as well as fibers.
+        yield* Effect.acquireRelease(
+          fs.makeDirectory(`${state}/writers.lock`).pipe(
+            Effect.mapError(
+              () =>
+                new ManagementError({
+                  message:
+                    "Writer registry is locked by another update. Retry after it completes; remove writers.lock only if that process has stopped.",
+                }),
+            ),
+          ),
+          () => fs.remove(`${state}/writers.lock`, { recursive: true }).pipe(Effect.orDie),
+        );
+        const exists = yield* fs.exists(`${state}/writers.json`);
+        const writers = { ...(exists || revoke ? yield* readWriters() : {}) };
+        const token = hex(yield* crypto.randomBytes(32));
+        if (revoke) delete writers[name];
+        else {
+          writers[name] = hex(yield* crypto.digest("SHA-256", new TextEncoder().encode(token)));
+        }
+        yield* save("writers", yield* encodeWriters(writers));
+        if (!revoke && endpoint)
+          yield* save(name, yield* encodeCredential({ endpoint, name, token }));
+        return revoke ? undefined : `${state}/${name}.json`;
+      }),
+    );
   });
   return WriterRegistry.of({ read: readWriters, update: updateWriter });
 });

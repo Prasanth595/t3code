@@ -21,8 +21,20 @@ const { endpoint } = JSON.parse(
 );
 const githubEnv = process.env.GITHUB_ENV;
 if (!githubEnv) throw new Error("Missing GitHub Actions environment file");
+const directory = process.env.RUNNER_TEMP;
+if (!directory) throw new Error("Missing GitHub Actions temporary directory");
+const shellSetup = NodePath.join(directory, "t3-task-cache.sh");
+const quote = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
 const preload = NodeURL.pathToFileURL(NodePath.join(root, "infra/task-cache/src/preload.mjs")).href;
-await NodeFSP.appendFile(
-  githubEnv,
-  `VP_REMOTE_CACHE_URL=${endpoint}\nNODE_OPTIONS=${process.env.NODE_OPTIONS || ""} --import=${preload}\n`,
+// GitHub prohibits NODE_OPTIONS in GITHUB_ENV; bash exports it to task subprocesses instead.
+await NodeFSP.writeFile(
+  shellSetup,
+  [
+    process.env.BASH_ENV && process.env.BASH_ENV !== shellSetup
+      ? `. ${quote(process.env.BASH_ENV)}`
+      : "",
+    `export NODE_OPTIONS="\${NODE_OPTIONS:+$NODE_OPTIONS }"${quote(`--import=${preload}`)}`,
+    "",
+  ].join("\n"),
 );
+await NodeFSP.appendFile(githubEnv, `VP_REMOTE_CACHE_URL=${endpoint}\nBASH_ENV=${shellSetup}\n`);

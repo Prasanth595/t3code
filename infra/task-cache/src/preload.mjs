@@ -11,15 +11,22 @@ if (
     load(url, context, nextLoad) {
       const loaded = nextLoad(url, context);
       if (!url.endsWith("/vite-plus/dist/bin.js")) return loaded;
-      const source =
-        typeof loaded.source === "string" ? loaded.source : Buffer.from(loaded.source).toString();
-      return {
-        ...loaded,
-        source: patchNativeCli(source).replace(
-          'from "./run-hook.js"',
-          `from ${JSON.stringify(hookUrl)}`,
-        ),
-      };
+      try {
+        const source =
+          typeof loaded.source === "string" ? loaded.source : Buffer.from(loaded.source).toString();
+        return {
+          ...loaded,
+          source: patchNativeCli(source).replace(
+            'from "./run-hook.js"',
+            `from ${JSON.stringify(hookUrl)}`,
+          ),
+        };
+      } catch {
+        process.stderr.write(
+          "Task cache hook does not support this Vite+ version; running without telemetry.\n",
+        );
+        return loaded;
+      }
     },
   });
 }

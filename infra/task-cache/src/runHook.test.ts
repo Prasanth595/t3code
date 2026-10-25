@@ -198,3 +198,146 @@ it("does not start telemetry or create local state without cache credentials", a
     await NodeFSP.rm(root, { recursive: true, force: true });
   }
 });
+
+it("installs without masking .profile and configures CI through bash", async () => {
+  const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "task-cache-login-"));
+  const server = NodeHttp.createServer((_request, response) => response.writeHead(204).end());
+  const run = (args: string[], env: NodeJS.ProcessEnv) =>
+    new Promise<string>((resolve, reject) => {
+      const child = NodeChildProcess.spawn(args[0]!, args.slice(1), {
+        env: { ...process.env, ...env, HOME: home, NODE_OPTIONS: "" },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let output = "";
+      child.stdout.on("data", (chunk) => {
+        output += chunk;
+      });
+      child.stderr.on("data", (chunk) => {
+        output += chunk;
+      });
+      child.once("error", reject);
+      child.once("close", (code) => (code === 0 ? resolve(output) : reject(new Error(output))));
+    });
+  try {
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing HTTP address");
+    await NodeFSP.writeFile(NodePath.join(home, ".profile"), "export EXISTING_PROFILE=preserved\n");
+    await run(
+      [
+        process.execPath,
+        NodePath.join(import.meta.dirname, "../scripts/install.ts"),
+        "--non-interactive",
+      ],
+      {
+        T3_CACHE_SETUP_URL: `http://127.0.0.1:${address.port}/projects/test`,
+        T3_CACHE_SETUP_NAME: "maria",
+        T3_CACHE_SETUP_TOKEN: "test-credential-for-isolated-http-server",
+      },
+    );
+    expect(await NodeFSP.readdir(home)).not.toContain(".bash_profile");
+    expect(await NodeFSP.readFile(NodePath.join(home, ".profile"), "utf8")).toContain(
+      "EXISTING_PROFILE=preserved",
+    );
+    const githubEnv = NodePath.join(home, "github-env");
+    await run([process.execPath, NodePath.join(import.meta.dirname, "../scripts/install-ci.ts")], {
+      GITHUB_REPOSITORY: "pingdotgg/t3code",
+      GITHUB_ACTIONS: "true",
+      GITHUB_ENV: githubEnv,
+      RUNNER_TEMP: home,
+    });
+    const values = await NodeFSP.readFile(githubEnv, "utf8");
+    expect(values).not.toContain("\nNODE_OPTIONS=");
+    const bashEnv = values
+      .split("\n")
+      .find((line) => line.startsWith("BASH_ENV="))
+      ?.slice(9);
+    const output = await run(["bash", "-c", 'printf "%s" "$NODE_OPTIONS"'], { BASH_ENV: bashEnv });
+    expect(output).toContain("--import=file:");
+    expect(output).toContain("/infra/task-cache/src/preload.mjs");
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    await NodeFSP.rm(home, { recursive: true, force: true });
+  }
+});
+
+it("does not send an old endpoint's token after changing the URL interactively", async () => {
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "task-cache-endpoint-"));
+  const requests: string[] = [];
+  const server = NodeHttp.createServer((request, response) => {
+    requests.push(request.headers.authorization || "");
+    response.writeHead(401).end();
+  });
+  try {
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing HTTP address");
+    const endpoint = `http://127.0.0.1:${address.port}/projects/test`;
+    const scripts = NodePath.join(root, "infra/task-cache/scripts");
+    await NodeFSP.mkdir(scripts, { recursive: true });
+    await NodeFSP.mkdir(NodePath.join(root, "infra/task-cache/src"));
+    await NodeFSP.writeFile(NodePath.join(root, "package.json"), '{"type":"module"}');
+    await NodeFSP.writeFile(NodePath.join(root, ".task-cache.json"), JSON.stringify({ endpoint }));
+    await NodeFSP.copyFile(
+      NodePath.join(import.meta.dirname, "../scripts/install.ts"),
+      NodePath.join(scripts, "install.ts"),
+    );
+    await NodeFSP.copyFile(
+      NodePath.join(import.meta.dirname, "nativeHook.ts"),
+      NodePath.join(root, "infra/task-cache/src/nativeHook.ts"),
+    );
+    await NodeFSP.mkdir(NodePath.join(root, ".config/t3-task-cache"), { recursive: true });
+    await NodeFSP.writeFile(
+      NodePath.join(root, ".config/t3-task-cache/credentials.json"),
+      JSON.stringify({
+        [endpoint]: { name: "maria", token: "different-saved-endpoint-credential" },
+      }),
+    );
+    const result = await new Promise<{ code: number | null; output: string }>((resolve, reject) => {
+      const child = NodeChildProcess.spawn(
+        process.execPath,
+        [NodePath.join(scripts, "install.ts")],
+        {
+          env: {
+            ...process.env,
+            HOME: root,
+            NODE_OPTIONS: "",
+            T3_CACHE_SETUP_URL: "https://old.example",
+            T3_CACHE_SETUP_NAME: "maria",
+            T3_CACHE_SETUP_TOKEN: "old-endpoint-token-must-not-be-forwarded",
+          },
+          stdio: ["pipe", "pipe", "pipe"],
+        },
+      );
+      let output = "";
+      let sentUrl = false;
+      let sentName = false;
+      child.stdout.on("data", (chunk) => {
+        output += chunk;
+        if (!sentUrl && output.includes("Cache URL")) {
+          sentUrl = true;
+          child.stdin.write(endpoint + "\n");
+        }
+        if (!sentName && output.includes("Developer name")) {
+          sentName = true;
+          child.stdin.write("\n");
+        }
+      });
+      child.stderr.on("data", (chunk) => {
+        output += chunk;
+      });
+      child.once("error", reject);
+      child.once("close", (code) => resolve({ code, output }));
+    });
+    expect(result.code).not.toBe(0);
+    expect(result.output).toContain("Use T3_CACHE_SETUP_TOKEN");
+    expect(requests).toEqual([]);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    await NodeFSP.rm(root, { recursive: true, force: true });
+  }
+});

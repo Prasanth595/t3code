@@ -31,12 +31,14 @@ const prompt = NodeReadlinePromises.createInterface({
 let endpoint = process.env.T3_CACHE_SETUP_URL || defaultEndpoint;
 let name = process.env.T3_CACHE_SETUP_NAME || credentials[endpoint]?.name;
 let token = process.env.T3_CACHE_SETUP_TOKEN || credentials[endpoint]?.token;
+const initialEndpoint = endpoint;
+const initialName = name;
 try {
   if (!nonInteractive) {
     endpoint = (await prompt.question(`Cache URL [${endpoint}]: `)).trim() || endpoint;
     name = (await prompt.question(`Developer name${name ? ` [${name}]` : ""}: `)).trim() || name;
     prompt.close();
-    if (!token || endpoint !== defaultEndpoint || name !== credentials[endpoint]?.name) {
+    if (!token || endpoint !== initialEndpoint || name !== initialName) {
       if (!process.stdin.isTTY)
         throw new Error("Use T3_CACHE_SETUP_TOKEN for non-interactive setup.");
       process.stdout.write("Credential token (hidden): ");
@@ -186,13 +188,21 @@ await NodeFSP.writeFile(
   { mode: 0o600 },
 );
 const sourceLine = '. "$HOME/.config/t3-task-cache/env"';
-for (const file of [".profile", ".bashrc", ".bash_profile", ".zshenv", ".zshrc"]) {
+for (const file of [".profile", ".bashrc", ".bash_profile", ".bash_login", ".zshenv", ".zshrc"]) {
   const path = NodePath.join(home, file);
   let original = "";
   try {
     original = await NodeFSP.readFile(path, "utf8");
   } catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  }
+  if (file === ".bash_profile" || file === ".bash_login") {
+    if (!original) continue;
+    // Earlier installers created a profile that masks the user’s existing login profile.
+    if (file === ".bash_profile" && original.trim() === sourceLine) {
+      await NodeFSP.unlink(path);
+      continue;
+    }
   }
   if (!original.split("\n").includes(sourceLine))
     await NodeFSP.appendFile(path, `\n${sourceLine}\n`);

@@ -20,7 +20,12 @@ const credential = JSON.parse(
 const url = new URL(endpoint);
 url.username = credential.name;
 url.password = credential.token;
-const env = { ...process.env, VP_REMOTE_CACHE: "read-write", VP_REMOTE_CACHE_URL: url.href };
+const env = {
+  ...process.env,
+  T3_TASK_CACHE_TELEMETRY: "off",
+  VP_REMOTE_CACHE: "read-write",
+  VP_REMOTE_CACHE_URL: url.href,
+};
 const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-cache-probe-"));
 const name = `t3-cache-probe-${NodeCrypto.randomUUID()}`;
 

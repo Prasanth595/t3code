@@ -85,7 +85,7 @@ const make = Effect.gen(function* () {
       const allowed = yield* protocol(() =>
         (writing ? bindings.storeLimit : bindings.readLimit).limit({
           key: route
-            ? `t3code:${writing ? "store" : operation === "fetch" ? "fetch" : "blob"}`
+            ? `t3code:${writing ? "store" : operation === "fetch" || operation === "telemetry" ? operation : "blob"}`
             : "unknown",
         }),
       );

@@ -109,3 +109,37 @@ it.effect("aborts the upstream deadline before disposing it on interruption", ()
     );
   }),
 );
+
+it.effect("gives telemetry a rate-limit budget separate from artifact downloads", () => {
+  const limit = vi.fn(async (_options: { key: string }) => ({ success: true }));
+  return Effect.gen(function* () {
+    const cache = yield* Cache.Cache;
+    yield* cache.handle(new Request("https://cache.example/projects/t3code/telemetry"), {
+      waitUntil: () => {},
+    });
+    yield* cache.handle(
+      new Request(
+        "https://cache.example/projects/t3code/blob/12345678-1234-1234-1234-123456789abc",
+        { method: "POST" },
+      ),
+      { waitUntil: () => {} },
+    );
+    expect(limit.mock.calls).toEqual([[{ key: "t3code:telemetry" }], [{ key: "t3code:blob" }]]);
+  }).pipe(
+    Effect.provide(
+      Cache.layer.pipe(
+        Layer.provide([
+          Layer.succeed(Cache.Bindings, {
+            readLimit: { limit },
+          } as unknown as Cache.Bindings["Service"]),
+          Admission.layer,
+          Layer.succeed(Savings.Savings, {
+            record: () => Effect.void,
+            emitTotals: () => Effect.void,
+            cleanup: Effect.void,
+          }),
+        ]),
+      ),
+    ),
+  );
+});

@@ -101,3 +101,57 @@ it.effect("writes credentials for the supplied deployed worker endpoint", () =>
     expect(credential.name).toBe("maria");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("refuses a concurrent registry update without changing committed credentials", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const home = yield* fs.makeTempDirectoryScoped();
+    const state = `${home}/.config/t3-task-cache`;
+    yield* fs.makeDirectory(`${state}/writers.lock`, { recursive: true });
+    yield* fs.writeFileString(`${state}/writers.json`, '{"maria":"digest"}');
+    const result = yield* WriterRegistry.WriterRegistry.pipe(
+      Effect.flatMap((registry) => registry.update("theo", false, "https://cache.example")),
+      Effect.provide(
+        WriterRegistry.layer.pipe(
+          Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ HOME: home }))),
+        ),
+      ),
+      Effect.exit,
+    );
+    expect(Exit.isFailure(result)).toBe(true);
+    expect(yield* fs.readFileString(`${state}/writers.json`)).toBe('{"maria":"digest"}');
+    expect(yield* fs.exists(`${state}/theo.json`)).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("keeps the committed registry intact if a replacement write fails", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const home = yield* fs.makeTempDirectoryScoped();
+    const state = `${home}/.config/t3-task-cache`;
+    yield* fs.makeDirectory(state, { recursive: true });
+    const original = '{"maria":"digest"}';
+    yield* fs.writeFileString(`${state}/writers.json`, original);
+    const result = yield* WriterRegistry.WriterRegistry.pipe(
+      Effect.flatMap((registry) => registry.update("theo", false, "https://cache.example")),
+      Effect.provide(
+        WriterRegistry.layer.pipe(
+          Layer.provide([
+            ConfigProvider.layer(ConfigProvider.fromUnknown({ HOME: home })),
+            Layer.succeed(FileSystem.FileSystem, {
+              ...fs,
+              writeFileString: (path) =>
+                fs
+                  .writeFileString(path, "partial")
+                  .pipe(Effect.andThen(Effect.die("disk write failed"))),
+            }),
+          ]),
+        ),
+      ),
+      Effect.exit,
+    );
+    expect(Exit.isFailure(result)).toBe(true);
+    expect(yield* fs.readFileString(`${state}/writers.json`)).toBe(original);
+    expect(yield* fs.exists(`${state}/writers.lock`)).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
