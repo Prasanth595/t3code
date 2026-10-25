@@ -297,6 +297,30 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("rejects anonymous viewers even when the fallback could return a PR author", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(JSON.stringify({ authenticatedUser: { descriptor: "System:PublicAccess" } })),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              JSON.stringify([
+                { ...pullRequestRow, createdBy: { uniqueName: "someone@example.com" } },
+              ]),
+            ),
+          ),
+        );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      const error = yield* Effect.flip(cli.getViewer({ cwd: "/w" }));
+      assert.strictEqual(error._tag, "AzureDevOpsViewerAnonymousError");
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+    }),
+  );
+
   it.effect("does not substitute an identity id for a missing account login", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(

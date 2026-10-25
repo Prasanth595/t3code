@@ -434,6 +434,6 @@ it.live("does not authenticate public access to an organization", () =>
       const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
       return yield* Effect.flip(cli.getViewer({ cwd: "/repo" }));
     }).pipe(Effect.provide(cliLayer));
-    assert.strictEqual(error._tag, "AzureDevOpsViewerUnavailableError");
+    assert.strictEqual(error._tag, "AzureDevOpsViewerAnonymousError");
   }).pipe(Effect.provide(NodeServices.layer)),
 );

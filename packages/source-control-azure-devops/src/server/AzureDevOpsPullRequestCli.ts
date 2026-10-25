@@ -62,6 +62,22 @@ export class AzureDevOpsViewerUnavailableError extends Schema.TaggedError<AzureD
   }
 }
 
+export class AzureDevOpsViewerAnonymousError extends Schema.TaggedError<AzureDevOpsViewerAnonymousError>()(
+  "AzureDevOpsViewerAnonymousError",
+  {
+    command: Schema.Literal("az"),
+    cwd: Schema.String,
+  },
+) {
+  get detail(): string {
+    return "Azure DevOps returned an anonymous identity. Run `az devops login` and retry.";
+  }
+
+  override get message(): string {
+    return `Azure CLI failed in getViewer: ${this.detail}`;
+  }
+}
+
 export class AzureDevOpsPullRequestIncompleteError extends Schema.TaggedError<AzureDevOpsPullRequestIncompleteError>()(
   "AzureDevOpsPullRequestIncompleteError",
   {
@@ -100,7 +116,8 @@ export type AzureDevOpsPullRequestCliError =
   | AzureDevOpsPullRequestReadError
   | AzureDevOpsPullRequestIncompleteError
   | AzureDevOpsReviewerNameError
-  | AzureDevOpsViewerUnavailableError;
+  | AzureDevOpsViewerUnavailableError
+  | AzureDevOpsViewerAnonymousError;
 
 const REST_API_VERSION = "7.1";
 const PULL_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
@@ -460,13 +477,20 @@ export const make = Effect.gen(function* () {
             );
           }
           const viewer = decoded.success;
-          return viewer._tag === "SignedIn" && viewer.account !== null
+          if (viewer._tag === "Anonymous") {
+            return Effect.fail(
+              new AzureDevOpsViewerAnonymousError({ command: "az", cwd: input.cwd }),
+            );
+          }
+          return viewer.account !== null
             ? Effect.succeed(viewer.account)
             : Effect.fail(new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }));
         }),
         // The extension can identify its current actor if connectionData is unavailable.
         Effect.catchIf(
-          (error) => error._tag !== "AzureDevOpsCliUnavailableError",
+          (error) =>
+            error._tag !== "AzureDevOpsCliUnavailableError" &&
+            error._tag !== "AzureDevOpsViewerAnonymousError",
           () =>
             executeJson({
               cwd: input.cwd,
