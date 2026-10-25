@@ -242,27 +242,53 @@ describe("DesktopBrowserHost", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("stops waiting on a screenshot the page navigated away from", () =>
+  it.effect("releases an abandoned screenshot's rendering activity and preserves the queue", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
-      host.attach(key, debuggee.tab);
+      const released: Array<number> = [];
+      let preparations = 0;
+      host.attach(key, {
+        ...debuggee.tab,
+        prepareScreenshot: async () => {
+          const preparation = ++preparations;
+          return () => {
+            released.push(preparation);
+          };
+        },
+      });
       const replies = yield* watchReplies(host);
 
+      const firstSent = debuggee.nextSend();
       yield* command(host, 1, "Page.captureScreenshot");
       yield* command(host, 2, "Page.captureScreenshot");
       yield* command(host, 3, "Page.captureScreenshot");
+      yield* Effect.promise(() => firstSent);
+      expect(debuggee.sent).toEqual([1]);
+      expect(released).toEqual([]);
+
+      const secondSent = debuggee.nextSend();
       debuggee.navigate();
+      expect(released).toEqual([1]);
+      yield* Effect.promise(() => secondSent);
       expect(debuggee.sent).toEqual([1, 2]);
 
       // The superseded screenshot answering late must not start a third beside the second.
       debuggee.releaseFirst();
       expect(yield* Queue.take(replies)).toBe(1);
+      expect(released).toEqual([1]);
       expect(debuggee.sent).toEqual([1, 2]);
 
+      const thirdSent = debuggee.nextSend();
       debuggee.releaseFirst();
       expect(yield* Queue.take(replies)).toBe(2);
+      yield* Effect.promise(() => thirdSent);
+      expect(released).toEqual([1, 2]);
       expect(debuggee.sent).toEqual([1, 2, 3]);
+
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(3);
+      expect(released).toEqual([1, 2, 3]);
     }).pipe(Effect.scoped),
   );
 

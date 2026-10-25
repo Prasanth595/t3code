@@ -40,11 +40,15 @@ export interface DesktopBrowserTabDebugger {
 
 const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000${tabId}`;
 
+interface ScreenshotTurn {
+  release?: () => void;
+}
+
 interface AttachedTab {
   readonly key: DesktopBrowserTabKey;
   readonly debuggee: DesktopBrowserTabDebugger;
   relay: CdpRelayConnection | null;
-  screenshotTurn: object | null;
+  screenshotTurn: ScreenshotTurn | null;
   readonly waitingScreenshots: Array<() => void>;
   downloadDirectory: string | null;
   pendingDownloadGuid: string | null;
@@ -89,6 +93,7 @@ export const make = Effect.gen(function* () {
   const emit = (event: DesktopBrowserEventType) => runFork(PubSub.publish(outbox, event));
 
   const nextScreenshot = (tab: AttachedTab) => {
+    tab.screenshotTurn?.release?.();
     tab.screenshotTurn = null;
     tab.waitingScreenshots.shift()?.();
   };
@@ -111,11 +116,18 @@ export const make = Effect.gen(function* () {
           nextScreenshot(tab);
           return;
         }
-        const turn = {};
+        const turn: ScreenshotTurn = {};
         tab.screenshotTurn = turn;
         const prepare = tab.debuggee.prepareScreenshot;
         const capturing = prepare
-          ? prepare().then(async (release) => {
+          ? prepare().then(async (acquired) => {
+              let released = false;
+              const release = () => {
+                if (released) return;
+                released = true;
+                acquired();
+              };
+              turn.release = release;
               try {
                 if (tab.screenshotTurn !== turn || tab.relay !== relay) {
                   throw new Error("The preview changed while preparing its screenshot.");
