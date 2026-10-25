@@ -99,8 +99,9 @@ Unset the variable or set it to `automatic` to restore automatic limits on resta
 The slice is shared by T3 servers running as the same OS user, so configure all
 of them consistently. This option does not remove runtime overrides written by
 earlier starts. Apply your intended limits with `systemctl --user set-property
---runtime app-t3code-agents.slice MemoryHigh=… MemoryMax=…`, or restart the user
-manager to clear runtime overrides and load your persistent slice configuration.
+--runtime app-t3code-agents.slice MemoryHigh=… MemoryMax=…`. Restarting the server
+or user manager does not clear those runtime configuration files; they can remain
+until the next reboot.
 
 T3 Connect can offer service installation during setup, but the two are managed
 separately. Signing out of T3 Connect does not stop or uninstall the service.
