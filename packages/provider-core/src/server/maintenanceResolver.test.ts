@@ -64,7 +64,7 @@ const nativePackageToolUpdate = makePackageManagedProviderMaintenanceResolver({
 const miseToolUpdate = makePackageManagedProviderMaintenanceResolver({
   provider: driver("packageTool"),
   npmPackageName: "@example/package-tool",
-  miseTool: "package-tool",
+  mise: { tool: "package-tool" },
   nativeUpdate: null,
 });
 const installedPackageToolProvider: ServerProvider = {
@@ -1364,7 +1364,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         const miseMappedNative = makePackageManagedProviderMaintenanceResolver({
           provider: driver("nativePackageTool"),
           npmPackageName: "@example/native-package-tool",
-          miseTool: "native-package-tool",
+          mise: { tool: "native-package-tool" },
           nativeUpdate: {
             args: ["update"],
             isCommandPath: isNativeTestCommandPath("/.local/bin/native-package-tool"),
@@ -1382,6 +1382,89 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           args: ["update"],
           lockKey: "nativePackageTool-native",
         });
+      }),
+  );
+
+  it.effect.each([
+    {
+      name: "a mise tool whose upgrades are disabled",
+      mise: { tool: "package-tool", upgrade: false },
+    },
+    { name: "a pinned mise tool", mise: { tool: "package-tool" }, pinned: true },
+  ] as const)(
+    "keeps $name in a custom data dir manual-only instead of running its own updater",
+    (fixture) =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-mise-custom-manual");
+        const mise = miseFixture(tempDir, { dataDir: NodePath.join(tempDir, "data") });
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          makePackageManagedProviderMaintenanceResolver({
+            provider: driver("packageTool"),
+            npmPackageName: "@example/package-tool",
+            mise: fixture.mise,
+            nativeUpdate: { args: ["upgrade"] },
+          }),
+          { binaryPath: mise.latestBinaryPath, env: { PATH: mise.miseBinDir } },
+        ).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            miseSpawner(
+              {
+                which: mise.binaryPath,
+                installed: mise.installed(
+                  "pinned" in fixture ? { requested_version: "1.0.0" } : {},
+                ),
+              },
+              [],
+            ),
+          ),
+        );
+
+        expect(capabilities.update).toBeNull();
+      }),
+    { skip: !symlinksSupported || windowsHost },
+  );
+
+  it.effect.skipIf(!symlinksSupported || windowsHost)(
+    "updates an npm global under mise's Node with npm even when mise runs it",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-mise-node-npm");
+        const mise = miseFixture(tempDir);
+        const nodePrefix = NodePath.join(tempDir, "mise", "installs", "node", "22.0.0");
+        const binaryPath = NodePath.join(nodePrefix, "bin", "package-tool");
+        const target = NodePath.join(
+          nodePrefix,
+          "lib",
+          "node_modules",
+          "@example",
+          "package-tool",
+          "bin",
+          "package-tool.js",
+        );
+        writeExecutable(target);
+        NodeFS.mkdirSync(NodePath.dirname(binaryPath), { recursive: true });
+        NodeFS.symlinkSync(target, binaryPath);
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(miseToolUpdate, {
+          binaryPath,
+          env: { PATH: mise.miseBinDir },
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            // mise resolves the npm global through its Node; no `package-tool` tool is installed.
+            miseSpawner({ which: binaryPath, installed: {} }, []),
+          ),
+        );
+
+        expect(capabilities.update?.args).toEqual([
+          "install",
+          "-g",
+          "--prefix",
+          NodeFS.realpathSync(nodePrefix),
+          "--allow-scripts=@example/package-tool",
+          "@example/package-tool@latest",
+        ]);
       }),
   );
 

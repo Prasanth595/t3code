@@ -51,7 +51,7 @@ export const museMaintenance: ProviderMaintenanceCapabilitiesResolver = {
     if (!context || context.platform === "win32") return manual;
     const mise = yield* resolveMiseProviderMaintenance(
       { provider: DRIVER, packageName: null },
-      "muse",
+      { tool: "muse" },
       context,
     );
     if (mise) return { ...mise, compareVersions: compareMuseVersions };

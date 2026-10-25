@@ -64,7 +64,7 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
     }
     const mise = yield* resolveMiseProviderMaintenance(
       { provider: DRIVER_KIND, packageName: GROK_NPM_PACKAGE },
-      "grok",
+      { tool: "grok" },
       context,
     );
     if (mise) return mise;

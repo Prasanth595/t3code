@@ -45,7 +45,7 @@ const DRIVER_KIND = ProviderDriverKind.make("pi");
 const UPDATE = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   npmPackageName: "@earendil-works/pi-coding-agent",
-  miseTool: "pi",
+  mise: { tool: "pi" },
   nativeUpdate: { args: ["update", "--self"] },
 });
 
