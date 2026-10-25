@@ -210,7 +210,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           No messages waiting in this queue.
         </Text>
       ) : null}
-      {queuedRuns.map(({ run, text, attachments }, index) => {
+      {queuedRuns.map(({ run, text, attachments, context }, index) => {
         const layout = dragRows?.find((row) => row.id === run.id);
         const offset =
           sourceLayout?.y !== undefined &&
@@ -226,6 +226,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           canReorder: workflow?.canReorder ?? false,
           index,
           isEditing: editing?.runId === run.id,
+          isGuestMessage: context?.guest !== undefined,
           queuedCount: queuedRuns.length,
           text,
         });
@@ -362,7 +363,11 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={title}
-                    accessibilityHint="Opens this message in the composer for editing"
+                    accessibilityHint={
+                      controls.canEdit
+                        ? "Opens this message in the composer for editing"
+                        : undefined
+                    }
                     disabled={!controls.canEdit}
                     onPress={() => void act(run.id, "edit")}
                     className="min-h-14 flex-row items-center gap-2.5 py-2.5 active:opacity-70"
@@ -379,6 +384,11 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                       }
                       numberOfLines={1}
                     >
+                      {context?.guest === undefined ? null : (
+                        <Text className="font-t3-medium text-adaptive-fuchsia-600-300">
+                          {`${context.guest.name}  `}
+                        </Text>
+                      )}
                       {title}
                     </Text>
                     {controls.isEditing ? (
