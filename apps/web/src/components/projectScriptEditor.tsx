@@ -19,7 +19,7 @@ import {
   PlayIcon,
   WrenchIcon,
 } from "lucide-react";
-import React, { type FormEvent, type KeyboardEvent, useRef, useState } from "react";
+import React, { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 
 import {
   keybindingValueForCommand,
@@ -282,9 +282,12 @@ function ProjectScriptEditorForm({
   const pendingSubmissionRef = useRef<object | null>(null);
   // A save that settles after this form is replaced must not close or error
   // the request that replaced it.
-  const releasePendingSubmission = () => () => {
-    pendingSubmissionRef.current = null;
-  };
+  useEffect(
+    () => () => {
+      pendingSubmissionRef.current = null;
+    },
+    [],
+  );
 
   const isEditing = request.scriptId != null;
 
@@ -402,7 +405,7 @@ function ProjectScriptEditorForm({
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
-        <form id={formId} ref={releasePendingSubmission} onSubmit={submit}>
+        <form id={formId} onSubmit={submit}>
           <fieldset className="space-y-4" disabled={isSaving || !canEditActions}>
             <div className="space-y-1.5">
               <Label htmlFor="script-name">Name</Label>
