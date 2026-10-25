@@ -4007,8 +4007,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       Effect.orElseSucceed(() => undefined),
     );
   // A worktree's .git file points at <main>/.git/worktrees/<name>, whose commondir leads back to
-  // <main>/.git, or to the repository itself for a bare repository. Anything else that is not a
-  // git directory resolves to the checkout itself.
+  // <main>/.git. A bare repository's worktree has no such main checkout, and Claude Code keeps its
+  // local file in the worktree, as it does for anything else that is not a git directory.
   const mainCheckoutRoot = (checkout: string) =>
     fileSystem.readFileString(path.join(checkout, ".git")).pipe(
       Effect.flatMap((pointer) => {
@@ -4018,7 +4018,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         return fileSystem.readFileString(path.join(worktreeGitDir, "commondir")).pipe(
           Effect.map((commonDir) => {
             const common = path.resolve(worktreeGitDir, commonDir.trim());
-            return path.basename(common) === ".git" ? path.dirname(common) : common;
+            return path.basename(common) === ".git" ? path.dirname(common) : checkout;
           }),
         );
       }),
