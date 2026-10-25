@@ -3251,6 +3251,79 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("moves a running Bash command to the background before sending a steer", () =>
+    Effect.gen(function* () {
+      const backgrounded: Array<{ readonly toolUseId: string; readonly offered: number }> = [];
+      let offeredMessages: ReadonlyArray<SDKUserMessage> = [];
+      const harness = yield* makeWakeHarnessWithOptions({
+        backgroundTasks: (toolUseId) =>
+          Effect.sync(() => backgrounded.push({ toolUseId, offered: offeredMessages.length })).pipe(
+            Effect.as(true),
+          ),
+      });
+      offeredMessages = harness.offeredMessages;
+      const input = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("steer-running-bash"),
+        text: "Wait for the build",
+        attachments: [],
+      });
+      yield* harness.runtime.startTurn(input);
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "assistant",
+          uuid: "steer-bash-assistant",
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: {
+            id: "steer-bash-message",
+            type: "message",
+            role: "assistant",
+            model: "claude-sonnet-4-6",
+            content: [
+              {
+                type: "tool_use",
+                id: "toolu-steer-bash",
+                name: "Bash",
+                input: { command: "for i in $(seq 1 57); do sleep 10; done" },
+              },
+            ],
+          },
+        }),
+      );
+
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const offered = harness.offeredMessages.length;
+      yield* harness.runtime.steerTurn({
+        threadId: harness.threadId,
+        runId: input.runId,
+        providerThread: harness.providerThread,
+        providerTurnId: idAllocator.derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: `turn:${input.attemptId}`,
+        }),
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("steer-running-bash"),
+          text: "Stop waiting, answer my question",
+          attachments: [],
+        },
+      });
+
+      assert.deepEqual(backgrounded, [{ toolUseId: "toolu-steer-bash", offered }]);
+      assert.equal(harness.offeredMessages.length, offered + 1);
+      assert.equal(harness.offeredMessages.at(-1)?.priority, "now");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   // regression: #15475 MCP title arriving after the tool starts must survive to completion
   it.effect.each([
     { isError: false, title: "Check weather" },

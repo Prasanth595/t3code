@@ -9867,15 +9867,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ),
         );
 
-        // Move subagents to the background before priority "now" steers cancel foreground tools.
-        const backgroundForegroundSubagents = Effect.fnUntraced(function* (
+        // Move foreground subagents and Bash commands to the background before a priority "now"
+        // steer: it would cancel the subagents, and Claude Code holds it behind a running Bash command.
+        const backgroundForegroundTasks = Effect.fnUntraced(function* (
           live: ClaudeLiveQueryContext,
+          turn: ActiveClaudeTurnContext,
           deadline: number,
         ) {
           const foreground: Array<{
-            readonly taskId: string;
+            readonly taskId: string | null;
             readonly toolUseId: string;
           }> = [];
+          for (const toolCall of turn.toolCalls.values()) {
+            if (toolCall.classification.itemType === "command_execution") {
+              foreground.push({ taskId: null, toolUseId: toolCall.nativeItemId });
+            }
+          }
           for (const [taskId, subagent] of yield* Ref.get(sessionSubagentsByTaskId)) {
             const toolUseId = subagent.runToolUseId;
             if (
@@ -9901,7 +9908,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             const move = yield* live.query.backgroundTasks(toolUseId).pipe(
               Effect.flatMap((moved) =>
-                moved
+                moved && taskId !== null
                   ? Ref.get(sessionSubagentsByTaskId).pipe(
                       Effect.flatMap((registry) =>
                         registry.get(taskId)?.task.status === "running" &&
@@ -9915,7 +9922,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   : Effect.void,
               ),
               Effect.catch((cause) =>
-                Effect.logWarning("orchestration-v2.claude-steer-background-subagent-failed", {
+                Effect.logWarning("orchestration-v2.claude-steer-background-task-failed", {
                   taskId,
                   toolUseId,
                   cause,
@@ -9962,7 +9969,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               fileSystem,
               skills: yield* userInvocableSkills(currentTurn.input.runtimePolicy.cwd),
             });
-            yield* backgroundForegroundSubagents(existing, backgroundDeadline);
+            yield* backgroundForegroundTasks(existing, currentTurn, backgroundDeadline);
             // The turn can end while the moves are answered. A steer offered
             // then would start a new turn the orchestrator never asked for, so
             // the steer fails and the orchestrator starts the follow-up turn.
