@@ -110,6 +110,8 @@ export const layer: Layer.Layer<
           (settings) =>
             resolveProjectSettings(settings, thread?.projectId ?? null).settings.checkpointCapture,
         ),
+        // An unreadable setting must not strand a finished run in `waiting`; keep the default.
+        Effect.orElseSucceed(() => true),
       );
       const baselineOrdinalWithinScope = Math.max(0, run.ordinal - 1);
       const hasReadyCheckpoint = (ordinalWithinScope: number) =>
