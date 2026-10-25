@@ -123,14 +123,22 @@ of \`main\` for that work, never the tag-pinned diagnosis clone.
   repro steps, environment, evidence, related issues.
 - Under Version, give the version the bug happened on from step 4, or say it is
   unknown. Name the triage CLI version only as the CLI's.
-- Label it \`via-triage\`. Use a plain, specific title with no prefix.
+- The issue needs the \`via-triage\` label. Use a plain, specific title with no
+  prefix.
 - Show the user the complete final issue text and get an explicit yes before
   posting. Never post without it.
 - Note at the end of the issue which model and agent produced it.
-- If \`gh\` is not authenticated, offer \`gh auth login\`, or build a prefilled
-  https://github.com/pingdotgg/t3code/issues/new URL with title and body query
-  parameters; print the URL, and open it in their browser only after they
-  approve.
+- Post with \`gh issue create --label via-triage\` only if
+  \`gh api repos/pingdotgg/t3code --jq .permissions.triage\` prints \`true\`. For
+  anyone else GitHub drops the label and still reports success.
+- Otherwise, or if \`gh\` is not authenticated, build a prefilled
+  https://github.com/pingdotgg/t3code/issues/new?template=via-triage.yml URL.
+  The form applies the label whoever submits it. Add \`title\` plus one
+  URL-encoded query parameter per form field id: \`what-happened\`, \`diagnosis\`,
+  \`steps\`, \`version\`, \`environment\`, \`evidence\`, \`related\`, \`workaround\` and
+  \`agent\`. Keep the URL under about 6,000 characters by trimming Evidence, and
+  post the rest as a comment once the issue exists. Print the URL, and open it
+  in their browser only after they approve.
 - If the user pasted screenshots, remind them to drag the images into the issue
   after it is created; they cannot be attached from here.
 

@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import { assert, it } from "@effect/vitest";
+import { parse as parseYaml } from "yaml";
 
 import { buildTriageContext, buildTriageLaunchPrompt, TRIAGE_PLAYBOOK } from "./triagePrompt.ts";
 
@@ -13,6 +14,26 @@ it("stays byte-identical to .github/triage/PLAYBOOK.md", () => {
     "../../../../.github/triage/PLAYBOOK.md",
   );
   assert.equal(TRIAGE_PLAYBOOK, NodeFS.readFileSync(canonicalPath, "utf8"));
+});
+
+it("routes reporters without triage permission to the labelled via-triage form", () => {
+  // GitHub drops `--label` for accounts without triage permission; only the form applies it.
+  const form: { readonly body: ReadonlyArray<{ readonly id?: string }> } = parseYaml(
+    NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../../../../.github/ISSUE_TEMPLATE/via-triage.yml"),
+      "utf8",
+    ),
+  );
+  const fieldIds = form.body.flatMap((field) => (field.id === undefined ? [] : [field.id]));
+  assert.isNotEmpty(fieldIds);
+  assert.include(TRIAGE_PLAYBOOK, "--jq .permissions.triage");
+  assert.include(
+    TRIAGE_PLAYBOOK,
+    "https://github.com/pingdotgg/t3code/issues/new?template=via-triage.yml",
+  );
+  for (const id of fieldIds) {
+    assert.include(TRIAGE_PLAYBOOK, `\`${id}\``, `form field ${id} has no prefill parameter`);
+  }
 });
 
 it("launch prompt stays a single argv-safe line naming the prompt file", () => {
