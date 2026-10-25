@@ -3,7 +3,8 @@
  * of the pull request's head merged with the base tip, the project's commands in it, and the
  * decision that follows, and the wait for the project's required CI checks before the pull
  * request is marked ready; and `regate`, the same gate for a `pr-open` pull request whose head
- * moved since its last pass. The checkout, the commands and the removal are `FactoryGate`'s
+ * moved since its last pass, with the same wait before its pass is posted. The checkout, the
+ * commands and the removal are `FactoryGate`'s
  * (`gate.ts`), which also writes the attempt's `gate_checkout` and `gate_command` lines; this
  * module decides what they mean, and writes the conflict line itself for a pull request GitHub
  * already says conflicts, which never reaches `FactoryGate`.
@@ -38,7 +39,7 @@ import { readRun } from "../ledger/read.ts";
 import { asciiLower, runIdToString, type RunId } from "../ledger/runId.ts";
 import type { FactorySessions, ThreadStatus } from "../t3/sessions.ts";
 import { isCommitId, sanitize } from "../text.ts";
-import type { BoundGitHub, CheckStatus, IssueDetail, PullRequest } from "../tracker/github.ts";
+import type { BoundGitHub, IssueDetail, PullRequest } from "../tracker/github.ts";
 import {
   WrongRepoError,
   append,
@@ -353,6 +354,51 @@ const sendBack = Effect.fn("RunnerGating.sendBack")(function* (
 });
 
 /**
+ * What the required checks say about the pass on `pass.sha`: all passed; one failed, the read
+ * (null when the ledger already records a failure on this commit, which stands); still pending
+ * or missing within `limits.checks_minutes` of the pass; or past that limit, with the fixed
+ * reason for the stuck comment (a check that never appeared has its own). The `checks_read`
+ * line is the caller's to write, where its order among the caller's other lines matters.
+ */
+const decideChecks = Effect.fn("RunnerGating.decideChecks")(function* (
+  ctx: GateContext,
+  seen: Seen,
+  pass: PassRecord,
+) {
+  const recorded =
+    seen.checksFailed !== null && seen.checksFailed.sha === pass.sha
+      ? seen.checksFailed.failed
+      : null;
+  if (recorded !== null) return { kind: "failed", read: null, failed: recorded } as const;
+  const checks = yield* ctx.tracker.checks(pass.sha, ctx.project.requiredChecks);
+  const read: RunEvent = {
+    event: "checks_read",
+    data: {
+      sha: pass.sha,
+      checks: checks.map((c) => ({ name: c.name, state: c.state })),
+    },
+  };
+  const failed = checks.filter((c) => c.state === "failed");
+  if (failed.length > 0) return { kind: "failed", read, failed } as const;
+  if (checks.every((c) => c.state === "passed")) return { kind: "passed", read } as const;
+  const minutes = ctx.project.limits.checksMinutes;
+  if (ctx.clock() - pass.atMs < minutes * 60_000) return { kind: "pending" } as const;
+  const reason = checks.some((c) => c.state === "missing")
+    ? `a required check was not reported within ${minutes} minutes`
+    : `the required checks did not finish within ${minutes} minutes`;
+  return { kind: "timed-out", read, reason } as const;
+});
+
+/** The stop of a pass whose required checks failed `since` attempts after the last pass. */
+const checksRetriesUsedUp = (since: number, message: string): Stop => {
+  const sessionText = prepareOutputTail(message);
+  return {
+    reason: `the required checks failed after ${attempts(since)}`,
+    ...(sessionText !== "" && { sessionText }),
+  };
+};
+
+/**
  * What is left of a passing gate when the project names required checks: they must all have
  * passed on the commit that was gated before the pull request is marked ready.
  *
@@ -401,40 +447,21 @@ const awaitChecks = Effect.fn("RunnerGating.awaitChecks")(function* (
   if (pull.headSha.toLowerCase() !== pass.sha) {
     return yield* stuck("checks-head-moved", { reason: CHECKS_HEAD_MOVED });
   }
-  const recorded =
-    seen.checksFailed !== null && seen.checksFailed.sha === pass.sha
-      ? seen.checksFailed.failed
-      : null;
-  let failed: ReadonlyArray<CheckStatus>;
-  let read: RunEvent | null = null;
-  if (recorded !== null) {
-    failed = recorded;
-  } else {
-    const checks = yield* ctx.tracker.checks(pass.sha, ctx.project.requiredChecks);
-    read = {
-      event: "checks_read",
-      data: {
-        sha: pass.sha,
-        checks: checks.map((c) => ({ name: c.name, state: c.state })),
-      },
-    };
-    failed = checks.filter((c) => c.state === "failed");
-    if (failed.length === 0) {
-      if (checks.every((c) => c.state === "passed")) {
-        const why = yield* textStop(ctx, issue, seen);
-        if (why !== null) return yield* stuck(why.code, { reason: why.reason });
-        yield* append(out, read, "gate", "required-checks-read", { attempt });
-        return yield* finishPass(ctx, out, issue, at, pass, pr, true);
-      }
-      const minutes = ctx.project.limits.checksMinutes;
-      const waited = ctx.clock() - pass.atMs;
-      if (waited < minutes * 60_000) return { kind: "checks-pending" } as const;
-      yield* append(out, read, "gate", "checks-timed-out", { attempt });
-      const reason = checks.some((c) => c.state === "missing")
-        ? `a required check was not reported within ${minutes} minutes`
-        : `the required checks did not finish within ${minutes} minutes`;
-      return yield* stuck("checks-timed-out", { reason });
+  const decided = yield* decideChecks(ctx, seen, pass);
+  switch (decided.kind) {
+    case "passed": {
+      const why = yield* textStop(ctx, issue, seen);
+      if (why !== null) return yield* stuck(why.code, { reason: why.reason });
+      yield* append(out, decided.read, "gate", "required-checks-read", { attempt });
+      return yield* finishPass(ctx, out, issue, at, pass, pr, true);
     }
+    case "pending":
+      return { kind: "checks-pending" } as const;
+    case "timed-out":
+      yield* append(out, decided.read, "gate", "checks-timed-out", { attempt });
+      return yield* stuck("checks-timed-out", { reason: decided.reason });
+    case "failed":
+      break;
   }
   const status = yield* threadStatus(ctx, threadId);
   if (status === null) return yield* stuck("thread-gone", stopOf(THREAD_GONE, null));
@@ -443,17 +470,15 @@ const awaitChecks = Effect.fn("RunnerGating.awaitChecks")(function* (
   // for, not the checks.
   if (status.runOrdinal === null) return NOT_READY;
   if (sessionBusy(seen, status)) return NOT_READY;
-  if (read !== null) yield* append(out, read, "gate", "required-checks-failed", { attempt });
+  if (decided.read !== null) {
+    yield* append(out, decided.read, "gate", "required-checks-failed", { attempt });
+  }
   const drafted = yield* backToDraft(ctx, out, pr, pull, stuck, status.lastAssistantMessage);
   if (drafted !== null) return drafted;
-  const message = checksFailureMessage(pass.sha, failed);
+  const message = checksFailureMessage(pass.sha, decided.failed);
   const since = attemptsSincePass(seen, attempt);
   if (since > ctx.project.limits.gateRetries) {
-    const sessionText = prepareOutputTail(message);
-    return yield* stuck("checks-retries-used-up", {
-      reason: `the required checks failed after ${attempts(since)}`,
-      ...(sessionText !== "" && { sessionText }),
-    });
+    return yield* stuck("checks-retries-used-up", checksRetriesUsedUp(since, message));
   }
   return yield* sendBack(
     ctx,
@@ -465,6 +490,72 @@ const awaitChecks = Effect.fn("RunnerGating.awaitChecks")(function* (
     status.runOrdinal,
     message,
     "required-checks-failed",
+  );
+});
+
+/**
+ * What is left of a passing re-gate when the project names required checks: as `awaitChecks`,
+ * for a pull request that is ready already. `pull` is the pull request as the caller read it,
+ * open and at the gated commit `pass.sha`. The pull request stays ready while the checks run:
+ * the pass before it was decided, and the new one is not posted until its checks are. All
+ * passed: the issue text is judged again, the read is recorded and the pass is posted
+ * (`finishRegatePass`, with `reassert` as the caller says). One failed: the read is recorded
+ * and the failure starts a new session from the pull request's branch, like any failed re-gate
+ * (`relaunchForRegate`) under the pass's attempt, unless the retries since the last pass are
+ * used up, which goes `stuck`. Pending: `checks-pending` and nothing is written, until
+ * `limits.checks_minutes` after the pass, when the read is recorded and the issue goes `stuck`.
+ * A head that moved meanwhile never comes here: `regate` compares and gates the new head.
+ */
+const awaitRegateChecks = Effect.fn("RunnerGating.awaitRegateChecks")(function* (
+  ctx: GateContext,
+  out: Out,
+  run: RunId,
+  seen: Seen,
+  at: Progress,
+  pass: PassRecord,
+  pull: PullRequest,
+  gating: { readonly pr: number; readonly prUrl: string; readonly reassert: boolean },
+) {
+  const { pr, prUrl, reassert } = gating;
+  const issue = Number(run.issue);
+  const attempt = pass.attempt;
+  const stuck = (code: string, stop: Stop) => stuckWith(ctx, out, issue, at, code, stop);
+  const decided = yield* decideChecks(ctx, seen, pass);
+  switch (decided.kind) {
+    case "passed": {
+      const why = yield* textStop(ctx, issue, seen);
+      if (why !== null) return yield* stuck(why.code, { reason: why.reason });
+      yield* append(out, decided.read, "gate", "required-checks-read", { attempt });
+      return yield* finishRegatePass(ctx, out, issue, at, pass, pr, reassert);
+    }
+    case "pending":
+      return { kind: "checks-pending" } as const;
+    case "timed-out":
+      yield* append(out, decided.read, "gate", "checks-timed-out", { attempt });
+      return yield* stuck("checks-timed-out", { reason: decided.reason });
+    case "failed":
+      break;
+  }
+  if (decided.read !== null) {
+    yield* append(out, decided.read, "gate", "required-checks-failed", { attempt });
+  }
+  const message = checksFailureMessage(pass.sha, decided.failed);
+  const since = attemptsSincePass(seen, attempt);
+  if (since > ctx.project.limits.gateRetries) {
+    return yield* stuck("checks-retries-used-up", checksRetriesUsedUp(since, message));
+  }
+  // The failure is about to put a session back to work, so the text it works on is checked as
+  // `watch` checks it, as for any failed re-gate.
+  const why = yield* textStop(ctx, issue, seen);
+  if (why !== null) return yield* stuck(why.code, { reason: why.reason });
+  return yield* relaunchForRegate(
+    ctx,
+    out,
+    issue,
+    at,
+    run,
+    { pr, prUrl, branch: pull.headRef },
+    { attempt, message },
   );
 });
 
@@ -586,8 +677,8 @@ export const gate = (ctx: GateContext, run: RunId): Effect.Effect<GateStep, Gate
  * request. A `building` run's pull request has a session that the gate waits for and sends a
  * failure to. A ready pull request (`regate`) passed the gate and waits for a person: it has no
  * session to wait for or to send a failure to, any branch is its own, a merged or closed pull
- * request ends the run, a failure starts a new session instead, and its pass does not wait for
- * the required checks again.
+ * request ends the run, a failure starts a new session instead, and its pass waits for the
+ * required checks on the new head before it is posted.
  */
 interface GateMode {
   readonly pr: number;
@@ -625,8 +716,8 @@ interface AttemptSteps {
   ) => Effect.Effect<PullRequest | GateStep, GateStepError>;
   /** Notes once, for a building run, that someone took its pull request out of draft while the commands ran. */
   readonly noteReadyOutside: (pull: PullRequest) => Effect.Effect<void, GateStepError>;
-  /** The rest of a recorded pass on a pull request that is still open. */
-  readonly passed: (pass: PassRecord) => Effect.Effect<GateStep, GateStepError>;
+  /** The rest of a recorded pass on `pull`, read after the commands: open, and at the gated commit. */
+  readonly passed: (pass: PassRecord, pull: PullRequest) => Effect.Effect<GateStep, GateStepError>;
   /**
    * Before a failure is counted: a building run's pull request someone took out of draft goes back
    * to draft, and the step when that cannot be done. Null to go on.
@@ -796,9 +887,20 @@ const readyMode = (
           return Effect.succeed(pull);
         },
         noteReadyOutside: () => Effect.void,
-        // A ready pull request stays ready, with the results posted again; the required checks
-        // are not waited for again (softfac's rule).
-        passed: (pass) => finishRegatePass(ctx, out, issue, at, pass, pr, resumed),
+        // A ready pull request stays ready; the results are posted again once the required
+        // checks, when the project names any, have passed on the new head.
+        passed: (pass, pull) => {
+          // `seen` was read before this pass: a read of the checks in it was about an earlier one.
+          const unread: Seen = { ...seen, checksPassed: null, checksFailed: null };
+          if (checksWanted(ctx, unread, pass.sha)) {
+            return awaitRegateChecks(ctx, out, run, unread, at, pass, pull, {
+              pr,
+              prUrl,
+              reassert: resumed,
+            });
+          }
+          return finishRegatePass(ctx, out, issue, at, pass, pr, resumed);
+        },
         beforeFailure: () => Effect.succeed(null),
         failed: Effect.fn("RunnerGating.failed")(function* (pull, text) {
           // The failure is about to put a session back to work, so the text it works on is
@@ -981,7 +1083,7 @@ const gateAttempts = Effect.fn("RunnerGating.gateAttempts")(function* (
       yield* endRun(ctx, yield* out.open, at, prUrl, pullNow, "gate");
       return { kind: "ended" } as const;
     }
-    return yield* steps.passed(pass);
+    return yield* steps.passed(pass, pullNow);
   }
 
   return yield* ran._tag === "conflict"
@@ -1289,8 +1391,12 @@ export const lastPass = (
  * `gate_retries` counts the failures since the last pass, so a run that passed has its whole
  * send-back budget again. A base that moves while it runs does not send it round again.
  *
- * A pass posts a new comment naming the base it ran against, and the pull request stays ready;
- * the project's required checks are not waited for again (softfac's rule). A failure puts the
+ * A pass posts a new comment naming the base it ran against, and the pull request stays ready.
+ * When the project names `required_checks`, the comment waits until they have all passed on the
+ * re-gated head (`awaitRegateChecks`): until then the answer is `checks-pending` and each call
+ * reads the pull request and the checks, with no checkout and no command; a failed check starts
+ * a new session like a failed re-gate; and a head that moves meanwhile is compared and gated as
+ * a push to a quiet pull request is, with nothing of the undecided pass posted. A failure puts the
  * pull request back to draft, assigns the issue and labels it `building`, and
  * starts a new session from the pull request's branch on `origin` with the failure in its first
  * message (see `relaunchForRegate`): the old session was stopped, and its worktree removed, when
@@ -1342,6 +1448,9 @@ export const regate = (ctx: GateContext, run: RunId): Effect.Effect<Regated, Gat
         );
         return { step, moved: seen.regateMoved };
       }
+      // The pull request, when a resumed re-gate read it and found its head moved on from the
+      // pass whose checks were still to be decided: compared and gated below as a push is.
+      let movedOn: PullRequest | null = null;
       if (entry.kind === "resume") {
         // A re-gate that an earlier call began. Its pass is recorded and the results are not
         // posted yet; or its failure is recorded as sent and the transition is not committed; or
@@ -1352,10 +1461,24 @@ export const regate = (ctx: GateContext, run: RunId): Effect.Effect<Regated, Gat
             yield* endRun(ctx, yield* out.open, at, last.url, pull, "gate");
             return { step: { kind: "ended" }, moved: null };
           }
-          // The call that began it may have drafted the pull request on a stuck path it did not
-          // finish before the pass was recorded: the ready state is set again.
-          const step = yield* finishRegatePass(ctx, out, issue, at, seen.pass, last.pr, true);
-          return { step, moved: seen.regateMoved };
+          const pass = seen.pass;
+          if (!checksWanted(ctx, seen, pass.sha)) {
+            // The call that began it may have drafted the pull request on a stuck path it did
+            // not finish before the pass was recorded: the ready state is set again.
+            const step = yield* finishRegatePass(ctx, out, issue, at, pass, last.pr, true);
+            return { step, moved: seen.regateMoved };
+          }
+          if (pull.headSha.toLowerCase() === pass.sha) {
+            const step = yield* awaitRegateChecks(ctx, out, run, seen, at, pass, pull, {
+              pr: last.pr,
+              prUrl: last.url,
+              reassert: true,
+            });
+            return { step, moved: seen.regateMoved };
+          }
+          // No check on another commit says anything about this pass, and nothing of it is
+          // posted: the new head is what the pull request holds now.
+          movedOn = pull;
         }
         if (seen.regateSentBack && seen.sending !== null) {
           const step = yield* finishRegateFailure(
@@ -1385,9 +1508,11 @@ export const regate = (ctx: GateContext, run: RunId): Effect.Effect<Regated, Gat
         // its worktree: they go now, as the pass would have taken them, with nothing else
         // written. Once the worktree line is there this is never done again.
         if (!seen.worktreeDone) yield* stopSession(ctx, yield* out.open, at);
+      }
+      if (entry.kind === "compare" || movedOn !== null) {
         // The pull request first: a merge or a close is noticed at once, and a push to the
         // branch is a head the last pass did not see.
-        const pull = yield* ctx.tracker.pullRequest(last.pr);
+        const pull = movedOn ?? (yield* ctx.tracker.pullRequest(last.pr));
         if (pull === null || !pull.open) {
           yield* endRun(ctx, yield* out.open, at, last.url, pull, "gate");
           return { step: { kind: "ended" }, moved: null };

@@ -1426,7 +1426,7 @@ it.live("provision runs before the gate and a failing provision command stops th
     );
     assert.deepStrictEqual(
       lines
-        .slice(1)
+        .filter((l) => l.event === "gate_command")
         .map((l) => [
           (l.data as { command: string }).command,
           (l.data as { exit_code: number }).exit_code,
