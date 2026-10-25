@@ -496,24 +496,21 @@ export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMain
     if (!misePath) return notOwned(context.realCommandPath);
     // Asked even off mise's usual paths, since `MISE_DATA_DIR` can put installs anywhere.
     const which = nonEmptyString(yield* runProbe(misePath, ["which", miseTool], context.env));
-    const binaryPath = which ? yield* realPath(which) : null;
-    // Through a shim T3 Code runs whatever mise resolves; otherwise mise must resolve this binary.
-    if (
-      !binaryPath ||
-      (!isShim &&
-        normalizeCommandPath(binaryPath) !== normalizeCommandPath(context.realCommandPath))
-    ) {
-      return notOwned(binaryPath ?? context.realCommandPath);
-    }
+    const resolvedPath = which ? yield* realPath(which) : null;
+    // Through a shim T3 Code runs whatever mise resolves; otherwise the configured binary.
+    const binaryPath = isShim ? resolvedPath : context.realCommandPath;
+    if (!binaryPath) return manual(context.realCommandPath);
+    const binary = normalizeCommandPath(binaryPath);
+    const runsBinary = resolvedPath !== null && normalizeCommandPath(resolvedPath) === binary;
     const listing = yield* runProbe(
       misePath,
       ["ls", "--json", "--installed", miseTool],
       context.env,
     );
-    if (!listing) return manual(binaryPath);
-    const binary = normalizeCommandPath(binaryPath);
+    if (!listing) return runsBinary ? manual(binaryPath) : notOwned(binaryPath);
     const isUnder = (path: string, dir: string) =>
       path.startsWith(`${normalizeCommandPath(dir).replace(/\/+$/, "")}/`);
+    // An inactive or shadowed install is still mise's, even when `mise which` resolves another.
     const owning = yield* Effect.filter(miseToolInstalls(listing, miseTool), (install) =>
       realPath(install.install_path).pipe(
         Effect.map((installPath) => isUnder(binary, installPath)),
@@ -521,6 +518,7 @@ export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMain
     );
     // `mise which` also resolves binaries from other tools, such as npm globals under mise's Node.
     if (owning.length === 0) return notOwned(binaryPath);
+    if (!runsBinary) return manual(binaryPath);
     const install = owning.find(
       (candidate) => candidate.active === true && candidate.requested_version === "latest",
     );

@@ -1391,12 +1391,31 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       mise: { tool: "package-tool", upgrade: false },
     },
     { name: "a pinned mise tool", mise: { tool: "package-tool" }, pinned: true },
+    {
+      name: "an inactive version of a mise tool",
+      mise: { tool: "package-tool" },
+      inactive: true,
+    },
+    {
+      name: "an inactive version of a mise tool whose upgrades are disabled",
+      mise: { tool: "package-tool", upgrade: false },
+      inactive: true,
+    },
   ] as const)(
     "keeps $name in a custom data dir manual-only instead of running its own updater",
     (fixture) =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-mise-custom-manual");
         const mise = miseFixture(tempDir, { dataDir: NodePath.join(tempDir, "data") });
+        let binaryPath = mise.latestBinaryPath;
+        let installed = mise.installed("pinned" in fixture ? { requested_version: "1.0.0" } : {});
+        if ("inactive" in fixture) {
+          // Configured to 1.0.0 while mise resolves its active 2.0.0 instead.
+          binaryPath = mise.binaryPath;
+          const inactive = { ...installed["package-tool"]![0]!, active: false };
+          mise.install("2.0.0");
+          installed = { "package-tool": [inactive, ...mise.installed()["package-tool"]!] };
+        }
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           makePackageManagedProviderMaintenanceResolver({
             provider: driver("packageTool"),
@@ -1404,19 +1423,11 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
             mise: fixture.mise,
             nativeUpdate: { args: ["upgrade"] },
           }),
-          { binaryPath: mise.latestBinaryPath, env: { PATH: mise.miseBinDir } },
+          { binaryPath, env: { PATH: mise.miseBinDir } },
         ).pipe(
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
-            miseSpawner(
-              {
-                which: mise.binaryPath,
-                installed: mise.installed(
-                  "pinned" in fixture ? { requested_version: "1.0.0" } : {},
-                ),
-              },
-              [],
-            ),
+            miseSpawner({ which: mise.binaryPath, installed }, []),
           ),
         );
 
