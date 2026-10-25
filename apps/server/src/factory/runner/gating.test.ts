@@ -4655,6 +4655,49 @@ describe("regate: a re-gate pass waits for the required checks", () => {
   );
 
   it.effect(
+    "a failed-checks stuck path cut short after the draft is finished even once the head moved",
+    () =>
+      Effect.gen(function* () {
+        const setup = () =>
+          Effect.map(prOpenRun(), (rig) => {
+            rig.project = { ...rig.project, requiredChecks: ["gate"] };
+            withLimits(rig, { gateRetries: 0 });
+            scriptChecks(rig, [["failed"], ["passed"]]);
+            headMoved(rig);
+            return rig;
+          });
+        // No retry left: the failed check's stuck path drafts the pull request and dies on the
+        // next GitHub call, before the stuck line.
+        const probe = yield* setup();
+        assert.strictEqual((yield* regateStep(probe)).kind, "stuck");
+        const drafted = probe.gh.calls.indexOf("markPrDraft 12");
+        assert.ok(drafted >= 0, probe.gh.calls.join("; "));
+        const rig = yield* setup();
+        rig.gh.failAt = drafted + 1;
+        assert.strictEqual((yield* Effect.result(regateIn(rig)))._tag, "Failure");
+        assert.isFalse(rig.gh.world.prReady);
+        rig.gh.failAt = null;
+        // A commit is pushed meanwhile. The recorded failure stands and so does the decision it
+        // made: the stuck path is finished and the new head is not gated.
+        rig.gh.pr = { ...rig.gh.pr!, headSha: OTHER_HEAD };
+        clearCalls(rig);
+        const step = yield* regateStep(rig);
+        assert.strictEqual(step.kind, "stuck");
+        if (step.kind !== "stuck") return;
+        assert.ok(
+          step.reason.startsWith("the required checks failed after 1 attempt"),
+          step.reason,
+        );
+        assert.deepStrictEqual(rig.ws.calls, []);
+        assert.deepStrictEqual(rig.t3.launches, []);
+        assert.strictEqual(rig.gh.world.state, "stuck");
+        assert.deepStrictEqual(eventsOf(rig, "checks_read"), [
+          checksRead([["gate", "failed"]], PUSHED),
+        ]);
+      }),
+  );
+
+  it.effect(
     "a timed-out stuck path cut short after the draft is finished even once the head moved",
     () =>
       Effect.gen(function* () {
