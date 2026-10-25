@@ -969,6 +969,82 @@ describe("ThreadSettlementServiceV2 worker", () => {
     ),
   );
 
+  it.effect("settles a stopped thread while another thread's lookup is slow", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const slowLookupStarted = yield* Deferred.make<void>();
+        const releaseSlowLookup = yield* Deferred.make<void>();
+        const settled = yield* Deferred.make<void>();
+        const branchLookupCount = yield* Ref.make(0);
+        const recent = DateTime.makeUnsafe("2026-08-27T00:00:00.000Z");
+        const slow = makeThread("slow-lookup", { branch: "feature", latestUserMessageAt: recent });
+        const merged = makeThread("merged", {
+          latestUserMessageAt: recent,
+          pullRequests: [
+            {
+              ...persistedLink("open", recent),
+              snapshot: {
+                state: "merged",
+                title: "Pull request",
+                headBranch: "feature",
+                baseBranch: "main",
+                isDraft: false,
+                updatedAt: NOW,
+                syncedAt: NOW,
+                mergedAt: NOW,
+              },
+            },
+          ],
+          pendingBackgroundTasks: [{ taskId: "child", kind: "subagent", description: "Review" }],
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([slow, merged]),
+          branchPullRequest: () =>
+            Ref.updateAndGet(branchLookupCount, (count) => count + 1).pipe(
+              Effect.flatMap((count) =>
+                count === 1
+                  ? Effect.succeed(makeBranchPullRequest("open"))
+                  : Deferred.succeed(slowLookupStarted, undefined).pipe(
+                      Effect.andThen(Deferred.await(releaseSlowLookup)),
+                      Effect.as(makeBranchPullRequest("open")),
+                    ),
+              ),
+            ),
+          onDispatch: () => Deferred.succeed(settled, undefined),
+        });
+        const backgroundEnded = (threadId: ThreadId): OrchestrationV2DomainEvent => ({
+          type: "run.background-work-cancelled",
+          id: EventId.make(`event:background-ended:${threadId}`),
+          threadId,
+          occurredAt: DateTime.makeUnsafe(NOW),
+          payload: { runId: RunId.make(`run:${threadId}`), restartCancelledBackgroundWork: [] },
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          yield* fixture.publishEvent(backgroundEnded(slow.id));
+          yield* Deferred.await(slowLookupStarted);
+
+          yield* Ref.set(
+            fixture.snapshots,
+            makeSnapshot([slow, { ...merged, pendingBackgroundTasks: [] }]),
+          );
+          yield* fixture.publishEvent(backgroundEnded(merged.id));
+          yield* Deferred.await(settled);
+
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            [merged.id],
+          );
+          yield* Deferred.succeed(releaseSlowLookup, undefined);
+          yield* reactor.drain;
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect(
     "settles branch threads on a pull request merge without waiting for the next sweep",
     () =>

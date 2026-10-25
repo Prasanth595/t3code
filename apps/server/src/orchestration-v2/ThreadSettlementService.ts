@@ -16,9 +16,11 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
+import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -526,21 +528,23 @@ export const make = Effect.gen(function* () {
             }),
       ),
     );
-  // A thread that just stopped must not wait behind a full sweep's host reads: clients
-  // hold it in Working only briefly, so a late settle makes it appear and then vanish.
+  // A thread that just stopped must not wait behind a full sweep or another thread's host
+  // reads: clients hold it in Working only briefly, so a late settle makes it appear and then vanish.
   const fullSweeps = yield* makeDrainableWorker(() => runSweep(null));
+  const threadSweeps = yield* FiberSet.make<void>();
+  const threadSweepSlots = yield* Semaphore.make(8);
   const queuedThreads = new Set<ThreadId>();
-  const threadSweeps = yield* makeDrainableWorker((threadId: ThreadId) =>
-    Effect.sync(() => queuedThreads.delete(threadId)).pipe(
-      Effect.andThen(runSweep(null, threadId)),
-    ),
-  );
   const enqueueThread = (threadId: ThreadId) =>
     Effect.suspend(() => {
       if (queuedThreads.has(threadId)) return Effect.void;
       queuedThreads.add(threadId);
-      return threadSweeps.enqueue(threadId);
-    }).pipe(Effect.uninterruptible);
+      return Effect.sync(() => queuedThreads.delete(threadId)).pipe(
+        Effect.andThen(runSweep(null, threadId)),
+        threadSweepSlots.withPermits(1),
+        FiberSet.run(threadSweeps),
+        Effect.asVoid,
+      );
+    });
 
   // Skip settle scripts in shared checkouts where other threads may still work.
   const cleanUpSettledThread = Effect.fn("ThreadSettlementServiceV2.cleanUpSettledThread")(
@@ -646,7 +650,7 @@ export const make = Effect.gen(function* () {
 
   return {
     start,
-    drain: Effect.andThen(fullSweeps.drain, threadSweeps.drain),
+    drain: Effect.andThen(fullSweeps.drain, FiberSet.awaitEmpty(threadSweeps)),
   } satisfies ThreadSettlementServiceV2["Service"];
 });
 
