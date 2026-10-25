@@ -118,6 +118,29 @@ describe("createInboxReturnTracker", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it.each(["interrupted", "cancelled", "rolled_back"] as const)(
+    "holds a %s run, because the server can still settle it",
+    (status) => {
+      const tracker = createInboxReturnTracker();
+      const stopped = {
+        ...thread("a", false),
+        latestRun: {
+          runId: RunId.make("stopped"),
+          status,
+          requestedAt: null,
+          startedAt: null,
+          completedAt: null,
+          assistantMessageId: null,
+        },
+      };
+      tracker.observe([thread("a", true)]);
+      tracker.observe([stopped]);
+      expect(tracker.isWorking(stopped)).toBe(true);
+      tracker.observe([{ ...stopped, settledOverride: "settled" as const }]);
+      expect(tracker.isWorking(stopped)).toBe(false);
+    },
+  );
+
   it("grants grace after a retained expired snooze", () => {
     const tracker = createInboxReturnTracker();
     const retained = {

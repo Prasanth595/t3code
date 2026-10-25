@@ -114,11 +114,9 @@ type ThreadKeyInput = Pick<EnvironmentThreadShell, "environmentId" | "id">;
 export const WORKING_EXIT_GRACE_MS = 2_000;
 
 /**
- * Keep one at module scope so shelf placement and return order survive routes
- * that unmount the list. Call `observe` with every thread shell whenever the
- * shells change or the snapshot version changes, or with null to reset while the
- * beta is off. It returns placement as of that observation, which stays fixed so
- * a list built from it can be cached.
+ * Keep one at module scope so placement survives routes that unmount the list. Call
+ * `observe` when the shells or the snapshot version change, or with null while the beta
+ * is off. Its result stays fixed, so a list built from it can be cached.
  */
 export function createInboxReturnTracker() {
   const keyOf = (thread: ThreadKeyInput) => `${thread.environmentId}:${thread.id}`;
@@ -202,10 +200,7 @@ export function createInboxReturnTracker() {
           thread.pendingSubagentRequest != null ||
           (thread.interactionMode === "plan" && thread.hasActionableProposedPlan) ||
           thread.runtime?.lastError != null ||
-          (thread.latestRun != null &&
-            ["failed", "cancelled", "interrupted", "rolled_back"].includes(
-              thread.latestRun.status,
-            ));
+          thread.latestRun?.status === "failed";
         const moved = previous !== undefined && previous.placement !== placement;
         const excluded =
           thread.archivedAt != null ||

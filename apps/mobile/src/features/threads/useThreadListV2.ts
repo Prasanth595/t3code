@@ -61,6 +61,7 @@ export function useThreadListV2(input: {
   );
   const inbox = useMemo(
     () => threadListInboxReturns.observe(workingShelfEnabled ? threads : null),
+    // oxlint-disable-next-line react/memo-dependencies -- the version signals an expired grace
     [threads, workingShelfEnabled, inboxVersion],
   );
   // Up/down menu availability for every card, computed once per section per
