@@ -13,6 +13,14 @@ export interface PierreIconResolution {
 
 const PIERRE_ICON_SPRITE_ID = "t3code-pierre-file-icon-sprite";
 
+const DOCUMENT_ICON_COLORS: Readonly<Record<string, string>> = {
+  "t3-file-icon-pdf": "light-dark(#d52c36, #ff6762)",
+  "t3-file-icon-word": "light-dark(#1a85d4, #69b1ff)",
+  "t3-file-icon-spreadsheet": "light-dark(#199f43, #5ecc71)",
+  "t3-file-icon-slides": "light-dark(#d47628, #ffa359)",
+  "t3-file-icon-epub": "light-dark(#693acf, #9d6afb)",
+};
+
 const T3_FILE_ICON_SPRITE = `
 <svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" aria-hidden="true">
   <!-- Lucide Film icon, ISC license. -->
@@ -43,7 +51,7 @@ const T3_FILE_ICON_SPRITE = `
   </symbol>
   <!-- Lucide File Type, File Text, File Spreadsheet, Presentation and Book Open icons, ISC license. -->
   <symbol id="t3-file-icon-pdf" viewBox="0 0 24 24">
-    <g fill="none" style="stroke: light-dark(#d52c36, #ff6762)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <g fill="none" style="stroke: ${DOCUMENT_ICON_COLORS["t3-file-icon-pdf"]}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" />
       <path d="M14 2v5a1 1 0 0 0 1 1h5" />
       <path d="M11 18h2" />
@@ -52,7 +60,7 @@ const T3_FILE_ICON_SPRITE = `
     </g>
   </symbol>
   <symbol id="t3-file-icon-word" viewBox="0 0 24 24">
-    <g fill="none" style="stroke: light-dark(#1a85d4, #69b1ff)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <g fill="none" style="stroke: ${DOCUMENT_ICON_COLORS["t3-file-icon-word"]}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" />
       <path d="M14 2v5a1 1 0 0 0 1 1h5" />
       <path d="M10 9H8" />
@@ -61,7 +69,7 @@ const T3_FILE_ICON_SPRITE = `
     </g>
   </symbol>
   <symbol id="t3-file-icon-spreadsheet" viewBox="0 0 24 24">
-    <g fill="none" style="stroke: light-dark(#199f43, #5ecc71)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <g fill="none" style="stroke: ${DOCUMENT_ICON_COLORS["t3-file-icon-spreadsheet"]}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" />
       <path d="M14 2v5a1 1 0 0 0 1 1h5" />
       <path d="M8 13h2" />
@@ -71,14 +79,14 @@ const T3_FILE_ICON_SPRITE = `
     </g>
   </symbol>
   <symbol id="t3-file-icon-slides" viewBox="0 0 24 24">
-    <g fill="none" style="stroke: light-dark(#d47628, #ffa359)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <g fill="none" style="stroke: ${DOCUMENT_ICON_COLORS["t3-file-icon-slides"]}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M2 3h20" />
       <path d="M21 3v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3" />
       <path d="m7 21 5-5 5 5" />
     </g>
   </symbol>
   <symbol id="t3-file-icon-epub" viewBox="0 0 24 24">
-    <g fill="none" style="stroke: light-dark(#693acf, #9d6afb)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <g fill="none" style="stroke: ${DOCUMENT_ICON_COLORS["t3-file-icon-epub"]}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12 7v14" />
       <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" />
     </g>
@@ -234,6 +242,11 @@ export function resolvePierreIconForEntry(
         fileIconPathForMimeType(pathValue, mimeType),
       )
     : icon;
+}
+
+export function documentIconColorForFileName(fileName: string) {
+  const icon = resolvePierreIconForEntry(fileName, "file");
+  return icon ? DOCUMENT_ICON_COLORS[icon.name] : undefined;
 }
 
 export function hasSpecificPierreIconForFileName(fileName: string): boolean {
