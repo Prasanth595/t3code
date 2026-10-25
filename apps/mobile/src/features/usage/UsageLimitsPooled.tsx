@@ -233,7 +233,7 @@ function PoolWindowCard({
       <View>
         {pool.columns.map(({ account, window }, index) => {
           if (!window) return null;
-          const accentColor = normalizeProviderAccentColor(account.accentColor);
+          const segmentColor = normalizeProviderAccentColor(account.accentColor) ?? color;
           const credits = account.limits.resetCredits?.availableCount ?? 0;
           const resetsIn = formatResetsIn(window, now);
           return (
@@ -246,13 +246,11 @@ function PoolWindowCard({
               className="min-h-[44px] flex-row items-center gap-2 active:opacity-60"
             >
               <View className="relative size-5 items-center justify-center overflow-hidden rounded-md bg-subtle-strong">
-                {accentColor ? (
-                  <View
-                    pointerEvents="none"
-                    className="absolute inset-0"
-                    style={{ backgroundColor: accentColor, opacity: 0.35 }}
-                  />
-                ) : null}
+                <View
+                  pointerEvents="none"
+                  className="absolute inset-0"
+                  style={{ backgroundColor: segmentColor, opacity: 0.35 }}
+                />
                 <Text className="text-xs font-t3-medium tabular-nums text-foreground">
                   {index + 1}
                 </Text>
