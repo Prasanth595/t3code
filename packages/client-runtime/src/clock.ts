@@ -22,12 +22,15 @@ function makeTickStore<A>(read: () => A, periodMs: number): ClockStore<A> {
   const schedule = () => {
     timer = setTimeout(
       () => {
+        timer = undefined;
         const next = read();
         if (next !== value) {
           value = next;
           for (const listener of listeners) listener();
         }
-        schedule();
+        // Listeners may unsubscribe (stopping the clock) or resubscribe (arming
+        // a fresh timer) while notified; only continue a clock nobody re-armed.
+        if (listeners.size > 0 && timer === undefined) schedule();
       },
       periodMs - (Date.now() % periodMs),
     );

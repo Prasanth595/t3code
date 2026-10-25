@@ -117,4 +117,24 @@ describe("secondTick", () => {
     unsubscribe();
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it("stops ticking when the last subscriber leaves during a tick", () => {
+    vi.useFakeTimers({ now: 0 });
+    const unsubscribe = secondTick.subscribe(() => unsubscribe());
+    vi.advanceTimersByTime(1_000);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps one timer when a subscriber replaces itself during a tick", () => {
+    vi.useFakeTimers({ now: 0 });
+    let unsubscribeNext = () => {};
+    const unsubscribe = secondTick.subscribe(() => {
+      unsubscribe();
+      unsubscribeNext = secondTick.subscribe(() => {});
+    });
+    vi.advanceTimersByTime(1_000);
+    expect(vi.getTimerCount()).toBe(1);
+    unsubscribeNext();
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });
