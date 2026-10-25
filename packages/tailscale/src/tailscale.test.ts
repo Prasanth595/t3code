@@ -98,13 +98,16 @@ function layerMockSpawner(
   );
 }
 
-function layerServeFixture(rootProxy: string) {
+function layerServeFixture(rootProxy: string | null, listener: object = { HTTPS: true }) {
   const writes: Array<ReadonlyArray<string>> = [];
   const serveStatus = JSON.stringify({
-    TCP: { "443": { HTTPS: true } },
+    TCP: { "443": listener },
     Web: {
       "desktop.tail.ts.net:443": {
-        Handlers: { "/": { Proxy: rootProxy }, "/keep/": { Proxy: "http://127.0.0.1:8081" } },
+        Handlers: {
+          ...(rootProxy === null ? {} : { "/": { Proxy: rootProxy } }),
+          "/keep/": { Proxy: "http://127.0.0.1:8081" },
+        },
       },
     },
   });
@@ -303,6 +306,21 @@ describe("tailscale", () => {
       );
     }).pipe(Effect.scoped),
   );
+
+  it.effect("leaves a Serve port that another app listens on as plain HTTP in place", () => {
+    const fixture = layerServeFixture(null, { HTTP: true });
+
+    return Effect.gen(function* () {
+      const claimed = yield* claimTailscaleServe({ localPort: 3774 }).pipe(
+        Effect.result,
+        Effect.provide(fixture.layer),
+      );
+      assert.deepEqual(fixture.writes, []);
+      assert.isTrue(
+        Result.isFailure(claimed) && claimed.failure._tag === "TailscaleServeOccupiedError",
+      );
+    });
+  });
 
   it.live("replaces a Serve root left behind by a stopped server", () =>
     Effect.gen(function* () {

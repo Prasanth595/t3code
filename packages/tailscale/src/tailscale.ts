@@ -469,7 +469,13 @@ class TailscaleServeOccupiedError extends Schema.TaggedError<TailscaleServeOccup
 
 const TailscaleServeConfigFields = {
   TCP: Schema.optional(
-    Schema.Record(Schema.String, Schema.Struct({ TCPForward: Schema.optional(Schema.String) })),
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        HTTPS: Schema.optional(Schema.Boolean),
+        TCPForward: Schema.optional(Schema.String),
+      }),
+    ),
   ),
   Web: Schema.optional(
     Schema.Record(
@@ -512,14 +518,16 @@ const servePortHolder = (
   servePort: number,
 ): TailscaleServePortHolder => {
   for (const scope of [config, ...Object.values(config.Foreground ?? {})]) {
+    const listener = scope.TCP?.[String(servePort)];
+    // `serve --https` switches the whole port to HTTPS, so a plain HTTP or TCP listener is taken.
+    if (listener !== undefined && (listener.HTTPS !== true || listener.TCPForward !== undefined)) {
+      return { _tag: "other" };
+    }
     for (const [hostPort, web] of Object.entries(scope.Web ?? {})) {
       const root = hostPort.endsWith(`:${servePort}`) ? web.Handlers?.["/"] : undefined;
       if (root !== undefined) {
         return root.Proxy !== undefined ? { _tag: "proxy", target: root.Proxy } : { _tag: "other" };
       }
-    }
-    if (scope.TCP?.[String(servePort)]?.TCPForward !== undefined) {
-      return { _tag: "other" };
     }
   }
   return { _tag: "free" };
