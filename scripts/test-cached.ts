@@ -5,6 +5,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 
+import { matchesTestPath } from "./lib/cached-tests.ts";
 import { shardedTestFiles } from "./lib/sharded-tests.ts";
 
 const root = NodePath.resolve(import.meta.dirname, "..");
@@ -53,8 +54,7 @@ const files = [...new Set(candidates)].filter(
     /\.test\.[cm]?[jt]sx?$/.test(file) &&
     !file.startsWith(".repos/") &&
     NodeFS.existsSync(NodePath.join(root, file)) &&
-    (filters.length === 0 ||
-      filters.some((filter) => file === filter || file.startsWith(`${filter}/`))),
+    matchesTestPath(file, filters),
 );
 if (files.length === 0) {
   console.error("No test files matched");

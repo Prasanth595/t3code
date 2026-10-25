@@ -15,6 +15,13 @@ interface CachedTestTask {
       };
 }
 
+export function matchesTestPath(file: string, filters: Array<string>) {
+  return (
+    filters.length === 0 ||
+    filters.some((filter) => filter === "" || file === filter || file.startsWith(`${filter}/`))
+  );
+}
+
 export function cachedTestTasks(
   raw: string | undefined,
   root = NodePath.resolve(import.meta.dirname, "../.."),

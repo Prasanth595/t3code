@@ -6,9 +6,21 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
-import { cachedTestTasks } from "./cached-tests.ts";
+import { cachedTestTasks, matchesTestPath } from "./cached-tests.ts";
 
 describe("cachedTestTasks", () => {
+  it("selects every test for a checkout-root path", () => {
+    const root = NodePath.resolve(import.meta.dirname, "../..");
+    for (const path of [".", root]) {
+      expect(
+        matchesTestPath("apps/server/src/auth/utils.test.ts", [
+          NodePath.relative(root, NodePath.resolve(root, path)),
+        ]),
+      ).toBe(true);
+    }
+    expect(matchesTestPath("apps/server/src/auth/utils.test.ts", ["apps/server"])).toBe(true);
+    expect(matchesTestPath("apps/server-other/a.test.ts", ["apps/server"])).toBe(false);
+  });
   it("keeps a file's cache task stable when unrelated tests are added", () => {
     const first = cachedTestTasks(JSON.stringify({ files: ["src/b.test.ts"], groupSize: 1 }));
     const second = cachedTestTasks(
