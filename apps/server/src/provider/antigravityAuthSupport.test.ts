@@ -21,6 +21,7 @@ import {
   ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
   type AntigravityAuthConfig,
   type AntigravityProfile,
+  antigravityAuthIssue,
   buildAntigravityAcpSpawnInput,
   isAntigravitySignInRequiredError,
   makeAntigravityStderrHandler,
@@ -654,6 +655,44 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         expect(Result.isFailure(result)).toBe(true);
         expect(yield* fs.exists(profileDirectory)).toBe(false);
       }
+    }),
+  );
+});
+
+it.layer(NodeServices.layer)("Antigravity Agent Platform credentials", (it) => {
+  it.effect("finds application default credentials where the runtime looks for them", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const userHome = yield* fs.makeTempDirectoryScoped();
+      const sdkConfig = path.join(userHome, "sdk-config");
+      yield* fs.makeDirectory(sdkConfig);
+      yield* fs.makeDirectory(path.join(userHome, ".config", "gcloud"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(userHome, ".config", "gcloud", "application_default_credentials.json"),
+        "{}",
+      );
+      const auth: AntigravityAuthConfig = {
+        authMethod: "agent-platform",
+        apiKey: "",
+        gcpProject: "proj",
+        gcpLocation: "us-central1",
+      };
+      const issueWith = (environment: NodeJS.ProcessEnv) =>
+        antigravityAuthIssue(auth, { platform: "darwin", environment, userHome });
+
+      // CLOUDSDK_CONFIG replaces ~/.config/gcloud, as it does for gcloud.
+      expect(yield* issueWith({ CLOUDSDK_CONFIG: sdkConfig })).toContain(
+        "gcloud auth application-default login",
+      );
+      yield* fs.writeFileString(path.join(sdkConfig, "application_default_credentials.json"), "{}");
+      expect(yield* issueWith({ CLOUDSDK_CONFIG: sdkConfig })).toBeNull();
+      expect(
+        yield* issueWith({
+          CLOUDSDK_CONFIG: path.join(userHome, "missing"),
+          GCE_METADATA_HOST: "metadata.google.internal",
+        }),
+      ).toBeNull();
     }),
   );
 });

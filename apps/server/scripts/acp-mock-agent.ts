@@ -599,7 +599,7 @@ const program = Effect.gen(function* () {
     }),
   );
 
-  // Antigravity requires GEMINI_API_KEY for API key authentication; Agent Platform checks credentials only on prompt.
+  // Antigravity requires GEMINI_API_KEY for API key authentication. Agent Platform checks credentials on prompt.
   yield* agent.handleAuthenticate((request) =>
     Effect.gen(function* () {
       if (antigravityProfile) {

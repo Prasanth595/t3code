@@ -157,12 +157,15 @@ export const antigravityAuthIssue = Effect.fn("antigravityAuthIssue")(function* 
   if (host.environment.GCE_METADATA_HOST) return null;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const configDirectory =
-    host.platform === "win32" ? host.environment.APPDATA : path.join(host.userHome, ".config");
+  const gcloudDirectory =
+    host.environment.CLOUDSDK_CONFIG ||
+    (host.platform === "win32"
+      ? host.environment.APPDATA && path.join(host.environment.APPDATA, "gcloud")
+      : path.join(host.userHome, ".config", "gcloud"));
   if (
-    configDirectory &&
+    gcloudDirectory &&
     (yield* fs
-      .exists(path.join(configDirectory, "gcloud", "application_default_credentials.json"))
+      .exists(path.join(gcloudDirectory, "application_default_credentials.json"))
       .pipe(Effect.orElseSucceed(() => false)))
   ) {
     return null;
