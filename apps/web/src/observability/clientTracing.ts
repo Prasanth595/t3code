@@ -16,11 +16,12 @@ import { APP_VERSION } from "~/branding";
 
 const DEFAULT_EXPORT_INTERVAL_MS = 1_000;
 // PR previews can't mark themselves in APP_VERSION without breaking the version-skew check against the server.
-const RELEASE_CHANNEL = import.meta.env.DEV
-  ? "dev"
-  : import.meta.env.VITE_RELEASE_CHANNEL === "preview"
-    ? "preview"
-    : releaseChannelOf(APP_VERSION);
+const RELEASE_CHANNEL =
+  import.meta.env.DEV || import.meta.env.VITE_RELEASE_CHANNEL === "dev"
+    ? "dev"
+    : import.meta.env.VITE_RELEASE_CHANNEL === "preview"
+      ? "preview"
+      : releaseChannelOf(APP_VERSION);
 const CLIENT_TRACING_RESOURCE = {
   serviceName: "t3code-web",
   attributes: {
