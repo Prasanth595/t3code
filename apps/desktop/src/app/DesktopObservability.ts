@@ -7,8 +7,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SharedObservability from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
-import { cliReleaseChannelOf } from "@t3tools/shared/cliRelease";
-import { releaseResourceAttributes } from "@t3tools/shared/releaseResource";
+import { releaseChannelOf, releaseResourceAttributes } from "@t3tools/shared/releaseResource";
 import {
   parsePersistedServerObservabilitySettings,
   type PersistedServerObservabilitySettings,
@@ -609,7 +608,7 @@ const layerTelemetry = Layer.unwrap(
         "service.runtime": "desktop",
         "service.mode": environment.isDevelopment ? "development" : "packaged",
         ...releaseResourceAttributes(
-          environment.isDevelopment ? "dev" : cliReleaseChannelOf(serviceVersion),
+          environment.isDevelopment ? "dev" : releaseChannelOf(serviceVersion),
           endpoints.resourceAttributes,
         ),
         "host.name": endpoints.resourceAttributes["host.name"] || (yield* HostProcess.Hostname),

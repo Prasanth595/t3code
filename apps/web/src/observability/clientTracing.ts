@@ -8,8 +8,7 @@ import { OtlpExporter, OtlpSerialization, OtlpTracer } from "effect/observabilit
 import { settleAsyncResult, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary";
-import { cliReleaseChannelOf } from "@t3tools/shared/cliRelease";
-import { releaseResourceAttributes } from "@t3tools/shared/releaseResource";
+import { releaseChannelOf, releaseResourceAttributes } from "@t3tools/shared/releaseResource";
 import * as ClientTracer from "./clientTracer";
 import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer";
 import { isElectron } from "../env";
@@ -21,7 +20,7 @@ const RELEASE_CHANNEL = import.meta.env.DEV
   ? "dev"
   : import.meta.env.VITE_RELEASE_CHANNEL === "preview"
     ? "preview"
-    : cliReleaseChannelOf(APP_VERSION);
+    : releaseChannelOf(APP_VERSION);
 const CLIENT_TRACING_RESOURCE = {
   serviceName: "t3code-web",
   attributes: {

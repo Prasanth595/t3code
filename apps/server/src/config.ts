@@ -12,8 +12,7 @@ import type { OtlpEndpointSource } from "@t3tools/contracts";
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
 import { DEFAULT_SIGNAL_EXPORT, type SignalExport } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
-import { cliReleaseChannelOf } from "@t3tools/shared/cliRelease";
-import { releaseResourceAttributes } from "@t3tools/shared/releaseResource";
+import { releaseChannelOf, releaseResourceAttributes } from "@t3tools/shared/releaseResource";
 import packageJson from "../package.json" with { type: "json" };
 
 export const DEFAULT_PORT = 3773;
@@ -117,7 +116,7 @@ export const otlpResource = (
     "service.runtime": "t3-server",
     "t3code.server.managed_by": config.mode === "desktop" ? "desktop" : "standalone",
     ...releaseResourceAttributes(
-      config.devUrl === undefined ? cliReleaseChannelOf(packageJson.version) : "dev",
+      config.devUrl === undefined ? releaseChannelOf(packageJson.version) : "dev",
       config.otelEnvironment.resourceAttributes,
     ),
     "host.name": config.otelEnvironment.resourceAttributes["host.name"] || hostName,
