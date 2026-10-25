@@ -2332,6 +2332,22 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           { env },
         );
       } else {
+        const mergeHead = yield* executeGit(
+          "GitVcsDriver.commit.mergeHead",
+          cwd,
+          ["rev-parse", "--verify", "--quiet", "MERGE_HEAD"],
+          { allowNonZeroExit: true },
+        );
+        // Like git commit --only, reject partial merges before reset can discard their ancestry.
+        if (mergeHead.exitCode === 0) {
+          return yield* new GitCommandError({
+            operation: "GitVcsDriver.commit",
+            command: "git commit",
+            cwd,
+            detail:
+              "Cannot commit selected files during a merge. Commit all files to finish the merge.",
+          });
+        }
         yield* runGit("GitVcsDriver.commit.reset", cwd, ["reset"]).pipe(
           Effect.catchTags({ GitCommandError: () => Effect.void }),
         );
