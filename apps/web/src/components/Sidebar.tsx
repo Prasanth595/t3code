@@ -516,13 +516,13 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   const { threads, scopedProjectKeys, serverConfigs, optimisticDrop, workingShelfEnabled } = input;
   const preciseNow = new Date().toISOString();
   const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys);
-  inboxReturns.observe(workingShelfEnabled ? threads : null);
+  const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
   const working: EnvironmentThreadShell[] = [];
   const inbox = (thread: EnvironmentThreadShell, manuallyMoved = false) =>
     workingShelfEnabled &&
-    (manuallyMoved ? isThreadWorking(thread) : inboxReturns.isWorking(thread))
+    (manuallyMoved ? isThreadWorking(thread) : inboxObservation.isWorking(thread))
       ? working
       : active;
   const snoozed: EnvironmentThreadShell[] = [];
@@ -574,7 +574,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   // Capability gates dragging only; mixed server versions must preserve the same pinned order across clients.
   const sortedPinned = sortPinnedThreadsForSidebar(pinned);
   const sortedActive = workingShelfEnabled
-    ? sortInboxThreadsByReturn(active, inboxReturns.returnedAt)
+    ? sortInboxThreadsByReturn(active, inboxObservation.returnedAt)
     : sortThreadsForSidebar(active);
   return {
     pinnedThreads:

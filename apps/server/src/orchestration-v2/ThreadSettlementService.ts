@@ -6,6 +6,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
   CommandId,
+  isOrchestrationV2WorkActive,
   type ThreadId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
@@ -591,10 +592,17 @@ export const make = Effect.gen(function* () {
       case "thread.pull-request-link-updated":
       case "thread.pull-request-synced":
       case "provider-session.detached":
-      case "provider-thread.updated":
-      case "subagent.updated":
       case "run.background-work-cancelled":
         return enqueueThread(event.threadId);
+      // Sweep only when the work can have ended: progress updates cannot settle anything.
+      case "subagent.updated":
+        return isOrchestrationV2WorkActive(event.payload.status)
+          ? Effect.void
+          : enqueueThread(event.threadId);
+      case "provider-thread.updated":
+        return backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? [])
+          ? Effect.void
+          : enqueueThread(event.threadId);
       case "turn-item.updated":
         return turnItemUpdateCanEndBackgroundWork(event.payload)
           ? enqueueThread(event.threadId)
