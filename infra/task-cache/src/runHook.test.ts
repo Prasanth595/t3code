@@ -112,18 +112,22 @@ it("uses one machine hook across fresh worktrees without modifying Vite+", async
     const originalEntrypoint = await NodeFSP.readFile(entrypoint, "utf8");
     const run = (task: string, cwd = root, ci = false, cache = "--cache") =>
       new Promise<number | null>((resolve, reject) => {
-        const child = NodeChildProcess.spawn(process.execPath, [entrypoint, "run", cache, task], {
-          cwd,
-          env: {
-            ...process.env,
-            HOME: root,
-            GITHUB_ACTIONS: ci ? "true" : undefined,
-            NODE_OPTIONS: `--import=${new URL("./preload.mjs", import.meta.url).href}`,
-            VP_REMOTE_CACHE: undefined,
-            VP_REMOTE_CACHE_URL: undefined,
+        const child = NodeChildProcess.spawn(
+          process.execPath,
+          [entrypoint, "run", ...(task === "--last-details" ? [] : [cache]), task],
+          {
+            cwd,
+            env: {
+              ...process.env,
+              HOME: root,
+              GITHUB_ACTIONS: ci ? "true" : undefined,
+              NODE_OPTIONS: `--import=${new URL("./preload.mjs", import.meta.url).href}`,
+              VP_REMOTE_CACHE: undefined,
+              VP_REMOTE_CACHE_URL: undefined,
+            },
+            stdio: ["ignore", "ignore", "pipe"],
           },
-          stdio: ["ignore", "ignore", "pipe"],
-        });
+        );
         let stderr = "";
         child.stderr.on("data", (chunk) => {
           stderr += chunk;
@@ -137,6 +141,7 @@ it("uses one machine hook across fresh worktrees without modifying Vite+", async
       });
     expect(await run("build")).toBe(0);
     await report(1);
+    expect(await run("--last-details")).toBe(0);
     expect(
       JSON.parse(await NodeFSP.readFile(NodePath.join(root, "environment.json"), "utf8")),
     ).toMatchObject({ url: null });

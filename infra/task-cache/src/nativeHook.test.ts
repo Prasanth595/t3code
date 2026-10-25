@@ -36,6 +36,18 @@ it("leaves an unsupported CLI runnable when the machine preload is enabled", asy
     );
     expect(result.stdout.trim()).toBe("unmodified CLI");
     expect(result.stderr).toBe("");
+    await fs.mkdir(path.join(root, "vite-plus/binding"));
+    await fs.writeFile(path.join(root, "vite-plus/binding/index.js"), "export {};");
+    await fs.writeFile(
+      path.join(directory, "bin.js"),
+      'const command="--version"; const rustCliArgs=[]; const run=async()=>0;\n\tconst exitCode = await run({\n\t\targs: rustCliArgs\n\t});\nconsole.log("compatible CLI");',
+    );
+    const compatible = await promisify(execFile)(
+      process.execPath,
+      ["--import", new URL("./preload.mjs", import.meta.url).href, path.join(directory, "bin.js")],
+      { env: { ...process.env, NODE_OPTIONS: "" } },
+    );
+    expect(compatible.stdout.trim()).toBe("compatible CLI");
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

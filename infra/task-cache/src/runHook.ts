@@ -35,5 +35,7 @@ export default function start({ root }: { readonly root: string }) {
     child.on("error", () => {});
     child.unref();
   };
-  return Object.assign(finish, { remoteCache: process.env.VP_REMOTE_CACHE || "read-write" });
+  return Object.assign(finish, {
+    remoteCache: process.env.VP_REMOTE_CACHE || process.env.VP_T3_TASK_CACHE_MODE || "read-write",
+  });
 }

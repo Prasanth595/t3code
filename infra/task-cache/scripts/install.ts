@@ -220,11 +220,16 @@ for (const file of [
   "nativeHook.js",
   "nativeRunHook.js",
   "preload.mjs",
-])
-  await NodeFSP.copyFile(
-    NodePath.join(import.meta.dirname, "../src", file),
-    NodePath.join(installed, file),
-  );
+]) {
+  const destination = NodePath.join(installed, file);
+  const temporary = `${destination}.${NodeCrypto.randomUUID()}.tmp`;
+  try {
+    await NodeFSP.copyFile(NodePath.join(import.meta.dirname, "../src", file), temporary);
+    await NodeFSP.rename(temporary, destination);
+  } finally {
+    await NodeFSP.rm(temporary, { force: true });
+  }
+}
 await NodeFSP.mkdir(NodePath.dirname(hookConfig), { recursive: true });
 await NodeFSP.writeFile(
   hookConfig,
