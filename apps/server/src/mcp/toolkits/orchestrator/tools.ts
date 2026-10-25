@@ -119,7 +119,7 @@ const WorkflowStopTool = Tool.make("t3_workflow_stop", {
 
 const BackgroundWaitTool = Tool.make("t3_background_wait", {
   description:
-    "Keep this thread in the user's Working list while you wait on your own background work. After starting a background command or Monitor whose result you will act on when you are woken, call this with its task ID (the ID shown when it started) before ending your turn. Until that task ends, the thread stays in Working and the user is not told it finished. Unmarked background commands and monitors, such as dev servers and their watchdogs, never keep the thread in Working, so do not mark those. Pass waiting=false to stop waiting without stopping the task. IDs that are not running come back in unmatched and change nothing. Only Claude threads support this.",
+    "Keep this thread in the user's Working list and out of their inbox while you wait for background work. Start a background command or Monitor first. Call this before you end your turn if you will act on its result when it wakes you. In taskIds, give the ID shown when the task started. The thread stays in Working until the task ends. The user is not told the work is done. Do not mark work you leave running, such as a dev server or watcher. Unmarked commands and monitors never keep the thread in Working. Pass waiting=false to remove the mark. This does not stop the task. IDs that are not running return in unmatched and change nothing. Only Claude threads support this tool. Other providers return an error.",
   parameters: Schema.Struct({
     taskIds: Schema.Array(TrimmedNonEmptyString).check(
       Schema.isMinLength(1),
