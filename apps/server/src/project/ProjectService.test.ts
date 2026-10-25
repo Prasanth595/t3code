@@ -1,11 +1,14 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -83,7 +86,7 @@ const layerProjectServiceDependencies = Layer.mergeAll(
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-race-" })),
-  Layer.provide(NodeServices.layer),
+  Layer.provideMerge(NodeServices.layer),
 );
 
 const waitForProject = Effect.fn("ProjectServiceTest.waitForProject")(function* (
@@ -223,6 +226,35 @@ it.layer(layerTest)("ProjectService", (it) => {
       assert.isFalse(second.created);
       assert.equal(second.project.id, first.project.id);
     }),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "bootstraps a symlinked folder into the project that already owns it",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const service = yield* ProjectService.ProjectService;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "project-service-alias-" });
+        const workspaceRoot = path.join(root, "workspace");
+        const aliasRoot = path.join(root, "alias");
+        yield* fs.makeDirectory(workspaceRoot);
+        yield* fs.symlink(workspaceRoot, aliasRoot);
+        const owner = yield* service.create({
+          commandId: CommandId.make("command:alias:owner"),
+          projectId: ProjectId.make("project:alias:owner"),
+          title: "Owner",
+          workspaceRoot,
+        });
+        const aliased = yield* service.bootstrap({
+          commandId: CommandId.make("command:alias:bootstrap"),
+          projectId: ProjectId.make("project:alias:bootstrap"),
+          title: "Alias",
+          workspaceRoot: aliasRoot,
+        });
+        assert.isFalse(aliased.created);
+        assert.equal(aliased.project.id, owner.id);
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("commits the event, the row and the receipt together, once per command id", () =>
