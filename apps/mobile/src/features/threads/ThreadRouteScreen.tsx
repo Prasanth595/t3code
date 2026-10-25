@@ -392,7 +392,7 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
-  const runScript = useAtomCommand(projectEnvironment.runScript, "run project script");
+  const runScript = useAtomCommand(projectEnvironment.runScript, { reportFailure: false });
   const resumeThreadQueue = useAtomCommand(threadEnvironment.resumeThreadQueue, "resume queue");
   const loadEarlierHistory = useAtomCommand(threadEnvironment.loadEarlierHistory, {
     label: "load earlier thread history",
@@ -780,7 +780,11 @@ function ThreadRouteContent(
       if (focusedThreadIdentityRef.current !== routeThreadIdentity) return;
       if (result._tag !== "Success") {
         if (!isAtomCommandInterrupted(result)) {
-          Dialog.alert("Couldn't run script", String(squashAtomCommandFailure(result)));
+          const error = squashAtomCommandFailure(result);
+          Dialog.alert(
+            "Couldn't run script",
+            error instanceof Error ? error.message : String(error),
+          );
         }
         return;
       }
