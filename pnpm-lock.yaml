@@ -173,9 +173,6 @@ catalogs:
     '@effect/openapi-generator':
       specifier: 4.0.5
       version: 4.0.5
-    '@effect/platform-bun':
-      specifier: 4.0.5
-      version: 4.0.5
     '@effect/sql-sqlite-do':
       specifier: 4.0.5
       version: 4.0.5
@@ -1321,9 +1318,6 @@ importers:
       '@cloudflare/workers-types':
         specifier: ^4.20260601.1
         version: 4.20260604.1
-      '@effect/platform-bun':
-        specifier: 'catalog:'
-        version: 4.0.5(bufferutil@4.1.0)(effect@4.0.5)(utf-8-validate@6.0.6)
       '@effect/platform-node':
         specifier: 4.0.5
         version: 4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.2.1)(utf-8-validate@6.0.6)
@@ -13578,6 +13572,7 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+    optional: true
 
   '@effect/platform-node-shared@4.0.5(bufferutil@4.1.0)(effect@4.0.5)(utf-8-validate@6.0.6)':
     dependencies:

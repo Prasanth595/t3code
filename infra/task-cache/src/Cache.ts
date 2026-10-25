@@ -4,23 +4,7 @@ import * as Clock from "effect/Clock";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type * as Cloudflare from "@cloudflare/workers-types";
-import { authorize, githubKeys } from "@voidzero-dev/vite-plus-remote-cache-cloudflare/src/auth.ts";
-import { cborResponse } from "@voidzero-dev/vite-plus-remote-cache-cloudflare/src/cbor.ts";
-import {
-  cleanup,
-  getScope,
-  selectBlob,
-} from "@voidzero-dev/vite-plus-remote-cache-cloudflare/src/database.ts";
-import {
-  errorResponse,
-  HttpError,
-} from "@voidzero-dev/vite-plus-remote-cache-cloudflare/src/errors.ts";
-import { fetchMetadata } from "@voidzero-dev/vite-plus-remote-cache-cloudflare/src/fetch.ts";
-import { defaults } from "@voidzero-dev/vite-plus-remote-cache-cloudflare/src/limits.ts";
-import { store } from "@voidzero-dev/vite-plus-remote-cache-cloudflare/src/store.ts";
 import { Summary, recordSummary } from "./Summary.ts";
-import { readBody, Deadline } from "@voidzero-dev/vite-plus-remote-cache-cloudflare/src/streams.ts";
-import { Observations } from "@voidzero-dev/vite-plus-remote-cache-cloudflare/src/observations.ts";
 import { emitTotals, persistSavings } from "./Savings.ts";
 import * as Admission from "./Admission.ts";
 import { developerIdentity } from "./developer-auth.ts";
@@ -35,23 +19,11 @@ export class CacheError extends Schema.TaggedError<CacheError>()("CacheError", {
   reason: Schema.String,
 }) {}
 
-// The upstream adapter owns the experimental wire format and atomic D1 publication.
-const protocol = <A>(run: (signal: AbortSignal) => Promise<A>) =>
-  Effect.tryPromise({
-    try: run,
-    catch: (cause) =>
-      new CacheError({
-        status: cause instanceof HttpError ? cause.status : 503,
-        reason: cause instanceof HttpError ? cause.code : "unavailable",
-      }),
-  });
-
 export class Bindings extends Context.Service<
   Bindings,
   Env & {
     readonly developerKeys: string;
     readonly savings: Cloudflare.D1Database;
-    readonly githubKeys: ReturnType<typeof githubKeys>;
     readonly readLimit: Cloudflare.RateLimit;
     readonly storeLimit: Cloudflare.RateLimit;
   }
@@ -73,7 +45,34 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const bindings = yield* Bindings;
     const admission = yield* Admission.Admission;
-    const keys = bindings.githubKeys;
+    // The source-only protocol dependency is bundled for Workers, never evaluated by Node during deployment.
+    const {
+      authorize,
+      keys,
+      cborResponse,
+      cleanup,
+      getScope,
+      selectBlob,
+      errorResponse,
+      HttpError,
+      fetchMetadata,
+      defaults,
+      store,
+      readBody,
+      Deadline,
+      Observations,
+    } = yield* Effect.promise(() => import("./protocol.ts"));
+
+    // The upstream adapter owns the experimental wire format and atomic D1 publication.
+    const protocol = <A>(run: (signal: AbortSignal) => Promise<A>) =>
+      Effect.tryPromise({
+        try: run,
+        catch: (cause) =>
+          new CacheError({
+            status: cause instanceof HttpError ? cause.status : 503,
+            reason: cause instanceof HttpError ? cause.code : "unavailable",
+          }),
+      });
 
     const handle = Effect.fn("TaskCache.handle")(
       function* (request: Request, context: Pick<ExecutionContext, "waitUntil">) {

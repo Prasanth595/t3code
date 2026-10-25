@@ -83,16 +83,18 @@ it("deduplicates shared summaries and retries delivery without credentials in qu
   }
 });
 
-it("skips an unauthenticated endpoint without blocking later queued events", async () => {
+it("skips unauthenticated endpoints without consuming the delivery budget", async () => {
   const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "cache-queue-"));
   const endpoint = "https://cache.example/projects/t3code";
   try {
     const queue = NodePath.join(home, ".cache/t3-task-cache/telemetry");
     NodeFS.mkdirSync(queue, { recursive: true });
-    NodeFS.writeFileSync(
-      NodePath.join(queue, "a.json"),
-      JSON.stringify({ endpoint: "https://old.example/projects/t3code", event: { id: "old" } }),
-    );
+    const skipped = Array.from({ length: 101 }, (_, i) => `a${i}.json`);
+    for (const file of skipped)
+      NodeFS.writeFileSync(
+        NodePath.join(queue, file),
+        JSON.stringify({ endpoint: "https://old.example/projects/t3code", event: { id: file } }),
+      );
     NodeFS.writeFileSync(
       NodePath.join(queue, "b.json"),
       JSON.stringify({ endpoint, event: { id: "current" } }),
@@ -106,7 +108,7 @@ it("skips an unauthenticated endpoint without blocking later queued events", asy
       .spyOn(globalThis, "fetch")
       .mockResolvedValue(new Response(null, { status: 204 }));
     await flushTelemetry(home, {});
-    expect(NodeFS.readdirSync(queue)).toEqual(["a.json"]);
+    expect(NodeFS.readdirSync(queue).sort()).toEqual(skipped.sort());
     expect(request).toHaveBeenCalledOnce();
     expect(request.mock.calls[0]![0].toString()).toBe(`${endpoint}/telemetry`);
   } finally {

@@ -55,7 +55,7 @@ const updateWriter = Effect.fn("TaskCache.updateWriter")(function* (name: string
       : `Private credential written to ${state}/${name}.json.`,
   );
   yield* Console.log(
-    "Run bun alchemy deploy --stage prod from infra/task-cache to apply the writer changes.",
+    "Run alchemy deploy --stage prod from infra/task-cache to apply the writer changes.",
   );
 });
 

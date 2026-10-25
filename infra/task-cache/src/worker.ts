@@ -7,7 +7,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import { githubKeys } from "@voidzero-dev/vite-plus-remote-cache-cloudflare/src/auth.ts";
 import * as Admission from "./Admission.ts";
 import * as Cache from "./Cache.ts";
 import { emitTotals } from "./Savings.ts";
@@ -36,7 +35,6 @@ const layer = Worker.make(
       namespaceId: "1002",
       simple: { limit: 600, period: 60 },
     });
-    const keys = yield* Effect.sync(githubKeys);
     const bindings = Effect.gen(function* () {
       return Cache.Bindings.of({
         INDEX: yield* database.raw,
@@ -44,7 +42,6 @@ const layer = Worker.make(
         ARTIFACTS: (yield* artifacts.raw) as unknown as Env["ARTIFACTS"],
         GC_BATCH_SIZE: "16",
         developerKeys: Redacted.value(developerKeys),
-        githubKeys: keys,
         readLimit: yield* reads.raw,
         storeLimit: yield* writes.raw,
       });

@@ -180,7 +180,7 @@ export async function flushTelemetry(home = NodeOS.homedir(), env = process.env)
     const deadline = Date.now() + 15_000;
     const skipped = new Set<string>();
     // Re-scan between sends so a concurrent command's final summary joins this flush.
-    for (let sent = 0; sent < 100 && Date.now() < deadline; sent++) {
+    for (let sent = 0; sent < 100 && Date.now() < deadline;) {
       const file = NodeFS.readdirSync(queue)
         .filter((entry) => entry.endsWith(".json") && !skipped.has(entry))
         .sort()[0];
@@ -206,6 +206,7 @@ export async function flushTelemetry(home = NodeOS.homedir(), env = process.env)
         skipped.add(file);
         continue;
       }
+      sent++;
       url.pathname = `${url.pathname.replace(/\/$/, "")}/telemetry`;
       const response = await fetch(url, {
         method: "POST",
