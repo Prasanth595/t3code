@@ -3331,7 +3331,6 @@ export const OrchestrationV2ThreadBoundedSnapshot = Schema.Struct({
   historyCursor: Schema.NullOr(TrimmedNonEmptyString),
   hasMoreHistory: Schema.Boolean,
   latestLocalTurnOrdinal: Schema.NullOr(NonNegativeInt),
-  payloadBudgetExceeded: Schema.optional(Schema.Boolean),
   /**
    * Set only for clients that opted in: `projection.turnItems` omits the items
    * of local visible rows, which lead the full list. Clients must restore them
@@ -3415,7 +3414,6 @@ export const OrchestrationV2ThreadStreamItem = Schema.Union([
     historyCursor: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
     hasMoreHistory: Schema.optionalKey(Schema.Boolean),
     latestLocalTurnOrdinal: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
-    payloadBudgetExceeded: Schema.optionalKey(Schema.Boolean),
     turnItemsOmitLocalVisible: Schema.optionalKey(Schema.Literal(true)),
   }),
   Schema.Struct({
