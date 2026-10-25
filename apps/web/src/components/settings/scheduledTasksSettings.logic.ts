@@ -73,10 +73,7 @@ export interface DraftState {
   readonly modelKey: string;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
-  /**
-   * The model picker only edits `instanceId:model`; this holds saved or edited provider
-   * options until the model changes.
-   */
+  /** Keep saved or edited provider options until the picker changes instanceId:model. */
   readonly baseModelSelection: ModelSelection | null;
   readonly signatureEnabled: boolean;
   readonly signatureHeader: string;
