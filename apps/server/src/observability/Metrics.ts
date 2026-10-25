@@ -20,8 +20,7 @@ export const orchestrationCommandsTotal = Metric.counter("t3_orchestration_comma
 });
 
 export const orchestrationCommandDuration = Metric.timer("t3_orchestration_command_duration", {
-  description:
-    "Orchestration command dispatch duration while holding its dispatch lock, excluding lock wait.",
+  description: "Orchestration command handling duration, excluding thread dispatch lock wait.",
 });
 
 export const orchestrationEffectClaimsTotal = Metric.counter(
