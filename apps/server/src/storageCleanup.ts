@@ -116,7 +116,16 @@ function sameProjectWorktreePolicies(left: ServerSettings, right: ServerSettings
   );
 }
 
-export function storageCleanupThreadIdle(thread: OrchestrationV2ThreadShell, now: number): boolean {
+type LimitRecoverySettings = Pick<
+  ServerSettings,
+  "autoResumeLimitedThreads" | "snoozeLimitedThreads"
+>;
+
+export function storageCleanupThreadIdle(
+  thread: OrchestrationV2ThreadShell,
+  now: number,
+  settings: LimitRecoverySettings,
+): boolean {
   return (
     thread.worktreePath !== null &&
     thread.activeRunId === null &&
@@ -129,21 +138,32 @@ export function storageCleanupThreadIdle(thread: OrchestrationV2ThreadShell, now
     (thread.pendingBackgroundTasks?.length ?? 0) === 0 &&
     thread.pendingRuntimeRequest === null &&
     !threadHasQueuedTurnStart(thread, now) &&
-    !awaitingLimitReset(thread, now)
+    !heldForLimitRecovery(thread, now, settings)
   );
 }
 
 // A run held for its usage-limit reset has its work still ahead of it, and a
 // fresh worktree would otherwise look unchanged and be removed before it runs.
-function awaitingLimitReset(thread: OrchestrationV2ThreadShell, now: number): boolean {
+function heldForLimitRecovery(
+  thread: OrchestrationV2ThreadShell,
+  now: number,
+  settings: LimitRecoverySettings,
+): boolean {
+  if (
+    thread.status !== "failed" ||
+    thread.lastErrorClass !== "usage_limit" ||
+    !thread.usageLimitResetAt ||
+    thread.archivedAt !== null ||
+    thread.settledOverride === "settled"
+  )
+    return false;
+  const resetMs = Date.parse(thread.usageLimitResetAt);
   const recovery = thread.limitRecovery;
-  return (
-    thread.status === "failed" &&
-    recovery != null &&
-    recovery.runId === thread.latestRunId &&
-    (recovery.autoResume || recovery.snooze === true) &&
-    Date.parse(recovery.resetAt) > now
-  );
+  if (recovery?.runId === thread.latestRunId && recovery.resetAt === thread.usageLimitResetAt)
+    // An auto-resume holds until its continuation replaces the failed run.
+    return recovery.autoResume || (recovery.snooze === true && resetMs > now);
+  // The recovery worker arms this failure on a later tick; hold it until then.
+  return (settings.autoResumeLimitedThreads || settings.snoozeLimitedThreads) && resetMs > now;
 }
 
 /** PR metadata refreshes must not reset the inactivity clock. */
@@ -817,7 +837,7 @@ const make = Effect.gen(function* () {
         if (project === undefined) return keep("project is unavailable");
         if (
           thread.branch === null ||
-          !group.every((member) => storageCleanupThreadIdle(member, now))
+          !group.every((member) => storageCleanupThreadIdle(member, now, serverSettings))
         )
           return keep("thread is running or has pending work");
         if (group.some((member) => member.branch !== thread.branch))
@@ -988,7 +1008,7 @@ const make = Effect.gen(function* () {
                 shell.branch !== thread.branch ||
                 !Equal.equals(shell.settledAt, previous.settledAt) ||
                 (shell.settledAt !== null && !Equal.equals(shell.updatedAt, previous.updatedAt)) ||
-                !storageCleanupThreadIdle(shell, now) ||
+                !storageCleanupThreadIdle(shell, now, serverSettings) ||
                 path.resolve(shell.worktreePath!) !== worktreePath ||
                 storageCleanupActivityAt(shell) !== storageCleanupActivityAt(previous)
               );
