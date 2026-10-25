@@ -114,7 +114,8 @@ export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
           {children}
         </table>
       </ScrollArea>
-      <div className="mt-0.5 flex items-center justify-between select-none">
+      {/* Pulls the icon buttons' padding out so the glyphs line up with the cell text. */}
+      <div className="mt-0.5 -mx-1.5 flex items-center justify-between select-none">
         {hasClippedCells ? (
           <Tooltip>
             <TooltipTrigger
