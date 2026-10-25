@@ -7,6 +7,7 @@ import { AsyncResult } from "effect/reactivity";
 import {
   archiveSelectedThreadEntries,
   deleteSelectedThreadEntries,
+  displayedProjectOrder,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
   resolveSidebarRowThreadId,
@@ -44,6 +45,7 @@ import {
   type Thread,
 } from "../types";
 import { makeThreadFixture, type ThreadFixtureOverrides } from "../test-fixtures";
+import { parsePersistedState, reorderProjects } from "../uiStateStore";
 import { completeSidebarRouteReveal, pendingSidebarRouteReveal } from "./sidebar/routeReveal";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
@@ -1244,5 +1246,42 @@ describe("pendingSidebarRouteReveal", () => {
     pendingSidebarRouteReveal(reveal, "env:a1");
     expect(pendingSidebarRouteReveal(reveal, null)).toBeNull();
     expect(pendingSidebarRouteReveal(reveal, "env:a1")).toBe("env:a1");
+  });
+});
+
+describe("displayedProjectOrder", () => {
+  const project = (...keys: string[]) => ({
+    memberProjects: keys.map((physicalProjectKey) => ({ physicalProjectKey })),
+  });
+
+  it("lists projects as shown, grouped members together, then saved projects not shown", () => {
+    expect(
+      displayedProjectOrder(
+        [project("c"), project("a1", "a2"), project("b")],
+        ["a1", "x", "b", "c", "a2"],
+      ),
+    ).toEqual(["c", "a1", "a2", "b", "x"]);
+  });
+
+  it("reorders from the order on screen rather than the saved order", () => {
+    const order = displayedProjectOrder(
+      [project("c"), project("a"), project("b")],
+      ["a", "b", "c"],
+    );
+    expect(reorderProjects(parsePersistedState({}), order, ["c"], ["b"]).projectOrder).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+  });
+
+  it("moves every member of a grouped project and keeps hidden projects", () => {
+    const order = displayedProjectOrder(
+      [project("a1", "a2"), project("b"), project("c")],
+      ["hidden", "c", "b", "a2", "a1"],
+    );
+    expect(
+      reorderProjects(parsePersistedState({}), order, ["a1", "a2"], ["c"]).projectOrder,
+    ).toEqual(["b", "c", "a1", "a2", "hidden"]);
   });
 });

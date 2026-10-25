@@ -781,6 +781,22 @@ export function shouldCreateNewThreadInCurrentProject(
   return shiftKey || projectGroupCount <= 1;
 }
 
+/**
+ * Project order keys in the order the sidebar shows its projects, keeping a
+ * grouped project's members together. Saved keys of projects not shown, such
+ * as ones in a disconnected environment, follow in their saved order.
+ */
+export function displayedProjectOrder(
+  groups: ReadonlyArray<{ readonly memberProjects: ReadonlyArray<{ physicalProjectKey: string }> }>,
+  savedOrder: readonly string[],
+): string[] {
+  const shown = groups.flatMap((group) =>
+    group.memberProjects.map((member) => member.physicalProjectKey),
+  );
+  const shownKeys = new Set(shown);
+  return [...shown, ...savedOrder.filter((key) => !shownKeys.has(key))];
+}
+
 export function orderItemsByPreferredIds<TItem, TId>(input: {
   items: readonly TItem[];
   preferredIds: readonly TId[];

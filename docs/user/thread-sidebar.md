@@ -128,6 +128,19 @@ device keeps its own choice.
 While this is on, the active list is ordered by when each thread last came back to you, so you
 cannot drag or move threads within it. Your saved order returns when you turn it off.
 
+### Switch projects with pills (beta)
+
+Turn on **Settings → General → Project switcher (beta)** on web and desktop to replace the
+project filter with a row of project pills below search. It is not available with the legacy
+sidebar and does not change the mobile app. Click a pill to show only that project's
+threads, or **All** to show every project. Swipe sideways with a trackpad anywhere over the
+sidebar to move to the next or previous project. Scrolling over the pills in any direction moves the
+row instead.
+A search stays open as you switch and shows the matches in each project.
+Drag a pill, or focus it and press Alt+Left Arrow or Alt+Right Arrow, to reorder projects. This
+switches the shared project order to manual. Right-click a pill to open its project settings. Each
+device keeps its own choice.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

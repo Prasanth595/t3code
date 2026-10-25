@@ -5,6 +5,10 @@ declare module "vite-plus/test/browser" {
   interface BrowserCommands {
     /** Defined in vite.config.ts. Moves Playwright's mouse off the page. */
     resetPointer: () => Promise<void>;
+    /** Defined in vite.config.ts. Hovers `selector` and sends real wheel input. */
+    wheel: (selector: string, deltaX: number, deltaY: number) => Promise<void>;
+    /** Defined in vite.config.ts. Emulates `prefers-reduced-motion`. */
+    emulateReducedMotion: (reduce: boolean) => Promise<void>;
   }
 }
 

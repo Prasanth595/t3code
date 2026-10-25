@@ -1510,7 +1510,8 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
   providerEntryByInstanceId: ReadonlyMap<string, SidebarProviderEntry>;
   isHighlighted: boolean;
   isRouteActive: boolean;
-  resultId: string;
+  /** Absent on the project switcher's inert pages, which repeat live results. */
+  resultId?: string | undefined;
   searchMatch: EnvironmentThreadSearchMatch | null;
   searchQuery: string;
   /** The query `searchMatch` was found for, which lags `searchQuery` while a search runs. */
@@ -1595,7 +1596,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
               tabIndex={-1}
               aria-selected={props.isHighlighted}
               aria-current={accessibility.current}
-              aria-describedby={`${props.resultId}-pr`}
+              aria-describedby={props.resultId && `${props.resultId}-pr`}
               aria-label={accessibility.label}
               onMouseMove={props.onHighlight}
               onClick={props.onSelect}
@@ -1636,7 +1637,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
               >
                 {thread.title}
               </span>
-              <span id={`${props.resultId}-pr`} className="contents">
+              <span id={props.resultId && `${props.resultId}-pr`} className="contents">
                 <ThreadSearchPullRequestNumber
                   thread={thread}
                   query={props.searchQuery}

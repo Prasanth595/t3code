@@ -437,6 +437,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
+    ...(settings.sidebarProjectSwitcherEnabled !==
+    DEFAULT_UNIFIED_SETTINGS.sidebarProjectSwitcherEnabled
+      ? ["Project switcher"]
+      : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? ["Auto-settle inactive threads"]
       : []),
@@ -609,6 +613,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarProjectSwitcherEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSwitcherEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -998,6 +1003,34 @@ export function GeneralSettingsPanel() {
                 updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
               }
               aria-label="Working section (beta)"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("project-switcher")}
+          description="Replace the project filter with a row of project pills below search, and swipe sideways anywhere over the sidebar to switch projects. Moving a pill switches project order to Manual. Not available with the legacy sidebar."
+          resetAction={
+            settings.sidebarProjectSwitcherEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarProjectSwitcherEnabled ? (
+              <SettingResetButton
+                label="project switcher"
+                onClick={() =>
+                  updateSettings({
+                    sidebarProjectSwitcherEnabled:
+                      DEFAULT_UNIFIED_SETTINGS.sidebarProjectSwitcherEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarProjectSwitcherEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarProjectSwitcherEnabled: Boolean(checked) })
+              }
+              aria-label="Project switcher (beta)"
             />
           }
         />

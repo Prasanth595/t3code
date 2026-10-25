@@ -352,6 +352,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
+    id: "project-switcher",
+    title: "Project switcher (beta)",
+    to: "/settings/general",
+    searchTerms: ["sidebar project pills tabs swipe filter reorder"],
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/general",
