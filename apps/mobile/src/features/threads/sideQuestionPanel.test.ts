@@ -28,7 +28,7 @@ describe("mobile side question panel", () => {
     const focused = beginSideQuestion(pending, "thread", "unused", "");
     expect(focused?.id).toBe(pending?.id);
     expect(focused?.exchanges).toBe(pending?.exchanges);
-    expect(focused?.focusKey).toBe(1);
+    expect(focused?.focusKey).toBe(3);
     expect(focused?.pending).toBe(true);
     expect(beginSideQuestion(focused, "thread", "rejected", "Another?")).toBeNull();
     const finished = finishSideQuestion(focused, "second", { answer: "This way." });
@@ -36,7 +36,7 @@ describe("mobile side question panel", () => {
     expect(finished?.exchanges.at(-1)?.answer).toBe("This way.");
     const refocused = beginSideQuestion(finished, "thread", "unused", "");
     expect(refocused?.exchanges).toBe(finished?.exchanges);
-    expect(refocused?.focusKey).toBe(2);
+    expect(refocused?.focusKey).toBe(4);
   });
 
   it("starts pending immediately and rejects overlapping asks", () => {

@@ -85,7 +85,10 @@ import {
   resolveWorkflowOpening,
   workflowOpeningParentThreadId,
 } from "@t3tools/client-runtime/state/subagentRuntime";
-import { threadSupportsProviderHandoff } from "@t3tools/client-runtime/state/thread-workflows";
+import {
+  resolveSideQuestionForkRunId,
+  threadSupportsProviderHandoff,
+} from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import { HandoffRow } from "./chat/V2LifecycleRow";
 import {
@@ -1586,6 +1589,7 @@ export default function ChatView(props: ChatViewProps) {
       })
     : null;
   const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
+  const sideQuestionForkRunId = resolveSideQuestionForkRunId(activeLatestRun);
   const sideQuestionPanel = useSideQuestionPanel({
     environmentId,
     threadId: serverThread?.id ?? null,
@@ -1595,6 +1599,7 @@ export default function ChatView(props: ChatViewProps) {
         ? null
         : resolveProviderSlashCommandsForCwd(conversationProviderStatus, gitCwd),
     ask: askSideQuestion,
+    forkRunId: sideQuestionForkRunId,
   });
   const gitStatusQuery = useEnvironmentQuery(
     gitStatusCwd === null
@@ -2805,6 +2810,11 @@ export default function ChatView(props: ChatViewProps) {
     composerDraftTarget,
     setThreadError,
   });
+  const forkSideQuestion = useStableCallback(async () => {
+    if (!canOperateThread) return;
+    const input = sideQuestionPanel.forkInput();
+    if (input !== null) await onForkFromRunStable(input);
+  });
   const onCompactContext = () => {
     if (compactDisabled) return;
     void sendStandaloneCommand("/compact", "Failed to compact context.");
@@ -3450,6 +3460,32 @@ export default function ChatView(props: ChatViewProps) {
               }
             >
               <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">
+                {/* Outside the composer stack, which takes pointer events across its
+                    full width, so the strip beside the island still scrolls the thread. */}
+                {composerMounted && sideQuestionPanel.panel && !isDraftHeroState ? (
+                  <div className="mx-auto w-full max-w-(--chat-content-max-width)">
+                    <ComposerSideQuestion
+                      state={sideQuestionPanel.panel}
+                      environmentId={environmentId}
+                      cwd={gitCwd ?? undefined}
+                      forkBlockedReason={
+                        !canOperateThread
+                          ? "This connection cannot create threads"
+                          : activeEnvironmentUnavailable
+                            ? "Reconnect to fork"
+                            : sideQuestionForkRunId === null
+                              ? "Fork once the thread's turn finishes"
+                              : null
+                      }
+                      onAsk={sideQuestionPanel.ask}
+                      onFork={forkSideQuestion}
+                      onDismiss={() => {
+                        sideQuestionPanel.dismiss();
+                        composerRef.current?.focusAtEnd();
+                      }}
+                    />
+                  </div>
+                ) : null}
                 <div
                   data-chat-composer-stack="true"
                   className="group/composer-stack pointer-events-auto relative z-10 mx-auto w-full max-w-(--chat-content-max-width)"
@@ -3508,20 +3544,6 @@ export default function ChatView(props: ChatViewProps) {
                                   : null
                               }
                             />
-                          ) : null}
-                          {composerMounted && sideQuestionPanel.panel ? (
-                            <div className="relative z-10 mb-2">
-                              <ComposerSideQuestion
-                                state={sideQuestionPanel.panel}
-                                environmentId={environmentId}
-                                cwd={gitCwd ?? undefined}
-                                onAsk={sideQuestionPanel.ask}
-                                onDismiss={() => {
-                                  sideQuestionPanel.dismiss();
-                                  composerRef.current?.focusAtEnd();
-                                }}
-                              />
-                            </div>
                           ) : null}
                           {!composerMounted ? null : (
                             <ChatComposer

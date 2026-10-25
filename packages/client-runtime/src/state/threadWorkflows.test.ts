@@ -5,6 +5,7 @@ import {
   canForkProjectedAssistantItem,
   deriveThreadQueueWorkflowState,
   resolveLatestMergeBackRun,
+  resolveSideQuestionForkRunId,
   threadSupportsProviderHandoff,
 } from "./threadWorkflows.ts";
 
@@ -353,6 +354,24 @@ describe("thread workflows", () => {
         } as never,
       }),
     ).toBe(false);
+  });
+
+  it.each(["waiting", "completed", "failed", "interrupted", "cancelled"] as const)(
+    "forks a side question from a latest run that is %s",
+    (status) => {
+      expect(resolveSideQuestionForkRunId({ runId: "run", status } as never)).toBe("run");
+    },
+  );
+
+  it.each(["preparing", "queued", "starting", "running", "rolled_back"] as const)(
+    "does not fork a side question while the latest run is %s",
+    (status) => {
+      expect(resolveSideQuestionForkRunId({ runId: "run", status } as never)).toBeNull();
+    },
+  );
+
+  it("does not fork a side question from a thread without runs", () => {
+    expect(resolveSideQuestionForkRunId(null)).toBeNull();
   });
 
   it("merges the newest provider-finished run while checkpoint capture is pending", () => {

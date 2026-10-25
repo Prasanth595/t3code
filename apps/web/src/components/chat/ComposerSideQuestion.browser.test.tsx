@@ -1,5 +1,5 @@
 import "../../index.css";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import type {
   ProviderAskSideQuestionInput,
   ProviderAskSideQuestionResult,
@@ -26,15 +26,25 @@ function pendingReply() {
   return { promise, resolve };
 }
 
+const noFork = async () => {};
+
 function Harness({
   ask,
   threadKey = "thread-a",
+  forkRunId = RunId.make("run-1"),
+  forkFromRun = noFork,
 }: {
   ask: (target: {
     environmentId: EnvironmentId;
     input: ProviderAskSideQuestionInput;
   }) => Promise<AtomCommandResult<ProviderAskSideQuestionResult, unknown>>;
   threadKey?: string;
+  forkRunId?: RunId | null;
+  forkFromRun?: (input: {
+    sourceThreadId: ThreadId;
+    runId: RunId;
+    draftPrompt: string;
+  }) => Promise<void>;
 }) {
   const sideQuestion = useSideQuestionPanel({
     environmentId: EnvironmentId.make("local"),
@@ -42,6 +52,7 @@ function Harness({
     threadKey,
     providerSlashCommands: [SIDE_QUESTION_COMMAND],
     ask,
+    forkRunId,
   });
   return (
     <div className="mx-auto mt-8 max-w-2xl px-4">
@@ -51,7 +62,12 @@ function Harness({
           state={sideQuestion.panel}
           environmentId={EnvironmentId.make("local")}
           cwd={undefined}
+          forkBlockedReason={forkRunId === null ? "Fork once the thread's turn finishes" : null}
           onAsk={sideQuestion.ask}
+          onFork={async () => {
+            const input = sideQuestion.forkInput();
+            if (input !== null) await forkFromRun(input);
+          }}
           onDismiss={sideQuestion.dismiss}
         />
       ) : null}
@@ -90,19 +106,35 @@ it("opens and focuses immediately, shows pending feedback and keeps follow-up hi
   await expect.element(page.getByRole("region", { name: "Side question" })).not.toBeInTheDocument();
   await page.getByRole("button", { name: "Open /btw" }).click();
   await expect.element(input).toHaveFocus();
-  await expect.element(page.getByText("In parser.ts", { exact: true })).not.toBeInTheDocument();
+  await expect.element(page.getByText("In parser.ts", { exact: true })).toBeVisible();
 });
 
-it("ignores a late answer after dismissal and a new question", async () => {
+it("keeps an answer that arrives while dismissed and reopens without asking again", async () => {
+  const reply = pendingReply();
+  const ask = vi.fn().mockReturnValueOnce(reply.promise);
+  await using _screen = await render(<Harness ask={ask} />);
+  await page.getByRole("button", { name: "Open /btw" }).click();
+  const input = page.getByRole("textbox", { name: "Ask a side question" });
+  await input.fill("Where is the parser?");
+  await userEvent.keyboard("{Enter}");
+  await page.getByRole("button", { name: "Dismiss" }).click();
+  await act(async () => reply.resolve(AsyncResult.success({ answer: "In parser.ts" })));
+  await expect.element(page.getByRole("region", { name: "Side question" })).not.toBeInTheDocument();
+  await page.getByRole("button", { name: "Open /btw" }).click();
+  await expect.element(page.getByText("In parser.ts", { exact: true })).toBeVisible();
+  expect(ask).toHaveBeenCalledTimes(1);
+});
+
+it("ignores a late answer after switching threads", async () => {
   const oldReply = pendingReply();
   const newReply = pendingReply();
   const ask = vi.fn().mockReturnValueOnce(oldReply.promise).mockReturnValueOnce(newReply.promise);
-  await using _screen = await render(<Harness ask={ask} />);
+  await using screen = await render(<Harness ask={ask} />);
   await page.getByRole("button", { name: "Open /btw" }).click();
   const input = page.getByRole("textbox", { name: "Ask a side question" });
   await input.fill("Old question");
   await userEvent.keyboard("{Enter}");
-  await page.getByRole("button", { name: "Close side question" }).click();
+  await screen.rerender(<Harness ask={ask} threadKey="thread-b" />);
   await page.getByRole("button", { name: "Open /btw" }).click();
   await input.fill("New question");
   await userEvent.keyboard("{Enter}");
@@ -133,6 +165,61 @@ it("retries a failed question without retyping it", async () => {
     question: "Can you explain this?",
     history: [],
   });
+});
+
+it("forks the answered exchanges into a new thread's draft", async () => {
+  const ask = vi
+    .fn()
+    .mockResolvedValueOnce(AsyncResult.success({ answer: "In parser.ts" }))
+    .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("Provider unavailable"))));
+  const forkFromRun = vi.fn(async () => {});
+  await using _screen = await render(<Harness ask={ask} forkFromRun={forkFromRun} />);
+  await page.getByRole("button", { name: "Open /btw" }).click();
+  const input = page.getByRole("textbox", { name: "Ask a side question" });
+  await input.fill("Where is the parser?");
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByText("In parser.ts", { exact: true })).toBeVisible();
+  await input.fill("And its tests?");
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("Provider unavailable");
+  await page.getByRole("button", { name: "Fork" }).click();
+  expect(forkFromRun).toHaveBeenCalledWith({
+    sourceThreadId: "thread-a",
+    runId: "run-1",
+    draftPrompt: "From a side question:\n\n> **Q:** Where is the parser?\n>\n> In parser.ts\n\n",
+  });
+});
+
+it("keeps Fork off until an answer arrives and the thread can fork", async () => {
+  const reply = pendingReply();
+  const forkFromRun = vi.fn(async () => {});
+  await using _screen = await render(
+    <Harness ask={vi.fn().mockReturnValueOnce(reply.promise)} forkFromRun={forkFromRun} />,
+  );
+  await page.getByRole("button", { name: "Open /btw" }).click();
+  await page.getByRole("textbox", { name: "Ask a side question" }).fill("Where is the parser?");
+  await userEvent.keyboard("{Enter}");
+  const fork = page.getByRole("button", { name: "Fork" });
+  await expect.element(fork).toHaveAttribute("aria-disabled", "true");
+  await fork.click({ force: true });
+  expect(forkFromRun).not.toHaveBeenCalled();
+  await act(async () => reply.resolve(AsyncResult.success({ answer: "In parser.ts" })));
+  await expect.element(fork).not.toHaveAttribute("aria-disabled");
+});
+
+it("folds to the latest question and opens again on the next /btw", async () => {
+  const ask = vi.fn().mockResolvedValue(AsyncResult.success({ answer: "In parser.ts" }));
+  await using _screen = await render(<Harness ask={ask} />);
+  await page.getByRole("button", { name: "Open /btw" }).click();
+  await page.getByRole("textbox", { name: "Ask a side question" }).fill("Where is the parser?");
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByText("In parser.ts", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Collapse side question" }).click();
+  await expect.element(page.getByText("In parser.ts", { exact: true })).not.toBeInTheDocument();
+  await expect.element(page.getByText("Where is the parser?", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Open /btw" }).click();
+  await expect.element(page.getByText("In parser.ts", { exact: true })).toBeVisible();
+  await expect.element(page.getByRole("textbox", { name: "Ask a side question" })).toHaveFocus();
 });
 
 it("leaves focus where the user moved it when an answer arrives", async () => {

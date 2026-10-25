@@ -247,9 +247,11 @@ Send `/btw` followed by a question, or pick it from the slash menu, to ask
 something without adding it to the conversation. It works with Claude while the
 thread's session is running, including mid-turn, and the answer comes from that
 session, so it already knows what the agent is doing. The question and answer
-never appear in the thread's transcript. The panel above the composer keeps your
-follow-up questions and their answers until you close it or switch threads. Web,
-desktop, and mobile all have the panel.
+never appear in the thread's transcript. Dismiss hides the panel, and a bare
+`/btw` reopens it with your answers. Switching threads or reloading clears them.
+Once the thread's current turn finishes, **Fork** opens a new thread with the
+parent conversation and these answers in its composer. Read the draft and add
+what you want to do before sending it. Web, desktop, and mobile all have the panel.
 
 ## Goals
 

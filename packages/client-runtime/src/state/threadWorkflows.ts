@@ -5,7 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
 
-import type { ThreadStructure } from "./models.ts";
+import type { ThreadRunSummary, ThreadStructure } from "./models.ts";
 
 type Projection = ThreadStructure;
 type Run = Projection["runs"][number];
@@ -18,6 +18,13 @@ const MERGE_BACK_BLOCKING_RUN_STATUSES = new Set<Run["status"]>([
   "preparing",
   "starting",
   "running",
+]);
+const SIDE_QUESTION_FORK_RUN_STATUSES = new Set<Run["status"]>([
+  "waiting",
+  "completed",
+  "failed",
+  "interrupted",
+  "cancelled",
 ]);
 
 export interface QueuedThreadRun {
@@ -62,6 +69,15 @@ export function resolveLatestMergeBackRun(projection: Projection): Run | null {
       MERGE_BACK_BLOCKING_RUN_STATUSES.has(run.status),
   );
   return hasNewerActiveRun ? null : latestProviderFinishedRun;
+}
+
+// Forking an older run would omit the work the side question was asked about.
+export function resolveSideQuestionForkRunId(
+  latestRun: Pick<ThreadRunSummary, "runId" | "status"> | null,
+): Run["id"] | null {
+  return latestRun !== null && SIDE_QUESTION_FORK_RUN_STATUSES.has(latestRun.status)
+    ? latestRun.runId
+    : null;
 }
 
 function resolveThreadProviderSession(projection: Projection): ProviderSession | null {

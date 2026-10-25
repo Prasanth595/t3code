@@ -30,7 +30,7 @@ export function beginSideQuestion(
   return {
     id: same?.id ?? id,
     threadKey,
-    focusKey: same?.focusKey ?? 0,
+    focusKey: (same?.focusKey ?? 0) + 1,
     // Only answered exchanges carry over, so retrying a failed question
     // replaces it instead of stacking a copy.
     exchanges: [

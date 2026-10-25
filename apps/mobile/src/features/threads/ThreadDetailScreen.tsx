@@ -47,7 +47,6 @@ import type {
   RuntimeRequestId,
   ScopedThreadRef,
   ServerConfig as T3ServerConfig,
-  ThreadId,
   UsageLimitsReport,
 } from "@t3tools/contracts";
 import {
@@ -70,7 +69,7 @@ import {
   type ProviderSubagentStatus,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
-import { isProviderNativeSubagentThread } from "@t3tools/contracts";
+import { isProviderNativeSubagentThread, ThreadId } from "@t3tools/contracts";
 import type { QueuedRunEdit } from "../../state/queued-run-edit";
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
@@ -136,9 +135,15 @@ import {
   clearThreadComposerError,
   threadComposerErrorsAtom,
 } from "../../state/thread-composer-error";
-import { threadEnvironment } from "../../state/threads";
+import { environmentThreadShells, threadEnvironment } from "../../state/threads";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { setComposerDraftText } from "../../state/use-composer-drafts";
 import { uuidv4 } from "../../lib/uuid";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { resolveSideQuestionForkRunId } from "@t3tools/client-runtime/state/thread-workflows";
+import { sideQuestionForkDraft } from "@t3tools/shared/sideQuestion";
 import { ComposerSideQuestion } from "./ComposerSideQuestion";
+import { waitForThreadShellReady } from "./threadForkNavigation";
 import {
   beginSideQuestion,
   finishSideQuestion,
@@ -620,6 +625,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const askSideQuestion = useAtomCommand(threadEnvironment.askSideQuestion, {
     reportFailure: false,
   });
+  const forkFromRun = useAtomCommand(threadEnvironment.forkFromRun, "fork side question");
   const [statusRequest, setStatusRequest] = useState<{ threadKey: string } | null>(null);
   const statusPending = statusRequest?.threadKey === selectedThreadKey;
   const [lifecycleNow, setLifecycleNow] = useState(() => new Date().toISOString());
@@ -884,6 +890,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   // The /btw panel. Like the web one it lives only in memory, so a reload
   // starts clean and the thread's transcript never gains anything.
   const [sideQuestionPanel, setSideQuestionPanel] = useState<SideQuestionPanelState | null>(null);
+  const [sideQuestionHidden, setSideQuestionHidden] = useState(false);
   const sideQuestionPanelRef = useRef(sideQuestionPanel);
   const updateSideQuestionPanel = (next: SideQuestionPanelState | null) => {
     sideQuestionPanelRef.current = next;
@@ -904,6 +911,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     const next = beginSideQuestion(sideQuestionPanelRef.current, threadKey, askedId, question);
     if (next === null) return false;
     updateSideQuestionPanel(next);
+    setSideQuestionHidden(false);
     if (question.length === 0) return true;
     const settled = next.exchanges.filter(
       (exchange): exchange is SideQuestionExchange & { answer: string } => exchange.answer !== null,
@@ -935,6 +943,52 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       );
     });
     return true;
+  };
+  const sideQuestionForkRunId = resolveSideQuestionForkRunId(props.selectedThread.latestRun);
+  const forkSideQuestion = async () => {
+    const panel = sideQuestionPanelRef.current;
+    const answered = (panel?.exchanges ?? []).filter(
+      (exchange): exchange is SideQuestionExchange & { answer: string } => exchange.answer !== null,
+    );
+    if (
+      !props.canOperateThread ||
+      panel?.pending ||
+      panel?.threadKey !== selectedThreadKey ||
+      sideQuestionForkRunId === null ||
+      answered.length === 0
+    )
+      return;
+    const targetThreadId = ThreadId.make(uuidv4());
+    void Haptics.selectionAsync();
+    const result = await forkFromRun({
+      environmentId: props.environmentId,
+      input: {
+        sourceThreadId: props.selectedThread.id,
+        targetThreadId,
+        runId: sideQuestionForkRunId,
+        title: `${props.selectedThread.title} fork`,
+        creationSource: "mobile",
+      },
+    });
+    if (result._tag !== "Success") return;
+    setComposerDraftText(
+      scopedThreadKey(props.environmentId, targetThreadId),
+      sideQuestionForkDraft(answered),
+    );
+    const shellAtom = environmentThreadShells.threadShellAtom(
+      scopeThreadRef(props.environmentId, targetThreadId),
+    );
+    const targetThreadReady = await waitForThreadShellReady({
+      read: () => appAtomRegistry.get(shellAtom) !== null,
+    });
+    if (!targetThreadReady) {
+      Dialog.alert(
+        "Fork created",
+        "Its thread data did not reach this client. Reconnect and try opening it from the thread list.",
+      );
+      return;
+    }
+    navigation.navigate("Thread", { environmentId: props.environmentId, threadId: targetThreadId });
   };
   // A send may resolve after navigating away, so only the originating
   // thread's panel is cleared; a panel opened elsewhere in the meantime stays.
@@ -1633,7 +1687,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                       />
                     </Animated.View>
                   ) : null}
-                  {sideQuestionPanel && activeUserInputRequestId === null ? (
+                  {sideQuestionPanel && !sideQuestionHidden && activeUserInputRequestId === null ? (
                     <Animated.View
                       className="shrink-0 px-4 pb-3"
                       entering={FadeInDown.duration(220)}
@@ -1642,8 +1696,10 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                       <ComposerSideQuestion
                         key={sideQuestionPanel.id}
                         state={sideQuestionPanel}
+                        canFork={props.canOperateThread && sideQuestionForkRunId !== null}
                         onAsk={handleSideQuestion}
-                        onClose={() => updateSideQuestionPanel(null)}
+                        onFork={forkSideQuestion}
+                        onClose={() => setSideQuestionHidden(true)}
                       />
                     </Animated.View>
                   ) : null}

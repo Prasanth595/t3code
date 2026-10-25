@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { SIDE_QUESTION_COMMAND, parseSideQuestionCommand } from "./sideQuestion.ts";
+import {
+  SIDE_QUESTION_COMMAND,
+  parseSideQuestionCommand,
+  sideQuestionForkDraft,
+} from "./sideQuestion.ts";
 
 describe("parseSideQuestionCommand", () => {
   it("returns the question after the command", () => {
@@ -31,5 +35,36 @@ describe("parseSideQuestionCommand", () => {
 
   it("advertises a name the client and server both match on", () => {
     expect(SIDE_QUESTION_COMMAND.name).toBe("btw");
+  });
+});
+
+describe("sideQuestionForkDraft", () => {
+  it("quotes every exchange, keeping blank answer lines inside the quote", () => {
+    expect(
+      sideQuestionForkDraft([
+        {
+          question: " Where is the parser?\nAnd its tests? ",
+          answer: "In parser.ts.\n\nIts tests are next to it.",
+        },
+        { question: "Is it slow?", answer: "No." },
+      ]),
+    ).toBe(
+      [
+        "From a side question:",
+        "",
+        "> **Q:** Where is the parser?",
+        "> And its tests?",
+        ">",
+        "> In parser.ts.",
+        ">",
+        "> Its tests are next to it.",
+        "",
+        "> **Q:** Is it slow?",
+        ">",
+        "> No.",
+        "",
+        "",
+      ].join("\n"),
+    );
   });
 });

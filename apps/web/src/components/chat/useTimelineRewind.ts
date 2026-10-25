@@ -229,6 +229,8 @@ export function useTimelineRewind(input: TimelineRewindInput) {
   const onForkFromRun = async (input: {
     readonly sourceThreadId: ThreadId;
     readonly runId: RunId;
+    /** Text the fork's composer opens with. */
+    readonly draftPrompt?: string;
   }) => {
     if (!activeThread || activeEnvironmentUnavailable) return;
     const targetThreadId = newThreadId();
@@ -251,6 +253,9 @@ export function useTimelineRewind(input: TimelineRewindInput) {
         );
       }
       return;
+    }
+    if (input.draftPrompt !== undefined) {
+      useComposerDraftStore.getState().setPrompt(targetThreadRef, input.draftPrompt);
     }
     const targetThreadReady = await waitForThreadShell(targetThreadRef);
     if (!targetThreadReady) {

@@ -2,10 +2,11 @@ import type {
   EnvironmentId,
   ProviderAskSideQuestionInput,
   ProviderAskSideQuestionResult,
+  RunId,
   ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
-import { SIDE_QUESTION_COMMAND } from "@t3tools/shared/sideQuestion";
+import { SIDE_QUESTION_COMMAND, sideQuestionForkDraft } from "@t3tools/shared/sideQuestion";
 import { useLayoutEffect, useRef, useState } from "react";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import {
@@ -24,9 +25,11 @@ export function useSideQuestionPanel(input: {
     readonly environmentId: EnvironmentId;
     readonly input: ProviderAskSideQuestionInput;
   }) => Promise<AtomCommandResult<ProviderAskSideQuestionResult, unknown>>;
+  readonly forkRunId: RunId | null;
 }) {
-  const { environmentId, threadId, threadKey, providerSlashCommands, ask } = input;
+  const { environmentId, threadId, threadKey, providerSlashCommands, ask, forkRunId } = input;
   const [panel, setPanel] = useState<SideQuestionPanelState | null>(null);
+  const [hidden, setHidden] = useState(false);
   const requestRef = useRef<{ threadKey: string; id: string } | null>(null);
   useLayoutEffect(() => {
     if (requestRef.current?.threadKey !== threadKey) requestRef.current = null;
@@ -38,12 +41,10 @@ export function useSideQuestionPanel(input: {
     threadId !== null &&
     providerSlashCommands?.some((command) => command.name === SIDE_QUESTION_COMMAND.name) === true;
 
-  const dismiss = useStableCallback(() => {
-    requestRef.current = null;
-    setPanel(null);
-  });
+  const dismiss = useStableCallback(() => setHidden(true));
   const askFromPanel = useStableCallback((question: string) => {
     if (!offered || threadId === null) return false;
+    setHidden(false);
     const asked = question.trim();
     if (!asked) {
       const focusKey = newMessageId();
@@ -101,5 +102,19 @@ export function useSideQuestionPanel(input: {
     });
     return true;
   });
-  return { panel, offered, ask: askFromPanel, dismiss };
+  const forkInput = useStableCallback(() => {
+    if (threadId === null || forkRunId === null || panel === null || panel.requestId !== null) {
+      return null;
+    }
+    const answered = panel.exchanges.filter(
+      (exchange): exchange is typeof exchange & { answer: string } => exchange.answer !== null,
+    );
+    if (answered.length === 0) return null;
+    return {
+      sourceThreadId: threadId,
+      runId: forkRunId,
+      draftPrompt: sideQuestionForkDraft(answered),
+    };
+  });
+  return { panel: hidden ? null : panel, offered, ask: askFromPanel, dismiss, forkInput };
 }
