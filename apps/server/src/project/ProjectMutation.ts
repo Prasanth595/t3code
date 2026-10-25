@@ -1,6 +1,7 @@
 import { type ProjectMutation } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
+import { type ProjectCloneTracker } from "./ProjectCloneTracker.ts";
 import { type ProjectService } from "./ProjectService.ts";
 
 type ProjectMutations = Pick<ProjectService["Service"], "create" | "delete" | "update">;
@@ -50,4 +51,23 @@ export const projectMutationOperation = Effect.fn("projectMutationOperation")(fu
         ...(mutation.force === undefined ? {} : { force: mutation.force }),
       });
   }
+});
+
+/**
+ * A deleted project's clone record goes with it. The record lives only in
+ * memory and nothing else removes it, so a client that disconnects after the
+ * delete commits must not skip the discard: the stale "Failed to clone" banner
+ * would outlive the project, and Remove could no longer clear it.
+ */
+export const mutateProjectWithClone = Effect.fn("mutateProjectWithClone")(function* (
+  projects: ProjectMutations,
+  clones: Pick<ProjectCloneTracker["Service"], "discard">,
+  mutation: ProjectMutation,
+) {
+  if (mutation.type !== "project.delete")
+    return yield* projectMutationOperation(projects, mutation);
+  return yield* projectMutationOperation(projects, mutation).pipe(
+    Effect.tap(() => clones.discard(mutation.projectId)),
+    Effect.uninterruptible,
+  );
 });
