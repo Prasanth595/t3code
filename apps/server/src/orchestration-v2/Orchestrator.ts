@@ -34,6 +34,7 @@ import {
   type OrchestrationV2ServerCommand,
   type ThreadPullRequestLink,
   type ThreadPullRequestWatch,
+  type ThreadPullRequestWatchEvents,
   type OrchestrationV2AppThread,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ContextSourcePoint,
@@ -614,6 +615,18 @@ function hasLiveRun(projection: Pick<OrchestrationV2ThreadProjection, "runs">): 
   return projection.runs.some(
     (run) => run.status === "preparing" || run.status === "starting" || run.status === "running",
   );
+}
+
+/** Sorted and deduplicated, so the same filter in another order is the same watch. */
+const sortedWatchEvents = (events: ThreadPullRequestWatchEvents | undefined) =>
+  events && [...new Set(events)].toSorted();
+
+function withWatchEvents(
+  watch: ThreadPullRequestWatch,
+  events: ThreadPullRequestWatchEvents | undefined,
+): ThreadPullRequestWatch {
+  const { events: _events, ...rest } = watch;
+  return events === undefined ? rest : { ...rest, events };
 }
 
 function withPullRequestWatch(
@@ -3518,7 +3531,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : linked;
           const existing = links.find(visible);
           if (existing === undefined) return thread;
-          const watch =
+          const observed =
             command.type === "thread.pull-request-watch.sync"
               ? existing.watch?.startedAt === command.startedAt
                 ? (command.watch ?? undefined)
@@ -3550,6 +3563,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     remarkIds: [],
                     wakes: 0,
                   });
+          // The filter is the watcher's choice, not read state, so a sync never changes it.
+          const events = sortedWatchEvents(
+            command.type === "thread.pull-request.watch" ? command.events : existing.watch?.events,
+          );
+          const watch =
+            observed === undefined || observed.events?.join() === events?.join()
+              ? observed
+              : withWatchEvents(observed, events);
           if (watch === existing.watch && links === linked) return thread;
           const final =
             command.type === "thread.pull-request-watch.sync" && watch === undefined
