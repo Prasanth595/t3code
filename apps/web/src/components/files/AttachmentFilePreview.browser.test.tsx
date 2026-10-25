@@ -4,11 +4,15 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 import "~/index.css";
 
-const { refresh } = vi.hoisted(() => ({ refresh: vi.fn<() => Promise<string | null>>() }));
+const { refresh, assetUrlState } = vi.hoisted(() => ({
+  refresh: vi.fn<() => Promise<string | null>>(),
+  assetUrlState: vi.fn<() => import("~/assets/assetUrls").AssetUrlState>(),
+}));
 
 vi.mock(import("~/assets/assetUrls"), async (original) => ({
   ...(await original()),
   useAssetUrlRefresh: () => refresh,
+  useAssetUrlState: assetUrlState,
 }));
 // The real source view highlights through a worker pool; the text it receives is what matters here.
 // Never load the original: its highlighter graph can outlast waitFor on a cold CI browser.
@@ -24,6 +28,79 @@ import { MermaidFilePreview } from "./MermaidFilePreview";
 import { OFFICE_PREVIEW_MAX_COLUMNS, type OfficeWorkerResult } from "./officePreviewProtocol";
 
 describe("large text preview recovery", () => {
+  it("retains the workspace viewer across URL renewals and reloads revisions and manual refreshes", async () => {
+    const { WorkspaceLargeTextPreview } = await import("./FilePreviewPanel");
+    const original = URL.createObjectURL(new Blob(["original\n".repeat(1000)]));
+    const changed = URL.createObjectURL(new Blob(["changed\n".repeat(1000)]));
+    const workers: Worker[] = [];
+    using _worker = stubGlobal(
+      "Worker",
+      class extends Worker {
+        constructor(...args: ConstructorParameters<typeof Worker>) {
+          super(...args);
+          workers.push(this);
+        }
+      },
+    );
+    const preview = (mutation: string, key = 0) => (
+      <div style={{ display: "flex", flexDirection: "column", height: 400, width: 600 }}>
+        <WorkspaceLargeTextPreview
+          key={key}
+          environmentId={EnvironmentId.make("test")}
+          threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
+          absolutePath="/repo/large.txt"
+          name="large.txt"
+          delimiter={null}
+          workspaceMutationId={mutation}
+          revealLine={null}
+          revealRequestId={0}
+        />
+      </div>
+    );
+    const state = (url: string, fileRevision?: string) =>
+      assetUrlState.mockReturnValue({
+        _tag: "Success",
+        url,
+        expiresAt: Date.now() + 3_600_000,
+        ...(fileRevision === undefined ? {} : { fileRevision }),
+      });
+    refresh.mockResolvedValue(`${original}#renewed`);
+    try {
+      state(`${original}#initial`, "one");
+      await using screen = await render(preview("first"));
+      await vi.waitFor(() => expect(workers).toHaveLength(1));
+      await vi.waitFor(() => expect(screen.container.textContent).toContain("original"));
+      await vi.waitFor(() => expect(screen.container.textContent).toContain("1,000 lines"));
+      const viewport = screen.container.querySelector<HTMLElement>('[tabindex="0"]')!;
+      await act(() =>
+        viewport.dispatchEvent(
+          new WheelEvent("wheel", { deltaY: 250, bubbles: true, cancelable: true }),
+        ),
+      );
+      await vi.waitFor(() => expect(viewport.scrollTop).toBeGreaterThan(0));
+      const scrollTop = viewport.scrollTop;
+      state(`${original}#renewed`, "one");
+      await screen.rerender(preview("unrelated-command"));
+      expect(screen.container.querySelector('[tabindex="0"]')).toBe(viewport);
+      expect(viewport.scrollTop).toBe(scrollTop);
+      expect(workers).toHaveLength(1);
+      state(`${changed}#updated`, "two");
+      await screen.rerender(preview("file-edit"));
+      await vi.waitFor(() => expect(screen.container.textContent).toContain("changed"));
+      expect(workers).toHaveLength(2);
+      await screen.rerender(preview("file-edit", 1));
+      await vi.waitFor(() => expect(workers).toHaveLength(3));
+      await vi.waitFor(() => expect(screen.container.textContent).toContain("changed"));
+      state(`${original}#legacy`);
+      await screen.rerender(preview("legacy-edit", 1));
+      await vi.waitFor(() => expect(screen.container.textContent).toContain("original"));
+      expect(workers).toHaveLength(4);
+    } finally {
+      URL.revokeObjectURL(original);
+      URL.revokeObjectURL(changed);
+    }
+  });
+
   it("scrolls within a wrapped row when the row-count track is shorter than the viewport", async () => {
     await using screen = await render(
       <div style={{ display: "flex", height: 400, width: 600 }}>

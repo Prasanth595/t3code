@@ -1552,7 +1552,7 @@ export default function FilePreviewPanel({
 }
 
 const LargeTextViewer = lazy(() => import("./LargeTextViewer"));
-function WorkspaceLargeTextPreview(props: {
+export function WorkspaceLargeTextPreview(props: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef;
   absolutePath: string;
@@ -1588,13 +1588,23 @@ function WorkspaceLargeTextPreview(props: {
       void refreshAssetUrl().catch(() => undefined);
     },
   });
-  if (assetUrl._tag !== "Success")
+  const contentRevision = JSON.stringify([
+    props.environmentId,
+    resource,
+    assetUrl._tag === "Success" ? (assetUrl.fileRevision ?? props.workspaceMutationId) : null,
+    revision,
+  ]);
+  const [loaded, setLoaded] = useState<{ revision: string; url: string } | null>(null);
+  if (assetUrl._tag === "Success" && loaded?.revision !== contentRevision) {
+    setLoaded({ revision: contentRevision, url: assetUrl.url });
+  }
+  if (assetUrl._tag !== "Success" || loaded === null)
     return (
       <div className="p-6 text-xs text-muted-foreground">
         {assetUrl._tag === "Failure" ? "Unable to load file preview." : "Loading…"}
       </div>
     );
-  const src = `${assetUrl.url}${assetUrl.url.includes("?") ? "&" : "?"}revision=${encodeURIComponent(props.workspaceMutationId ?? "")}`;
+  const src = `${loaded.url}${loaded.url.includes("?") ? "&" : "?"}revision=${encodeURIComponent(loaded.revision)}`;
   return (
     <>
       <div className={FILE_SURFACE_SUBHEADER_CLASS}>
