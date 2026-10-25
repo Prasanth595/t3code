@@ -508,6 +508,11 @@ export function filterCommandPaletteGroups(input: {
   activeGroups: ReadonlyArray<CommandPaletteGroup>;
   query: string;
   isInSubmenu: boolean;
+  /** Submenu options join the root search, and a submenu with no match falls back to it. */
+  allOptions?: {
+    readonly rootGroups: ReadonlyArray<CommandPaletteGroup>;
+    readonly nestedItems: ReadonlyArray<CommandPaletteActionItem>;
+  };
   projectSearchItems: ReadonlyArray<CommandPaletteActionItem>;
   settingsSearchItems?: ReadonlyArray<CommandPaletteActionItem>;
   threadSearchItems: ReadonlyArray<CommandPaletteActionItem>;
@@ -515,6 +520,17 @@ export function filterCommandPaletteGroups(input: {
   threadMessageItems?: ReadonlyArray<CommandPaletteActionItem>;
   now?: number;
 }): CommandPaletteGroup[] {
+  if (input.allOptions && input.isInSubmenu) {
+    const { allOptions, ...submenuInput } = input;
+    const scoped = filterCommandPaletteGroups(submenuInput);
+    if (scoped.length > 0 || input.query.trim().length === 0) return scoped;
+    return filterCommandPaletteGroups({
+      ...input,
+      activeGroups: allOptions.rootGroups,
+      isInSubmenu: false,
+    });
+  }
+
   const isActionsFilter = input.query.startsWith(">");
   const searchQuery = isActionsFilter ? input.query.slice(1) : input.query;
   const normalizedQuery = foldSearchQuery(searchQuery);
@@ -538,6 +554,13 @@ export function filterCommandPaletteGroups(input: {
   // On equal match classes, groups keep this order: threads, what people search
   // for most, right after commands.
   if (searchesEverything) {
+    if (input.allOptions && input.allOptions.nestedItems.length > 0) {
+      searchableGroups.push({
+        value: "nested-search",
+        label: "Suggestions",
+        items: input.allOptions.nestedItems,
+      });
+    }
     if (input.threadSearchItems.length > 0) {
       searchableGroups.push({
         value: "threads-search",
@@ -572,7 +595,7 @@ export function filterCommandPaletteGroups(input: {
     const limit =
       group.value === "threads-search"
         ? PALETTE_THREAD_LIMIT
-        : searchesEverything && threadsMatch
+        : group.value === "nested-search" || (searchesEverything && threadsMatch)
           ? PALETTE_SECONDARY_LIMIT
           : ranked.length;
     // Hints are built only for the rows shown.
@@ -598,6 +621,27 @@ export function filterCommandPaletteGroups(input: {
   return messageItems.length === 0
     ? groups
     : [...groups, { value: "threads-messages", label: "In messages", items: messageItems }];
+}
+
+/** Every option inside a submenu as one row, e.g. "New thread in t3code" or "Change theme: Dracula". */
+export function buildNestedSearchItems(
+  items: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>,
+): CommandPaletteActionItem[] {
+  return items.flatMap((parent) => {
+    if (parent.kind !== "submenu" || typeof parent.title !== "string") return [];
+    const stem = parent.title.replace(/(\.\.\.|…)$/u, "");
+    const prefix = stem === parent.title ? `${stem}: ` : `${stem.trimEnd()} `;
+    return parent.groups.flatMap((group) =>
+      group.items.flatMap((child) => {
+        const name = typeof child.title === "string" ? child.title : child.searchTitle;
+        if (child.kind !== "action" || name === undefined) return [];
+        const { searchTitle: _searchTitle, ...rest } = child;
+        const title = `${prefix}${name}`;
+        // Only the combined title: child keywords like "theme" would list every theme.
+        return [{ ...rest, title, searchTerms: [title] }];
+      }),
+    );
+  });
 }
 
 export function buildBrowseGroups(input: {
