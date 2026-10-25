@@ -2,12 +2,7 @@ import {
   capitalizeTerm,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
-import type {
-  CodeViewItem,
-  DiffLineAnnotation,
-  FileDiffMetadata,
-  SelectedLineRange,
-} from "@pierre/diffs";
+import type { CodeViewItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
 import type { CodeViewAnnotationArgs, CodeViewDiffItem, CodeViewHandle } from "@pierre/diffs/react";
 import type {
   EnvironmentId,
@@ -85,7 +80,8 @@ import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { DiffFileTree } from "../diffs/DiffFileTree";
 import {
   createDiffFocusNavigation,
-  DiffFocusLayout,
+  DiffFocusKeyboard,
+  DiffFocusKeyHints,
   useDiffFocusLayoutWidth,
   type DiffFocusSelection,
 } from "../diffs/DiffFocusLayout";
@@ -665,19 +661,8 @@ function PullRequestCodeTab({
       };
     },
   );
-  const fileLineStat = (fileKey: string, path: string, fileDiff: FileDiffMetadata) => {
-    const stat = sourceFileStats.get(fileKey) ?? getDiffLineStat([fileDiff]);
-    if (stat.additions !== 0 || stat.deletions !== 0) return stat;
-    return omittedFileStats.get(path) ?? stat;
-  };
-  const focusFiles = annotatedFiles.map(({ fileKey, path, fileDiff }) => ({
-    fileKey,
-    fileDiff,
-    path,
-    ...fileLineStat(fileKey, path, fileDiff),
-  }));
   const focusNavigation = createDiffFocusNavigation({
-    files: focusFiles,
+    files: annotatedFiles,
     position: focusSelection,
     setPosition: setFocusSelection,
     reveal: requestTreeReveal,
@@ -838,8 +823,12 @@ function PullRequestCodeTab({
 
   const renderHeaderMetadata = (item: CodeViewItem<ReviewAnnotationGroup>) => {
     if (item.type !== "diff") return null;
+    let { additions, deletions } = sourceFileStats.get(item.id) ?? getDiffLineStat([item.fileDiff]);
     const path = resolveFileDiffPath(item.fileDiff);
-    const { additions, deletions } = fileLineStat(item.id, path, item.fileDiff);
+    if (additions === 0 && deletions === 0) {
+      const withheld = omittedFileStats.get(path);
+      if (withheld) ({ additions, deletions } = withheld);
+    }
     return (
       <FileViewedToggle
         fileKey={item.id}
@@ -1380,76 +1369,6 @@ function PullRequestCodeTab({
     else orphanFiles.set(thread.path, [thread]);
   }
 
-  const viewerPane = (
-    <div
-      className="relative min-h-0 min-w-0 flex-1"
-      // Headers live in shadow DOM; composedPath crosses that boundary.
-      onClickCapture={(event) => {
-        const composedPath = event.nativeEvent.composedPath?.() ?? [];
-        for (const node of composedPath) {
-          if (!(node instanceof HTMLElement)) continue;
-          if (node instanceof HTMLButtonElement || node instanceof HTMLAnchorElement) {
-            return;
-          }
-          if (node.hasAttribute("data-viewed-toggle")) return;
-          if (node.hasAttribute("data-diffs-header")) {
-            if (wideLayout) return;
-            const filePath = node.querySelector("[data-title]")?.textContent?.trim();
-            if (filePath === undefined || filePath === "") return;
-            const item = items.find(
-              (candidate) => resolveFileDiffPath(candidate.fileDiff) === filePath,
-            );
-            if (item !== undefined) toggleFile(item.id);
-            return;
-          }
-        }
-      }}
-    >
-      {/* The viewer must own its scroll element to position virtual rows within it. */}
-      <FileViewedToggleContext value={fileViewedToggle}>
-        <StyledDiffCodeView<ReviewAnnotationGroup>
-          className="@container h-full overflow-auto [scrollbar-gutter:stable]"
-          containerRef={scrollerRef}
-          viewerRef={setViewer}
-          items={viewerItems}
-          selectedLines={selectedLines}
-          onSelectedLinesChange={setSelectedLines}
-          options={diffViewOptions}
-          {...(wideLayout ? {} : { renderCodeViewFooter })}
-          renderHeaderPrefix={renderHeaderPrefix}
-          renderHeaderMetadata={renderHeaderMetadata}
-          renderAnnotation={renderAnnotation}
-          // Find may repeat requests before render; only unfold, never toggle.
-          onRevealSearchMatch={(item) =>
-            setToggledFiles((current) =>
-              toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
-            )
-          }
-          unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
-        />
-      </FileViewedToggleContext>
-    </div>
-  );
-  const loadMoreFiles =
-    nextCursor === null ? null : (
-      <div className="shrink-0 border-t border-border/60 p-2">
-        <Button
-          type="button"
-          size="xs"
-          variant="outline"
-          className="w-full"
-          disabled={diffQuery.isPending}
-          onClick={diffQuery.error !== null ? () => diffQuery.refresh() : loadNextSlice}
-        >
-          {diffQuery.error !== null
-            ? "Retry"
-            : diffQuery.isPending
-              ? "Loading more files..."
-              : "Load more files"}
-        </Button>
-      </div>
-    );
-
   return (
     <div ref={measureLayout} className="flex h-full min-h-0 flex-col">
       {toolbar}
@@ -1506,30 +1425,95 @@ function PullRequestCodeTab({
           </Collapsible>
         </div>
       ) : null}
-      {wideLayout ? (
-        <DiffFocusLayout
-          ariaLabel={`${capitalizeTerm(term)} #${detail.number} files`}
-          files={focusFiles}
-          navigation={focusNavigation}
-          listFooter={loadMoreFiles}
+      <DiffFocusKeyboard
+        navigation={wideLayout ? focusNavigation : null}
+        className="flex min-h-0 flex-1 overflow-hidden"
+      >
+        <div
+          className="relative min-h-0 min-w-0 flex-1"
+          // Headers live in shadow DOM; composedPath crosses that boundary.
+          onClickCapture={(event) => {
+            const composedPath = event.nativeEvent.composedPath?.() ?? [];
+            for (const node of composedPath) {
+              if (!(node instanceof HTMLElement)) continue;
+              if (node instanceof HTMLButtonElement || node instanceof HTMLAnchorElement) {
+                return;
+              }
+              if (node.hasAttribute("data-viewed-toggle")) return;
+              if (node.hasAttribute("data-diffs-header")) {
+                if (wideLayout) return;
+                const filePath = node.querySelector("[data-title]")?.textContent?.trim();
+                if (filePath === undefined || filePath === "") return;
+                const item = items.find(
+                  (candidate) => resolveFileDiffPath(candidate.fileDiff) === filePath,
+                );
+                if (item !== undefined) toggleFile(item.id);
+                return;
+              }
+            }
+          }}
         >
-          {viewerPane}
-        </DiffFocusLayout>
-      ) : (
-        <div className="flex min-h-0 flex-1 overflow-hidden">
-          {viewerPane}
-          {fileTreeOpen ? (
-            <aside className="flex w-[min(20rem,40%)] min-w-48 shrink-0 border-l border-border/60">
-              <DiffFileTree
-                ariaLabel={`${capitalizeTerm(term)} #${detail.number} files`}
-                entries={fileTreeEntries}
-                onSelectFile={revealFile}
-                footer={loadMoreFiles}
-              />
-            </aside>
-          ) : null}
+          {/* The viewer must own its scroll element to position virtual rows within it. */}
+          <FileViewedToggleContext value={fileViewedToggle}>
+            <StyledDiffCodeView<ReviewAnnotationGroup>
+              className="@container h-full overflow-auto [scrollbar-gutter:stable]"
+              containerRef={scrollerRef}
+              viewerRef={setViewer}
+              items={viewerItems}
+              selectedLines={selectedLines}
+              onSelectedLinesChange={setSelectedLines}
+              options={diffViewOptions}
+              {...(wideLayout ? {} : { renderCodeViewFooter })}
+              renderHeaderPrefix={renderHeaderPrefix}
+              renderHeaderMetadata={renderHeaderMetadata}
+              renderAnnotation={renderAnnotation}
+              // Find may repeat requests before render; only unfold, never toggle.
+              onRevealSearchMatch={(item) =>
+                setToggledFiles((current) =>
+                  toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
+                )
+              }
+              unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
+            />
+          </FileViewedToggleContext>
         </div>
-      )}
+        {fileTreeOpen || wideLayout ? (
+          <aside className="flex w-[min(20rem,40%)] min-w-48 shrink-0 border-l border-border/60">
+            <DiffFileTree
+              ariaLabel={`${capitalizeTerm(term)} #${detail.number} files`}
+              entries={fileTreeEntries}
+              selectedPath={wideLayout ? (focusNavigation.selected?.path ?? null) : null}
+              onSelectFile={revealFile}
+              followFocus={wideLayout}
+              footer={
+                <>
+                  {wideLayout ? <DiffFocusKeyHints navigation={focusNavigation} /> : null}
+                  {nextCursor === null ? null : (
+                    <div className="shrink-0 border-t border-border/60 p-2">
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        className="w-full"
+                        disabled={diffQuery.isPending}
+                        onClick={
+                          diffQuery.error !== null ? () => diffQuery.refresh() : loadNextSlice
+                        }
+                      >
+                        {diffQuery.error !== null
+                          ? "Retry"
+                          : diffQuery.isPending
+                            ? "Loading more files..."
+                            : "Load more files"}
+                      </Button>
+                    </div>
+                  )}
+                </>
+              }
+            />
+          </aside>
+        ) : null}
+      </DiffFocusKeyboard>
       {unstructured}
     </div>
   );
