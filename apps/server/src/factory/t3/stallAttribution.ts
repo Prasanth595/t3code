@@ -46,11 +46,10 @@ export interface StallAttributionOptions {
 }
 
 /**
- * Wraps the Tracer in the layer's output so the factory can name the root spans and SQL
- * statements that were running when the event loop stalled. It writes its own warning and
- * `factory-event-loop-stalls.ndjson`, and leaves upstream's EventLoopMonitor alone. The
- * wrapper's Tracer wins over `self`'s because `Layer.provideMerge` merges the receiving layer's
- * outputs last.
+ * Wraps the Tracer in the layer's output so the factory can name the root spans and SQL statements
+ * running when the event loop stalled. It writes its own warning and
+ * `factory-event-loop-stalls.ndjson` and leaves upstream's EventLoopMonitor alone. Its Tracer wins
+ * over `self`'s because `Layer.provideMerge` merges the receiving layer's outputs last.
  */
 export const makeWithStallAttribution =
   (options: StallAttributionOptions = {}) =>

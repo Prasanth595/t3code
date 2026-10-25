@@ -64,15 +64,10 @@ const git = (cwd: string, ...args: Array<string>) => {
   return result.stdout.trim();
 };
 
-// A deploy.sh that records each call with the commit it ran at, whether it was told to leave the
-// autodeploy job loaded and whether it was told it already holds the deploy lock, and on an
-// install keeps the old `current` as `previous` and points `current` at the commit, as install.sh
-// would. It makes the commit's version directory but, unlike install.sh, leaves the install time
-// of one already there, so a test can make `current` the oldest. DEPLOY_FAIL fails the build,
-// INSTALL_FAIL the install (as a health check that rolled back would), BUILD_HANG makes the build
-// hang on a child whose pid it writes there, HOLD_DURING_BUILD leaves autodeploy.hold as a
-// deploy by hand during the build would, and CURRENT_AT makes the version directory in that
-// directory instead and points `current` at it by absolute path, as a link repaired by hand might.
+// A deploy.sh that records each call with its commit and flags, and on an install keeps the old
+// `current` as `previous` and points `current` at the commit, as install.sh would. Unlike
+// install.sh it leaves the install time of an existing version directory, so `current` can be
+// the oldest. DEPLOY_FAIL, INSTALL_FAIL, BUILD_HANG, HOLD_DURING_BUILD and CURRENT_AT vary it.
 const FAKE_DEPLOY = [
   "#!/usr/bin/env bash",
   "set -euo pipefail",

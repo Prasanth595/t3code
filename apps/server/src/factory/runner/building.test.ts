@@ -1,13 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - the tests read the bytes of real run files.
 /**
- * `advance` of a building run, ported from softfac's `runner/tests.rs` ("advance" and "advance:
- * the result-line reminder"), with the end of a run from #20: a merged or closed pull request, a
- * closed issue and a stop by hand. Left out, for the issues that own them: the "a new attempt ..."
- * tests (`start.ts`, covered by its own tests), `apply()` internals
- * (`a_stuck_comment_without_a_stop_never_shows_the_lifecycle_reason`), the gate and forward
- * interplay, the crash matrix and the interruption tests of the stop-by-hand section. For `watch`
- * and `timeLimit` also left out: a recorded gate pass (#19), a relaunch decided by an
- * interruption, and the tests over the real `gh` client (`tracker/github.test.ts` owns them).
+ * `advance` of a building run, ported from softfac's `runner/tests.rs`, with the end of a run:
+ * a merged or closed pull request, a closed issue and a stop by hand. Left out: the "a new
+ * attempt ..." tests (`start.ts`), `apply()` internals, the gate and forward interplay, the
+ * crash matrix, a recorded gate pass, and the real `gh` client (`tracker/github.test.ts`).
  */
 import * as NodeFS from "node:fs";
 

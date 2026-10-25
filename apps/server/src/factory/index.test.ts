@@ -313,7 +313,7 @@ it.effect("logs one warning per retired model key and still starts", () =>
   }),
 );
 
-// #106 retired the key: a file that still has it starts the factory, which watches T3's projects.
+// The key is retired: a file that still has it starts the factory, which watches T3's projects.
 it.effect("logs one warning for a repos key left in the file and still starts", () =>
   Effect.gen(function* () {
     const { logs, machineConfigPath, status } = yield* logsFor(

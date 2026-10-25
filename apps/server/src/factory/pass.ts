@@ -1,13 +1,8 @@
 /**
- * One pass of the factory: the watched repos (T3's projects that opt in), the project config and
- * tracker login of each, every
- * unfinished run, the claims that have no run, then new issues. Ported from softfac's `tick.rs`
- * (`run_keeping`, `load_repos`, `runs`, `untracked_claims`, `unassigned_claims` and `claim`) up
- * to the claim; the steps that follow a run (issues #16 to #20) and the dry run are not here.
- *
- * Pure over `PassWorld`: every read and write goes through it, so the tests script a world and
- * `index.ts` builds the live one. Every line goes to `out` as it is decided. Each pass writes
- * `pass_started` first and `pass_finished` last to the machine log.
+ * One pass of the factory: watched repos (T3 projects that opt in), their config and tracker
+ * login, unfinished runs, claims with no run, then new issues. Ported from softfac's `tick.rs`
+ * up to the claim. Pure over `PassWorld`, so tests script a world; `pass_started` and
+ * `pass_finished` bracket the pass in the machine log.
  */
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -366,11 +361,9 @@ interface NoteError {
   /** What went wrong, before it is cleaned for the ledger. */
   readonly message: string;
   /**
-   * T3's session layer did not answer (a `FactorySessionsError`): the error also goes to the
-   * machine log, where `t3Trouble` reads the sign that sessions ending badly were an interruption.
-   * softfac has such a sign from its own T3 check of each repo, a server call; this factory's
-   * project lookup is in-process and cannot fail when T3 is down, so the calls that do fail are
-   * the sign.
+   * T3's session layer did not answer (a `FactorySessionsError`); the error also goes to the
+   * machine log, where `t3Trouble` reads it as the sign that sessions ended badly by interruption.
+   * The project lookup is in-process and cannot fail when T3 is down, so these calls are the sign.
    */
   readonly t3Down?: boolean;
 }
@@ -552,11 +545,9 @@ class Pass {
   }
 
   /**
-   * Prints `error` as an error line and records it: as an `error` line in the ledger of `run`
-   * when there is one that can take it, in the machine log otherwise (with the run's id when a
-   * run's ledger could not take it). A run's error that says a T3 call failed (`t3Down`) goes to
-   * both, so the machine log holds the T3 trouble of this pass for the next one to read.
-   * `unreadable` is a run whose own ledger cannot be read.
+   * Prints `error` as an error line and records it: in the ledger of `run` when it can take it,
+   * else in the machine log. A `t3Down` error goes to both, so the machine log holds this pass's
+   * T3 trouble. `unreadable` is a run whose own ledger cannot be read.
    */
   fail(run: RunId | null, error: NoteError, unreadable = false): Effect.Effect<void> {
     this.error(error.line);
@@ -718,11 +709,10 @@ export const runPass = Effect.fn("Pass.runPass")(function* (
 export const STUCK_READ_EVERY_MS = 10 * 60 * 1000;
 
 /**
- * Clears the item of a stuck run whose issue GitHub has closed: a person is done with it, or its
- * pull request merged and closed it. Only stuck items of the repos loaded this pass are asked
- * about, each at most once every `STUCK_READ_EVERY_MS`. An item whose issue cannot be read stays,
- * with a line that is not an error: an issue that can never be read again (deleted, transferred)
- * must not fail every pass.
+ * Clears the item of a stuck run whose issue GitHub has closed. Only stuck items of repos loaded
+ * this pass are asked about, each at most once every `STUCK_READ_EVERY_MS`. An issue that cannot
+ * be read leaves the item with a non-error line: one that can never be read again (deleted,
+ * transferred) must not fail every pass.
  */
 const closedStuck = Effect.fn("Pass.closedStuck")(function* (
   world: PassWorld,
@@ -761,13 +751,10 @@ const LOW_DISK_ITEM_ID = "low-disk";
 const GIB = 1024 ** 3;
 
 /**
- * Whether the volume of the worktrees or of the gate's checkouts has less free than
- * `min_free_gib`. A run that writes to a
- * full disk fails partway, and its gate fails for reasons that are not the code, so while it is
- * low the pass claims nothing and starts no gate: one line, one `claim_skipped` event and one
- * attention item, which clears on the first pass that finds the space back. A space that cannot
- * be read is an error line and holds nothing back. 0 turns the check off. Session relaunches of
- * runs already claimed are not held back.
+ * Whether the worktrees' or gate checkouts' volume has less free than `min_free_gib`. A full disk
+ * fails runs and gates for reasons that are not the code, so the pass claims nothing and starts no
+ * gate: one line, one `claim_skipped` event and one attention item that clears when space returns.
+ * An unreadable space is an error line and holds nothing back. 0 turns it off.
  */
 const lowDisk = Effect.fn("Pass.lowDisk")(function* (
   world: PassWorld,
@@ -814,11 +801,9 @@ const lowDisk = Effect.fn("Pass.lowDisk")(function* (
 
 /**
  * Whether the 1-minute load is above `max_load_per_core` times the cores. Gates on an overloaded
- * machine fail on timeouts the code did not cause, so while it is the pass claims nothing: one
- * line and one `claim_skipped` event. No attention item: the load drops without a person, and an
- * item would notify each time it flaps. The world's gate holds a second gate by the same rule
- * (`Factory.startGate`). 0 turns the check off. Session relaunches of runs already claimed are
- * not held back.
+ * machine fail on timeouts the code did not cause, so the pass claims nothing, with no attention
+ * item: load drops without a person. `Factory.startGate` holds a second gate by the same rule.
+ * 0 turns it off; relaunches of claimed runs are not held back.
  */
 const highLoad = Effect.fn("Pass.highLoad")(function* (
   world: PassWorld,
@@ -838,18 +823,10 @@ const highLoad = Effect.fn("Pass.highLoad")(function* (
 export const UNSETTLED_READ_EVERY_MS = 5 * 60 * 1000;
 
 /**
- * Archives the live threads left on a stopped session's worktree that is gone or no longer a git
- * checkout: subagents sharing the session's checkout, which archiving the session did not stop,
- * or threads on a folder a removal left half done. T3's pull request lookup and settlement run git
- * there every minute and fail every time; an archived thread is out of both. Only threads on the
- * worktree of a run's session are the factory's, and only once that session is stopped: until
- * then the run's own stop archives what is on its worktree. The ledger is read only while T3 has
- * such a thread not ruled out before, and for a thread it could not settle, at most every
- * `UNSETTLED_READ_EVERY_MS`. A thread the factory archived on any path is not found again until
- * the server restarts, so a person who unarchives it keeps it until then. Each worktree gets one
- * line and one attention item, and is not found again once its threads are archived. The item
- * names the run in its text, not in `run`, so it stays after the run finished, which it nearly
- * always has.
+ * Archives live threads on a stopped session's worktree that is gone or no longer a git checkout,
+ * where T3's pull request lookup runs git every minute and fails. Only a stopped session's worktree
+ * is the factory's: until then the run's own stop archives it. The attention item names the run in
+ * its text, not in `run`, so it stays after the run finished.
  */
 const brokenWorktrees = Effect.fn("Pass.brokenWorktrees")(function* (world: PassWorld, pass: Pass) {
   const cannotCheck = (failure: PassError) =>
@@ -926,11 +903,10 @@ const CONFIG_SKIPS_BEFORE_ATTENTION = 3;
 const configNotLoadedId = (key: string): string => `config-not-loaded:${key}`;
 
 /**
- * The project config and tracker login of every watched repo. A repo whose config cannot be
- * loaded is reported and its issues are left alone; so is one whose tracker login cannot be read,
- * and one that two T3 projects name (`ambiguousRepos`). A config that has not loaded for
- * {@link CONFIG_SKIPS_BEFORE_ATTENTION} passes in a row raises an attention item, which the
- * next pass that loads it clears: one failed call is a skipped pass, a broken setup is not.
+ * The project config and tracker login of every watched repo. A repo whose config or login cannot
+ * be read, or that two T3 projects name (`ambiguousRepos`), is reported and its issues left
+ * alone. A config failing {@link CONFIG_SKIPS_BEFORE_ATTENTION} passes in a row raises an
+ * attention item that the next successful load clears.
  */
 const loadRepos = Effect.fn("Pass.loadRepos")(function* (
   world: PassWorld,
@@ -1112,18 +1088,10 @@ const runs = Effect.fn("Pass.runs")(function* (world: PassWorld, pass: Pass) {
 });
 
 /**
- * Works each confirmed run: a stop request an operator left for it is taken into its ledger, then
- * the time limit, for every state (the runner decides which runs it applies to). A run in `triage` (or with no state yet) is gone on with by `resume`, from
- * its ledger, so a run cut short after the launch was sent is finished and its session never runs
- * on untracked. A building run has its text watched and its session's result read by `advance`
- * on every pass, as softfac's `building` does, also once its session has reported its pull
- * request: `advance` puts a pull request someone took out of draft back to draft and judges the
- * session's latest run, and only when it says `ready-for-gate` is the gate started, in the
- * background (softfac's `softfac gate` child). A run left in `needs-info` or `stuck` (an end cut short) is finished by `advance`, so its
- * thread is archived and its slot freed. A run in `pr-open` is not worked here: `prOpenRuns`
- * gates it again at the end. A run of a repo that is not loaded is left alone. None of it is a new
- * claim, so none is counted as one. An issue put back to `ready` is left to the claim step, which
- * finishes its run when it claims the issue.
+ * Works each confirmed run: a stop request is taken into its ledger, then the time limit applies.
+ * `resume` continues `triage` runs; `advance` watches building runs and starts the gate on
+ * `ready-for-gate`, and finishes `needs-info` and `stuck` runs; `prOpenRuns` gates `pr-open`
+ * runs. Runs of unloaded repos are left alone. None of it is a new claim.
  */
 const workRuns = Effect.fn("Pass.workRuns")(function* (
   world: PassWorld,
@@ -1176,11 +1144,10 @@ const endedAs = (what: BadEnd): string =>
   what === "thread-gone" ? "the T3 thread is gone" : `session ended as ${what}`;
 
 /**
- * Decides, for the sessions `advance` found ended badly in this pass, whether each is an
- * interruption or a stop (`interrupted` in `runner/building.ts`). The evidence is the same for all
- * of them: the newest T3 trouble in the machine log, and how many sessions ended badly. The log
- * is read once, and not at all when none did. A log that cannot be read is an error line, and then
- * only two or more sessions that ended badly are decided; a lone one waits for the next pass.
+ * Decides whether each session `advance` found ended badly this pass was an interruption or a
+ * stop (`interrupted` in `runner/building.ts`), from the newest T3 trouble in the machine log and
+ * the count of such sessions. The log is read once, and not at all when none did. If it cannot be
+ * read, only two or more bad endings are decided; a lone one waits for the next pass.
  */
 const decideInterruptions = Effect.fn("Pass.decideInterruptions")(function* (
   world: PassWorld,
@@ -1277,13 +1244,10 @@ const relaunched = Effect.fn("Pass.relaunched")(function* (
 });
 
 /**
- * The gate started for every run whose issue is `pr-open`, once each, after the claims (softfac's
- * `pr_open_runs`), unless its head did not move since its last pass (see `unchanged`): such a run costs
- * no process and no gate slot, and the pass says nothing of it. A stop request left for the run
- * is dropped first, and the pass says so. The gate (`regate`) deals with a merged or closed pull request, a re-gate under
- * way, a relaunch not yet recorded, a run whose worktree line is not written yet, a checkout an
- * earlier gate left on disk, and a read that fails. A run of a repo that is not loaded is left
- * alone.
+ * The gate started once for every `pr-open` run, after the claims, unless its head did not move
+ * since its last pass (see `unchanged`): such a run costs no process or gate slot and is not
+ * mentioned. A stop request left for the run is dropped first. `regate` handles the rest: merged
+ * or closed pull requests, a re-gate under way, a relaunch not yet recorded, leftovers on disk.
  */
 const prOpenRuns = Effect.fn("Pass.prOpenRuns")(function* (
   world: PassWorld,
@@ -1320,12 +1284,10 @@ const prOpenRuns = Effect.fn("Pass.prOpenRuns")(function* (
 });
 
 /**
- * Calls the feedback step for a `pr-open` run and says what it did. True when it did anything,
- * which is when the run is not gated in this pass; false for a run with no new feedback, for which
- * nothing was written and nothing is said. A step that fails is said, and then the run is treated
- * as one with no feedback: a read that fails every pass must not keep a moved head from
- * being gated, or a merged pull request from being ended. The step does not take a gate lock:
- * gates run as fibers of this process and `gateRunning` was asked first.
+ * Calls the feedback step for a `pr-open` run. True when it did anything, so the run is not gated
+ * this pass. A failing step is said, then the run is treated as having no feedback, so a read
+ * that fails every pass cannot keep a moved head from the gate or a merge from ending the run.
+ * No gate lock is taken: gates are fibers of this process and `gateRunning` was asked first.
  */
 const actedOnFeedback = Effect.fn("Pass.actedOnFeedback")(function* (
   world: PassWorld,
@@ -1363,12 +1325,10 @@ const actedOnFeedback = Effect.fn("Pass.actedOnFeedback")(function* (
 });
 
 /**
- * Whether `regate` would find the run's pull request at the head its last pass ran on, by the
- * read it makes before it answers `unchanged`. The base branch is not read: a pass stays valid
- * while the base moves. A run it would do more for (one whose pull request GitHub says conflicts
- * is one), or a read that fails, is not unchanged: the gate deals with it, and says what failed.
- * `failed` holds the repos whose pull request read failed this pass, by lowercase repo name: the
- * other runs on one go to the gate without a read that could wait for its timeout again.
+ * Whether `regate` would find the run's pull request at the head its last pass ran on. The base
+ * is not read: a pass stays valid while it moves. A conflicted pull request, or a failed read, is
+ * not unchanged. `failed` holds the lowercase repos whose read failed this pass, so other runs on
+ * one go to the gate without a read that could time out again.
  */
 const unchanged = Effect.fn("Pass.unchanged")(function* (
   world: PassWorld,
@@ -1489,11 +1449,10 @@ const resumeRun = Effect.fn("Pass.resumeRun")(function* (
 const GATE_WAITS = "the gate waits for the next pass because a comment was sent";
 
 /**
- * The watch, then `forward`, then `advance`, for a building run: what the session did, in a line.
- * A forward that failed may have sent something before it did, so it counts as having sent; a
- * pass where something was sent does not start the gate, since the message starts a new run
- * that the gate would judge too early. A forward that cannot write the ledger leaves the run
- * alone for the pass.
+ * The watch, then `forward`, then `advance`, for a building run. A forward that failed may have
+ * sent something, so it counts as sent; a pass where something was sent does not start the gate,
+ * since the message starts a new run the gate would judge too early. A forward that cannot write
+ * the ledger leaves the run alone for the pass.
  */
 const followBuilding = Effect.fn("Pass.followBuilding")(function* (
   world: PassWorld,
@@ -1637,11 +1596,10 @@ const advanceRun = Effect.fn("Pass.advanceRun")(function* (
 });
 
 /**
- * The run's issue was closed by a person, so the run is over and its session stopped. Says so,
- * and asks for a person to look: that the issue was closed on purpose is their call to check.
- * `mayHaveSession` names the runs that sent a launch and never got a thread, whose session this
- * could not archive; each is raised with the command id to look for. `error` is why `start` could
- * not end a later run of the issue, which the next pass tries again.
+ * The run's issue was closed by a person, so the run is over and its session stopped. Asks a
+ * person to look. `mayHaveSession` names runs that sent a launch and never got a thread, with the
+ * command id to look for. `error` is why `start` could not end a later run of the issue; the next
+ * pass tries again.
  */
 const abandoned = Effect.fn("Pass.abandoned")(function* (
   pass: Pass,
@@ -1754,11 +1712,10 @@ class Known {
 }
 
 /**
- * Claims `start` began that left no run it can go on from: the issue is `factory:triage` and
- * assigned to the factory's login alone, and no unfinished run for it is confirmed (`RunInfo`).
- * `resume` finishes such an issue (the design sends it to `stuck`), in the run it left when there
- * is one, so a stuck path cut short is tried again on every pass. They are claims already made,
- * so the limit on new claims does not apply to them.
+ * Claims `start` began that left no run it can go on from: the issue is `factory:triage`,
+ * assigned to the factory's login alone, with no confirmed unfinished run (`RunInfo`). `resume`
+ * finishes such an issue every pass until it is done. They are claims already made, so the limit
+ * on new claims does not apply.
  */
 const untrackedClaims = Effect.fn("Pass.untrackedClaims")(function* (
   world: PassWorld,
@@ -1955,10 +1912,8 @@ const count = (known: Known, queues: ReadonlyArray<Queue>): number => {
 
 /**
  * Claims `factory:ready` issues with `start` while fewer than `max_concurrent_runs` runs are
- * active on the machine. Each claim goes to the repo with the fewest runs holding a slot among
- * the repos that still have a ready issue to try, the one listed first by T3 on
- * a tie, and the runs are counted again after every claim, so free slots spread across the
- * repos. Within a repo the issues go by number, which is the order they were opened in.
+ * active. Each claim goes to the repo with the fewest slot-holding runs (T3's listing order on a
+ * tie), recounted after every claim so slots spread across repos. Within a repo, by issue number.
  */
 const claim = Effect.fn("Pass.claim")(function* (
   world: PassWorld,
@@ -2023,10 +1978,9 @@ const claim = Effect.fn("Pass.claim")(function* (
     // Checked before the blockers: a person paused claims, so no claim is started. The pause is
     // the machine's, said once after the loop.
     if (paused !== null) continue;
-    // Before the blockers: with no slot free nothing is claimed, so they are not read. Every
-    // issue left is counted as left over, blocked or not. The issue's own triage runs end with
-    // this claim (`finishOlderRuns`). One with no session leaves nothing running, so its slot is
-    // the claim's; one whose session may be running keeps its slot, so no second session
+    // Before the blockers: with no slot free nothing is claimed, so they are not read. The
+    // issue's own triage runs end with this claim (`finishOlderRuns`). One with no session leaves
+    // its slot to the claim; one whose session may be running keeps it, so no second session
     // starts past the limit.
     const own = known.of(name, issue).filter(inTriage);
     const freed = own.filter((run) => !run.session).length;

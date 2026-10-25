@@ -46,14 +46,10 @@ export interface SpanRegistry {
    */
   markConnection(id: number, connection: SqlConnection): void;
   /**
-   * The spans most likely to have blocked the loop in [windowStartMs, windowEndMs]. A synchronous
-   * block usually ends its span before a timer can notice the stall, so spans that ended inside
-   * the window count too. Ranked by evidence of running in the window:
-   *
-   * 1. spans that ended or started inside it: SQL first, then by the window time the span spent
-   *    on its own (its overlap minus its children's), then the most recently started;
-   * 2. open spans that started before it, most recently started first. A span that has been open
-   *    for hours is the caller of the blocker, not the blocker.
+   * The spans most likely to have blocked the loop in [windowStartMs, windowEndMs]. A sync block
+   * usually ends its span before a timer notices, so ended spans count. Ranked: those that ended or
+   * started inside it (SQL, then self time, then most recent), then open ones that started before
+   * it, most recent first; a long-open span is the blocker's caller, not the blocker.
    */
   active(
     windowStartMs: number,
@@ -198,12 +194,10 @@ const isSqlConnection = (value: unknown): value is SqlConnection =>
   value === "reader" || value === "writer";
 
 /**
- * Delegates every span to `tracer` and records each in `registry`, wrapping its `end`. A client
- * span that sets `db.system.name` is a SQL statement (effect names those after the database, so
- * only the kind and attributes identify them), the `db.query.text` it sets next is kept for the
- * report, and the `db.connection` the sqlite client sets once it has a connection says whether
- * the statement ran on the main thread (writer) or the reader worker. A transaction span carries
- * that attribute for every statement inside it.
+ * Delegates every span to `tracer` and records each in `registry`, wrapping its `end`. Effect names
+ * SQL spans after the database, so a client span with `db.system.name` marks one; its
+ * `db.query.text` is kept, and `db.connection` says writer (main thread) or reader worker. A
+ * transaction span carries that attribute for every statement inside it.
  */
 export const wrapTracer = (tracer: Tracer.Tracer, registry: SpanRegistry): Tracer.Tracer => {
   const ids = new WeakMap<object, number>();

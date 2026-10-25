@@ -20,14 +20,10 @@ import { FactoryProcess, type RunInput, type RunResult, type RunSpawnError } fro
 import { commandLine, isCommitId, sanitize, shortSha } from "./text.ts";
 
 /**
- * The gate: a fresh checkout of a pull request's head merged with the base branch tip, the
- * project's provision and gate commands run in it, and the checkout removed again. softfac's
- * `Workspace::checkout`, `gate::run` and `gating::run_in_checkout` in one module.
- *
- * The gate commands come from the caller (the project config on the default branch), never from
- * the checkout, so a pull request cannot edit its own gate. Locks are plain files: the gate runs
- * inside this server process, so a lock file exists exactly while a gate effect runs, and one a
- * dead server left behind is removed at start by `clearGateLocks`.
+ * The gate: a fresh checkout of a pull request's head merged with the base tip, with the project's
+ * provision and gate commands run in it. The commands come from the caller (default-branch config),
+ * never the checkout, so a pull request cannot edit its own gate. A lock file exists only while a
+ * gate effect runs; `clearGateLocks` removes one a dead server left.
  */
 
 const DEFAULT_REMOTE_BASE = "https://github.com";
@@ -197,12 +193,10 @@ const FETCH_ATTEMPTS = 3;
 /** The wait before the second and the third fetch, in milliseconds; each gets up to a second more. */
 const FETCH_RETRY_DELAYS_MS = [5_000, 15_000] as const;
 /**
- * What git's stderr says when the network dropped the fetch: an HTTP/2 stream error, a TLS
- * handshake that timed out, a name that did not resolve, a connection that failed or timed out,
- * or one cut off mid-pack. Anything else (a ref the remote does not have, a refused login) is
- * not a network problem and is returned at once. The match is what the retry log line names.
- * `RPC failed` counts only with a curl code right after it: with an HTTP status in between
- * (`RPC failed; HTTP 403 curl 22`) the server answered, and refused.
+ * What git's stderr says when the network dropped the fetch: HTTP/2 stream error, TLS handshake
+ * timeout, unresolved name, failed or timed-out connection, or a cut-off pack. Anything else
+ * (missing ref, refused login) returns at once. `RPC failed` counts only with a curl code right
+ * after it; `RPC failed; HTTP 403 curl 22` means the server answered and refused.
  */
 const TRANSIENT_FETCH =
   /Error in the HTTP2 framing layer|TLS handshake timeout|Could not resolve host|Failed to connect|Connection timed out|SSL_ERROR_SYSCALL|early EOF|RPC failed; curl \d+/;
@@ -499,24 +493,10 @@ const lines = (text: string): ReadonlyArray<string> => {
 const unexpected = (what: string) => new WorkspaceUnexpectedError({ what });
 
 /**
- * The gate's checkout, merge and removal through `git`.
- *
- * A checkout is a repository of its own: `git init` in the directory the gate chose, a fetch of
- * the head and the base by their full ids from `<remoteBase>/<owner>/<name>.git`, and `git
- * checkout --detach`. The URL is built here and never read from any git config, so nothing a
- * session writes in its own repository (a replace ref, a sparse checkout, `info/attributes`,
- * `remote.origin.url`, `url.*.insteadOf`, `core.sshCommand`) reaches it. Every git call runs with
- * no system and no global config, no hooks, no fsmonitor, no line-ending conversion, no `ext`
- * transport, and the `file` transport only when the remote base is a `file://` URL. Only the
- * fetch gets credentials, from `gh auth git-credential`. After the checkout and after a merge,
- * `git status --porcelain --ignored` must print nothing: with no sparse checkout, nothing
- * untracked and nothing ignored, that means the files are exactly the commit's.
- *
- * Every git call gets FactoryProcess's environment allowlist (PATH, HOME, USER, LOGNAME, SHELL,
- * LANG, TMPDIR, TERM, LC_*), where softfac gave the calls other than the fetch only PATH and HOME.
- * None of the extra names changes what git does.
- *
- * Not protected: a session running as the same OS user can still read the server's own files.
+ * The gate's checkout, merge and removal through `git`, in a repository of its own. The fetch URL
+ * is built here, never read from git config, so nothing a session writes in its repository reaches
+ * it. Git runs with no system or global config, hooks, fsmonitor, eol conversion or `ext`
+ * transport; only the fetch gets credentials. A session as the same OS user can still read ours.
  */
 export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
   const remoteBase = (options.remoteBase ?? DEFAULT_REMOTE_BASE).replace(/\/+$/, "");
@@ -741,11 +721,9 @@ export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
   const remove = removeCheckout;
 
   /**
-   * Makes a standalone repository in `dir` (which should not exist yet), fetches `sha` (a pull
-   * request's head) and `base` (the tip of its base branch) of `repo` (`owner/name`) into it by
-   * their full ids, checks `sha` out detached and merges `base` into it, so `dir` holds the
-   * merged tree. A conflict is not an error: the merge is aborted and the paths are returned.
-   * On any error nothing is left behind.
+   * Makes a standalone repository in `dir` (which should not exist yet), fetches `sha` and `base`
+   * by full id, checks `sha` out detached and merges `base` into it. A conflict is not an error:
+   * the merge is aborted and the paths are returned. On any error nothing is left behind.
    */
   const checkout = Effect.fn("FactoryGate.checkout")(function* (
     repo: string,

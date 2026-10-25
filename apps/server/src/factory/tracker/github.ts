@@ -152,28 +152,18 @@ export const COMMENT_EDITOR_QUERY =
 const COMMENT_EDITOR_IDS = 100;
 
 /**
- * The most pages of 50 reviews one feedback read takes: the newest, and up to 19 earlier ones
- * (20 points). 1,000 reviews is far past the factory's scale, so going on is GitHub misbehaving or
- * a pull request flooded with reviews, and it must not hold the pass open. A read pages back only
- * to the start of the last read that found nothing new, so the limit is hit only when more than
- * 1,000 reviews arrive between two such reads. Every read after that fails the same way.
+ * The most pages of 50 reviews one feedback read takes: the newest and up to 19 earlier (20
+ * points). 1,000 reviews is far past the factory's scale, so going on is GitHub misbehaving and
+ * must not hold the pass open. A read pages back only to the last read that found nothing new, so
+ * the limit is hit only by over 1,000 reviews between two such reads, and then every read fails.
  */
 export const REVIEW_PAGE_LIMIT = 20;
 
 /**
- * The newest 50 reviews of a pull request with the first 50 comments each left on the diff, and
- * the newest 100 comments in its conversation. `totalCount` and `pageInfo { startCursor }` on the
- * reviews let `prFeedback` see that older reviews exist and read them (see
- * {@link REVIEWS_BEFORE_QUERY}). `__typename` on an author tells a person from a GitHub App. For a
- * review and a conversation comment, `editor` says who last changed the text and
- * `userContentEdits(first: 20)` who made every change (20 keeps the nested query within GitHub's
- * node limit; a longer history is cut off, and the text is then not trusted). An inline comment
- * carries `lastEditedAt` and its node `id`, and no editor or history: those are read for the ones
- * an instructor wrote and that were edited, together, one call for each 100 (see
- * {@link COMMENT_EDITOR_QUERY}).
- *
- * GitHub prices a query by the requests its nested connections would make: each is requested
- * once per combination of its parents' page sizes. This shape is 202 requests, 2 points.
+ * The newest 50 reviews with the first 50 diff comments each, and the newest 100 conversation
+ * comments. `pageInfo { startCursor }` lets `prFeedback` page back ({@link REVIEWS_BEFORE_QUERY}).
+ * `userContentEdits(first: 20)` keeps the nested query within GitHub's node limit; a longer history
+ * is cut off and untrusted. Inline editors: {@link COMMENT_EDITOR_QUERY}. Priced at 2 points.
  */
 export const PR_FEEDBACK_QUERY =
   "query($owner: String!, $name: String!, $number: Int!) { " +
@@ -823,11 +813,9 @@ export interface OpenPullRequest {
 export type Relation = "ahead" | "behind" | "identical" | "diverged";
 
 /**
- * How one required check stands on a commit, in the words the ledger records:
- * `passed` when every run completed as `success` or `neutral`, `failed` when a run
- * completed as anything else, `pending` when a run exists and has not completed, and
- * `missing` when no run of that name has a result (none exists, or every one was
- * skipped, which means nothing ran).
+ * How one required check stands on a commit: `passed` when every run completed as `success` or
+ * `neutral`, `failed` when one completed as anything else, `pending` when a run has not
+ * completed, and `missing` when no run of that name has a result (none, or every one skipped).
  */
 export type CheckState = "passed" | "failed" | "pending" | "missing";
 
@@ -1308,11 +1296,10 @@ export const makeGitHub = (options: GitHubOptions) => {
   });
 
   /**
-   * The text of the file at `path` in the commit `sha` (a full 40 or 64 digit id, never
-   * a ref name), read through the contents API. Only a regular file of at most 64 KiB
-   * whose content arrived whole is accepted; refusing the reply is a Parse error. `path` is
-   * plain `/`-separated segments of letters, digits, `.`, `_` and `-`; anything else, or a
-   * `sha` that is not a full id, is refused before the call.
+   * The text of the file at `path` in the commit `sha` (a full 40 or 64 digit id, never a ref),
+   * read through the contents API. Only a regular file of at most 64 KiB whose content arrived
+   * whole is accepted; refusing the reply is a Parse error. `path` is `/`-separated segments of
+   * letters, digits, `.`, `_` and `-`; any other path or a non-full `sha` is refused up front.
    */
   const fileAt = Effect.fn("GitHub.fileAt")(function* (
     path: string,
@@ -1406,14 +1393,10 @@ export const makeGitHub = (options: GitHubOptions) => {
     );
 
   /**
-   * Puts the pull request back to draft (`gh pr ready --undo`). One that is a draft already
-   * counts as done: `gh` warns `Pull request <repo>#<n> is already "in draft"` on stderr and
-   * exits 0, and an answer that was lost on the way back leaves a caller asking again. So
-   * does one that is no longer open, merged or closed in the meantime: there is nothing to
-   * draft, and a caller that resumes a decision would otherwise fail on it every time. When
-   * the call fails for any other reason, a non-zero exit, a timeout, a rate limit or too much
-   * output, the pull request is read, and its state decides, not the words of the error; a
-   * read that fails or finds it open leaves the original error.
+   * Puts the pull request back to draft (`gh pr ready --undo`). One already draft counts as done
+   * (`gh` warns on stderr and exits 0), and so does one no longer open, so a resumed decision does
+   * not fail on it. On any other failure the pull request is read and its state decides, not the
+   * error's words; a failed read or an open pull request leaves the original error.
    */
   const markPrDraft = (pr: number): GitHubEffect<void> =>
     gh([...repoArgs(["pr", "ready", String(pr)]), "--undo"]).pipe(
@@ -1470,10 +1453,9 @@ export const makeGitHub = (options: GitHubOptions) => {
 
   /**
    * The open pull requests whose text says they close the issue, as GitHub links them
-   * (`closedByPullRequestsReferences`), in GitHub's order. Forks and other bases are listed too,
-   * whoever opened them: the caller decides which is the factory's own. GitHub makes the link
-   * only for a pull request onto the repo's default branch, so one onto another base is never
-   * here; `openPullRequestsOnHead` finds that one by its branch.
+   * (`closedByPullRequestsReferences`), in GitHub's order. Forks and other bases are listed too;
+   * the caller decides which is the factory's own. GitHub links only a pull request onto the
+   * default branch, so `openPullRequestsOnHead` finds one onto another base by its branch.
    */
   const openPullRequestsClosing = Effect.fn("GitHub.openPullRequestsClosing")(function* (
     issue: number,
@@ -1518,11 +1500,10 @@ export const makeGitHub = (options: GitHubOptions) => {
   });
 
   /**
-   * How `head` stands against `base`, by GitHub's compare API (`status` of `base...head`).
-   * A ref that GitHub does not know (a 404) is null. Only the status is read, so a long
-   * history costs one small answer. Each ref goes into the API path the way `branchTip`
-   * places a branch, and a ref with an empty or dot segment, or `..` anywhere, is refused
-   * before the call so that it cannot leave the compare path or name a second range.
+   * How `head` stands against `base`, by GitHub's compare API (`status` of `base...head`). An
+   * unknown ref (404) is null. Only the status is read, so a long history costs one small answer.
+   * A ref with an empty or dot segment, or `..` anywhere, is refused before the call so it cannot
+   * leave the compare path or name a second range; refs go in the path as `branchTip` does.
    */
   const compare = Effect.fn("GitHub.compare")(function* (
     base: string,
@@ -1559,12 +1540,10 @@ export const makeGitHub = (options: GitHubOptions) => {
   });
 
   /**
-   * How each of the check `names` stands on the commit `sha` (a full 40 or 64 digit id,
-   * refused before the call otherwise): one answer for every name, in the order asked,
-   * whatever else ran. Only check runs count (what GitHub Actions and other GitHub apps
-   * report), and only the latest run of each. A name is matched exactly. A skipped run is
-   * no result. When one name has several runs, a failed one decides, then a pending one,
-   * then a skipped one, and it passes only when all passed.
+   * How each of the check `names` stands on the commit `sha` (a full 40 or 64 digit id, refused
+   * otherwise): one answer per name, in the order asked. Only the latest check runs count; a name
+   * is matched exactly and a skipped run is no result. With several runs a failed one decides,
+   * then a pending one, then a skipped one; it passes only when all passed.
    */
   const checks = Effect.fn("GitHub.checks")(function* (
     sha: string,
@@ -1627,10 +1606,9 @@ export const makeGitHub = (options: GitHubOptions) => {
 
   /**
    * The issues named in the `## Depends on` section of `issue` that are not closed, in the order
-   * the text names them. A reference without a repo is in this repo. It costs one read of the
-   * body and one of each named issue, and is an error when any of them cannot be read: an issue
-   * that cannot be read is not taken as resolved. A section naming more than `MAX_DEPENDS_ON`
-   * issues is an error before any of them is read.
+   * named. A reference without a repo is in this repo. It is an error when any named issue cannot
+   * be read, as that is not taken as resolved, or when the section names more than
+   * `MAX_DEPENDS_ON` issues (before any is read).
    */
   const textBlockers = Effect.fn("GitHub.textBlockers")(function* (
     issue: number,
@@ -1720,12 +1698,10 @@ export const makeGitHub = (options: GitHubOptions) => {
     );
 
   /**
-   * Whether the issue text is as an instructor left it: every body edit and every title rename
-   * at or after `since` (a moment in the same second counts) was made by an instructor who is a
-   * `User`, and the histories reach back far enough to tell. Keeps apart a text someone else
-   * changed from one whose histories cannot be judged: a stranger's change that can be read wins
-   * over a history that is also too long. One call, with the approval's own query and rules.
-   * Labels are not text and are not looked at.
+   * Whether the issue text is as an instructor left it: every body edit and title rename at or
+   * after `since` (a moment in the same second counts) was made by an instructor who is a `User`,
+   * and the histories reach back far enough to tell. A readable stranger's change wins over a
+   * history that is also too long. One call, with the approval's own query and rules.
    */
   const textCheck = Effect.fn("GitHub.textCheck")(function* (
     issue: number,
@@ -1779,15 +1755,10 @@ export const makeGitHub = (options: GitHubOptions) => {
   });
 
   /**
-   * Whether a comment that was updated after it was written may be trusted, from its entry in
-   * {@link commentEditors}: GitHub has no edit of it (the update was not to its body), or every
-   * edit in its history is a person's who is an instructor. Unlike a body edit there is no `since` cut-off: the
-   * comment is the instructor's own text from the start, so any other editor at any time
-   * disqualifies it. A deleted account, or an App (not a `User`) whose login matches an
-   * instructor, among the editors counts as another editor. An edit by
-   * someone else that the answer shows is `other` even when the history is also too long to read
-   * whole. A history that may hide more is `unverifiable`. No entry (no node id, or a comment
-   * that is gone) is `gone`.
+   * Whether a comment updated after it was written may be trusted, from its entry in
+   * {@link commentEditors}: GitHub has no edit of it, or every edit is by an instructor who is a
+   * `User`. There is no `since` cut-off: any other editor at any time makes it `other`, even with
+   * a too-long history; a history that may hide more is `unverifiable`, no entry `gone`.
    */
   const checkEdits = (
     node: CommentEditors | undefined,
@@ -1809,19 +1780,10 @@ export const makeGitHub = (options: GitHubOptions) => {
   };
 
   /**
-   * Comments and a body edit on the issue made by `instructors` after `since`. The factory's own
-   * comments are left out.
-   *
-   * Comments come from the paginated REST listing (so a long thread cannot hide a new comment),
-   * oldest first; the body edit comes from one small GraphQL call. `since` must be GitHub's
-   * uniform UTC form, `2026-10-04T10:13:16Z`; anything else is rejected before `gh` runs.
-   * Timestamps are compared as strings, so an equal timestamp is not "after".
-   *
-   * The text of an edited comment is its last editor's, so a comment whose history has anyone
-   * else in it is not forwarded but listed in `dropped`, with a reason; one that cannot be
-   * looked up or is gone is neither. The body shown is the whole current body, so every edit
-   * after `since` must be a person's who is an instructor (not an App), not only the last, and the history must be whole:
-   * anything else leaves `bodyEdit` empty.
+   * Comments and a body edit made by `instructors` after `since`, minus the factory's own. Comments
+   * come from the paginated REST listing, oldest first; `since` must be GitHub's UTC form or it is
+   * rejected before `gh` runs, and an equal timestamp is not "after". A comment edited by anyone
+   * else goes in `dropped`; `bodyEdit` is empty unless the whole history since is instructors'.
    */
   const activitySince = Effect.fn("GitHub.activitySince")(function* (
     issue: number,
@@ -1908,12 +1870,9 @@ export const makeGitHub = (options: GitHubOptions) => {
 
   /**
    * Every review of pull request `pr` that may be new, oldest first: the newest page `first` and
-   * the pages before it, read with `before:` until one starts with a review at or before `floor`,
-   * or there are no more. `args` are the arguments of the call that read `first`, for an error. A
-   * page that starts at the cursor just sent, another page wanted after {@link REVIEW_PAGE_LIMIT}
-   * pages, a page with more behind it but no cursor to reach it, and a pull request gone from a
-   * later page are errors: a read that stopped short of `floor` must not count as one that found
-   * nothing. An empty page ends the paging, as the start of the list.
+   * the pages before it, read with `before:` until one starts at or before `floor` or is empty.
+   * A repeated cursor, a page past {@link REVIEW_PAGE_LIMIT}, a missing cursor or a vanished pull
+   * request is an error (`args` names the call): a read short of `floor` must not pass as empty.
    */
   const reviewsSince = Effect.fn("GitHub.reviewsSince")(function* (
     pr: number,
@@ -1982,29 +1941,10 @@ export const makeGitHub = (options: GitHubOptions) => {
   });
 
   /**
-   * The instructors' feedback on pull request `pr` written after `since`, oldest first. One
-   * GraphQL call (2 points) reads the newest 50 reviews, with the first 50 comments each left on
-   * the diff, and the newest 100 conversation comments, plus one call (1 point) for each earlier
-   * page of 50 reviews it pages back through, up to {@link REVIEW_PAGE_LIMIT} pages. `since` and
-   * `floor` must be GitHub's uniform UTC form; anything else is rejected before `gh` runs.
-   * Timestamps are compared as strings, so an equal timestamp is not "after".
-   *
-   * `floor` (not before `since`) is how far back the paging goes: it stops at a review submitted
-   * at or before `floor`. A review submitted after `since` on the pages read is judged, whether or
-   * not it is after `floor`. GitHub lists reviews by when each was started, so a review missed is
-   * one started as a pending review before that one and submitted after `floor`, or a dismissed
-   * review with no text, judged as not counting and later edited to say something.
-   * Only the newest 100 conversation comments are read.
-   *
-   * Only a person who is an instructor counts, and nothing that carries the factory's marker. A
-   * review is judged by its `submittedAt` and its state: one that asks for changes or comments is
-   * feedback; one that approves is feedback only when it has an inline comment, one that was
-   * dismissed only when it has a body or an inline comment; a pending one is not. A review, a
-   * conversation comment or an inline comment whose text was edited counts only when every edit in
-   * its history and its last editor are instructors who are people and the history is whole; an
-   * inline comment that fails drops out of its review and the rest of the review stays. The line of
-   * an inline comment is the one it is on, or the one it was on. A time or id GitHub gives that
-   * this cannot read is an error and not a guess; a pull request that is gone has no feedback.
+   * The instructors' feedback on pull request `pr` written after `since`, oldest first: 2 points
+   * for the newest 50 reviews and 100 comments, 1 per earlier page up to {@link REVIEW_PAGE_LIMIT}.
+   * Paging stops at a review submitted at or before `floor`; GitHub lists by start, so one started
+   * earlier and submitted later is missed. Edited text counts only if instructors made every edit.
    */
   const prFeedback = Effect.fn("GitHub.prFeedback")(function* (
     pr: number,
@@ -2097,11 +2037,10 @@ export const makeGitHub = (options: GitHubOptions) => {
           body: c.body ?? "",
         });
       }
-      // Only an approval's body is not read: softfac also counts it, so approving with "LGTM!"
-      // would send the pull request back to draft and the issue back to building. A comment and
-      // a `COMMENTED` review always count, whatever they say: the factory's login opens the pull
-      // requests, so an instructor acting as it cannot approve or request changes, and its
-      // comments are its only way to ask (softfac `docs/lifecycle.md`, "Instructor feedback").
+      // An approval's body is not read, so "LGTM!" does not send the pull request back to draft.
+      // A comment and a `COMMENTED` review always count: the factory's login opens the pull
+      // requests, so an instructor acting as it cannot approve or request changes and comments
+      // are its only way to ask.
       const counts =
         review.state === "CHANGES_REQUESTED" || review.state === "COMMENTED"
           ? true
@@ -2169,12 +2108,10 @@ export const makeGitHub = (options: GitHubOptions) => {
   });
 
   /**
-   * Assigns the issue to `user` and swaps `from` for `to`, in one `gh issue edit`. An issue that
-   * already has any assignee is left alone. The view and the edit are two calls, so two
-   * machines claiming at the same instant can both win. An error does not mean nothing
-   * changed: GitHub has applied the labels and failed to answer. A failure GitHub never
-   * received retries the view and the edit together, so a retried edit cannot land seconds
-   * after another machine's claim that a fresh view would have seen.
+   * Assigns the issue to `user` and swaps `from` for `to`, in one `gh issue edit`. An issue with
+   * any assignee is left alone. View and edit are two calls, so two machines claiming at once can
+   * both win. An error does not mean nothing changed: GitHub may have applied the labels and not
+   * answered. A failure GitHub never received retries the view too, so a stale edit cannot land.
    */
   const claim = Effect.fn("GitHub.claim")(function* (
     number: number,
@@ -2218,18 +2155,10 @@ export const makeGitHub = (options: GitHubOptions) => {
       .find((e) => e.__typename === "LabeledEvent" && e.label.name === stateLabel(state));
 
   /**
-   * The open `factory:triage` then `factory:building` issues (at most 200 of each) that no one
-   * is assigned to, that were last updated before `before`, and whose label was last added by
-   * `user` (case-insensitive), with the state each is in, by number within each state. An issue
-   * another login labelled, or whose label history has no such event, is not one of this
-   * machine's claims and is left out. `before` and GitHub's `updatedAt` are both
-   * `YYYY-MM-DDTHH:MM:SSZ`, so they compare as text. An issue whose `updatedAt` is not in that
-   * form is left out: an issue that cannot be dated is not moved. The label history is read
-   * only for an issue that passed the other two checks, is not in `known` (the issues the pass
-   * has a run for), and was not judged not ours by `memo` at the same `updatedAt`. A history
-   * that cannot be read because of that issue (`gh` failed on it, or its answer could not be
-   * parsed or was too large) is reported in `unread` and the scan goes on with the rest. A
-   * rate limit, a timeout, or `gh` not starting would fail every call, so it ends the scan.
+   * The open `factory:triage` then `factory:building` issues (at most 200 of each) with no
+   * assignee, last updated before `before`, whose label `user` added last, by number per state. An
+   * undatable issue is left out. Label history is read only when not in `known` or `memo`; one `gh`
+   * fails on goes in `unread`, while a rate limit, timeout or `gh` not starting ends the scan.
    */
   const unassignedClaims = Effect.fn("GitHub.unassignedClaims")(function* (
     before: string,
@@ -2290,12 +2219,10 @@ export const makeGitHub = (options: GitHubOptions) => {
     );
 
   /**
-   * The newest comment the factory posted on the issue, or null when it has posted none. A
-   * comment counts when it ends with the factory marker (the status comment has its own marker
-   * and does not count). The text is returned without the marker, with CRLF as LF and without
-   * trailing whitespace, so it compares with what was posted, along with the time GitHub says
-   * the comment was created. Anyone can paste the marker, so this says what the newest marked
-   * comment reads, not who wrote it.
+   * The newest comment the factory posted on the issue, or null. A comment counts when it ends with
+   * the factory marker (the status comment has its own marker and does not count). The text is
+   * returned without the marker, CRLF as LF and trimmed, with its creation time. Anyone can paste
+   * the marker, so this says what the newest marked comment reads, not who wrote it.
    */
   const newestFactoryComment = Effect.fn("GitHub.newestFactoryComment")(function* (
     number: number,

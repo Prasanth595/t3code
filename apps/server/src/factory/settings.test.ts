@@ -112,7 +112,7 @@ describe("editMachineConfig", () => {
     assert.strictEqual(edited(text, { poll_seconds: 120 }), text);
   });
 
-  // #106 retired the key. The page no longer sends it, and an edit leaves a hand-written block as is.
+  // The key was retired. The page no longer sends it; an edit leaves a hand-written block as is.
   it("keeps a hand-written repos block and its comments through an edit", () => {
     const text = edited(COMMENTED, { poll_seconds: 120 });
     for (const kept of [
@@ -144,7 +144,7 @@ describe("editMachineConfig", () => {
     );
   });
 
-  // #93 retired the two keys. A save keeps them as written, so a rollback to a version that
+  // The two keys are retired. A save keeps them as written, so a rollback to a version that
   // still requires them loads the file; the current loader only warns about them.
   it("keeps the retired model_instance and model keys through a save, with every other key and comment", () => {
     const retired = COMMENTED.replace(

@@ -197,11 +197,10 @@ export interface Seen {
    */
   readonly idleForwardWait: number | null;
   /**
-   * `idleForwardWait` when the ledger proves T3 refused every send under it: each send has its
-   * own `forward-wait <k>` line naming the send's T3 command id in its cause, and a
-   * `comment-refused` or `body-edit-refused` step names the same id. T3 keeps one result per
-   * command id, so the refusal of a resend is the outcome of a send whose own was lost. No run was
-   * started, so `forward` cancels it.
+   * `idleForwardWait` when the ledger proves T3 refused every send under it: each send has its own
+   * `forward-wait <k>` line naming its T3 command id, and a `comment-refused` or
+   * `body-edit-refused` step names the same id. T3 keeps one result per command id, so a resend's
+   * refusal answers for a send whose own was lost. No run started, so `forward` cancels it.
    */
   readonly refusedForwardWait: number | null;
   /** The id of every comment a `comment-dropped <id>` step names: the issue was told it was not forwarded. */
@@ -260,12 +259,10 @@ export interface Seen {
    */
   readonly checksTimedOut: { readonly sha: string; readonly missing: boolean } | null;
   /**
-   * Finishing the pass on record sets the ready state again: a stuck path an earlier call did
+   * Finishing the pass on record sets the ready state again, since a stuck path an earlier call did
    * not finish may have drafted the pull request or relabelled the issue. False only for a pass
-   * whose cause says `gate-passed-clean`, which a re-gate call writes when it began the re-gate
-   * itself: it has nothing to set again, and a person's draft or assignment made while the
-   * checks ran stands. A pass recorded before that reason existed owes it, as every resumed
-   * pass did then.
+   * whose cause is `gate-passed-clean`, written when a re-gate began itself: there is nothing to
+   * set again, and a person's draft or assignment stands.
    */
   readonly regatePassReassert: boolean;
   /** That re-gate's failure was recorded as sent back, and the state has not changed yet. */
@@ -288,11 +285,10 @@ export interface Seen {
   /** How many items the newest `feedback_relaunching` line names. */
   readonly feedbackLastItems: number;
   /**
-   * When the run first reached `pr-open` since its last feedback relaunch (since it began, when
-   * there is none), in epoch milliseconds: the moment of the gate pass that took it there.
-   * Feedback is read from here. A feedback relaunch resets it to null and the next `pr-open` sets
-   * it. A later trip through `building` and back, or a re-gate pass on a moved base, does not
-   * move it, so feedback written while those ran is not lost.
+   * When the run first reached `pr-open` since its last feedback relaunch (since it began, if
+   * none), in epoch milliseconds: the gate pass that took it there. Feedback is read from here. A
+   * feedback relaunch resets it to null and the next `pr-open` sets it; a trip through `building`
+   * and back, or a re-gate pass on a moved base, does not move it, so feedback from then is kept.
    */
   readonly prOpenSince: number | null;
   /**
@@ -305,12 +301,9 @@ export interface Seen {
 
 /**
  * The pull request's branch when the run's session was launched to push there: to fix a failed
- * re-gate of this same run, for feedback, or to continue an earlier attempt's open pull request
- * (its `session_launched` line's `resumed_from` names the run itself). That session works on a
- * branch of T3's own and pushes to the pull request's, so that is where its work is. Null for a
- * first launch, and for a session resumed from an earlier attempt's branch: a version before the
- * push words left that work on T3's branch, so the next launch tries T3's branch first and falls
- * back to this one only when origin lacks it (`start`'s `continuation`).
+ * re-gate of this run, for feedback, or to continue an earlier attempt's open pull request. Null
+ * for a first launch, and for a session resumed from an earlier attempt's branch: older versions
+ * left that work on T3's branch, so `start` tries it first and this one only if origin lacks it.
  */
 export const regateBranch = (seen: Seen, run: RunId): string | null =>
   seen.resumedFromRun === runIdToString(run) ? seen.resumedFrom : null;

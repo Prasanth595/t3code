@@ -1,13 +1,8 @@
 /**
- * The session that fixes a failed re-gate of a ready pull request, ported from softfac's
- * `runner.rs` (`branch_refused`, `send_relaunch`, `relaunch_session`). The ready pull request's
- * session was stopped and its worktree removed when the gate passed, so a failure has no session
- * to be sent to: a new one is launched from the pull request's branch at its tip on `origin`,
- * with the failure in its first message, and pushes to the same branch.
- *
- * The decision (`regate_relaunching`) is in the ledger before this runs, so a call that finds it
- * with no `session_launched` after it sends the launch again under the same command id, and T3
- * answers with the thread it made.
+ * The session that fixes a failed re-gate of a ready pull request. Its earlier session was stopped
+ * and its worktree removed at the gate pass, so a new one launches from the branch's tip on
+ * `origin` with the failure in its first message. The decision (`regate_relaunching`) is in the
+ * ledger first, so a call with no `session_launched` after it relaunches under the same command id.
  */
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
@@ -66,13 +61,10 @@ export const branchRefused = (branch: string): Stop | null =>
     : { reason: LAUNCH_FAILED, detail: "the pull request's branch is not a plain branch name" };
 
 /**
- * Launches the session of a decided relaunch and writes its `session_launched` line, with
- * `resumed_from` (this run and the pull request's branch). `earlierCall` says an earlier call
- * reached this point, so a session may exist whatever this call's refusal says. Not finding the
- * project fails as an error with nothing written; a project that is not there, or a launch T3
- * answers with a failure (in-process, every failure of the call is T3's answer after the request
- * went out, and a session may exist), sends the issue `stuck` with the note and the command id.
- * So does a project with no default model (`launchable`).
+ * Launches the session of a decided relaunch and writes `session_launched` with `resumed_from`.
+ * `earlierCall` says an earlier call reached this point, so a session may exist whatever this
+ * call's refusal says. A failed project lookup is an error with nothing written; a missing
+ * project, a T3 launch failure or no default model (`launchable`) sends the issue `stuck`.
  */
 export const relaunchSession = Effect.fn("RunnerRelaunch.relaunchSession")(function* (
   ctx: RelaunchContext,

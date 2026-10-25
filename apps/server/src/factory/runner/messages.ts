@@ -39,12 +39,10 @@ const escapeForGitHub = (text: string): string =>
   sanitize(text, true).replaceAll("@", "@\u200B").replaceAll("<!--", "<\u200B!--");
 
 /**
- * Session text made safe to store and to show, prepared once where it enters the factory and
- * then used as it is for the comment, the ledger and the returned reason. Line endings are
- * normalised and the ends trimmed, the text is cut at {@link SESSION_TEXT_LIMIT} characters with
- * a final `[cut]` line, control characters and invisible or bidirectional marks become spaces
- * (newline and tab stay), `@` cannot ping anyone and `<!--` cannot forge the factory's hidden
- * markers.
+ * Session text made safe to store and show, prepared once where it enters the factory. Line
+ * endings are normalised, ends trimmed, text cut at {@link SESSION_TEXT_LIMIT} with a final `[cut]`
+ * line, control and invisible or bidirectional characters become spaces (newline and tab stay),
+ * `@` cannot ping anyone and `<!--` cannot forge the factory's hidden markers.
  */
 export const prepareSessionText = (text: string): string => {
   const trimmed = text.replaceAll("\r\n", "\n").trim();
@@ -149,12 +147,9 @@ export const WRONG_ACCOUNT_PREFIX = "the session's gh account is ";
 
 /**
  * What a launch continues from, and why. The worktree is made from `branch`. `time-limit` and
- * `interrupted` continue an earlier run of this issue (`run`); `existing-pr` continues the open
- * pull request at `prUrl` that an earlier attempt (on this machine or another) opened for the
- * issue; `failed-regate` and `feedback` continue the run's own pull request at `prUrl`, which
- * passed the gate and failed it when it ran again, or passed it and an instructor left feedback.
- * Every resume names the branch to push to and says not to open another pull request: a session
- * that opens one beside the work it was given is the duplicate this is here to prevent.
+ * `interrupted` continue an earlier run (`run`); `existing-pr` continues the open pull request at
+ * `prUrl` that an earlier attempt opened; `failed-regate` and `feedback` continue the run's own
+ * pull request at `prUrl`. A resume names the branch to push to and says not to open another one.
  */
 export type ResumeFrom = EarlierRunResume | ExistingPrResume | RegateResume;
 
@@ -208,11 +203,9 @@ const resumeParagraph = (resumed: ResumeFrom): string => {
 
 /**
  * The first message of a session for a GitHub issue: invokes `/factory`, says nobody is in the
- * chat, names the branch to open the pull request against when the issue's `## Base` names one
- * other than the repo's (`base`), adds the resume paragraph when the launch continues an earlier
- * run's branch, and names the GitHub identity the session acts as (`login`, and the
- * `ghConfigDir` its T3 server should have been started with) with what to do when `gh` says
- * otherwise.
+ * chat, names the base branch when the issue's `## Base` differs from the repo's (`base`), adds the
+ * resume paragraph for a continued branch, and names the GitHub identity the session acts as
+ * (`login`, `ghConfigDir`) with what to do when `gh` says otherwise.
  */
 export const launchMessage = (
   repo: string,
@@ -438,12 +431,10 @@ const feedbackKind = (kind: FeedbackKind): string => {
 };
 
 /**
- * The first message's block of new feedback from instructors: the factory's fixed words, then
- * each item numbered, with its author, its kind, its text and, for a review, each inline comment
- * with its path and line. Everything from GitHub is cleaned like an instructor's text and put in
- * a fence, so none of it can leave its place in the block. The texts together are cut at
- * {@link INSTRUCTION_LIMIT} characters, and a cut says so and where to read the rest. `prUrl` is
- * the pull request the feedback is on.
+ * The first message's block of new feedback from instructors: fixed words, then each item numbered
+ * with author, kind, text and, for a review, each inline comment's path and line. GitHub text is
+ * cleaned and fenced so none of it can leave its place. Texts are cut together at
+ * {@link INSTRUCTION_LIMIT} characters, saying where to read the rest. `prUrl` is the pull request.
  */
 export const feedbackMessage = (prUrl: string, items: ReadonlyArray<Feedback>): string => {
   let left = INSTRUCTION_LIMIT;

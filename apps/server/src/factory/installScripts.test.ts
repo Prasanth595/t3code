@@ -106,17 +106,10 @@ const makeArchive = (version: string, options: { binary?: boolean; label?: strin
   return archive;
 };
 
-// A little launchd-like, one loaded flag and drain file per job label (the main job and the
-// logrotate job): bootout leaves the job loaded for two more `print` polls (or
-// LAUNCHCTL_BOOTOUT_DRAIN for the main job, LAUNCHCTL_BOOTOUT_DRAIN_LOGROTATE for the other),
-// and bootstrap fails with EIO while it is still loaded (or when LAUNCHCTL_BOOTSTRAP_FAIL is
-// set, main job only; LAUNCHCTL_BOOTSTRAP_FAIL_LOGROTATE fails the logrotate job's bootstrap
-// only). Only the main job's bootstrap writes "factory started" to the log when
-// LAUNCHCTL_HEALTHY (space-separated `current` targets) lists the version `current` points at
-// (LAUNCHCTL_HEALTHY_LINE writes another line instead, LAUNCHCTL_HEALTHY_DELAY writes it that many
-// seconds later, as a server still starting would); LAUNCHCTL_TRUNCATE_LOG empties the log first,
-// and LAUNCHCTL_ROTATE_LOG moves a fresh copy of the log to .1 and empties it right after the
-// line, as rotate-log.sh would.
+// A launchd-like stub: one loaded flag and drain file per job label (main and logrotate).
+// bootout leaves the job loaded for two more `print` polls, and bootstrap fails with EIO while
+// loaded. The LAUNCHCTL_* variables tune drain, bootstrap failure, the "factory started" health
+// line and log truncation or rotation; the stub below reads each.
 const setupSandbox = () => {
   tmp = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3fac-install-")));
   home = NodePath.join(tmp, "home");
