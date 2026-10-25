@@ -128,9 +128,9 @@ of \`main\` for that work, never the tag-pinned diagnosis clone.
 - Show the user the complete final issue text and get an explicit yes before
   posting. Never post without it.
 - Note at the end of the issue which model and agent produced it.
-- Post with \`gh issue create --label via-triage\` only if
-  \`gh api repos/pingdotgg/t3code --jq .permissions.triage\` prints \`true\`. For
-  anyone else GitHub drops the label and still reports success.
+- Post with \`gh issue create --repo pingdotgg/t3code --label via-triage\` only
+  if \`gh api repos/pingdotgg/t3code --jq .permissions.triage\` prints \`true\`.
+  For anyone else GitHub drops the label and still reports success.
 - Otherwise, or if \`gh\` is not authenticated, build a prefilled
   https://github.com/pingdotgg/t3code/issues/new?template=via-triage.yml URL.
   The form applies the label whoever submits it. Add \`title\` plus one
