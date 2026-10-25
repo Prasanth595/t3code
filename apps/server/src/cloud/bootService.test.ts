@@ -193,6 +193,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     service,
     makeService,
     fs,
+    home,
     baseDir,
     statePath,
     commands,
@@ -298,8 +299,10 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
   it.effect("installs, reports current state, and uninstalls", () =>
     Effect.gen(function* () {
       const { service, fs, statePath, timeouts, runtime } = yield* makeHarness();
+      const path = yield* Path.Path;
       const plan = yield* service.install();
 
+      expect(plan.logPath).toBe(path.join(plan.baseDir, "userdata", "logs", "boot-service.log"));
       expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
         protocol: SERVICE_LAUNCHER_PROTOCOL,
         activeVersion: "1.2.3",
@@ -737,6 +740,50 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           "systemctl --user restart t3code.service",
         ]);
       }
+    }),
+  );
+
+  // regression: #24910 launchd must open its logs before the service can start.
+  it.effect("keeps macOS service logs in Library when the T3 home is elsewhere", () =>
+    Effect.gen(function* () {
+      const { makeService, fs, home } = yield* makeHarness("darwin");
+      const path = yield* Path.Path;
+      const volume = yield* fs.makeTempDirectoryScoped({ prefix: "t3-external-home-" });
+      const baseDir = path.join(volume, "T3Code");
+      const service = yield* makeService(undefined, "1.2.3", baseDir);
+
+      const plan = yield* service.install();
+      const logDir = path.join(home, "Library", "Logs", "T3Code");
+      const logPath = path.join(logDir, "boot-service.log");
+      expect(plan.logPath).toBe(logPath);
+      expect(yield* fs.exists(logDir)).toBe(true);
+      const plist = yield* fs.readFileString(plan.unitPath);
+      expect(plist).toContain(`<key>StandardOutPath</key>\n  <string>${logPath}</string>`);
+      expect(plist).toContain(`<key>StandardErrorPath</key>\n  <string>${logPath}</string>`);
+      expect(BootService.bootServiceBaseDirOf(plist)).toBe(baseDir);
+      expect(yield* service.status).toMatchObject({ current: true, logPath });
+    }),
+  );
+
+  it.effect("moves legacy macOS service logs to Library on repair and keeps them on update", () =>
+    Effect.gen(function* () {
+      const { service, makeService, fs, home, baseDir } = yield* makeHarness("darwin");
+      const path = yield* Path.Path;
+      const logPath = path.join(home, "Library", "Logs", "T3Code", "boot-service.log");
+      const plan = yield* service.install();
+      const plist = yield* fs.readFileString(plan.unitPath);
+      const legacyLogPath = path.join(baseDir, "userdata", "logs", "boot-service.log");
+      yield* fs.writeFileString(plan.unitPath, plist.replaceAll(logPath, legacyLogPath));
+
+      expect((yield* service.status).current).toBe(false);
+      expect((yield* service.install()).logPath).toBe(logPath);
+      expect(yield* fs.readFileString(plan.unitPath)).toBe(plist);
+      expect((yield* service.status).current).toBe(true);
+
+      const updated = yield* makeService(undefined, "1.2.4");
+      expect((yield* updated.install()).logPath).toBe(logPath);
+      expect(yield* updated.status).toMatchObject({ current: true, logPath });
+      expect(yield* fs.readFileString(plan.unitPath)).not.toContain(legacyLogPath);
     }),
   );
 
