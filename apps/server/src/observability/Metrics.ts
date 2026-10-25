@@ -195,3 +195,14 @@ export const withMetrics: {
   ): <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   <A, E, R>(effect: Effect.Effect<A, E, R>, options: WithMetricsOptions): Effect.Effect<A, E, R>;
 } = dual(2, withMetricsImpl);
+
+// Shaped as an `Effect.fn` combinator: the command is the instrumented function's argument.
+export const withCommandMetrics = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  command: { readonly type: string },
+): Effect.Effect<A, E, R> =>
+  withMetrics(effect, {
+    counter: orchestrationCommandsTotal,
+    timer: orchestrationCommandDuration,
+    attributes: { commandType: command.type },
+  });
