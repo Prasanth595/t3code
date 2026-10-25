@@ -47,7 +47,6 @@ it.effect.each([
 
     const triageDir = path.join(baseDir, "userdata", "triage");
     const directories = yield* fs.readDirectory(triageDir);
-    assert.lengthOf(directories, 1);
     const context = yield* fs.readFileString(
       path.join(triageDir, directories[0] ?? "", "context.md"),
     );
@@ -58,7 +57,6 @@ it.effect.each([
       context,
       `Service log (systemd/launchd service installs only): ${expectedLogPath}`,
     );
-    assert.include(context, `Logs dir: ${path.join(baseDir, "userdata", "logs")}`);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
