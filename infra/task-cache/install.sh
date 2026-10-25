@@ -6,9 +6,9 @@ source_dir="${T3_TASK_CACHE_SOURCE_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}
 export PATH="$HOME/.local/share/vite-plus/bin:$HOME/.vite-plus/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 if [[ $# -gt 0 ]]; then
-  node "$source_dir/manage.ts" import "$1"
+  node "$source_dir/install.mjs" "$1"
 else
-  node "$source_dir/manage.ts" install
+  node "$source_dir/install.mjs"
 fi
 
 mkdir -p "$HOME/.config/t3-task-cache"

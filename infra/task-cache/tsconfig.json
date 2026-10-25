@@ -2,7 +2,9 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ESNext", "DOM"],
-    "types": ["node"]
+    "types": ["node"],
+    // The pinned upstream protocol uses parameter properties; Alchemy bundles it.
+    "erasableSyntaxOnly": false
   },
   "include": ["*.ts"]
 }

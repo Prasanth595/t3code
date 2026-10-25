@@ -70,7 +70,7 @@ runs:
       if: hashFiles('.task-cache.json') != ''
       shell: bash
       run: |
-        node infra/task-cache/manage.ts install
+        node infra/task-cache/install.mjs
         if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main ]]; then
           echo 'VP_REMOTE_CACHE=read-write' >> "$GITHUB_ENV"
         else

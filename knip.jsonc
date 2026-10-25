@@ -115,6 +115,9 @@
       // React Native codegen discovers component specifications by filename.
       "entry": ["src/*NativeComponent.ts!"],
     },
+    "infra/task-cache": {
+      "entry": ["alchemy.run.ts!"],
+    },
     "infra/relay": {
       "entry": ["alchemy.run.ts!", "src/persistence/schema.ts!"],
     },
