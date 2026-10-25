@@ -955,7 +955,7 @@ function buildRemotePairingScript(stateKey: string, input?: RemoteT3RunnerOption
   });
 }
 
-export function buildRemoteStopScript(stateKey: string): string {
+function buildRemoteStopScript(stateKey: string): string {
   return applyScriptPlaceholders(REMOTE_STOP_SCRIPT, {
     T3_STATE_LOCK_SCRIPT: REMOTE_STATE_LOCK_SCRIPT,
     T3_STATE_KEY: stateKey,
