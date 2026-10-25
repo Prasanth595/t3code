@@ -1,5 +1,6 @@
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { threadHasOpenQuestion } from "@t3tools/client-runtime/state/models";
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { showThreadUndoNotice } from "./thread-undo-notice";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
@@ -342,7 +343,7 @@ export function useThreadListActions(): {
         Dialog.alert(
           "Could not snooze thread",
           thread.hasPendingApprovals ||
-            thread.hasPendingUserInput ||
+            threadHasOpenQuestion(thread) ||
             thread.pendingSubagentRequest != null
             ? "This thread is waiting on you. Respond to the pending request before snoozing it."
             : "This thread is still starting a turn. Try again once it's running.",

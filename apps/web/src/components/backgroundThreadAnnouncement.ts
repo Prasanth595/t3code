@@ -1,4 +1,5 @@
 import type { OrchestrationV2RunStatus, RunId } from "@t3tools/contracts";
+import { threadHasOpenQuestion } from "@t3tools/client-runtime/state/models";
 
 import type { SidebarThreadSummary } from "../types";
 import { runOutcomeText, THREAD_STATUS_TEXT } from "./chat/threadActivityAnnouncement";
@@ -29,7 +30,7 @@ export function resolveBackgroundThreadRequest(
   const ownRequestId = thread.source.pendingRuntimeRequest?.id ?? null;
   if (thread.hasPendingApprovals) return { request: "approval", requestId: ownRequestId };
   if (thread.pendingSubagentRequest === "approval") return { request: "approval", requestId: null };
-  if (thread.hasPendingUserInput) return { request: "input", requestId: ownRequestId };
+  if (threadHasOpenQuestion(thread)) return { request: "input", requestId: ownRequestId };
   if (thread.pendingSubagentRequest === "user_input") return { request: "input", requestId: null };
   return { request: null, requestId: null };
 }

@@ -23,6 +23,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -99,6 +100,26 @@ describe("resolveThreadListV2Status", () => {
     expect(resolveThreadListV2Status(present({ ...raw, blockedOnThreadWait: false }))).toBe(
       "working",
     );
+  });
+
+  it("shows Input for an async question while the agent keeps working", () => {
+    const thread = presentThreadShell(
+      environmentId,
+      makeRawThreadShell({
+        status: "running",
+        activeRunId: RunId.make("run-async-question"),
+        latestRunId: RunId.make("run-async-question"),
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("request-async-question"),
+          kind: "user_input",
+          createdAt: DateTime.makeUnsafe(NOW),
+          blocking: false,
+        },
+      }),
+    );
+
+    expect(thread.hasPendingUserInput).toBe(false);
+    expect(resolveThreadListV2Status(thread)).toBe("input");
   });
 
   it("shows a waiting guest message as Request, after the agent's own requests", () => {

@@ -173,6 +173,17 @@ describe("resolveBackgroundThreadRequest", () => {
       source: { pendingRuntimeRequest: parentQuestion === null ? null : question(parentQuestion) },
     });
 
+  it("raises an async question the agent keeps working past", () => {
+    expect(
+      resolveBackgroundThreadRequest({
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        pendingSubagentRequest: null,
+        source: { pendingRuntimeRequest: { ...question("question-async"), blocking: false } },
+      }),
+    ).toEqual({ request: "input", requestId: "question-async" });
+  });
+
   it("raises a subagent's request on the parent without borrowing the parent's request id", () => {
     expect(childApproval(null)).toEqual({ request: "approval", requestId: null });
     // The parent's own questions come and go while the child's approval waits.

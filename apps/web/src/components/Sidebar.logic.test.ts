@@ -35,7 +35,14 @@ import {
   resolveSidebarDropVerb,
 } from "./Sidebar.logic";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  RuntimeRequestId,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import {
   DEFAULT_INTERACTION_MODE,
@@ -437,6 +444,27 @@ describe("resolveThreadStatusPill", () => {
       updatedAt: "2026-03-09T10:00:00.000Z",
     },
   };
+
+  it("shows Input for an async question while the agent keeps working", () => {
+    const asyncQuestion = presentThreadShell(localEnvironmentId, {
+      ...makeThreadFixture().source,
+      latestRunId: RunId.make("run-async-question"),
+      activeRunId: RunId.make("run-async-question"),
+      status: "running",
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("request-async-question"),
+        kind: "user_input",
+        createdAt: DateTime.makeUnsafe("2026-03-09T10:00:00.000Z"),
+        blocking: false,
+      },
+    });
+
+    expect(asyncQuestion.hasPendingUserInput).toBe(false);
+    expect(resolveSidebarThreadStatus(asyncQuestion)).toBe("input");
+    expect(resolveThreadStatusPill({ thread: asyncQuestion })).toMatchObject({
+      label: "Awaiting Input",
+    });
+  });
 
   it("shows an active thread wait without a pulse and resumes Working when it ends", () => {
     const blocked = { ...baseThread, blockedOnThreadWait: true };

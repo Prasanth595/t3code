@@ -251,6 +251,15 @@ export function scopeProject(
 
 export type PendingSubagentRequest = "approval" | "user_input";
 
+/** Thread lists show Input even for async questions the agent keeps working past. */
+export function threadHasOpenQuestion(
+  thread: Pick<EnvironmentThreadShell, "hasPendingUserInput"> & {
+    readonly source?: Pick<EnvironmentThreadShell["source"], "pendingRuntimeRequest"> | undefined;
+  },
+): boolean {
+  return thread.hasPendingUserInput || thread.source?.pendingRuntimeRequest?.kind === "user_input";
+}
+
 export function presentThreadShell(
   environmentId: EnvironmentId,
   thread: OrchestrationV2ThreadShell,
