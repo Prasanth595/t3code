@@ -56,7 +56,7 @@ export function BetaSettingsPanel() {
               <Link to="/settings/connections" className="underline underline-offset-2">
                 Connections
               </Link>
-              . Turning it off ends every open guest link.
+              . While it is off, every guest link stops working.
             </>
           }
           control={
