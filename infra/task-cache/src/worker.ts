@@ -78,9 +78,10 @@ export const layer = Worker.make(
     );
     yield* Cloudflare.Workers.cron("* * * * *", () =>
       Cache.Cache.pipe(
+        // Three full batches stay below D1’s 1,000-query invocation limit.
         Effect.flatMap((cache) =>
-          Effect.all([cache.cleanup, cache.cleanup, cache.cleanup, cache.cleanup], {
-            concurrency: 4,
+          Effect.all([cache.cleanup, cache.cleanup, cache.cleanup], {
+            concurrency: 3,
             discard: true,
           }),
         ),
