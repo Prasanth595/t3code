@@ -3,16 +3,14 @@ import { useEffect, useEffectEvent } from "react";
 import { BackHandler } from "react-native";
 
 /**
- * Handles the Android hardware back button while `active` and the owning screen
- * is focused. `onBack` returns false to let the press fall through.
- *
- * Registration depends only on `active` and focus, never on `onBack`'s identity:
- * BackHandler calls the newest listener first, so re-registering on every render
- * would move a covered screen's handler above the screen on top of it.
+ * Android hardware back while `active` and the owning screen is focused.
+ * Keyed on those alone, not `onBack`: BackHandler calls the newest listener
+ * first, so re-registering per render lets a covered screen consume Back.
  */
 export function useHardwareBack(active: boolean, onBack: () => boolean) {
   const focused = useIsFocused();
   const handleBack = useEffectEvent(onBack);
+  // oxlint-disable-next-line t3code/react-effect-budget -- subscribes to BackHandler for the focused screen's lifetime
   useEffect(() => {
     if (!active || !focused) return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => handleBack());

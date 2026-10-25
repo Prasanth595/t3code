@@ -51,9 +51,12 @@ export function subscribeReduceMotion(onChange: Listener): () => void {
     reduceMotionSubscription = subscription;
     // The native event only reports changes; seed the current value once per
     // observation, and drop a seed that resolves after observation stopped.
-    void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
-      if (reduceMotionSubscription === subscription) setReduceMotionEnabled(enabled);
-    }, () => undefined);
+    void AccessibilityInfo.isReduceMotionEnabled().then(
+      (enabled) => {
+        if (reduceMotionSubscription === subscription) setReduceMotionEnabled(enabled);
+      },
+      () => undefined,
+    );
   }
   return () => {
     reduceMotionListeners.delete(onChange);
