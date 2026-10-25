@@ -1021,6 +1021,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           > => event.type === "subagent.updated",
         );
       return {
+        adapter,
         runtime,
         providerThread,
         threadId,
@@ -1140,6 +1141,127 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.isBelow(requests.indexOf("thread/inject_items"), requests.indexOf("turn/start"));
       }).pipe(
         Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
+  it.effect.each([
+    {
+      code: "unauthorized",
+      message:
+        "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.",
+      stale: true,
+    },
+    {
+      code: "unauthorized",
+      message:
+        "Error running remote compact task: Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.",
+      stale: true,
+    },
+    {
+      code: "unauthorized",
+      message:
+        "Your access token could not be refreshed because your refresh token has expired. Please log out and sign in again.",
+      stale: false,
+    },
+    { code: "internalServerError", message: "Service unavailable", stale: false },
+  ])(
+    "marks only external account mismatch for idle recovery: $message",
+    ({ code, message, stale }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "auth-change-thread";
+          const nativeTurnId = "auth-change-turn";
+          const error = { message, codexErrorInfo: code, additionalDetails: null };
+          const requests: string[] = [];
+          const harness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario: "external-auth-change",
+              entries: [
+                ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "hello" }),
+                {
+                  type: "emit_inbound",
+                  label: "error",
+                  frame: {
+                    method: "error",
+                    params: {
+                      threadId: nativeThreadId,
+                      turnId: nativeTurnId,
+                      error,
+                      willRetry: false,
+                    },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "failed",
+                  frame: {
+                    method: "turn/completed",
+                    params: {
+                      threadId: nativeThreadId,
+                      turn: {
+                        ...makeCodexReplayTurn({ id: nativeTurnId, status: "failed" }),
+                        error,
+                      },
+                    },
+                  },
+                },
+              ],
+            }),
+            () => Effect.void,
+            (method) =>
+              Effect.sync(() => {
+                requests.push(method);
+              }),
+          );
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("auth-change-attempt"),
+              text: "hello",
+            }),
+          );
+          yield* harness.firstTerminal;
+          assert.equal(yield* harness.runtime.hasStaleCredentials ?? Effect.succeed(false), stale);
+          assert.equal(harness.terminalEvents()[0]?.status, "failed");
+          assert.include(harness.terminalEvents()[0]?.failure?.message, message);
+          assert.equal(requests.filter((method) => method === "turn/start").length, 1);
+          if (stale) {
+            const replacement = yield* harness.adapter.openSession({
+              threadId: harness.threadId,
+              providerSessionId: ProviderSessionId.make("auth-change-replacement"),
+              modelSelection: CODEX_TEST_MODEL_SELECTION,
+              runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+            });
+            const replacementThread = yield* replacement.ensureThread({
+              threadId: harness.threadId,
+              modelSelection: CODEX_TEST_MODEL_SELECTION,
+              runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+            });
+            const failedAgain = yield* replacement.events.pipe(
+              Stream.filter((event) => event.type === "turn.terminal"),
+              Stream.runHead,
+              Effect.forkChild({ startImmediately: true }),
+            );
+            yield* replacement.startTurn(
+              makeCodexTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: replacementThread,
+                now: yield* DateTime.now,
+                attemptId: RunAttemptId.make("auth-change-replacement-attempt"),
+                text: "hello",
+              }),
+            );
+            yield* Fiber.join(failedAgain);
+            assert.isFalse(yield* replacement.hasStaleCredentials ?? Effect.succeed(false));
+            assert.include(harness.terminalEvents()[0]?.failure?.message, "run codex login");
+          }
+        }),
+      ).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
         ),
