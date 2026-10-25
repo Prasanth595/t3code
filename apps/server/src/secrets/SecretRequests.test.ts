@@ -420,6 +420,29 @@ it.effect("a failed file write keeps the value, so the request can retry", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("a file is not delivered while its stored copy cannot be removed", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "secret-files-test-" });
+    yield* withService(
+      ({ service }) =>
+        Effect.gen(function* () {
+          yield* service.answer({
+            threadId,
+            turnItemId,
+            answer: { type: "save", secret: "cf_token" },
+          });
+          const first = yield* service.saveToFile({ threadId, turnItemId }).pipe(Effect.flip);
+          assert.equal(first.reason, "consume_failed");
+          // A retry finds the file but still will not hand it out until the removal works.
+          const retried = yield* service.saveToFile({ threadId, turnItemId }).pipe(Effect.flip);
+          assert.equal(retried.reason, "consume_failed");
+        }),
+      { delivery: "file", directory, removeFails: true },
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("a secret the card promised to keep from the agent is never written to a file", () =>
   withService(({ service, stored }) =>
     Effect.gen(function* () {

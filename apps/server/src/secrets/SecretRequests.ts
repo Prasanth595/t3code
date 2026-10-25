@@ -253,8 +253,16 @@ const make = Effect.gen(function* () {
     const ref = refFor(salt, input.threadId, item.id);
     const file = path.join(filesDir, ref.slice(SECRET_REF_PREFIX.length));
     return yield* Effect.gen(function* () {
-      // A retry with the same clientRequestId gets the file the first call wrote.
-      if (yield* fileSystem.exists(file).pipe(Effect.orElseSucceed(() => false))) return file;
+      // One use: the file counts as delivered only once the stored copy is gone. A retry with the
+      // same clientRequestId gets the file the first call wrote and finishes that removal.
+      const removeStored = removeLogged(storeName(ref)).pipe(
+        Effect.flatMap((removed) =>
+          removed ? Effect.succeed(file) : new SecretRequestError({ reason: "consume_failed" }),
+        ),
+      );
+      if (yield* fileSystem.exists(file).pipe(Effect.orElseSucceed(() => false))) {
+        return yield* removeStored;
+      }
       // The stored value goes only after the file is complete, so a failed write can retry.
       const value = yield* readRef({ ref, projectId: records.thread.projectId });
       const partial = `${file}.partial`;
@@ -271,8 +279,7 @@ const make = Effect.gen(function* () {
         Effect.andThen(fileSystem.rename(partial, file)),
         Effect.mapError((cause) => new SecretRequestError({ reason: "store_failed", cause })),
       );
-      yield* removeLogged(storeName(ref));
-      return file;
+      return yield* removeStored;
     }).pipe(consumeLock.withPermits(1));
   });
 
