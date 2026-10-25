@@ -2240,12 +2240,22 @@ export const layerWithOptions = (
                       event.type === "provider_thread.updated" &&
                       event.providerThread.appThreadId !== null
                     ) {
+                      // Keep the update pending when persistence fails. Letting the
+                      // failure escape would end the event pump and tear down the
+                      // session for an unread snapshot that a later retry can save.
                       const received = yield* ingestRunlessEventHeld(
                         entry,
                         event.providerThread.appThreadId,
                         event,
+                      ).pipe(
+                        Effect.catchCause((cause) =>
+                          Effect.logWarning(
+                            "orchestration-v2.driver-session.unread-thread-update-failed",
+                            { providerSessionId: entry.runtime.providerSessionId, cause },
+                          ).pipe(Effect.as(false)),
+                        ),
                       );
-                      const update = entry.latestThreadUpdates.get(event.providerThread.id);
+                      const update = entry.threadUpdateDeliveries.get(event);
                       if (update !== undefined) update.received = received;
                       if (received) entry.pendingRewinds.delete(event);
                     }

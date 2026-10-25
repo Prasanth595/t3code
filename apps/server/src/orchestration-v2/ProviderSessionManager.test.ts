@@ -3016,6 +3016,103 @@ it.effect("ProviderSessionManagerV2 persists a provider thread update without a 
 );
 
 it.effect(
+  "ProviderSessionManagerV2 keeps the event pump alive when a runless thread update fails",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const beforeUnchangedWrite = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const projectId = yield* idAllocator.allocate.project({
+          fixtureName: "provider-session-manager-runless-update-failure",
+        });
+        const threadId = yield* idAllocator.allocate.thread({
+          fixtureName: "provider-session-manager-runless-update-failure",
+          projectId,
+        });
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const afterOpen = yield* eventSink.latestSequence({ threadId });
+        const persistedFiber = yield* eventSink.stream({ threadId, afterSequence: afterOpen }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "provider-thread.updated" &&
+              stored.event.payload.nativeThreadRef?.nativeId === "next-session",
+          ),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        const adapterEvents = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+        assert.isDefined(adapterEvents);
+        // Fail the first unread-snapshot write, then let later writes through.
+        yield* Ref.set(
+          beforeUnchangedWrite,
+          Effect.die(new Error("simulated unread snapshot write failure")),
+        );
+        yield* Queue.offer(adapterEvents!, {
+          type: "provider_thread.updated",
+          driver: CODEX_DRIVER,
+          providerThread: {
+            ...providerThread,
+            nativeThreadRef: {
+              driver: CODEX_DRIVER,
+              nativeId: "cleared-session",
+              strength: "strong",
+            },
+          },
+        });
+        // The pump must keep processing after the failed fallback write.
+        yield* Queue.offer(adapterEvents!, {
+          type: "provider_thread.updated",
+          driver: CODEX_DRIVER,
+          providerThread: {
+            ...providerThread,
+            nativeThreadRef: {
+              driver: CODEX_DRIVER,
+              nativeId: "next-session",
+              strength: "strong",
+            },
+          },
+        });
+        yield* Fiber.join(persistedFiber);
+
+        assert.equal(
+          (yield* projectionStore.getThreadProjection(threadId)).providerThreads[0]?.nativeThreadRef
+            ?.nativeId,
+          "next-session",
+        );
+      });
+
+      yield* effect.pipe(
+        Effect.provide(layerTest({ state, idleTimeoutMs: 1000, beforeUnchangedWrite })),
+      );
+    }),
+);
+
+it.effect(
   "ProviderSessionManagerV2 persists a provider thread update queued behind a closing run",
   () =>
     Effect.gen(function* () {
