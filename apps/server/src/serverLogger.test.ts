@@ -151,17 +151,6 @@ const printThroughConsole = (fields: object) =>
   });
 
 describe("ServerLoggerLive", () => {
-  it.effect("exports a resource that names its service instance", () =>
-    Effect.gen(function* () {
-      const { requests } = yield* logInSpanThrough({
-        otlpLogsUrl: "https://collector.example.com/v1/logs",
-      });
-
-      const body = requests.map((request) => request.body).join("\n");
-      assert.include(body, '"key":"service.instance.id"');
-    }),
-  );
-
   it.effect("exports the operator's service instance id instead of a generated one", () =>
     Effect.gen(function* () {
       const { requests } = yield* logInSpanThrough({

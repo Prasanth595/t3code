@@ -28,11 +28,8 @@ import {
 } from "./observability.ts";
 
 describe("processServiceInstanceId", () => {
-  it("stays the same for the life of the process", () => {
+  it("stays the same for the process unless the operator set one", () => {
     expect(processServiceInstanceId()).toBe(processServiceInstanceId({}));
-  });
-
-  it("keeps a value the operator set in OTEL_RESOURCE_ATTRIBUTES", () => {
     expect(processServiceInstanceId({ "service.instance.id": "pod-7" })).toBe("pod-7");
   });
 });
