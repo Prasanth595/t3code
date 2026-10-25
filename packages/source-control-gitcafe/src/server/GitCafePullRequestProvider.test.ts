@@ -241,7 +241,11 @@ describe("GitCafePullRequestProvider changed paths", () => {
                 ...(cursor === undefined ? {} : { cursor }),
               });
         const first = yield* read();
-        const result = yield* read(first.nextCursor!).pipe(Effect.result);
+        const input = { ...target, cursor: first.nextCursor! };
+        const result =
+          method === "getDiff"
+            ? yield* provider.getDiff(input).pipe(Effect.result)
+            : yield* provider.getDiffFilePaths!(input).pipe(Effect.result);
         assert.strictEqual(result._tag, "Failure");
       }).pipe(Effect.provide(server.layer));
     },
