@@ -225,7 +225,7 @@ describe("install.sh and rollback.sh", () => {
     expect(plist).not.toContain("@HOME@");
     for (const part of [
       `if [ -f "${home}/.config/t3fac/env" ]; then . "${home}/.config/t3fac/env"; fi; `,
-      `exec "${home}/.local/share/t3fac/current/t3" serve --base-dir "${home}/.config/t3fac" --port 3876</string>`,
+      `export T3FAC_LAUNCH_PATH="$PATH"; exec "${home}/.local/share/t3fac/current/t3" serve --base-dir "${home}/.config/t3fac" --port 3876</string>`,
       `${home}/Library/Logs/t3fac/`,
     ]) {
       expect(plist).toContain(part);

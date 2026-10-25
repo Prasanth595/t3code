@@ -113,6 +113,43 @@ it.live("passes PATH, LC_* and the env argument through", () =>
   ),
 );
 
+it.live("puts the launch PATH first, then the rest of the server PATH, without duplicates", () =>
+  withEnv(
+    {
+      T3FAC_LAUNCH_PATH: "/launch/python/bin:/opt/homebrew/bin:/usr/bin",
+      PATH: "/usr/bin:/login/bin:/opt/homebrew/bin:/usr/bin:/bin",
+    },
+    Effect.gen(function* () {
+      const path = yield* run({ command: `printf %s "$PATH"`, shell: true });
+      assert.strictEqual(
+        path.tail,
+        "/launch/python/bin:/opt/homebrew/bin:/usr/bin:/login/bin:/bin",
+      );
+      const launch = yield* run({
+        command: `printf %s "\${T3FAC_LAUNCH_PATH-unset}"`,
+        shell: true,
+      });
+      assert.strictEqual(launch.tail, "unset");
+    }),
+  ),
+);
+
+it.live("passes the server PATH unchanged when no launch PATH is set", () =>
+  Effect.gen(function* () {
+    const saved = globalThis.process.env.T3FAC_LAUNCH_PATH;
+    delete globalThis.process.env.T3FAC_LAUNCH_PATH;
+    try {
+      const path = yield* withEnv(
+        { PATH: "/usr/bin:/login/bin:/usr/bin:/bin" },
+        run({ command: `printf %s "$PATH"`, shell: true }),
+      );
+      assert.strictEqual(path.tail, "/usr/bin:/login/bin:/usr/bin:/bin");
+    } finally {
+      if (saved !== undefined) globalThis.process.env.T3FAC_LAUNCH_PATH = saved;
+    }
+  }),
+);
+
 it.live("a timeout kills the whole process group, grandchild included", () =>
   withTempDir((dir) =>
     Effect.gen(function* () {
