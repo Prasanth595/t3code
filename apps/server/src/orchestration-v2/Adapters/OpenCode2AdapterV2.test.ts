@@ -1105,67 +1105,46 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  // regression: #22331 a steer sent while a foreground subagent ran was never answered
-  it.effect("moves a foreground subagent to the background so the parent answers a steer", () =>
+  const foregroundCall = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-fg" };
+  const foregroundSteerId = "msg_recorded_steer";
+  const steerDuringForeground: ReadonlyArray<ProviderReplayEntry> = [
+    out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+    promptAccepted,
+    event("session.execution.started", { sessionID: SESSION }),
+    event("session.tool.input.started", { ...foregroundCall, name: "subagent" }),
+    event("session.tool.called", {
+      ...foregroundCall,
+      name: "subagent",
+      input: { description: "Sleep", prompt: "sleep" },
+      executed: false,
+    }),
+    event("session.created", childCreated(CHILD)),
+    event("session.tool.progress", {
+      ...foregroundCall,
+      metadata: { sessionID: CHILD, status: "running" },
+    }),
+    event("session.execution.started", { sessionID: CHILD }),
+    out("session.prompt", {
+      sessionID: SESSION,
+      id: foregroundSteerId,
+      text: "<any>",
+      delivery: "steer",
+    }),
+    replyData("session.prompt", {
+      id: foregroundSteerId,
+      sessionID: SESSION,
+      time: { created: 1790656601500 },
+      type: "user",
+      payload: { text: "Also say STEERED." },
+      delivery: "steer",
+    }),
+    out("session.background", { sessionID: SESSION }),
+  ];
+  const steerForeground = (
+    runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
+    thread: OrchestrationV2ProviderThread,
+  ) =>
     Effect.gen(function* () {
-      const call = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-fg" };
-      const steerId = "msg_recorded_steer";
-      const { runtime, thread } = yield* resumed([
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-        promptAccepted,
-        event("session.execution.started", { sessionID: SESSION }),
-        event("session.tool.input.started", { ...call, name: "subagent" }),
-        event("session.tool.called", {
-          ...call,
-          name: "subagent",
-          input: { description: "Sleep", prompt: "sleep" },
-          executed: false,
-        }),
-        event("session.created", childCreated(CHILD)),
-        event("session.tool.progress", {
-          ...call,
-          metadata: { sessionID: CHILD, status: "running" },
-        }),
-        event("session.execution.started", { sessionID: CHILD }),
-        out("session.prompt", {
-          sessionID: SESSION,
-          id: steerId,
-          text: "<any>",
-          delivery: "steer",
-        }),
-        replyData("session.prompt", {
-          id: steerId,
-          sessionID: SESSION,
-          time: { created: 1790656601500 },
-          type: "user",
-          payload: { text: "Also say STEERED." },
-          delivery: "steer",
-        }),
-        out("session.background", { sessionID: SESSION }),
-        reply("session.background", null),
-        // Event order follows an OpenCode 2.1.4 capture, with shortened ids and texts.
-        returnedRunning(call.id),
-        event("session.inbox.enqueued", {
-          inboxID: "msg_backgrounded",
-          sessionID: SESSION,
-          item: {
-            type: "synthetic",
-            payload: {
-              text: "User requested that active blocking work be moved to the background.",
-            },
-            delivery: "steer",
-          },
-        }),
-        event("session.inbox.delivered", { sessionID: SESSION, inboxID: steerId }),
-        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_backgrounded" }),
-        event("session.text.ended", {
-          sessionID: SESSION,
-          assistantMessageID: "msg_assistant_answer",
-          ordinal: 0,
-          text: "STEERED",
-        }),
-        event("session.execution.succeeded", { sessionID: SESSION }),
-      ]);
       const attached = yield* Deferred.make<void>();
       const answered = yield* Deferred.make<void>();
       const ended = yield* Deferred.make<string>();
@@ -1191,22 +1170,93 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
       yield* runtime.startTurn(withLineage(thread));
       yield* Deferred.await(attached);
-      yield* runtime.steerTurn({
-        threadId,
-        runId: RunId.make("run:opencode2-adapter"),
-        providerThread: thread,
-        providerTurnId: yield* providerTurnId,
-        message: {
-          ...turnInput(thread).message,
-          messageId: MessageId.make("message:opencode2-adapter:steer"),
-          text: "Also say STEERED.",
-        },
-      });
-      assert.equal(yield* Deferred.await(ended), "completed");
-      yield* Deferred.await(answered);
+      const steer = yield* runtime
+        .steerTurn({
+          threadId,
+          runId: RunId.make("run:opencode2-adapter"),
+          providerThread: thread,
+          providerTurnId: yield* providerTurnId,
+          message: {
+            ...turnInput(thread).message,
+            messageId: MessageId.make("message:opencode2-adapter:steer"),
+            text: "Also say STEERED.",
+          },
+        })
+        .pipe(Effect.forkScoped);
+      return {
+        steer,
+        answered: Deferred.await(answered),
+        ended: Deferred.await(ended),
+        sleep,
+      };
+    });
+
+  // regression: #22331 a steer sent while a foreground subagent ran was never answered
+  it.effect("moves a foreground subagent to the background so the parent answers a steer", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...steerDuringForeground,
+        reply("session.background", null),
+        // Event order follows an OpenCode 2.1.4 capture, with shortened ids and texts.
+        returnedRunning(foregroundCall.id),
+        event("session.inbox.enqueued", {
+          inboxID: "msg_backgrounded",
+          sessionID: SESSION,
+          item: {
+            type: "synthetic",
+            payload: {
+              text: "User requested that active blocking work be moved to the background.",
+            },
+            delivery: "steer",
+          },
+        }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: foregroundSteerId }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_backgrounded" }),
+        event("session.text.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_assistant_answer",
+          ordinal: 0,
+          text: "STEERED",
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const { steer, answered, ended, sleep } = yield* steerForeground(runtime, thread);
+      yield* Fiber.join(steer);
+      assert.equal(yield* ended, "completed");
+      yield* answered;
       assert.equal(sleep.at(-1), "running");
       assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
     }).pipe(Effect.scoped),
+  );
+
+  it.effect("a steer returns when OpenCode never answers the background request", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...steerDuringForeground,
+        reply("session.background", "<hang>"),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        event("session.tool.success", {
+          ...foregroundCall,
+          content: [{ type: "text", text: `<subagent sessionID="${CHILD}" state="completed">` }],
+          metadata: { sessionID: CHILD, status: "completed" },
+          executed: false,
+        }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: foregroundSteerId }),
+        event("session.text.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_assistant_answer",
+          ordinal: 0,
+          text: "STEERED",
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const { steer, answered, ended } = yield* steerForeground(runtime, thread);
+      // The replay emits the answer only after the background request reached it.
+      yield* answered;
+      assert.equal(yield* ended, "completed");
+      yield* TestClock.adjust("10 seconds");
+      yield* Fiber.join(steer);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   const MIDDLE = "ses_middle0000000000000000000";

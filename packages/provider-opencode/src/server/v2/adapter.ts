@@ -3691,7 +3691,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           if (blocked && turn.steers.has(inboxID)) {
             yield* client.session
               .background({ sessionID: Session.ID.make(sessionId) })
-              .pipe(Effect.ignore({ log: true }));
+              .pipe(Effect.timeout(REQUEST_REPLY_TIMEOUT), Effect.ignore({ log: true }));
           }
         },
         (effect, steerInput) =>
