@@ -32,9 +32,7 @@ import {
   pagePullRequestConversationItems,
   pullRequestConversationItemComments,
   pullRequestConversationItems,
-  handoffPrompt,
-  handoffReviewComments,
-  stripPullRequestHandoffReferences,
+  appendHandoff,
   isPullRequestVerdictStale,
   isStackedPullRequestBase,
   loadingPullRequestCheckoutCommand,
@@ -890,7 +888,7 @@ describe("asking about a change rather than working on it", () => {
   });
 });
 
-describe("a second ask into the same composer", () => {
+describe("a second handoff into the same composer", () => {
   const chip = (id: string): ReviewCommentContext => ({
     id,
     sectionId: "pull-request:42",
@@ -902,67 +900,64 @@ describe("a second ask into the same composer", () => {
     text: "",
     diff: "",
   });
+  const ids = (comments: ReadonlyArray<ReviewCommentContext>) => comments.map((c) => c.id);
 
-  it("replaces what the last one left, chips included", () => {
-    const next = handoffReviewComments(
-      [chip("pull-request-context:41"), chip("pull-request-selection:page.tsx:1:2")],
-      [chip("pull-request-context:42")],
+  it("keeps the earlier findings and their chips", () => {
+    const next = appendHandoff(
+      {
+        prompt: "Fix the first finding.",
+        reviewComments: [chip("pull-request-finding:t1")],
+      },
+      { prompt: "Fix the second finding.", reviewComments: [chip("pull-request-finding:t2")] },
     );
-    expect(next.map((comment) => comment.id)).toEqual(["pull-request-context:42"]);
-  });
-
-  it("keeps a reader's own pull request reference when a later handoff lands", () => {
-    const own = buildPullRequestReferenceContext({
-      number: 42,
-      title: "Add the pull requests page",
-      url: "https://github.com/pingdotgg/t3code/pull/42",
-      headBranch: "feature",
-      baseBranch: "main",
-      state: "open" as const,
-      isDraft: false,
-    });
-    const prompt = `Look at this. ${formatInlineContextReference(reviewCommentContextReference(own))} `;
-
-    expect(stripPullRequestHandoffReferences(prompt, [own])).toBe(prompt);
-    expect(
-      handoffReviewComments([own], [chip("pull-request-context:42")]).map((comment) => comment.id),
-    ).toEqual([own.id, "pull-request-context:42"]);
-  });
-
-  it("keeps an edit the reader made to the sentence they were handed", () => {
-    expect(
-      handoffPrompt(
-        {
-          prompt: "Explain this pull request, the caching especially.",
-          lastHandoffPrompt: "Explain this pull request.",
-        },
-        "",
-      ),
-    ).toBe("Explain this pull request, the caching especially.");
-  });
-
-  it("replaces only its own sentence under text the reader typed", () => {
-    expect(
-      handoffPrompt(
-        {
-          prompt: "check the migration first\n\nExplain this pull request.",
-          lastHandoffPrompt: "Explain this pull request.",
-        },
-        "Why the cache key?",
-      ),
-    ).toBe("check the migration first\n\nWhy the cache key?");
-  });
-
-  it("keeps the lines the reader marked up in the thread themselves", () => {
-    const own = chip("file-comment:3");
-    const next = handoffReviewComments(
-      [own, chip("pull-request-finding:t1")],
-      [chip("pull-request-context:42")],
-    );
-    expect(next.map((comment) => comment.id)).toEqual([
-      "file-comment:3",
-      "pull-request-context:42",
+    expect(next.prompt).toBe("Fix the first finding.\n\nFix the second finding.");
+    expect(ids(next.reviewComments)).toEqual([
+      "pull-request-finding:t1",
+      "pull-request-finding:t2",
     ]);
+  });
+
+  it("keeps earlier diff selections when another is added", () => {
+    const next = appendHandoff(
+      {
+        prompt: "why this?",
+        reviewComments: [
+          chip("pull-request-context:42"),
+          chip("pull-request-selection:page.tsx:1:2"),
+        ],
+      },
+      {
+        prompt: "and this?",
+        reviewComments: [
+          chip("pull-request-context:42"),
+          chip("pull-request-selection:page.tsx:8:9"),
+        ],
+      },
+    );
+    expect(next.prompt).toBe("why this?\n\nand this?");
+    expect(ids(next.reviewComments)).toEqual([
+      "pull-request-context:42",
+      "pull-request-selection:page.tsx:1:2",
+      "pull-request-selection:page.tsx:8:9",
+    ]);
+  });
+
+  it("keeps what the reader typed, trailing line breaks aside", () => {
+    expect(
+      appendHandoff(
+        { prompt: "check the migration first\n", reviewComments: [chip("file-comment:3")] },
+        { prompt: "", reviewComments: [chip("pull-request-context:42")] },
+      ),
+    ).toEqual({
+      prompt: "check the migration first\n",
+      reviewComments: [chip("file-comment:3"), chip("pull-request-context:42")],
+    });
+    expect(
+      appendHandoff(
+        { prompt: "check the migration first\n", reviewComments: [] },
+        { prompt: "Explain this pull request.", reviewComments: [] },
+      ).prompt,
+    ).toBe("check the migration first\n\nExplain this pull request.");
   });
 });
 

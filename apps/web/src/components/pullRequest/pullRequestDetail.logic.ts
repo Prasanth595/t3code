@@ -40,8 +40,6 @@ import {
 } from "@t3tools/client-runtime/thread-pull-requests";
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
-import { reviewCommentContextId } from "~/lib/composerContextRecords";
-import { removeInlineContextReference } from "~/lib/composerContextReferences";
 
 export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
   merge: "Merge",
@@ -819,51 +817,30 @@ export interface FixFindingsHandoff {
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
 }
 
-const HANDOFF_COMMENT_ID_PREFIX = "pull-request-";
-
-export function stripPullRequestHandoffReferences(
-  prompt: string,
-  comments: ReadonlyArray<ReviewCommentContext>,
-  retainedIds: ReadonlySet<string> = new Set(),
-): string {
-  let next = prompt;
-  for (const comment of comments) {
-    if (!comment.id.startsWith(HANDOFF_COMMENT_ID_PREFIX) || retainedIds.has(comment.id)) continue;
-    next = removeInlineContextReference(next, reviewCommentContextId(comment.id)).prompt;
-  }
-  return next;
-}
-
-export function handoffPrompt(
+export function appendHandoff(
   existing: {
     readonly prompt: string;
-    /** Store only the handoff contribution so later handoffs preserve user text. */
-    readonly lastHandoffPrompt: string | undefined;
+    readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
   },
-  incoming: string,
-): string {
-  if (existing.prompt.trim().length === 0) return incoming;
-  const last = existing.lastHandoffPrompt ?? "";
-  const kept =
-    last.length === 0
-      ? existing.prompt
-      : existing.prompt === last
-        ? ""
-        : existing.prompt.endsWith(`\n\n${last}`)
-          ? existing.prompt.slice(0, -(last.length + 2))
-          : existing.prompt;
-  if (kept.trim().length === 0) return incoming;
-  return incoming.length === 0 ? kept : `${kept}\n\n${incoming}`;
-}
-
-export function handoffReviewComments(
-  existing: ReadonlyArray<ReviewCommentContext>,
-  incoming: ReadonlyArray<ReviewCommentContext>,
-): ReviewCommentContext[] {
-  return [
-    ...existing.filter((comment) => !comment.id.startsWith(HANDOFF_COMMENT_ID_PREFIX)),
-    ...incoming,
-  ];
+  incoming: {
+    readonly prompt: string;
+    readonly reviewComments?: ReadonlyArray<ReviewCommentContext>;
+  },
+): { prompt: string; reviewComments: ReviewCommentContext[] } {
+  const kept = existing.prompt.trimEnd();
+  const existingIds = new Set(existing.reviewComments.map((comment) => comment.id));
+  return {
+    prompt:
+      kept.length === 0
+        ? incoming.prompt
+        : incoming.prompt.length === 0
+          ? existing.prompt
+          : `${kept}\n\n${incoming.prompt}`,
+    reviewComments: [
+      ...existing.reviewComments,
+      ...(incoming.reviewComments ?? []).filter((comment) => !existingIds.has(comment.id)),
+    ],
+  };
 }
 
 /** Review bodies and check output are attacker-controlled on public repositories. */
