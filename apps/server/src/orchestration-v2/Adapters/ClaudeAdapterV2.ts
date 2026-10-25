@@ -64,6 +64,7 @@ import {
 } from "@t3tools/shared/claudeCompaction";
 import {
   type ChatAttachment,
+  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   ClaudeSettings,
   TrimmedNonEmptyString,
   defaultInstanceIdForDriver,
@@ -499,7 +500,10 @@ export interface ClaudeAgentSdkQueryOpenInput {
 
 export interface ClaudeAgentSdkQuerySession {
   readonly messages: Stream.Stream<SDKMessage, ClaudeAgentSdkQueryRunnerError>;
-  readonly offer: (message: SDKUserMessage) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  readonly offer: (
+    message: SDKUserMessage,
+    onQueued?: () => void,
+  ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly setModel: (model: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly applyFlagSettings: (
     settings: ClaudeFlagSettings,
@@ -815,7 +819,7 @@ function makeClaudeAgentSdkProtocolLogger(input: {
   };
 }
 
-const encodeClaudeHistoryOptions = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const encodeClaudeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeClaudeHistoryFork = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Struct({ sessionId: Schema.String, headMessageId: Schema.optionalKey(Schema.String) }),
@@ -830,9 +834,12 @@ const claudeConfigDirOf = (
 
 // The SDK reads CLAUDE_CONFIG_DIR from process.env. Isolate custom homes in a
 // worker so concurrent providers keep the server's environment.
-const forkClaudeSessionInWorker = Effect.fn("forkClaudeSessionInWorker")(function* (
-  input: ClaudeAgentSdkSessionForkInput,
-) {
+const runClaudeWorker = Effect.fn("runClaudeWorker")(function* (input: {
+  readonly method: "forkSession";
+  readonly sessionId: string;
+  readonly options?: ForkSessionOptions;
+  readonly environment: NodeJS.ProcessEnv;
+}) {
   const path = yield* Path.Path;
   const fromSource = import.meta.url.endsWith(".ts");
   // A single executable hosts the worker itself; it has no sibling script.
@@ -852,22 +859,30 @@ const forkClaudeSessionInWorker = Effect.fn("forkClaudeSessionInWorker")(functio
     executablePath,
     ChildProcess.make(
       executablePath,
-      [
-        ...workerArguments,
-        "forkSession",
-        input.sessionId,
-        encodeClaudeHistoryOptions(input.options),
-      ],
-      { env: { ...input.environment, ELECTRON_RUN_AS_NODE: "1" } },
+      [...workerArguments, input.method, input.sessionId, encodeClaudeJson(input.options ?? {})],
+      {
+        env: {
+          ...input.environment,
+          ELECTRON_RUN_AS_NODE: "1",
+        },
+      },
     ),
   ).pipe(Effect.timeout("30 seconds"));
   if (result.code !== 0) {
     return yield* new ClaudeAgentSdkQueryRunnerError({
-      method: "forkSession",
+      method: input.method,
       cause: result.stderr.trim() || `Claude history worker exited with code ${result.code}.`,
     });
   }
-  return yield* decodeClaudeHistoryFork(result.stdout);
+  return result.stdout;
+});
+
+const forkClaudeSessionInWorker = Effect.fn("forkClaudeSessionInWorker")(function* (
+  input: ClaudeAgentSdkSessionForkInput,
+) {
+  return yield* runClaudeWorker({ ...input, method: "forkSession" }).pipe(
+    Effect.flatMap(decodeClaudeHistoryFork),
+  );
 });
 
 export const layerQueryRunner: Layer.Layer<
@@ -1015,8 +1030,12 @@ export const layerQueryRunner: Layer.Layer<
               }),
             ),
           ),
-          offer: (message) =>
-            Queue.offer(promptQueue, message).pipe(
+          offer: (message, onQueued) =>
+            Effect.uninterruptibleMask((restore) =>
+              restore(Queue.offer(promptQueue, message)).pipe(
+                Effect.tap(() => Effect.sync(() => onQueued?.())),
+              ),
+            ).pipe(
               Effect.asVoid,
               Effect.tap(() =>
                 logProtocolEvent({
@@ -1273,13 +1292,42 @@ export function claudeQueryEnvironment(
   return { ...environment, CLAUDE_CODE_PROMPT_CACHE_TTL: subagentPromptCacheTtl };
 }
 
+// Claude Code's auto tool search sends every MCP schema in full while they fit under a share of the
+// context window, which T3's tools do on 1M models. auto:0 already means on and auto:100 off.
+export function claudeToolSearchOverride(value: string | undefined): "true" | undefined {
+  if (value === undefined) return undefined;
+  if (value === "auto") return "true";
+  if (!value.startsWith("auto:")) return undefined;
+  const percent = parseClaudeInteger(value.slice("auto:".length));
+  // Claude Code treats an unparsable auto:N as auto, and clamps N to 0..100.
+  if (Number.isNaN(percent)) return "true";
+  const clamped = Math.min(100, Math.max(0, percent));
+  return clamped > 0 && clamped < 100 ? "true" : undefined;
+}
+
+// Claude Code 2.1.310's integer parsing for auto:N. Scientific notation counts only when it is an
+// integer, grouped digits (1_000, 1,000, or 1 000) are joined, and anything else uses parseInt.
+const CLAUDE_SCIENTIFIC_INTEGER = /^[+-]?(\d+(\.\d*)?|\.\d+)[eE][+-]?\d+$/;
+const CLAUDE_GROUPED_INTEGER = /^[+-]?\d{1,3}([_,\u00A0\u202F ])\d{3}(?:\1\d{3})*$/;
+function parseClaudeInteger(text: string): number {
+  const value = text.trim();
+  if (value.length <= 32 && CLAUDE_SCIENTIFIC_INTEGER.test(value)) {
+    const number = Number(value);
+    return Number.isInteger(number) ? number : Number.NaN;
+  }
+  if (value.length <= 32 && CLAUDE_GROUPED_INTEGER.test(value)) {
+    return Number.parseInt(value.replace(/[_,\u00A0\u202F ]/g, ""), 10);
+  }
+  return Number.parseInt(value, 10);
+}
+
 // Claude Code defers MCP tools behind ToolSearch, so the agent only finds
 // t3_background_wait when the system prompt says when to reach for it.
 const CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS = `
 
 ### Background work you wait on
 
-Before you end your turn to wait for a background command or Monitor you started, such as tests, a build, or a CI wait, call \`t3_background_wait\` with its task ID. The thread then stays in the user's Working list until that task ends, instead of returning to them early. Do not mark a dev server, a watcher, or anything else you leave running.
+To wait for a background command or Monitor you started (tests, a build), call \`t3_background_wait\` with its task ID before you end your turn. Do not mark work you leave running, or PRs. T3 MCP tools are deferred: load one with ToolSearch before you call it.
 `;
 
 export function makeClaudeQueryOptions(input: {
@@ -1302,6 +1350,8 @@ export function makeClaudeQueryOptions(input: {
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
   readonly appendSystemPromptFileText?: string;
+  // Flag settings, because a user's settings.json env beats the process env in Claude Code.
+  readonly toolSearchOverride?: "true";
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);
   const {
@@ -1338,12 +1388,20 @@ export function makeClaudeQueryOptions(input: {
       : typeof input.sdkSettings === "object" && input.sdkSettings !== null
         ? ({ ...input.sdkSettings, ...selectionSettings } as ClaudeSdkSettings)
         : selectionSettings;
-  const effectiveQuerySettings =
+  const compactQuerySettings =
     input.settings?.autoCompactWindow === undefined || input.settings.autoCompactWindow.length === 0
       ? querySettings
       : ({
           ...(typeof querySettings === "object" && querySettings !== null ? querySettings : {}),
           autoCompactWindow: Number(input.settings.autoCompactWindow),
+        } as ClaudeSdkSettings);
+  // A settings file path cannot take extra keys, so it goes through unchanged.
+  const effectiveQuerySettings =
+    input.toolSearchOverride === undefined || typeof compactQuerySettings === "string"
+      ? compactQuerySettings
+      : ({
+          ...compactQuerySettings,
+          env: { ...compactQuerySettings?.env, ENABLE_TOOL_SEARCH: input.toolSearchOverride },
         } as ClaudeSdkSettings);
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
@@ -1845,6 +1903,138 @@ export function makeClaudeUserMessage(input: {
   };
 }
 
+// Never decode streams just to enforce a provider limit. Only accept an explicit,
+// uncompressed page tree whose /Count agrees with the visible page objects.
+const estimateClaudePdfPages = (bytes: Buffer): number | null => {
+  if (bytes.length > 20 * 1024 * 1024 || bytes.subarray(0, 5).toString() !== "%PDF-") return null;
+  if (!bytes.subarray(-1024).includes("%%EOF")) return null;
+  let pages = 0;
+  let count = 0;
+  let catalog = false;
+  let pageTree = false;
+  let previous = "";
+  const delimiter = (byte: number) =>
+    byte <= 32 || "()<>[]{}/%".includes(String.fromCharCode(byte));
+  for (let i = 0; i < bytes.length;) {
+    const byte = bytes[i]!;
+    if (byte === 37) {
+      while (i < bytes.length && bytes[i] !== 10 && bytes[i] !== 13) i++;
+      continue;
+    }
+    if (byte <= 32) {
+      i++;
+      continue;
+    }
+    if (previous === "/Type" && byte !== 47) return null;
+    if (previous === "/Kids") {
+      if (byte !== 91) return null;
+      previous = "";
+    }
+    if (byte === 40) {
+      let depth = 1;
+      for (i++; i < bytes.length && depth > 0; i++) {
+        if (bytes[i] === 92) i++;
+        else if (bytes[i] === 40) depth++;
+        else if (bytes[i] === 41) depth--;
+      }
+      if (depth !== 0) return null;
+      previous = "";
+      continue;
+    }
+    if (byte === 60 && bytes[i + 1] !== 60) {
+      i = bytes.indexOf(62, i + 1);
+      if (i < 0) return null;
+      i++;
+      previous = "";
+      continue;
+    }
+    if (byte === 60 && bytes[i + 1] === 60) {
+      i += 2;
+      previous = "";
+      continue;
+    }
+    if (delimiter(byte) && byte !== 47) {
+      i++;
+      continue;
+    }
+    const start = i++;
+    while (i < bytes.length && !delimiter(bytes[i]!)) i++;
+    if (i - start > 64) return null;
+    const token = bytes.toString("latin1", start, i);
+    if (token.includes("#") || ["/ObjStm", "/XRef", "/Encrypt", "/Prev"].includes(token))
+      return null;
+    if (token === "stream") {
+      i = bytes.indexOf("endstream", i);
+      if (i < 0) return null;
+      i += 9;
+      previous = "";
+      continue;
+    }
+    if (previous === "/Type") {
+      if (token === "/Page") pages++;
+      if (token === "/Catalog") catalog = true;
+      if (token === "/Pages") pageTree = true;
+    }
+    if (previous === "/Count") {
+      if (!/^[1-9]\d{0,8}$/.test(token)) return null;
+      let next = i;
+      while (next < bytes.length) {
+        if (bytes[next]! <= 32) next++;
+        else if (bytes[next] === 37) {
+          while (next < bytes.length && bytes[next] !== 10 && bytes[next] !== 13) next++;
+        } else break;
+      }
+      // A second scalar is an indirect reference, not a direct page count.
+      if (next < bytes.length && !delimiter(bytes[next]!)) return null;
+      count = Math.max(count, Number(token));
+    }
+    previous = token;
+  }
+  return catalog && pageTree && pages > 0 && count === pages ? pages : null;
+};
+
+const CLAUDE_ATTACHMENT_MAX_BYTES = 28 * 1024 * 1024;
+const CLAUDE_ATTACHMENT_MAX_PAGES = 100;
+
+const makeClaudeAttachmentBudget = (used?: { pagesUsed: number; bytesUsed: number }) => ({
+  committed: { pages: used?.pagesUsed ?? 0, bytes: used?.bytesUsed ?? 0 },
+  pending: { pages: 0, bytes: 0 },
+  compacting: null as { pages: number; bytes: number } | null,
+  get remainingPages() {
+    return CLAUDE_ATTACHMENT_MAX_PAGES - this.committed.pages - this.pending.pages;
+  },
+  get remainingBytes() {
+    return CLAUDE_ATTACHMENT_MAX_BYTES - this.committed.bytes - this.pending.bytes;
+  },
+});
+
+const reserveClaudePdfBudget = (
+  budget: ReturnType<typeof makeClaudeAttachmentBudget>,
+  persist: Effect.Effect<void>,
+) =>
+  Effect.acquireRelease(
+    Effect.sync(() => ({
+      budget,
+      pages: 0,
+      bytes: 0,
+      delivered: false,
+      commit() {
+        if (this.delivered) return;
+        this.delivered = true;
+        budget.pending.pages -= this.pages;
+        budget.pending.bytes -= this.bytes;
+        budget.committed.pages += this.pages;
+        budget.committed.bytes += this.bytes;
+      },
+    })),
+    (reservation) =>
+      Effect.sync(() => {
+        if (reservation.delivered) return;
+        budget.pending.pages -= reservation.pages;
+        budget.pending.bytes -= reservation.bytes;
+      }).pipe(Effect.andThen(persist)),
+  );
+
 const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input: {
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
@@ -1852,15 +2042,20 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
   readonly uuid?: SDKUserMessage["uuid"];
   readonly attachmentsDir: string;
   readonly fileSystem: FileSystem.FileSystem;
+  readonly pdfReservation: Effect.Success<ReturnType<typeof reserveClaudePdfBudget>>;
   readonly skills?: ReadonlyMap<string, ClaudeSkillTarget>;
 }) {
   if (input.attachments.length === 0) {
-    return makeClaudeUserMessage({
+    const message = makeClaudeUserMessage({
       text: input.text,
       ...(input.skills === undefined ? {} : { skills: input.skills }),
       ...(input.priority === undefined ? {} : { priority: input.priority }),
       ...(input.uuid === undefined ? {} : { uuid: input.uuid }),
     });
+    const bytes = Buffer.byteLength(encodeClaudeJson(message.message.content));
+    input.pdfReservation.budget.pending.bytes += bytes;
+    input.pdfReservation.bytes += bytes;
+    return message;
   }
 
   const textWithAttachmentPaths = providerMessageTextWithAttachmentPaths({
@@ -1875,21 +2070,39 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
       ? undefined
       : planClaudeSkillDispatch(textWithAttachmentPaths, input.skills);
   const content: Array<ClaudeUserContentBlock> = [];
+  // Base64 adds a third to the payload. Leave room below Anthropic's 32 MB
+  // request limit for text, instructions, and SDK framing. The SDK does not
+  // expose document/context-window capabilities, so use the 100-page limit
+  // that also applies to models with less than a 1M-token context window.
   if (dispatch?.leadingText !== undefined) {
     content.push({ type: "text", text: dispatch.leadingText });
   }
 
-  for (const attachment of input.attachments) {
-    if (attachment.type === "file") {
-      continue;
-    }
+  // Reserve all text and actual image bytes before considering any document,
+  // including images that follow it in attachment order.
+  const images = new Map<number, ClaudeUserContentBlock>();
+  const textBytes = Buffer.byteLength(
+    encodeClaudeJson(
+      dispatch
+        ? [
+            ...(dispatch.leadingText === undefined
+              ? []
+              : [{ type: "text", text: dispatch.leadingText }]),
+            { type: "text", text: dispatch.commandText },
+          ]
+        : [{ type: "text", text: textWithAttachmentPaths }],
+    ),
+  );
+  input.pdfReservation.budget.pending.bytes += textBytes;
+  input.pdfReservation.bytes += textBytes;
+  for (const [index, attachment] of input.attachments.entries()) {
+    if (attachment.type !== "image") continue;
     if (!isSupportedClaudeImageMimeType(attachment.mimeType)) {
       return yield* new ProviderAdapter.ProviderAdapterProtocolError({
         driver: CLAUDE_PROVIDER,
         detail: `Unsupported Claude image attachment type '${attachment.mimeType}'`,
       });
     }
-
     const attachmentPath = resolveAttachmentPath({
       attachmentsDir: input.attachmentsDir,
       attachment,
@@ -1900,7 +2113,6 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
         detail: `Invalid attachment id '${attachment.id}'`,
       });
     }
-
     const bytes = yield* input.fileSystem.readFile(attachmentPath).pipe(
       Effect.mapError(
         (cause) =>
@@ -1912,14 +2124,76 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
           }),
       ),
     );
-    content.push({
+    const retainedBytes = 4 * Math.ceil(bytes.length / 3) + 128;
+    if (retainedBytes > input.pdfReservation.budget.remainingBytes) continue;
+    input.pdfReservation.budget.pending.bytes += retainedBytes;
+    input.pdfReservation.bytes += retainedBytes;
+    const block: ClaudeUserContentBlock = {
       type: "image",
       source: {
         type: "base64",
         media_type: attachment.mimeType,
         data: Buffer.from(bytes).toString("base64"),
       },
-    });
+    };
+    images.set(index, block);
+  }
+  for (const [index, attachment] of input.attachments.entries()) {
+    if (attachment.type === "file") {
+      if (
+        input.pdfReservation.budget.remainingPages <= 0 ||
+        attachment.mimeType.toLowerCase().split(";", 1)[0]?.trim() !== "application/pdf" ||
+        ("source" in attachment && attachment.source?._tag === "pasted-text")
+      )
+        continue;
+      const attachmentPath = resolveAttachmentPath({
+        attachmentsDir: input.attachmentsDir,
+        attachment,
+      });
+      if (attachmentPath === null) continue;
+      const remainingBytes = Math.min(
+        PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+        20 * 1024 * 1024,
+        Math.floor(((input.pdfReservation.budget.remainingBytes - 1024) * 3) / 4),
+      );
+      const info = yield* input.fileSystem
+        .stat(attachmentPath)
+        .pipe(Effect.orElseSucceed(() => null));
+      if (info?.type !== "File" || Number(info.size) > remainingBytes || remainingBytes <= 0)
+        continue;
+      const bytes = yield* input.fileSystem
+        .stream(attachmentPath, { bytesToRead: remainingBytes + 1 })
+        .pipe(
+          Stream.runCollect,
+          Effect.map((chunks) => Buffer.concat(chunks)),
+          Effect.orElseSucceed(() => null),
+        );
+      if (bytes === null || bytes.length > remainingBytes) continue;
+      const pageCount = estimateClaudePdfPages(bytes);
+      if (pageCount === null) {
+        yield* Effect.logDebug("Claude PDF page count is unknown; keeping attachment path-only.");
+        continue;
+      }
+      const retainedBytes = 4 * Math.ceil(bytes.length / 3) + 128;
+      if (
+        pageCount <= 0 ||
+        pageCount > input.pdfReservation.budget.remainingPages ||
+        retainedBytes > input.pdfReservation.budget.remainingBytes
+      )
+        continue;
+      input.pdfReservation.budget.pending.pages += pageCount;
+      input.pdfReservation.pages += pageCount;
+      const block: ClaudeUserContentBlock = {
+        type: "document",
+        source: { type: "base64", media_type: "application/pdf", data: bytes.toString("base64") },
+      };
+      input.pdfReservation.budget.pending.bytes += retainedBytes;
+      input.pdfReservation.bytes += retainedBytes;
+      content.push(block);
+      continue;
+    }
+    const image = images.get(index);
+    if (image !== undefined) content.push(image);
   }
 
   // Images must precede the command block for skill expansion.
@@ -2156,6 +2430,14 @@ const decodeClaudeSubagentCacheSettings = Schema.decodeUnknownEffect(
   fromLenientJson(
     Schema.StructWithRest(
       Schema.Struct({ subagentPromptCacheTtl: Schema.optionalKey(ClaudePromptCacheTtl) }),
+      [Schema.Record(Schema.String, Schema.Unknown)],
+    ),
+  ),
+);
+const decodeClaudeEnvSettings = Schema.decodeUnknownEffect(
+  fromLenientJson(
+    Schema.StructWithRest(
+      Schema.Struct({ env: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)) }),
       [Schema.Record(Schema.String, Schema.Unknown)],
     ),
   ),
@@ -3874,6 +4156,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   adapterOptions: ClaudeAdapterV2Options,
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const { attachmentsDir, fileSystem, path, crypto, idAllocator, queryRunner } = adapterOptions;
   const subagentModelCatalog = scopeClaudeModelCatalog(
@@ -3943,6 +4226,73 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           )
         : undefined;
       return resolved?.effective.subagentPromptCacheTtl ?? home?.subagentPromptCacheTtl;
+    },
+  );
+
+  const readToolSearchSetting = (filePath: string) =>
+    fileSystem.readFileString(filePath).pipe(
+      Effect.flatMap(decodeClaudeEnvSettings),
+      Effect.map((settings) => {
+        const value = settings.env?.ENABLE_TOOL_SEARCH;
+        return typeof value === "string" ? value : undefined;
+      }),
+      Effect.orElseSucceed(() => undefined),
+    );
+  // A worktree's .git file points at <main>/.git/worktrees/<name>, whose commondir leads back to
+  // <main>/.git. A bare repository has no main checkout, so its worktree keeps its own file.
+  const mainCheckoutRoot = (checkout: string) =>
+    fileSystem.readFileString(path.join(checkout, ".git")).pipe(
+      Effect.flatMap((pointer) => {
+        const gitDir = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
+        if (gitDir === undefined) return Effect.succeed(checkout);
+        const worktreeGitDir = path.resolve(checkout, gitDir);
+        return fileSystem.readFileString(path.join(worktreeGitDir, "commondir")).pipe(
+          Effect.map((commonDir) => {
+            const common = path.resolve(worktreeGitDir, commonDir.trim());
+            return path.basename(common) === ".git" ? path.dirname(common) : checkout;
+          }),
+        );
+      }),
+      Effect.orElseSucceed(() => checkout),
+    );
+  // Claude Code keeps .claude/settings.local.json at the repository root, or in cwd outside a
+  // repository, on Windows, or when the root is home. Its owner check is skipped: missing it only
+  // leaves tool search on, Claude Code's default.
+  const localSettingsDirectory = Effect.fn("ClaudeAdapterV2.localSettingsDirectory")(function* (
+    cwd: string,
+  ) {
+    if ((yield* HostProcess.Platform) === "win32") return cwd;
+    for (let directory = cwd; ; directory = path.dirname(directory)) {
+      const isCheckout = yield* fileSystem
+        .exists(path.join(directory, ".git"))
+        .pipe(Effect.orElseSucceed(() => false));
+      if (isCheckout) {
+        const root = yield* mainCheckoutRoot(directory);
+        return root === (yield* HostProcess.HomeDirectory) ? cwd : root;
+      }
+      if (path.dirname(directory) === directory) return cwd;
+    }
+  });
+  // Settings env beats the process env, local over project over user, and a local file an older
+  // Claude Code left in cwd applies under the root one. resolveSettings reads local from cwd only.
+  const resolveToolSearchOverride = Effect.fn("ClaudeAdapterV2.resolveToolSearchOverride")(
+    function* (cwd: string | null) {
+      const localDirectory = cwd === null ? null : yield* localSettingsDirectory(cwd);
+      const settingsFiles = [
+        ...(cwd === null || localDirectory === null
+          ? []
+          : [
+              path.join(localDirectory, ".claude", "settings.local.json"),
+              ...(localDirectory === cwd ? [] : [path.join(cwd, ".claude", "settings.local.json")]),
+              path.join(cwd, ".claude", "settings.json"),
+            ]),
+        path.join(homePath, "settings.json"),
+      ];
+      for (const settingsFile of settingsFiles) {
+        const value = yield* readToolSearchSetting(settingsFile);
+        if (value !== undefined) return claudeToolSearchOverride(value);
+      }
+      return claudeToolSearchOverride(adapterOptions.environment.ENABLE_TOOL_SEARCH);
     },
   );
 
@@ -4056,6 +4406,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
         });
         const openedNativeThreads = yield* Ref.make(new Set<string>());
+        const pdfBudgets = new Map<string, ReturnType<typeof makeClaudeAttachmentBudget>>();
         const latestPlanByKind = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact>());
         // Claude 5 task tools edit one list per native session, across turns.
         const taskListsByNativeThread = yield* Ref.make(
@@ -4268,8 +4619,44 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const runtimeContext = yield* Effect.context<never>();
         const runPromise = Effect.runPromiseWith(runtimeContext);
 
-        const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
-          Queue.offer(events, event).pipe(Effect.asVoid);
+        const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) => {
+          if (event.type === "provider_thread.updated") {
+            const budget = pdfBudgets.get(event.providerThread.nativeThreadRef?.nativeId ?? "");
+            if (budget !== undefined) {
+              event = {
+                ...event,
+                providerThread: {
+                  ...event.providerThread,
+                  nativeMetadata: {
+                    ...event.providerThread.nativeMetadata,
+                    claudeAttachmentBudget: {
+                      bytesUsed: budget.committed.bytes,
+                      pagesUsed: budget.committed.pages,
+                    },
+                  },
+                },
+              };
+            }
+          }
+          return Queue.offer(events, event).pipe(Effect.asVoid);
+        };
+
+        const persistAttachmentBudget = Effect.fnUntraced(function* (nativeThreadId: string) {
+          const providerThread = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
+            nativeThreadId,
+          );
+          if (providerThread === undefined) return;
+          const active = yield* Ref.get(activeTurn);
+          yield* emitProviderEvent({
+            type: "provider_thread.updated",
+            driver: CLAUDE_PROVIDER,
+            providerThread: {
+              ...providerThread,
+              status: active?.nativeThreadId === nativeThreadId ? "active" : providerThread.status,
+              updatedAt: yield* DateTime.now,
+            },
+          });
+        });
 
         // Usage without input is a placeholder, not a context measurement.
         const emitContextUsage = Effect.fnUntraced(function* (
@@ -7705,7 +8092,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 driver: CLAUDE_PROVIDER,
                 turnItem: context.compaction,
               });
-              if (message.compact_result !== "success") context.compaction = null;
+              if (message.compact_result !== "success") {
+                context.compaction = null;
+                const budget = pdfBudgets.get(context.nativeThreadId);
+                if (budget !== undefined) budget.compacting = null;
+              }
             }
           }
 
@@ -7745,6 +8136,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 updatedAt: now,
               } satisfies OrchestrationV2TurnItem);
             if (message.subtype === "status") {
+              const budget = pdfBudgets.get(context.nativeThreadId);
+              // Offers made while compaction runs are outside the history it
+              // removes. Pending reservations must survive its boundary too.
+              if (budget !== undefined) budget.compacting = { ...budget.committed };
               context.compaction = compaction;
               yield* emitProviderEvent({
                 type: "turn_item.updated",
@@ -7752,6 +8147,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 turnItem: compaction,
               });
               return;
+            }
+            const budget = pdfBudgets.get(context.nativeThreadId);
+            if (budget !== undefined) {
+              // Aggregate persisted usage cannot identify attachments in a
+              // preserved segment. Retain it conservatively on partial compacts.
+              if (
+                message.compact_metadata.preserved_segment === undefined &&
+                message.compact_metadata.preserved_messages === undefined
+              ) {
+                const compacted = budget.compacting ?? { ...budget.committed };
+                budget.committed.pages -= compacted.pages;
+                budget.committed.bytes -= compacted.bytes;
+              }
+              budget.compacting = null;
+              yield* persistAttachmentBudget(context.nativeThreadId);
             }
             if (context.streamUsage !== null) context.streamUsage.usage = null;
             const postTokens = message.compact_metadata.post_tokens;
@@ -9220,6 +9630,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+          const toolSearchOverride = yield* resolveToolSearchOverride(turnInput.runtimePolicy.cwd);
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             nativeThreadId,
@@ -9252,6 +9663,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             onUserDialog,
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
+            ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
           });
           const querySession = yield* queryRunner
             .open({
@@ -9404,6 +9816,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (!goalsByNativeThread.has(nativeThreadId)) {
               goalsByNativeThread.set(nativeThreadId, turnInput.providerThread.goal ?? null);
             }
+            if (!pdfBudgets.has(nativeThreadId)) {
+              // Older sessions did not record retained attachments. Keep their
+              // existing native-image allowance rather than disabling images.
+              const used = turnInput.providerThread.nativeMetadata?.claudeAttachmentBudget;
+              pdfBudgets.set(nativeThreadId, makeClaudeAttachmentBudget(used));
+            }
+            const pdfReservation = yield* reserveClaudePdfBudget(
+              pdfBudgets.get(nativeThreadId)!,
+              persistAttachmentBudget(nativeThreadId),
+            );
             const userMessage =
               promptUuid === null
                 ? null
@@ -9415,9 +9837,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     attachments: turnInput.message.attachments,
                     attachmentsDir,
                     fileSystem,
+                    pdfReservation,
                     skills: yield* userInvocableSkills(turnInput.runtimePolicy.cwd),
                     uuid: promptUuid,
-                  });
+                  }).pipe(
+                    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                    Effect.provideService(Path.Path, path),
+                  );
             const querySession = yield* openQuery(turnInput, nativeThreadId);
             const context: ActiveClaudeTurnContext = {
               input: turnInput,
@@ -9526,7 +9952,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (userMessage !== null) {
               yield* attachTurn;
               yield* startUserTurnForWakeReports(nativeThreadId);
-              yield* querySession.query.offer(userMessage);
+              yield* Effect.uninterruptibleMask((restore) =>
+                restore(
+                  querySession.query.offer(userMessage, () => {
+                    pdfReservation.commit();
+                  }),
+                ).pipe(
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      pdfReservation.commit();
+                    }),
+                  ),
+                ),
+              );
               return;
             }
             // Transcript reads suspend replay; hold SDK frames until the buffer is applied to preserve order.
@@ -9652,6 +10090,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           },
           (effect, turnInput) =>
             effect.pipe(
+              Effect.scoped,
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapter.ProviderAdapterTurnStartError({
@@ -9835,6 +10274,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 detail: `Claude provider turn ${turnInput.providerTurnId} is not the active turn.`,
               });
             }
+            const pdfReservation = yield* reserveClaudePdfBudget(
+              pdfBudgets.get(existing.nativeThreadId) ??
+                makeClaudeAttachmentBudget({
+                  pagesUsed: CLAUDE_ATTACHMENT_MAX_PAGES,
+                  bytesUsed: CLAUDE_ATTACHMENT_MAX_BYTES,
+                }),
+              persistAttachmentBudget(existing.nativeThreadId),
+            );
             const userMessage = yield* makeClaudeUserMessageWithAttachments({
               text: applyClaudePromptEffortPrefix(
                 turnInput.message.text,
@@ -9844,8 +10291,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               priority: "now",
               attachmentsDir,
               fileSystem,
+              pdfReservation,
               skills: yield* userInvocableSkills(currentTurn.input.runtimePolicy.cwd),
-            });
+            }).pipe(
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+              Effect.provideService(Path.Path, path),
+            );
             yield* backgroundForegroundSubagents(existing, backgroundDeadline);
             // The turn can end while the moves are answered. A steer offered
             // then would start a new turn the orchestrator never asked for, so
@@ -9864,10 +10315,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.add(turnInput.providerTurnId);
               return next;
             });
-            yield* existing.query.offer(userMessage);
+            yield* Effect.uninterruptibleMask((restore) =>
+              restore(
+                existing.query.offer(userMessage, () => {
+                  pdfReservation.commit();
+                }),
+              ).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    pdfReservation.commit();
+                  }),
+                ),
+              ),
+            );
           },
           (effect, turnInput) =>
             effect.pipe(
+              Effect.scoped,
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapter.ProviderAdapterSteerRunError({
@@ -10373,6 +10837,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 return updated;
               });
               const now = yield* DateTime.now;
+              // Native forks retain document/image history. Inherit full current
+              // usage even at an earlier fork point; this is conservative.
+              const claudeAttachmentBudget =
+                forkInput.sourceProviderThread.nativeMetadata?.claudeAttachmentBudget;
               return makeProviderThread({
                 idAllocator,
                 providerInstanceId: adapterOptions.instanceId,
@@ -10386,9 +10854,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     ? {}
                     : { providerTurnId: forkInput.providerTurnId }),
                 },
-                ...(forked.headMessageId === undefined
+                ...(forked.headMessageId === undefined && claudeAttachmentBudget === undefined
                   ? {}
-                  : { nativeMetadata: { forkHeadMessageId: forked.headMessageId } }),
+                  : {
+                      nativeMetadata: {
+                        ...(forked.headMessageId === undefined
+                          ? {}
+                          : { forkHeadMessageId: forked.headMessageId }),
+                        ...(claudeAttachmentBudget === undefined ? {} : { claudeAttachmentBudget }),
+                      },
+                    }),
                 now,
               });
             },
@@ -10424,6 +10899,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 });
 
 export type ClaudeAdapterV2DriverEnv =
+  | ChildProcessSpawner.ChildProcessSpawner
   | ClaudeAgentSdkQueryRunner
   | Crypto.Crypto
   | FileSystem.FileSystem
@@ -10517,6 +10993,7 @@ const makeDefaultClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2.layer")(function* 
 const layer: Layer.Layer<
   ProviderAdapter.ProviderAdapterV2,
   never,
+  | ChildProcessSpawner.ChildProcessSpawner
   | ClaudeAgentSdkQueryRunner
   | Crypto.Crypto
   | FileSystem.FileSystem
