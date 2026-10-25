@@ -6358,7 +6358,25 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               else next.delete(threadId);
               return next;
             });
+            // Completion can remove the old context while turn/start is in flight.
+            const previousTurns = new Map([
+              ...(yield* Ref.get(settledTurns)),
+              ...(yield* Ref.get(activeTurns)),
+            ]);
             const started = yield* client.request("turn/start", turnStartParams);
+            const previousTurn =
+              previousTurns.get(started.turn.id) ??
+              (yield* Ref.get(activeTurns)).get(started.turn.id);
+            if (
+              previousTurn !== undefined &&
+              previousTurn.input.attemptId !== turnInput.attemptId
+            ) {
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver: CODEX_PROVIDER,
+                detail:
+                  "Codex returned a turn belonging to an earlier run. Stop the existing turn before retrying this message.",
+              });
+            }
             yield* registerRootTurn({
               turnInput,
               nativeTurnId: started.turn.id,
