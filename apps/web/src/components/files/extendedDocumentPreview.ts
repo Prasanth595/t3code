@@ -238,8 +238,10 @@ async function epubHtml(node: XmlNode, archive: JSZip, base: string): Promise<st
 }
 async function odfHtml(node: XmlNode, archive: JSZip): Promise<string> {
   if (node.name === "#text") return boundedMarkup(escape(text(node)));
-  if (node.name === "text:s") return boundedMarkup(" ".repeat(repeat(node.attrs["text:c"], 100)));
-  if (node.name === "text:tab") return boundedMarkup("&#9;");
+  if (node.name === "text:s" || node.name === "text:tab")
+    return boundedMarkup(
+      `<span data-odf-whitespace>${node.name === "text:tab" ? "&#9;" : " ".repeat(repeat(node.attrs["text:c"], 100))}</span>`,
+    );
   if (node.name === "text:line-break") return boundedMarkup("<br>");
   if (node.name === "draw:image") {
     const src = await imageData(
