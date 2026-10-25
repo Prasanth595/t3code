@@ -20,19 +20,26 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
@@ -1367,4 +1374,255 @@ it.effect("explicit settle clears snooze atomically and stays idempotent after r
     assert.deepInclude(yield* projections.getThreadShell(threadId), active);
     assert.deepInclude((yield* projections.getThreadProjection(threadId)).thread, active);
   }).pipe(Effect.provide(layerTest)),
+);
+
+// Claude sessions hold one provider thread each, so a detach closes the session's process.
+const makeSessionAdapter = (cwd: string) => {
+  const driver = ProviderDriverKind.make("claudeAgent");
+  const instanceId = ProviderInstanceId.make("claudeAgent");
+  const turns: Array<{
+    readonly turn: ProviderAdapter.ProviderAdapterV2TurnInput;
+    readonly providerSessionId: ProviderSessionId;
+    readonly events: Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>;
+  }> = [];
+  const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
+    instanceId,
+    driver,
+    getCapabilities: () => Effect.succeed(ClaudeProviderCapabilitiesV2),
+    planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
+    openSession: (input) =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        return {
+          instanceId,
+          driver,
+          providerSessionId: input.providerSessionId,
+          providerSession: {
+            id: input.providerSessionId,
+            driver,
+            providerInstanceId: instanceId,
+            status: "ready",
+            cwd,
+            model: "claude-test",
+            capabilities: ClaudeProviderCapabilitiesV2,
+            createdAt: now,
+            updatedAt: now,
+            lastError: null,
+          },
+          events: Stream.fromQueue(events),
+          ensureThread: ({ threadId }) =>
+            Effect.succeed({
+              id: ProviderThreadId.make(`provider-thread:${threadId}`),
+              driver,
+              providerInstanceId: instanceId,
+              providerSessionId: input.providerSessionId,
+              appThreadId: threadId,
+              ownerNodeId: null,
+              nativeThreadRef: { driver, nativeId: `native:${threadId}`, strength: "strong" },
+              nativeConversationHeadRef: null,
+              status: "idle",
+              firstRunOrdinal: null,
+              lastRunOrdinal: null,
+              handoffIds: [],
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+            }),
+          resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
+          startTurn: (turn) =>
+            Effect.gen(function* () {
+              turns.push({ turn, providerSessionId: input.providerSessionId, events });
+              yield* Queue.offer(events, {
+                type: "provider_turn.updated",
+                driver,
+                providerTurn: {
+                  id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
+                  providerThreadId: turn.providerThread.id,
+                  nodeId: turn.rootNodeId,
+                  runAttemptId: turn.attemptId,
+                  nativeTurnRef: null,
+                  ordinal: turn.providerTurnOrdinal,
+                  status: "running",
+                  startedAt: now,
+                  completedAt: null,
+                },
+              });
+            }),
+          steerTurn: () => Effect.die("unused"),
+          interruptTurn: () => Effect.void,
+          respondToRuntimeRequest: () => Effect.die("unused"),
+          readThreadSnapshot: () => Effect.die("unused"),
+          rollbackThread: () => Effect.die("unused"),
+          forkThread: () => Effect.die("unused"),
+        };
+      }),
+  };
+  return { adapter, turns };
+};
+
+it.effect.each([
+  { outcome: "completed", delegated: true, released: true },
+  { outcome: "failed", delegated: true, released: true },
+  { outcome: "interrupted", delegated: true, released: false },
+  { outcome: "completed", delegated: false, released: false },
+] as const)(
+  "releases the session only when a delegated task ends completed or failed ($outcome, delegated: $delegated)",
+  ({ outcome, delegated, released }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("delegated-session-release");
+        const { adapter: sessionAdapter, turns } = makeSessionAdapter(cwd);
+        const sessionModelSelection = {
+          instanceId: sessionAdapter.instanceId,
+          model: "claude-test",
+        };
+        const layerSessions = ProviderReplayHarness.layerWithRegistry(
+          { name: "delegated-session-release" },
+          ProviderAdapterRegistry.layerSingle(sessionAdapter),
+          { runEffectWorker: false },
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          const parentThreadId = ThreadId.make("thread:session-release-parent");
+          const next = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
+            orchestrator.streamDomainEvents.pipe(
+              Stream.filter(predicate),
+              Stream.runHead,
+              Effect.forkScoped,
+            );
+          const turnRunning = () =>
+            next(
+              (event) =>
+                event.type === "provider-turn.updated" && event.payload.status === "running",
+            );
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("create-session-release-parent"),
+            threadId: parentThreadId,
+            projectId: ProjectId.make("project:session-release"),
+            title: "Parent",
+            modelSelection: sessionModelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          const parentRunning = yield* turnRunning();
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("start-session-release-parent"),
+            threadId: parentThreadId,
+            messageId: MessageId.make("message:session-release-parent"),
+            text: "Delegate a review",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* worker.drain();
+          yield* Fiber.join(parentRunning);
+
+          let threadId = parentThreadId;
+          if (delegated) {
+            const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
+            const childRunning = yield* turnRunning();
+            yield* orchestrator.dispatch({
+              type: "delegated_task.request",
+              commandId: CommandId.make("delegate-session-release"),
+              parentThreadId,
+              parentRunId: parentRun.id,
+              parentNodeId: parentRun.rootNodeId!,
+              task: "Review the change",
+              modelSelection: sessionModelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              completionWake: "settled_only",
+              createdBy: "agent",
+              creationSource: "mcp",
+            });
+            yield* worker.drain();
+            yield* Fiber.join(childRunning);
+            threadId = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!
+              .childThreadId!;
+          }
+          const { turn, providerSessionId, events } = turns.find(
+            (entry) => entry.turn.threadId === threadId,
+          )!;
+          const providerTurn = (yield* orchestrator.getThreadProjection(threadId))
+            .providerTurns[0]!;
+          const detached = yield* next(
+            (event) => event.type === "provider-session.detached" && event.threadId === threadId,
+          );
+          // A completed run waits for its checkpoint, which the drained worker captures.
+          const settling = yield* next(
+            (event) =>
+              event.type === "run.updated" &&
+              event.payload.id === turn.runId &&
+              event.payload.status === (outcome === "completed" ? "waiting" : outcome),
+          );
+          // A delegated task's terminal row is written while finalize holds the parent's lock.
+          const ended = yield* next((event) =>
+            delegated
+              ? event.type === "subagent.updated" && event.payload.status === outcome
+              : event.type === "run.updated" &&
+                event.payload.id === turn.runId &&
+                event.payload.status === outcome,
+          );
+          const now = yield* DateTime.now;
+          const terminal = {
+            type: "turn.terminal",
+            driver: sessionAdapter.driver,
+            providerThreadId: providerTurn.providerThreadId,
+            providerTurnId: providerTurn.id,
+            runOrdinal: turn.runOrdinal,
+            threadDisposition: "reusable",
+          } as const;
+          yield* Queue.offerAll(events, [
+            {
+              type: "provider_turn.updated",
+              driver: sessionAdapter.driver,
+              providerTurn: { ...providerTurn, status: outcome, completedAt: now },
+            },
+            outcome === "failed"
+              ? {
+                  ...terminal,
+                  status: outcome,
+                  failureItemOrdinal: 1,
+                  failure: {
+                    class: "provider_error",
+                    message: "Provider failed",
+                    code: null,
+                    retryable: null,
+                  },
+                }
+              : { ...terminal, status: outcome, failure: null },
+          ]);
+          yield* Fiber.join(settling);
+          yield* worker.drain();
+          yield* Fiber.join(ended);
+          // Commands on the parent wait for its lock, so this runs after finalize returns.
+          yield* orchestrator.dispatch({
+            type: "thread.visit",
+            commandId: CommandId.make("visit-session-release-parent"),
+            threadId: parentThreadId,
+            visitedAt: DateTime.formatIso(now),
+          });
+          yield* worker.drain();
+
+          assert.equal(yield* sessions.isLive(providerSessionId), !released);
+          if (released) {
+            const event = Option.getOrThrow(yield* Fiber.join(detached));
+            assert.equal(
+              event.type === "provider-session.detached" ? event.payload.reason : undefined,
+              "Delegated task finished.",
+            );
+          }
+        }).pipe(Effect.provide(layerSessions));
+      }),
+    ),
 );

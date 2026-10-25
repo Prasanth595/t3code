@@ -11198,6 +11198,45 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (completionPlan.offer && completionPlan.parentRun !== undefined) {
         yield* offerDelegatedCompletionDelivery(parentThreadId, completionPlan.parentRun.id);
       }
+
+      if (terminalStatus !== "completed" && terminalStatus !== "failed") return;
+      // Callers hold the parent lock; detach takes the child lock, as follow-up intake does.
+      // A follow-up that already started keeps the session; a later one resumes the native thread.
+      yield* threadDispatch
+        .withLock(
+          childThreadId,
+          Effect.gen(function* () {
+            const child = yield* projectionStore.getThreadRecords(childThreadId, [
+              "runs",
+              "providerSessions",
+            ]);
+            if (child.runs.some((run) => delegatedTaskTerminalStatus(run.status) === null)) return;
+            yield* Effect.forEach(
+              child.providerSessions.filter(
+                (session) => session.status !== "stopped" && session.status !== "error",
+              ),
+              (session) =>
+                dispatchWithReceiptEffect({
+                  type: "provider-session.detach",
+                  commandId: CommandId.make(
+                    `command:system:delegated-task-release:${task.id}:${session.id}`,
+                  ),
+                  threadId: childThreadId,
+                  providerSessionId: session.id,
+                  reason: "Delegated task finished.",
+                }),
+              { discard: true },
+            );
+          }),
+        )
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Failed to release a finished delegated task's provider session", {
+              childThreadId,
+              cause,
+            }),
+          ),
+        );
     },
   );
 
