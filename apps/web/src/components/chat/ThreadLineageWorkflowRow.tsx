@@ -79,7 +79,12 @@ function WorkflowMemberRow({
             />
           }
         >
-          <ThreadRelationshipIcon driver={driver} provider={provider} status={member.status} />
+          <ThreadRelationshipIcon
+            driver={driver}
+            provider={provider}
+            providers={providers}
+            status={member.status}
+          />
           <span className="min-w-0 flex-1 truncate">{member.title}</span>
           <span className="sr-only">{member.status}</span>
           {member.startedAt ? (

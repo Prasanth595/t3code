@@ -533,6 +533,7 @@ export function ThreadRelationshipsPanel(props: {
                   <ThreadRelationshipIcon
                     driver={isSubagent && !isParent ? providerDriver : undefined}
                     provider={provider}
+                    providers={providers}
                     fallbackIcon={RelationshipIcon}
                     status={rowStatus}
                   />
