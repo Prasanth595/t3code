@@ -83,8 +83,8 @@ export function splitBufferedAssistantText(text: string): { ready: string; rest:
 
 // Each passed snapshot is a durable event holding the full text, so paragraph
 // streaming would store bytes growing with the square of the length. Past this
-// length a snapshot passes only once its text is a quarter longer than the
-// last, keeping the stored total within a few times the final text.
+// length a snapshot that extends the last passes only once it is a quarter
+// longer, keeping the stored total within a few times the final text.
 const SNAPSHOT_GROWTH_START_LENGTH = 8_000;
 const SNAPSHOT_GROWTH_FACTOR = 1.25;
 
@@ -121,7 +121,8 @@ export function makeAssistantStreamingFilter(mode: ResponseStreamingMode) {
     if (
       previous &&
       previous.text.length >= SNAPSHOT_GROWTH_START_LENGTH &&
-      ready.length < previous.text.length * SNAPSHOT_GROWTH_FACTOR
+      ready.length < previous.text.length * SNAPSHOT_GROWTH_FACTOR &&
+      ready.startsWith(previous.text)
     )
       return null;
     delivered.set(key, { text: ready, at: now });
