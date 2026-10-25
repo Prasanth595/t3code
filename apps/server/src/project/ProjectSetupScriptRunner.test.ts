@@ -2,7 +2,9 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 import { ProjectId, type TerminalEvent } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import { TestClock } from "effect/testing";
@@ -16,25 +18,33 @@ const threadId = "thread-1";
 const terminalId = "setup-setup";
 const event = { threadId, terminalId, sequence: 1, createdAt: "2026-01-01T00:00:00.000Z" };
 
-const setup = Effect.gen(function* () {
+const makeHarness = Effect.fn(function* (options: {
+  readonly history?: string;
+  readonly opening?: Deferred.Deferred<void>;
+}) {
   const listeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
   const writes = yield* Queue.unbounded<string>();
   const outputLines = yield* Queue.unbounded<string>();
   const terminals = Layer.mock(TerminalManager.TerminalManager)({
     open: (input) =>
-      Effect.succeed({
-        threadId: input.threadId,
-        terminalId: input.terminalId ?? terminalId,
-        cwd: input.cwd,
-        worktreePath: null,
-        status: "running",
-        pid: 123,
-        history: "",
-        exitCode: null,
-        exitSignal: null,
-        label: "zsh",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      }),
+      (options.opening
+        ? Deferred.succeed(options.opening, undefined).pipe(Effect.andThen(Effect.never))
+        : Effect.void
+      ).pipe(
+        Effect.as({
+          threadId: input.threadId,
+          terminalId: input.terminalId ?? terminalId,
+          cwd: input.cwd,
+          worktreePath: null,
+          status: "running",
+          pid: 123,
+          history: options.history ?? "",
+          exitCode: null,
+          exitSignal: null,
+          label: "zsh",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        }),
+      ),
     subscribe: (listener) =>
       Effect.sync(() => {
         listeners.add(listener);
@@ -55,7 +65,7 @@ const setup = Effect.gen(function* () {
     Effect.provideService(HostProcess.Platform, "darwin"),
     Effect.provideService(HostProcess.Environment, { SHELL: "/bin/zsh" }),
   );
-  const result = yield* runner.runForThread({
+  const start = runner.runForThread({
     threadId,
     worktreePath: "/repo/.t3/worktrees/feature",
     observeCompletion: { onOutputLine: (line) => Queue.offer(outputLines, line) },
@@ -73,17 +83,23 @@ const setup = Effect.gen(function* () {
       ],
     },
   });
-  const completion = result.status === "started" ? result.completion : undefined;
-  if (!completion) return yield* Effect.die("setup did not start an observed run");
   const emit = (terminalEvent: TerminalEvent) =>
     Effect.forEach([...listeners], (listener) => listener(terminalEvent), { discard: true });
-  return { result, completion, writes, outputLines, emit };
+  return { start, listeners, writes, outputLines, emit };
+});
+
+const setup = Effect.fn(function* (options: { readonly history?: string } = {}) {
+  const harness = yield* makeHarness(options);
+  const result = yield* harness.start;
+  const completion = result.status === "started" ? result.completion : undefined;
+  if (!completion) return yield* Effect.die("setup did not start an observed run");
+  return { ...harness, result, completion };
 });
 
 describe("ProjectSetupScriptRunner", () => {
   it.effect("shows a startup prompt and types only once the line editor starts", () =>
     Effect.gen(function* () {
-      const { result, writes, outputLines, emit } = yield* setup;
+      const { result, writes, outputLines, emit } = yield* setup();
       expect(result).toMatchObject({ status: "started", terminalId });
 
       yield* emit({ ...event, type: "output", data: "Missing Node.\r\nInstall it? [y/N]: " });
@@ -100,15 +116,36 @@ describe("ProjectSetupScriptRunner", () => {
 
   it.effect("types into a quiet shell that has no line editor", () =>
     Effect.gen(function* () {
-      const { writes } = yield* setup;
-      yield* TestClock.adjust("2 seconds");
+      const { writes } = yield* setup();
+      yield* TestClock.adjust("3 seconds");
       expect(yield* Queue.take(writes)).toMatch(/^ \( vp i\r\);/);
+    }),
+  );
+
+  it.effect("ignores line editor state restored from an earlier shell", () =>
+    Effect.gen(function* () {
+      const { writes, emit } = yield* setup({ history: "old run\r\n% \x1b[?2004h" });
+      yield* emit({ ...event, type: "activity", hasRunningSubprocess: true, label: "fnm" });
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Queue.size(writes)).toBe(0);
+    }),
+  );
+
+  it.effect("drops its terminal listeners when cancelled while the terminal opens", () =>
+    Effect.gen(function* () {
+      const opening = yield* Deferred.make<void>();
+      const { start, listeners } = yield* makeHarness({ opening });
+      const fiber = yield* Effect.forkChild(start);
+      yield* Deferred.await(opening);
+      expect(listeners.size).toBe(2);
+      yield* Fiber.interrupt(fiber);
+      expect(listeners.size).toBe(0);
     }),
   );
 
   it.effect("does not type into a shell that exits during startup", () =>
     Effect.gen(function* () {
-      const { completion, writes, emit } = yield* setup;
+      const { completion, writes, emit } = yield* setup();
       yield* emit({ ...event, type: "exited", exitCode: 1, exitSignal: null });
       expect(yield* completion).toMatchObject({ exitCode: null });
       yield* TestClock.adjust("1 minute");

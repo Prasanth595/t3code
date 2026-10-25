@@ -142,7 +142,8 @@ function stripTerminalControl(text: string): string {
 // Line editors (zsh, fish, bash 5.1+) enable bracketed paste when they start reading a command.
 const BRACKETED_PASTE_ON = "\x1b[?2004h";
 const BRACKETED_PASTE_OFF = "\x1b[?2004l";
-const SHELL_QUIET_FALLBACK = "2 seconds";
+// Longer than one subprocess poll plus its ps timeout, so a startup prompt is seen as busy first.
+const SHELL_QUIET_FALLBACK = "3 seconds";
 
 function lineEditorReading(text: string, previous: boolean): boolean {
   const on = text.lastIndexOf(BRACKETED_PASTE_ON);
@@ -327,11 +328,8 @@ export const make = Effect.gen(function* () {
           yield* input.onStartupPrompt;
         }
       });
-      const wait = (history: string) =>
-        (lineEditorReading(history, false)
-          ? Effect.succeed("ready" as const)
-          : Deferred.await(outcome).pipe(Effect.raceFirst(quiet))
-        ).pipe(Effect.ensuring(Effect.sync(() => unsubscribe())));
+      // Restored history can hold a previous shell's line editor state, so only live output counts.
+      const wait = Deferred.await(outcome).pipe(Effect.raceFirst(quiet));
       return { wait, unsubscribe };
     },
   );
@@ -452,7 +450,7 @@ export const make = Effect.gen(function* () {
             onStartupPrompt: observed?.flushPartialLine ?? Effect.void,
           });
 
-    const terminal = yield* terminalManager
+    yield* terminalManager
       .open({
         threadId: input.threadId,
         terminalId,
@@ -469,7 +467,7 @@ export const make = Effect.gen(function* () {
               cause,
             }),
         ),
-        Effect.tapError(() =>
+        Effect.onError(() =>
           Effect.sync(() => {
             observed?.unsubscribe();
             readiness?.unsubscribe();
@@ -478,7 +476,7 @@ export const make = Effect.gen(function* () {
       );
 
     // Return once the terminal exists so callers can show it while a startup prompt waits.
-    yield* (readiness?.wait(terminal.history) ?? Effect.succeed("ready" as const)).pipe(
+    yield* (readiness?.wait ?? Effect.succeed("ready" as const)).pipe(
       Effect.flatMap((shell) =>
         shell === "exited"
           ? Effect.void
@@ -495,6 +493,7 @@ export const make = Effect.gen(function* () {
           cause,
         }).pipe(Effect.andThen(observed?.abandon ?? Effect.void)),
       ),
+      Effect.ensuring(Effect.sync(() => readiness?.unsubscribe())),
       Effect.forkIn(serviceScope),
     );
 
