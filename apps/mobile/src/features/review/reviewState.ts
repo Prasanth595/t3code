@@ -1,6 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 
-import type { EnvironmentId, ReviewDiffPreviewSource, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ReviewDiffPreviewSource,
+  ReviewDiffPreviewSourceKind,
+  ThreadId,
+} from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { scopedThreadKey } from "../../lib/scopedEntities";
@@ -178,11 +183,16 @@ export function useReviewCacheForThread(input: {
   };
 }
 
-export function setReviewGitSections(
+export function setReviewGitSectionsOfKind(
   threadKey: string,
+  kind: ReviewDiffPreviewSourceKind,
   sections: ReadonlyArray<ReviewDiffPreviewSource>,
 ): void {
-  appAtomRegistry.set(reviewGitSectionsByThreadKeyAtom(threadKey), sections);
+  const atom = reviewGitSectionsByThreadKeyAtom(threadKey);
+  appAtomRegistry.set(atom, [
+    ...appAtomRegistry.get(atom).filter((section) => section.kind !== kind),
+    ...sections,
+  ]);
 }
 
 export function setReviewTurnDiff(threadKey: string, sectionId: string, diff: string): void {

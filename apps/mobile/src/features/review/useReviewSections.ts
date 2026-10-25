@@ -7,7 +7,12 @@ import {
   deriveThreadCheckpointSummaries,
   type ThreadCheckpointSummary,
 } from "@t3tools/client-runtime/state/thread-checkpoints";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ReviewDiffPreviewResult,
+  ReviewDiffPreviewSourceKind,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import { useCheckpointDiff } from "../../state/queries";
 import { useEnvironmentQuery } from "../../state/query";
@@ -23,7 +28,7 @@ import {
 } from "./reviewModel";
 import {
   setReviewAsyncError,
-  setReviewGitSections,
+  setReviewGitSectionsOfKind,
   setReviewSelectedSectionId,
   setReviewTurnDiff,
   setReviewTurnDiffLoading,
@@ -51,21 +56,52 @@ export function useReviewSections(input: {
   const { canReadFiles } = fileAccess;
   const selectedThread = useSelectedThreadProjection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
-  const diffPreview = useEnvironmentQuery(
+  const diffPreviewQuery = (sourceKind: ReviewDiffPreviewSourceKind) =>
     canReadFiles && enabled && environmentId !== undefined && selectedThreadCwd !== null
       ? reviewEnvironment.diffPreview({
           environmentId,
-          input: { cwd: selectedThreadCwd },
+          input: { cwd: selectedThreadCwd, sourceKind },
         })
-      : null,
+      : null;
+  // Each source loads on its own so a failing branch comparison leaves Uncommitted usable.
+  const workingTreePreview = useEnvironmentQuery(diffPreviewQuery("working-tree"));
+  const branchPreview = useEnvironmentQuery(diffPreviewQuery("branch-range"));
+  // A kind without live data keeps its cached source, so the other kind loading first
+  // cannot drop it from the section list.
+  const gitSections = useMemo(
+    () =>
+      (
+        [
+          ["working-tree", workingTreePreview.data],
+          ["branch-range", branchPreview.data],
+        ] as const
+      ).flatMap(([kind, preview]) =>
+        preview
+          ? sourcesOfKind(preview, kind)
+          : reviewCache.gitSections.filter((section) => section.kind === kind),
+      ),
+    [branchPreview.data, reviewCache.gitSections, workingTreePreview.data],
   );
   const { loadingTurnIds } = reviewCache.asyncState;
 
   useEffect(() => {
-    if (reviewCache.threadKey && diffPreview.data) {
-      setReviewGitSections(reviewCache.threadKey, diffPreview.data.sources);
+    if (reviewCache.threadKey && workingTreePreview.data) {
+      setReviewGitSectionsOfKind(
+        reviewCache.threadKey,
+        "working-tree",
+        sourcesOfKind(workingTreePreview.data, "working-tree"),
+      );
     }
-  }, [diffPreview.data, reviewCache.threadKey]);
+  }, [reviewCache.threadKey, workingTreePreview.data]);
+  useEffect(() => {
+    if (reviewCache.threadKey && branchPreview.data) {
+      setReviewGitSectionsOfKind(
+        reviewCache.threadKey,
+        "branch-range",
+        sourcesOfKind(branchPreview.data, "branch-range"),
+      );
+    }
+  }, [branchPreview.data, reviewCache.threadKey]);
 
   const readyCheckpoints = useMemo(
     () =>
@@ -84,16 +120,18 @@ export function useReviewSections(input: {
       ) as Record<string, ThreadCheckpointSummary>,
     [readyCheckpoints],
   );
+  const workingTreeSectionState = gitSectionState(fileAccess.isPending, workingTreePreview);
+  const branchSectionState = gitSectionState(fileAccess.isPending, branchPreview);
   const reviewSections = useMemo(() => {
     const sections = buildReviewSectionItems({
       checkpoints: readyCheckpoints,
-      gitSections:
-        canReadFiles || fileAccess.isPending
-          ? (diffPreview.data?.sources ?? reviewCache.gitSections)
-          : [],
+      gitSections: canReadFiles || fileAccess.isPending ? gitSections : [],
       turnDiffById: reviewCache.turnDiffById,
       loadingTurnIds,
-      loadingGitSections: fileAccess.isPending || diffPreview.isPending,
+      gitSectionStates: {
+        "working-tree": workingTreeSectionState,
+        "branch-range": branchSectionState,
+      },
     });
     // Keep the selected section while its grant loads, without displaying cached host files.
     return fileAccess.isPending
@@ -102,14 +140,14 @@ export function useReviewSections(input: {
         )
       : sections;
   }, [
+    branchSectionState,
     canReadFiles,
-    diffPreview.data?.sources,
-    diffPreview.isPending,
     fileAccess.isPending,
+    gitSections,
     loadingTurnIds,
     readyCheckpoints,
-    reviewCache.gitSections,
     reviewCache.turnDiffById,
+    workingTreeSectionState,
   ]);
   const selectedSection = useMemo(
     () =>
@@ -191,8 +229,8 @@ export function useReviewSections(input: {
       activeTurnDiff.refresh();
       return;
     }
-    diffPreview.refresh();
-  }, [activeTurnDiff, diffPreview, enabled, selectedSection?.kind]);
+    (selectedSection?.kind === "working-tree" ? workingTreePreview : branchPreview).refresh();
+  }, [activeTurnDiff, branchPreview, enabled, selectedSection?.kind, workingTreePreview]);
 
   const selectSection = useCallback(
     (sectionId: string) => {
@@ -203,19 +241,32 @@ export function useReviewSections(input: {
     [reviewCache.threadKey],
   );
 
+  const selectedGitPreview =
+    selectedSection?.kind === "working-tree"
+      ? workingTreePreview
+      : selectedSection?.kind === "branch-range"
+        ? branchPreview
+        : null;
+
   return {
     error:
-      diffPreview.error ??
+      (selectedSection === null
+        ? (workingTreePreview.error ?? branchPreview.error)
+        : selectedGitPreview?.error) ??
       activeTurnDiff.error ??
       reviewCache.asyncState.error ??
       (selectedSection === null && !fileAccess.isPending && !canReadFiles
         ? (fileAccess.error ?? "This connection cannot read local diffs.")
         : null),
     isSelectedSectionPending:
-      selectedSection?.kind === "turn" ? activeTurnDiff.isPending : diffPreview.isPending,
-    loadingGitDiffs: fileAccess.isPending || diffPreview.isPending,
-    diffPreviewRevision: diffPreview.data
-      ? DateTime.formatIso(diffPreview.data.generatedAt)
+      selectedSection?.kind === "turn"
+        ? activeTurnDiff.isPending
+        : (selectedGitPreview?.isPending ??
+          (workingTreePreview.isPending || branchPreview.isPending)),
+    loadingGitDiffs:
+      fileAccess.isPending || workingTreePreview.isPending || branchPreview.isPending,
+    diffPreviewRevision: selectedGitPreview?.data
+      ? DateTime.formatIso(selectedGitPreview.data.generatedAt)
       : undefined,
     loadingTurnIds,
     reviewSections,
@@ -223,4 +274,17 @@ export function useReviewSections(input: {
     refreshSelectedSection,
     selectSection,
   };
+}
+
+// Servers that predate source selection ignore `sourceKind` and return every source.
+function sourcesOfKind(preview: ReviewDiffPreviewResult, kind: ReviewDiffPreviewSourceKind) {
+  return preview.sources.filter((source) => source.kind === kind);
+}
+
+function gitSectionState(
+  isFileAccessPending: boolean,
+  preview: { readonly isPending: boolean; readonly error: string | null },
+) {
+  if (isFileAccessPending || preview.isPending) return "loading";
+  return preview.error === null ? null : "failed";
 }
