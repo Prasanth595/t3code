@@ -50,6 +50,8 @@ const ProfileSettingsFile = Schema.Struct({
 const encodeProfileSettings = Schema.encodeSync(Schema.fromJsonString(ProfileSettingsFile));
 const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
 const isAcpTransportError = Schema.is(AcpErrors.AcpTransportError);
+// Google Compute Engine VMs get credentials from the metadata server.
+const googleCloudProductNames = new Set(["Google", "Google Compute Engine"]);
 
 // Python splits BROWSER on path separators before parsing quotes. Exit 0 on EPIPE to prevent browser fallback after cancellation.
 const browserHelperSource =
@@ -119,7 +121,7 @@ export function antigravityAuthLabel(authMethod: AntigravityAuthMethod): string 
   }
 }
 
-export function antigravityAuthConfigIssue(auth: AntigravityAuthConfig): string | null {
+function antigravityAuthConfigIssue(auth: AntigravityAuthConfig): string | null {
   switch (auth.authMethod) {
     case "oauth-personal":
       return null;
@@ -135,6 +137,46 @@ export function antigravityAuthConfigIssue(auth: AntigravityAuthConfig): string 
         : "Agent Platform needs an API key, or a GCP project and location, in the Antigravity provider settings.";
   }
 }
+
+/**
+ * The runtime starts sessions without credentials and fails on the first prompt. Mirror its Go
+ * credential lookup, minus GOOGLE_APPLICATION_CREDENTIALS, which the launch environment drops.
+ */
+export const antigravityAuthIssue = Effect.fn("antigravityAuthIssue")(function* (
+  auth: AntigravityAuthConfig,
+  host: {
+    readonly platform: NodeJS.Platform;
+    readonly environment: NodeJS.ProcessEnv;
+    readonly userHome: string;
+  },
+) {
+  const configIssue = antigravityAuthConfigIssue(auth);
+  if (configIssue !== null || auth.authMethod !== "agent-platform" || auth.apiKey) {
+    return configIssue;
+  }
+  if (host.environment.GCE_METADATA_HOST) return null;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const configDirectory =
+    host.platform === "win32" ? host.environment.APPDATA : path.join(host.userHome, ".config");
+  if (
+    configDirectory &&
+    (yield* fs
+      .exists(path.join(configDirectory, "gcloud", "application_default_credentials.json"))
+      .pipe(Effect.orElseSucceed(() => false)))
+  ) {
+    return null;
+  }
+  const productName =
+    host.platform === "linux"
+      ? yield* fs
+          .readFileString("/sys/class/dmi/id/product_name")
+          .pipe(Effect.orElseSucceed(() => ""))
+      : "";
+  return googleCloudProductNames.has(productName.trim())
+    ? null
+    : "Agent Platform without an API key needs Google Cloud application default credentials. Run `gcloud auth application-default login`, or enter an API key in the Antigravity provider settings.";
+});
 
 /**
  * `auth.type` names the selected method so a native logout clears only that method's credentials

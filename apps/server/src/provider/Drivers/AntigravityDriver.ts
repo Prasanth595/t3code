@@ -29,7 +29,7 @@ import { makeAntigravityAuth, type AntigravityAuth } from "../AntigravityAuth.ts
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
 import * as AntigravityUsage from "./AntigravityUsage.ts";
 import {
-  antigravityAuthConfigIssue,
+  antigravityAuthIssue,
   antigravityAuthLabel,
   antigravityAuthUsesBrowser,
   buildAntigravityAcpSpawnInput,
@@ -121,12 +121,21 @@ export const AntigravityDriver: ProviderDriver<
       gcpProject: settings.gcpProject,
       gcpLocation: settings.gcpLocation,
     };
-    const authConfigIssue = antigravityAuthConfigIssue(auth);
     const processEnvironment = yield* mergeProviderInstanceEnvironment(environment);
+    const platform = yield* HostProcess.Platform;
     const userHome = resolveAntigravityUserHome(
-      yield* HostProcess.Platform,
+      platform,
       processEnvironment,
       yield* HostProcess.HomeDirectory,
+    );
+    // Recheck on every use so credentials created after startup take effect.
+    const authIssue = antigravityAuthIssue(auth, {
+      platform,
+      environment: processEnvironment,
+      userHome,
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
     );
     const directories = yield* resolveAntigravityInstanceDirectories(
       host.paths.stateDir,
@@ -176,6 +185,7 @@ export const AntigravityDriver: ProviderDriver<
       AcpError | ProviderSetupError,
       Scope.Scope
     > {
+      const authConfigIssue = yield* authIssue;
       if (authConfigIssue !== null) {
         return yield* new ProviderSetupError({
           instanceId,
@@ -344,6 +354,7 @@ export const AntigravityDriver: ProviderDriver<
     // minute.
     const probe = Effect.gen(function* () {
       yield* modelCatalog.refreshInBackground;
+      const authConfigIssue = yield* authIssue;
       if (authConfigIssue !== null) {
         return yield* new ProviderSetupError({
           instanceId,

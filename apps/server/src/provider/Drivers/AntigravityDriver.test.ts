@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
@@ -52,7 +53,11 @@ function shellQuote(value: string): string {
 }
 
 const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
-  options: { readonly config?: Partial<AntigravitySettings>; readonly enabled?: boolean } = {},
+  options: {
+    readonly config?: Partial<AntigravitySettings>;
+    readonly enabled?: boolean;
+    readonly environment?: ReadonlyArray<{ readonly name: string; readonly value: string }>;
+  } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -195,6 +200,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       { name: "GEMINI_HOME", value: "/must-not-be-used" },
       { name: "ANTIGRAVITY_HARNESS_PATH", value: "/must-not-be-used" },
       { name: "BROWSER", value: "must-not-run" },
+      ...(options.environment ?? []),
     ].map((variable) => ({ ...variable, sensitive: false })),
   }).pipe(
     Effect.provide(layerInstallation),
@@ -349,6 +355,36 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         expect(snapshot.supportsTextGeneration).toBe(false);
         expect(h.acquisitions).toHaveLength(2);
         expect(h.releases).toEqual([h.first.version, h.signedOut.version]);
+        yield* h.assertClosed;
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "reports missing Google Cloud credentials before Agent Platform starts",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-home-" });
+        const h = yield* makeHarness({
+          config: { authMethod: "agent-platform", gcpProject: "proj", gcpLocation: "us-central1" },
+          environment: [{ name: "HOME", value: home }],
+        });
+        const result = yield* h.refresh().pipe(Effect.result);
+        expect(Result.isFailure(result) ? result.failure.detail : "refresh succeeded").toContain(
+          "gcloud auth application-default login",
+        );
+        expect((yield* h.instance.snapshot.getSnapshot).auth.status).not.toBe("authenticated");
+        expect(h.launches).toEqual([]);
+
+        const gcloudDirectory = path.join(home, ".config", "gcloud");
+        yield* fs.makeDirectory(gcloudDirectory, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(gcloudDirectory, "application_default_credentials.json"),
+          "{}",
+        );
+        yield* h.refresh();
+        expect((yield* h.instance.snapshot.getSnapshot).auth.status).toBe("authenticated");
         yield* h.assertClosed;
       }).pipe(Effect.scoped),
   );
