@@ -95,6 +95,19 @@ describe("large text preview recovery", () => {
       await screen.rerender(preview("legacy-edit", 1));
       await vi.waitFor(() => expect(screen.container.textContent).toContain("original"));
       expect(workers).toHaveLength(4);
+      assetUrlState.mockReturnValue({ _tag: "Failure" });
+      await screen.rerender(preview("legacy-edit", 1));
+      expect(screen.container.textContent).toContain("Unable to load file preview.");
+      refresh.mockClear();
+      refresh.mockImplementation(async () => {
+        state(`${changed}#retried`);
+        return changed;
+      });
+      await screen.getByRole("button", { name: "Try again" }).click();
+      expect(refresh).toHaveBeenCalledOnce();
+      await screen.rerender(preview("legacy-edit", 1));
+      await vi.waitFor(() => expect(screen.container.textContent).toContain("changed"));
+      expect(screen.container.querySelector('[role="alert"]')).toBeNull();
     } finally {
       URL.revokeObjectURL(original);
       URL.revokeObjectURL(changed);
