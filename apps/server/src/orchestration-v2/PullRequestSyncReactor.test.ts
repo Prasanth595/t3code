@@ -1612,6 +1612,13 @@ describe("PullRequestSyncReactor", () => {
       output: "https://gitlab.com/owner/repository/-/merge_requests/3",
       linked: [],
     },
+    {
+      name: "an existing pull request quoted in another command",
+      input:
+        "printf '%s\\n' 'https://github.com/owner/repository/pull/120'; gh pr create --fill > /dev/null",
+      output: "https://github.com/owner/repository/pull/120",
+      linked: [],
+    },
   ])("links what the command created: $name", ({ input, output, linked }) =>
     Effect.scoped(
       Effect.gen(function* () {

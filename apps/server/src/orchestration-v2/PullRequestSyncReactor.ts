@@ -76,19 +76,21 @@ const LISTS_CHANGE_REQUESTS =
   /\b(?:gh\s+(?:pr\s+(?:list|status)|search\s+prs|api)|glab\s+(?:mr\s+list|api))\b/u;
 const URL_LINE = /^[ \t]*(https?:\/\/\S+)[ \t]*$/gmu;
 
-/** The commands a shell input runs, without the text it carries. */
-function shellCode(input: string): string {
+/** The script a shell input runs, unwrapped from Codex's `sh -lc`. */
+function shellScript(input: string): string {
   const [, wrapped] = SHELL_WRAPPER.exec(input) ?? [];
-  const script =
-    wrapped === undefined
-      ? input
-      : Array.from(
-          wrapped.matchAll(SHELL_WORD_PIECE),
-          ([, double, single, escaped, bare]) =>
-            double?.replace(/\\(["\\$`])/gu, "$1") ?? single ?? escaped ?? bare,
-        ).join("");
-  return script.replace(HEREDOC_BODY, "<<").replace(QUOTED_OR_COMMENT, "''");
+  return wrapped === undefined
+    ? input
+    : Array.from(
+        wrapped.matchAll(SHELL_WORD_PIECE),
+        ([, double, single, escaped, bare]) =>
+          double?.replace(/\\(["\\$`])/gu, "$1") ?? single ?? escaped ?? bare,
+      ).join("");
 }
+
+/** The commands a script runs, without the text it carries. */
+const shellCode = (script: string) =>
+  script.replace(HEREDOC_BODY, "<<").replace(QUOTED_OR_COMMENT, "''");
 
 type CommandExecution = Extract<OrchestrationV2TurnItem, { readonly type: "command_execution" }>;
 
@@ -100,7 +102,8 @@ type CommandExecution = Extract<OrchestrationV2TurnItem, { readonly type: "comma
  */
 function changeRequestsCreatedBy(input: string, output: string) {
   if (!CREATE_COMMANDS.some(({ command }) => command.test(input))) return [];
-  const code = shellCode(input);
+  const script = shellScript(input);
+  const code = shellCode(script);
   const creates = createCommandCount(code);
   if (creates === 0) return [];
   const otherCommands = code
@@ -117,8 +120,9 @@ function changeRequestsCreatedBy(input: string, output: string) {
     // Only the host whose create command ran can have printed a new change request.
     if (parsed === null || !creators.has(parsed.definition.kind)) continue;
     const { link } = parsed;
-    const named = new RegExp(`(?:^|(?<=[\\s#/=(]))${link.number}(?=$|[\\s);&|/])`, "u");
-    if (named.test(otherCommands)) continue;
+    const named = new RegExp(`(?:^|(?<=[\\s#/=("']))${link.number}(?=$|[\\s);&|/"'])`, "u");
+    // Quoted text counts here: the command that creates a change request cannot name its number.
+    if (named.test(script)) continue;
     const key = normalizeThreadPullRequestKey(link);
     created.set(threadPullRequestKeyOf(key), { ...key, url });
   }
