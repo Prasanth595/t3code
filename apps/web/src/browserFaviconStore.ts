@@ -292,20 +292,27 @@ export function useFaviconForThreadUrl(threadRef: ScopedThreadRef, url: string):
     ? new URL(preparedConnection.value.httpBaseUrl).hostname
     : null;
   const threadKey = scopedThreadKey(threadRef);
-  return useBrowserFaviconStore(
-    (state) =>
-      lookupFavicon(state.byKey, projectRef, url, environmentHostname) ??
-      lookupPendingFavicon(state.pendingByThreadKey[threadKey], url),
+  return useBrowserFaviconStore((state) =>
+    lookupFaviconForThread(state, threadKey, projectRef, url, environmentHostname),
   );
 }
 
-/** A capture waiting for its thread's project still shows on that thread. */
-function lookupPendingFavicon(
-  pending: PendingFaviconsByOrigin | undefined,
+/**
+ * A capture waiting for its thread's project still shows on that thread, and wins
+ * over an older stored capture for the same origin.
+ */
+export function lookupFaviconForThread(
+  state: Pick<BrowserFaviconStoreState, "byKey" | "pendingByThreadKey">,
+  threadKey: string,
+  projectRef: ScopedProjectRef | null,
   url: string,
+  environmentHostname: string | null,
 ): string | null {
-  const originKey = pending ? pendingOriginKey(url) : null;
-  return originKey ? (pending?.[originKey]?.dataUrl ?? null) : null;
+  const stored = lookupFaviconEntry(state.byKey, projectRef, url, environmentHostname);
+  const originKey = pendingOriginKey(url);
+  const pending = originKey ? state.pendingByThreadKey[threadKey]?.[originKey] : undefined;
+  if (pending && (!stored || pending.capturedAt > stored.capturedAt)) return pending.dataUrl;
+  return stored?.dataUrl ?? null;
 }
 
 export function lookupFavicon(
@@ -314,17 +321,26 @@ export function lookupFavicon(
   url: string,
   environmentHostname: string | null,
 ): string | null {
+  return lookupFaviconEntry(byKey, projectRef, url, environmentHostname)?.dataUrl ?? null;
+}
+
+function lookupFaviconEntry(
+  byKey: Record<string, BrowserFaviconEntry>,
+  projectRef: ScopedProjectRef | null,
+  url: string,
+  environmentHostname: string | null,
+): BrowserFaviconEntry | null {
   const key = projectRef
     ? faviconKey(scopedProjectKey(projectRef), url, environmentHostname)
     : null;
   if (!key) return null;
   const direct = byKey[key];
-  if (direct) return direct.dataUrl;
+  if (direct) return direct;
   try {
     const requestedHost = normalizeHostname(new URL(url).hostname);
     const localKey = faviconKey(scopedProjectKey(projectRef!), url, requestedHost);
     const localEntry = localKey ? byKey[localKey] : null;
-    return localEntry?.aliases?.includes(requestedHost) ? localEntry.dataUrl : null;
+    return localEntry?.aliases?.includes(requestedHost) ? localEntry : null;
   } catch {
     return null;
   }

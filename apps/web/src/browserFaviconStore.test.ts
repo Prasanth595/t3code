@@ -20,6 +20,7 @@ vi.mock("~/state/session", () => ({
 import { useComposerDraftStore, type DraftThreadState } from "./composerDraftStore";
 import {
   lookupFavicon,
+  lookupFaviconForThread,
   recordFaviconForProject,
   recordFaviconForThread,
   resetBrowserFaviconsForTests,
@@ -125,6 +126,27 @@ describe("browser favicon store", () => {
 
     expect(recordFaviconForThread(threadRef, favicon("http://192.168.64.2:5173/", 2))).toBe(false);
     expect(Object.values(useBrowserFaviconStore.getState().pendingByThreadKey)[0]).toBeDefined();
+  });
+
+  it("shows a newer pending capture over the stored favicon for the same origin", () => {
+    const NEWER = "data:image/png;base64,BBBB";
+    metadata.projectId = "project-1";
+    metadata.httpBaseUrl = "http://192.168.64.2:3773";
+    expect(recordFaviconForThread(threadRef, favicon("http://192.168.64.2:5173/", 1))).toBe(true);
+
+    metadata.httpBaseUrl = null;
+    expect(recordFaviconForThread(threadRef, favicon("http://192.168.64.2:5173/", 2, NEWER))).toBe(
+      false,
+    );
+    expect(
+      lookupFaviconForThread(
+        useBrowserFaviconStore.getState(),
+        scopedThreadKey(threadRef),
+        projectRef,
+        "http://192.168.64.2:5173/",
+        "192.168.64.2",
+      ),
+    ).toBe(NEWER);
   });
 
   it("keeps the memory shadow authoritative after an asymmetric primary write failure", () => {
