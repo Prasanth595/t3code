@@ -117,7 +117,14 @@
     },
     "infra/task-cache": {
       // The bootstrap and Vite+ hook are loaded by shell/package configuration.
-      "entry": ["alchemy.run.ts!", "scripts/install.ts", "src/runHook.ts"],
+      "entry": [
+        "alchemy.run.ts!",
+        "scripts/install.ts",
+        "scripts/install-ci.ts",
+        "src/runHook.ts",
+        "src/nativeRunHook.js",
+        "src/preload.mjs",
+      ],
     },
     "infra/relay": {
       "entry": ["alchemy.run.ts!", "src/persistence/schema.ts!"],

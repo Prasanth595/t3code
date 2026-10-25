@@ -28,7 +28,8 @@ export default function start({ root }: { readonly root: string }) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
   }
-  const endpoint = new URL(process.env.VP_REMOTE_CACHE_URL || configured.endpoint);
+  if (!process.env.VP_REMOTE_CACHE_URL) return;
+  const endpoint = new URL(process.env.VP_REMOTE_CACHE_URL);
   endpoint.username = "";
   endpoint.password = "";
   if (process.env.T3_TASK_CACHE_TELEMETRY === "off") return;

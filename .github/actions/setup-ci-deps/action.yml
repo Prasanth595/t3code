@@ -67,9 +67,13 @@ runs:
       run: vp install
 
     - name: Enable shared task cache
-      if: hashFiles('.task-cache.json') != ''
+      if: >-
+        github.repository == 'pingdotgg/t3code' &&
+        (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+        hashFiles('.task-cache.json') != ''
       shell: bash
       run: |
+        node infra/task-cache/scripts/install-ci.ts
         if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main ]]; then
           echo 'VP_REMOTE_CACHE=read-write' >> "$GITHUB_ENV"
         else

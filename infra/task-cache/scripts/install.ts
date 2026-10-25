@@ -5,6 +5,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import * as NodeReadlinePromises from "node:readline/promises";
 import { patchNativeCli } from "../src/nativeHook.ts";
 
@@ -132,13 +133,16 @@ for (const candidate of candidates) {
   }
 }
 if (!targets.size) throw new Error("Install Vite+ before installing its telemetry hook.");
-const hook = await NodeFSP.readFile(
-  NodePath.join(root, "node_modules/vite-plus/dist/run-hook.js"),
-  "utf8",
-);
 const installed = NodePath.join(home, ".local/share/t3-task-cache");
 await NodeFSP.mkdir(installed, { recursive: true });
-for (const file of ["runHook.ts", "telemetry.ts"])
+await NodeFSP.writeFile(NodePath.join(installed, "package.json"), '{"type":"module"}\n');
+for (const file of [
+  "runHook.ts",
+  "telemetry.ts",
+  "nativeHook.ts",
+  "nativeRunHook.js",
+  "preload.mjs",
+])
   await NodeFSP.copyFile(
     NodePath.join(import.meta.dirname, "../src", file),
     NodePath.join(installed, file),
@@ -153,15 +157,13 @@ await NodeFSP.writeFile(
   }),
 );
 for (const [path, { original, patched }] of targets) {
-  if (original !== patched) {
-    await NodeFSP.writeFile(`${path}.before-task-cache`, original, { flag: "wx" }).catch(
-      (error) => {
-        if (error.code !== "EEXIST") throw error;
-      },
-    );
-    await NodeFSP.writeFile(path, patched);
+  try {
+    const backup = await NodeFSP.readFile(`${path}.before-task-cache`, "utf8");
+    if (original === patchNativeCli(backup) && original === patched)
+      await NodeFSP.writeFile(path, backup);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
   }
-  await NodeFSP.writeFile(NodePath.join(NodePath.dirname(path), "run-hook.js"), hook);
 }
 await NodeFSP.mkdir(state, { recursive: true, mode: 0o700 });
 credentials[endpoint] = { name, token };
@@ -170,35 +172,31 @@ await NodeFSP.writeFile(NodePath.join(state, "credentials.json"), JSON.stringify
 });
 await NodeFSP.chmod(NodePath.join(state, "credentials.json"), 0o600);
 
-// Remove only the PATH integration installed by the previous task-cache bootstrap.
+const environmentFile = NodePath.join(state, "env");
+const preload = NodeURL.pathToFileURL(NodePath.join(installed, "preload.mjs")).href;
+await NodeFSP.writeFile(
+  environmentFile,
+  [
+    `case " \${NODE_OPTIONS-} " in`,
+    `  *" --import=${preload} "*) ;;`,
+    `  *) export NODE_OPTIONS="\${NODE_OPTIONS:+$NODE_OPTIONS }--import=${preload}" ;;`,
+    `esac`,
+    "",
+  ].join("\n"),
+  { mode: 0o600 },
+);
+const sourceLine = '. "$HOME/.config/t3-task-cache/env"';
 for (const file of [".profile", ".bashrc", ".bash_profile", ".zshenv", ".zshrc"]) {
   const path = NodePath.join(home, file);
+  let original = "";
   try {
-    const original = await NodeFSP.readFile(path, "utf8");
-    const cleaned = original
-      .split("\n")
-      .filter((line) => line !== '. "$HOME/.config/t3-task-cache/env"')
-      .join("\n");
-    if (cleaned !== original) await NodeFSP.writeFile(path, cleaned);
+    original = await NodeFSP.readFile(path, "utf8");
   } catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
   }
-}
-for (const file of ["vp", "vpr"]) {
-  const path = NodePath.join(home, ".local/share/t3-task-cache/bin", file);
-  try {
-    if ((await NodeFSP.readlink(path)) === "../vp.ts") await NodeFSP.unlink(path);
-  } catch (error) {
-    if (
-      !(
-        error instanceof Error &&
-        "code" in error &&
-        ["ENOENT", "EINVAL"].includes(String(error.code))
-      )
-    )
-      throw error;
-  }
+  if (!original.split("\n").includes(sourceLine))
+    await NodeFSP.appendFile(path, `\n${sourceLine}\n`);
 }
 console.log(
-  `Verified credentials and installed telemetry hooks in ${targets.size} Vite+ entrypoints. Global executables and PATH are unchanged. Open a fresh shell if the old launcher was active.`,
+  "Verified credentials and installed the machine-wide Vite+ hook. Open a fresh shell to enable it in all worktrees. Executables and PATH are unchanged.",
 );
