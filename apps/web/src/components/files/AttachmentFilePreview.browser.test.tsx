@@ -2512,7 +2512,7 @@ it.each(["rtf", "epub", "ods"] as const)(
     } else if (kind === "ods") {
       archive.file(
         "content.xml",
-        '<office:document><table:table table:name="Forecast"><table:table-row><table:table-cell><text:p>North<office:annotation><text:p>nested note</text:p></office:annotation></text:p><office:annotation><text:p>private note</text:p></office:annotation></table:table-cell><table:table-cell office:value="150"><office:annotation><text:p>revised from 120</text:p></office:annotation></table:table-cell></table:table-row></table:table></office:document>',
+        '<office:document><table:table table:name="Forecast"><table:table-row><table:table-cell><text:p>North<office:annotation><text:p>nested note</text:p></office:annotation></text:p><office:annotation><text:p>private note</text:p></office:annotation></table:table-cell><table:table-cell office:value="150"><office:annotation><text:p>revised from 120</text:p></office:annotation></table:table-cell><table:table-cell table:number-columns-repeated="1024"/></table:table-row><table:table-row table:number-rows-repeated="1048570"><table:table-cell table:number-columns-repeated="1024"/></table:table-row></table:table></office:document>',
       );
     }
     const file =
@@ -2571,6 +2571,8 @@ it.each(["rtf", "epub", "ods"] as const)(
         expect(screen.container.textContent).toContain("North");
         expect(screen.container.textContent).toContain("150");
         expect(screen.container.textContent).not.toContain("private note");
+        expect(screen.container.textContent).toContain("1 rows · 2 columns");
+        expect(screen.container.textContent).not.toContain("Limited to 500");
       } else {
         const frame = screen.container.querySelector("iframe");
         expect(frame?.srcdoc).toContain(kind === "rtf" ? "10–20" : "first<br>second<br>third");
@@ -2682,3 +2684,27 @@ it.each(["epub", "odt", "ipynb", "html", "encoded-html"] as const)(
     }
   },
 );
+
+it.each([
+  ["standardFontDataUrl", "FoxitSerif.pfb", "standard_fonts"],
+  ["cMapUrl", "78-EUC-H.bcmap", "cmaps"],
+  ["wasmUrl", "openjpeg.wasm", "wasm"],
+])("validates PDF %s assets before decoding", async (kind, filename, directory) => {
+  const { BinaryDataFactory } = await import("./pdfDocument");
+  const factory = new BinaryDataFactory();
+  const fetchAsset = vi.fn(
+    async () =>
+      new Response("<html>app</html>", {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
+  );
+  using _fetch = stubGlobal("fetch", fetchAsset);
+  await expect(factory.fetch({ kind, filename })).rejects.toThrow(
+    `PDF ${directory} asset unavailable.`,
+  );
+  fetchAsset.mockImplementation(async () => new Response(new Uint8Array([1, 2, 3])));
+  await expect(factory.fetch({ kind, filename })).resolves.toEqual(new Uint8Array([1, 2, 3]));
+  await expect(factory.fetch({ kind, filename: "missing" })).rejects.toThrow(
+    `Unsupported PDF ${directory} asset.`,
+  );
+});

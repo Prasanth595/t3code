@@ -317,6 +317,36 @@ describe("document preview contents", () => {
     expect(result.sheets[0]!.rows[0]![0]).toBe("Research & design");
   });
 
+  it.each([1, 500])("ignores styled ODS filler after %s populated rows", async (count) => {
+    const archive = new JSZip().file(
+      "content.xml",
+      `<office:document><table:table><table:table-row table:number-rows-repeated="${count}"><table:table-cell><text:p>North</text:p></table:table-cell><table:table-cell table:number-columns-repeated="1024"/></table:table-row><table:table-row table:number-rows-repeated="1048570"><table:table-cell table:number-columns-repeated="1024"/></table:table-row></table:table></office:document>`,
+    );
+    const result = await openDocument(archive, "ods");
+    if (result.type !== "ods") throw new Error("Expected workbook");
+    expect(result.sheets[0]).toMatchObject({ rowCount: count, columns: 1, truncated: false });
+    expect(result.sheets[0]!.rows).toEqual(Array.from({ length: count }, () => ["North"]));
+  });
+
+  it.each([2, 999999])(
+    "preserves internal ODS gaps of %s rows and reports real overflow",
+    async (gap) => {
+      const archive = new JSZip().file(
+        "content.xml",
+        `<office:document><table:table><table:table-row><table:table-cell><text:p>First</text:p></table:table-cell></table:table-row><table:table-row table:number-rows-repeated="${gap}"><table:table-cell/></table:table-row><table:table-row><table:table-cell table:number-columns-repeated="2"/><table:table-cell><text:p>Last</text:p></table:table-cell></table:table-row></table:table></office:document>`,
+      );
+      const result = await openDocument(archive, "ods");
+      if (result.type !== "ods") throw new Error("Expected workbook");
+      expect(result.sheets[0]).toMatchObject({
+        rowCount: Math.min(gap + 2, 500),
+        columns: gap === 2 ? 3 : 1,
+        truncated: gap !== 2,
+      });
+      expect(result.sheets[0]!.rows[1]).toEqual([]);
+      if (gap === 2) expect(result.sheets[0]!.rows[3]).toEqual(["", "", "Last"]);
+    },
+  );
+
   it.each(["odt", "odp"] as const)("reads %s text and rejects XML entities", async (kind) => {
     const archive = new JSZip().file(
       "content.xml",

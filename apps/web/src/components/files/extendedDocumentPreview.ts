@@ -299,11 +299,8 @@ export async function openDocument(
       sheets: tables.map((table, index) => {
         const rows: string[][] = [];
         let truncated = false;
+        let pendingEmptyRows = 0;
         for (const row of find(table, "table:table-row")) {
-          if (rows.length >= ODS_PREVIEW_MAX_ROWS) {
-            truncated = true;
-            break;
-          }
           const cells: string[] = [];
           for (const cell of row.children.filter((child) =>
             ["table:table-cell", "table:covered-table-cell"].includes(child.name),
@@ -319,15 +316,26 @@ export async function openDocument(
               cell.attrs["table:number-columns-repeated"],
               ODS_PREVIEW_MAX_COLUMNS + 1,
             );
-            if (cells.length + count > ODS_PREVIEW_MAX_COLUMNS) truncated = true;
+            if (value && cells.length + count > ODS_PREVIEW_MAX_COLUMNS) truncated = true;
             for (let i = 0; i < count && cells.length < ODS_PREVIEW_MAX_COLUMNS; i++) {
               if (value.length > 10_000)
                 throw new Error("A spreadsheet cell is too large to preview.");
               cells.push(value);
             }
           }
+          while (cells.at(-1) === "") cells.pop();
           const count = repeat(row.attrs["table:number-rows-repeated"], ODS_PREVIEW_MAX_ROWS + 1);
+          if (!cells.length) {
+            pendingEmptyRows = Math.min(ODS_PREVIEW_MAX_ROWS + 1, pendingEmptyRows + count);
+            continue;
+          }
+          while (pendingEmptyRows > 0 && rows.length < ODS_PREVIEW_MAX_ROWS) {
+            rows.push([]);
+            pendingEmptyRows--;
+          }
+          pendingEmptyRows = 0;
           if (rows.length + count > ODS_PREVIEW_MAX_ROWS) truncated = true;
+          if (rows.length >= ODS_PREVIEW_MAX_ROWS) break;
           for (let i = 0; i < count && rows.length < ODS_PREVIEW_MAX_ROWS; i++) {
             cellBytes += cells.reduce((size, cell) => size + cell.length, 0);
             if (cellBytes > 8 * 1024 * 1024)
