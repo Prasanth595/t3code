@@ -186,7 +186,10 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
       }
       return context.path.join(context.home, ".config", "zen");
     },
-    alternateLinuxRoots: (context) => [context.path.join(context.home, ".zen")],
+    alternateLinuxRoots: (context) => [
+      context.path.join(context.home, ".zen"),
+      context.path.join(context.home, ".var", "app", "app.zen_browser.zen", "zen"),
+    ],
   },
 ];
 

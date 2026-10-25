@@ -357,6 +357,7 @@ describe("Zen", () => {
         );
         assert.deepEqual(zen.alternateLinuxRoots?.(linuxContext), [
           linuxContext.path.join("/home/zen-user", ".zen"),
+          linuxContext.path.join("/home/zen-user", ".var", "app", "app.zen_browser.zen", "zen"),
         ]);
       }),
     ),
@@ -468,6 +469,36 @@ describe("Zen", () => {
         assert.deepEqual(yield* listSourceProfiles(zen, context), [
           { directory: legacyProfile, name: "Legacy", cookieCount: 1 },
         ]);
+      }),
+    ),
+  );
+
+  it.effect("discovers a Flatpak-only Zen installation and resolves its cookies", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-zen-flatpak-" });
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcess.Environment, { HOME: home }),
+          Effect.provideService(HostProcess.Platform, "linux"),
+        );
+        const root = context.path.join(home, ".var", "app", "app.zen_browser.zen", "zen");
+        const profile = context.path.join(root, "flatpak.default");
+        yield* fileSystem.makeDirectory(profile, { recursive: true });
+        yield* writeFirefoxCookieDatabase(context.path.join(profile, "cookies.sqlite"), 2, 1);
+        yield* fileSystem.writeFileString(
+          context.path.join(root, "profiles.ini"),
+          "[Profile0]\nName=Flatpak\nIsRelative=1\nPath=flatpak.default\n",
+        );
+
+        assert.deepEqual(yield* listSourceProfiles(zen, context), [
+          { directory: profile, name: "Flatpak", cookieCount: 2 },
+        ]);
+        assert.isTrue(yield* isSourceInstalled(zen, context));
+        assert.equal(
+          yield* resolveCookieDatabase(zen, context, profile),
+          context.path.join(profile, "cookies.sqlite"),
+        );
       }),
     ),
   );
