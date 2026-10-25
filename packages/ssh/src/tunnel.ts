@@ -58,6 +58,8 @@ const REMOTE_ARCHIVE_CHECKSUMS_SECONDS = 30;
 const REMOTE_ARCHIVE_DOWNLOAD_SECONDS = 240;
 const REMOTE_ARCHIVE_LOCK_WAIT_SECONDS = 360;
 const REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS = 900_000;
+// Any state operation may queue behind a cold archive launch, then needs its own work budget.
+const REMOTE_STATE_LOCK_WAIT_MS = REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
 
 export interface RemoteT3RunnerOptions {
@@ -623,7 +625,7 @@ while ! ln "$LAUNCH_LOCK_RECORD" "$LAUNCH_LOCK" 2>/dev/null; do
   if reclaim_launch_lock; then
     continue
   fi
-  if [ "$LOCK_WAIT_COUNT" -ge 200 ]; then
+  if [ "$LOCK_WAIT_COUNT" -ge ${REMOTE_STATE_LOCK_WAIT_MS / 100} ]; then
     printf 'Another SSH operation holds %s. Retry after it finishes.\\n' "$LAUNCH_LOCK" >&2
     exit 1
   fi
@@ -1061,9 +1063,9 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
     const result = yield* runSshCommand(target, {
       remoteCommandArgs: ["sh", "-l", "-s", "--", stateKey],
       stdin: buildRemoteLaunchScript(runner),
-      timeoutMs: isNodeScriptRunner(runner)
-        ? REMOTE_LAUNCH_TIMEOUT_MS
-        : REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS,
+      timeoutMs:
+        REMOTE_STATE_LOCK_WAIT_MS +
+        (isNodeScriptRunner(runner) ? REMOTE_LAUNCH_TIMEOUT_MS : REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS),
       ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
       ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
       ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
@@ -1122,7 +1124,9 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
   const result = yield* runSshCommand(target, {
     remoteCommandArgs: ["sh", "-s"],
     stdin: buildRemotePairingScript(stateKey, runner),
-    ...(isNodeScriptRunner(runner) ? {} : { timeoutMs: REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS }),
+    timeoutMs:
+      REMOTE_STATE_LOCK_WAIT_MS +
+      (isNodeScriptRunner(runner) ? REMOTE_LAUNCH_TIMEOUT_MS : REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS),
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
@@ -1174,6 +1178,7 @@ const stopRemoteServer = Effect.fn("ssh/tunnel.stopRemoteServer")(function* (
   yield* runSshCommand(target, {
     remoteCommandArgs: ["sh", "-s"],
     stdin: buildRemoteStopScript(stateKey),
+    timeoutMs: REMOTE_STATE_LOCK_WAIT_MS + REMOTE_LAUNCH_TIMEOUT_MS,
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),

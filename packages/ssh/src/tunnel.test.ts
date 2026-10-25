@@ -106,6 +106,52 @@ describe("ssh tunnel scripts", () => {
     );
   });
 
+  it.effect.each([
+    { operation: "launch", runner: "archive" },
+    { operation: "launch", runner: "node" },
+    { operation: "pairing", runner: "archive" },
+    { operation: "pairing", runner: "node" },
+  ] as const)("lets $runner $operation finish after a full lock wait", ({ operation, runner }) =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(started, undefined);
+          const result = operation === "launch" ? { remotePort: 3774 } : { credential: "test" };
+          return {
+            ...makeSuccessfulProcess(JSON.stringify(result)),
+            exitCode: Deferred.await(finish).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+          };
+        }),
+      );
+      const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
+      const options = runner === "archive" ? ARCHIVE : { nodeScriptPath: "/test/server.js" };
+      const command = Effect.gen(function* () {
+        if (operation === "launch") {
+          const result = yield* SshTunnel.launchOrReuseRemoteServer(target, undefined, options);
+          assert.deepEqual(result, { remotePort: 3774, remoteServerKind: null });
+        } else {
+          const result = yield* SshTunnel.issueRemotePairingToken(target, undefined, options);
+          assert.deepEqual(result, { credential: "test" });
+        }
+      });
+      const fiber = yield* command.pipe(
+        Effect.provide(
+          Layer.merge(
+            NodeServices.layer,
+            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          ),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(started);
+      yield* TestClock.adjust(Duration.millis(900_001));
+      yield* Deferred.succeed(finish, undefined);
+      yield* Fiber.join(fiber);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("accepts launch JSON after remote shell startup noise", () => {
     const target = {
       alias: "devbox",
@@ -371,7 +417,7 @@ describe("ssh tunnel scripts", () => {
 // bind unless both sockets set SO_REUSEPORT, so on Linux the preload adds it to
 // the picker's probe and the holder sets it too.
 
-const LOCK_WAIT_SITE = '  if [ "$LOCK_WAIT_COUNT" -ge 200 ]; then';
+const LOCK_WAIT_SITE = '  if [ "$LOCK_WAIT_COUNT" -ge 9000 ]; then';
 // Gives up after the first failed claim and recovery attempt instead of waiting.
 const FAIL_FAST: readonly [string, string] = [
   LOCK_WAIT_SITE,
@@ -680,6 +726,43 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
       yield* Deferred.succeed(releaseHolder, undefined);
       assert.equal((yield* Fiber.join(first)).serverKind, "managed");
       assert.isFalse(yield* fs.exists(lockPath));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("waits past the former 20-second limit for a live owner to finish", () =>
+    Effect.gen(function* () {
+      const { launch, writeVariant } = yield* prepareLaunch;
+      const holding = yield* Deferred.make<void>();
+      const releaseHolder = yield* Deferred.make<void>();
+      const holder = yield* writeVariant("slow-holder", [HOLD_LOCK]);
+      const contender = yield* writeVariant("patient-contender", [
+        ["LOCK_WAIT_COUNT=0", "LOCK_WAIT_COUNT=200"],
+        ["  sleep 0.1", '  printf "waiting\\n"; read -r release'],
+      ]);
+      const first = yield* launch(
+        "first-alias",
+        {
+          onLine: (line) =>
+            line === "holding"
+              ? Deferred.succeed(holding, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          release: Deferred.await(releaseHolder),
+        },
+        holder,
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(holding);
+      const second = yield* launch(
+        "second-alias",
+        {
+          onLine: (line) =>
+            line === "waiting"
+              ? Deferred.succeed(releaseHolder, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          release: Fiber.join(first).pipe(Effect.orDie, Effect.asVoid),
+        },
+        contender,
+      );
+      assert.deepEqual(second, yield* Fiber.join(first));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
