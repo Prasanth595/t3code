@@ -1030,7 +1030,8 @@ function pullRequestContextComment(
 ): ReviewCommentContext {
   const term = terminologyForUrl(input.url).singular;
   return {
-    id: `pull-request-context:${input.number}`,
+    // Use URLs because repositories can share pull request numbers.
+    id: `pull-request-context:${input.url}`,
     sectionId: `pull-request:${input.number}`,
     sectionTitle: `PR #${input.number}`,
     filePath: `PR #${input.number}`,
@@ -1061,7 +1062,6 @@ export function buildPullRequestReferenceContext(
   input: PullRequestContextMetadata,
 ): ReviewCommentContext {
   const comment = pullRequestContextComment(input, []);
-  // Use URLs because repositories can share pull request numbers.
   return { ...comment, id: `pr-reference:${input.url}` };
 }
 
@@ -1156,7 +1156,7 @@ export function buildAskAboutGuideStopHandoff(input: {
     reviewComments: [
       pullRequestContextComment(input, ANSWER_INSTRUCTIONS),
       {
-        id: `pull-request-guide-stop:${input.number}:${stop.index}`,
+        id: `pull-request-guide-stop:${input.url}:${stop.index}`,
         sectionId: `pull-request:${input.number}`,
         sectionTitle: `PR #${input.number} review guide`,
         filePath: `Guide stop ${stop.index + 1}`,

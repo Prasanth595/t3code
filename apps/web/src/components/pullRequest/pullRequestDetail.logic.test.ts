@@ -870,6 +870,39 @@ describe("asking about a change rather than working on it", () => {
     expect(handoff.reviewComments[1]?.text).toBe("");
   });
 
+  it("keeps both pull requests when two repositories share a number", () => {
+    const selection = (id: string) => ({
+      id,
+      sectionId: "pull-request:42",
+      sectionTitle: "PR #42 review",
+      filePath: "apps/web/src/page.tsx",
+      startIndex: 11,
+      endIndex: 17,
+      rangeLabel: "L12-L18",
+      text: "",
+      diff: "+const answer = 42;",
+    });
+    const otherUrl = "https://github.com/acme/other/pull/42";
+    const first = buildAddSelectionToAgentHandoff({
+      ...base,
+      comment: selection("pull-request-selection:t3code:page.tsx:12:18"),
+      request: "why?",
+    });
+    const second = buildAddSelectionToAgentHandoff({
+      ...base,
+      url: otherUrl,
+      comment: selection("pull-request-selection:other:page.tsx:12:18"),
+      request: "and here?",
+    });
+    const draft = appendHandoff(appendHandoff({ prompt: "", reviewComments: [] }, first), second);
+    expect(draft.reviewComments.map((comment) => comment.pullRequest?.url)).toEqual([
+      base.url,
+      undefined,
+      otherUrl,
+      undefined,
+    ]);
+  });
+
   it("explains a GitLab merge request in its own term", () => {
     const handoff = buildExplainPullRequestHandoff({
       ...base,
