@@ -1,6 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
-import { ProjectId, type TerminalEvent } from "@t3tools/contracts";
+import { ProjectId, type TerminalEvent, type TerminalSessionSnapshot } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -18,6 +18,20 @@ const threadId = "thread-1";
 const terminalId = "setup-setup";
 const event = { threadId, terminalId, sequence: 1, createdAt: "2026-01-01T00:00:00.000Z" };
 
+const openSnapshot = (history: string): TerminalSessionSnapshot => ({
+  threadId,
+  terminalId,
+  cwd: "/repo/.t3/worktrees/feature",
+  worktreePath: null,
+  status: "running",
+  pid: 123,
+  history,
+  exitCode: null,
+  exitSignal: null,
+  label: "zsh",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+});
+
 const makeHarness = Effect.fn(function* (options: {
   readonly history?: string;
   readonly opening?: Deferred.Deferred<void>;
@@ -26,25 +40,11 @@ const makeHarness = Effect.fn(function* (options: {
   const writes = yield* Queue.unbounded<string>();
   const outputLines = yield* Queue.unbounded<string>();
   const terminals = Layer.mock(TerminalManager.TerminalManager)({
-    open: (input) =>
+    open: () =>
       (options.opening
         ? Deferred.succeed(options.opening, undefined).pipe(Effect.andThen(Effect.never))
         : Effect.void
-      ).pipe(
-        Effect.as({
-          threadId: input.threadId,
-          terminalId: input.terminalId ?? terminalId,
-          cwd: input.cwd,
-          worktreePath: null,
-          status: "running",
-          pid: 123,
-          history: options.history ?? "",
-          exitCode: null,
-          exitSignal: null,
-          label: "zsh",
-          updatedAt: "2026-01-01T00:00:00.000Z",
-        }),
-      ),
+      ).pipe(Effect.as(openSnapshot(options.history ?? ""))),
     subscribe: (listener) =>
       Effect.sync(() => {
         listeners.add(listener);
@@ -128,6 +128,19 @@ describe("ProjectSetupScriptRunner", () => {
       yield* emit({ ...event, type: "activity", hasRunningSubprocess: true, label: "fnm" });
       yield* TestClock.adjust("1 minute");
       expect(yield* Queue.size(writes)).toBe(0);
+    }),
+  );
+
+  it.effect("forgets a busy startup child when the shell restarts", () =>
+    Effect.gen(function* () {
+      const { writes, emit } = yield* setup();
+      yield* emit({ ...event, type: "activity", hasRunningSubprocess: true, label: "fnm" });
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Queue.size(writes)).toBe(0);
+      yield* emit({ ...event, type: "restarted", snapshot: openSnapshot("") });
+      // The restart lands inside a quiet window, so the next full window decides.
+      yield* TestClock.adjust("6 seconds");
+      expect(yield* Queue.take(writes)).toMatch(/^ \( vp i\r\);/);
     }),
   );
 

@@ -307,6 +307,12 @@ export const make = Effect.gen(function* () {
           return Effect.void;
         }
         activity += 1;
+        // A new shell process starts idle; the manager resets its subprocess state without an event.
+        if (event.type === "started" || event.type === "restarted") {
+          busy = false;
+          reading = false;
+          carry = "";
+        }
         if (event.type === "activity") busy = event.hasRunningSubprocess;
         if (event.type === "output") {
           const text = carry + event.data;
