@@ -94,6 +94,9 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
   let closeGate: Promise<void> | undefined;
   let onProcessExit: MuseSdkHostOptions["onProcessExit"];
   let history: MuseItem[] = [];
+  // Muse resolves a turn's effort from turn/start, then the session default, then its own.
+  let sessionEffort: unknown;
+  const turnEfforts = new Map<string, unknown>();
   const responses = new Map<
     string,
     Array<Promise<Record<string, unknown>> | Record<string, unknown> | Error>
@@ -116,7 +119,14 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
           session: { sessionId, modelId: MODEL, activeTurnId: null },
           history: { items: history },
         };
+      case "session/setReasoningEffort":
+        sessionEffort = call.params.reasoningEffort;
+        return {};
       case "turn/start":
+        turnEfforts.set(
+          String(call.commandId),
+          call.params.reasoningEffort ?? sessionEffort ?? "host-default",
+        );
         return { turnId: call.commandId };
       case "turn/steer":
         return { turnId: call.params.expectedTurnId };
@@ -183,6 +193,12 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
       Effect.sync(() => {
         notify({ jsonrpc: "2.0", method, params: { sessionId, ...params } });
       }),
+    startOwnTurn: (turnId: string) =>
+      Effect.sync(() => {
+        turnEfforts.set(turnId, sessionEffort ?? "host-default");
+        notify({ jsonrpc: "2.0", method: "turn/started", params: { sessionId, turnId } });
+      }),
+    turnEffort: (turnId: string) => turnEfforts.get(turnId),
     emitHostWide: (method: string, params: Record<string, unknown>) =>
       Effect.sync(() => {
         notify({ jsonrpc: "2.0", method, params });
@@ -708,12 +724,22 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  it.effect("keeps the selected effort as the session default for turns Muse starts itself", () =>
+  it.effect("runs the follow-up turns Muse starts itself at the thread's selected effort", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
-      for (const [index, effort] of ["max", "max", "low"].entries()) {
-        const input = yield* turnInput(harness.providerThread, index + 1);
+      const offers =
+        yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        { continuationRequests: { offer: (request) => Queue.offer(offers, request) } },
+      );
+      for (const [index, effort] of ["max", "low"].entries()) {
+        const input = yield* turnInput(harness.providerThread, index * 2 + 1);
         const selection = {
           ...input.modelSelection,
           options: [{ id: "reasoningEffort", value: effort }],
@@ -726,21 +752,23 @@ describe("MuseAdapterV2", () => {
         const turn = yield* fake.takeCall("turn/start");
         yield* fake.emit("turn/completed", { turnId: turn.commandId!, terminal: "completed" });
         yield* harness.takeEvent("turn.terminal");
+
+        const reportId = `report-${index + 1}`;
+        yield* fake.startOwnTurn(reportId);
+        const continuation = yield* Queue.take(offers);
+        const followUp = yield* turnInput(harness.providerThread, index * 2 + 2);
+        yield* continuation.dispatchIfCurrent!(
+          harness.runtime.startTurn({
+            ...followUp,
+            message: { ...followUp.message, createdBy: "agent", creationSource: "provider" },
+          }),
+        );
+        const adopted = yield* harness.takeEvent("provider_turn.updated");
+        assert.strictEqual(adopted.providerTurn.nativeTurnRef?.nativeId, reportId);
+        yield* fake.emit("turn/completed", { turnId: reportId, terminal: "completed" });
+        assert.strictEqual((yield* harness.takeEvent("turn.terminal")).status, "completed");
+        assert.strictEqual(fake.turnEffort(reportId), effort);
       }
-      assert.deepStrictEqual(
-        fake.calls.flatMap((call) =>
-          call.method === "session/setReasoningEffort" || call.method === "turn/start"
-            ? [`${call.method} ${String(call.params.reasoningEffort)}`]
-            : [],
-        ),
-        [
-          "session/setReasoningEffort max",
-          "turn/start max",
-          "turn/start max",
-          "session/setReasoningEffort low",
-          "turn/start low",
-        ],
-      );
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
