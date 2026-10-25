@@ -913,35 +913,35 @@ export const layer: Layer.Layer<
           threadDisposition: "reusable",
         });
         const responseStreamingMode = yield* Effect.gen(function* () {
-          const responseStreamingMode = yield* serverSettings.getSettings.pipe(
+          const projectSettings = yield* serverSettings.getSettings.pipe(
             Effect.map(
-              (settings) =>
-                resolveProjectSettings(settings, input.appThread.projectId).settings
-                  .responseStreamingMode,
+              (settings) => resolveProjectSettings(settings, input.appThread.projectId).settings,
             ),
           );
-          yield* checkpointService
-            .captureBaseline({
-              scope: input.checkpointScope,
-              ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
-            })
-            .pipe(
-              Effect.catchCauseIf(
-                (cause) => !Cause.hasInterruptsOnly(cause),
-                (_cause) =>
-                  Effect.logWarning(
-                    "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
-                    { runId: input.run.id },
-                  ),
-              ),
-            );
+          if (projectSettings.checkpointCapture) {
+            yield* checkpointService
+              .captureBaseline({
+                scope: input.checkpointScope,
+                ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
+              })
+              .pipe(
+                Effect.catchCauseIf(
+                  (cause) => !Cause.hasInterruptsOnly(cause),
+                  (_cause) =>
+                    Effect.logWarning(
+                      "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
+                      { runId: input.run.id },
+                    ),
+                ),
+              );
+          }
           if (
             input.shouldStartProviderTurn !== undefined &&
             !(yield* input.shouldStartProviderTurn())
           ) {
             return null;
           }
-          return responseStreamingMode;
+          return projectSettings.responseStreamingMode;
         }).pipe(
           Effect.catchCause((cause) =>
             Effect.gen(function* () {

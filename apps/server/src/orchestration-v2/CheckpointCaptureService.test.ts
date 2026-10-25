@@ -30,6 +30,7 @@ import * as CheckpointCaptureService from "./CheckpointCaptureService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const layerProjectionStoreTest = Layer.mergeAll(
   ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
@@ -269,6 +270,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           Layer.provide(
             Layer.mergeAll(
               IdAllocator.layer,
+              ServerSettings.layerTest(),
               refLookupFails
                 ? CheckpointService.layer.pipe(
                     Layer.provide(
@@ -448,6 +450,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         Layer.provide(
           Layer.mergeAll(
             IdAllocator.layer,
+            ServerSettings.layerTest(),
             Layer.mock(CheckpointService.CheckpointServiceV2)({
               materializeBaselineCheckpoint: () => Effect.die("a discarded run has no baseline"),
               capture: () => Effect.die("a discarded run must not be captured"),
@@ -672,6 +675,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         Layer.provide(
           Layer.mergeAll(
             IdAllocator.layer,
+            ServerSettings.layerTest(),
             Layer.mock(CheckpointService.CheckpointServiceV2)({
               materializeBaselineCheckpoint: () =>
                 Effect.die("baseline materialization must be skipped when ordinal 0 is ready"),
@@ -717,6 +721,205 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
       );
       assert.equal(projected.rootNode?.status, "cancelled");
       assert.deepEqual([...projected.readyCheckpointOrdinals].toSorted(), [0, 1]);
+    }),
+  );
+
+  it.effect("records a missing checkpoint without git when the project turns capture off", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const offThreadId = ThreadId.make("thread:checkpoint-capture-off");
+      const offRunId = RunId.make("run:checkpoint-capture-off");
+      const offScopeId = CheckpointScopeId.make("scope:checkpoint-capture-off");
+      const offRootNodeId = NodeId.make("node:checkpoint-capture-off-root");
+      const offProviderThreadId = ProviderThreadId.make("provider-thread:checkpoint-capture-off");
+      yield* projectionStore.apply({
+        id: EventId.make("event:checkpoint-capture-off:thread"),
+        type: "thread.created",
+        threadId: offThreadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: offThreadId,
+          projectId,
+          title: "Checkpoint capture off",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: offThreadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:checkpoint-capture-off:provider-thread"),
+        type: "provider-thread.updated",
+        threadId: offThreadId,
+        nodeId: offRootNodeId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: offProviderThreadId,
+          driver,
+          providerInstanceId,
+          providerSessionId: null,
+          appThreadId: offThreadId,
+          ownerNodeId: offRootNodeId,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 1,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:checkpoint-capture-off:scope"),
+        type: "checkpoint-scope.created",
+        threadId: offThreadId,
+        runId: offRunId,
+        nodeId: offRootNodeId,
+        occurredAt: now,
+        payload: {
+          id: offScopeId,
+          threadId: offThreadId,
+          runId: offRunId,
+          nodeId: offRootNodeId,
+          parentScopeId: null,
+          providerThreadId: offProviderThreadId,
+          kind: "root_run",
+          ordinalWithinParent: 0,
+          advancesAppRunCount: true,
+          cwd: "/repo",
+          createdAt: now,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:checkpoint-capture-off:run"),
+        type: "run.updated",
+        threadId: offThreadId,
+        runId: offRunId,
+        nodeId: offRootNodeId,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: offRunId,
+          threadId: offThreadId,
+          ordinal: 1,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: offProviderThreadId,
+          userMessageId: MessageId.make("message:checkpoint-capture-off"),
+          rootNodeId: offRootNodeId,
+          activeAttemptId: null,
+          status: "waiting",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:checkpoint-capture-off:node"),
+        type: "node.updated",
+        threadId: offThreadId,
+        runId: offRunId,
+        nodeId: offRootNodeId,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: offRootNodeId,
+          threadId: offThreadId,
+          runId: offRunId,
+          parentNodeId: null,
+          rootNodeId: offRootNodeId,
+          kind: "root_turn",
+          status: "waiting",
+          countsForRun: true,
+          providerThreadId: offProviderThreadId,
+          providerTurnId: null,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: offScopeId,
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+
+      const snapshots = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
+      const layerCapture = CheckpointCaptureService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            ServerSettings.layerTest({
+              projectSettingsOverrides: { [projectId]: { checkpointCapture: false } },
+            }),
+            Layer.mock(CheckpointService.CheckpointServiceV2)({
+              materializeBaselineCheckpoint: () =>
+                Effect.die("capture off must not materialize a git baseline"),
+              capture: (input) =>
+                Ref.update(snapshots, (all) => [...all, input.snapshot]).pipe(
+                  Effect.as({
+                    id: CheckpointId.make("checkpoint:off-1"),
+                    threadId: offThreadId,
+                    scopeId: offScopeId,
+                    runId: offRunId,
+                    nodeId: offRootNodeId,
+                    parentCheckpointId: null,
+                    ordinalWithinScope: 1,
+                    appRunOrdinal: 1,
+                    ref: CheckpointRef.make("checkpoint-ref:off-1"),
+                    status: "missing" as const,
+                    files: [],
+                    capturedAt: now,
+                  }),
+                ),
+            }),
+            Layer.mock(EventSink.EventSinkV2)({
+              commitCommand: (input) =>
+                Effect.forEach(input.events, (event) => projectionStore.apply(event)).pipe(
+                  Effect.as({ committed: true } as never),
+                  Effect.orDie,
+                ),
+            }),
+          ),
+        ),
+      );
+
+      yield* CheckpointCaptureService.CheckpointCaptureServiceV2.pipe(
+        Effect.flatMap((service) =>
+          service.execute({ threadId: offThreadId, runId: offRunId, scopeId: offScopeId }),
+        ),
+        Effect.provide(layerCapture),
+      );
+
+      assert.deepEqual(yield* Ref.get(snapshots), [false]);
+      const projected = yield* projectionStore.getCheckpointCaptureContext(offThreadId, {
+        runId: offRunId,
+        scopeId: offScopeId,
+      });
+      assert.equal(projected.run?.status, "completed");
+      assert.equal(projected.run?.checkpointId, CheckpointId.make("checkpoint:off-1"));
     }),
   );
 });

@@ -92,6 +92,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const mixedSubmodules = useScopedSettingsMixed(["worktreeSubmodules"]);
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
   const mixedAgentCredits = useScopedSettingsMixed(["removeAgentCreditsOnMerge"]);
+  const mixedCheckpoints = useScopedSettingsMixed(["checkpointCapture"]);
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
@@ -403,6 +404,30 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 mixed={mixedAutoPull}
                 checked={mixedAutoPull ? false : settings.defaultAutoPull}
                 onCheckedChange={(enabled) => updateSettings({ defaultAutoPull: enabled })}
+              />
+            }
+          />
+          <SettingsRow
+            serverScoped
+            settingKeys={["checkpointCapture"]}
+            mixed={mixedCheckpoints}
+            {...searchableSetting("turn-checkpoints")}
+            description="Snapshot the workspace with Git around each turn for turn diffs and rollback. Turn off for very large workspaces where snapshots delay the end of every turn."
+            resetAction={
+              settings.checkpointCapture ? null : (
+                <SettingResetButton
+                  label="turn checkpoints"
+                  tooltip="Reset turn checkpoints to on"
+                  onClick={() => updateSettings({ checkpointCapture: true })}
+                />
+              )
+            }
+            control={
+              <Switch
+                aria-label="Turn checkpoints"
+                mixed={mixedCheckpoints}
+                checked={mixedCheckpoints ? false : settings.checkpointCapture}
+                onCheckedChange={(enabled) => updateSettings({ checkpointCapture: enabled })}
               />
             }
           />

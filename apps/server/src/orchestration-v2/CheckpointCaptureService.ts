@@ -14,7 +14,9 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 
+import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -52,6 +54,7 @@ export const layer: Layer.Layer<
   | EventSink.EventSinkV2
   | IdAllocator.IdAllocatorV2
   | ProjectionStore.ProjectionStoreV2
+  | ServerSettings.ServerSettingsService
 > = Layer.effect(
   CheckpointCaptureServiceV2,
   Effect.gen(function* () {
@@ -59,6 +62,7 @@ export const layer: Layer.Layer<
     const eventSink = yield* EventSink.EventSinkV2;
     const ids = yield* IdAllocator.IdAllocatorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
 
     const execute = Effect.fn("orchestrationV2.checkpointCapture.execute")(function* (input: {
       readonly threadId: ThreadId;
@@ -100,22 +104,30 @@ export const layer: Layer.Layer<
       }
 
       const capturedAt = yield* DateTime.now;
+      const thread = yield* projections.getThreadShell(input.threadId);
+      const snapshot = yield* serverSettings.getSettings.pipe(
+        Effect.map(
+          (settings) =>
+            resolveProjectSettings(settings, thread?.projectId ?? null).settings.checkpointCapture,
+        ),
+      );
       const baselineOrdinalWithinScope = Math.max(0, run.ordinal - 1);
       const hasReadyCheckpoint = (ordinalWithinScope: number) =>
         readyCheckpointOrdinals.includes(ordinalWithinScope);
       const threadStartCheckpoint =
-        baselineOrdinalWithinScope === 0 || hasReadyCheckpoint(0)
+        !snapshot || baselineOrdinalWithinScope === 0 || hasReadyCheckpoint(0)
           ? null
           : yield* checkpoints.materializeBaselineCheckpoint({
               scope,
               ordinalWithinScope: 0,
             });
-      const baselineCheckpoint = hasReadyCheckpoint(baselineOrdinalWithinScope)
-        ? null
-        : yield* checkpoints.materializeBaselineCheckpoint({
-            scope,
-            ordinalWithinScope: baselineOrdinalWithinScope,
-          });
+      const baselineCheckpoint =
+        !snapshot || hasReadyCheckpoint(baselineOrdinalWithinScope)
+          ? null
+          : yield* checkpoints.materializeBaselineCheckpoint({
+              scope,
+              ordinalWithinScope: baselineOrdinalWithinScope,
+            });
       const checkpoint = yield* checkpoints.capture({
         scope,
         runId: run.id,
@@ -123,6 +135,7 @@ export const layer: Layer.Layer<
         ordinalWithinScope: run.ordinal,
         appRunOrdinal: run.ordinal,
         capturedAt,
+        snapshot,
       });
       // Omit delegatedCompletion to preserve cohort writes made after capture loaded the run.
       const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } = run;

@@ -834,6 +834,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["auto pull default branch current checkout fast forward upstream"],
   },
   {
+    id: "turn-checkpoints",
+    title: "Turn checkpoints",
+    to: "/settings/source-control",
+    scope: "project-defaults",
+    searchTerms: ["checkpoint snapshot git diff undo rollback restore slow large repository"],
+  },
+  {
     id: "remove-agent-credits-on-merge",
     title: "Remove agent credits when merging",
     to: "/settings/source-control",

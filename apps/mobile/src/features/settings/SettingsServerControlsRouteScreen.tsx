@@ -53,6 +53,7 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
   "new-threads": ["defaultThreadEnvMode", "worktreeSubmodules", "defaultRuntimeMode"],
   "source-control": [
     "defaultAutoPull",
+    "checkpointCapture",
     "removeAgentCreditsOnMerge",
     "newWorktreesStartFromOrigin",
     "branchNamingMode",
@@ -381,6 +382,16 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       value={uniform("defaultAutoPull")}
                       disabled={disabledFor("defaultAutoPull")}
                       onValueChange={(value) => write({ defaultAutoPull: value })}
+                    />
+                  </SettingsSection>
+                  <SettingsSection title="Checkpoints">
+                    <SettingsSwitchRow
+                      icon="arrow.uturn.backward"
+                      label="Turn checkpoints"
+                      subtitle="Snapshot the workspace with Git around each turn for turn diffs and rollback. Turn off for very large workspaces where snapshots delay the end of every turn."
+                      value={uniform("checkpointCapture")}
+                      disabled={disabledFor("checkpointCapture")}
+                      onValueChange={(value) => write({ checkpointCapture: value })}
                     />
                   </SettingsSection>
                   <SettingsSection title="Worktrees">
