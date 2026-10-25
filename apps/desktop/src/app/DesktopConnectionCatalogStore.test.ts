@@ -467,10 +467,14 @@ describe("DesktopConnectionCatalogStore", () => {
         yield* fileSystem.remove(backupPath);
         yield* fileSystem.makeDirectory(backupPath);
 
+        const error = yield* store.get.pipe(Effect.flip);
         assert.instanceOf(
-          yield* store.get.pipe(Effect.flip),
+          error,
           DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreWriteError,
         );
+        assert.equal(error.operation, "replace-catalog-file");
+        assert.equal(error.path, backupPath);
+        assert.include(error.message, backupPath);
         assert.deepStrictEqual(yield* fileSystem.readFile(catalogPath), damaged);
         assert.sameMembers(yield* fileSystem.readDirectory(environment.stateDir), [
           "connection-catalog.json",

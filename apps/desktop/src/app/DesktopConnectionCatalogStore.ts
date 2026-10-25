@@ -486,13 +486,14 @@ export const make = Effect.gen(function* () {
         },
       );
     },
-    Effect.mapError(
-      (cause) =>
-        new DesktopConnectionCatalogStoreWriteError({
-          operation: "preserve-corrupt-catalog",
-          path: catalogPath,
-          cause,
-        }),
+    Effect.mapError((cause) =>
+      Schema.is(DesktopConnectionCatalogStoreWriteError)(cause)
+        ? cause
+        : new DesktopConnectionCatalogStoreWriteError({
+            operation: "preserve-corrupt-catalog",
+            path: catalogPath,
+            cause,
+          }),
     ),
   );
 
