@@ -17,6 +17,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { resolvePiCommand } from "./bundledPi.ts";
 import { buildPiRpcLaunch, resolvePiLaunchArgs } from "./mcpInjection.ts";
 import {
   makePiRpcConnection,
@@ -210,13 +211,14 @@ const runPiVersionCommand = Effect.fn("PiProviderStatus.runPiVersionCommand")(fu
   environment: NodeJS.ProcessEnv,
 ) {
   const command = piSettings.binaryPath || "pi";
-  const spawnCommand = yield* resolveSpawnCommand(command, ["--version"], {
-    env: environment,
+  const piCommand = resolvePiCommand(command, ["--version"], environment);
+  const spawnCommand = yield* resolveSpawnCommand(piCommand.command, [...piCommand.args], {
+    env: piCommand.env,
   });
   return yield* spawnAndCollect(
     command,
     ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-      env: environment,
+      env: piCommand.env,
       shell: spawnCommand.shell,
     }),
   );

@@ -66,6 +66,7 @@ import {
   type PiRpcConnection,
   type PiRpcRecord,
 } from "./rpc.ts";
+import { resolvePiCommand } from "./bundledPi.ts";
 import {
   buildPiRpcLaunch,
   materializePiT3McpExtension,
@@ -466,12 +467,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         extensionPath,
         runtimeMode: input.runtimePolicy.runtimeMode,
       });
+      const piCommand = resolvePiCommand(options.settings.binaryPath, launch.args, launch.env);
       const scopedLaunch = yield* agentScope.wrap({
-        command: options.settings.binaryPath || "pi",
-        args: launch.args,
+        command: piCommand.command,
+        args: piCommand.args,
         name: "pi",
         threadId: input.threadId,
-        env: launch.env,
+        env: piCommand.env,
       });
       // Finalizers run in reverse order: reap detached work after terminating Pi.
       const scopeUnit = scopedLaunch.unit;
@@ -482,7 +484,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         command: scopedLaunch.command,
         args: scopedLaunch.args,
         cwd,
-        env: launch.env,
+        env: piCommand.env,
       }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.mapError(
