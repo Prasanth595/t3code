@@ -8,6 +8,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
+import { HttpClient } from "effect/http";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -50,8 +51,6 @@ const ProfileSettingsFile = Schema.Struct({
 const encodeProfileSettings = Schema.encodeSync(Schema.fromJsonString(ProfileSettingsFile));
 const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
 const isAcpTransportError = Schema.is(AcpErrors.AcpTransportError);
-// Google Compute Engine VMs get credentials from the metadata server.
-const googleCloudProductNames = new Set(["Google", "Google Compute Engine"]);
 
 // Python splits BROWSER on path separators before parsing quotes. Exit 0 on EPIPE to prevent browser fallback after cancellation.
 const browserHelperSource =
@@ -121,7 +120,7 @@ export function antigravityAuthLabel(authMethod: AntigravityAuthMethod): string 
   }
 }
 
-function antigravityAuthConfigIssue(auth: AntigravityAuthConfig): string | null {
+export function antigravityAuthConfigIssue(auth: AntigravityAuthConfig): string | null {
   switch (auth.authMethod) {
     case "oauth-personal":
       return null;
@@ -148,6 +147,7 @@ export const antigravityAuthIssue = Effect.fn("antigravityAuthIssue")(function* 
     readonly platform: NodeJS.Platform;
     readonly environment: NodeJS.ProcessEnv;
     readonly userHome: string;
+    readonly onGoogleCloud: Effect.Effect<boolean>;
   },
 ) {
   const configIssue = antigravityAuthConfigIssue(auth);
@@ -170,16 +170,17 @@ export const antigravityAuthIssue = Effect.fn("antigravityAuthIssue")(function* 
   ) {
     return null;
   }
-  const productName =
-    host.platform === "linux"
-      ? yield* fs
-          .readFileString("/sys/class/dmi/id/product_name")
-          .pipe(Effect.orElseSucceed(() => ""))
-      : "";
-  return googleCloudProductNames.has(productName.trim())
+  return (yield* host.onGoogleCloud)
     ? null
     : "Agent Platform without an API key needs Google Cloud application default credentials. Run `gcloud auth application-default login`, or enter an API key in the Antigravity provider settings.";
 });
+
+// The Go client's metadata server check. Unreachable link-local addresses can hang, so bound it.
+export const probeGoogleMetadataServer = HttpClient.get("http://169.254.169.254").pipe(
+  Effect.map((response) => response.headers["metadata-flavor"] === "Google"),
+  Effect.timeoutOrElse({ duration: "1 second", orElse: () => Effect.succeed(false) }),
+  Effect.orElseSucceed(() => false),
+);
 
 /**
  * `auth.type` names the selected method so a native logout clears only that method's credentials

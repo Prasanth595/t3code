@@ -5,12 +5,15 @@ import { ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as Ndjson from "effect/encoding/Ndjson";
 import * as AcpErrors from "effect-acp/errors";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -28,6 +31,7 @@ import {
   makeAntigravityStdoutTransform,
   parseAntigravityAuthorizationUrl,
   prepareAntigravityProfile,
+  probeGoogleMetadataServer,
   resolveAntigravityInstanceDirectories,
 } from "./antigravityAuthSupport.ts";
 
@@ -678,8 +682,17 @@ it.layer(NodeServices.layer)("Antigravity Agent Platform credentials", (it) => {
         gcpProject: "proj",
         gcpLocation: "us-central1",
       };
-      const issueWith = (environment: NodeJS.ProcessEnv) =>
-        antigravityAuthIssue(auth, { platform: "darwin", environment, userHome });
+      const issueWith = (
+        environment: NodeJS.ProcessEnv,
+        platform: NodeJS.Platform = "darwin",
+        onGoogleCloud = false,
+      ) =>
+        antigravityAuthIssue(auth, {
+          platform,
+          environment,
+          userHome,
+          onGoogleCloud: Effect.succeed(onGoogleCloud),
+        });
 
       // CLOUDSDK_CONFIG replaces ~/.config/gcloud, as it does for gcloud.
       expect(yield* issueWith({ CLOUDSDK_CONFIG: sdkConfig })).toContain(
@@ -693,6 +706,53 @@ it.layer(NodeServices.layer)("Antigravity Agent Platform credentials", (it) => {
           GCE_METADATA_HOST: "metadata.google.internal",
         }),
       ).toBeNull();
+
+      // Windows reads %APPDATA%\gcloud and never the POSIX path.
+      expect(yield* issueWith({ APPDATA: userHome }, "win32")).toContain(
+        "gcloud auth application-default login",
+      );
+      yield* fs.makeDirectory(path.join(userHome, "gcloud"));
+      yield* fs.writeFileString(
+        path.join(userHome, "gcloud", "application_default_credentials.json"),
+        "{}",
+      );
+      expect(yield* issueWith({ APPDATA: userHome }, "win32")).toBeNull();
+
+      // A metadata server supplies credentials without any local file.
+      const missing = { CLOUDSDK_CONFIG: path.join(userHome, "missing") };
+      expect(yield* issueWith(missing, "linux")).toContain("gcloud auth application-default login");
+      expect(yield* issueWith(missing, "linux", true)).toBeNull();
+      expect(
+        yield* issueWith({ APPDATA: path.join(userHome, "missing") }, "win32", true),
+      ).toBeNull();
+    }),
+  );
+
+  it.effect("detects the metadata server the way the Go client does", () =>
+    Effect.gen(function* () {
+      const probeWith = (respond: Parameters<typeof HttpClient.make>[0]) =>
+        probeGoogleMetadataServer.pipe(
+          Effect.provideService(HttpClient.HttpClient, HttpClient.make(respond)),
+        );
+      const respondWith = (headers: Record<string, string>) =>
+        probeWith((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { headers }))),
+        );
+
+      expect(yield* respondWith({ "Metadata-Flavor": "Google" })).toBe(true);
+      expect(yield* respondWith({})).toBe(false);
+      expect(
+        yield* probeWith((request) =>
+          Effect.fail(
+            new HttpClientError.HttpClientError({
+              reason: new HttpClientError.TransportError({ request }),
+            }),
+          ),
+        ),
+      ).toBe(false);
+      const unanswered = yield* probeWith(() => Effect.never).pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      expect(yield* Fiber.join(unanswered)).toBe(false);
     }),
   );
 });

@@ -29,12 +29,14 @@ import { makeAntigravityAuth, type AntigravityAuth } from "../AntigravityAuth.ts
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
 import * as AntigravityUsage from "./AntigravityUsage.ts";
 import {
+  antigravityAuthConfigIssue,
   antigravityAuthIssue,
   antigravityAuthLabel,
   antigravityAuthUsesBrowser,
   buildAntigravityAcpSpawnInput,
   isAntigravitySignInRequiredError,
   prepareAntigravityProfile,
+  probeGoogleMetadataServer,
   resolveAntigravityInstanceDirectories,
   type AntigravityAuthConfig,
 } from "../antigravityAuthSupport.ts";
@@ -128,11 +130,16 @@ export const AntigravityDriver: ProviderDriver<
       processEnvironment,
       yield* HostProcess.HomeDirectory,
     );
+    // Probe the metadata server at most once per instance, as the Go client does per process.
+    const onGoogleCloud = yield* Effect.cached(
+      probeGoogleMetadataServer.pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
+    );
     // Recheck on every use so credentials created after startup take effect.
     const authIssue = antigravityAuthIssue(auth, {
       platform,
       environment: processEnvironment,
       userHome,
+      onGoogleCloud,
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
@@ -180,12 +187,14 @@ export const AntigravityDriver: ProviderDriver<
 
     const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
       input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
+      options: { readonly signOut?: boolean } = {},
     ): Effect.fn.Return<
       AcpSessionRuntime.AcpSessionRuntime["Service"],
       AcpError | ProviderSetupError,
       Scope.Scope
     > {
-      const authConfigIssue = yield* authIssue;
+      // Sign-out needs no Google Cloud credentials, so removing them must not block it.
+      const authConfigIssue = options.signOut ? antigravityAuthConfigIssue(auth) : yield* authIssue;
       if (authConfigIssue !== null) {
         return yield* new ProviderSetupError({
           instanceId,
@@ -278,7 +287,9 @@ export const AntigravityDriver: ProviderDriver<
     });
 
     const makeDisposableRuntime = Effect.fn("AntigravityDriver.makeDisposableRuntime")(function* (
-      input: Pick<AntigravityAcpRuntimeInput, "onAuthorizationUrl">,
+      input: Pick<AntigravityAcpRuntimeInput, "onAuthorizationUrl"> & {
+        readonly signOut?: boolean;
+      },
     ) {
       const cwd = yield* fileSystem
         .makeTempDirectoryScoped({ prefix: "t3-antigravity-setup-" })
@@ -303,12 +314,15 @@ export const AntigravityDriver: ProviderDriver<
           Effect.provideService(Path.Path, path),
         ),
       );
-      const runtime = yield* makeRuntime({
-        cwd,
-        clientInfo: { name: "t3-code-provider-setup", version: "0.0.0" },
-        mcpServers: [],
-        ...(input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {}),
-      });
+      const runtime = yield* makeRuntime(
+        {
+          cwd,
+          clientInfo: { name: "t3-code-provider-setup", version: "0.0.0" },
+          mcpServers: [],
+          ...(input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {}),
+        },
+        { signOut: input.signOut === true },
+      );
       return {
         ...runtime,
         start: () =>

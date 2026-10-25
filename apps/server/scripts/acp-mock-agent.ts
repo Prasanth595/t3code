@@ -2585,6 +2585,13 @@ const program = Effect.gen(function* () {
   );
 
   yield* agent.handleUnknownExtRequest((method, params) => {
+    // Antigravity's sign-out is the raw v1 method, sent through the runtime's generic request.
+    if (antigravityProfile && method === "logout") {
+      return Effect.sync(() => {
+        authenticated = false;
+        return {};
+      });
+    }
     if (method === "_test/environment") {
       return Effect.succeed({
         inherited: process.env.T3_ACP_RUNTIME_AMBIENT === "sentinel",
