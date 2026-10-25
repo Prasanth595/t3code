@@ -183,30 +183,33 @@ export function WorkspaceToolbar(props: {
               : undefined,
         }}
       />
-      {/* UIKit lays trailing items out from the edge inward. */}
-      <Toolbar placement="right">
-        {searchButton}
-        {nativeToolbarCompose && foldedSearch ? <Toolbar.Spacer width={8} /> : null}
-        {composeButton}
-        {selectedTab !== "threads" ||
-        isDuoDevice(deviceType) ||
-        deviceType === "pad" ||
-        sidebarTabs === "picker" ||
-        compactTabs ? null : (
-          <Toolbar.Button
-            accessibilityLabel="New chat"
-            icon="square.and.pencil"
-            onPress={props.onNewTask}
-          />
-        )}
-        {NATIVE_LIQUID_GLASS_SUPPORTED ? null : (
-          <Toolbar.Button
-            accessibilityLabel={searchLabel}
-            icon="magnifyingglass"
-            onPress={focusSearch}
-          />
-        )}
-      </Toolbar>
+      {/* UIKit lays trailing items out from the edge inward. A trailing toolbar replaces the
+          header's own items, so an empty one would hide the Settings scope filter. */}
+      {workspace.settingsOpen && !foldedSearch && NATIVE_LIQUID_GLASS_SUPPORTED ? null : (
+        <Toolbar placement="right">
+          {searchButton}
+          {nativeToolbarCompose && foldedSearch ? <Toolbar.Spacer width={8} /> : null}
+          {composeButton}
+          {selectedTab !== "threads" ||
+          isDuoDevice(deviceType) ||
+          deviceType === "pad" ||
+          sidebarTabs === "picker" ||
+          compactTabs ? null : (
+            <Toolbar.Button
+              accessibilityLabel="New chat"
+              icon="square.and.pencil"
+              onPress={props.onNewTask}
+            />
+          )}
+          {NATIVE_LIQUID_GLASS_SUPPORTED ? null : (
+            <Toolbar.Button
+              accessibilityLabel={searchLabel}
+              icon="magnifyingglass"
+              onPress={focusSearch}
+            />
+          )}
+        </Toolbar>
+      )}
       <Toolbar placement="bottom">
         {sidebarTabs === "toolbar" ? <WorkspaceTabToolbarButtons /> : null}
         {bottomSearch && searchVisible ? <Toolbar.SearchBarSlot /> : null}
