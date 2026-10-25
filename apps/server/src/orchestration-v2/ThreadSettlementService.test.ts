@@ -6,6 +6,7 @@ import {
   ProjectId,
   EventId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
   type OrchestrationProjectShell,
   type OrchestrationV2AppThread,
@@ -884,6 +885,82 @@ describe("ThreadSettlementServiceV2 worker", () => {
           assert.deepStrictEqual(
             (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
             [ThreadId.make("merged-in-app")],
+          );
+          yield* Deferred.succeed(releasePeriodicLookup, undefined);
+          yield* reactor.drain;
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("settles a merged thread when its background work ends, during a slow full sweep", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const periodicLookupStarted = yield* Deferred.make<void>();
+        const releasePeriodicLookup = yield* Deferred.make<void>();
+        const settled = yield* Deferred.make<void>();
+        const branchLookupCount = yield* Ref.make(0);
+        const mergedLink: NonNullable<SettlementShell["pullRequests"]>[number] = {
+          ...persistedLink("open", DateTime.makeUnsafe("2026-08-20T00:00:00.000Z")),
+          snapshot: {
+            state: "merged",
+            title: "Pull request",
+            headBranch: "feature",
+            baseBranch: "main",
+            isDraft: false,
+            updatedAt: NOW,
+            syncedAt: NOW,
+            mergedAt: NOW,
+          },
+        };
+        const waiting = makeThread("waiting-on-subagent", {
+          pullRequests: [mergedLink],
+          pendingBackgroundTasks: [{ taskId: "child", kind: "subagent", description: "Review" }],
+        });
+        const slow = makeThread("slow-periodic-lookup", {
+          branch: "another-feature",
+          latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([waiting, slow]),
+          branchPullRequest: () =>
+            Ref.updateAndGet(branchLookupCount, (count) => count + 1).pipe(
+              Effect.flatMap((count) =>
+                count === 1
+                  ? Effect.succeed(makeBranchPullRequest("open"))
+                  : Deferred.succeed(periodicLookupStarted, undefined).pipe(
+                      Effect.andThen(Deferred.await(releasePeriodicLookup)),
+                      Effect.as(makeBranchPullRequest("open")),
+                    ),
+              ),
+            ),
+          onDispatch: () => Deferred.succeed(settled, undefined),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+          yield* fixture.updateSettings({ sidebarAutoSettleAfterDays: 4 });
+          yield* Deferred.await(periodicLookupStarted);
+
+          yield* Ref.set(
+            fixture.snapshots,
+            makeSnapshot([{ ...waiting, pendingBackgroundTasks: [] }, slow]),
+          );
+          yield* fixture.publishEvent({
+            type: "run.background-work-cancelled",
+            id: EventId.make("event:background-ended"),
+            threadId: waiting.id,
+            occurredAt: DateTime.makeUnsafe(NOW),
+            payload: { runId: RunId.make("run:waiting"), restartCancelledBackgroundWork: [] },
+          });
+          yield* Deferred.await(settled);
+
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            [waiting.id],
           );
           yield* Deferred.succeed(releasePeriodicLookup, undefined);
           yield* reactor.drain;

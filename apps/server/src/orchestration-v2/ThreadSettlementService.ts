@@ -1,4 +1,7 @@
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  backgroundWorkHoldsCompletion,
+  turnItemUpdateCanEndBackgroundWork,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
@@ -523,9 +526,21 @@ export const make = Effect.gen(function* () {
             }),
       ),
     );
-  const worker = yield* makeDrainableWorker((threadId: ThreadId | undefined) =>
-    runSweep(null, threadId),
+  // A thread that just stopped must not wait behind a full sweep's host reads: clients
+  // hold it in Working only briefly, so a late settle makes it appear and then vanish.
+  const fullSweeps = yield* makeDrainableWorker(() => runSweep(null));
+  const queuedThreads = new Set<ThreadId>();
+  const threadSweeps = yield* makeDrainableWorker((threadId: ThreadId) =>
+    Effect.sync(() => queuedThreads.delete(threadId)).pipe(
+      Effect.andThen(runSweep(null, threadId)),
+    ),
   );
+  const enqueueThread = (threadId: ThreadId) =>
+    Effect.suspend(() => {
+      if (queuedThreads.has(threadId)) return Effect.void;
+      queuedThreads.add(threadId);
+      return threadSweeps.enqueue(threadId);
+    }).pipe(Effect.uninterruptible);
 
   // Skip settle scripts in shared checkouts where other threads may still work.
   const cleanUpSettledThread = Effect.fn("ThreadSettlementServiceV2.cleanUpSettledThread")(
@@ -572,16 +587,23 @@ export const make = Effect.gen(function* () {
       case "thread.pull-request-link-updated":
       case "thread.pull-request-synced":
       case "provider-session.detached":
-        return worker.enqueue(event.threadId);
+      case "provider-thread.updated":
+      case "subagent.updated":
+      case "run.background-work-cancelled":
+        return enqueueThread(event.threadId);
+      case "turn-item.updated":
+        return turnItemUpdateCanEndBackgroundWork(event.payload)
+          ? enqueueThread(event.threadId)
+          : Effect.void;
       case "provider-session.updated":
         return event.payload.status !== "starting" && event.payload.status !== "running"
-          ? worker.enqueue(event.threadId)
+          ? enqueueThread(event.threadId)
           : Effect.void;
       case "run.updated":
         return ["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
           event.payload.status,
         )
-          ? worker.enqueue(event.threadId)
+          ? enqueueThread(event.threadId)
           : Effect.void;
       default:
         return Effect.void;
@@ -598,8 +620,8 @@ export const make = Effect.gen(function* () {
     let lastSettlementSettings = autoSettlementSettingsKey(initialSettings);
     yield* forkParked(
       Effect.gen(function* () {
-        yield* worker.enqueue(undefined);
-        yield* worker.drain;
+        yield* fullSweeps.enqueue(undefined);
+        yield* fullSweeps.drain;
       }).pipe(Effect.repeat(Schedule.spaced("1 minute")), Effect.asVoid),
     );
     yield* forkParked(
@@ -609,7 +631,7 @@ export const make = Effect.gen(function* () {
           return Effect.void;
         }
         lastSettlementSettings = key;
-        return worker.enqueue(undefined);
+        return fullSweeps.enqueue(undefined);
       }),
     );
     yield* forkParked(Stream.runForEach(mergedPullRequests, (event) => runSweep(event)));
@@ -622,7 +644,10 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  return { start, drain: worker.drain } satisfies ThreadSettlementServiceV2["Service"];
+  return {
+    start,
+    drain: Effect.andThen(fullSweeps.drain, threadSweeps.drain),
+  } satisfies ThreadSettlementServiceV2["Service"];
 });
 
 export const layer = Layer.effect(ThreadSettlementServiceV2, make);
