@@ -1008,6 +1008,24 @@ describe("a second handoff into the same composer", () => {
     );
   });
 
+  it("keeps a second pull request's failing checks when they share a name", () => {
+    const fixFindings = (number: number) =>
+      buildFixFindingsHandoff({
+        number,
+        title: "Add the pull requests page",
+        url: `https://github.com/pingdotgg/t3code/pull/${number}`,
+        headBranch: `feat/${number}`,
+        baseBranch: "main",
+        reviewThreads: [],
+        comments: [],
+        checks: [{ name: "lint", status: "failure", description: null, url: null }],
+        commentsTruncated: false,
+      });
+    const first = appendHandoff({ prompt: "", reviewComments: [] }, fixFindings(42)).prompt;
+    const both = appendHandoff({ prompt: first, reviewComments: [] }, fixFindings(43)).prompt;
+    expect(both.slice(first.length)).toContain("Failing checks:\n> lint");
+  });
+
   it("keeps what the reader typed, trailing line breaks aside", () => {
     expect(
       appendHandoff(

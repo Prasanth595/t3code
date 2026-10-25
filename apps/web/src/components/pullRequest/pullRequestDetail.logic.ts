@@ -834,11 +834,18 @@ export function appendHandoff(
       .split("\n")
       .map((line) => line.trim()),
   );
-  const added = incoming.prompt
-    .split("\n")
-    .filter((line) => line.trim().length === 0 || !present.has(line.trim()))
-    .join("\n")
-    .trim();
+  const lines = incoming.prompt.split("\n");
+  const isRepeat = lines.every((line) => line.trim().length === 0 || present.has(line.trim()));
+  // Quotes and their headers belong to this handoff's pull request even when an earlier one shares them.
+  const added = isRepeat
+    ? ""
+    : lines
+        .filter((line) => {
+          const trimmed = line.trim();
+          return trimmed.length === 0 || /^>|:$/u.test(trimmed) || !present.has(trimmed);
+        })
+        .join("\n")
+        .trim();
   const kept = existing.prompt.trimEnd();
   const incomingById = new Map(
     (incoming.reviewComments ?? []).map((comment) => [comment.id, comment]),
