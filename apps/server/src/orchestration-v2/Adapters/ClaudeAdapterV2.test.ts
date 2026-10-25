@@ -2888,12 +2888,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const home = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-claude-tool-search-",
         });
-        const openedToolSearch = (settingsJson: string, cwd = CLAUDE_TEST_RUNTIME_POLICY.cwd) =>
+        const openedToolSearch = (
+          settingsJson: string,
+          cwd = CLAUDE_TEST_RUNTIME_POLICY.cwd,
+          environment?: NodeJS.ProcessEnv,
+        ) =>
           Effect.scoped(
             Effect.gen(function* () {
               yield* fileSystem.writeFileString(path.join(home, "settings.json"), settingsJson);
               const harness = yield* makeWakeHarnessWithOptions({
                 settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: home },
+                ...(environment === undefined ? {} : { environment }),
               });
               yield* harness.runtime.startTurn(
                 makeClaudeTestTurnInput({
@@ -2941,6 +2946,24 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* rootLocal("false");
         assert.isUndefined(yield* openedToolSearch(userAuto, worktree));
         assert.isUndefined(yield* openedToolSearch(userAuto, path.join(repo, "packages", "app")));
+
+        // Project settings beat user settings, and the process env applies only when no file sets it.
+        const project = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-project-" });
+        yield* fileSystem.makeDirectory(path.join(project, ".claude"));
+        yield* fileSystem.writeFileString(
+          path.join(project, ".claude", "settings.json"),
+          '{"env":{"ENABLE_TOOL_SEARCH":"auto"}}',
+        );
+        assert.equal(
+          yield* openedToolSearch('{"env":{"ENABLE_TOOL_SEARCH":"false"}}', project),
+          "true",
+        );
+        assert.equal(
+          yield* openedToolSearch("{}", CLAUDE_TEST_RUNTIME_POLICY.cwd, {
+            ENABLE_TOOL_SEARCH: "auto",
+          }),
+          "true",
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

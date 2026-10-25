@@ -1292,7 +1292,7 @@ export function claudeToolSearchOverride(value: string | undefined): "true" | un
 // Claude Code 2.1.310's integer parsing for auto:N. Scientific notation counts only when it is an
 // integer, grouped digits (1_000, 1,000, or 1 000) are joined, and anything else uses parseInt.
 const CLAUDE_SCIENTIFIC_INTEGER = /^[+-]?(\d+(\.\d*)?|\.\d+)[eE][+-]?\d+$/;
-const CLAUDE_GROUPED_INTEGER = /^[+-]?\d{1,3}([_,   ])\d{3}(?:\1\d{3})*$/;
+const CLAUDE_GROUPED_INTEGER = /^[+-]?\d{1,3}([_,\u00A0\u202F ])\d{3}(?:\1\d{3})*$/;
 function parseClaudeInteger(text: string): number {
   const value = text.trim();
   if (value.length <= 32 && CLAUDE_SCIENTIFIC_INTEGER.test(value)) {
@@ -1300,7 +1300,7 @@ function parseClaudeInteger(text: string): number {
     return Number.isInteger(number) ? number : Number.NaN;
   }
   if (value.length <= 32 && CLAUDE_GROUPED_INTEGER.test(value)) {
-    return Number.parseInt(value.replace(/[_,   ]/g, ""), 10);
+    return Number.parseInt(value.replace(/[_,\u00A0\u202F ]/g, ""), 10);
   }
   return Number.parseInt(value, 10);
 }
@@ -4007,24 +4007,28 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       Effect.orElseSucceed(() => undefined),
     );
   // A worktree's .git file points at <main>/.git/worktrees/<name>, whose commondir leads back to
-  // <main>/.git. Anything else that is not a git directory resolves to the checkout itself.
+  // <main>/.git, or to the repository itself for a bare repository. Anything else that is not a
+  // git directory resolves to the checkout itself.
   const mainCheckoutRoot = (checkout: string) =>
     fileSystem.readFileString(path.join(checkout, ".git")).pipe(
       Effect.flatMap((pointer) => {
         const gitDir = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
         if (gitDir === undefined) return Effect.succeed(checkout);
         const worktreeGitDir = path.resolve(checkout, gitDir);
-        return fileSystem
-          .readFileString(path.join(worktreeGitDir, "commondir"))
-          .pipe(
-            Effect.map((commonDir) => path.dirname(path.resolve(worktreeGitDir, commonDir.trim()))),
-          );
+        return fileSystem.readFileString(path.join(worktreeGitDir, "commondir")).pipe(
+          Effect.map((commonDir) => {
+            const common = path.resolve(worktreeGitDir, commonDir.trim());
+            return path.basename(common) === ".git" ? path.dirname(common) : common;
+          }),
+        );
       }),
       Effect.orElseSucceed(() => checkout),
     );
   // Where Claude Code keeps .claude/settings.local.json: the repository root, or the main
   // checkout's root in a worktree. It stays in the working directory outside a repository, on
-  // Windows, or when the root is the home directory.
+  // Windows, or when the root is the home directory. Claude Code also stays there when the root
+  // belongs to another user; that check is skipped, and the cost of missing it is tool search on,
+  // which is Claude Code's default.
   const localSettingsDirectory = Effect.fn("ClaudeAdapterV2.localSettingsDirectory")(function* (
     cwd: string,
   ) {
