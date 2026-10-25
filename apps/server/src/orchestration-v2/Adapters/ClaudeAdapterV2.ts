@@ -9388,6 +9388,31 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }),
             ),
           );
+          // The CLI withdrew the request (a PermissionRequest hook or Auto mode answered it),
+          // so nobody can answer this card any more.
+          if (!(yield* Deferred.isDone(decision))) {
+            const resolvedAt = yield* DateTime.now;
+            yield* emitProviderEvent({
+              type: "runtime_request.updated",
+              driver: CLAUDE_PROVIDER,
+              runtimeRequest: { ...artifacts.request, status: "cancelled", resolvedAt },
+            });
+            yield* emitProviderEvent({
+              type: "node.updated",
+              driver: CLAUDE_PROVIDER,
+              node: { ...artifacts.node, status: "cancelled", completedAt: resolvedAt },
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem: {
+                ...artifacts.turnItem,
+                status: "cancelled",
+                completedAt: resolvedAt,
+                updatedAt: resolvedAt,
+              },
+            });
+          }
 
           return permissionResultFromDecision({
             toolName,

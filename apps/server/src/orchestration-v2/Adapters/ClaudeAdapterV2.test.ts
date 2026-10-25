@@ -3280,6 +3280,129 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  describe("approvals Claude withdraws", () => {
+    const startFullAccessTurn = Effect.fn("startFullAccessTurn")(function* (
+      harness: Effect.Success<typeof makeWakeHarness>,
+      attempt: string,
+    ) {
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(attempt),
+          text: "Clear the render folder.",
+          attachments: [],
+        }),
+      );
+    });
+
+    const openApproval = Effect.fn("openApproval")(function* (
+      harness: Effect.Success<typeof makeWakeHarness>,
+      toolUseID: string,
+    ) {
+      const controller = new AbortController();
+      const callback = yield* Effect.promise(() =>
+        harness.getOpenedOptions()!.canUseTool!(
+          "Bash",
+          { command: "F=$(cat dir.txt); rm -f $F/*" },
+          {
+            signal: controller.signal,
+            toolUseID,
+            requestId: `${toolUseID}-request`,
+            decisionReason: "Dangerous rm operation on possibly-empty variable path",
+          },
+        ),
+      ).pipe(Effect.forkScoped);
+      let opened = yield* Queue.take(harness.runtimeRequestReceipts);
+      while (opened.runtimeRequest.nativeRequestRef?.nativeId !== toolUseID) {
+        opened = yield* Queue.take(harness.runtimeRequestReceipts);
+      }
+      assert.equal(opened.runtimeRequest.kind, "command");
+      assert.equal(opened.runtimeRequest.status, "pending");
+      return { controller, callback, request: opened.runtimeRequest };
+    });
+
+    // Events reach the harness in emission order, so once a later card has arrived every
+    // update the adapter made to an earlier one has too.
+    const updatesAfterBarrier = Effect.fn("updatesAfterBarrier")(function* (
+      harness: Effect.Success<typeof makeWakeHarness>,
+      request: Effect.Success<ReturnType<typeof openApproval>>["request"],
+    ) {
+      yield* openApproval(harness, "barrier-tool");
+      return harness.events.flatMap((event) => {
+        if (event.type === "runtime_request.updated") {
+          return event.runtimeRequest.id === request.id
+            ? [`request:${event.runtimeRequest.status}`]
+            : [];
+        }
+        if (event.type === "node.updated") {
+          return event.node.id === request.nodeId ? [`node:${event.node.status}`] : [];
+        }
+        if (event.type === "turn_item.updated" && event.turnItem.type === "approval_request") {
+          return event.turnItem.requestId === request.id ? [`item:${event.turnItem.status}`] : [];
+        }
+        return [];
+      });
+    });
+
+    // A PermissionRequest hook or Auto mode's classifier answers while T3's card is open, and
+    // the CLI withdraws the request it sent T3.
+    it.effect("closes the card when the CLI cancels its request", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* startFullAccessTurn(harness, "attempt-withdrawn-approval");
+        const approval = yield* openApproval(harness, "withdrawn-tool");
+
+        approval.controller.abort();
+        assert.equal((yield* Fiber.join(approval.callback))?.behavior, "deny");
+        assert.deepEqual(yield* updatesAfterBarrier(harness, approval.request), [
+          "node:waiting",
+          "request:pending",
+          "item:waiting",
+          "request:cancelled",
+          "node:cancelled",
+          "item:cancelled",
+        ]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
+    it.effect("leaves a card the user answered to the user's decision", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* startFullAccessTurn(harness, "attempt-cancelled-by-user");
+        const approval = yield* openApproval(harness, "cancelled-by-user-tool");
+
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: approval.request.id,
+          decision: "cancel",
+        });
+        assert.deepEqual(yield* Fiber.join(approval.callback), {
+          behavior: "deny",
+          message: "User cancelled tool execution.",
+          toolUseID: "cancelled-by-user-tool",
+          decisionClassification: "user_reject",
+          interrupt: true,
+        });
+        // The interrupt the answer asked for then aborts the answered request.
+        approval.controller.abort();
+        assert.deepEqual(yield* updatesAfterBarrier(harness, approval.request), [
+          "node:waiting",
+          "request:pending",
+          "item:waiting",
+        ]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+  });
+
   describe("Claude settings restrictions", () => {
     it.effect("resolves cached managed policy from the configured home through the real SDK", () =>
       Effect.gen(function* () {
