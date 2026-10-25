@@ -411,9 +411,9 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                       }
                       disabled={!controls.canSend}
                       onPress={() => void act(run.id, "steer")}
-                      className="min-h-14 shrink-0 justify-center pl-4 active:opacity-70 disabled:opacity-40"
+                      className="shrink-0 justify-center self-stretch pl-4 active:opacity-70 disabled:opacity-40"
                     >
-                      <View className="h-9 flex-row items-center gap-1.5 rounded-full bg-primary px-4">
+                      <View className="min-h-9 flex-row items-center gap-1.5 rounded-full bg-primary px-4">
                         <SymbolView
                           name={workflow?.canSendNow ? "arrow.up" : "arrow.turn.left.up"}
                           size={13}
