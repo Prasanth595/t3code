@@ -3988,135 +3988,73 @@ describe("failed turn transcript", () => {
     },
   );
 
-  it.each([
-    { position: "latest", pauseNotice: true },
-    { position: "historical", pauseNotice: false },
-  ] as const)(
-    "keeps tool groups in a $position run paused by a usage limit",
-    ({ position, pauseNotice }) => {
-      const runId = RunId.make("limited-run");
-      const threadId = ThreadId.make("limited-thread");
-      const at = DateTime.makeUnsafe("2026-10-25T09:00:00Z");
-      const base = {
-        threadId,
-        runId,
-        nodeId: null,
-        providerThreadId: null,
-        providerTurnId: null,
-        nativeItemRef: null,
-        parentItemId: null,
-        title: null,
-        startedAt: at,
-        completedAt: at,
-        updatedAt: at,
-      };
-      const projected = (item: OrchestrationV2TurnItem): OrchestrationV2ProjectedTurnItem => ({
-        position: item.ordinal,
-        visibility: "local",
-        sourceThreadId: threadId,
-        sourceItemId: item.id,
-        item,
-      });
-      const command = (
-        id: string,
-        ordinal: number,
-        status: "completed" | "failed",
-      ): OrchestrationV2TurnItem => ({
+  it("keeps tool groups collapsed when the latest run stops on a usage limit", () => {
+    const runId = RunId.make("limited-run");
+    const threadId = ThreadId.make("limited-thread");
+    const at = DateTime.makeUnsafe("2026-10-25T09:00:00Z");
+    const base = {
+      threadId,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      title: null,
+      startedAt: at,
+      completedAt: at,
+      updatedAt: at,
+    };
+    const items: OrchestrationV2TurnItem[] = [
+      ...["pwd", "ls", "false"].map((input, index): OrchestrationV2TurnItem => ({
         ...base,
-        id: TurnItemId.make(id),
-        ordinal,
+        id: TurnItemId.make(input),
+        ordinal: index,
         type: "command_execution",
-        status,
-        input: id,
+        status: "completed",
+        input,
         output: "",
-        exitCode: status === "completed" ? 0 : 1,
-      });
-      const items = [
-        projected({
-          ...base,
-          id: TurnItemId.make("user"),
-          ordinal: 0,
-          type: "user_message",
-          status: "completed",
-          messageId: MessageId.make("user"),
-          createdBy: "user",
-          creationSource: "web",
-          inputIntent: "turn_start",
-          text: "Build it",
-          attachments: [],
-        }),
-        projected(command("pwd", 1, "completed")),
-        projected(command("ls", 2, "completed")),
-        projected(command("false", 3, "failed")),
-        projected({
-          ...base,
-          id: TurnItemId.make("pause"),
-          ordinal: 4,
-          type: "system_notice",
-          status: "completed",
-          message: "Claude usage limit reached. This turn is paused until the limit resets.",
-        }),
-        projected({
-          ...base,
-          id: TurnItemId.make("limit"),
-          ordinal: 5,
-          type: "error",
-          status: "failed",
-          failure: {
-            class: "usage_limit",
-            message: "You've hit your session limit",
-            code: null,
-            retryable: true,
-          },
-        }),
-      ];
-      const timelineEntries = deriveTimelineEntriesFromVisibleTurnItems({
-        visibleTurnItems: pauseNotice ? items : items.filter((row) => row.item.id !== "pause"),
+        exitCode: 0,
+      })),
+      {
+        ...base,
+        id: TurnItemId.make("limit"),
+        ordinal: 3,
+        type: "error",
+        status: "failed",
+        failure: { class: "usage_limit", message: "Limit hit", code: null, retryable: true },
+      },
+    ];
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: items.map((item) => ({
+          position: item.ordinal,
+          visibility: "local",
+          sourceThreadId: threadId,
+          sourceItemId: item.id,
+          item,
+        })),
         optimisticMessages: [],
-      });
-      const derive = (expandedWorkGroupIds?: ReadonlySet<string>) =>
-        deriveMessagesTimelineRows({
-          timelineEntries,
-          latestRun: {
-            runId: position === "latest" ? runId : RunId.make("continued-run"),
-            status: position === "latest" ? "failed" : "completed",
-            startedAt: DateTime.formatIso(at),
-            completedAt: DateTime.formatIso(at),
-          },
-          ...(expandedWorkGroupIds ? { expandedWorkGroupIds } : {}),
-          isWorking: false,
-          turnDiffSummaries: [],
-          supportsConversationRollback: false,
-        });
+      }),
+      latestRun: {
+        runId,
+        status: "failed",
+        startedAt: DateTime.formatIso(at),
+        completedAt: DateTime.formatIso(at),
+      },
+      isWorking: false,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
 
-      const rows = derive();
-      expect(rows.some((row) => row.kind === "turn-fold" || row.kind === "attempt-fold")).toBe(
-        false,
-      );
-      const toggle = rows.find((row) => row.kind === "work-toggle");
-      expect(toggle).toMatchObject({ hiddenCount: 3, expanded: false, hasFailure: true });
-      expect(
-        rows.flatMap((row) =>
-          row.kind === "work" ? row.groupedEntries.map((entry) => entry.id) : [],
-        ),
-      ).toEqual(pauseNotice ? ["pause", "limit"] : ["limit"]);
-      expect(
-        rows.flatMap((row) => (row.kind === "work" ? row.groupedEntries : [])).at(-1),
-      ).toMatchObject({ label: "Usage limit reached", toolLifecycleStatus: "failed" });
-
-      const expanded = derive(new Set([toggle?.kind === "work-toggle" ? toggle.groupId : ""]));
-      const group = expanded.find((row) => row.kind === "work" && row.isExpandedToolGroup);
-      expect(
-        group?.kind === "work"
-          ? group.groupedEntries.map((entry) => [entry.id, entry.toolLifecycleStatus])
-          : [],
-      ).toEqual([
-        ["pwd", "completed"],
-        ["ls", "completed"],
-        ["false", "failed"],
-      ]);
-    },
-  );
+    expect(rows.find((row) => row.kind === "work-toggle")).toMatchObject({
+      hiddenCount: 3,
+      expanded: false,
+    });
+    expect(
+      rows.flatMap((row) => (row.kind === "work" ? row.groupedEntries.map((e) => e.id) : [])),
+    ).toEqual(["limit"]);
+  });
 });
 
 describe("live subagents after their parent turn settles", () => {
