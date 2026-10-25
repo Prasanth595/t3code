@@ -1,5 +1,5 @@
 import { parsePatchFiles } from "@pierre/diffs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { diffChangeTargets, stepDiffChange } from "./diffFocusNavigation.logic";
 

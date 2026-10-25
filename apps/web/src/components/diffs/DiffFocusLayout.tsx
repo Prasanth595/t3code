@@ -22,7 +22,7 @@ import {
 } from "./diffFocusNavigation.logic";
 import { toGitStatus } from "./diffFileTree.logic";
 
-export const DIFF_FOCUS_LAYOUT_MIN_WIDTH = 960;
+const DIFF_FOCUS_LAYOUT_MIN_WIDTH = 960;
 
 export interface DiffFocusFile {
   readonly fileKey: string;
