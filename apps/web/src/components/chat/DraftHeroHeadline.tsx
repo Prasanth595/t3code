@@ -3,8 +3,9 @@ import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDr
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import { FolderPlusIcon } from "lucide-react";
+import { FolderPlusIcon, SettingsIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
+import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
@@ -77,6 +78,7 @@ export function DraftHeroHeadline({
   const openAddProject = () => openCommandPalette({ open: "add-project" });
   const { scratchEnvironmentId, scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
   const openProjectDraft = useNewThreadHandler();
+  const navigate = useNavigate();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerQuery, setPickerQuery] = useState("");
@@ -300,6 +302,26 @@ export function DraftHeroHeadline({
             );
           }}
         </ComboboxList>
+        {activeProjectGroup && !activeProjectGroup.isScratch ? (
+          // Matches ComboboxList + ComboboxItem insets so the icon and label line up with the rows above.
+          <div className="shrink-0 border-t border-border/70 p-1">
+            <button
+              type="button"
+              aria-label={`Project settings for ${activeProjectGroup.displayName}`}
+              className="flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-left text-base text-muted-foreground outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground sm:min-h-7 sm:text-sm"
+              onClick={() => {
+                setPickerOpen(false);
+                void navigate({
+                  to: "/projects/$projectKey",
+                  params: { projectKey: activeProjectGroup.projectKey },
+                });
+              }}
+            >
+              <SettingsIcon aria-hidden="true" className="size-4 shrink-0" />
+              <span className="min-w-0 truncate">for {activeProjectGroup.displayName}</span>
+            </button>
+          </div>
+        ) : null}
       </ComboboxPopup>
     </Combobox>
   ) : (
