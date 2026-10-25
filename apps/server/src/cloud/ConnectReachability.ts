@@ -15,6 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as SynchronizedRef from "effect/SynchronizedRef";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
@@ -132,7 +133,9 @@ export function classifyReachability(
     return fail(
       "no_connector",
       "Cloudflare has no live connection from this machine for the tunnel.",
-      restart,
+      (connector.readyConnections ?? 0) > 0
+        ? "T3 Code retries the tunnel automatically. Wait a few minutes. If it stays offline, restart T3 Code."
+        : restart,
     );
   }
   if (status !== null) {
@@ -212,7 +215,7 @@ const make = Effect.gen(function* () {
     Option.none<{ readonly order: number; readonly result: EnvironmentConnectReachability }>(),
   );
   const checkCounter = yield* Ref.make(0);
-  const deadConnectorRef = yield* Ref.make<{
+  const deadConnectorRef = yield* SynchronizedRef.make<{
     readonly streak: { readonly pid: number; readonly since: number } | null;
     readonly restartAfterMillis: number;
   }>({ streak: null, restartAfterMillis: Duration.toMillis(DEAD_CONNECTOR_RESTART_AFTER) });
@@ -284,30 +287,31 @@ const make = Effect.gen(function* () {
       (connector.readyConnections ?? 0) > 0
         ? connector
         : null;
-    const restartPid = yield* Ref.modify(deadConnectorRef, (state) => {
-      if (result.status === "reachable") {
-        return [
-          null,
-          { streak: null, restartAfterMillis: Duration.toMillis(DEAD_CONNECTOR_RESTART_AFTER) },
-        ];
-      }
-      if (dead === null) return [null, { ...state, streak: null }];
-      if (state.streak?.pid !== dead.pid) {
-        return [null, { ...state, streak: { pid: dead.pid, since: now } }];
-      }
-      if (now - state.streak.since < state.restartAfterMillis) return [null, state];
-      return [
-        dead.pid,
-        {
+    yield* SynchronizedRef.updateEffect(deadConnectorRef, (state) =>
+      Effect.gen(function* () {
+        if (result.status === "reachable") {
+          return {
+            streak: null,
+            restartAfterMillis: Duration.toMillis(DEAD_CONNECTOR_RESTART_AFTER),
+          };
+        }
+        if (dead === null) return { ...state, streak: null };
+        if (state.streak?.pid !== dead.pid) {
+          return { ...state, streak: { pid: dead.pid, since: now } };
+        }
+        if (now - state.streak.since < state.restartAfterMillis) return state;
+        const restarted = yield* runtime.restartConnector(dead.pid);
+        return {
           streak: null,
-          restartAfterMillis: Math.min(
-            state.restartAfterMillis * 2,
-            Duration.toMillis(DEAD_CONNECTOR_RESTART_AFTER_MAX),
-          ),
-        },
-      ];
-    });
-    if (restartPid !== null) yield* runtime.restartConnector(restartPid);
+          restartAfterMillis: restarted
+            ? Math.min(
+                state.restartAfterMillis * 2,
+                Duration.toMillis(DEAD_CONNECTOR_RESTART_AFTER_MAX),
+              )
+            : state.restartAfterMillis,
+        };
+      }),
+    );
   });
 
   const check = Effect.gen(function* () {

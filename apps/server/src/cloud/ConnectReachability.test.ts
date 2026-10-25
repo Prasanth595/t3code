@@ -358,6 +358,11 @@ describe("ConnectReachability stale connector recovery", () => {
           if (nextConfig) {
             expect(yield* fixture.nextConnector).toBe(801);
             expect(yield* fixture.runtime.inspectConnector).not.toBeNull();
+            yield* fixture.reachability.check;
+            yield* TestClock.adjust(Duration.minutes(2));
+            yield* fixture.reachability.check;
+            expect(fixture.killed).toEqual([800, 801]);
+            expect(yield* fixture.nextConnector).toBe(802);
           } else {
             expect(yield* fixture.runtime.inspectConnector).toBeNull();
           }

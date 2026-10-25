@@ -64,8 +64,8 @@ export class CloudManagedEndpointRuntime extends Context.Service<
     readonly readinessChanged: Stream.Stream<void>;
     readonly recoveryRequests: Stream.Stream<RelayManagedEndpointRuntimeConfig>;
     readonly requestRecovery: (config: RelayManagedEndpointRuntimeConfig) => Effect.Effect<void>;
-    /** Restarts the connector with this pid; ignored once it is no longer the active one. */
-    readonly restartConnector: (pid: number) => Effect.Effect<void>;
+    /** Returns whether the active connector matched this pid and received a restart request. */
+    readonly restartConnector: (pid: number) => Effect.Effect<boolean>;
     readonly tunnelConnected: Stream.Stream<void>;
     readonly withLinkStateLock: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   }
@@ -727,13 +727,16 @@ export const make = Effect.gen(function* () {
     pid: number,
   ) {
     const active = yield* Ref.get(activeRef);
-    if (!active || Number(active.child.pid) !== pid) return;
+    if (!active || Number(active.child.pid) !== pid) return false;
     yield* Effect.logWarning(
       "Cloudflare has no live connection from the relay client; restarting it",
       { pid, tunnelId: active.config.tunnelId, tunnelName: active.config.tunnelName },
     );
     // The supervisor starts the replacement with its usual crash-loop backoff.
-    yield* active.child.kill().pipe(Effect.ignore);
+    return yield* active.child.kill().pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
   }, reconcileSemaphore.withPermits(1));
 
   const readMetrics = <S extends Schema.Decoder<unknown>>(url: string, schema: S) =>
