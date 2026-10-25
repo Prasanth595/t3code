@@ -48,7 +48,10 @@ const CLIENT_TRACING_RESOURCE = {
   serviceVersion: APP_VERSION,
   attributes: {
     "service.namespace": "t3code",
-    "service.mode": isElectron ? "electron" : "browser",
+    "deployment.environment.name": import.meta.env.DEV ? "development" : "production",
+    "service.runtime": "t3-web",
+    "t3code.client.surface": isElectron ? "desktop" : "web",
+    "service.version": APP_VERSION,
     ...browserResourceAttributes(),
   },
 };

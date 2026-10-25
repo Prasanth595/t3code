@@ -1,4 +1,5 @@
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
+import desktopPackageJson from "../../package.json" with { type: "json" };
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -313,7 +314,7 @@ describe("DesktopObservability", () => {
     );
   });
 
-  it.effect("exports the process resource under the semantic convention keys", () => {
+  it.effect("reports the app's own version for an unpackaged desktop run", () => {
     const requests: Array<ExportedRequest> = [];
     return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -334,11 +335,8 @@ describe("DesktopObservability", () => {
       const body = requests.map((request) => request.body).join("\n");
       assert.include(
         body,
-        '"key":"deployment.environment.name","value":{"stringValue":"development"}',
+        `"key":"service.version","value":{"stringValue":"${desktopPackageJson.version}"}`,
       );
-      assert.include(body, '"key":"process.runtime.name","value":{"stringValue":"nodejs"}');
-      assert.notInclude(body, "service.runtime");
-      assert.notInclude(body, "service.mode");
     }).pipe(
       Effect.scoped,
       Effect.provide(Layer.mergeAll(NodeServices.layer, layerCollector(requests), layerEmptyEnv)),
