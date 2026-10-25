@@ -55,10 +55,10 @@ const isChangeRequestCloseCommand = (command: string) =>
 const COMMAND_START =
   "(?:^|[;&|({`\\n]|\\b(?:do|then|else)\\s)\\s*(?:(?:\\w+=\\S*|env|time|nohup|timeout\\s+\\S+)\\s+)*";
 const CREATE_COMMANDS = sourceControlDefinitions.definitions.flatMap(
-  ({ changeRequestCreateCommand: command }) =>
+  ({ kind, changeRequestCreateCommand: command }) =>
     command === undefined
       ? []
-      : [{ command, run: new RegExp(COMMAND_START + command.source, "gu") }],
+      : [{ kind, command, run: new RegExp(COMMAND_START + command.source, "gu") }],
 );
 const createCommandCount = (code: string) =>
   CREATE_COMMANDS.reduce((count, { run }) => count + [...code.matchAll(run)].length, 0);
@@ -69,8 +69,11 @@ const SHELL_WRAPPER = /^\s*(?:\S*\/)?(?:ba|z|da|k)?sh\s+-l?c\s+(?=["'])([\s\S]*)
 const SHELL_WORD_PIECE = /"((?:\\[\s\S]|[^"\\])*)"|'([^']*)'|\\([\s\S])|(\S)/gu;
 // Heredoc bodies, quoted strings and comments are text a command carries, not commands it runs.
 const HEREDOC_BODY = /<<-?[ \t]*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?(?:\n[ \t]*\2[ \t]*(?=\n|$)|$)/gu;
-const QUOTED_OR_COMMENT = /'[^']*'|"(?:\\[\s\S]|[^"\\])*"|(?<=^|\s)#[^\n]*/gmu;
+const QUOTED_OR_COMMENT = /'[^']*'|"(?:\\[\s\S]|[^"\\])*"|(?<=^|[\s;&|(])#[^\n]*/gmu;
 const COMMAND_SEPARATOR = /&&|\|\||[;|\n]/u;
+// Commands that print other change requests' URLs, so output beside them proves nothing.
+const LISTS_CHANGE_REQUESTS =
+  /\b(?:gh\s+(?:pr\s+(?:list|status)|search\s+prs|api)|glab\s+(?:mr\s+list|api))\b/u;
 const URL_LINE = /^[ \t]*(https?:\/\/\S+)[ \t]*$/gmu;
 
 /** The commands a shell input runs, without the text it carries. */
@@ -104,10 +107,16 @@ function changeRequestsCreatedBy(input: string, output: string) {
     .split(COMMAND_SEPARATOR)
     .filter((part) => createCommandCount(part) === 0)
     .join("\n");
+  if (LISTS_CHANGE_REQUESTS.test(otherCommands)) return [];
+  const creators = new Set(
+    CREATE_COMMANDS.filter(({ run }) => code.match(run) !== null).map(({ kind }) => kind),
+  );
   const created = new Map<string, ThreadPullRequestKey & { readonly url: string }>();
   for (const [, url = ""] of output.matchAll(URL_LINE)) {
-    const link = sourceControlDefinitions.parseChangeRequestUrl(url)?.link;
-    if (link === undefined) continue;
+    const parsed = sourceControlDefinitions.parseChangeRequestUrl(url);
+    // Only the host whose create command ran can have printed a new change request.
+    if (parsed === null || !creators.has(parsed.definition.kind)) continue;
+    const { link } = parsed;
     const named = new RegExp(`(?:^|(?<=[\\s#/=(]))${link.number}(?=$|[\\s);&|/])`, "u");
     if (named.test(otherCommands)) continue;
     const key = normalizeThreadPullRequestKey(link);
@@ -568,30 +577,32 @@ export const make = Effect.gen(function* () {
     );
 
   // An agent that opens a pull request from a shell gets it linked as link_pull_request would.
-  const linkCreatedChangeRequests = (threadId: ThreadId, item: CommandExecution) =>
-    isOrchestrationV2WorkActive(item.status)
-      ? Effect.void
-      : Effect.forEach(
-          changeRequestsCreatedBy(item.input, item.output ?? ""),
-          (created) =>
-            engine
-              .dispatch({
-                type: "thread.pull-request.link",
-                // Stable per command, so a repeated settlement cannot relink one the user unlinked.
-                commandId: CommandId.make(
-                  `server:pr-created-link:${threadId}:${item.id}:${threadPullRequestKeyOf(created)}`,
-                ),
-                threadId,
-                ...created,
-                source: "created",
-              })
-              .pipe(
-                Effect.catchCause(
-                  logSkipped("linking a pull request a command created failed", { threadId }),
-                ),
+  const linkCreatedChangeRequests = Effect.fn("PullRequestSyncReactor.linkCreatedChangeRequests")(
+    function* (threadId: ThreadId, item: CommandExecution) {
+      if (isOrchestrationV2WorkActive(item.status)) return;
+      yield* Effect.forEach(
+        changeRequestsCreatedBy(item.input, item.output ?? ""),
+        (created) =>
+          engine
+            .dispatch({
+              type: "thread.pull-request.link",
+              // Stable per command, so a repeated settlement cannot relink one the user unlinked.
+              commandId: CommandId.make(
+                `server:pr-created-link:${threadId}:${item.id}:${threadPullRequestKeyOf(created)}`,
               ),
-          { discard: true },
-        );
+              threadId,
+              ...created,
+              source: "created",
+            })
+            .pipe(
+              Effect.catchCause(
+                logSkipped("linking a pull request a command created failed", { threadId }),
+              ),
+            ),
+        { discard: true },
+      );
+    },
+  );
 
   const start: PullRequestSyncReactor["Service"]["start"] = Effect.fn(
     "PullRequestSyncReactor.start",

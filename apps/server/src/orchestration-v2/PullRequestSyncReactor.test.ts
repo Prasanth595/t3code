@@ -1594,6 +1594,24 @@ describe("PullRequestSyncReactor", () => {
       output: "https://github.com/owner/repository/pull/124",
       linked: [],
     },
+    {
+      name: "a create command after a comment that starts at a separator",
+      input: "gh pr view --json url --jq .url;# note; gh pr create --fill",
+      output: "https://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
+      name: "a create beside a command that lists other pull requests",
+      input: "gh pr list --json url --jq '.[].url' && gh pr create --fill > /dev/null",
+      output: "https://github.com/owner/repository/pull/120",
+      linked: [],
+    },
+    {
+      name: "another host's URL beside a create command",
+      input: "gh pr create --fill",
+      output: "https://gitlab.com/owner/repository/-/merge_requests/3",
+      linked: [],
+    },
   ])("links what the command created: $name", ({ input, output, linked }) =>
     Effect.scoped(
       Effect.gen(function* () {
