@@ -1,5 +1,8 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Schema from "effect/Schema";
 import * as Console from "effect/Console";
 import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
@@ -8,10 +11,35 @@ import * as Command from "effect/cli/Command";
 
 import * as WriterRegistry from "../src/WriterRegistry.ts";
 
+const decodeDeployment = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ url: Schema.String })),
+);
+
 const name = Argument.String("name").pipe(Argument.withDescription("Lowercase writer name"));
 const updateWriter = Effect.fn("TaskCache.manageWriter")(function* (name: string, revoke: boolean) {
   const registry = yield* WriterRegistry.WriterRegistry;
-  const file = yield* registry.update(name, revoke);
+  let endpoint: string | undefined;
+  if (!revoke && WriterRegistry.isWriterName(name)) {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const output = yield* spawner.string(
+      ChildProcess.make(
+        "node",
+        [
+          `${import.meta.dirname}/../node_modules/alchemy/bin/cli.js`,
+          "state",
+          "read",
+          "T3TaskCache/prod/output",
+          "--backend",
+          "cloudflare",
+          "--no-input",
+        ],
+        { cwd: `${import.meta.dirname}/..`, stderr: "inherit" },
+      ),
+    );
+    const deployed = yield* decodeDeployment(output);
+    endpoint = new URL("/projects/t3code", deployed.url).href;
+  }
+  const file = yield* registry.update(name, revoke, endpoint);
   yield* Console.log(
     file === undefined
       ? `Removed ${name} from the local writer registry.`

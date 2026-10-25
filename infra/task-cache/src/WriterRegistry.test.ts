@@ -4,10 +4,12 @@ import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Redacted from "effect/Redacted";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as WriterRegistry from "./WriterRegistry.ts";
 import { WriterSecrets } from "./deploymentConfig.ts";
 
 const readKeys = Config.Redacted("DEVELOPER_KEYS").pipe(Effect.provide(WriterSecrets));
@@ -76,5 +78,26 @@ it.live("rejects reserved writer names without modifying credential stores", () 
       expect(yield* fs.readFileString(`${state}/writers.json`)).toBe(writers);
       expect(yield* fs.readFileString(`${state}/credentials.json`)).toBe(credentials);
     }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("writes credentials for the supplied deployed worker endpoint", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const home = yield* fs.makeTempDirectoryScoped();
+    const endpoint = "https://preview-cache.example/projects/t3code";
+    const file = yield* WriterRegistry.WriterRegistry.pipe(
+      Effect.flatMap((registry) => registry.update("maria", false, endpoint)),
+      Effect.provide(
+        WriterRegistry.layer.pipe(
+          Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ HOME: home }))),
+        ),
+      ),
+    );
+    expect(file).toBe(`${home}/.config/t3-task-cache/maria.json`);
+    if (!file) return yield* Effect.die("Expected a credential file");
+    const credential = JSON.parse(yield* fs.readFileString(file));
+    expect(credential.endpoint).toBe(endpoint);
+    expect(credential.name).toBe("maria");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

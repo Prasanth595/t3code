@@ -21,8 +21,10 @@ const Credential = Schema.fromJsonString(
 class ManagementError extends Schema.TaggedError<ManagementError>()("ManagementError", {
   message: Schema.String,
 }) {}
+export const isWriterName = (name: string) =>
+  /^(?!writers$|credentials$)[a-z0-9-]{1,64}$/.test(name);
+
 const encodeCredential = Schema.encodeEffect(Credential);
-const endpoint = "https://t3-task-cache.pinglabs.workers.dev/projects/t3code";
 
 export class WriterRegistry extends Context.Service<
   WriterRegistry,
@@ -34,6 +36,7 @@ export class WriterRegistry extends Context.Service<
     readonly update: (
       name: string,
       revoke: boolean,
+      endpoint?: string,
     ) => Effect.Effect<
       string | undefined,
       PlatformError.PlatformError | Schema.SchemaError | ManagementError
@@ -59,9 +62,11 @@ const make = Effect.gen(function* () {
   const updateWriter = Effect.fn("TaskCache.updateWriter")(function* (
     name: string,
     revoke: boolean,
+    endpoint?: string,
   ) {
-    if (!/^(?!writers$|credentials$)[a-z0-9-]{1,64}$/.test(name))
-      return yield* new ManagementError({ message: "Invalid writer name." });
+    if (!isWriterName(name)) return yield* new ManagementError({ message: "Invalid writer name." });
+    if (!revoke && !endpoint)
+      return yield* new ManagementError({ message: "A deployed cache endpoint is required." });
     const exists = yield* fs.exists(`${state}/writers.json`);
     const writers = { ...(exists || revoke ? yield* readWriters() : {}) };
     const token = hex(yield* crypto.randomBytes(32));
@@ -70,7 +75,7 @@ const make = Effect.gen(function* () {
       writers[name] = hex(yield* crypto.digest("SHA-256", new TextEncoder().encode(token)));
     }
     yield* save("writers", yield* encodeWriters(writers));
-    if (!revoke) yield* save(name, yield* encodeCredential({ endpoint, name, token }));
+    if (!revoke && endpoint) yield* save(name, yield* encodeCredential({ endpoint, name, token }));
     return revoke ? undefined : `${state}/${name}.json`;
   });
   return WriterRegistry.of({ read: readWriters, update: updateWriter });
