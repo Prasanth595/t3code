@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
+  NativeSessionError,
   ChatImageAttachment,
   CommandId,
   EnvironmentId,
@@ -883,6 +884,94 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
         Layer.provide(ServerSecretStore.layer),
         Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-attachment-" })),
         Layer.provide(NodeServices.layer),
+      ),
+    ),
+  ),
+);
+
+it.effect("retains bounded native pre-enrollment blockers through the production MCP handler", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({
+        name: "t3_native_session_adopt",
+        arguments: {
+          contractVersion: 1,
+          environmentId: scope.environmentId,
+          projectId: "project:mcp-test",
+          threadId,
+          operationId: "019bd450-188a-7000-8000-000000000002",
+          commandId: "native-adopt",
+          providerInstanceId: "codex",
+          expectedEpoch: 0,
+          sourceStopped: { evidenceId: "exit", process: { pid: 123, boot: "boot", start: "1" } },
+          settings: {
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+            approvalPolicy: "never",
+            sandboxPolicy: { type: "dangerFullAccess" },
+          },
+          binding: {
+            home: "/private/codex",
+            nativeId: "019bd450-188a-7000-8000-000000000001",
+            cwd: "/work",
+            protocolVersion: "0.164.0",
+            nativeStores: {
+              sessionStore: "/private/sessions",
+              sessionStoreIdentity: "1:2:0",
+              writerLockStore: "/private/writers",
+              writerLockStoreIdentity: "1:3:0",
+            },
+            transport: {
+              kind: "shared-daemon",
+              proof: {
+                process: { pid: 10, boot: "boot", start: "2" },
+                executable: "/bin/codex",
+                codexIdentity: "1:4:0",
+                socket: "/private/socket",
+                socketIdentity: "1:5:0",
+                controlIdentity: "1:6:0",
+                rendezvous: "/private/link",
+                rendezvousIdentity: "1:7:0",
+                uid: 1000,
+              },
+            },
+          },
+        },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(result.isError).toBe(true);
+    expect(declaredFailure(result)).toMatchObject({
+      code: "source-still-running",
+      threadId,
+      nextAction: "wait-for-exit",
+    });
+    expect(JSON.stringify(result)).not.toContain("private diagnostic token");
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            getProjectThreadRecords: () =>
+              Effect.succeed(
+                McpToolAccessTestkit.idleThreadProjection(
+                  McpToolAccessTestkit.liveThreadShell(threadId),
+                ),
+              ),
+            adoptNativeSession: () =>
+              new NativeSessionError({
+                code: "source-still-running",
+                threadId,
+                cause: new Error("private diagnostic token"),
+              }),
+          }),
+        ),
       ),
     ),
   ),

@@ -20,6 +20,8 @@ import {
 import { makeChildStdio, makeTerminationError } from "./_internal/stdio.ts";
 
 export interface CodexAppServerClientOptions {
+  readonly messages?: CodexProtocol.CodexAppServerMessageTransport;
+  readonly writePolicy?: CodexProtocol.CodexAppServerWritePolicy;
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
   readonly logger?: (
@@ -95,7 +97,7 @@ const V2TurnStartParamsWithCollaborationMode = CodexSchema.V2TurnStartParams.pip
 );
 
 export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make")(function* (
-  stdio: Stdio.Stdio,
+  stdio: Stdio.Stdio | undefined,
   options: CodexAppServerClientOptions = {},
   terminationError?: Effect.Effect<CodexError.CodexAppServerError>,
 ): Effect.fn.Return<CodexAppServerClient["Service"], never, Scope.Scope> {
@@ -196,7 +198,9 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
   };
 
   const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
-    stdio,
+    ...(stdio ? { stdio } : {}),
+    ...(options.messages ? { messages: options.messages } : {}),
+    ...(options.writePolicy ? { writePolicy: options.writePolicy } : {}),
     ...(terminationError ? { terminationError } : {}),
     ...(options.logIncoming !== undefined ? { logIncoming: options.logIncoming } : {}),
     ...(options.logOutgoing !== undefined ? { logOutgoing: options.logOutgoing } : {}),

@@ -1,10 +1,9 @@
+import * as NativeSessionService from "./NativeSessionService.ts";
 import * as GuestShareService from "../guest/GuestShareService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import * as OrchestrationCommandReceipts from "../persistence/OrchestrationCommandReceipts.ts";
-import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as McpAppRequests from "../mcpApps/McpAppRequests.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
@@ -19,12 +18,9 @@ import * as CheckpointCaptureService from "./CheckpointCaptureService.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as CommandPolicy from "./CommandPolicy.ts";
-import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
-import * as EventSink from "./EventSink.ts";
-import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -56,34 +52,19 @@ import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 
-export const layerEventInfrastructure = Layer.mergeAll(
-  OrchestrationEventStore.layer,
-  OrchestrationCommandReceipts.layer,
-);
-
+export { layerEventInfrastructure, layerEventSink } from "./eventInfrastructure.ts";
+import {
+  layerEventInfrastructure,
+  layerEventSink,
+  layerStores,
+  layerCommandReceiptStoreProvided,
+  layerNativeSessionStore,
+} from "./eventInfrastructure.ts";
+const layerEventSinkProvided = layerEventSink;
 const layerRuntimePolicyProvided = RuntimePolicy.layerFromProjectStore.pipe(
   Layer.provide(ProjectStore.layer),
 );
 
-const layerEventStoreProvided = EventStore.layerFromOrchestrationEventStore.pipe(
-  Layer.provide(layerEventInfrastructure),
-);
-const layerCommandReceiptStoreProvided = CommandReceiptStore.layerFromApplicationReceipts.pipe(
-  Layer.provide(layerEventInfrastructure),
-);
-
-const layerStores = Layer.mergeAll(
-  layerEventInfrastructure,
-  layerEventStoreProvided,
-  ProjectionStore.layer,
-  ProjectStore.layer,
-  layerCommandReceiptStoreProvided,
-  EffectOutbox.layer,
-  TurnItemPositionStore.layer,
-);
-
-export const layerEventSink = EventSink.layerFromStores.pipe(Layer.provide(layerStores));
-const layerEventSinkProvided = layerEventSink;
 const layerProjectionMaintenanceProvided = ProjectionMaintenance.layer.pipe(
   Layer.provide(layerStores),
 );
@@ -248,9 +229,22 @@ const layerAgentSessionImporterProvided = AgentSessionImporter.layer.pipe(
   ),
 );
 
+const layerNativeSessionProvided = NativeSessionService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerNativeSessionStore,
+      ProjectionStore.layer,
+      layerProviderSessionManagerProvided,
+      layerRuntimePolicyProvided,
+      IdAllocator.layer,
+    ),
+  ),
+);
+
 const layerThreadManagementProvided = ThreadManagementService.layerWithLegacyImporter.pipe(
   Layer.provide(
     Layer.mergeAll(
+      layerNativeSessionProvided,
       layerOrchestratorProvided,
       layerLegacyV1ThreadImporterProvided,
       layerCommandReceiptStoreProvided,

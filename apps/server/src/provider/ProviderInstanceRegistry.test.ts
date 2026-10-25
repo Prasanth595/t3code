@@ -1,3 +1,4 @@
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
@@ -192,6 +193,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
   const layerBase = ProviderHostLive.layer.pipe(Layer.provideMerge(layerBaseDeps));
   const layerTest = ProviderOrchestrationAdapterInfrastructure.layer.pipe(
     Layer.provideMerge(layerBase),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
   );
 
   it.live("treats an explicit in-config enabled:false as disabling despite the envelope", () =>

@@ -1,5 +1,8 @@
 import {
   CommandId,
+  EventId,
+  OrchestrationV2AppThread,
+  type ProviderOptionSelections,
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
@@ -21,6 +24,7 @@ import * as PubSub from "effect/PubSub";
 import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Struct from "effect/Struct";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
@@ -34,6 +38,39 @@ import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import { nativeCommandCategory } from "./NativeSessionPolicy.ts";
+
+export const NativeCommandAdmission = Context.Reference<
+  { readonly threadId: ThreadId; readonly epoch: number | null } | undefined
+>("t3/orchestration-v2/NativeCommandAdmission", { defaultValue: () => undefined });
+const threadPolicyKeys = [
+  "id",
+  "projectId",
+  "providerInstanceId",
+  "modelSelection",
+  "runtimeMode",
+  "interactionMode",
+  "worktreePath",
+  "activeProviderThreadId",
+  "archivedAt",
+  "deletedAt",
+] as const;
+const threadPolicySchema = Schema.Struct(
+  Struct.pick(OrchestrationV2AppThread.fields, threadPolicyKeys),
+);
+const sameThreadPolicy = Schema.toEquivalence(threadPolicySchema);
+export interface ThreadProjectionCommit {
+  readonly expected: typeof threadPolicySchema.Type;
+  readonly modelOptionsUpdate?: {
+    readonly eventId: EventId;
+    readonly occurredAt: DateTime.Utc;
+    readonly options: ProviderOptionSelections;
+  };
+}
+const isThreadEvent = (
+  event: OrchestrationV2DomainEvent,
+): event is Extract<OrchestrationV2DomainEvent, { readonly payload: OrchestrationV2AppThread }> =>
+  event.type.startsWith("thread.") && "runtimeMode" in event.payload;
 
 export class EventSinkWriteError extends Schema.TaggedError<EventSinkWriteError>()(
   "EventSinkWriteError",
@@ -68,6 +105,7 @@ export type EventSinkV2Error = typeof EventSinkV2Error.Type;
 
 export interface EventSinkV2Shape {
   readonly write: (input: {
+    readonly threadCommit?: ThreadProjectionCommit;
     /** Return no events if another thread owns this native session at commit time. */
     readonly unlessNativeThreadOwned?: Pick<
       OrchestrationV2ProviderThread,
@@ -78,6 +116,7 @@ export interface EventSinkV2Shape {
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventSinkV2Error>;
   readonly writeWithEffects: (input: {
+    readonly threadCommit?: ThreadProjectionCommit;
     /**
      * Rebuilds each run.updated from the stored row with only its delegatedCompletion replaced.
      * The batch must not also change that run's lifecycle.
@@ -328,6 +367,13 @@ const layerBase: Layer.Layer<
       });
 
     const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
+      const nativePositions = new Map(
+        events.flatMap((event) =>
+          event.type === "native-session.updated" && event.payload.type === "history"
+            ? event.payload.value.items.map((item) => [item.turnItemId, item.ordinal] as const)
+            : [],
+        ),
+      );
       const runOrdinals = new Map(
         events.flatMap((event) =>
           event.type === "run.created" || event.type === "run.updated"
@@ -337,15 +383,21 @@ const layerBase: Layer.Layer<
       );
       return Effect.forEach(
         events,
-        (event): Effect.Effect<OrchestrationV2DomainEvent, unknown> =>
-          event.type === "turn-item.updated"
-            ? turnItemPositions
-                .normalize(
-                  event.payload,
-                  event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
-                )
-                .pipe(Effect.map((payload) => ({ ...event, payload })))
-            : Effect.succeed(event),
+        (event): Effect.Effect<OrchestrationV2DomainEvent, unknown> => {
+          if (event.type !== "turn-item.updated") return Effect.succeed(event);
+          const nativeOrdinal = nativePositions.get(event.payload.id);
+          if (nativeOrdinal !== undefined)
+            return Effect.succeed({
+              ...event,
+              payload: { ...event.payload, ordinal: nativeOrdinal },
+            });
+          return turnItemPositions
+            .normalize(
+              event.payload,
+              event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
+            )
+            .pipe(Effect.map((payload) => ({ ...event, payload })));
+        },
         { concurrency: 1 },
       );
     };
@@ -394,6 +446,36 @@ const layerBase: Layer.Layer<
 
       const { committed } = yield* commitThenPublish(
         Effect.gen(function* () {
+          const threadCommit = input.threadCommit;
+          const threadEvents: Array<OrchestrationV2DomainEvent> = [];
+          if (threadCommit !== undefined) {
+            const current = yield* projectionStore.getThread(threadCommit.expected.id);
+            if (!sameThreadPolicy(current, threadCommit.expected))
+              return { committed: [], outcomes: [] };
+            const update = threadCommit.modelOptionsUpdate;
+            if (update !== undefined) {
+              const replaced = new Set(update.options.map((option) => option.id));
+              threadEvents.push({
+                id: update.eventId,
+                threadId: current.id,
+                occurredAt: update.occurredAt,
+                type: "thread.model-selection-updated",
+                payload: {
+                  ...current,
+                  updatedAt: update.occurredAt,
+                  modelSelection: {
+                    ...current.modelSelection,
+                    options: [
+                      ...(current.modelSelection.options ?? []).filter(
+                        (option) => !replaced.has(option.id),
+                      ),
+                      ...update.options,
+                    ],
+                  },
+                },
+              });
+            }
+          }
           // Check ownership in the same transaction that claims the native session.
           const imported = input.unlessNativeThreadOwned;
           if (imported?.nativeThreadRef != null) {
@@ -432,10 +514,11 @@ const layerBase: Layer.Layer<
                 }),
               )
             : input.events;
+          const projected = [...events, ...threadEvents];
           const normalized = yield* normalizeEvents(
             input.guardPendingUserInputCancellations === true
-              ? yield* guardUserInputCancellations(events)
-              : events,
+              ? yield* guardUserInputCancellations(projected)
+              : projected,
           );
           const committed = yield* eventStore.append({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
@@ -646,7 +729,72 @@ const layerBase: Layer.Layer<
             return { ...existing, committed: false as const, cancelledEffectIds: [] };
           }
 
-          const normalized = yield* normalizeEvents(input.events);
+          let events = input.events;
+          const admission = yield* NativeCommandAdmission;
+          const nativeScopes = [
+            input.threadId,
+            ...(admission === undefined ? [] : [admission.threadId]),
+          ];
+          const rows = yield* sql<{
+            thread_id: ThreadId;
+            controller: string;
+            epoch: number;
+          }>`SELECT thread_id, json_extract(payload_json, '$.controller.type') AS controller, json_extract(payload_json, '$.controller.epoch') AS epoch FROM orchestration_v2_native_sessions WHERE thread_id IN ${sql.in(nativeScopes)}`;
+          const selectedNative = rows.find((row) => row.thread_id === input.threadId);
+          if (rows.length > 0) {
+            const current =
+              selectedNative === undefined
+                ? undefined
+                : yield* projectionStore.getThread(input.threadId);
+            const workspaceChanged = input.events.some(
+              (event) =>
+                current !== undefined &&
+                event.threadId === input.threadId &&
+                isThreadEvent(event) &&
+                event.payload.worktreePath !== current.worktreePath,
+            );
+            const category = nativeCommandCategory(input.commandType);
+            if (
+              category === "unsupported" ||
+              category === "create" ||
+              workspaceChanged ||
+              (category === "controlled" &&
+                rows.some(
+                  (native) =>
+                    native.controller !== "t3" ||
+                    (admission !== undefined &&
+                      (admission.threadId !== native.thread_id ||
+                        admission.epoch !== native.epoch)),
+                ))
+            ) {
+              const receipt: CommandReceiptStore.CommandReceiptV2 = {
+                commandId: input.commandId,
+                threadId: input.threadId,
+                commandType: input.commandType,
+                acceptedAt: input.acceptedAt,
+                resultSequence: yield* eventStore.latestSequence({ threadId: input.threadId }),
+                status: "rejected",
+                error: "Native session controller or policy changed before command admission.",
+              };
+              yield* commandReceipts.upsert(receipt);
+              return {
+                receipt,
+                storedEvents: [],
+                outcomes: [],
+                committed: true as const,
+                cancelledEffectIds: [],
+              };
+            }
+            events = input.events.map((event) =>
+              current !== undefined && event.threadId === input.threadId && isThreadEvent(event)
+                ? {
+                    ...event,
+                    payload: { ...event.payload, ...Struct.pick(current, threadPolicyKeys) },
+                  }
+                : event,
+            );
+          }
+          const normalized = yield* normalizeEvents(events);
           const storedEvents = yield* eventStore.append({
             commandId: input.commandId,
             events: normalized,

@@ -1,3 +1,4 @@
+import { NativeSessionWriteContext } from "./NativeSessionProtocol.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
@@ -271,8 +272,10 @@ export const layer: Layer.Layer<
           .filter((transfer) => transfer.type === "subagent_result")
           .map((transfer) => transfer.id),
       );
+      const nativeAuthoritative = providerThread?.nativeMetadata?.historyAuthority === "native";
       const handoffs = projection.contextHandoffs.filter(
         (handoff) =>
+          !nativeAuthoritative &&
           (handoff.transferId == null || !subagentResultTransfers.has(handoff.transferId)) &&
           handoff.status === "ready" &&
           (handoff.targetRunId === run.id ||
@@ -773,6 +776,8 @@ export const layer: Layer.Layer<
           return resumed.success;
         }
 
+        if (nativeAuthoritative) return yield* loadFromProvider(Effect.fail(resumed.failure));
+
         yield* Effect.logWarning("Provider resume failed; attempting a fresh native session", {
           driver: session.driver,
           providerThreadId: providerThread.id,
@@ -1147,6 +1152,7 @@ export const layer: Layer.Layer<
       };
       const missedRuns = projection.runs.filter(
         (source) =>
+          !nativeAuthoritative &&
           source.ordinal < run.ordinal &&
           source.providerThreadId === providerThread.id &&
           (source.status === "failed" || source.status === "interrupted") &&
@@ -1345,11 +1351,40 @@ export const layer: Layer.Layer<
         function* (input) {
           // Storage cleanup removes worktrees under the same lease. Only startup
           // holds it; the provider turn runs after it is released.
-          const { thread } = yield* projectionStore.getThreadRecords(input.threadId, []);
-          const providerTurn = yield* thread.worktreePath === null
-            ? start(input)
-            : withWorkspaceLease(path.resolve(thread.worktreePath), start(input));
-          if (providerTurn !== undefined) yield* providerTurn;
+          const { thread, runs, providerThreads } = yield* projectionStore.getThreadRecords(
+            input.threadId,
+            ["runs", "providerThreads"],
+          );
+          const run = runs?.find((candidate) => candidate.id === input.runId);
+          const provider = providerThreads?.find(
+            (candidate) => candidate.id === run?.providerThreadId,
+          );
+          const authority = provider?.nativeMetadata?.historyAuthority === "native";
+          const epoch = run?.nativeControllerEpoch;
+          if (
+            authority &&
+            (epoch === undefined || epoch !== provider.nativeMetadata?.controllerEpoch)
+          )
+            return yield* new ProviderTurnStartError({
+              runId: input.runId,
+              cause: "Native controller epoch is stale or unknown.",
+            });
+          const withAuthority = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+            authority && epoch !== undefined
+              ? effect.pipe(
+                  Effect.provideService(NativeSessionWriteContext, {
+                    id: `${input.runId}:${run?.activeAttemptId}`,
+                    operationId: input.runId,
+                    epoch,
+                  }),
+                )
+              : effect;
+          const providerTurn = yield* withAuthority(
+            thread.worktreePath === null
+              ? start(input)
+              : withWorkspaceLease(path.resolve(thread.worktreePath), start(input)),
+          );
+          if (providerTurn !== undefined) yield* withAuthority(providerTurn);
         },
         (effect, input) =>
           effect.pipe(

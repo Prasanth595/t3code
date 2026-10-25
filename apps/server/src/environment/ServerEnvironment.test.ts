@@ -106,6 +106,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
           Effect.provideService(HostProcess.Platform, "linux"),
           Effect.provideService(HostProcess.Environment, {}),
         );
+        expect(descriptor.capabilities.nativeSessionsContractVersion).toBe(1);
         expect(descriptor.capabilities.serverInstallation).toEqual(
           mode === "web" ? { kind: "npm-global", prefix } : undefined,
         );

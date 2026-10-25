@@ -1,4 +1,12 @@
 import {
+  NativeSessionAdoptInput,
+  NativeSessionReleaseInput,
+  NativeSessionRefreshInput,
+  NativeSessionStatusInput,
+  NativeSessionResult,
+  NativeSessionMcpFailure,
+} from "@t3tools/contracts";
+import {
   ScheduledTaskId,
   ScheduledTask,
   OrchestrationSearchThreadsInput,
@@ -278,7 +286,43 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+const NativeAdoptTool = Tool.make("t3_native_session_adopt", {
+  ...commandTool,
+  failure: Schema.Union([OrchestratorMcpFailure, NativeSessionMcpFailure]),
+  description:
+    "Adopt a verified existing native Codex conversation without a prompt. Requires stopped-source proof and stable operation IDs.",
+  parameters: NativeSessionAdoptInput,
+  success: NativeSessionResult,
+});
+const NativeReleaseTool = Tool.make("t3_native_session_release", {
+  ...commandTool,
+  failure: Schema.Union([OrchestratorMcpFailure, NativeSessionMcpFailure]),
+  description:
+    "Revoke native send authority and reserve one return launch after verified release. Pending or blocked is not launch permission.",
+  parameters: NativeSessionReleaseInput,
+  success: NativeSessionResult,
+});
+const NativeRefreshTool = Tool.make("t3_native_session_refresh", {
+  ...commandTool,
+  failure: Schema.Union([OrchestratorMcpFailure, NativeSessionMcpFailure]),
+  description:
+    "Refresh native authoritative displayed history without an agent turn or history injection.",
+  parameters: NativeSessionRefreshInput,
+  success: NativeSessionResult,
+}).annotate(Tool.Readonly, true);
+const NativeStatusTool = Tool.make("t3_native_session_status", {
+  ...commandTool,
+  failure: Schema.Union([OrchestratorMcpFailure, NativeSessionMcpFailure]),
+  description: "Read native controller, operation, delivery blockers and return reservation.",
+  parameters: NativeSessionStatusInput,
+  success: NativeSessionResult,
+}).annotate(Tool.Readonly, true);
+
 export const ThreadToolkit = Toolkit.make(
+  NativeAdoptTool,
+  NativeReleaseTool,
+  NativeRefreshTool,
+  NativeStatusTool,
   ScheduledTaskRunTool,
   ThreadSearchTool,
   ThreadForkTool,

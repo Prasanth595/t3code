@@ -37,8 +37,30 @@ export interface CodexAppServerIncomingRequest {
   readonly params?: unknown;
 }
 
+export interface CodexAppServerMessageTransport {
+  readonly incoming: Stream.Stream<string, CodexError.CodexAppServerError>;
+  readonly write: (message: string) => Effect.Effect<void, CodexError.CodexAppServerError>;
+}
+
+export interface CodexAppServerWritePolicy {
+  readonly beforeWrite: (
+    message: Readonly<Record<string, unknown>>,
+  ) => Effect.Effect<void, CodexError.CodexAppServerError>;
+  readonly onResponse?: (
+    response: Readonly<Record<string, unknown>>,
+  ) => Effect.Effect<void, CodexError.CodexAppServerError>;
+  readonly onRequest?: (
+    request: CodexAppServerIncomingRequest,
+  ) => Effect.Effect<void, CodexError.CodexAppServerError>;
+  readonly onNotification?: (
+    notification: CodexAppServerIncomingNotification,
+  ) => Effect.Effect<boolean | void, CodexError.CodexAppServerError>;
+}
+
 export interface CodexAppServerPatchedProtocolOptions {
-  readonly stdio: Stdio.Stdio;
+  readonly stdio?: Stdio.Stdio;
+  readonly messages?: CodexAppServerMessageTransport;
+  readonly writePolicy?: CodexAppServerWritePolicy;
   readonly terminationError?: Effect.Effect<CodexError.CodexAppServerError>;
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
@@ -235,7 +257,10 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
           stage: "decoded",
           payload: message,
         });
-        const encoded = yield* encodeWireMessage(message);
+        if (options.writePolicy) yield* options.writePolicy.beforeWrite(message);
+        const encoded = yield* encodeWireMessage(message).pipe(
+          Effect.map((value) => (options.messages ? value.slice(0, -1) : value)),
+        );
         yield* logProtocol({
           direction: "outgoing",
           stage: "raw",
@@ -283,11 +308,14 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
       error: CodexError.CodexAppServerRequestError,
     ) => offerOutgoing(toProtocolMessage(requestId, { error: error.toProtocolError() }));
 
-    const handleResponse = (response: typeof JsonRpcResponseEnvelope.Type) => {
+    const handleResponse = Effect.fn("CodexAppServerProtocol.handleResponse")(function* (
+      response: typeof JsonRpcResponseEnvelope.Type,
+    ) {
+      if (options.writePolicy?.onResponse) yield* options.writePolicy.onResponse(response);
       const requestId = String(response.id);
       const protocolError = response.error;
       if (protocolError !== undefined) {
-        return resolvePending(requestId, ({ deferred, method }) =>
+        return yield* resolvePending(requestId, ({ deferred, method }) =>
           Deferred.fail(
             deferred,
             CodexError.CodexAppServerRequestError.fromProtocolError(
@@ -298,10 +326,10 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
           ),
         );
       }
-      return resolvePending(requestId, ({ deferred }) =>
+      return yield* resolvePending(requestId, ({ deferred }) =>
         Deferred.succeed(deferred, response.result),
       );
-    };
+    });
 
     const handleRequest = (request: CodexAppServerIncomingRequest) =>
       Queue.offer(incomingRequests, request).pipe(
@@ -360,8 +388,18 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
 
     const routeMessage = Effect.fnUntraced(function* (message: unknown) {
       if (Option.isSome(yield* Ref.get(terminationFailure))) return;
-      if (isIncomingRequest(message)) return yield* handleRequest(message);
-      if (isIncomingNotification(message)) return yield* handleNotification(message);
+      if (isIncomingRequest(message)) {
+        if (options.writePolicy?.onRequest) yield* options.writePolicy.onRequest(message);
+        return yield* handleRequest(message);
+      }
+      if (isIncomingNotification(message)) {
+        if (
+          options.writePolicy?.onNotification &&
+          (yield* options.writePolicy.onNotification(message)) === false
+        )
+          return;
+        return yield* handleNotification(message);
+      }
       if (isIncomingResponse(message)) return yield* handleResponse(message);
       return yield* CodexError.CodexAppServerProtocolParseError.fromUnroutableMessage(message);
     });
@@ -403,70 +441,104 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
       );
     };
 
-    yield* options.stdio.stdin.pipe(
-      Stream.interruptWhen(Deferred.await(terminationSignal)),
-      Stream.decodeText(),
-      Stream.runForEach(
-        Effect.fnUntraced(function* (chunk) {
-          let start = 0;
-          while (start < chunk.length) {
-            const newline = chunk.indexOf("\n", start);
-            const fragment = chunk.slice(start, newline === -1 ? chunk.length : newline);
-            // decodeText holds back split UTF-8 sequences, so fragment byte sums are exact.
-            remainderBytes += Buffer.byteLength(fragment, "utf8");
-            if (remainderBytes > maxIncomingMessageBytes) {
-              remainder.length = 0;
-              return yield* new CodexError.CodexAppServerTransportError({
-                operation: "read-input-stream",
-                cause: new Error(`Incoming message exceeded ${maxIncomingMessageBytes} bytes.`),
-              });
-            }
-            remainder.push(fragment);
-            if (newline === -1) break;
-            const line = remainder.join("").replace(/\r$/, "");
-            remainder.length = 0;
-            remainderBytes = 0;
-            yield* handleLine(line);
-            start = newline + 1;
-          }
-        }),
-      ),
-      Effect.matchEffect({
-        onFailure: (error) =>
-          handleTermination(() =>
-            Effect.succeed(normalizeIncomingError(error, "read-input-stream")),
-          ),
-        onSuccess: () =>
-          Effect.sync(() => {
-            const line = remainder.join("");
-            remainder.length = 0;
-            return line;
-          }).pipe(
-            Effect.flatMap(handleLine),
-            Effect.matchEffect({
-              onFailure: (error) => handleTermination(() => Effect.succeed(error)),
-              onSuccess: () =>
-                handleTermination(() => {
-                  const ended = new CodexError.CodexAppServerInputStreamEndedError({});
-                  // Node ends stdout before it reports the exit of a crashed process, so
-                  // wait briefly for the exit status. stdout can also close while the
-                  // process keeps running, so the wait must not hang pending requests.
-                  return options.terminationError === undefined
-                    ? Effect.succeed(ended)
-                    : options.terminationError.pipe(
-                        Effect.timeoutOrElse({
-                          duration: EXIT_STATUS_GRACE,
-                          orElse: () => Effect.succeed(ended),
-                        }),
-                      );
+    if (options.messages) {
+      const messages = options.messages;
+      yield* messages.incoming.pipe(
+        Stream.interruptWhen(Deferred.await(terminationSignal)),
+        Stream.runForEach((message) =>
+          Buffer.byteLength(message, "utf8") > maxIncomingMessageBytes
+            ? Effect.fail(
+                new CodexError.CodexAppServerTransportError({
+                  operation: "read-input-stream",
+                  cause: new Error("Incoming message exceeded limit."),
                 }),
-            }),
-          ),
-      }),
-      Effect.forkScoped,
-    );
+              )
+            : handleLine(message),
+        ),
+        Effect.matchEffect({
+          onFailure: (error) => handleTermination(() => Effect.succeed(error)),
+          onSuccess: () =>
+            handleTermination(() =>
+              Effect.succeed(new CodexError.CodexAppServerInputStreamEndedError({})),
+            ),
+        }),
+        Effect.forkScoped,
+      );
+      yield* Stream.fromQueue(outgoing).pipe(
+        Stream.runForEach(messages.write),
+        Effect.catch((error) => handleTermination(() => Effect.succeed(error))),
+        Effect.forkScoped,
+      );
+    } else if (options.stdio) {
+      yield* options.stdio.stdin.pipe(
+        Stream.interruptWhen(Deferred.await(terminationSignal)),
+        Stream.decodeText(),
+        Stream.runForEach(
+          Effect.fnUntraced(function* (chunk) {
+            let start = 0;
+            while (start < chunk.length) {
+              const newline = chunk.indexOf("\n", start);
+              const fragment = chunk.slice(start, newline === -1 ? chunk.length : newline);
+              // decodeText holds back split UTF-8 sequences, so fragment byte sums are exact.
+              remainderBytes += Buffer.byteLength(fragment, "utf8");
+              if (remainderBytes > maxIncomingMessageBytes) {
+                remainder.length = 0;
+                return yield* new CodexError.CodexAppServerTransportError({
+                  operation: "read-input-stream",
+                  cause: new Error(`Incoming message exceeded ${maxIncomingMessageBytes} bytes.`),
+                });
+              }
+              remainder.push(fragment);
+              if (newline === -1) break;
+              const line = remainder.join("").replace(/\r$/, "");
+              remainder.length = 0;
+              remainderBytes = 0;
+              yield* handleLine(line);
+              start = newline + 1;
+            }
+          }),
+        ),
+        Effect.matchEffect({
+          onFailure: (error) =>
+            handleTermination(() =>
+              Effect.succeed(normalizeIncomingError(error, "read-input-stream")),
+            ),
+          onSuccess: () =>
+            Effect.sync(() => {
+              const line = remainder.join("");
+              remainder.length = 0;
+              return line;
+            }).pipe(
+              Effect.flatMap(handleLine),
+              Effect.matchEffect({
+                onFailure: (error) => handleTermination(() => Effect.succeed(error)),
+                onSuccess: () =>
+                  handleTermination(() => {
+                    const ended = new CodexError.CodexAppServerInputStreamEndedError({});
+                    // Node ends stdout before it reports the exit of a crashed process, so
+                    // wait briefly for the exit status. stdout can also close while the
+                    // process keeps running, so the wait must not hang pending requests.
+                    return options.terminationError === undefined
+                      ? Effect.succeed(ended)
+                      : options.terminationError.pipe(
+                          Effect.timeoutOrElse({
+                            duration: EXIT_STATUS_GRACE,
+                            orElse: () => Effect.succeed(ended),
+                          }),
+                        );
+                  }),
+              }),
+            ),
+        }),
+        Effect.forkScoped,
+      );
 
-    yield* Stream.fromQueue(outgoing).pipe(Stream.run(options.stdio.stdout()), Effect.forkScoped);
+      yield* Stream.fromQueue(outgoing).pipe(Stream.run(options.stdio.stdout()), Effect.forkScoped);
+    } else {
+      yield* handleTermination(() =>
+        Effect.succeed(new CodexError.CodexAppServerInputStreamEndedError({})),
+      );
+    }
 
     const request = Effect.fn("CodexAppServerProtocol.request")(function* (
       method: string,

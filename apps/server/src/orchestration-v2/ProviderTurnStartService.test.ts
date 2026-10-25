@@ -256,6 +256,7 @@ it.each([
 });
 
 function makeLocalCommandHarness(input: {
+  readonly nativeAuthority?: boolean;
   readonly text: string;
   readonly worktreePath?: string;
   readonly worktreesDir?: string;
@@ -300,6 +301,7 @@ function makeLocalCommandHarness(input: {
     providerThreadId,
     userMessageId: messageId,
     rootNodeId,
+    ...(input.nativeAuthority ? { nativeControllerEpoch: 1 } : {}),
     activeAttemptId: attemptId,
     status: "starting",
     requestedAt: now,
@@ -315,6 +317,9 @@ function makeLocalCommandHarness(input: {
     providerSessionId,
     appThreadId: threadId,
     ownerNodeId: null,
+    ...(input.nativeAuthority
+      ? { nativeMetadata: { historyAuthority: "native" as const, controllerEpoch: 1 } }
+      : {}),
     nativeThreadRef: null,
     nativeConversationHeadRef: null,
     status: "not_loaded",
@@ -557,6 +562,7 @@ function makeLocalCommandHarness(input: {
       ),
     ),
   );
+  const fallbackEnsure = vi.fn(() => Effect.succeed(providerThread));
   const resumeFallbackSession = {
     driver: providerThread.driver,
     resumeThread: () =>
@@ -567,7 +573,7 @@ function makeLocalCommandHarness(input: {
           cause: "native thread is gone",
         }),
       ),
-    ensureThread: () => Effect.succeed(providerThread),
+    ensureThread: fallbackEnsure,
   };
   const open = vi.fn(() =>
     input.interruptOpen === true
@@ -742,6 +748,7 @@ function makeLocalCommandHarness(input: {
     ),
   );
   return {
+    fallbackEnsure,
     getThreadRecords,
     getTurnStartContext,
     setProjection: (next: OrchestrationV2ThreadProjection) => {
@@ -1241,3 +1248,19 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+effectIt.effect("never replaces an authoritative native conversation after resume failure", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "New input",
+      nativeAuthority: true,
+      historyReadFailureAfterFallback: "must not read catch-up",
+    });
+    yield* harness.start;
+    expect(harness.projection().runs.at(-1)?.status).toBe("failed");
+    expect(harness.projection().providerThreads[0]?.nativeThreadRef?.nativeId).toBe(
+      "native-resume-thread",
+    );
+    expect(harness.fallbackEnsure).toHaveBeenCalledTimes(0);
+  }),
+);

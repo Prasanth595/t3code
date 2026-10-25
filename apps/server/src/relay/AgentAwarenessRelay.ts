@@ -126,6 +126,7 @@ function shouldPublishAgentAwarenessEvent(
     case "provider-turn.updated":
     case "turn-item.updated":
       return isTurnItemPayload(event.payload) && turnItemUpdateCanEndBackgroundWork(event.payload);
+    case "native-session.updated":
     case "message.updated":
     case "plan.updated":
     case "checkpoint-scope.created":

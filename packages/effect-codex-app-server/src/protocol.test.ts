@@ -691,3 +691,63 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
     }),
   );
 });
+
+it.effect(
+  "uses complete WebSocket messages and fences every outbound response at the shared write boundary",
+  () =>
+    Effect.gen(function* () {
+      const input = yield* Queue.unbounded<string>();
+      const output = yield* Queue.unbounded<string>();
+      const rejected = new CodexError.CodexAppServerTransportError({
+        operation: "read-input-stream",
+        cause: new Error("revoked"),
+      });
+      const protocol = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        messages: {
+          incoming: Stream.fromQueue(input),
+          write: (message) => Queue.offer(output, message).pipe(Effect.asVoid),
+        },
+        writePolicy: {
+          beforeWrite: (message) => ("method" in message ? Effect.void : Effect.fail(rejected)),
+        },
+      });
+      const request = yield* protocol
+        .request("thread/read", { threadId: "native" })
+        .pipe(Effect.forkScoped);
+      assert.equal(
+        yield* Queue.take(output),
+        '{"id":1,"method":"thread/read","params":{"threadId":"native"}}',
+      );
+      yield* Queue.offer(input, '{"id":1,"result":{"text":"你好\\nworld"}}');
+      assert.deepEqual(yield* Fiber.join(request), { text: "你好\nworld" });
+      assert.equal(yield* Effect.flip(protocol.respond(8, { decision: "accept" })), rejected);
+      assert.equal(
+        yield* Effect.flip(
+          protocol.respondError(8, CodexError.CodexAppServerRequestError.methodNotFound("unknown")),
+        ),
+        rejected,
+      );
+    }),
+);
+
+it.effect("persists the native response before exposing an acknowledged request result", () =>
+  Effect.gen(function* () {
+    const input = yield* Queue.unbounded<string>();
+    const output = yield* Queue.unbounded<string>();
+    const ack = yield* Deferred.make<void>();
+    const protocol = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+      messages: {
+        incoming: Stream.fromQueue(input),
+        write: (message) => Queue.offer(output, message).pipe(Effect.asVoid),
+      },
+      writePolicy: { beforeWrite: () => Effect.void, onResponse: () => Deferred.await(ack) },
+    });
+    const request = yield* protocol
+      .request("turn/start", { threadId: "native" })
+      .pipe(Effect.forkScoped);
+    yield* Queue.take(output);
+    yield* Queue.offer(input, '{"id":1,"result":{"turn":{"id":"turn-one"}}}');
+    yield* Deferred.succeed(ack, undefined);
+    assert.deepEqual(yield* Fiber.join(request), { turn: { id: "turn-one" } });
+  }),
+);

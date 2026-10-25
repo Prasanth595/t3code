@@ -267,6 +267,20 @@ export function applyOrchestrationV2ProjectionEvent(
   const latestLocalTurnOrdinal = options?.latestLocalTurnOrdinal;
   const base = { ...projection, updatedAt: event.occurredAt };
   switch (event.type) {
+    case "native-session.updated": {
+      if (event.payload.type !== "history") return projection;
+      const removedMessages = new Set(event.payload.value.removedMessageIds ?? []);
+      const removedItems = new Set(event.payload.value.removedTurnItemIds ?? []);
+      if (removedMessages.size === 0 && removedItems.size === 0) return projection;
+      return {
+        ...base,
+        messages: projection.messages.filter((message) => !removedMessages.has(message.id)),
+        turnItems: projection.turnItems.filter((item) => !removedItems.has(item.id)),
+        visibleTurnItems: projection.visibleTurnItems.filter(
+          (item) => item.sourceThreadId !== event.threadId || !removedItems.has(item.sourceItemId),
+        ),
+      };
+    }
     case "thread.pull-request-link-updated":
       return {
         ...base,

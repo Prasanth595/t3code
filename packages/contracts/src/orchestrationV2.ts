@@ -1,3 +1,4 @@
+import { NativeSessionJournalEntry } from "./nativeSessions.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
@@ -596,6 +597,7 @@ export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
 export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_preparation_failed";
 
 export const OrchestrationV2Run = Schema.Struct({
+  nativeControllerEpoch: Schema.optional(NonNegativeInt),
   id: RunId,
   threadId: ThreadId,
   ordinal: PositiveInt,
@@ -913,6 +915,8 @@ export const OrchestrationV2PendingBackgroundTask = kindUnionWithFallback(
 export type OrchestrationV2PendingBackgroundTask = typeof OrchestrationV2PendingBackgroundTask.Type;
 
 export const OrchestrationV2ProviderThreadNativeMetadata = Schema.Struct({
+  historyAuthority: Schema.optionalKey(Schema.Literal("native")),
+  controllerEpoch: Schema.optionalKey(NonNegativeInt),
   modelSelection: Schema.optional(ModelSelection),
   title: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   updatedAt: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -1684,6 +1688,11 @@ const OrchestrationV2EventBase = Schema.Struct({
 });
 
 export const OrchestrationV2DomainEvent = Schema.Union([
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("native-session.updated"),
+    payload: NativeSessionJournalEntry,
+  }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("thread.created"),
@@ -2566,6 +2575,11 @@ export const OrchestrationV2RawProviderEventJson = OrchestrationV2RawProviderEve
 export type OrchestrationV2RawProviderEventJson = typeof OrchestrationV2RawProviderEventJson.Type;
 
 export const OrchestrationV2DomainEventJson = Schema.Union([
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("native-session.updated"),
+    payload: NativeSessionJournalEntry,
+  }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("thread.created"),

@@ -1,3 +1,13 @@
+import { NativeSessionError, type NativeSessionRecord } from "@t3tools/contracts";
+import * as NativeSessionStore from "../NativeSessionStore.ts";
+import { openCheckedNativeTransport } from "../NativeSessionTransport.ts";
+import {
+  makeNativeWritePolicy,
+  NativeSessionWriteContext,
+  releaseNativeSession,
+  nativeConnectionCurrent,
+} from "../NativeSessionProtocol.ts";
+import { readNativeHistory } from "../NativeSessionHistory.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
@@ -728,6 +738,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>;
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
     readonly modelSelection: ModelSelection;
+    readonly nativeSettings?: NativeSessionRecord["settings"];
     readonly hasT3Mcp?: boolean;
     readonly browserToolsAvailable?: boolean;
     readonly deviceToolsAvailable?: boolean;
@@ -774,7 +785,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       t3Context === undefined && Object.keys(appContext).length === 0
         ? undefined
         : { ...t3Context, ...appContext };
-    return yield* decodeCodexTurnStartParamsWithCollaborationMode({
+    const params = yield* decodeCodexTurnStartParamsWithCollaborationMode({
       threadId: input.nativeThreadId,
       input: input.codexInput,
       ...(additionalContext ? { additionalContext } : {}),
@@ -797,6 +808,25 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
         },
       },
     });
+    const native = input.nativeSettings;
+    return native === undefined
+      ? params
+      : {
+          ...params,
+          model: native.model,
+          effort: native.reasoningEffort,
+          approvalPolicy: native.approvalPolicy,
+          approvalsReviewer: "user" as const,
+          sandboxPolicy: native.sandboxPolicy,
+          collaborationMode: {
+            ...params.collaborationMode!,
+            settings: {
+              ...params.collaborationMode!.settings,
+              model: native.model,
+              reasoning_effort: native.reasoningEffort,
+            },
+          },
+        };
   },
 );
 
@@ -1296,6 +1326,7 @@ type CodexSubAgentActivityItem = Extract<
 
 export interface CodexAppServerClientFactoryShape {
   readonly open: (input: {
+    readonly initialNativeThreadId?: string;
     readonly instanceId: ProviderInstanceId;
     readonly threadId: ThreadId;
     readonly providerSessionId: OrchestrationV2ProviderSession["id"];
@@ -1303,7 +1334,20 @@ export interface CodexAppServerClientFactoryShape {
     readonly settings: CodexSettings;
     readonly environment: NodeJS.ProcessEnv;
   }) => Effect.Effect<
-    CodexClient.CodexAppServerClient["Service"],
+    CodexClient.CodexAppServerClient["Service"] & {
+      readonly nativeControl?: {
+        readonly record: NativeSessionRecord;
+        readonly connectionId: string;
+        readonly state: { resumeVerified: boolean };
+        readonly isCurrent?: Effect.Effect<boolean>;
+        readonly release?: (
+          config: Readonly<Record<string, unknown>>,
+        ) => Effect.Effect<
+          { readonly status: "unsubscribed" },
+          ProviderAdapter.ProviderAdapterProtocolError
+        >;
+      };
+    },
     ProviderAdapter.ProviderAdapterOpenSessionError,
     Scope.Scope
   >;
@@ -1524,10 +1568,17 @@ function isSensitiveCodexProtocolKey(key: string): boolean {
 export const layerAppServerClientFactory: Layer.Layer<
   CodexAppServerClientFactory,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | ProviderEventLoggers.ProviderEventLoggers
+  | ChildProcessSpawner.ChildProcessSpawner
+  | ProviderEventLoggers.ProviderEventLoggers
+  | Crypto.Crypto
+  | NativeSessionStore.NativeSessionStore
+  | ServerConfig
 > = Layer.effect(
   CodexAppServerClientFactory,
   Effect.gen(function* () {
+    const nativeCrypto = yield* Crypto.Crypto;
+    const nativeStore = yield* NativeSessionStore.NativeSessionStore;
+    const config = yield* ServerConfig;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const agentScope = yield* AgentScope;
@@ -1535,6 +1586,168 @@ export const layerAppServerClientFactory: Layer.Layer<
     return CodexAppServerClientFactory.of({
       open: Effect.fn("CodexAdapterV2.open")(function* (input) {
         const scope = yield* Scope.Scope;
+        const enrolled = yield* nativeStore.get(input.threadId).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapter.ProviderAdapterOpenSessionError({
+                driver: CODEX_PROVIDER,
+                providerSessionId: input.providerSessionId,
+                cause,
+              }),
+          ),
+        );
+        if (Option.isNone(enrolled) && input.initialNativeThreadId) {
+          const owner = yield* nativeStore.byNativeId(input.initialNativeThreadId).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterOpenSessionError({
+                  driver: CODEX_PROVIDER,
+                  providerSessionId: input.providerSessionId,
+                  cause,
+                }),
+            ),
+          );
+          if (Option.isSome(owner))
+            return yield* new ProviderAdapter.ProviderAdapterOpenSessionError({
+              driver: CODEX_PROVIDER,
+              providerSessionId: input.providerSessionId,
+              cause: new Error(
+                "This native conversation is reserved by its original application binding.",
+              ),
+            });
+        }
+        if (Option.isSome(enrolled)) {
+          const record = enrolled.value;
+          const recovery = yield* Effect.serviceOption(NativeSessionWriteContext);
+          const recoveringRelease =
+            record.controller.type === "releasing" &&
+            Option.isSome(recovery) &&
+            recovery.value.recovery === "release" &&
+            recovery.value.epoch === record.controller.epoch &&
+            recovery.value.operationId === record.operationId;
+          if (
+            (!["adopting", "t3"].includes(record.controller.type) && !recoveringRelease) ||
+            input.settings.homePath !== record.binding.home ||
+            input.instanceId !== record.providerInstanceId ||
+            input.providerSessionId !== `native-session:${record.key}`
+          )
+            return yield* new ProviderAdapter.ProviderAdapterOpenSessionError({
+              driver: CODEX_PROVIDER,
+              providerSessionId: input.providerSessionId,
+              cause: new Error("Native controller or runtime binding is unavailable."),
+            });
+          const nonce = yield* nativeCrypto.randomUUIDv4().pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterOpenSessionError({
+                  driver: CODEX_PROVIDER,
+                  providerSessionId: input.providerSessionId,
+                  cause,
+                }),
+            ),
+          );
+          const connectionId = `native:${input.threadId}:${record.controller.epoch}:${nonce}`;
+          const state = { resumeVerified: false };
+          const effects = yield* nativeStore.effects(input.threadId).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterOpenSessionError({
+                  driver: CODEX_PROVIDER,
+                  providerSessionId: input.providerSessionId,
+                  cause,
+                }),
+            ),
+          );
+          const messages = yield* openCheckedNativeTransport({
+            binding: record.binding,
+            authority: { environmentId: record.environmentId, databasePath: config.dbPath },
+            allowCreateAuthority: record.controller.epoch === 1 && effects.length === 0,
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterOpenSessionError({
+                  driver: CODEX_PROVIDER,
+                  providerSessionId: input.providerSessionId,
+                  cause,
+                }),
+            ),
+          );
+          const writePolicy = yield* makeNativeWritePolicy({
+            threadId: input.threadId,
+            epoch: record.controller.epoch,
+            operationId: record.operationId,
+            connectionId,
+            nativeId: record.binding.nativeId,
+            cwd: record.binding.cwd,
+            settings: record.settings,
+            mcpServerName: record.mcpServerName,
+            home: record.binding.home,
+            protocolVersion: record.binding.protocolVersion,
+            onResumeVerified: () => {
+              state.resumeVerified = true;
+            },
+          }).pipe(Effect.provideService(NativeSessionStore.NativeSessionStore, nativeStore));
+          const client = yield* CodexClient.make(undefined, { messages, writePolicy });
+          const connected = { ...record, connectionId };
+          yield* nativeStore
+            .withLock(
+              record.threadId,
+              Effect.gen(function* () {
+                const current = yield* nativeStore.get(record.threadId);
+                if (
+                  Option.isNone(current) ||
+                  current.value.controller.epoch !== record.controller.epoch ||
+                  current.value.operationId !== record.operationId
+                )
+                  return yield* new NativeSessionError({
+                    code: "stale-controller",
+                    threadId: record.threadId,
+                  });
+                yield* nativeStore.write([
+                  { type: "session", value: { ...current.value, connectionId } },
+                ]);
+              }),
+            )
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterOpenSessionError({
+                    driver: CODEX_PROVIDER,
+                    providerSessionId: input.providerSessionId,
+                    cause,
+                  }),
+              ),
+            );
+          const isCurrent = nativeConnectionCurrent({
+            threadId: record.threadId,
+            nativeId: record.binding.nativeId,
+            epoch: record.controller.epoch,
+            connectionId,
+          }).pipe(
+            Effect.provideService(NativeSessionStore.NativeSessionStore, nativeStore),
+            Effect.orElseSucceed(() => false),
+          );
+          const release = (disableMcpConfig: Readonly<Record<string, unknown>>) =>
+            releaseNativeSession({
+              native: connected,
+              request: client.raw.request,
+              disableMcpConfig,
+            }).pipe(
+              Effect.provideService(NativeSessionStore.NativeSessionStore, nativeStore),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CODEX_PROVIDER,
+                    detail: "Native release is unverified.",
+                    cause,
+                  }),
+              ),
+            );
+          return {
+            ...client,
+            nativeControl: { record: connected, connectionId, state, isCurrent, release },
+          };
+        }
         const environment = {
           ...codexAppServerEnvironment(input.environment),
           ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
@@ -1726,6 +1939,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ),
               );
         const client = yield* clientFactory.open({
+          ...(input.initialNativeThreadId === undefined
+            ? {}
+            : { initialNativeThreadId: input.initialNativeThreadId }),
           instanceId: adapterOptions.instanceId,
           threadId: input.threadId,
           providerSessionId: input.providerSessionId,
@@ -1744,7 +1960,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const restoreAdditionalContext = Effect.fn("CodexAdapterV2.restoreAdditionalContext")(
           function* (threadId: string) {
             const context = (yield* Ref.get(additionalContextByThread)).get(threadId);
-            if (!context) return;
+            if (!context || client.nativeControl) return;
             yield* client.request("thread/inject_items", {
               threadId,
               items: Object.entries(context).map(([key, entry]) =>
@@ -6323,6 +6539,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const turnStartParams = yield* buildCodexTurnStartParams({
               nativeThreadId: threadId,
               codexInput,
+              ...(client.nativeControl === undefined
+                ? {}
+                : { nativeSettings: client.nativeControl.record.settings }),
               runtimePolicy: turnInput.runtimePolicy,
               modelSelection: turnInput.modelSelection,
               hasT3Mcp: mcpSession !== undefined,
@@ -6343,7 +6562,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               else next.delete(threadId);
               return next;
             });
-            const started = yield* client.request("turn/start", turnStartParams);
+            const native = client.nativeControl?.record;
+            const started = yield* native
+              ? client.raw
+                  .request("turn/start", {
+                    ...turnStartParams,
+                  })
+                  .pipe(Effect.flatMap(Schema.decodeUnknownEffect(CodexSchema.V2TurnStartResponse)))
+              : client.request(
+                  "turn/start",
+                  yield* decodeCodexTurnStartParamsWithCollaborationMode(turnStartParams),
+                );
             yield* registerRootTurn({
               turnInput,
               nativeTurnId: started.turn.id,
@@ -6546,12 +6775,133 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ),
         };
 
+        const nativeControl = client.nativeControl;
+        const nativeSession: ProviderAdapter.ProviderAdapterV2SessionRuntime["nativeSession"] =
+          nativeControl === undefined
+            ? undefined
+            : {
+                attached: () => nativeControl.state.resumeVerified,
+                inspect: Effect.fn("CodexAdapterV2.inspectNativeSession")(
+                  function* () {
+                    yield* ensureInitialized;
+                    const native = nativeControl.record;
+                    const history = yield* readNativeHistory(client.raw.request, native.binding);
+                    const mcp = yield* readMcpSession(input.threadId);
+                    const name = native.mcpServerName;
+                    let mcpVerified = false;
+                    if (mcp && name) {
+                      const result = yield* client.raw.request("mcpServerStatus/list", {
+                        threadId: native.binding.nativeId,
+                        serverName: name,
+                        detail: "full",
+                        limit: 100,
+                      });
+                      const status = yield* Schema.decodeUnknownEffect(
+                        Schema.Struct({
+                          data: Schema.Array(
+                            Schema.Struct({
+                              name: Schema.String,
+                              httpOrigin: Schema.NullOr(Schema.String),
+                              runtimeStatus: Schema.NullOr(Schema.String),
+                              serverInfo: Schema.NullOr(
+                                Schema.Struct({ name: Schema.String, version: Schema.String }),
+                              ),
+                            }),
+                          ),
+                          nextCursor: Schema.optionalKey(Schema.NullOr(Schema.String)),
+                        }),
+                      )(result);
+                      const selected = status.data.find((server) => server.name === name);
+                      if (
+                        selected?.httpOrigin === new URL(mcp.endpoint).origin &&
+                        selected.runtimeStatus === "connected" &&
+                        selected.serverInfo?.name === "T3 Code" &&
+                        status.nextCursor == null
+                      ) {
+                        const resource = yield* client.raw.request("mcpResource/read", {
+                          threadId: native.binding.nativeId,
+                          server: name,
+                          uri: "t3://native-session/authority",
+                        });
+                        const contents = yield* Schema.decodeUnknownEffect(
+                          Schema.Struct({
+                            contents: Schema.Array(
+                              Schema.Struct({ text: Schema.optionalKey(Schema.String) }),
+                            ),
+                          }),
+                        )(resource);
+                        const expected = Schema.Struct({
+                          environmentId: Schema.String,
+                          threadId: Schema.String,
+                          providerSessionId: Schema.String,
+                          providerInstanceId: Schema.String,
+                        });
+                        for (const content of contents.contents) {
+                          if (content.text === undefined) continue;
+                          const proof = Schema.decodeOption(Schema.fromJsonString(expected))(
+                            content.text,
+                          );
+                          if (
+                            Option.isSome(proof) &&
+                            proof.value.environmentId === mcp.environmentId &&
+                            proof.value.threadId === mcp.threadId &&
+                            proof.value.providerSessionId === mcp.providerSessionId &&
+                            proof.value.providerInstanceId === mcp.providerInstanceId
+                          )
+                            mcpVerified = true;
+                        }
+                      }
+                    }
+                    return {
+                      history,
+                      settingsVerified: nativeControl.state.resumeVerified,
+                      mcpVerified,
+                    };
+                  },
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderAdapter.ProviderAdapterProtocolError({
+                        driver: CODEX_PROVIDER,
+                        detail: "Native session verification failed.",
+                        cause,
+                      }),
+                  ),
+                ),
+                release: Effect.fn("CodexAdapterV2.releaseNativeSession")(
+                  function* () {
+                    const native = nativeControl.record;
+                    yield* ensureInitialized;
+                    const mcp = yield* readMcpSession(input.threadId);
+                    if (!mcp || !native.mcpServerName || !nativeControl.release)
+                      return yield* toProtocolError("Native MCP ownership is unavailable.");
+                    return yield* nativeControl.release({
+                      [`mcp_servers.${native.mcpServerName}`]: {
+                        url: mcp.endpoint,
+                        enabled: false,
+                        tool_timeout_sec: CODEX_T3_MCP_TOOL_TIMEOUT_SEC,
+                        http_headers: { Authorization: mcp.authorizationHeader },
+                      },
+                    });
+                  },
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderAdapter.ProviderAdapterProtocolError({
+                        driver: CODEX_PROVIDER,
+                        detail: "Native session release is unverified.",
+                        cause,
+                      }),
+                  ),
+                ),
+              };
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
+          ...(nativeSession === undefined ? {} : { nativeSession }),
           instanceId: adapterOptions.instanceId,
           driver: CODEX_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
-          events: Stream.fromEffectRepeat(Queue.take(events)),
+          events: Stream.fromEffectRepeat(Queue.take(events)).pipe(
+            Stream.filterEffect(() => nativeControl?.isCurrent ?? Effect.succeed(true)),
+          ),
           canReuseContextUsage: canReuseCodexContextUsage,
           // Idle release can beat delayed subagent resumes: Codex reports them completed between turns with no resume-expected signal.
           hasPendingBackgroundWork: Effect.gen(function* () {
@@ -6633,13 +6983,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             function* (threadInput) {
               const nativeThreadId = yield* getNativeThreadId(threadInput.providerThread);
               // excludeTurns is not in the generated request schema yet.
+              const mcpSession = yield* readMcpSession(
+                threadInput.threadId ?? threadInput.providerThread.appThreadId,
+              );
+              const native = client.nativeControl?.record;
               const resume = client.raw.request("thread/resume", {
                 threadId: nativeThreadId,
                 excludeTurns: true,
                 ...codexThreadRuntimeParams({
-                  mcpSession: yield* readMcpSession(
-                    threadInput.threadId ?? threadInput.providerThread.appThreadId,
-                  ),
+                  mcpSession: native ? undefined : mcpSession,
                   ...(threadInput.modelSelection === undefined
                     ? {}
                     : { modelSelection: threadInput.modelSelection }),
@@ -6647,6 +6999,21 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     ? {}
                     : { runtimePolicy: threadInput.runtimePolicy }),
                 }),
+                ...(native && mcpSession && native.mcpServerName
+                  ? {
+                      cwd: native.binding.cwd,
+                      model: native.settings.model,
+                      config: {
+                        ...CODEX_THREAD_CONFIG,
+                        model_reasoning_effort: native.settings.reasoningEffort,
+                        [`mcp_servers.${native.mcpServerName}`]: {
+                          url: mcpSession.endpoint,
+                          tool_timeout_sec: CODEX_T3_MCP_TOOL_TIMEOUT_SEC,
+                          http_headers: { Authorization: mcpSession.authorizationHeader },
+                        },
+                      },
+                    }
+                  : {}),
               });
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(
@@ -6799,11 +7166,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }
 
               const codexInput = yield* toCodexInput(turnInput);
-              yield* client.request("turn/steer", {
+              const steer = client.request("turn/steer", {
                 expectedTurnId: activeTurn.nativeTurnId,
                 input: codexInput,
                 threadId,
               });
+              yield* client.nativeControl
+                ? steer.pipe(
+                    Effect.provideService(NativeSessionWriteContext, {
+                      id: `${turnInput.runId}:${turnInput.message.messageId}`,
+                      operationId: turnInput.runId,
+                      epoch: client.nativeControl.record.controller.epoch,
+                    }),
+                  )
+                : steer;
             },
             (effect, turnInput) =>
               effect.pipe(

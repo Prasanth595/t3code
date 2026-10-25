@@ -1,4 +1,4 @@
-import { pendingGuestMessageCount } from "@t3tools/contracts";
+import { NativeSessionRecord, pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
@@ -308,7 +308,7 @@ export type ProjectionRuntimeRecoveryState = Pick<
   | "runtimeRequests"
   | "messages"
   | "turnItems"
->;
+> & { readonly nativeSessions?: ReadonlyArray<NativeSessionRecord> };
 
 export type ProjectionPendingUserInputs = Pick<
   OrchestrationV2ThreadProjection,
@@ -829,6 +829,20 @@ export function applyToProjection(
   };
 
   switch (event.type) {
+    case "native-session.updated": {
+      if (event.payload.type !== "history") return projection;
+      const removedMessages = new Set(event.payload.value.removedMessageIds ?? []);
+      const removedItems = new Set(event.payload.value.removedTurnItemIds ?? []);
+      if (removedMessages.size === 0 && removedItems.size === 0) return projection;
+      return {
+        ...base,
+        messages: projection.messages.filter((message) => !removedMessages.has(message.id)),
+        turnItems: projection.turnItems.filter((item) => !removedItems.has(item.id)),
+        visibleTurnItems: projection.visibleTurnItems.filter(
+          (item) => item.sourceThreadId !== event.threadId || !removedItems.has(item.sourceItemId),
+        ),
+      };
+    }
     case "thread.pull-request-link-updated":
       return {
         ...projection,
@@ -1997,6 +2011,45 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       Effect.fnUntraced(
         function* (event) {
           switch (event.type) {
+            case "native-session.updated": {
+              const entry = event.payload;
+              const payload = yield* Schema.encodeUnknownEffect(
+                Schema.fromJsonString(Schema.Unknown),
+              )(entry.value);
+              if (entry.type === "history") {
+                const removedItems = encodeIdList(entry.value.removedTurnItemIds ?? []);
+                const removedMessages = encodeIdList(entry.value.removedMessageIds ?? []);
+                yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE thread_id = ${event.threadId} AND turn_item_id IN (SELECT value FROM json_each(${removedItems}))`;
+                yield* sql`DELETE FROM orchestration_v2_projection_messages WHERE thread_id = ${event.threadId} AND message_id IN (SELECT value FROM json_each(${removedMessages}))`;
+                yield* sql`DELETE FROM orchestration_v2_turn_item_positions WHERE thread_id = ${event.threadId} AND turn_item_id IN (SELECT value FROM json_each(${removedItems}))`;
+                yield* sql`DELETE FROM orchestration_v2_turn_item_positions WHERE thread_id = ${event.threadId} AND turn_item_id IN (SELECT turn_item_id FROM orchestration_v2_native_history WHERE thread_id = ${event.threadId})`;
+                yield* sql`DELETE FROM orchestration_v2_native_history WHERE thread_id = ${event.threadId}`;
+                for (const item of entry.value.items) {
+                  yield* sql`INSERT INTO orchestration_v2_turn_item_positions (thread_id, turn_item_id, ordinal) VALUES (${event.threadId}, ${item.turnItemId}, ${item.ordinal}) ON CONFLICT(thread_id, turn_item_id) DO UPDATE SET ordinal = excluded.ordinal`;
+                  const encoded = yield* Schema.encodeUnknownEffect(
+                    Schema.fromJsonString(Schema.Unknown),
+                  )(item);
+                  yield* sql`INSERT INTO orchestration_v2_native_history (thread_id, native_turn_id, native_item_id, message_id, turn_item_id, payload_json)
+                    VALUES (${event.threadId}, ${item.nativeTurnId}, ${item.nativeItemId}, ${item.messageId}, ${item.turnItemId}, ${encoded})`;
+                }
+              } else if (entry.type === "session") {
+                yield* sql`INSERT INTO orchestration_v2_native_sessions (thread_id, native_key, payload_json)
+                  VALUES (${entry.value.threadId}, ${entry.value.key}, ${payload})
+                  ON CONFLICT(thread_id) DO UPDATE SET payload_json = excluded.payload_json
+                  WHERE native_key = excluded.native_key`;
+              } else if (entry.type === "operation") {
+                yield* sql`INSERT INTO orchestration_v2_native_operations (operation_id, command_id, thread_id, payload_hash, payload_json)
+                  VALUES (${entry.value.operationId}, ${entry.value.commandId}, ${entry.value.threadId}, ${entry.value.payloadHash}, ${payload})
+                  ON CONFLICT(operation_id) DO UPDATE SET payload_json = excluded.payload_json
+                  WHERE payload_hash = excluded.payload_hash AND command_id = excluded.command_id AND thread_id = excluded.thread_id`;
+              } else {
+                yield* sql`INSERT INTO orchestration_v2_native_effects (effect_id, thread_id, state, payload_json)
+                  VALUES (${entry.value.id}, ${entry.value.threadId}, ${entry.value.state}, ${payload})
+                  ON CONFLICT(effect_id) DO UPDATE SET state = excluded.state, payload_json = excluded.payload_json`;
+              }
+              break;
+            }
+
             case "thread.pull-request-link-updated": {
               const thread = yield* getThread(event.threadId);
               yield* apply({
@@ -4091,6 +4144,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND type IN ('command_execution', 'dynamic_tool', 'subagent')
                   AND status IN ('pending', 'running', 'waiting')
                 UNION
+                SELECT thread_id FROM orchestration_v2_native_sessions
+                WHERE json_extract(payload_json, '$.controller.type') IN ('adopting', 't3', 'releasing')
+                UNION
                 SELECT thread_id FROM orchestration_v2_effect_outbox
                 WHERE status IN ('pending', 'running')
               `;
@@ -4679,7 +4735,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             decodeRows(decodeMessagePayload, threadId)(messageRows),
             decodeRows(decodeTurnItemPayload, threadId)(turnItemRows),
           ]);
+          const nativeRows = yield* sql<PayloadRow>`
+            SELECT payload_json FROM orchestration_v2_native_sessions
+            WHERE thread_id = ${threadId} OR 'native-session:' || native_key IN (
+              SELECT provider_session_id FROM orchestration_v2_projection_provider_threads WHERE thread_id = ${threadId}
+            )
+          `;
+          const nativeSessions = yield* Effect.forEach(nativeRows, (row) =>
+            Schema.decodeEffect(Schema.fromJsonString(NativeSessionRecord))(row.payload_json),
+          );
           return {
+            ...(nativeSessions.length === 0 ? {} : { nativeSessions }),
             thread,
             runs,
             attempts,

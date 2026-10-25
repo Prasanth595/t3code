@@ -1,3 +1,6 @@
+import { NativeSessionError } from "@t3tools/contracts";
+import * as EventSink from "./EventSink.ts";
+import * as NativeSessionService from "./NativeSessionService.ts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -332,6 +335,10 @@ export type ThreadManagementError = typeof ThreadManagementError.Type;
 type ThreadManagementFailure = ThreadManagementError | Orchestrator.OrchestratorV2Error;
 
 export interface ThreadManagementServiceShape {
+  readonly adoptNativeSession: NativeSessionService.NativeSessionService["Service"]["adopt"];
+  readonly releaseNativeSession: NativeSessionService.NativeSessionService["Service"]["release"];
+  readonly refreshNativeSession: NativeSessionService.NativeSessionService["Service"]["refresh"];
+  readonly nativeSessionStatus: NativeSessionService.NativeSessionService["Service"]["status"];
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
   ) => Stream.Stream<OrchestrationV2SearchThreadResult, Orchestrator.OrchestratorV2Error>;
@@ -529,6 +536,7 @@ function latestSteerableRun(
 const SETTLE_AFTER_RUN_WAIT_MS = 24 * 60 * 60 * 1_000;
 
 const make = Effect.gen(function* () {
+  const nativeSessions = yield* Effect.serviceOption(NativeSessionService.NativeSessionService);
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
@@ -694,7 +702,25 @@ const make = Effect.gen(function* () {
   const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
     ensureCommandTranscripts(command).pipe(
       Effect.andThen(assertDispatchTargetEnabled(command)),
-      Effect.andThen(orchestrator.dispatch(command)),
+      Effect.andThen(
+        Option.isSome(nativeSessions)
+          ? nativeSessions.value.authorizeCommand(command).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new Orchestrator.OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause,
+                  }),
+              ),
+              Effect.flatMap((admission) =>
+                orchestrator
+                  .dispatch(command)
+                  .pipe(Effect.provideService(EventSink.NativeCommandAdmission, admission)),
+              ),
+            )
+          : orchestrator.dispatch(command),
+      ),
     );
 
   const getProjectThread: ThreadManagementServiceShape["getProjectThread"] = (input) =>
@@ -1200,6 +1226,22 @@ const make = Effect.gen(function* () {
   });
 
   return ThreadManagementService.of({
+    adoptNativeSession: (input) =>
+      Option.isSome(nativeSessions)
+        ? nativeSessions.value.adopt(input)
+        : new NativeSessionError({ code: "native-service-unavailable", threadId: input.threadId }),
+    releaseNativeSession: (input) =>
+      Option.isSome(nativeSessions)
+        ? nativeSessions.value.release(input)
+        : new NativeSessionError({ code: "native-service-unavailable", threadId: input.threadId }),
+    refreshNativeSession: (input) =>
+      Option.isSome(nativeSessions)
+        ? nativeSessions.value.refresh(input)
+        : new NativeSessionError({ code: "native-service-unavailable", threadId: input.threadId }),
+    nativeSessionStatus: (input) =>
+      Option.isSome(nativeSessions)
+        ? nativeSessions.value.status(input)
+        : new NativeSessionError({ code: "native-service-unavailable", threadId: input.threadId }),
     ensureLegacyTranscript,
     searchThreadStream: (input) =>
       Stream.unwrap(

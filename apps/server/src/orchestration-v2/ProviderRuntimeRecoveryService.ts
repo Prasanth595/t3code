@@ -2,6 +2,7 @@ import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
+  nativeSessionBlocker,
   type OrchestrationV2DomainEvent,
   type ProviderThreadId,
   type OrchestrationV2RestartCancelledBackgroundWork,
@@ -168,6 +169,66 @@ function latestStartedRun(
   );
 }
 
+function processOwnedProjection(
+  projection: ProjectionStore.ProjectionRuntimeRecoveryState,
+): ProjectionStore.ProjectionRuntimeRecoveryState {
+  const native = projection.nativeSessions ?? [];
+  if (native.length === 0) return projection;
+  const nativeSessionIds = new Set(native.map((session) => `native-session:${session.key}`));
+  const nativeThreadIds = new Set(
+    projection.providerThreads
+      .filter(
+        (thread) =>
+          (thread.providerSessionId !== null && nativeSessionIds.has(thread.providerSessionId)) ||
+          native.some(
+            (session) =>
+              thread.providerInstanceId === session.providerInstanceId &&
+              thread.nativeThreadRef?.nativeId === session.binding.nativeId,
+          ),
+      )
+      .map((thread) => thread.id),
+  );
+  const processThreadIds = new Set(
+    projection.providerThreads
+      .filter((thread) => !nativeThreadIds.has(thread.id))
+      .map((thread) => thread.id),
+  );
+  const runs = projection.runs.filter(
+    (run) => run.providerThreadId == null || processThreadIds.has(run.providerThreadId),
+  );
+  const processRunIds = new Set(runs.map((run) => run.id));
+  const owned = (row: {
+    readonly runId: import("@t3tools/contracts").RunId | null;
+    readonly providerThreadId?: ProviderThreadId | null | undefined;
+  }) =>
+    row.providerThreadId != null
+      ? processThreadIds.has(row.providerThreadId)
+      : row.runId != null && processRunIds.has(row.runId);
+  const nodes = projection.nodes.filter(owned);
+  const processNodeIds = new Set(nodes.map((node) => node.id));
+  return {
+    ...projection,
+    runs,
+    attempts: (projection.attempts ?? []).filter((attempt) => processRunIds.has(attempt.runId)),
+    nodes,
+    subagents: (projection.subagents ?? []).filter(owned),
+    providerSessions: projection.providerSessions.filter(
+      (session) => !nativeSessionIds.has(session.id),
+    ),
+    providerThreads: projection.providerThreads.filter((thread) => processThreadIds.has(thread.id)),
+    providerTurns: (projection.providerTurns ?? []).filter((turn) =>
+      processThreadIds.has(turn.providerThreadId),
+    ),
+    runtimeRequests: projection.runtimeRequests.filter((request) =>
+      processNodeIds.has(request.nodeId),
+    ),
+    messages: projection.messages.filter(
+      (message) => message.runId !== null && processRunIds.has(message.runId),
+    ),
+    turnItems: projection.turnItems.filter(owned),
+  };
+}
+
 export const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -198,6 +259,8 @@ export const make = Effect.gen(function* () {
       continueAfterRestart: boolean,
       stoppedThisPass: ReadonlyMap<string, RecoverySession> = new Map(),
     ) {
+      const nativeSessions = projection.nativeSessions ?? [];
+      projection = processOwnedProjection(projection);
       const now = yield* DateTime.now;
       const runs = [] as Array<OrchestrationV2ThreadProjection["runs"][number]>;
       for (const run of nonterminalRuns(projection)) {
@@ -258,6 +321,27 @@ export const make = Effect.gen(function* () {
           ),
         );
       const events: Array<OrchestrationV2DomainEvent> = [];
+      for (const session of nativeSessions) {
+        if (
+          session.threadId !== projection.thread.id ||
+          session.controller.type === "external" ||
+          session.blockers.some((blocker) => blocker.code === "native-connection-unsettled")
+        )
+          continue;
+        events.push({
+          id: yield* allocateEventId(),
+          type: "native-session.updated",
+          threadId: session.threadId,
+          occurredAt: now,
+          payload: {
+            type: "session",
+            value: {
+              ...session,
+              blockers: [...session.blockers, nativeSessionBlocker("native-connection-unsettled")],
+            },
+          },
+        });
+      }
       const cancelledBackgroundWork = new Map<
         ProviderThreadId,
         Array<OrchestrationV2RestartCancelledBackgroundWork>
@@ -519,7 +603,6 @@ export const make = Effect.gen(function* () {
           }
         }
       }
-      // No provider process survives the server; open native subagents can never report completion.
       for (const subagent of projection.subagents ?? []) {
         events.push(
           ...(yield* endOrphanedNativeSubagent({
@@ -718,7 +801,7 @@ export const make = Effect.gen(function* () {
         resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
           .continueThreadsAfterServerUpdate;
       const result = yield* reconcileProjection(projection, trigger, enabled, stoppedThisPass);
-      for (const session of projection.providerSessions) {
+      for (const session of processOwnedProjection(projection).providerSessions) {
         if (session.status !== "stopped" && session.status !== "error") {
           stoppedThisPass.set(session.id, session);
         }
@@ -748,7 +831,9 @@ export const make = Effect.gen(function* () {
     const threadIds = yield* projections.getRecoveryThreadIds("runtime");
     for (const threadId of threadIds) {
       yield* Effect.gen(function* () {
-        const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
+        const projection = processOwnedProjection(
+          yield* projections.getRuntimeRecoveryProjection(threadId),
+        );
         if (
           !resolveProjectSettings(enabled, projection.thread.projectId).settings
             .continueThreadsAfterServerUpdate

@@ -1,3 +1,4 @@
+import { NATIVE_SESSION_METHODS } from "@t3tools/contracts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -1944,6 +1945,10 @@ export const layerWsRpc = (
                 ),
             ),
           ),
+        [NATIVE_SESSION_METHODS.adopt]: (input) => threadManagement.adoptNativeSession(input),
+        [NATIVE_SESSION_METHODS.release]: (input) => threadManagement.releaseNativeSession(input),
+        [NATIVE_SESSION_METHODS.refresh]: (input) => threadManagement.refreshNativeSession(input),
+        [NATIVE_SESSION_METHODS.status]: (input) => threadManagement.nativeSessionStatus(input),
         [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (input) => threadManagement.stopWorkflow(input),
         [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>
           readWorkflowScript({ scriptPath: input.scriptPath }),

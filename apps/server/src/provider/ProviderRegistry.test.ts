@@ -1,3 +1,4 @@
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { vi } from "vite-plus/test";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
@@ -321,7 +322,12 @@ const layerTestNodeServices = Layer.mergeAll(
 );
 
 it.layer(
-  Layer.mergeAll(layerTestNodeServices, ServerSettingsModule.layerTest(), layerTestHttpClient),
+  Layer.mergeAll(
+    layerTestNodeServices,
+    ServerSettingsModule.layerTest(),
+    layerTestHttpClient,
+    SqlitePersistence.layerMemory,
+  ),
 )("ProviderRegistry", (it) => {
   describe("checkCodexProviderStatus", () => {
     it.effect("uses the app-server account and model list for provider status", () =>

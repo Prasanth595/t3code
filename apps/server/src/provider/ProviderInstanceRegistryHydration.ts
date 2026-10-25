@@ -1,3 +1,4 @@
+import type * as SqlClient from "effect/sql/SqlClient";
 import {
   defaultInstanceIdForDriver,
   providerInstanceConfigEnabledFlag,
@@ -23,6 +24,7 @@ import type * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import type * as ServerConfig from "../config.ts";
 
 type ProviderInstanceRegistryHydrationEnv =
+  | SqlClient.SqlClient
   | Exclude<
       BuiltInDriversEnv,
       | ProviderOrchestrationAdapterInfrastructure.ProviderOrchestrationAdapterInfrastructure

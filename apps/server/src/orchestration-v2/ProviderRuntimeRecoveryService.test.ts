@@ -1368,3 +1368,182 @@ it.effect("leaves delegated tasks to their own child threads after process loss"
     assert.deepEqual(noted, [`subagent ${nativeSubagentId}`]);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect(
+  "preserves surviving native daemon work while recovering process-owned work in the same app thread",
+  () => {
+    const threadId = ThreadId.make("mixed-lifetime");
+    const nativeThreadId = ProviderThreadId.make("native-provider");
+    const processThreadId = ProviderThreadId.make("process-provider");
+    const nativeRun = RunId.make("native-run");
+    const processRun = RunId.make("process-run");
+    const nativeNode = NodeId.make("native-child");
+    const processNode = NodeId.make("process-child");
+    const projection = {
+      thread: { id: threadId, providerInstanceId: ProviderInstanceId.make("codex") },
+      nativeSessions: [
+        {
+          key: "enrolled",
+          threadId,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          binding: { nativeId: "native-uuid" },
+          controller: { type: "t3", epoch: 1 },
+          blockers: [],
+        },
+      ],
+      runs: [
+        {
+          id: nativeRun,
+          status: "running",
+          providerThreadId: nativeThreadId,
+          providerInstanceId: "codex",
+        },
+        {
+          id: processRun,
+          status: "running",
+          providerThreadId: processThreadId,
+          providerInstanceId: "claude",
+        },
+      ],
+      attempts: [],
+      nodes: [
+        { id: nativeNode, runId: nativeRun, providerThreadId: nativeThreadId, status: "running" },
+        {
+          id: processNode,
+          runId: processRun,
+          providerThreadId: processThreadId,
+          status: "running",
+        },
+      ],
+      subagents: [
+        {
+          id: nativeNode,
+          threadId,
+          runId: nativeRun,
+          providerThreadId: nativeThreadId,
+          origin: "provider_native",
+          status: "running",
+          providerInstanceId: "codex",
+        },
+      ],
+      providerSessions: [
+        {
+          id: "native-session:enrolled",
+          providerInstanceId: "codex",
+          driver: "codex",
+          status: "ready",
+        },
+        { id: "spawned-session", providerInstanceId: "claude", driver: "claude", status: "ready" },
+      ],
+      providerThreads: [
+        {
+          id: nativeThreadId,
+          providerSessionId: "native-session:enrolled",
+          providerInstanceId: "codex",
+          driver: "codex",
+          status: "active",
+          ownerNodeId: null,
+          pendingBackgroundTasks: [
+            { taskId: "native-task", description: "Still running in daemon" },
+          ],
+        },
+        {
+          id: processThreadId,
+          providerSessionId: "spawned-session",
+          providerInstanceId: "claude",
+          driver: "claude",
+          status: "active",
+          ownerNodeId: null,
+          pendingBackgroundTasks: [
+            { taskId: "process-task", description: "Owned by stopped process" },
+          ],
+        },
+      ],
+      providerTurns: [],
+      runtimeRequests: [],
+      messages: [],
+      turnItems: [
+        {
+          id: TurnItemId.make("native-command"),
+          runId: nativeRun,
+          nodeId: nativeNode,
+          providerThreadId: nativeThreadId,
+          type: "command_execution",
+          status: "running",
+        },
+        {
+          id: TurnItemId.make("process-command"),
+          runId: processRun,
+          nodeId: processNode,
+          providerThreadId: processThreadId,
+          type: "command_execution",
+          status: "running",
+        },
+      ],
+    } as unknown as ProjectionStore.ProjectionRuntimeRecoveryState;
+    const events: Array<import("@t3tools/contracts").OrchestrationV2DomainEvent> = [];
+    return Effect.gen(function* () {
+      const summary =
+        yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
+      assert.equal(summary.terminalizedRuns, 1);
+      assert.equal(summary.stoppedSessions, 1);
+      assert.isFalse(
+        events.some(
+          (event) =>
+            "id" in event.payload &&
+            [
+              nativeThreadId,
+              nativeRun,
+              nativeNode,
+              "native-command",
+              "native-session:enrolled",
+            ].includes(event.payload.id),
+        ),
+      );
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "provider-thread.updated" &&
+            event.payload.id === processThreadId &&
+            event.payload.status === "idle" &&
+            event.payload.pendingBackgroundTasks?.length === 0,
+        ),
+      );
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "native-session.updated" &&
+            event.payload.type === "session" &&
+            event.payload.value.blockers.some(
+              (blocker) => blocker.code === "native-connection-unsettled",
+            ),
+        ),
+      );
+    }).pipe(
+      Effect.provide(
+        ProviderRuntimeRecovery.layer.pipe(
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.mock(ProjectionStore.ProjectionStoreV2)({
+                getRecoveryThreadIds: () => Effect.succeed([threadId]),
+                getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+              }),
+              Layer.mock(EventSink.EventSinkV2)({
+                commitCommand: (input) =>
+                  Effect.sync(() => {
+                    events.push(...input.events);
+                    return { committed: true, cancelledEffectCount: 0 } as never;
+                  }),
+              }),
+              IdAllocator.layer,
+              Layer.mock(EffectOutbox.EffectOutboxV2)({
+                reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+  },
+);

@@ -14,7 +14,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
-  type ProviderSessionId,
+  ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -396,6 +396,15 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
         }
 
         return {
+          ...(input.providerSessionId.startsWith("native-session:")
+            ? {
+                nativeSession: {
+                  attached: () => true,
+                  inspect: () => unimplemented("native inspect unused"),
+                  release: () => unimplemented("native release unused"),
+                },
+              }
+            : {}),
           instanceId: ProviderInstanceId.make("codex"),
           driver: CODEX_DRIVER,
           providerSessionId: input.providerSessionId,
@@ -3540,5 +3549,99 @@ it.effect(
         projectExists: false,
       });
       assert.isFalse(denied?.capabilities?.has("device"));
+    }),
+);
+
+it.effect("keeps a controller-owned native runtime through the ordinary idle timeout", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const allocator = yield* IdAllocator.IdAllocatorV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("native-idle-owner");
+      yield* sink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator: allocator, threadId, now })],
+      });
+      const providerSessionId = ProviderSessionId.make("native-session:idle-owner");
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      yield* TestClock.adjust("2 seconds");
+      assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+      yield* manager.release({
+        providerSessionId,
+        reason: "manual_shutdown",
+        requireSettled: true,
+      });
+      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+    }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+  }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 preserves native pending approvals when only the connector is lost",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const projectId = yield* idAllocator.allocate.project({
+          fixtureName: "provider-session-manager-request-expire",
+        });
+        const threadId = yield* idAllocator.allocate.thread({
+          fixtureName: "provider-session-manager-request-expire",
+          projectId,
+        });
+        const providerSessionId = ProviderSessionId.make("native-session:request-survives");
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const pendingRequest = yield* makePendingRuntimeRequestEvents({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          providerThread,
+          now,
+        });
+        yield* eventSink.write({ events: pendingRequest.events });
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* manager.release({
+          providerSessionId,
+          reason: "runtime_error",
+          detail: "process exited",
+        });
+
+        const projection = yield* projectionStore.getThreadProjection(threadId);
+        const request = projection.runtimeRequests.at(-1);
+        const requestNode = projection.nodes.find((node) => node.id === request?.nodeId);
+        const requestTurnItem = projection.turnItems.find(
+          (item) => item.type === "approval_request" && item.requestId === request?.id,
+        );
+
+        assert.equal(request?.status, "pending");
+        assert.equal(request?.responseCapability.type, "live");
+        assert.equal(requestNode?.status, "waiting");
+        assert.equal(requestTurnItem?.status, "waiting");
+      });
+
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
     }),
 );

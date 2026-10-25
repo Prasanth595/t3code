@@ -5523,6 +5523,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerInstanceId: modelSelection.instanceId,
         modelSelection,
         providerThreadId: queuedProviderThread.id,
+        nativeControllerEpoch: projection.providerThreads.find(
+          (candidate) =>
+            candidate.providerInstanceId === modelSelection.instanceId &&
+            candidate.nativeMetadata?.historyAuthority === "native",
+        )?.nativeMetadata?.controllerEpoch,
         userMessageId: command.messageId,
         rootNodeId,
         activeAttemptId: attemptId,
@@ -5873,6 +5878,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerInstanceId: modelSelection.instanceId,
         modelSelection,
         providerThreadId,
+        nativeControllerEpoch: projection.providerThreads.find(
+          (candidate) =>
+            candidate.providerInstanceId === modelSelection.instanceId &&
+            candidate.nativeMetadata?.historyAuthority === "native",
+        )?.nativeMetadata?.controllerEpoch,
         userMessageId: command.messageId,
         rootNodeId,
         activeAttemptId: attemptId,
@@ -6560,6 +6570,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       providerInstanceId: modelSelection.instanceId,
       modelSelection,
       providerThreadId: providerThread.id,
+      nativeControllerEpoch: projection.providerThreads.find(
+        (candidate) =>
+          candidate.providerInstanceId === modelSelection.instanceId &&
+          candidate.nativeMetadata?.historyAuthority === "native",
+      )?.nativeMetadata?.controllerEpoch,
       userMessageId: command.messageId,
       rootNodeId,
       activeAttemptId: attemptId,

@@ -1,3 +1,4 @@
+import type { NativeSessionObservation } from "@t3tools/contracts";
 import type { OrchestrationV2HistoricalMessage } from "@t3tools/contracts";
 import {
   ChatAttachment,
@@ -541,6 +542,21 @@ export type ProviderAdapterV2SubagentOutcome = {
 };
 
 export interface ProviderAdapterV2SessionRuntime {
+  readonly nativeSession?: {
+    readonly attached: () => boolean;
+    readonly inspect: () => Effect.Effect<
+      {
+        readonly history: NativeSessionObservation;
+        readonly settingsVerified: boolean;
+        readonly mcpVerified: boolean;
+      },
+      ProviderAdapterV2Error
+    >;
+    readonly release: () => Effect.Effect<
+      { readonly status: "unsubscribed" | "notSubscribed" | "notLoaded" },
+      ProviderAdapterV2Error
+    >;
+  };
   readonly instanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
   readonly providerSessionId: ProviderSessionId;

@@ -1,3 +1,4 @@
+import * as Fiber from "effect/Fiber";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -1038,7 +1039,45 @@ export const layerMcpTransport = McpServer.layerHttp({
   allowSessionTermination: true,
 }).pipe(Layer.provide(layerMcpAuthMiddleware));
 
+const layerNativeSessionAuthorityResource = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    yield* server.addResource({
+      resource: new McpSchema.Resource({
+        uri: "t3://native-session/authority",
+        name: "Native session authority",
+        mimeType: "application/json",
+      }),
+      annotations: Context.empty(),
+      handle: Effect.gen(function* () {
+        const scope = yield* Effect.sync(() => {
+          const fiber = Fiber.getCurrent();
+          return (
+            fiber &&
+            Context.getOrUndefined(fiber.context, McpInvocationContext.McpInvocationContext)
+          );
+        });
+        const value = scope?.thread
+          ? {
+              environmentId: scope.environmentId,
+              threadId: scope.thread.threadId,
+              providerSessionId: scope.thread.providerSessionId,
+              providerInstanceId: scope.thread.providerInstanceId,
+            }
+          : { unavailable: true };
+        const text = yield* Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+          value,
+        ).pipe(Effect.orDie);
+        return {
+          contents: [{ uri: "t3://native-session/authority", mimeType: "application/json", text }],
+        };
+      }),
+    });
+  }),
+).pipe(Layer.provide(McpServer.McpServer.layer));
+
 export const layer = Layer.mergeAll(
+  layerNativeSessionAuthorityResource,
   layerPreviewToolkit,
   layerOrchestratorToolkit,
   layerThreadToolkit,

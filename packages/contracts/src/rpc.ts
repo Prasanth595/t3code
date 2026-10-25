@@ -1,4 +1,13 @@
 import {
+  NATIVE_SESSION_METHODS,
+  NativeSessionAdoptInput,
+  NativeSessionReleaseInput,
+  NativeSessionRefreshInput,
+  NativeSessionStatusInput,
+  NativeSessionResult,
+  NativeSessionError,
+} from "./nativeSessions.ts";
+import {
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -297,7 +306,6 @@ import {
   DeviceSession,
   DeviceShutdownInput,
 } from "./device.ts";
-import {} from "./previewAutomation.ts";
 import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
@@ -1905,7 +1913,31 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
+const nativeSessionRpcs = [
+  Rpc.make(NATIVE_SESSION_METHODS.adopt, {
+    payload: NativeSessionAdoptInput,
+    success: NativeSessionResult,
+    error: Schema.Union([NativeSessionError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(NATIVE_SESSION_METHODS.release, {
+    payload: NativeSessionReleaseInput,
+    success: NativeSessionResult,
+    error: Schema.Union([NativeSessionError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(NATIVE_SESSION_METHODS.refresh, {
+    payload: NativeSessionRefreshInput,
+    success: NativeSessionResult,
+    error: Schema.Union([NativeSessionError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(NATIVE_SESSION_METHODS.status, {
+    payload: NativeSessionStatusInput,
+    success: NativeSessionResult,
+    error: Schema.Union([NativeSessionError, EnvironmentAuthorizationError]),
+  }),
+] as const;
+
 export const WsRpcGroup = RpcGroup.make(
+  ...nativeSessionRpcs,
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,

@@ -172,6 +172,7 @@ export interface ProviderSessionManagerV2Shape {
   readonly release: (input: {
     readonly providerSessionId: ProviderSessionId;
     readonly reason: ProviderSessionReleaseReason;
+    readonly requireSettled?: boolean;
     readonly detail?: string;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
   readonly detach: (input: {
@@ -613,6 +614,7 @@ export const layerWithOptions = (
         readonly reason: ProviderSessionReleaseReason;
         readonly releasedAt: DateTime.Utc;
       }) {
+        if (input.entry.runtime.nativeSession !== undefined) return;
         const providerSessionId = input.entry.runtime.providerSessionId;
         const now = yield* DateTime.now;
         const status = releasedRuntimeRequestStatusFor(input.reason);
@@ -724,6 +726,7 @@ export const layerWithOptions = (
         }) {
           if (
             input.reason === "server_shutdown" ||
+            input.entry.runtime.nativeSession !== undefined ||
             input.entry.runtime.backgroundTasksEndWithProcess !== true
           ) {
             return [];
@@ -966,6 +969,7 @@ export const layerWithOptions = (
       const releaseEntry = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly reason: ProviderSessionReleaseReason;
+        readonly requireSettled?: boolean;
         readonly detail?: string;
         readonly detachedThreadId?: ThreadId;
         readonly cancelIdleFiber?: boolean;
@@ -1003,6 +1007,11 @@ export const layerWithOptions = (
                     providerSessionId: input.providerSessionId,
                     reason: input.reason,
                   });
+                  if (input.requireSettled && Option.isNone(closeExit))
+                    return yield* new ProviderSessionReleaseError({
+                      providerSessionId: input.providerSessionId,
+                      reason: input.reason,
+                    });
                   const records = {
                     entry,
                     reason: input.reason,
@@ -1081,6 +1090,7 @@ export const layerWithOptions = (
           const entry = current.get(key);
           if (
             entry === undefined ||
+            entry.runtime.nativeSession !== undefined ||
             entry.busyTurns.size > 0 ||
             entry.idleGeneration !== input.generation
           ) {
@@ -1171,7 +1181,11 @@ export const layerWithOptions = (
         const key = sessionKey(providerSessionId);
         const current = yield* Ref.get(sessions);
         const entry = current.get(key);
-        if (entry === undefined || entry.busyTurns.size > 0) {
+        if (
+          entry === undefined ||
+          entry.runtime.nativeSession !== undefined ||
+          entry.busyTurns.size > 0
+        ) {
           return;
         }
 
@@ -1491,6 +1505,7 @@ export const layerWithOptions = (
           const entry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
           if (
             entry === undefined ||
+            entry.runtime.nativeSession !== undefined ||
             !entry.supportsMultipleProviderThreads ||
             entry.exposedRuntime.unloadThread === undefined ||
             input.providerThread.nativeThreadRef === null
@@ -1513,7 +1528,12 @@ export const layerWithOptions = (
       const scheduleThreadUnload = Effect.fn("ProviderSessionManager.scheduleThreadUnload")(
         function* (providerSessionId: ProviderSessionId, providerThreadId: ProviderThreadId) {
           const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
-          if (entry === undefined || hasBusyTurn(entry, providerThreadId)) return;
+          if (
+            entry === undefined ||
+            entry.runtime.nativeSession !== undefined ||
+            hasBusyTurn(entry, providerThreadId)
+          )
+            return;
           const tracked = Array.from(entry.idleThreadUnloads).find(
             ([, pending]) => pending.providerThread.id === providerThreadId,
           );
@@ -2068,7 +2088,11 @@ export const layerWithOptions = (
               const existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined) {
                 const attached = existing.attachedThreadIds.has(input.threadId);
-                if (!attached && !existing.supportsMultipleProviderThreads) {
+                if (
+                  !attached &&
+                  (!existing.supportsMultipleProviderThreads ||
+                    input.providerSessionId.startsWith("native-session:"))
+                ) {
                   return yield* new ProviderSessionOpenError({
                     instanceId: input.modelSelection.instanceId,
                     providerSessionId: input.providerSessionId,

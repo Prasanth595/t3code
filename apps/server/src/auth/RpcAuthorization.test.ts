@@ -371,3 +371,10 @@ it.effect("denies manual cleanup before the handler without settings permission"
     expect(handled).toBe(false);
   }).pipe(Effect.scoped),
 );
+
+it("protects native session lifecycle and history reads with destination environment scopes", () => {
+  expect(RPC_REQUIRED_SCOPES["nativeSessions.adopt"]).toEqual(AuthOrchestrationOperateScope);
+  expect(RPC_REQUIRED_SCOPES["nativeSessions.release"]).toEqual(AuthOrchestrationOperateScope);
+  expect(RPC_REQUIRED_SCOPES["nativeSessions.refresh"]).toEqual(AuthOrchestrationReadScope);
+  expect(RPC_REQUIRED_SCOPES["nativeSessions.status"]).toEqual(AuthOrchestrationReadScope);
+});
