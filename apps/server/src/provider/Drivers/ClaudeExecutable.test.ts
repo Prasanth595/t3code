@@ -24,6 +24,15 @@ function withWindowsResolution(input: {
 }
 
 describe("resolveClaudeSdkExecutablePath", () => {
+  it.effect("awaits command discovery before following a launcher shim", () =>
+    resolveClaudeSdkExecutablePath("claude", {}).pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(ClaudeExecutableFileCheck, (path) => path === NPM_PACKAGE_EXE),
+      Effect.provideService(SpawnExecutableResolution, async () => NPM_SHIM),
+      Effect.tap((resolved) => Effect.sync(() => expect(resolved).toBe(NPM_PACKAGE_EXE))),
+    ),
+  );
+
   it.effect("follows an npm launcher shim to the packaged native binary", () =>
     Effect.gen(function* () {
       expect(

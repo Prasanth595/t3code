@@ -308,7 +308,7 @@ describe("AcpRegistrySupport", () => {
           registryUrl,
         }).pipe(
           Effect.provideService(HostProcess.Platform, "win32"),
-          Effect.provideService(SpawnExecutableResolution, () => `C:\\bin\\dsh${extension}`),
+          Effect.provideService(SpawnExecutableResolution, async () => `C:\\bin\\dsh${extension}`),
         );
         const localSettings = decodeAcpRegistrySettings({ source: "local", commandPath: "dsh" });
         for (const failure of [

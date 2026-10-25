@@ -680,6 +680,120 @@ describe("npmShimExecutable", () => {
 });
 
 effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
+  it.effect.runIf(HostProcess.Platform.defaultValue() === "win32")(
+    "yields while discovering a Windows executable",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-spawn-" });
+          const executable = path.join(directory, "tool.EXE");
+          yield* fs.writeFileString(executable, "");
+          const resolve = SpawnExecutableResolution.defaultValue();
+          let settled = false;
+          const pending = Promise.resolve(
+            resolve("tool", "win32", { PATH: directory, PATHEXT: ".EXE;.CMD" }),
+          ).then((value) => {
+            settled = true;
+            return value;
+          });
+          try {
+            yield* Effect.promise(() => Promise.resolve());
+            expect(settled).toBe(false);
+          } finally {
+            expect(yield* Effect.promise(() => pending)).toBe(executable);
+          }
+        }),
+      ),
+  );
+
+  it.effect.runIf(HostProcess.Platform.defaultValue() === "win32")(
+    "finds a just-installed executable without caching an earlier miss",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-spawn-" });
+          const executable = path.join(directory, "tool.EXE");
+          const shim = path.join(directory, "tool.CMD");
+          const lookup = resolveSpawnCommand("tool", ["status"], {
+            env: { PATH: directory, PATHEXT: ".EXE;.CMD" },
+          });
+          expect((yield* lookup).command).toBe("tool");
+          yield* fs.writeFileString(executable, "");
+          yield* fs.writeFileString(shim, "");
+          expect(yield* lookup).toEqual({ command: executable, args: ["status"], shell: false });
+          const later = path.join(directory, "later");
+          yield* fs.makeDirectory(later);
+          yield* fs.writeFileString(path.join(later, "tool.EXE"), "");
+          yield* fs.remove(executable);
+          expect(
+            yield* Effect.promise(async () =>
+              SpawnExecutableResolution.defaultValue()("tool", "win32", {
+                PATH: `${directory};${later}`,
+                PATHEXT: ".EXE;.CMD",
+              }),
+            ),
+          ).toBe(shim);
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(CommandResolutionCache, new Map()),
+        ),
+      ),
+  );
+
+  it.effect.runIf(HostProcess.Platform.defaultValue() === "win32")(
+    "probes known file names when a PATH directory cannot be enumerated",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-spawn-" });
+          const executable = path.join(directory, "tool.EXE");
+          yield* fs.writeFileString(executable, "");
+          using _listing = vi
+            .spyOn(NodeFS.promises, "readdir")
+            .mockRejectedValueOnce(
+              Object.assign(new Error("Directory enumeration denied"), { code: "EACCES" }),
+            );
+          expect(
+            yield* Effect.promise(async () =>
+              SpawnExecutableResolution.defaultValue()("tool", "win32", {
+                PATH: directory,
+                PATHEXT: ".EXE;.CMD",
+              }),
+            ),
+          ).toBe(executable);
+        }),
+      ),
+  );
+
+  it.effect.runIf(HostProcess.Platform.defaultValue() === "win32")(
+    "probes Windows short names omitted from directory listings",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-spawn-" });
+          const executable = path.join(directory, "LONGNA~1.EXE");
+          yield* fs.writeFileString(executable, "");
+          using _listing = vi.spyOn(NodeFS.promises, "readdir").mockResolvedValueOnce([]);
+          expect(
+            yield* Effect.promise(async () =>
+              SpawnExecutableResolution.defaultValue()("LONGNA~1", "win32", {
+                PATH: directory,
+                PATHEXT: ".EXE",
+              }),
+            ),
+          ).toBe(executable);
+        }),
+      ),
+  );
+
   it.effect("runs Windows executables directly without a shell", () =>
     Effect.gen(function* () {
       const command = yield* resolveSpawnCommand("node.exe", ["script.js", "hello & goodbye"], {
