@@ -464,7 +464,7 @@ export const make = Effect.gen(function* () {
             ? Effect.succeed(viewer.account)
             : Effect.fail(new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }));
         }),
-        // `az account show` cannot identify PAT logins; the extension resolves `--creator me`.
+        // The extension can identify its current actor if connectionData is unavailable.
         Effect.catchIf(
           (error) => error._tag !== "AzureDevOpsCliUnavailableError",
           () =>

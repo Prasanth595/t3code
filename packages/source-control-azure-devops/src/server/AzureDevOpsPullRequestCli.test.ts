@@ -278,6 +278,25 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("retains the extension viewer fallback when connection data is unavailable", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}"))).mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            JSON.stringify([
+              {
+                ...pullRequestRow,
+                createdBy: { id: "fallback-id", uniqueName: "fallback@example.com" },
+              },
+            ]),
+          ),
+        ),
+      );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      assert.strictEqual(yield* cli.getViewer({ cwd: "/w" }), "fallback@example.com");
+    }),
+  );
+
   it.effect("does not substitute an identity id for a missing account login", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
@@ -289,6 +308,7 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
           ),
         ),
       );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
       const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
       const error = yield* Effect.flip(cli.getViewer({ cwd: "/w" }));
       assert.strictEqual(error._tag, "AzureDevOpsViewerUnavailableError");
@@ -306,6 +326,7 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
           ),
         ),
       );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
       const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
       const error = yield* Effect.flip(cli.getViewer({ cwd: "/w" }));
       assert.strictEqual(error._tag, "AzureDevOpsViewerUnavailableError");
