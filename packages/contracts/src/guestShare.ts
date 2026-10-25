@@ -65,6 +65,7 @@ export const GuestShareCreateResult = Schema.Struct({
 export type GuestShareCreateResult = typeof GuestShareCreateResult.Type;
 
 const GUEST_SHARE_CREATE_MESSAGES = {
+  disabled: "Guest links are off. Turn them on in Settings > Beta.",
   connect_unavailable: "Guest links need a running T3 Connect tunnel.",
   thread_unavailable: "This thread cannot be shared.",
   read_failed: "Failed to read the shared thread.",
@@ -75,6 +76,7 @@ export class GuestShareCreateError extends Schema.TaggedError<GuestShareCreateEr
   "GuestShareCreateError",
   {
     reason: Schema.Literals([
+      "disabled",
       "connect_unavailable",
       "thread_unavailable",
       "read_failed",

@@ -6,8 +6,10 @@ until you send or dismiss it.
 
 ## Share a thread
 
-Guest links need [T3 Connect](./remote-access.md), because the link points at your machine's
-T3 Connect address. Your machine must stay online while the guest uses it.
+Guest links are a beta. Turn on **Settings → Beta → Guest links** for the machine that runs the
+thread. They also need [T3 Connect](./remote-access.md): sign in and link that machine, because the
+link points at its T3 Connect address. The machine must stay online while the guest uses it.
+Turning the setting off ends every open guest link on that machine.
 
 1. Right-click the thread in the sidebar and choose **Share with guest**. It is also in the thread
    menu and the command palette.

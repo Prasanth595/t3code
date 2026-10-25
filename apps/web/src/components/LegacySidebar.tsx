@@ -209,6 +209,7 @@ import { CommandDialogTrigger } from "./ui/command";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import {
   derivePhysicalProjectKey,
@@ -2167,9 +2168,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
             : []),
           { id: "rename", label: "Rename thread", disabled: !canOperateThread },
-          ...(appAtomRegistry.get(
-            serverEnvironment.createGuestShare.permissionAtom(thread.environmentId),
-          )
+          ...(appAtomRegistry.get(canShareWithGuestAtom(thread.environmentId))
             ? [{ id: "share-guest", label: "Share with guest" }]
             : []),
           { id: "mark-unread", label: "Mark unread" },

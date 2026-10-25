@@ -57,6 +57,7 @@ import {
   projectTurnItemForDetail,
 } from "../orchestration-v2/WireProjection.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { guestShareView, guestThreadModel } from "./guestView.ts";
 import {
   classifyGuestUploads,
@@ -208,6 +209,7 @@ const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const commandOutputs = yield* CommandOutputHub.CommandOutputHub;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const managedEndpoint = yield* CloudManagedEndpointRuntime;
   const { attachmentsDir } = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -260,6 +262,11 @@ const make = Effect.gen(function* () {
   const connectHostname = managedEndpoint.inspectConnector.pipe(
     Effect.map((facts) => facts?.hostname ?? null),
   );
+  // A beta: while it is off, no link opens and every guest request is refused.
+  const sharingEnabled = serverSettings.getSettings.pipe(
+    Effect.map((settings) => settings.guestSharingEnabled),
+    Effect.orElseSucceed(() => false),
+  );
 
   const dispatchGuestCommand = (
     command: Parameters<Orchestrator.OrchestratorV2["Service"]["dispatch"]>[0],
@@ -294,6 +301,7 @@ const make = Effect.gen(function* () {
     const share = thread.guestShare;
     const now = yield* DateTime.now;
     if (
+      !(yield* sharingEnabled) ||
       !share ||
       share.id !== claims.value.shareId ||
       thread.archivedAt !== null ||
@@ -308,6 +316,9 @@ const make = Effect.gen(function* () {
   });
 
   const create = Effect.fn("GuestShareService.create")(function* (input: GuestShareCreateInput) {
+    if (!(yield* sharingEnabled)) {
+      return yield* new GuestShareCreateError({ reason: "disabled" });
+    }
     const host = yield* connectHostname;
     if (host === null) {
       return yield* new GuestShareCreateError({ reason: "connect_unavailable" });
@@ -527,12 +538,13 @@ const make = Effect.gen(function* () {
       ),
       Stream.takeUntil((event) => event.type === "ended"),
       // Unlinking T3 Connect closes it quietly, so a tunnel that comes back on the same host
-      // keeps the guest in. Closing and expiry end it above, with `ended`.
+      // keeps the guest in. Turning the beta off closes it the same way. Closing and expiry end
+      // it above, with `ended`.
       Stream.interruptWhen(
-        connectHostname.pipe(
+        Effect.all([connectHostname, sharingEnabled]).pipe(
           Effect.repeat({
             schedule: Schedule.spaced(ACCESS_RECHECK_INTERVAL),
-            until: (current) => current !== share.host,
+            until: ([host, enabled]) => host !== share.host || !enabled,
           }),
         ),
       ),

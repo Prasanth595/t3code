@@ -46,6 +46,7 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import * as ResourceCleanupService from "../orchestration-v2/ResourceCleanupService.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as GuestShareService from "./GuestShareService.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
@@ -110,6 +111,7 @@ const layerTest = GuestShareService.layer.pipe(
     ),
   ),
   Layer.provide(layerProviders),
+  Layer.provideMerge(ServerSettings.layerTest({ guestSharingEnabled: true })),
   Layer.provide(layerConnect),
   Layer.provide(ServerSecretStore.layer),
   Layer.provideMerge(layerConfig),
@@ -289,6 +291,26 @@ it.effect("closes an open guest stream when T3 Connect stops serving the link's 
     assert.isTrue(Exit.isFailure(yield* Effect.exit(guestShares.stream(session))));
     yield* Ref.set(hostname, "env.t3.test");
     assert.isTrue(Exit.isSuccess(yield* Effect.exit(guestShares.stream(session))));
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("refuses new links and every guest request while the beta is off", () =>
+  Effect.gen(function* () {
+    const { guestShares, credential } = yield* shareThread;
+    const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
+    const collecting = yield* Stream.runCollect(yield* guestShares.stream(session)).pipe(
+      Effect.forkChild,
+    );
+    const settings = yield* ServerSettings.ServerSettingsService;
+    yield* settings.updateSettings({ guestSharingEnabled: false });
+    // An open stream closes at the next access check.
+    yield* TestClock.adjust("30 seconds");
+    yield* Fiber.join(collecting);
+    assert.equal((yield* Effect.flip(guestShares.create({ threadId }))).reason, "disabled");
+    assert.equal((yield* Effect.flip(guestShares.check(session))).reason, "inactive");
+    // Turning it back on lets the same guest back in.
+    yield* settings.updateSettings({ guestSharingEnabled: true });
+    assert.isTrue(Exit.isSuccess(yield* Effect.exit(guestShares.check(session))));
   }).pipe(Effect.provide(layerTest)),
 );
 
