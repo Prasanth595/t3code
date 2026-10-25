@@ -100,10 +100,10 @@ import {
 } from "react-native";
 import {
   KeyboardController,
+  KeyboardStickyView,
   useKeyboardState,
   useReanimatedKeyboardAnimation,
 } from "react-native-keyboard-controller";
-import { KeyboardStickyView } from "../../components/KeyboardStickyView";
 import Animated, {
   Easing,
   FadeInDown,
