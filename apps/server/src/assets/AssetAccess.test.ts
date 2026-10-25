@@ -627,6 +627,22 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("reports a workspace image's dimensions and revision together", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-workspace-image-" });
+      const filePath = path.join(root, "screenshot.png");
+      yield* fs.writeFile(filePath, screenshotPng);
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "workspace-file", threadId: ThreadId.make("thread-1"), path: filePath },
+        workspaceRoot: root,
+      });
+      expect(result.imageDimensions).toEqual({ width: 390, height: 844 });
+      expect(result.fileRevision).toEqual(expect.any(String));
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("keeps in-place edits readable but requires a new URL after atomic replacement", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

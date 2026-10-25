@@ -340,14 +340,6 @@ const readImageDimensionsFromOpenFile = (filePath: string, file: OpenMediaFile) 
 const fileRevisionOf = (file: OpenMediaFile) =>
   `${file.info.dev}:${file.info.ino}:${file.info.size}:${file.info.mtimeNs}:${file.info.ctimeNs}`;
 
-/** Opens through `openMediaFile` for the same reason as `readImageDimensionsFromHeader`. */
-const readFileRevision = (filePath: string) =>
-  openMediaFile(filePath).pipe(
-    Effect.map((file) => (file === null ? undefined : fileRevisionOf(file))),
-    Effect.scoped,
-    Effect.orElseSucceed((): string | undefined => undefined),
-  );
-
 /**
  * Opens through `openMediaFile` so a path swapped for a FIFO cannot block the
  * request; a regular open would wait for a writer that never comes.
@@ -495,12 +487,24 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
           }),
       ),
     );
-    const imageDimensions = HEADER_IMAGE_EXTENSIONS.has(
+    const wantsDimensions = HEADER_IMAGE_EXTENSIONS.has(
       path.extname(resolved.relativePath).toLowerCase(),
-    )
-      ? yield* readImageDimensionsFromHeader(canonicalFile)
-      : null;
-    const fileRevision = yield* readFileRevision(canonicalFile);
+    );
+    // One open for both, so the dimensions and revision describe the same version of the file.
+    const opened = yield* openMediaFile(canonicalFile).pipe(
+      Effect.flatMap((file) =>
+        file === null
+          ? Effect.succeed(null)
+          : Effect.map(
+              wantsDimensions
+                ? readImageDimensionsFromOpenFile(canonicalFile, file)
+                : Effect.succeed(null),
+              (dimensions) => ({ dimensions, fileRevision: fileRevisionOf(file) }),
+            ),
+      ),
+      Effect.scoped,
+      Effect.orElseSucceed(() => null),
+    );
     return {
       claims: isWorkspaceImagePreviewPath(resolved.relativePath)
         ? {
@@ -518,8 +522,8 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
             expiresAt: input.expiresAt,
           },
       fileName: path.basename(resolved.relativePath),
-      imageDimensions,
-      fileRevision,
+      imageDimensions: opened?.dimensions ?? null,
+      fileRevision: opened?.fileRevision,
     };
   },
 );
