@@ -1,9 +1,10 @@
 import type { InlineSkill } from "@t3tools/shared/inlineSkills";
 import type { OrchestrationV2SearchThreadResult, ScopedThreadRef } from "@t3tools/contracts";
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { workflowOpeningParentThreadId } from "@t3tools/shared/workflowOpeningText";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { orchestrationEnvironment } from "~/state/orchestration";
-import { useThreadProjection } from "~/state/entities";
+import { useQuietThreadProjection, useThreadProjection } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
 import { type ThreadFindMatch, type ThreadFindStart, stepThreadFindIndex } from "./threadFind";
@@ -33,7 +34,19 @@ export function useThreadFind({
   // Read here rather than passed in: a streamed delta re-renders only the find
   // provider, which refreshes open results from it.
   const content = useThreadProjection(enabled ? thread : null)?.projection;
+  // A workflow coordinator's opening is drawn from its row on the parent thread, and the server
+  // counts matches from that row, so a change to it must refresh open results too.
+  const openingParentId =
+    thread === null || content === undefined
+      ? null
+      : workflowOpeningParentThreadId({ thread: content.thread, messages: content.messages });
+  const coordinatorRow = useQuietThreadProjection(
+    thread === null || openingParentId === null
+      ? null
+      : scopeThreadRef(thread.environmentId, openingParentId),
+  )?.projection.subagents.find((subagent) => subagent.childThreadId === thread?.threadId);
   const lastContentRef = useRef(content);
+  const lastCoordinatorRowRef = useRef(coordinatorRow);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshAfterSearchRef = useRef(false);
   const threadKey = thread ? scopedThreadKey(thread) : null;
@@ -119,7 +132,8 @@ export function useThreadFind({
               entry.entryId === local.match.entryId && local.match.occurrence < entry.count,
           )) &&
         refreshTimerRef.current === null &&
-        lastContentRef.current === content
+        lastContentRef.current === content &&
+        lastCoordinatorRowRef.current === coordinatorRow
       ) {
         return {
           ...previous,
@@ -188,14 +202,16 @@ export function useThreadFind({
   }, [remote.isPending, remote.error]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts a debounce timer to refresh find results when streamed thread content changes
   useEffect(() => {
-    if (lastContentRef.current === content) return;
+    if (lastContentRef.current === content && lastCoordinatorRowRef.current === coordinatorRow)
+      return;
     lastContentRef.current = content;
+    lastCoordinatorRowRef.current = coordinatorRow;
     if (!isOpen || !state.query.trim() || refreshTimerRef.current !== null) return;
     refreshTimerRef.current = setTimeout(() => {
       refreshTimerRef.current = null;
       refreshLiveResults();
     }, 300);
-  }, [content, isOpen, state.query]);
+  }, [content, coordinatorRow, isOpen, state.query]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the pending refresh timer when the thread, open state or query changes
   useEffect(() => {
     if (!isOpen || threadKey === null || !state.query.trim()) return;

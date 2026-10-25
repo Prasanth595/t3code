@@ -133,6 +133,7 @@ export function UserMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mes
   return ctx.workflowOpening?.messageId === row.message.id ? (
     <WorkflowOpeningBlock
       opening={ctx.workflowOpening}
+      findable
       environmentId={ctx.activeThreadEnvironmentId}
       onOpenThread={(threadId) => ctx.onOpenThread(ThreadId.make(threadId))}
     />
