@@ -12,7 +12,7 @@ import type { OtlpEndpointSource } from "@t3tools/contracts";
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
 import {
   DEFAULT_SIGNAL_EXPORT,
-  nodeProcessResourceAttributes,
+  nodeProcessRuntimeAttributes,
   type SignalExport,
 } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
@@ -109,7 +109,7 @@ export class ServerConfig extends Context.Service<
 export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config);
 
 export const otlpResource = (
-  config: Pick<ServerConfig["Service"], "mode" | "devUrl" | "otelEnvironment">,
+  config: Pick<ServerConfig["Service"], "mode" | "otelEnvironment">,
   hostName: string,
 ) => ({
   serviceName: "t3code-server",
@@ -119,10 +119,7 @@ export const otlpResource = (
     "service.runtime": "t3-server",
     "t3code.server.managed_by": config.mode === "desktop" ? "desktop" : "standalone",
     "host.name": config.otelEnvironment.resourceAttributes["host.name"] || hostName,
-    ...nodeProcessResourceAttributes({
-      operatorAttributes: config.otelEnvironment.resourceAttributes,
-      isDevelopment: config.devUrl !== undefined,
-    }),
+    ...nodeProcessRuntimeAttributes(),
   },
 });
 

@@ -21,10 +21,9 @@ interface NavigatorUserAgentData {
 }
 
 /**
- * The same `browser.*` and `user_agent.original` attributes the OpenTelemetry
- * browser resource detector reports, plus the `process.runtime.*` values the
- * semantic conventions give a web browser. `userAgentData` exists only in
- * Chromium, which includes the desktop app.
+ * The `browser.*` and `user_agent.original` attributes the OpenTelemetry browser
+ * resource detector reports. `userAgentData` exists only in Chromium, which
+ * includes the desktop app.
  */
 const browserResourceAttributes = (): Record<string, unknown> => {
   if (typeof navigator === "undefined") return {};
@@ -32,8 +31,6 @@ const browserResourceAttributes = (): Record<string, unknown> => {
     .userAgentData;
   return {
     "user_agent.original": navigator.userAgent,
-    "process.runtime.name": "browser",
-    "process.runtime.version": navigator.userAgent,
     "browser.language": navigator.language,
     ...(userAgentData && {
       "browser.platform": userAgentData.platform,
@@ -45,7 +42,6 @@ const browserResourceAttributes = (): Record<string, unknown> => {
 
 const CLIENT_TRACING_RESOURCE = {
   serviceName: "t3code-web",
-  serviceVersion: APP_VERSION,
   attributes: {
     "service.namespace": "t3code",
     "deployment.environment.name": import.meta.env.DEV ? "development" : "production",
@@ -54,7 +50,7 @@ const CLIENT_TRACING_RESOURCE = {
     "service.version": APP_VERSION,
     ...browserResourceAttributes(),
   },
-};
+} as const;
 
 const layerDelegateRuntime = Layer.mergeAll(
   PrimaryEnvironmentHttpLayer.layer,

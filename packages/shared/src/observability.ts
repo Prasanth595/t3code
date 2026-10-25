@@ -39,21 +39,6 @@ export const nodeProcessRuntimeAttributes = (): Record<string, string> => ({
     : "Node.js",
 });
 
-/**
- * Resource attributes a Node process reports besides its service identity.
- * Effect lets explicit attributes beat `OTEL_RESOURCE_ATTRIBUTES`, so a value
- * an operator set there is carried over by hand to keep winning.
- */
-export const nodeProcessResourceAttributes = (input: {
-  readonly operatorAttributes: Readonly<Record<string, unknown>>;
-  readonly isDevelopment: boolean;
-}): Record<string, unknown> => ({
-  "deployment.environment.name":
-    input.operatorAttributes["deployment.environment.name"] ??
-    (input.isDevelopment ? "development" : "production"),
-  ...nodeProcessRuntimeAttributes(),
-});
-
 export const DEFAULT_SIGNAL_EXPORT: SignalExport = {
   protocol: "http/json",
   headers: undefined,

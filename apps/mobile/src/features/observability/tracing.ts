@@ -27,13 +27,8 @@ export function layerFromConfig(config: TracingConfig | null, resource: TracingR
   return RelayTracing.layer(config, {
     serviceName: "t3code-mobile",
     serviceVersion: resource.serviceVersion,
-    client: "mobile",
-    attributes: {
-      "process.runtime.name": "react-native",
-      ...(resource.appVariant !== "unknown" && {
-        "deployment.environment.name": resource.appVariant,
-      }),
-    },
+    runtime: "react-native",
+    client: `mobile-${resource.appVariant}`,
   });
 }
 
