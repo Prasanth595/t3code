@@ -3913,12 +3913,12 @@ export interface ClaudeAdapterV2Options {
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
+  readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   /**
    * The instance's model catalog with Claude Code's reported model ids, read per turn so turns
    * send ids its backend accepts. Defaults to the bundled catalog.
    */
   readonly modelCatalog?: Effect.Effect<ClaudeModelCatalog>;
-  readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   readonly continuationRequests?: {
     readonly offer: (
       request: ProviderContinuationRequests.ProviderContinuationRequest,
@@ -3977,6 +3977,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       };
     },
   );
+  const modelCatalog = adapterOptions.modelCatalog ?? Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG);
 
   // Claude Code's own subagent TTL setting, in its precedence order. Unset or unreadable means
   // Anthropic's default applies.
@@ -9228,13 +9229,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : { allowedTools: queryPolicy.allowedTools }),
           });
           const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
-          const modelCatalog = adapterOptions.modelCatalog
-            ? yield* adapterOptions.modelCatalog
-            : BUNDLED_CLAUDE_MODEL_CATALOG;
-          const compiledSelection = compileClaudeModelSelection(
-            turnInput.modelSelection,
-            modelCatalog,
-          );
+          const catalog = yield* modelCatalog;
+          const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection, catalog);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
           // A continuation prompts nothing: it drains output the live process
@@ -9335,7 +9331,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
-            modelCatalog,
+            modelCatalog: catalog,
             nativeThreadId,
             resume: shouldResume,
             ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
@@ -10533,7 +10529,7 @@ export type ClaudeAdapterV2DriverEnv =
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
   function* (
     input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
-    hooks: Pick<ClaudeAdapterV2Options, "scopedLimitNames" | "modelCatalog" | "onUsageLimits"> = {},
+    hooks: Pick<ClaudeAdapterV2Options, "scopedLimitNames" | "onUsageLimits" | "modelCatalog"> = {},
   ) {
     const { instanceId, environment, enabled, config } = input;
     const fileSystem = yield* FileSystem.FileSystem;
