@@ -536,7 +536,9 @@ export const make = Effect.gen(function* () {
   const threadSweepSlots = yield* Semaphore.make(8);
   // One sweep per thread at a time; events during a running sweep coalesce into one more pass.
   const threadSweepStates = new Map<ThreadId, "queued" | "running" | "rerun">();
-  const sweepThread = (threadId: ThreadId): Effect.Effect<void> =>
+  const sweepThread = (
+    threadId: ThreadId,
+  ): Effect.Effect<void, Effect.Error<ReturnType<typeof runSweep>>> =>
     Effect.sync(() => threadSweepStates.set(threadId, "running")).pipe(
       Effect.andThen(runSweep(null, threadId)),
       threadSweepSlots.withPermits(1),
