@@ -1468,6 +1468,7 @@ it.effect.each([
   { outcome: "completed", delegated: false, queued: "none", released: false },
   { outcome: "failed", delegated: true, queued: "held", released: true },
   { outcome: "completed", delegated: true, queued: "started", released: false },
+  { outcome: "completed", delegated: true, queued: "monitor", released: true },
 ] as const)(
   "releases the session only when a delegated task ends completed or failed ($outcome, delegated: $delegated, queued: $queued)",
   ({ outcome, delegated, queued, released }) =>
@@ -1552,7 +1553,10 @@ it.effect.each([
             threadId = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!
               .childThreadId!;
           }
-          const finishTurn = (status: "completed" | "failed" | "interrupted") =>
+          const finishTurn = (
+            status: "completed" | "failed" | "interrupted",
+            monitorWake = false,
+          ) =>
             Effect.gen(function* () {
               const { turn, events } = turns.findLast((entry) => entry.turn.threadId === threadId)!;
               const providerTurn = (yield* orchestrator.getThreadProjection(
@@ -1566,12 +1570,15 @@ it.effect.each([
                   event.payload.status === (status === "completed" ? "waiting" : status),
               );
               // A delegated task's terminal row is written while finalize holds the parent's lock.
+              // A monitor wake's end writes no task row; finalize only retries the release.
               const ended = yield* next((event) =>
-                delegated
-                  ? event.type === "subagent.updated" && event.payload.status === status
-                  : event.type === "run.updated" &&
-                    event.payload.id === turn.runId &&
-                    event.payload.status === status,
+                monitorWake
+                  ? event.type === "provider-session.detached" && event.threadId === threadId
+                  : delegated
+                    ? event.type === "subagent.updated" && event.payload.status === status
+                    : event.type === "run.updated" &&
+                      event.payload.id === turn.runId &&
+                      event.payload.status === status,
               );
               const now = yield* DateTime.now;
               const terminal = {
@@ -1606,6 +1613,40 @@ it.effect.each([
               yield* worker.drain();
               yield* Fiber.join(ended);
             });
+          if (queued === "monitor") {
+            // The wake queues behind the task's turn, so it is pending or running when the task finalizes.
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("queue-session-release-monitor"),
+              threadId,
+              messageId: MessageId.make("message:session-release-monitor"),
+              text: "A monitor reported new output.",
+              attachments: [],
+              notification: {
+                source: { kind: "monitor" },
+                outcome: "updated",
+                summary: "Monitor updated",
+              },
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "agent",
+              creationSource: "server",
+            });
+            yield* worker.drain();
+            const monitorRunning = yield* turnRunning();
+            yield* finishTurn("completed");
+            yield* worker.drain();
+            yield* Fiber.join(monitorRunning);
+            yield* orchestrator.dispatch({
+              type: "thread.visit",
+              commandId: CommandId.make("visit-session-release-monitor"),
+              threadId: parentThreadId,
+              visitedAt: DateTime.formatIso(yield* DateTime.now),
+            });
+            const { providerSessionId } = turns.findLast(
+              (entry) => entry.turn.threadId === threadId,
+            )!;
+            assert.isTrue(yield* sessions.isLive(providerSessionId));
+          }
           if (queued === "started") {
             // The first task releases its session; the follow-up task resumes the native thread.
             yield* finishTurn("completed");
@@ -1624,7 +1665,7 @@ it.effect.each([
             yield* worker.drain();
             yield* Fiber.join(followUpRunning);
           }
-          if (queued !== "none") {
+          if (queued === "held" || queued === "started") {
             yield* orchestrator.dispatch({
               type: "message.dispatch",
               commandId: CommandId.make("queue-session-release-child"),
@@ -1644,7 +1685,7 @@ it.effect.each([
           const detached = yield* next(
             (event) => event.type === "provider-session.detached" && event.threadId === threadId,
           );
-          yield* finishTurn(outcome);
+          yield* finishTurn(outcome, queued === "monitor");
           // Commands on the parent wait for its lock, so this runs after finalize returns.
           yield* orchestrator.dispatch({
             type: "thread.visit",
@@ -1663,11 +1704,16 @@ it.effect.each([
                     ["failed", false],
                     ["queued", true],
                   ]
-                : [
-                    ["completed", false],
-                    ["completed", false],
-                    ["running", false],
-                  ],
+                : queued === "monitor"
+                  ? [
+                      ["completed", false],
+                      ["completed", false],
+                    ]
+                  : [
+                      ["completed", false],
+                      ["completed", false],
+                      ["running", false],
+                    ],
             );
           }
           assert.equal(yield* sessions.isLive(providerSessionId), !released);

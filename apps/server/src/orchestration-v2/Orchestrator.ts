@@ -10912,6 +10912,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly syncRunId?: RunId;
         readonly task: OrchestrationV2Subagent;
         readonly resultRun?: OrchestrationV2Run;
+        // Its result is delivered; only a release held back by a later run, such as a
+        // monitor wake, remains.
+        readonly finalized?: boolean;
       },
     ) {
       const childThreadId = childControls.thread.id;
@@ -10989,6 +10992,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ]);
         return;
       }
+      if (options.finalized === true && childRun.id !== options.resultRun?.id) return;
       if (
         yield* childAwaitsRestartContinuation(
           taskRuns.length === 0 ? childControls.runs : taskRuns,
@@ -10998,6 +11002,54 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ) {
         return;
       }
+      // Callers hold the parent lock; detach takes the child lock, as follow-up intake does.
+      // A started or startable run, such as a follow-up or monitor wake, keeps the session
+      // until it ends. Held queued work, like a later follow-up, resumes the native thread.
+      const releaseSession =
+        terminalStatus !== "completed" && terminalStatus !== "failed"
+          ? Effect.void
+          : threadDispatch
+              .withLock(
+                childThreadId,
+                Effect.gen(function* () {
+                  const child = yield* projectionStore.getThreadRecords(childThreadId, [
+                    "runs",
+                    "providerSessions",
+                  ]);
+                  if (
+                    child.runs.some(
+                      (run) =>
+                        isBlockingRun(run) || (run.status === "queued" && run.queueHeld !== true),
+                    )
+                  )
+                    return;
+                  yield* Effect.forEach(
+                    child.providerSessions.filter(
+                      (session) => session.status !== "stopped" && session.status !== "error",
+                    ),
+                    (session) =>
+                      dispatchWithReceiptEffect({
+                        type: "provider-session.detach",
+                        commandId: CommandId.make(
+                          `command:system:delegated-task-release:${options.task.id}:${session.id}`,
+                        ),
+                        threadId: childThreadId,
+                        providerSessionId: session.id,
+                        reason: "Delegated task finished.",
+                      }),
+                    { discard: true },
+                  );
+                }),
+              )
+              .pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning(
+                    "Failed to release a finished delegated task's provider session",
+                    { childThreadId, cause },
+                  ),
+                ),
+              );
+      if (options.finalized === true) return yield* releaseSession;
 
       const childResult = yield* projectionStore.getThreadRecords(
         childThreadId,
@@ -11198,51 +11250,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (completionPlan.offer && completionPlan.parentRun !== undefined) {
         yield* offerDelegatedCompletionDelivery(parentThreadId, completionPlan.parentRun.id);
       }
-
-      if (terminalStatus !== "completed" && terminalStatus !== "failed") return;
-      // Callers hold the parent lock; detach takes the child lock, as follow-up intake does.
-      // A started or startable follow-up keeps the session. Held queued work, like a later
-      // follow-up, resumes the native thread.
-      yield* threadDispatch
-        .withLock(
-          childThreadId,
-          Effect.gen(function* () {
-            const child = yield* projectionStore.getThreadRecords(childThreadId, [
-              "runs",
-              "providerSessions",
-            ]);
-            if (
-              child.runs.some(
-                (run) => isBlockingRun(run) || (run.status === "queued" && run.queueHeld !== true),
-              )
-            )
-              return;
-            yield* Effect.forEach(
-              child.providerSessions.filter(
-                (session) => session.status !== "stopped" && session.status !== "error",
-              ),
-              (session) =>
-                dispatchWithReceiptEffect({
-                  type: "provider-session.detach",
-                  commandId: CommandId.make(
-                    `command:system:delegated-task-release:${task.id}:${session.id}`,
-                  ),
-                  threadId: childThreadId,
-                  providerSessionId: session.id,
-                  reason: "Delegated task finished.",
-                }),
-              { discard: true },
-            );
-          }),
-        )
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Failed to release a finished delegated task's provider session", {
-              childThreadId,
-              cause,
-            }),
-          ),
-        );
+      yield* releaseSession;
     },
   );
 
@@ -11272,17 +11280,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         task.origin !== "app_owned" ||
         task.childThreadId !== childThreadId ||
         (task.id === childControls.thread.forkedFrom.nodeId &&
-          progress.state !== "result_available") ||
-        (task.result !== null &&
-          parent.contextTransfers.some(
-            (transfer) =>
-              transfer.type === "subagent_result" && transfer.sourceThreadId === childThreadId,
-          ))
+          progress.state !== "result_available")
       )
         continue;
       yield* finalizeAppOwnedSubagentTask(childControls, {
         ...options,
         task,
+        finalized:
+          task.result !== null &&
+          parent.contextTransfers.some(
+            (transfer) =>
+              transfer.type === "subagent_result" && transfer.sourceThreadId === childThreadId,
+          ),
         ...(progress.resultRun === undefined ? {} : { resultRun: progress.resultRun }),
       });
     }
