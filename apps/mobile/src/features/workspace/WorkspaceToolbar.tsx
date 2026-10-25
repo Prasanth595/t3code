@@ -9,7 +9,8 @@ import {
   useWindowDimensions,
   type TextInputInstance,
 } from "react-native";
-import { KeyboardStickyView, useKeyboardState } from "react-native-keyboard-controller";
+import { useKeyboardState } from "react-native-keyboard-controller";
+import { KeyboardStickyView } from "../../components/KeyboardStickyView";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
