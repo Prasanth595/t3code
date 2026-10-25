@@ -254,17 +254,18 @@ export interface Seen {
   /** That re-gate recorded its pass (`gate-passed`), and the results are not posted yet. */
   readonly regatePassed: boolean;
   /**
-   * The newest `checks_read` line of the pass on record with nothing failed and not everything
-   * passed: a read is recorded like that only when the wait ran out, so it is the decision to go
-   * `stuck`, and it stands as a recorded failure does. `missing` says a check never appeared.
+   * The newest `checks_read` line of the pass on record that the wait running out wrote (its
+   * cause says `checks-timed-out`): the decision to go `stuck`, which stands as a recorded
+   * failure does. `missing` says a check never appeared.
    */
   readonly checksTimedOut: { readonly sha: string; readonly missing: boolean } | null;
   /**
-   * The pass on record was written by a re-gate call that resumed an earlier one (its cause says
-   * `gate-passed-resumed`): a stuck path the earlier call did not finish may have drafted the
-   * pull request or relabelled the issue, so finishing the pass sets the ready state again. A
-   * pass a first call recorded has nothing to set again, and a person's draft or assignment
-   * made while the checks ran stands.
+   * Finishing the pass on record sets the ready state again: a stuck path an earlier call did
+   * not finish may have drafted the pull request or relabelled the issue. False only for a pass
+   * whose cause says `gate-passed-clean`, which a re-gate call writes when it began the re-gate
+   * itself: it has nothing to set again, and a person's draft or assignment made while the
+   * checks ran stands. A pass recorded before that reason existed owes it, as every resumed
+   * pass did then.
    */
   readonly regatePassReassert: boolean;
   /** That re-gate's failure was recorded as sent back, and the state has not changed yet. */
@@ -368,8 +369,10 @@ export const COMMENT_DROPPED = "comment-dropped";
 export const GATE_SENDING = "gate-sending";
 /** The ledger step that records the decision that an attempt passed: `gate-passed <sha> <n>`. */
 export const GATE_PASSED = "gate-passed";
-/** The cause reason of a `gate-passed` step a resumed re-gate call wrote; `gate-passed` otherwise. */
-export const GATE_PASSED_RESUMED = "gate-passed-resumed";
+/** The cause reason of a re-gate's `gate-passed` step with nothing cut short before it to repair. */
+export const GATE_PASSED_CLEAN = "gate-passed-clean";
+/** The cause reason of the `checks_read` line written when the wait for the checks ran out. */
+export const CHECKS_TIMED_OUT = "checks-timed-out";
 /** The ledger step that says the gate results are on the pull request. */
 export const GATE_RESULTS_POSTED = "gate-results-posted";
 
@@ -614,7 +617,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
           checksFailed = null;
           checksTimedOut = null;
           regatePassed = regating;
-          regatePassReassert = entry.cause?.reason === GATE_PASSED_RESUMED;
+          regatePassReassert = entry.cause?.reason !== GATE_PASSED_CLEAN;
           // The step's own cause names the attempt; a ledger from before it did is read by the
           // last command.
           const fromCause = entry.cause === null ? undefined : entry.cause.attempt;
@@ -826,9 +829,10 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
           break;
         }
         const read: ReadonlyArray<unknown> = checks;
-        const allPassed =
-          read.length > 0 && read.every((check) => dataField(check, "state") === "passed");
-        checksPassed = allPassed ? sha.toLowerCase() : null;
+        checksPassed =
+          read.length > 0 && read.every((check) => dataField(check, "state") === "passed")
+            ? sha.toLowerCase()
+            : null;
         const failed = read.flatMap((check): Array<CheckStatus> => {
           const name = dataField(check, "name");
           if (dataField(check, "state") !== "failed" || typeof name !== "string") return [];
@@ -836,7 +840,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
           return [{ name, state: "failed", conclusion: "", url: null }];
         });
         if (failed.length > 0) checksFailed = { sha: sha.toLowerCase(), failed };
-        else if (!allPassed && read.length > 0) {
+        else if (entry.cause?.reason === CHECKS_TIMED_OUT) {
           checksTimedOut = {
             sha: sha.toLowerCase(),
             missing: read.some((check) => dataField(check, "state") === "missing"),

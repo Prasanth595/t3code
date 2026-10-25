@@ -3255,6 +3255,36 @@ describe("gate: required CI checks", () => {
     }),
   );
 
+  it.effect(
+    "a timed-out read recorded before a crash is the decision even if the checks pass later",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* readyWithChecks(["gate"]);
+        withLimits(rig, { checksMinutes: 10 });
+        scriptChecks(rig, [["pending"], ["pending"], ["passed"]]);
+        setNow(rig, 1_000);
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "checks-pending" });
+        clearCalls(rig);
+        setNow(rig, 1_000 + 600_000);
+        // The read that ran out is recorded; the stuck comment, the call after it, is lost.
+        rig.gh.failAt = 2;
+        assert.strictEqual((yield* Effect.flip(gateIn(rig)))._tag, "GitHubFailed");
+        const reads = () => linesOf(rig).filter((l) => l.event === "checks_read");
+        assert.deepStrictEqual(reads(), [checksRead([["gate", "pending"]])]);
+        // The check passed on GitHub since: the stuck path is finished, not judged again.
+        rig.gh.failAt = null;
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* gateIn(rig), {
+          kind: "stuck",
+          reason: "the required checks did not finish within 10 minutes",
+        });
+        assert.ok(!rig.gh.calls.some((c) => c.startsWith("checks ")), rig.gh.calls.join("; "));
+        assert.deepStrictEqual(reads(), [checksRead([["gate", "pending"]])]);
+        assert.isFalse(rig.gh.world.prReady);
+        assert.strictEqual(rig.gh.world.state, "stuck");
+      }),
+  );
+
   it.effect("checks that have passed when the limit ends still count", () =>
     Effect.gen(function* () {
       const rig = yield* readyWithChecks(["gate"]);
@@ -6178,6 +6208,38 @@ describe("regate: a failed regate cut short and then passing", () => {
         assert.deepStrictEqual(yield* regateStep(rig), { kind: "passed", pr: 12 });
         assertReadyAndPrOpen(rig, "resumed after the draft");
         assert.deepStrictEqual(yield* regateStep(rig), { kind: "unchanged" });
+      }),
+  );
+
+  it.effect(
+    "a re-gate pass an older build recorded, then a draft, is finished with the ready state set again",
+    () =>
+      Effect.gen(function* () {
+        const reference = yield* prOpenRun();
+        baseAndHeadMoved(reference);
+        yield* regateIn(reference);
+        const postAt = reference.gh.calls.findIndex((c) => c.startsWith("prComment "));
+        assert.ok(postAt >= 0, reference.gh.calls.join("; "));
+        // The pass is recorded and its results are not posted.
+        const rig = yield* prOpenRun();
+        baseAndHeadMoved(rig);
+        rig.gh.failAt = postAt;
+        assert.strictEqual((yield* Effect.result(regateIn(rig)))._tag, "Failure");
+        rig.gh.failAt = null;
+        // An older build wrote `gate-passed` for every pass, and finished every resumed one by
+        // setting the ready state again: a stuck path cut short before it may have drafted the
+        // pull request, as it did here.
+        const path = runPath(rig.dataDir, rig.run);
+        const before = NodeFS.readFileSync(path, "utf8");
+        const older = before.replaceAll('"reason":"gate-passed-clean"', '"reason":"gate-passed"');
+        assert.notStrictEqual(older, before, "the pass is recorded as clean");
+        NodeFS.writeFileSync(path, older);
+        rig.gh.pr = { ...rig.gh.pr!, isDraft: true };
+        rig.gh.world.prReady = false;
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* regateStep(rig), { kind: "passed", pr: 12 });
+        assert.ok(rig.gh.calls.includes("markPrReady 12"), rig.gh.calls.join("; "));
+        assertReadyAndPrOpen(rig, "older pass");
       }),
   );
 });

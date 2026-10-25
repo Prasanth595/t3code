@@ -66,8 +66,9 @@ import {
   prepareOutputTail,
 } from "./messages.ts";
 import {
+  CHECKS_TIMED_OUT,
   GATE_PASSED,
-  GATE_PASSED_RESUMED,
+  GATE_PASSED_CLEAN,
   GATE_SENDING,
   attemptsSincePass,
   nextGateAttempt,
@@ -362,14 +363,27 @@ const checksTimedOutReason = (minutes: number, missing: boolean): string =>
     : `the required checks did not finish within ${minutes} minutes`;
 
 /**
+ * The decision a read on record already made for the pass on `sha`, which stands: a failure's,
+ * so a check run again since cannot mark ready a pull request whose failure may already be in a
+ * session; or a wait that ran out, so the stuck decision an earlier call began and did not
+ * finish is finished, not judged again. Null while the pass is undecided.
+ */
+const recordedChecks = (seen: Seen, sha: string) => {
+  if (seen.checksFailed !== null && seen.checksFailed.sha === sha) {
+    return { kind: "failed", failed: seen.checksFailed.failed } as const;
+  }
+  if (seen.checksTimedOut !== null && seen.checksTimedOut.sha === sha) {
+    return { kind: "timed-out", missing: seen.checksTimedOut.missing } as const;
+  }
+  return null;
+};
+
+/**
  * What the required checks say about the pass on `pass.sha`: all passed; one failed, with the
  * read; still pending or missing within `limits.checks_minutes` of the pass; or past that limit,
- * with the fixed reason for the stuck comment. A read the ledger already records for this
- * commit stands, and `read` is null: a failure's, so a check run again since cannot mark ready a
- * pull request whose failure may already be in a session; and a wait that ran out, so the stuck
- * decision an earlier call began and did not finish is finished, not judged again. The
- * `checks_read` line is the caller's to write, where its order among the caller's other lines
- * matters.
+ * with the fixed reason for the stuck comment. A decision on record (`recordedChecks`) stands,
+ * and `read` is null. The `checks_read` line is the caller's to write, where its order among the
+ * caller's other lines matters.
  */
 const decideChecks = Effect.fn("RunnerGating.decideChecks")(function* (
   ctx: GateContext,
@@ -377,11 +391,12 @@ const decideChecks = Effect.fn("RunnerGating.decideChecks")(function* (
   pass: PassRecord,
 ) {
   const minutes = ctx.project.limits.checksMinutes;
-  if (seen.checksFailed !== null && seen.checksFailed.sha === pass.sha) {
-    return { kind: "failed", read: null, failed: seen.checksFailed.failed } as const;
+  const recorded = recordedChecks(seen, pass.sha);
+  if (recorded?.kind === "failed") {
+    return { kind: "failed", read: null, failed: recorded.failed } as const;
   }
-  if (seen.checksTimedOut !== null && seen.checksTimedOut.sha === pass.sha) {
-    const reason = checksTimedOutReason(minutes, seen.checksTimedOut.missing);
+  if (recorded?.kind === "timed-out") {
+    const reason = checksTimedOutReason(minutes, recorded.missing);
     return { kind: "timed-out", read: null, reason } as const;
   }
   const checks = yield* ctx.tracker.checks(pass.sha, ctx.project.requiredChecks);
@@ -442,7 +457,7 @@ const settleChecks = Effect.fn("RunnerGating.settleChecks")(function* (
       return { kind: "checks-pending" } as const;
     case "timed-out":
       if (decided.read !== null) {
-        yield* append(out, decided.read, "gate", "checks-timed-out", { attempt });
+        yield* append(out, decided.read, "gate", CHECKS_TIMED_OUT, { attempt });
       }
       return yield* stuckWith(ctx, out, issue, at, "checks-timed-out", { reason: decided.reason });
     case "failed":
@@ -774,7 +789,7 @@ export const gate = (ctx: GateContext, run: RunId): Effect.Effect<GateStep, Gate
 interface GateMode {
   readonly pr: number;
   readonly prUrl: string;
-  /** The cause reason of the `gate-passed` step: `GATE_PASSED_RESUMED` for a re-gate call that resumed an earlier one, else `GATE_PASSED`. */
+  /** The cause reason of the `gate-passed` step: `GATE_PASSED_CLEAN` for a re-gate pass with nothing to set again (`Seen.regatePassReassert`), else `GATE_PASSED`. */
   readonly passReason: string;
   /**
    * What the mode reads before the attempt `first`, and, for a building run, how it recovers a
@@ -923,8 +938,8 @@ const buildingMode = (
 /**
  * `gateAttempts` for a pull request that is ready for review (`regate`). With `reassert`, a stuck
  * decision an earlier call did not finish may have drafted the pull request or relabelled the
- * issue, so a pass sets the ready state again, and is recorded as owing that
- * (`GATE_PASSED_RESUMED`) in case it is finished by a later call.
+ * issue, so a pass sets the ready state again, and is recorded as owing that (`GATE_PASSED`) in
+ * case it is finished by a later call. Without it the pass is recorded as `GATE_PASSED_CLEAN`.
  */
 const readyMode = (
   ctx: GateContext,
@@ -948,7 +963,7 @@ const readyMode = (
   return {
     pr,
     prUrl,
-    passReason: reassert ? GATE_PASSED_RESUMED : GATE_PASSED,
+    passReason: reassert ? GATE_PASSED : GATE_PASSED_CLEAN,
     // A re-gate does not depend on the session, which has been stopped since the pass: a failure
     // starts a new one (`relaunchFailedRegate`). One whose launch is recorded and whose send is
     // not was finished by `regate` before this attempt; one whose launch is not recorded is run
@@ -1555,21 +1570,18 @@ export const regate = (ctx: GateContext, run: RunId): Effect.Effect<Regated, Gat
             return { step: { kind: "ended" }, moved: null };
           }
           const pass = seen.pass;
-          // Only a pass a resumed call recorded can have a cut-short stuck path before it to
-          // repair (`Seen.regatePassReassert`).
+          // Only a pass not recorded clean can have a cut-short stuck path before it to repair
+          // (`Seen.regatePassReassert`).
           const reassert = seen.regatePassReassert;
           if (!checksWanted(ctx, seen, pass.sha)) {
             const step = yield* finishRegatePass(ctx, out, issue, at, pass, last.pr, reassert);
             return { step, moved: seen.regateMoved };
           }
-          // A read on record for this pass is a decision (`decideChecks`): a wait that ran out,
+          // A read on record for this pass is a decision (`recordedChecks`): a wait that ran out,
           // or a failure, whose retries may be used up. The call that wrote it may have drafted
           // the pull request on a stuck path before it died, so it is finished whatever the head
           // holds now, and only an undecided pass is left behind for the new head.
-          const recorded =
-            (seen.checksFailed !== null && seen.checksFailed.sha === pass.sha) ||
-            (seen.checksTimedOut !== null && seen.checksTimedOut.sha === pass.sha);
-          if (pull.headSha.toLowerCase() !== pass.sha && !recorded) {
+          if (pull.headSha.toLowerCase() !== pass.sha && recordedChecks(seen, pass.sha) === null) {
             // No check on another commit says anything about this pass, and nothing of it is
             // posted: the new head is what the pull request holds now.
             movedOn = pull;
