@@ -3,6 +3,7 @@ import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import {
   DEFAULT_SERVER_SETTINGS,
+  PullRequestOperationError,
   ProjectId,
   EventId,
   ProviderInstanceId,
@@ -25,6 +26,9 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as References from "effect/References";
+import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -743,6 +747,59 @@ const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
 });
 
 describe("ThreadSettlementServiceV2 worker", () => {
+  it.effect("logs a rate-limited linked pull request read as info without settling", () => {
+    const logs: Array<{ level: string; parts: ReadonlyArray<unknown> }> = [];
+    const logger = Logger.make(({ logLevel, message }) => {
+      logs.push({ level: logLevel, parts: Array.isArray(message) ? message : [message] });
+    });
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const thread = makeThread("rate-limited", {
+        branch: "feature",
+        linkedPullRequest: {
+          projectId: PROJECT_ID,
+          repository: "owner/repository",
+          number: 42,
+          url: "https://github.com/owner/repository/pull/42",
+        },
+      });
+      // GitLab and Azure DevOps report a refusal without a reset time.
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([thread]),
+        settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: null },
+        pullRequestSummary: () =>
+          Effect.fail(
+            new PullRequestOperationError({
+              operation: "summary",
+              detail: "rate limited",
+              cause: new PullRequestProviderError({
+                provider: SourceControlProviderKind.make("gitlab"),
+                operation: "getChangeRequestSummary",
+                reason: "rate-limited",
+                detail: "rate limited",
+              }),
+            }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+        yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+      }).pipe(Effect.provide(fixture.layer));
+
+      expect(yield* Ref.get(fixture.commands)).toEqual([]);
+      expect(logs).toEqual([
+        {
+          level: "Info",
+          parts: [`automatic thread settlement skipped: rate limited (threads: ${thread.id})`],
+        },
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Logger.layer([logger])),
+      Effect.provideService(References.MinimumLogLevel, "Debug"),
+    );
+  });
+
   it.effect("settles a merged pull request stored only in the thread links", () =>
     Effect.scoped(
       Effect.gen(function* () {
