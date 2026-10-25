@@ -45,6 +45,89 @@ it("lets later viewport requests retry a failed source fetch", async () => {
   expect(await load("retry.ts")).toBe(SOURCE);
 });
 
+const failureKeys = [
+  ["string", () => "retry.ts"],
+  ["number", () => 1],
+  ["boolean", () => false],
+  ["bigint", () => 1n],
+  ["symbol", () => Symbol("retry.ts")],
+  ["null", () => null],
+  ["undefined", () => undefined],
+  ["object", () => ({ id: "retry.ts" })],
+  ["function", () => () => SOURCE],
+] as const;
+
+it.each(failureKeys)("bounds transient retries for a %s key", async (_name, createKey) => {
+  const key = createKey();
+  const fetch = vi.fn(async () => {
+    throw new Error("Offline");
+  });
+  const load = createNativeReviewDiffSourceLoader(fetch);
+  await expect(load(key)).rejects.toThrow("Offline");
+  expect(await load(key)).toBeNull();
+  expect(await load(key)).toBeNull();
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it.each(failureKeys)(
+  "remembers permanent unavailability for a %s key",
+  async (_name, createKey) => {
+    const key = createKey();
+    const fetch = vi.fn(async () => {
+      throw { reason: "unsupported" };
+    });
+    const load = createNativeReviewDiffSourceLoader(fetch);
+    expect(await load(key)).toBeNull();
+    expect(await load(key)).toBeNull();
+    expect(fetch).toHaveBeenCalledOnce();
+  },
+);
+
+it.each(failureKeys)(
+  "resets retries after success and eviction for a %s key",
+  async (_name, createKey) => {
+    const key = createKey();
+    const fetch = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Offline"))
+      .mockResolvedValueOnce(SOURCE)
+      .mockResolvedValueOnce({ oldContents: "", newContents: "x".repeat(8_000_000) })
+      .mockRejectedValueOnce(new Error("Offline again"))
+      .mockResolvedValueOnce(SOURCE);
+    const load = createNativeReviewDiffSourceLoader(fetch);
+    await expect(load(key)).rejects.toThrow("Offline");
+    expect(await load(key)).toBe(SOURCE);
+    await load({ id: "evict" });
+    await expect(load(key)).rejects.toThrow("Offline again");
+    expect(await load(key)).toBe(SOURCE);
+    expect(fetch).toHaveBeenCalledTimes(5);
+  },
+);
+
+it("shares an in-flight function request while one subscriber cancels", async () => {
+  const started = Promise.withResolvers<void>();
+  const response = Promise.withResolvers<NativeReviewDiffSource>();
+  let calls = 0;
+  const request = () => {
+    calls++;
+    started.resolve();
+    return response.promise;
+  };
+  const load = createNativeReviewDiffSourceLoader((sourceRequest: typeof request) =>
+    sourceRequest(),
+  );
+  const controller = new AbortController();
+  const first = load(request, controller.signal);
+  await started.promise;
+  const second = load(request);
+  controller.abort();
+  expect(await first).toBeNull();
+  response.resolve(SOURCE);
+  expect(await second).toBe(SOURCE);
+  expect(await load(request)).toBe(SOURCE);
+  expect(calls).toBe(1);
+});
+
 it("serializes RPCs and drops cancelled queued files", async () => {
   const started = Promise.withResolvers<void>();
   const response = Promise.withResolvers<NativeReviewDiffSource>();

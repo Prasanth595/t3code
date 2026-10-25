@@ -9,7 +9,10 @@ import type { NativeReviewDiffFile } from "../diffs/nativeReviewDiffTypes";
 import type { ReviewParsedDiff, ReviewRenderableFile } from "../review/reviewModel";
 import { combinePullRequestDiffPages } from "./pullRequestDiffPages";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { createPullRequestDiffHighlightFiles } from "./pullRequestDiffHighlightFiles";
+import {
+  createPullRequestDiffHighlightCache,
+  createPullRequestDiffHighlightFiles,
+} from "./pullRequestDiffHighlightFiles";
 
 vi.mock("expo", async () => {
   const { createWasmHighlightsModule } = await import("../../lib/highlights.testing");
@@ -137,17 +140,197 @@ it("loads only the selected PR file using its remote target, commit, and rename 
   expect(fetch).toHaveBeenCalledTimes(1);
 });
 
+it.each([null, "Some file contents are unavailable"])(
+  "retains fetched and unavailable source when another diff page is appended (notice: %s)",
+  async (notice) => {
+    const { parsed, files } = setup();
+    const contents = { oldContents: "before", newContents: "after" };
+    const fetch = vi.fn(async ({ input }: { input: { newPath: string } }) => {
+      if (input.newPath === "unseen.ts") throw { reason: "unsupported" };
+      return AsyncResult.success(contents);
+    });
+    const cache = createPullRequestDiffHighlightCache();
+    const first = createPullRequestDiffHighlightFiles({ target }, parsed, files, fetch, cache);
+    expect(await first[0]!.loadContents!()).toBe(contents);
+    expect(await first[1]!.loadContents!()).toBeNull();
+    const appended = file("appended", "appended.ts", null);
+    const next = createPullRequestDiffHighlightFiles(
+      { target },
+      { ...parsed, files: [...parsed.files, appended], fileCount: 3, notice },
+      [...files, { ...files[1]!, id: appended.id, path: appended.path }],
+      fetch,
+      cache,
+    );
+    expect(await next[0]!.loadContents!()).toBe(contents);
+    expect(await next[1]!.loadContents!()).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  },
+);
+
 it("does not reuse source from another diff snapshot", async () => {
   const { parsed, files } = setup();
   const fetch = vi.fn(async () =>
     AsyncResult.success({ oldContents: "", newContents: "const current = true;" }),
   );
-  const first = createPullRequestDiffHighlightFiles({ target }, parsed, files, fetch);
-  const second = createPullRequestDiffHighlightFiles({ target }, { ...parsed }, files, fetch);
+  const cache = createPullRequestDiffHighlightCache();
+  const first = createPullRequestDiffHighlightFiles({ target }, parsed, files, fetch, cache);
+  const second = createPullRequestDiffHighlightFiles(
+    { target },
+    { ...parsed, files: parsed.files.map((file) => ({ ...file })) },
+    files,
+    fetch,
+    cache,
+  );
   await first[0]!.loadContents!();
   await second[0]!.loadContents!();
   expect(fetch).toHaveBeenCalledTimes(2);
 });
+
+it.each([
+  [
+    "environment",
+    { target: { ...target, environmentId: EnvironmentId.make("other") }, commit: "abc" },
+  ],
+  [
+    "project",
+    {
+      target: { ...target, input: { ...target.input, projectId: ProjectId.make("other") } },
+      commit: "abc",
+    },
+  ],
+  [
+    "repository",
+    { target: { ...target, input: { ...target.input, repository: "other/repo" } }, commit: "abc" },
+  ],
+  ["PR", { target: { ...target, input: { ...target.input, number: 24 } }, commit: "abc" }],
+  [
+    "host",
+    { target: { ...target, input: { ...target.input, host: "other.example.com" } }, commit: "abc" },
+  ],
+  ["commit", { target, commit: "def" }],
+  ["unpinned commit", { target }],
+])("isolates retained file objects after changing the %s", async (_name, source) => {
+  const { parsed, files } = setup();
+  const cache = createPullRequestDiffHighlightCache();
+  const previous = { oldContents: "", newContents: "previous" };
+  const current = { oldContents: "", newContents: "current" };
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(AsyncResult.success(previous))
+    .mockResolvedValueOnce(AsyncResult.success(current));
+  const first = createPullRequestDiffHighlightFiles(
+    { target, commit: "abc" },
+    parsed,
+    files,
+    fetch,
+    cache,
+  );
+  expect(await first[0]!.loadContents!()).toBe(previous);
+  const second = createPullRequestDiffHighlightFiles(source, parsed, files, fetch, cache);
+  expect(await second[0]!.loadContents!()).toBe(current);
+  expect(await first[0]!.loadContents!()).toBe(previous);
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it("does not reuse a replaced later-page file with the same ID", async () => {
+  const { parsed, files } = setup();
+  const cache = createPullRequestDiffHighlightCache();
+  const previous = { oldContents: "", newContents: "previous" };
+  const current = { oldContents: "", newContents: "current" };
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(AsyncResult.success(previous))
+    .mockResolvedValueOnce(AsyncResult.success(current));
+  const first = createPullRequestDiffHighlightFiles({ target }, parsed, files, fetch, cache);
+  expect(await first[1]!.loadContents!()).toBe(previous);
+  const second = createPullRequestDiffHighlightFiles(
+    { target },
+    { ...parsed, files: [parsed.files[0]!, { ...parsed.files[1]! }] },
+    files,
+    fetch,
+    cache,
+  );
+  expect(await second[1]!.loadContents!()).toBe(current);
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it.each(["permanent", "transient"])(
+  "does not reuse a replaced later-page file's %s failure with the same ID",
+  async (failure) => {
+    const { parsed, files } = setup();
+    const cache = createPullRequestDiffHighlightCache();
+    const contents = { oldContents: "", newContents: "current" };
+    const fetch = vi.fn(async () => AsyncResult.success(contents));
+    const error = failure === "permanent" ? { reason: "unsupported" } : new Error("Offline");
+    fetch.mockRejectedValueOnce(error);
+    if (failure === "transient") fetch.mockRejectedValueOnce(error);
+    const first = createPullRequestDiffHighlightFiles({ target }, parsed, files, fetch, cache);
+    if (failure === "transient") await expect(first[1]!.loadContents!()).rejects.toThrow("Offline");
+    expect(await first[1]!.loadContents!()).toBeNull();
+    const second = createPullRequestDiffHighlightFiles(
+      { target },
+      { ...parsed, files: [parsed.files[0]!, { ...parsed.files[1]! }] },
+      files,
+      fetch,
+      cache,
+    );
+    expect(await second[1]!.loadContents!()).toBe(contents);
+    expect(await first[1]!.loadContents!()).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(failure === "permanent" ? 2 : 3);
+  },
+);
+
+it("does not reuse reconstructed source after an appended page makes completeness uncertain", async () => {
+  const { parsed, files } = setup();
+  const cache = createPullRequestDiffHighlightCache();
+  const reconstructed = { oldContents: "", newContents: "reconstructed" };
+  const authoritative = { oldContents: "", newContents: "authoritative" };
+  parsed.files[0] = { ...parsed.files[0]!, completePatchSource: () => reconstructed };
+  const fetch = vi.fn(async () => AsyncResult.success(authoritative));
+  const first = createPullRequestDiffHighlightFiles({ target }, parsed, files, fetch, cache);
+  expect(await first[0]!.loadContents!()).toBe(reconstructed);
+  const next = createPullRequestDiffHighlightFiles(
+    { target },
+    { ...parsed, notice: "Some file contents are unavailable" },
+    files,
+    fetch,
+    cache,
+  );
+  expect(await next[0]!.loadContents!()).toBe(authoritative);
+  expect(fetch).toHaveBeenCalledOnce();
+});
+
+it.each([
+  ["characters", 2, 4_500_000],
+  ["file count", 5, 1],
+])(
+  "shares the source cache's aggregate %s budget across appended pages",
+  async (_name, count, size) => {
+    const { parsed, files } = setup();
+    const cache = createPullRequestDiffHighlightCache();
+    const contents = { oldContents: "", newContents: "x".repeat(size) };
+    const fetch = vi.fn(async () => AsyncResult.success(contents));
+    const first = createPullRequestDiffHighlightFiles({ target }, parsed, files, fetch, cache);
+    expect(await first[0]!.loadContents!()).toBe(contents);
+    let next = first;
+    for (let i = 1; i < count; i++) {
+      const appended = file(`page-${i}`, `page-${i}.ts`, null);
+      parsed.files.push(appended);
+      files.push({ ...files[0]!, id: appended.id, path: appended.path });
+      next = createPullRequestDiffHighlightFiles(
+        { target },
+        { ...parsed },
+        [...files],
+        fetch,
+        cache,
+      );
+      expect(await next.at(-1)!.loadContents!()).toBe(contents);
+    }
+    expect(fetch).toHaveBeenCalledTimes(count);
+    expect(await next[0]!.loadContents!()).toBe(contents);
+    expect(fetch).toHaveBeenCalledTimes(count + 1);
+  },
+);
 
 function addedPatch(body: string, header = "@@ -0,0 +1,2 @@") {
   return `diff --git a/file.c b/file.c\nnew file mode 100644\n--- /dev/null\n+++ b/file.c\n${header}\n${body}`;

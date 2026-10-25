@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { diffWordsWithSpace } from "diff";
 import { AsyncResult } from "effect/reactivity";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { EnvironmentId, ProjectId, type PullRequestDiffResult } from "@t3tools/contracts";
@@ -11,6 +12,8 @@ import {
 } from "./nativeReviewDiffAdapter";
 import type { ReviewInlineComment } from "./reviewCommentSelection";
 import { buildReviewParsedDiff, type ReviewParsedDiff } from "./reviewModel";
+
+vi.mock("diff", { spy: true });
 
 function makeComment(text: string): ReviewInlineComment {
   return {
@@ -304,5 +307,67 @@ describe("buildNativeReviewDiffData row bound", () => {
       content: "const value999 = 999;",
     });
     expect(ordinaryRows.some((row) => row.kind === "notice")).toBe(false);
+  });
+});
+
+describe("buildNativeReviewDiffData word comparison bound", () => {
+  function modifiedFilePatch(pairCount: number, contextCount = 0) {
+    const lineCount = pairCount + contextCount;
+    return [
+      "diff --git a/example.ts b/example.ts",
+      "--- a/example.ts",
+      "+++ b/example.ts",
+      `@@ -1,${lineCount} +1,${lineCount} @@`,
+      ...Array.from({ length: contextCount }, (_, index) => ` const context${index} = true;`),
+      ...Array.from(
+        { length: pairCount },
+        (_, index) => `-const value${index} = renderPanel({ label: "before", enabled: true });`,
+      ),
+      ...Array.from(
+        { length: pairCount },
+        (_, index) => `+const value${index} = renderPanel({ label: "after", enabled: true });`,
+      ),
+    ].join("\n");
+  }
+
+  it("bounds eager word comparisons without truncating a large modified file", () => {
+    const parsedDiff = buildReviewParsedDiff(modifiedFilePatch(20_000), "native-word-bound");
+    const comparisons = vi.mocked(diffWordsWithSpace).mockClear();
+    const data = buildNativeReviewDiffData(parsedDiff);
+
+    expect(comparisons).toHaveBeenCalledTimes(1_000);
+    expect(data).toMatchObject({ additions: 20_000, deletions: 20_000 });
+    const lines = data.rows.filter((row) => row.kind === "line");
+    expect(lines).toHaveLength(40_000);
+    expect(data.rows.some((row) => row.kind === "notice")).toBe(false);
+    for (const offset of [0, 20_000]) {
+      expect(lines[offset]?.wordDiffRanges?.length).toBeGreaterThan(0);
+      expect(lines[offset + 999]?.wordDiffRanges?.length).toBeGreaterThan(0);
+      expect(lines[offset + 1_000]?.wordDiffRanges).toBeUndefined();
+    }
+    expect(lines.at(-1)).toMatchObject({
+      content: 'const value19999 = renderPanel({ label: "after", enabled: true });',
+      newLineNumber: 20_000,
+    });
+    expect(data.commentTargetsByRowId.size).toBe(40_000);
+    expect(data.commentTargetsByRowId.get(lines.at(-1)!.id)?.lineIndex).toBe(39_999);
+  });
+
+  it.each([0, 20_000])("preserves small word differences with %s context rows", (contextCount) => {
+    const parsedDiff = buildReviewParsedDiff(
+      modifiedFilePatch(2, contextCount),
+      "native-word-context",
+    );
+    const comparisons = vi.mocked(diffWordsWithSpace).mockClear();
+    const data = buildNativeReviewDiffData(parsedDiff);
+
+    expect(comparisons).toHaveBeenCalledTimes(2);
+    const changes = data.rows.filter((row) => row.kind === "line" && row.change !== "context");
+    expect(changes).toHaveLength(4);
+    for (const row of changes) {
+      expect(
+        row.wordDiffRanges?.map((range) => row.content!.slice(range.start, range.end)),
+      ).toEqual([row.change === "delete" ? "before" : "after"]);
+    }
   });
 });

@@ -9,7 +9,10 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import type { NativeReviewDiffFile } from "../diffs/nativeReviewDiffTypes";
 import { diffHighlightTraceHash, traceDiffHighlight } from "../diffs/nativeReviewDiffTrace";
 import type { ReviewParsedDiff } from "../review/reviewModel";
-import { createPullRequestDiffHighlightFiles } from "./pullRequestDiffHighlightFiles";
+import {
+  createPullRequestDiffHighlightCache,
+  createPullRequestDiffHighlightFiles,
+} from "./pullRequestDiffHighlightFiles";
 import { pullRequestTarget, type PullRequestDiffParams } from "./usePullRequestDiff";
 
 function traceSourceEndpoint(environmentId: string, url: string) {
@@ -34,6 +37,7 @@ export function usePullRequestDiffHighlightFiles(
     reportFailure: false,
   });
   const { environmentId, projectId, repository, number, host, commit } = params;
+  const cache = useMemo(() => createPullRequestDiffHighlightCache(), []);
   return useMemo(() => {
     if (process.env.EXPO_PUBLIC_T3_DIFF_TRACE === "1") {
       const catalog = appAtomRegistry.get(environmentCatalog.catalogValueAtom);
@@ -57,6 +61,18 @@ export function usePullRequestDiffHighlightFiles(
       parsed,
       files,
       fetchContents,
+      cache,
     );
-  }, [environmentId, projectId, repository, number, host, commit, parsed, files, fetchContents]);
+  }, [
+    environmentId,
+    projectId,
+    repository,
+    number,
+    host,
+    commit,
+    parsed,
+    files,
+    fetchContents,
+    cache,
+  ]);
 }

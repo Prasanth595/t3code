@@ -17,6 +17,8 @@ import type { ReviewInlineComment } from "./reviewCommentSelection";
 
 const NATIVE_REVIEW_MAX_WORD_DIFF_RANGE_COUNT = 4;
 const NATIVE_REVIEW_MAX_WORD_DIFF_COVERAGE = 0.45;
+// Keep eager word matching within the old 2,000-row budget while retaining more rendered rows.
+const NATIVE_REVIEW_MAX_WORD_DIFF_COMPARISONS = 1_000;
 // Bound the rows serialized to the native heap before mapping and word matching.
 const NATIVE_REVIEW_MAX_FILE_ROWS = 100_000;
 const TRUNCATED_FILE_NOTICE = "This diff is too large to show in full.";
@@ -329,13 +331,16 @@ function addNativeWordDiffRanges(
     }
   });
 
+  let comparisonCount = 0;
   for (const { deletionRowIndex, additionTokenIndex } of pairs) {
+    if (comparisonCount >= NATIVE_REVIEW_MAX_WORD_DIFF_COMPARISONS) break;
     const addedRowIndex = addedRowIndexes.get(additionTokenIndex);
     if (addedRowIndex === undefined) continue;
     const deletedRow = nextRows[deletionRowIndex];
     const addedRow = nextRows[addedRowIndex];
     if (!deletedRow?.content || !addedRow?.content) continue;
 
+    comparisonCount += 1;
     const ranges = computeWordAltDiffRanges({
       deletionLine: deletedRow.content,
       additionLine: addedRow.content,

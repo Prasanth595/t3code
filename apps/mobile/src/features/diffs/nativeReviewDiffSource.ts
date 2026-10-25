@@ -7,6 +7,10 @@ const MAX_SOURCE_FILES = 4;
 const MAX_CACHED_SOURCE_CHARACTERS = 8_000_000;
 const MAX_SOURCE_ATTEMPTS = 2;
 
+function isWeakKey(value: unknown): value is object {
+  return (typeof value === "object" && value !== null) || typeof value === "function";
+}
+
 function permanentSourceFailureReason(error: unknown): string | undefined {
   for (let depth = 0; depth < 8 && typeof error === "object" && error !== null; depth++) {
     const reason = "reason" in error ? error.reason : undefined;
@@ -61,15 +65,17 @@ function waitForSource(
   });
 }
 
-export function createNativeReviewDiffSourceLoader(
-  fetchSource: (fileId: string) => Promise<NativeReviewDiffSource>,
+export function createNativeReviewDiffSourceLoader<FileId>(
+  fetchSource: (fileId: FileId) => Promise<NativeReviewDiffSource>,
 ) {
-  const cached = new Map<string, NativeReviewDiffSource>();
+  const cached = new Map<FileId, NativeReviewDiffSource>();
   let cachedCharacters = 0;
-  const unavailable = new Set<string>();
-  const attempts = new Map<string, number>();
+  type Failure = { attempts: number; unavailable: boolean };
+  // Request closures can own parsed rows; failed versions must not retain them.
+  const objectFailures = new WeakMap<object, Failure>();
+  const primitiveFailures = new Map<FileId, Failure>();
   const pending = new Map<
-    string,
+    FileId,
     {
       readonly promise: Promise<NativeReviewDiffSource | null>;
       readonly subscribers: Set<AbortSignal | undefined>;
@@ -80,14 +86,17 @@ export function createNativeReviewDiffSourceLoader(
   let tail = Promise.resolve();
   const loader = diffHighlightTraceId(cached);
 
-  return async (fileId: string, signal?: AbortSignal) => {
+  return async (fileId: FileId, signal?: AbortSignal) => {
     const file = diffHighlightTraceId(fileId);
-    if (signal?.aborted || unavailable.has(fileId)) {
+    const failure = (isWeakKey(fileId)
+      ? objectFailures.get(fileId)
+      : primitiveFailures.get(fileId)) ?? { attempts: 0, unavailable: false };
+    if (signal?.aborted || failure.unavailable) {
       traceDiffHighlight("source-skip", {
         loader,
         file,
         aborted: signal?.aborted ?? false,
-        unavailable: unavailable.has(fileId),
+        unavailable: failure.unavailable,
       });
       return null;
     }
@@ -108,8 +117,9 @@ export function createNativeReviewDiffSourceLoader(
             traceDiffHighlight("source-dropped", { loader, file });
             return null;
           }
-          const attempt = (attempts.get(fileId) ?? 0) + 1;
-          attempts.set(fileId, attempt);
+          const attempt = ++failure.attempts;
+          if (isWeakKey(fileId)) objectFailures.set(fileId, failure);
+          else primitiveFailures.set(fileId, failure);
           traceDiffHighlight("source-start", { loader, file, attempt });
           try {
             const contents = await fetchSource(fileId);
@@ -120,7 +130,8 @@ export function createNativeReviewDiffSourceLoader(
               newCharacters: contents.newContents.length,
             });
             const characters = contents.oldContents.length + contents.newContents.length;
-            attempts.delete(fileId);
+            if (isWeakKey(fileId)) objectFailures.delete(fileId);
+            else primitiveFailures.delete(fileId);
             if (characters <= MAX_CACHED_SOURCE_CHARACTERS) {
               cached.set(fileId, contents);
               cachedCharacters += characters;
@@ -146,7 +157,7 @@ export function createNativeReviewDiffSourceLoader(
               reason: reason ?? "transient",
             });
             if (permanent || attempt >= MAX_SOURCE_ATTEMPTS) {
-              unavailable.add(fileId);
+              failure.unavailable = true;
               traceDiffHighlight("source-unavailable", {
                 loader,
                 file,
