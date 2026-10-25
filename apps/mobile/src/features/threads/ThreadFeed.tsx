@@ -38,7 +38,6 @@ import {
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
-import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   AuthFilesystemReadScope,
   idleCompactionOf,
@@ -251,7 +250,11 @@ import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
-import { ThreadWorkflowOpening, useWorkflowOpening } from "./thread-workflow-opening";
+import {
+  ThreadWorkflowOpening,
+  useWorkflowOpening,
+  type WorkflowOpeningView,
+} from "./thread-workflow-opening";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useV2ItemSupport } from "../../state/v2-item-support";
 import {
@@ -1337,7 +1340,7 @@ function renderFeedEntry(
     readonly markdownContentWidth: number;
     readonly contentWidth: number;
     readonly threadTitle: string;
-    readonly workflowOpening: WorkflowOpening | null;
+    readonly workflowOpening: WorkflowOpeningView | null;
   },
 ) {
   const entry = info.item;

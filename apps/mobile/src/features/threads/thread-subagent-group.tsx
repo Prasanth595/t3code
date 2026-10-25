@@ -24,6 +24,7 @@ import { useServerConfigs } from "../../state/entities";
 import { SubagentRow } from "./SubagentRow";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 import { subagentThreadTarget } from "./threadAgentsPresentation";
+import { AppWorkflowStop } from "./workflow-stop-control";
 import { WorkLogBlock } from "./work-log-layout";
 
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
@@ -86,6 +87,7 @@ export function ThreadSubagentGroup(props: {
     return {
       ...item,
       item,
+      live,
       status: live?.status ?? item.status,
       startedAt: live?.startedAt ?? item.startedAt,
       completedAt: live?.completedAt ?? item.completedAt,
@@ -160,47 +162,56 @@ export function ThreadSubagentGroup(props: {
               presentationById.has(id),
             );
             return (
-              <Pressable
-                key={agent.item.id}
-                accessible
-                accessibilityRole={target === null ? undefined : "link"}
-                accessibilityHint={
-                  target !== null
-                    ? "Opens this agent's thread"
-                    : agent.remoteChild !== undefined
-                      ? `Runs on ${agent.remoteChild.label}`
-                      : "Provider-managed agent"
-                }
-                disabled={target === null}
-                onPress={() => {
-                  if (target === null) return;
-                  if (
-                    openInspector(
-                      { environmentId: props.environmentId, threadId: members[0]!.threadId },
-                      {
-                        type: "thread",
-                        environmentId: target.environmentId,
-                        threadId: target.threadId,
-                      },
+              <View key={agent.item.id}>
+                <Pressable
+                  accessible
+                  accessibilityRole={target === null ? undefined : "link"}
+                  accessibilityHint={
+                    target !== null
+                      ? "Opens this agent's thread"
+                      : agent.remoteChild !== undefined
+                        ? `Runs on ${agent.remoteChild.label}`
+                        : "Provider-managed agent"
+                  }
+                  disabled={target === null}
+                  onPress={() => {
+                    if (target === null) return;
+                    if (
+                      openInspector(
+                        { environmentId: props.environmentId, threadId: members[0]!.threadId },
+                        {
+                          type: "thread",
+                          environmentId: target.environmentId,
+                          threadId: target.threadId,
+                        },
+                      )
                     )
-                  )
-                    return;
-                  navigation.dispatch(
-                    StackActions.push("Thread", {
-                      environmentId: String(target.environmentId),
-                      threadId: String(target.threadId),
-                    }),
-                  );
-                }}
-                className="rounded-lg px-3 py-3 active:bg-subtle"
-              >
-                <SubagentRow
-                  environmentId={props.environmentId}
-                  subagent={agent}
-                  canOpenRemote={target !== null}
-                  elapsed={<SubagentElapsed agents={[agent]} />}
-                />
-              </Pressable>
+                      return;
+                    navigation.dispatch(
+                      StackActions.push("Thread", {
+                        environmentId: String(target.environmentId),
+                        threadId: String(target.threadId),
+                      }),
+                    );
+                  }}
+                  className="rounded-lg px-3 py-3 active:bg-subtle"
+                >
+                  <SubagentRow
+                    environmentId={props.environmentId}
+                    subagent={agent}
+                    canOpenRemote={target !== null}
+                    elapsed={<SubagentElapsed agents={[agent]} />}
+                  />
+                </Pressable>
+                {agent.live === undefined ? null : (
+                  // Outside the row's accessible group, so assistive tech reaches it on its own.
+                  <AppWorkflowStop
+                    environmentId={props.environmentId}
+                    subagent={agent.live}
+                    className="px-3 pb-3"
+                  />
+                )}
+              </View>
             );
           })}
         </View>

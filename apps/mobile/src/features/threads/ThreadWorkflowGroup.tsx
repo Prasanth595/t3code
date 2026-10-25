@@ -24,6 +24,7 @@ import { cn } from "../../lib/cn";
 import { useEnvironmentServerConfig, useThreadShell } from "../../state/entities";
 import { SUBAGENT_TONE_TEXT_CLASS, SubagentStatusDot } from "./SubagentStatusDot";
 import { SubagentStopButton } from "./SubagentStopButton";
+import { AppWorkflowStop } from "./workflow-stop-control";
 import {
   nextWorkflowSelection,
   resolveSubagentRowPresentation,
@@ -92,6 +93,8 @@ export function ThreadWorkflowGroup(props: {
             className="mr-2"
           />
         </View>
+        {/* Stops a workflow T3 runs itself, which the button above does not; nothing for native ones. */}
+        <AppWorkflowStop environmentId={props.environmentId} subagent={props.subagent} className="px-4 pb-3" />
         {rail.length > 0 ? (
           <ScrollView
             horizontal
