@@ -174,7 +174,11 @@ class ReviewDiffViewportTest {
     .filter { (name, payload) -> name == "onDebug" && payload["message"] == "visible-range" }
     .map { it.second }
 
-  private fun rows(selectedFileId: String, selectedStart: Int = 900, count: Int = 1000): String = JSONArray().apply {
+  private fun rows(
+    selectedFileId: String,
+    selectedStart: Int = 900,
+    count: Int = 1000
+  ): String = JSONArray().apply {
     for (index in 0 until count) {
       put(
         JSONObject().apply {
