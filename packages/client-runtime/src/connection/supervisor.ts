@@ -784,7 +784,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       }
     }
     const currentIntent = yield* Ref.get(intent);
-    if (!currentIntent.desired || (currentIntent.network === "offline" && !ignoreOffline)) {
+    if (
+      !currentIntent.desired ||
+      currentIntent.suspended ||
+      (currentIntent.network === "offline" && !ignoreOffline)
+    ) {
       return {
         _tag: "Interrupted",
         established: false,

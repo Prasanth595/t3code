@@ -6,6 +6,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -46,6 +47,11 @@ import { presentConnectionState } from "./presentation.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 import { connectionRouteId, entryWithRoutes, isLearned, mergeLearnedRoutes } from "./routes.ts";
+
+// Make the ESM export configurable for the scoped race interleaving spy below.
+vi.mock("effect/Effect", async (importOriginal) => ({
+  ...(await importOriginal<typeof Effect>()),
+}));
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -393,6 +399,71 @@ describe("EnvironmentSupervisor", () => {
       yield* harness.wake("application-active-probe");
       yield* TestClock.adjust("10 minutes");
       expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("releases setup completed after its suspension signal was consumed", () =>
+    Effect.gen(function* () {
+      const setupReady = yield* Deferred.make<void>();
+      const suspensionConsumed = yield* Deferred.make<void>();
+      const interruptCancelled = yield* Deferred.make<void>();
+      const raceAllFirst = Effect.raceAllFirst;
+      // Pause the real interrupt contender after it consumes the signal, so setup
+      // can win the race even though the supervisor has already recorded suspension.
+      using _race = vi
+        .spyOn(Effect, "raceAllFirst")
+        .mockImplementationOnce(
+          <A, E, R>(
+            effects: Iterable<Effect.Effect<A, E, R>>,
+            options?: Parameters<typeof Effect.raceAllFirst>[1],
+          ) =>
+            raceAllFirst(
+              Array.from(effects, (effect) =>
+                effect.pipe(
+                  Effect.tap((event: unknown) =>
+                    typeof event === "object" &&
+                    event !== null &&
+                    "_tag" in event &&
+                    event._tag === "Interrupted"
+                      ? Deferred.succeed(suspensionConsumed, undefined).pipe(
+                          Effect.andThen(Effect.never),
+                          Effect.onInterrupt(() => Deferred.succeed(interruptCancelled, undefined)),
+                        )
+                      : Effect.void,
+                  ),
+                ),
+              ),
+              options,
+            ),
+        );
+      const harness = yield* makeHarness({
+        ready: (attempt) => (attempt === 1 ? Deferred.await(setupReady) : Effect.void),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+      yield* awaitState(supervisor.state, (state) => state.stage === "synchronizing");
+      yield* harness.wake("application-suspended");
+      yield* Deferred.await(suspensionConsumed);
+      yield* Deferred.succeed(setupReady, undefined);
+      yield* Deferred.await(interruptCancelled);
+
+      const settled = yield* awaitState(supervisor.state, (state) => state.phase !== "connecting");
+      expect(settled).toMatchObject({ phase: "available", generation: 0, lastFailure: null });
+      expect(Option.isNone(yield* SubscriptionRef.get(supervisor.session))).toBe(true);
+      expect(Option.isNone(yield* SubscriptionRef.get(supervisor.prepared))).toBe(true);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+
+      yield* harness.wake("application-active-probe");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(Option.isSome(yield* SubscriptionRef.get(supervisor.session))).toBe(true);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      yield* supervisor.disconnect;
+      yield* awaitState(supervisor.state, (state) => state.phase === "available");
+      expect(yield* Ref.get(harness.releaseCount)).toBe(2);
     }).pipe(Effect.scoped),
   );
 
