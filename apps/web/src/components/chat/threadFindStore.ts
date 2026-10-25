@@ -46,7 +46,7 @@ export const CLOSED_THREAD_FIND: ThreadFindState = {
 export const useThreadFindStore = create<ThreadFindState>(() => CLOSED_THREAD_FIND);
 
 /** What find needs from the timeline that shows a thread. */
-export interface ThreadFindTimeline {
+interface ThreadFindTimeline {
   readonly threadKey: string;
   readonly readPosition: ThreadFindPositionReader;
 }
@@ -57,11 +57,8 @@ function timelineFor(threadKey: string): ThreadFindTimeline | null {
   return attachedTimeline?.threadKey === threadKey ? attachedTimeline : null;
 }
 
-/** Ref for the timeline's find handle, attached while the timeline shows a thread. */
-export function attachThreadFindTimeline(
-  timeline: ThreadFindTimeline | null,
-): (() => void) | undefined {
-  if (!timeline) return;
+/** Attaches the timeline showing a thread; returns the detach. */
+export function attachThreadFindTimeline(timeline: ThreadFindTimeline): () => void {
   attachedTimeline = timeline;
   return () => {
     if (attachedTimeline === timeline) attachedTimeline = null;

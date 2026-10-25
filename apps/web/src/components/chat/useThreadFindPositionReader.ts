@@ -1,4 +1,4 @@
-import { useImperativeHandle } from "react";
+import { useLayoutEffect } from "react";
 import type { RunId } from "@t3tools/contracts";
 import type { TimelineEntry } from "../../session-logic";
 import {
@@ -7,7 +7,7 @@ import {
   type TimelineLatestRun,
 } from "./MessagesTimeline.logic";
 import type { ThreadFindPositionReader } from "./threadFind";
-import { attachThreadFindTimeline, type ThreadFindTimeline } from "./threadFindStore";
+import { attachThreadFindTimeline } from "./threadFindStore";
 import { readThreadFindPosition } from "./threadFindPosition";
 
 /** Hands thread find how to read the find position of this timeline's viewport. */
@@ -34,11 +34,9 @@ export function useThreadFindPositionReader({
   readonly rows: MessagesTimelineRow[];
   readonly contentInsetEndAdjustment: number;
 }) {
-  useImperativeHandle<
-    ThreadFindTimeline | null,
-    ThreadFindTimeline | null
-  >(attachThreadFindTimeline, () => {
-    if (!timelineViewportElement) return null;
+  // Layout effect so a find opened right after a thread switch reads this viewport.
+  useLayoutEffect(() => {
+    if (!timelineViewportElement) return;
     const read: ThreadFindPositionReader = (query) => {
       const foldRunIds =
         findFoldRunIds ??
@@ -85,7 +83,7 @@ export function useThreadFindPositionReader({
         contentInsetEndAdjustment,
       );
     };
-    return { threadKey, readPosition: read };
+    return attachThreadFindTimeline({ threadKey, readPosition: read });
   }, [
     contentInsetEndAdjustment,
     findFoldRunIds,

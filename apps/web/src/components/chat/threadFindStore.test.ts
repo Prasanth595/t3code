@@ -41,7 +41,7 @@ describe("thread find store", () => {
       navigationId: 2,
       requestId: 2,
     });
-    detach?.();
+    detach();
   });
 
   it("opens a search result's find for a thread before its timeline shows it", () => {
@@ -56,7 +56,7 @@ describe("thread find store", () => {
     // Another thread's timeline does not answer for this one.
     setThreadFindQuery(threadKey, "Caf");
     expect(readPosition).not.toHaveBeenCalled();
-    detach?.();
+    detach();
   });
 
   it("closes find once the route leaves its thread", () => {
