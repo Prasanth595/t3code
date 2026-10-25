@@ -2822,6 +2822,43 @@ it.effect("finalizes with a provider snapshot already persisted by a skipped eve
   }),
 );
 
+it.effect("does not adopt a stale snapshot that only stored rewind events", () =>
+  Effect.gen(function* () {
+    const rewind = {
+      sequence: 1,
+      commandId: null,
+      event: { type: "turn-item.updated", payload: { id: "rewind" } },
+    } as unknown as ProviderAdapter.ProviderAdapterV2PersistEventResult["storedEvents"][number];
+    const { finalEvents } = yield* captureRootRunTermination({
+      key: "stale-provider-thread-persist",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      reportedNativeThreadId: "original-session",
+      events: (ids) =>
+        Stream.make(
+          {
+            type: "provider_thread.updated",
+            driver,
+            providerThread: {
+              id: ids.providerThreadId,
+              driver,
+              nativeThreadRef: { driver, nativeId: "stale-session", strength: "strong" },
+            } as unknown as OrchestrationV2ProviderThread,
+          } as ProviderAdapter.ProviderAdapterV2Event,
+          rootTerminalEvent(ids, "completed"),
+        ),
+      persistEvent: (event, persist) =>
+        event.type === "provider_thread.updated"
+          ? Effect.succeed({ storedEvents: [rewind] })
+          : persist(true).pipe(Effect.map((storedEvents) => ({ storedEvents }))),
+    });
+    assert.equal(
+      finalEvents.find((event) => event.type === "provider-thread.updated")?.payload.nativeThreadRef
+        ?.nativeId,
+      "original-session",
+    );
+  }),
+);
+
 function captureRootRunTermination(input: {
   readonly key: string;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;

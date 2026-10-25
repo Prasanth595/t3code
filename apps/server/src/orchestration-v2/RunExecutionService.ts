@@ -1395,6 +1395,7 @@ export const layer: Layer.Layer<
               }
               let storedEventCount = 0;
               let persistedProviderThread: OrchestrationV2ProviderThread | undefined;
+              let persistedProviderThreadSnapshot = false;
               const deliveredEvent = filterAssistantEvent(
                 event,
                 DateTime.toEpochMillis(yield* DateTime.now),
@@ -1448,6 +1449,14 @@ export const layer: Layer.Layer<
                     : eventSubscription.persistEvent(event, persist);
                 storedEventCount = persisted.storedEvents.length;
                 persistedProviderThread = persisted.persistedProviderThread;
+                persistedProviderThreadSnapshot =
+                  persisted.persistedProviderThread !== undefined ||
+                  (event.type === "provider_thread.updated" &&
+                    persisted.storedEvents.some(
+                      (record) =>
+                        record.event.type === "provider-thread.updated" &&
+                        record.event.payload.id === event.providerThread.id,
+                    ));
                 if (
                   isRootProviderThreadUpdate &&
                   rootTerminalAlreadySeen &&
@@ -1471,15 +1480,16 @@ export const layer: Layer.Layer<
                 reservedHeldTurnItemIds.add(event.turnItem.id);
               }
               if (event.type === "provider_thread.updated") {
-                if (event.providerThread.id === input.providerThread.id) {
-                  // A skipped write (already persisted during release) still reports the
-                  // committed snapshot; a rejected write must not move the session forward.
-                  const providerThread =
-                    persistedProviderThread ??
-                    (storedEventCount > 0 ? event.providerThread : undefined);
-                  if (providerThread !== undefined) {
-                    yield* Ref.set(latestProviderThread, providerThread);
-                  }
+                if (
+                  event.providerThread.id === input.providerThread.id &&
+                  persistedProviderThreadSnapshot
+                ) {
+                  // Only a snapshot that actually persisted may replace the session.
+                  // Rewind events stored alongside a skipped snapshot are not evidence.
+                  yield* Ref.set(
+                    latestProviderThread,
+                    persistedProviderThread ?? event.providerThread,
+                  );
                 }
               }
               if (
