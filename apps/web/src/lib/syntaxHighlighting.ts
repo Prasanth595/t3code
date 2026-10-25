@@ -7,8 +7,12 @@ import {
 
 import { resolveDiffThemeName } from "./diffRendering";
 
-/** Use WASM at every creation site: the first-caller-wins singleton can hang with JS regex backtracking. */
-export const PREFERRED_HIGHLIGHTER: HighlighterTypes = "shiki-wasm";
+/**
+ * Highlights' hand-written WASM lexers tokenize large files 10-40x faster than
+ * Shiki and never backtrack like Shiki's JS regex engine. Only one highlighter
+ * type can be active per thread, so every creation site must pass this value.
+ */
+export const PREFERRED_HIGHLIGHTER: HighlighterTypes = "highlights";
 
 const highlighterPromiseCache = new Map<string, Promise<DiffsHighlighter>>();
 
