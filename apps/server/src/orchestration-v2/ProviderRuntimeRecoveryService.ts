@@ -160,7 +160,7 @@ const cancelledItem = (
 function answerableAfterRestart(
   projection: ProjectionStore.ProjectionRuntimeRecoveryState,
   request: OrchestrationV2ThreadProjection["runtimeRequests"][number],
-  cutRunIds: ReadonlySet<string>,
+  interruptedRunIds: ReadonlySet<string>,
 ): boolean {
   if (
     request.kind !== "user_input" ||
@@ -172,7 +172,7 @@ function answerableAfterRestart(
     return false;
   const { providerSessionId } = request.responseCapability;
   const node = projection.nodes.find((candidate) => candidate.id === request.nodeId);
-  if (node?.runId == null || !cutRunIds.has(node.runId)) return false;
+  if (node?.runId == null || !interruptedRunIds.has(node.runId)) return false;
   const runId = node.runId;
   const run = projection.runs.find((candidate) => candidate.id === runId);
   const providerThread = projection.providerThreads.find(
@@ -231,11 +231,7 @@ export const make = Effect.gen(function* () {
   const ids = yield* IdAllocator.IdAllocatorV2;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
   type RecoverySession = ProjectionStore.ProjectionRuntimeRecoveryState["providerSessions"][number];
-  /**
-   * A session shared by several threads (one Codex app server) is stopped by the
-   * first thread recovery reaches. It was live when the server went down, so a
-   * later thread still decides its wake as if it were.
-   */
+  /** Shared sessions stop on their first recovered thread; later threads still decide wakes from pre-recovery liveness. */
   const sessionsLiveAtStart = (
     projection: ProjectionStore.ProjectionRuntimeRecoveryState,
     stoppedThisPass: ReadonlyMap<string, RecoverySession>,
@@ -284,9 +280,9 @@ export const make = Effect.gen(function* () {
         }
         runs.push(run);
       }
-      const cutRunIds = new Set(runs.map((run) => run.id));
+      const interruptedRunIds = new Set(runs.map((run) => run.id));
       const answerableRequests = projection.runtimeRequests.filter((request) =>
-        answerableAfterRestart(projection, request, cutRunIds),
+        answerableAfterRestart(projection, request, interruptedRunIds),
       );
       const messageRequestNodeIds = new Set(
         projection.runtimeRequests
@@ -514,8 +510,7 @@ export const make = Effect.gen(function* () {
               candidate.status === "running" ||
               candidate.status === "waiting"),
         )) {
-          // A native subagent does not come back when its cut turn resumes, so the
-          // turn's continuation is told to restart it.
+          // Cut native subagents do not resume; record them for the continuation to restart.
           if (run.status === "waiting") recordCancelledBackgroundItem(item);
           else if (item.type === "subagent" && item.origin === "provider_native")
             recordCancelledBackgroundItem(item);
@@ -531,9 +526,8 @@ export const make = Effect.gen(function* () {
           });
         }
       }
-      // A blocking delegate_task wait dies with the turn that made it, and its
-      // continuation never got the tool result. Let the child's result wake
-      // the parent like an async task, so it reaches the continued turn.
+      // Blocking waits die with their turn; let child results wake the parent continuation as async tasks.
+      const cutRunIds = new Set(runs.map((run) => run.id));
       for (const task of projection.subagents ?? []) {
         if (
           task.origin !== "app_owned" ||
@@ -555,12 +549,10 @@ export const make = Effect.gen(function* () {
           payload: { ...task, completionWake: "always", updatedAt: now },
         });
       }
-      const recoveredNonterminalRunIds = new Set(runs.map((run) => run.id));
       // A request ended here whose run was not cut (missing, or kept to replay
       // its checkpoint) would otherwise leave its card waiting.
       const isLeftOpen = (status: string, runId: RunId | null) =>
-        isNonterminalTurnItemStatus(status) &&
-        (runId === null || !recoveredNonterminalRunIds.has(runId));
+        isNonterminalTurnItemStatus(status) && (runId === null || !cutRunIds.has(runId));
       for (const request of requests) {
         const item = (projection.turnItems ?? []).find(
           (candidate) =>
@@ -599,7 +591,7 @@ export const make = Effect.gen(function* () {
       }
       const cancelledStaleNodeIds = new Set<string>();
       for (const item of projection.turnItems ?? []) {
-        if (item.runId !== null && recoveredNonterminalRunIds.has(item.runId)) {
+        if (item.runId !== null && cutRunIds.has(item.runId)) {
           continue;
         }
         if (!isBackgroundCapableTurnItemType(item.type)) {
@@ -640,8 +632,7 @@ export const make = Effect.gen(function* () {
           }
         }
       }
-      // No provider process outlives the server, so a native subagent still open
-      // here never reports its end, whatever state its run and item are in.
+      // No provider process survives the server; open native subagents can never report completion.
       for (const subagent of projection.subagents ?? []) {
         events.push(
           ...(yield* endOrphanedNativeSubagent({
@@ -654,8 +645,7 @@ export const make = Effect.gen(function* () {
           })),
         );
       }
-      // A provider-native subagent thread has no runs; left running, the child
-      // would show as working forever.
+      // Native subagent threads have no runs to settle their runless root turns.
       events.push(
         ...(yield* endRunlessRootTurns({
           threadId: projection.thread.id,
@@ -717,8 +707,7 @@ export const make = Effect.gen(function* () {
       for (const [providerThreadId, work] of cancelledBackgroundWork) {
         const noteRun = latestStartedRun(projection, providerThreadId);
         if (noteRun === undefined) continue;
-        // Its own event: a run snapshot read before this commit could regress
-        // a lifecycle change (e.g. a checkpoint completing the run) made since.
+        // Use a separate event; stale run snapshots can overwrite intervening lifecycle changes.
         events.push({
           id: yield* allocateEventId(),
           type: "run.background-work-cancelled",
