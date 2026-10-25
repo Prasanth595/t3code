@@ -185,7 +185,7 @@
   "apps/web/src/components/AddProjectToMachineDialog.tsx": 1,
   "apps/web/src/components/AnimatedHeight.tsx": 2,
   "apps/web/src/components/AnimatedWidth.tsx": 1,
-  "apps/web/src/components/AppSidebarLayout.tsx": 4,
+  "apps/web/src/components/AppSidebarLayout.tsx": 1,
   "apps/web/src/components/BackgroundThreadAnnouncer.tsx": 1,
   "apps/web/src/components/BranchPicker.tsx": 2,
   "apps/web/src/components/BranchToolbar.tsx": 4,
