@@ -1996,10 +1996,12 @@ describe("mobile composer drafts", () => {
       mimeType: "application/pdf",
       sizeBytes: 42,
       fileUri: "file:///documents/t3-composer-attachments/plan.pdf",
+      uploadEnvironmentId: EnvironmentId.make("environment-1"),
+      uploadedAttachmentId: "pending-plan",
     };
     const unreadable = {
       text: "Written by a newer build",
-      attachments: [file],
+      attachments: [file, { id: "malformed", fileUri: null }],
       workspaceSelection: { mode: "cloud", branch: null, worktreePath: null },
     };
     composerDraftFileMocks.setDocument({
@@ -2021,6 +2023,7 @@ describe("mobile composer drafts", () => {
       "environment-1:new": { text: "Keep my new edits too", attachments: [] },
     });
     expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
+    expect(composerAttachmentCleanupMocks.releaseUploads).not.toHaveBeenCalled();
   });
 
   it("replaces a draft it cannot read once that composer gets a new draft", async () => {
@@ -2037,11 +2040,57 @@ describe("mobile composer drafts", () => {
 
     await waitForComposerDraftsLoaded();
     setComposerDraftText("environment-1:thread-1", "Started over");
-    await flushComposerDrafts();
     setComposerDraftText("environment-1:thread-1", "");
     await flushComposerDrafts();
 
     expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts).toEqual({});
+  });
+
+  it("drops drafts it cannot read with their environment, also at sign-out", async () => {
+    const load = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    onTestFinished(() => load.mockRestore());
+    const environmentId = EnvironmentId.make("environment-1");
+    const file = {
+      id: "newer-file",
+      type: "file",
+      name: "plan.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 42,
+      fileUri: "file:///documents/t3-composer-attachments/plan.pdf",
+      uploadEnvironmentId: environmentId,
+      uploadedAttachmentId: "pending-plan",
+    };
+    const newerMode = { mode: "cloud", branch: null, worktreePath: null };
+    const otherEnvironment = { text: "Other", attachments: [], workspaceSelection: newerMode };
+    composerDraftFileMocks.setDocument({
+      schemaVersion: 1,
+      drafts: {
+        "environment-1:thread-1": { text: "A", attachments: [file], workspaceSelection: newerMode },
+        "new-task:environment-1:project-1": {
+          text: "B",
+          attachments: [],
+          workspaceSelection: newerMode,
+        },
+        "new-task:draft-1": {
+          text: "C",
+          attachments: [],
+          workspaceSelection: newerMode,
+          project: { environmentId, projectId: "project-1", createdAt: "2026-10-24T00:00:00.000Z" },
+        },
+        "environment-2:thread-1": otherEnvironment,
+      },
+    });
+
+    await archiveCloudComposerDrafts("account-a", new Set([environmentId]));
+    await clearComposerDraftsEnvironment(environmentId);
+
+    const document = JSON.parse(composerDraftFileMocks.getDocument());
+    expect(document.drafts).toEqual({ "environment-2:thread-1": otherEnvironment });
+    expect(document.signedOutDrafts["account-a"].drafts).toEqual({});
+    expect(composerAttachmentCleanupMocks.remove).toHaveBeenCalledWith(file.fileUri);
+    expect(composerAttachmentCleanupMocks.releaseUploads).toHaveBeenCalledWith(environmentId, [
+      "pending-plan",
+    ]);
   });
 
   it("serializes environment cleanup after an older queued write", async () => {

@@ -404,12 +404,20 @@ const ComposerDraftSchema = Schema.Struct({
 
 const decodeComposerDraft = Schema.decodeUnknownOption(ComposerDraftSchema);
 
-// Only the attachment file references, so a draft this build cannot read still
-// keeps its files from looking unused.
-const decodeUnreadableDraftFiles = Schema.decodeUnknownOption(
-  Schema.Struct({
-    attachments: Schema.Array(Schema.Struct({ fileUri: Schema.optional(Schema.String) })),
-  }),
+// Only the references a draft this build cannot read still owns. Each attachment
+// decodes on its own, so one malformed attachment cannot make another
+// attachment's file or pending upload look unused.
+const decodeUnreadableDraftAttachments = Schema.decodeUnknownOption(
+  Schema.Struct({ attachments: Schema.Array(Schema.Unknown) }),
+);
+const decodeUnreadableAttachmentFile = Schema.decodeUnknownOption(
+  Schema.Struct({ fileUri: Schema.String }),
+);
+const decodeUnreadableAttachmentUpload = Schema.decodeUnknownOption(
+  Schema.Struct({ uploadEnvironmentId: EnvironmentIdSchema, uploadedAttachmentId: Schema.String }),
+);
+const decodeUnreadableDraftProject = Schema.decodeUnknownOption(
+  Schema.Struct({ project: Schema.Struct({ environmentId: EnvironmentIdSchema }) }),
 );
 
 const PersistedComposerDraftsSchema = Schema.Struct({
@@ -737,8 +745,6 @@ async function writePersistedComposerState(
   try {
     const file = await getComposerDraftsFile();
     operation = "encode";
-    // A draft typed into the same composer replaces the one this build could not read.
-    for (const key of Object.keys(drafts)) delete unreadableDrafts[key];
     const nonEmptyDrafts = Object.fromEntries(
       Object.entries(drafts).filter(([, draft]) => !isEmptyDraft(draft)),
     );
@@ -820,10 +826,26 @@ function signedOutAttachmentOwners() {
   ]);
 }
 
+type ComposerAttachmentReference = Pick<
+  DraftComposerAttachment,
+  "fileUri" | "uploadEnvironmentId" | "uploadedAttachmentId"
+>;
+
+function unreadableDraftAttachments(raw: unknown): ReadonlyArray<ComposerAttachmentReference> {
+  return Option.match(decodeUnreadableDraftAttachments(raw), {
+    onNone: () => [],
+    onSome: ({ attachments }) =>
+      attachments.map((attachment) => ({
+        ...Option.getOrUndefined(decodeUnreadableAttachmentFile(attachment)),
+        ...Option.getOrUndefined(decodeUnreadableAttachmentUpload(attachment)),
+      })),
+  });
+}
+
 function unreadableDraftAttachmentOwners() {
-  return Object.values(unreadableDrafts).flatMap((raw) =>
-    Option.toArray(decodeUnreadableDraftFiles(raw)),
-  );
+  return Object.values(unreadableDrafts).map((raw) => ({
+    attachments: unreadableDraftAttachments(raw),
+  }));
 }
 
 export function findLocalComposerClipboardAttachment(
@@ -875,7 +897,12 @@ function isComposerAttachmentUploadReferenced(
   const queuedMessages = Object.values(
     appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
   ).flat();
-  return [...drafts, ...queuedMessages, ...signedOutAttachmentOwners()].some((owner) =>
+  return [
+    ...drafts,
+    ...queuedMessages,
+    ...signedOutAttachmentOwners(),
+    ...unreadableDraftAttachmentOwners(),
+  ].some((owner) =>
     owner.attachments.some(
       (attachment) =>
         attachment.uploadEnvironmentId === environmentId &&
@@ -885,7 +912,7 @@ function isComposerAttachmentUploadReferenced(
 }
 
 export async function releaseUnusedComposerAttachmentFiles(
-  attachments: ReadonlyArray<DraftComposerAttachment>,
+  attachments: ReadonlyArray<ComposerAttachmentReference>,
 ): Promise<void> {
   const candidates = new Set(
     attachments.flatMap((attachment) =>
@@ -1292,6 +1319,11 @@ function updateComposerDrafts(
     return;
   }
   appAtomRegistry.set(composerDraftsAtom, next);
+  // An edit replaces the draft this build could not read under the same key,
+  // even when the edit is cleared again before it is saved.
+  for (const key of Object.keys(unreadableDrafts)) {
+    if (current[key] !== next[key]) delete unreadableDrafts[key];
+  }
   schedulePersistComposerState();
 }
 
@@ -1999,9 +2031,22 @@ export async function clearComposerDraftsEnvironment(environmentId: EnvironmentI
 
   const current = appAtomRegistry.get(composerDraftsAtom);
   const next = removeComposerDraftsForEnvironment(current, environmentId);
-  const removedAttachments = Object.entries(current)
-    .filter(([draftKey]) => next[draftKey] === undefined)
-    .flatMap(([, draft]) => draft.attachments);
+  // Drafts this build cannot read leave with their environment too. Sign-out
+  // removes cloud environments through here, so they are dropped, not archived.
+  const removedUnreadable = Object.entries(unreadableDrafts).filter(
+    ([draftKey, raw]) =>
+      draftKey.startsWith(`${environmentId}:`) ||
+      parseLegacyNewTaskDraftKey(draftKey)?.environmentId === environmentId ||
+      Option.getOrUndefined(decodeUnreadableDraftProject(raw))?.project.environmentId ===
+        environmentId,
+  );
+  for (const [draftKey] of removedUnreadable) delete unreadableDrafts[draftKey];
+  const removedAttachments = [
+    ...Object.entries(current)
+      .filter(([draftKey]) => next[draftKey] === undefined)
+      .flatMap(([, draft]) => draft.attachments),
+    ...removedUnreadable.flatMap(([, raw]) => unreadableDraftAttachments(raw)),
+  ];
 
   if (persistTimer !== null) {
     clearTimeout(persistTimer);
