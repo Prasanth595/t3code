@@ -1569,6 +1569,12 @@ describe("PullRequestSyncReactor", () => {
       linked: [60],
     },
     {
+      name: "a create subcommand that does not end its shell word",
+      input: "gh pr create#typo; gh pr view --json url --jq .url",
+      output: "https://github.com/owner/repository/pull/124",
+      linked: [],
+    },
+    {
       name: "a read with no create",
       input: "gh pr view 124 --json url --jq .url",
       output: "https://github.com/owner/repository/pull/124",

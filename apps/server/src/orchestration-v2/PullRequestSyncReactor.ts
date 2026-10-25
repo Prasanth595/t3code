@@ -58,7 +58,14 @@ const CREATE_COMMANDS = sourceControlDefinitions.definitions.flatMap(
   ({ kind, changeRequestCreateCommand: command }) =>
     command === undefined
       ? []
-      : [{ kind, command, run: new RegExp(COMMAND_START + command.source, "gu") }],
+      : // The subcommand must end its shell word: `gh pr create#x` runs another one.
+        [
+          {
+            kind,
+            command,
+            run: new RegExp(`${COMMAND_START}${command.source}(?=$|[\\s;&|)])`, "gu"),
+          },
+        ],
 );
 const createCommandCount = (code: string) =>
   CREATE_COMMANDS.reduce((count, { run }) => count + [...code.matchAll(run)].length, 0);
