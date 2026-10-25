@@ -247,6 +247,7 @@ or **Settings → Thread behavior → Snooze presets** on mobile, to configure f
 Each slot uses either a relative duration of 1–168 hours, or an absolute day and time.
 Choose Today, Tomorrow, or a weekday; weekdays use their next occurrence, including today
 if the chosen time is still ahead. A Today slot disappears from the menu after its time passes.
+When slots resolve to the same wake time, only the first appears in the menu.
 
 For example, replace the one-hour slot with **Relative: 168 hours**, and set two other
 slots to **Absolute: Tomorrow at 06:00** and **Absolute: Monday at 06:00**. Relative hours add

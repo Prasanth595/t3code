@@ -392,14 +392,54 @@ describe("resolveSnoozePresets", () => {
     );
   });
 
-  it("keeps configured slots distinct when their wake times coincide", () => {
+  it("deduplicates configured slots that resolve to the same wake time", () => {
     const presets = resolveSnoozePresets(localDate(2026, 8, 30, 7), DEFAULT_SNOOZE_PRESETS);
+    expect(presets.map((preset) => preset.id)).toEqual([
+      "preset-0",
+      "preset-1",
+      "preset-2",
+      "preset-3",
+    ]);
     expect(presets.find((preset) => preset.id === "preset-3")?.snoozedUntil).toBe(
       localDate(2026, 8, 31, 9).toISOString(),
     );
-    expect(presets.find((preset) => preset.id === "preset-4")?.snoozedUntil).toBe(
-      localDate(2026, 8, 31, 9).toISOString(),
-    );
+  });
+
+  it("deduplicates relative and absolute wakes while retaining distinct times with the same label", () => {
+    const presets = resolveSnoozePresets(localDate(2026, 4, 8, 15), [
+      { mode: "absolute", day: "today", time: "18:00" },
+      { mode: "relative", hours: 3 },
+      { mode: "relative", hours: 3 },
+      { mode: "absolute", day: "tomorrow", time: "06:00" },
+      { mode: "absolute", day: "tomorrow", time: "09:00" },
+    ]);
+    expect(presets.map(({ id, label, snoozedUntil }) => ({ id, label, snoozedUntil }))).toEqual([
+      {
+        id: "preset-0",
+        label: "This evening",
+        snoozedUntil: localDate(2026, 4, 8, 18).toISOString(),
+      },
+      {
+        id: "preset-3",
+        label: "Tomorrow",
+        snoozedUntil: localDate(2026, 4, 9, 6).toISOString(),
+      },
+      {
+        id: "preset-4",
+        label: "Tomorrow",
+        snoozedUntil: localDate(2026, 4, 9, 9).toISOString(),
+      },
+    ]);
+  });
+
+  it("deduplicates default wakes that coincide", () => {
+    const presets = resolveSnoozePresets(localDate(2026, 4, 8, 15));
+    expect(presets.map((preset) => preset.id)).toEqual([
+      "hour",
+      "three-hours",
+      "tomorrow",
+      "next-week",
+    ]);
   });
 
   it("omits a Today slot after its time without changing the remaining slot identities", () => {

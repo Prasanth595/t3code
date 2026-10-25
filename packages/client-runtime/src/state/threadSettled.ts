@@ -281,8 +281,7 @@ export function resolveSnoozePresets(
   now: Date,
   preferences: SnoozePreferences = null,
 ): ReadonlyArray<SnoozePreset> {
-  if (preferences === null) return resolveDefaultSnoozePresets(now);
-  return preferences.flatMap((slot, index): SnoozePreset[] => {
+  const configuredPresets = preferences?.flatMap((slot, index): SnoozePreset[] => {
     let wake: Date;
     let label: string;
     if (slot.mode === "relative") {
@@ -327,6 +326,12 @@ export function resolveSnoozePresets(
         snoozedUntil: wake.toISOString(),
       },
     ];
+  });
+  const seenWakeTimes = new Set<string>();
+  return (configuredPresets ?? resolveDefaultSnoozePresets(now)).filter((preset) => {
+    if (seenWakeTimes.has(preset.snoozedUntil)) return false;
+    seenWakeTimes.add(preset.snoozedUntil);
+    return true;
   });
 }
 
