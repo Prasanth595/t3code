@@ -1273,6 +1273,21 @@ export function claudeQueryEnvironment(
   return { ...environment, CLAUDE_CODE_PROMPT_CACHE_TTL: subagentPromptCacheTtl };
 }
 
+// Claude Code's auto tool search (ENABLE_TOOL_SEARCH=auto or auto:N) sends every MCP schema in
+// full while they fit under a share of the context window. T3's own tools fit under it on 1M
+// models, so every request carries them, and an MCP server that connects after the first request
+// changes the tool list and misses the prompt cache. Returns "true", which keeps tool search on,
+// when the user picked an auto mode. auto:0 already means on and auto:100 means off, so those stay.
+export function claudeToolSearchOverride(value: string | undefined): "true" | undefined {
+  if (value === undefined) return undefined;
+  if (value === "auto") return "true";
+  if (!value.startsWith("auto:")) return undefined;
+  const percent = Number.parseFloat(value.slice("auto:".length));
+  // Claude Code also treats an unparsable auto:N as auto.
+  if (Number.isNaN(percent)) return "true";
+  return percent > 0 && percent < 100 ? "true" : undefined;
+}
+
 // Claude Code defers MCP tools behind ToolSearch, so the agent only finds
 // t3_background_wait when the system prompt says when to reach for it.
 const CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS = `
@@ -1302,6 +1317,9 @@ export function makeClaudeQueryOptions(input: {
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
   readonly appendSystemPromptFileText?: string;
+  // From claudeToolSearchOverride. It travels in flag settings because a user's settings.json
+  // env beats the process env in Claude Code.
+  readonly toolSearchOverride?: "true";
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);
   const {
@@ -1338,12 +1356,20 @@ export function makeClaudeQueryOptions(input: {
       : typeof input.sdkSettings === "object" && input.sdkSettings !== null
         ? ({ ...input.sdkSettings, ...selectionSettings } as ClaudeSdkSettings)
         : selectionSettings;
-  const effectiveQuerySettings =
+  const compactQuerySettings =
     input.settings?.autoCompactWindow === undefined || input.settings.autoCompactWindow.length === 0
       ? querySettings
       : ({
           ...(typeof querySettings === "object" && querySettings !== null ? querySettings : {}),
           autoCompactWindow: Number(input.settings.autoCompactWindow),
+        } as ClaudeSdkSettings);
+  // A settings file path cannot take extra keys, so it goes through unchanged.
+  const effectiveQuerySettings =
+    input.toolSearchOverride === undefined || typeof compactQuerySettings === "string"
+      ? compactQuerySettings
+      : ({
+          ...compactQuerySettings,
+          env: { ...compactQuerySettings?.env, ENABLE_TOOL_SEARCH: input.toolSearchOverride },
         } as ClaudeSdkSettings);
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
@@ -2156,6 +2182,14 @@ const decodeClaudeSubagentCacheSettings = Schema.decodeUnknownEffect(
   fromLenientJson(
     Schema.StructWithRest(
       Schema.Struct({ subagentPromptCacheTtl: Schema.optionalKey(ClaudePromptCacheTtl) }),
+      [Schema.Record(Schema.String, Schema.Unknown)],
+    ),
+  ),
+);
+const decodeClaudeEnvSettings = Schema.decodeUnknownEffect(
+  fromLenientJson(
+    Schema.StructWithRest(
+      Schema.Struct({ env: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)) }),
       [Schema.Record(Schema.String, Schema.Unknown)],
     ),
   ),
@@ -3943,6 +3977,37 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           )
         : undefined;
       return resolved?.effective.subagentPromptCacheTtl ?? home?.subagentPromptCacheTtl;
+    },
+  );
+
+  const readToolSearchSetting = (filePath: string) =>
+    fileSystem.readFileString(filePath).pipe(
+      Effect.flatMap(decodeClaudeEnvSettings),
+      Effect.map((settings) => {
+        const value = settings.env?.ENABLE_TOOL_SEARCH;
+        return typeof value === "string" ? value : undefined;
+      }),
+      Effect.orElseSucceed(() => undefined),
+    );
+  // The ENABLE_TOOL_SEARCH value Claude Code will see: settings env, local over project over
+  // user, beats the process env. Plain file reads keep this off the per-turn resolveSettings
+  // path. An auto mode gets pinned on; see claudeToolSearchOverride.
+  const resolveToolSearchOverride = Effect.fn("ClaudeAdapterV2.resolveToolSearchOverride")(
+    function* (cwd: string | null) {
+      const settingsFiles = [
+        ...(cwd === null
+          ? []
+          : [
+              path.join(cwd, ".claude", "settings.local.json"),
+              path.join(cwd, ".claude", "settings.json"),
+            ]),
+        path.join(homePath, "settings.json"),
+      ];
+      for (const settingsFile of settingsFiles) {
+        const value = yield* readToolSearchSetting(settingsFile);
+        if (value !== undefined) return claudeToolSearchOverride(value);
+      }
+      return claudeToolSearchOverride(adapterOptions.environment.ENABLE_TOOL_SEARCH);
     },
   );
 
@@ -9220,6 +9285,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+          const toolSearchOverride = yield* resolveToolSearchOverride(turnInput.runtimePolicy.cwd);
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             nativeThreadId,
@@ -9252,6 +9318,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             onUserDialog,
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
+            ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
           });
           const querySession = yield* queryRunner
             .open({

@@ -272,6 +272,29 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     );
   });
 
+  it("pins Claude's auto tool search on through flag settings", () => {
+    const override = ClaudeAdapterV2.claudeToolSearchOverride;
+    for (const value of ["auto", "auto:10", "auto:99.5", "auto:x"]) {
+      assert.equal(override(value), "true", value);
+    }
+    for (const value of [undefined, "true", "false", "auto:0", "auto:100", "AUTO"]) {
+      assert.isUndefined(override(value), String(value));
+    }
+
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-tool-search",
+      resume: false,
+      cwd: "/workspace",
+      sdkSettings: { env: { OTHER: "kept" } },
+      toolSearchOverride: "true",
+    });
+    assert.deepEqual((options.settings as { env?: Record<string, string> }).env, {
+      OTHER: "kept",
+      ENABLE_TOOL_SEARCH: "true",
+    });
+  });
+
   it("projects AskUserQuestion input with question text as the answer key", () => {
     const preview = "\n  **Proposed change**\n\n```ts\n\tconst enabled = true;\n```\n  ";
     assert.deepEqual(
@@ -2845,6 +2868,44 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
           ),
         ),
+    );
+
+    it.effect("pins tool search on when the user's Claude settings choose auto", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-tool-search-",
+        });
+        const openedToolSearch = (settingsJson: string) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              yield* fileSystem.writeFileString(path.join(home, "settings.json"), settingsJson);
+              const harness = yield* makeWakeHarnessWithOptions({
+                settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: home },
+              });
+              yield* harness.runtime.startTurn(
+                makeClaudeTestTurnInput({
+                  threadId: harness.threadId,
+                  providerThread: harness.providerThread,
+                  now: yield* DateTime.now,
+                  attemptId: RunAttemptId.make("attempt-tool-search"),
+                  text: "Run git status.",
+                  attachments: [],
+                }),
+              );
+              const settings = harness.getOpenedOptions()?.settings;
+              return typeof settings === "object" ? settings.env?.ENABLE_TOOL_SEARCH : undefined;
+            }),
+          );
+        assert.equal(yield* openedToolSearch('{"env":{"ENABLE_TOOL_SEARCH":"auto"}}'), "true");
+        assert.isUndefined(yield* openedToolSearch('{"env":{"ENABLE_TOOL_SEARCH":"false"}}'));
+        assert.isUndefined(yield* openedToolSearch("{}"));
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
     );
   });
 
