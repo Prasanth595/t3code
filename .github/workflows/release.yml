@@ -890,7 +890,7 @@ jobs:
             fi
             echo 'release-assets/*.tar.gz'
             # Only list APKs when Play has a processed internal build available.
-            for apk in release-assets/*.apk; do
+            for apk in release-assets/*.apk release-assets/*.apks; do
               [[ -f "$apk" ]] && echo "$apk"
             done
             echo 'release-assets/SHA256SUMS'

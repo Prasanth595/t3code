@@ -76,41 +76,142 @@ function readRelease(tag) {
   }
 }
 
-// Stage downloads so failed requests cannot leave partial release assets.
-async function downloadApk({ token, appUrl, build, apkName }) {
+const ABI_NAMES = {
+  ARMEABI_V7A: "armeabi-v7a",
+  ARM64_V8A: "arm64-v8a",
+  X86: "x86",
+  X86_64: "x86_64",
+};
+
+async function generatedApks(token, appUrl, build) {
   const generated = await (
     await play(token, "GET", `${appUrl}/generatedApks/${build.versionCode}`)
   ).json();
-  const universal = (generated.generatedApks ?? []).filter((entry) => entry.generatedUniversalApk);
-  if (universal.length === 0) return undefined;
-  if (universal.length > 1) {
-    throw new Error(`Play returned ${universal.length} universal APKs, one per signing key.`);
+  const withUniversal = (generated.generatedApks ?? []).filter(
+    (entry) => entry.generatedUniversalApk,
+  );
+  if (withUniversal.length > 1) {
+    throw new Error(`Play returned ${withUniversal.length} universal APKs, one per signing key.`);
   }
-  const { downloadId } = universal[0].generatedUniversalApk;
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "apk-"));
-  const apkPath = path.join(directory, apkName);
-  try {
-    const download = await play(
-      token,
-      "GET",
-      `${appUrl}/generatedApks/${build.versionCode}/downloads/${encodeURIComponent(downloadId)}:download?alt=media`,
-    );
-    await pipeline(Readable.fromWeb(download.body), fs.createWriteStream(apkPath));
-    return apkPath;
-  } catch (error) {
-    fs.rmSync(directory, { recursive: true, force: true });
-    throw error;
-  }
+  return withUniversal[0];
 }
 
-function publishBeta(tag, apkPath, notes, title) {
-  const release = readRelease(tag);
-  if (
+// Each set holds one ABI split plus the base and every density and language
+// split of the lowest-SDK variant, so it installs on any device with that ABI.
+function planSplitApkSets(signingKey, packageName) {
+  const downloadIds = new Set((signingKey.generatedSplitApks ?? []).map((apk) => apk.downloadId));
+  const minSdk = (variant) =>
+    Math.min(
+      Infinity,
+      ...(variant.targeting?.sdkVersionTargeting?.value ?? []).map((sdk) => sdk.min ?? 0),
+    );
+  const [variant] = [...(signingKey.targetingInfo?.variant ?? [])].sort(
+    (a, b) => minSdk(a) - minSdk(b) || (a.variantNumber ?? 0) - (b.variantNumber ?? 0),
+  );
+  if (!variant || downloadIds.size === 0) return [];
+  let base;
+  const shared = [];
+  const byAbi = new Map();
+  for (const { moduleMetadata, apkDescription = [] } of variant.apkSet ?? []) {
+    const deliveryType = moduleMetadata?.deliveryType ?? "INSTALL_TIME";
+    if (deliveryType !== "INSTALL_TIME" && deliveryType !== "DELIVERY_TYPE_UNSPECIFIED") continue;
+    const moduleName = moduleMetadata?.name ?? "base";
+    for (const { path: apkPath, splitApkMetadata, targeting } of apkDescription) {
+      if (!splitApkMetadata) continue;
+      const downloadId = apkPath.replace(/\.apk$/, "");
+      if (!downloadIds.has(downloadId)) {
+        throw new Error(`Play targeting lists ${apkPath}, which is not a generated split APK.`);
+      }
+      const isBase = moduleName === "base" && splitApkMetadata.isMasterSplit;
+      const piece = {
+        downloadId,
+        fileName: isBase
+          ? `${packageName}.apk`
+          : `split_${splitApkMetadata.splitId || moduleName}.apk`,
+      };
+      const abis = (targeting?.abiTargeting?.value ?? []).map(({ alias }) => alias);
+      if (isBase) base = piece;
+      else if (abis.length === 0) shared.push(piece);
+      for (const alias of abis) {
+        const abi = ABI_NAMES[alias] ?? alias.toLowerCase();
+        byAbi.set(abi, [...(byAbi.get(abi) ?? []), piece]);
+      }
+    }
+  }
+  if (byAbi.size === 0) return [];
+  if (!base) throw new Error(`Play variant ${variant.variantNumber} has no base APK.`);
+  return [...byAbi].map(([abi, pieces]) => ({ abi, pieces: [base, ...shared, ...pieces] }));
+}
+
+async function download({ token, appUrl, build, downloadId, filePath }) {
+  const response = await play(
+    token,
+    "GET",
+    `${appUrl}/generatedApks/${build.versionCode}/downloads/${encodeURIComponent(downloadId)}:download?alt=media`,
+  );
+  await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(filePath));
+}
+
+// The zip deflates native libraries that the APKs store uncompressed.
+async function downloadAssets({ token, appUrl, build, signingKey, apkName, splitSets, directory }) {
+  const assets = [path.join(directory, apkName)];
+  await download({
+    token,
+    appUrl,
+    build,
+    downloadId: signingKey.generatedUniversalApk.downloadId,
+    filePath: assets[0],
+  });
+  const piecesDirectory = path.join(directory, "pieces");
+  fs.mkdirSync(piecesDirectory);
+  const downloaded = new Set();
+  for (const { name, pieces } of splitSets) {
+    for (const { downloadId, fileName } of pieces) {
+      if (downloaded.has(fileName)) continue;
+      await download({
+        token,
+        appUrl,
+        build,
+        downloadId,
+        filePath: path.join(piecesDirectory, fileName),
+      });
+      downloaded.add(fileName);
+    }
+    const setPath = path.join(directory, name);
+    execFileSync(
+      "zip",
+      [
+        "-q",
+        "-j",
+        "-9",
+        setPath,
+        ...pieces.map(({ fileName }) => path.join(piecesDirectory, fileName)),
+      ],
+      { stdio: "inherit" },
+    );
+    assets.push(setPath);
+  }
+  return assets;
+}
+
+function isPublished(release, names) {
+  return (
     release &&
     !release.isDraft &&
-    release.assets.some(
-      (asset) =>
-        asset.name === path.basename(apkPath) && asset.state === "uploaded" && asset.size > 0,
+    names.every((name) =>
+      release.assets.some(
+        (asset) => asset.name === name && asset.state === "uploaded" && asset.size > 0,
+      ),
+    )
+  );
+}
+
+function publishBeta(tag, assetPaths, notes, title) {
+  const release = readRelease(tag);
+  if (
+    isPublished(
+      release,
+      assetPaths.map((assetPath) => path.basename(assetPath)),
     )
   )
     return;
@@ -128,7 +229,7 @@ function publishBeta(tag, apkPath, notes, title) {
       notes,
     );
   }
-  gh("release", "upload", tag, apkPath, "--clobber");
+  gh("release", "upload", tag, ...assetPaths, "--clobber");
   gh(
     "release",
     "edit",
@@ -156,34 +257,52 @@ async function main() {
     return;
   }
   const safeName = build.versionName.replace(/[^0-9A-Za-z.]+/g, "-").replace(/^-|-$/g, "");
-  const apkName = `t3code-android-${channel}-${safeName}-${build.versionCode}.apk`;
+  const assetPrefix = `t3code-android-${channel}-${safeName}-${build.versionCode}`;
+  const apkName = `${assetPrefix}.apk`;
   const tag = `android-beta-${build.versionCode}`;
-  const release = outputDirectory ? undefined : readRelease(tag);
-  if (
-    release &&
-    !release.isDraft &&
-    release.assets.some(
-      (asset) => asset.name === apkName && asset.state === "uploaded" && asset.size > 0,
-    )
-  ) {
-    console.log(`${apkName} is already published.`);
-    return;
-  }
-  const apkPath = await downloadApk({ token, appUrl, build, apkName });
-  if (!apkPath) {
+  const signingKey = await generatedApks(token, appUrl, build);
+  if (!signingKey) {
     console.log(`Play is still processing the ${track} APK for ${build.versionCode}.`);
     return;
   }
+  let splitSets = [];
   try {
+    splitSets = planSplitApkSets(signingKey, packageName).map((set) => ({
+      ...set,
+      name: `${assetPrefix}-${set.abi}.apks`,
+    }));
+  } catch (error) {
+    // The universal APK still installs everywhere, so publish it alone.
+    console.warn(`Skipping split APK sets: ${error.message}`);
+  }
+  const assetNames = [apkName, ...splitSets.map(({ name }) => name)];
+  if (!outputDirectory && isPublished(readRelease(tag), assetNames)) {
+    console.log(`${assetNames.join(", ")} are already published.`);
+    return;
+  }
+  // Stage downloads so failed requests cannot leave partial release assets.
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "apk-"));
+  try {
+    const assetPaths = await downloadAssets({
+      token,
+      appUrl,
+      build,
+      signingKey,
+      apkName,
+      splitSets,
+      directory,
+    });
     if (outputDirectory) {
       fs.mkdirSync(outputDirectory, { recursive: true });
-      const destination = path.join(outputDirectory, apkName);
-      const temporary = `${destination}.tmp`;
-      try {
-        fs.copyFileSync(apkPath, temporary);
-        fs.renameSync(temporary, destination);
-      } finally {
-        fs.rmSync(temporary, { force: true });
+      for (const assetPath of assetPaths) {
+        const destination = path.join(outputDirectory, path.basename(assetPath));
+        const temporary = `${destination}.tmp`;
+        try {
+          fs.copyFileSync(assetPath, temporary);
+          fs.renameSync(temporary, destination);
+        } finally {
+          fs.rmSync(temporary, { force: true });
+        }
       }
       return;
     }
@@ -191,15 +310,21 @@ async function main() {
       `T3 Code for Android beta, mirrored from Google Play closed testing. Build: ${build.versionName} (${build.versionCode}).`,
       "",
       "These builds have been promoted for wider testing, but may still contain bugs. The beta is optional; the store app also works with Nightly servers.",
+      "",
+      "The `.apk` installs on any device. Each `.apks` file is a much smaller zip of split APKs for one CPU architecture. Install it with Obtainium or SAI, or unzip it and use `adb install-multiple`.",
     ].join("\n");
     // The build number makes retries and unchanged hourly checks idempotent.
-    publishBeta(tag, apkPath, notes, `Android beta ${build.versionName} (${build.versionCode})`);
+    publishBeta(tag, assetPaths, notes, `Android beta ${build.versionName} (${build.versionCode})`);
   } finally {
-    fs.rmSync(path.dirname(apkPath), { recursive: true, force: true });
+    fs.rmSync(directory, { recursive: true, force: true });
   }
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
+
+module.exports = { planSplitApkSets };

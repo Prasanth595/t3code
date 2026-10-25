@@ -338,7 +338,13 @@ without an APK. Android submissions continue to go to internal testing; promote 
 build to Alpha to publish it as a beta.
 
 The APK is the universal APK Play generates and signs from the
-uploaded bundle, so no signing key lives in GitHub. The job skips itself until
+uploaded bundle, so no signing key lives in GitHub. Next to it, each release has one
+`<name>-<abi>.apks` zip per CPU architecture. It holds Play's signed split APKs for that
+architecture: the base, the ABI split, and every density and language split. It is a
+fraction of the universal APK's size, because the universal APK stores native libraries
+uncompressed for all four architectures. Obtainium and SAI install these zips; the base APK
+inside is named after the package because Obtainium installs the file with that prefix first.
+If Play's split targeting cannot be read, the release publishes the universal APK alone. The job skips itself until
 `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` holds a Play service account key with the "Release to
 production, exclude devices, and use Play App Signing" permission, which downloading generated
 APKs requires. The job reads tracks without opening a Play edit, so it can share the service
