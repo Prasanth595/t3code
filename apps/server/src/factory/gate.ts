@@ -956,6 +956,22 @@ const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, Ga
           return yield* record({ _tag: "pass", dir, commands, gateCount });
         });
 
+        // How long the attempt took, from the start of its checkout to the end of its last
+        // command or of its aborted merge, for the run log. The attempt is decided by then, so
+        // a line that cannot be written changes nothing: the result stands without it.
+        const recordTime = Effect.fn("FactoryGate.recordTime")(function* (startedMs: number) {
+          const endedMs = yield* Clock.currentTimeMillis;
+          yield* Effect.ignore(
+            append(
+              {
+                event: "gate_finished",
+                data: { attempt, total_ms: Math.max(0, endedMs - startedMs) },
+              },
+              makeCause("gate", "gate-finished", { attempt }),
+            ),
+          );
+        });
+
         const attemptInDir = Effect.gen(function* () {
           yield* removeLeftovers;
           // A leftover that could not be removed is in the way of this attempt: a fault of this
@@ -965,6 +981,7 @@ const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, Ga
               what: `${dir} is still there from an earlier call`,
             });
           }
+          const startedMs = yield* Clock.currentTimeMillis;
           const made = yield* workspace.checkout(input.repo, input.head, input.base, dir);
           return yield* Effect.gen(function* () {
             // Where the attempt runs and on which commits goes into the ledger before the
@@ -989,7 +1006,10 @@ const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, Ga
               return { _tag: "conflict", dir, paths: made.merge.paths } satisfies GateResult;
             }
             return yield* runCommands;
-          }).pipe(Effect.ensuring(cleanup));
+          }).pipe(
+            Effect.tap(() => recordTime(startedMs)),
+            Effect.ensuring(cleanup),
+          );
         });
 
         // Only an empty root goes.

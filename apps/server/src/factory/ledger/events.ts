@@ -123,6 +123,11 @@ export type RunEvent =
       readonly data: { attempt: number; dir: string; sha: string; base_sha: string };
     }
   | {
+      /** The attempt ended: `total_ms` from the start of its checkout to the end of its last command, or of its aborted merge. */
+      readonly event: "gate_finished";
+      readonly data: { attempt: number; total_ms: number };
+    }
+  | {
       readonly event: "gate_regate";
       readonly data: {
         sha: string;
@@ -185,7 +190,7 @@ export type RunEventName = RunEvent["event"];
 type RunDataKeys<N extends RunEventName> = keyof Extract<RunEvent, { event: N }>["data"];
 
 /**
- * The 31 event types a run file can hold, each with the names of its `data` fields in the order
+ * The 32 event types a run file can hold, each with the names of its `data` fields in the order
  * they are written.
  */
 export const RUN_EVENT_FIELDS = {
@@ -224,6 +229,7 @@ export const RUN_EVENT_FIELDS = {
   gate_command: ["attempt", "command", "exit_code", "duration_ms"],
   gate_sent_back: ["attempt", "run_ordinal"],
   gate_checkout: ["attempt", "dir", "sha", "base_sha"],
+  gate_finished: ["attempt", "total_ms"],
   gate_regate: ["sha", "base_sha", "previous_base_sha", "conflict"],
   regate_relaunching: ["attempt", "branch", "message"],
   feedback_relaunching: ["n", "branch", "items", "message"],

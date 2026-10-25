@@ -1307,6 +1307,50 @@ it("sanitize turns control and hidden-text characters into spaces", () => {
 /** The ledger's lines of the run, as read back. */
 const entries = (dataDir: string, run: GateInput["run"]) => readRun(dataDir, run).entries;
 
+/**
+ * A `git` first on PATH that waits `seconds` before handing over to the real one, so every git
+ * call of a checkout takes at least that long and the checkout's share of an attempt's time is
+ * known. The gate commands do not see it: only git calls get `options.env`.
+ */
+const slowGit = (name: string, seconds: number): Pick<GateOptions, "env"> => {
+  const dir = tempDir(name);
+  NodeFS.writeFileSync(
+    NodePath.join(dir, "git"),
+    `#!/bin/sh\nsleep ${seconds}\nPATH="\${PATH#*:}" exec git "$@"\n`,
+    { mode: 0o755 },
+  );
+  return { env: { PATH: `${dir}:${globalThis.process.env.PATH ?? ""}` } };
+};
+
+/** The `total_ms` of the run's one `gate_finished` line. */
+const totalMs = (dataDir: string, run: GateInput["run"]): number => {
+  const finished = entries(dataDir, run).filter((l) => l.event === "gate_finished");
+  assert.strictEqual(finished.length, 1);
+  return (finished[0]!.data as { total_ms: number }).total_ms;
+};
+
+it.live("the attempt's time covers the checkout, not only the commands", () =>
+  Effect.gen(function* () {
+    // A checkout of a head that holds the base makes six git calls, each at least 0.3 s here:
+    // what the commands took cannot account for the total on its own.
+    const remote = makeRemote("gate-timing");
+    const dataDir = tempDir("gate-timing-data");
+    const run = newRunId(REPO, "10", 1);
+    const sha = remote.push([["README", "pushed\n"]]);
+    Ledger.create(dataDir, run, { clock: ticking(T0, 1000) }).close();
+    const input = baseInput(remote, dataDir, run, sha, sha);
+    const out = yield* (yield* FactoryGate).run({
+      ...input,
+      gate: ["true"],
+      options: { ...input.options, ...slowGit("gate-timing-git", 0.3) },
+    });
+    assert.strictEqual(out._tag, "pass");
+    if (out._tag !== "pass") return;
+    const commands = out.commands.reduce((sum, c) => sum + c.durationMs, 0);
+    assert.isAtLeast(totalMs(dataDir, run), commands + 1_500);
+  }).pipe(provided),
+);
+
 it.live(
   "the gate runs in a fresh checkout of the pr head and never in the session's worktree",
   () =>
@@ -1338,7 +1382,7 @@ it.live(
       const lines = entries(dataDir, run);
       assert.deepStrictEqual(
         lines.map((l) => l.event),
-        ["gate_checkout", "gate_command", "gate_command"],
+        ["gate_checkout", "gate_command", "gate_command", "gate_finished"],
       );
       assert.deepStrictEqual(lines[0]!.data, { attempt: 1, dir, sha, base_sha: sha });
       assert.deepStrictEqual(lines[0]!.cause, {
@@ -1360,6 +1404,17 @@ it.live(
           attempt: 1,
         });
       });
+      // The attempt ends with how long it took, from the start of the checkout to the end of
+      // the last command: at least what the commands themselves took.
+      const finished = lines.at(-1)!;
+      const total = (finished.data as { attempt: number; total_ms: number }).total_ms;
+      assert.strictEqual((finished.data as { attempt: number }).attempt, 1);
+      assert.isTrue(Number.isInteger(total), String(total));
+      assert.isAtLeast(
+        total,
+        out.commands.reduce((sum, c) => sum + c.durationMs, 0),
+      );
+      assert.deepStrictEqual(finished.cause, { step: "gate", reason: "gate-finished", attempt: 1 });
       // The primary checkout was not used: no new worktree, and the commit is not in its object
       // store.
       assert.notStrictEqual(spawnGit(remote.primary, ["cat-file", "-e", sha]).status, 0);
@@ -1411,11 +1466,11 @@ it.live("provision runs before the gate and a failing provision command stops th
     const lines = entries(dataDir, run2);
     assert.deepStrictEqual(
       lines.map((l) => l.event),
-      ["gate_checkout", "gate_command", "gate_command"],
+      ["gate_checkout", "gate_command", "gate_command", "gate_finished"],
     );
     assert.deepStrictEqual(
       lines
-        .slice(1)
+        .filter((l) => l.event === "gate_command")
         .map((l) => [
           (l.data as { command: string }).command,
           (l.data as { exit_code: number }).exit_code,
@@ -1453,7 +1508,7 @@ it.live("a failing gate command ends the attempt and the later commands do not r
     const lines = entries(dataDir, run);
     assert.deepStrictEqual(
       lines.map((l) => l.event),
-      ["gate_checkout", "gate_command", "gate_command"],
+      ["gate_checkout", "gate_command", "gate_command", "gate_finished"],
     );
     assert.strictEqual((lines[2]!.data as { exit_code: number }).exit_code, 4);
   }).pipe(provided),
@@ -1736,6 +1791,29 @@ it.live("a command line whose sync fails is in the ledger, so the attempt is use
   }).pipe(provided),
 );
 
+it.live("a timing line that cannot be written leaves the attempt's result as it is", () =>
+  Effect.gen(function* () {
+    // Write 1 is gate_checkout, 2 the command's line, 3 the timing line.
+    const remote = makeRemote("gate-record-timing");
+    const dataDir = tempDir("gate-record-timing-data");
+    const run = newRunId(REPO, "10", 1);
+    const sha = remote.push([["README", "pushed\n"]]);
+    Ledger.create(dataDir, run, { clock: ticking(T0, 1000) }).close();
+    const input = baseInput(remote, dataDir, run, sha, sha);
+    const out = yield* (yield* FactoryGate).run({
+      ...input,
+      gate: ["true"],
+      options: { ...input.options, ledgerIo: failingLedgerIo({ write: 3 }) },
+    });
+    assert.strictEqual(out._tag, "pass");
+    assert.strictEqual(gateLocksHeld(dataDir), 0);
+    assert.deepStrictEqual(
+      entries(dataDir, run).map((l) => l.event),
+      ["gate_checkout", "gate_command"],
+    );
+  }).pipe(provided),
+);
+
 it.live("a ledger failure before any command line went in uses no attempt", () =>
   Effect.gen(function* () {
     const { error, events } = yield* gateWithLedgerIo(
@@ -1778,10 +1856,12 @@ it.live("a conflict with the base is a failed attempt with no command run", () =
     Ledger.create(dataDir, run, { clock: ticking(T0, 1000) }).close();
     const marker = NodePath.join(dataDir, "ran");
     const gate = yield* FactoryGate;
+    const input = baseInput(remote, dataDir, run, pr, base);
     const out = yield* gate.run({
-      ...baseInput(remote, dataDir, run, pr, base),
+      ...input,
       provision: [`touch '${marker}'`],
       gate: [`touch '${marker}'`],
+      options: { ...input.options, ...slowGit("gate-conflict-git", 0.3) },
     });
     const dir = NodePath.join(dataDir, "gate/rawphp__softfac__10__1/1");
     assert.deepStrictEqual(out, { _tag: "conflict", dir, paths: ["README"] });
@@ -1789,7 +1869,7 @@ it.live("a conflict with the base is a failed attempt with no command run", () =
     const lines = entries(dataDir, run);
     assert.deepStrictEqual(
       lines.map((l) => l.event),
-      ["gate_checkout", "gate_command"],
+      ["gate_checkout", "gate_command", "gate_finished"],
     );
     assert.deepStrictEqual(lines[0]!.data, { attempt: 1, dir, sha: pr, base_sha: base });
     assert.deepStrictEqual(lines[1]!.data, {
@@ -1798,6 +1878,9 @@ it.live("a conflict with the base is a failed attempt with no command run", () =
       exit_code: 1,
       duration_ms: 0,
     });
+    assert.strictEqual((lines[2]!.data as { attempt: number }).attempt, 1);
+    // Nine git calls at 0.3 s or more each, up to and including the aborted merge.
+    assert.isAtLeast((lines[2]!.data as { total_ms: number }).total_ms, 2_000);
     assert.deepStrictEqual(lines[1]!.cause, {
       step: "gate",
       reason: "gate-merge-conflict",
@@ -1865,9 +1948,9 @@ it.live("a checkout that cannot be removed leaves a gate_cleanup_failed line", (
       const lines = entries(dataDir, run);
       assert.deepStrictEqual(
         lines.map((l) => l.event),
-        ["gate_checkout", "gate_command", "gate_cleanup_failed"],
+        ["gate_checkout", "gate_command", "gate_finished", "gate_cleanup_failed"],
       );
-      const failed = lines[2]!;
+      const failed = lines[3]!;
       const data = failed.data as { dir: string; error: string };
       assert.strictEqual(data.dir, dir);
       assert.isTrue(data.error.startsWith(`could not remove the checkout: ${dir}: `), data.error);
@@ -1904,7 +1987,7 @@ it.live("a leftover of a call the server died in is removed before the next chec
     assert.isFalse(NodeFS.existsSync(root));
     assert.deepStrictEqual(
       entries(dataDir, run).map((l) => l.event),
-      ["gate_checkout", "gate_command", "gate_command"],
+      ["gate_checkout", "gate_command", "gate_command", "gate_finished"],
     );
   }).pipe(provided),
 );
