@@ -1307,6 +1307,50 @@ it("sanitize turns control and hidden-text characters into spaces", () => {
 /** The ledger's lines of the run, as read back. */
 const entries = (dataDir: string, run: GateInput["run"]) => readRun(dataDir, run).entries;
 
+/**
+ * A `git` first on PATH that waits `seconds` before handing over to the real one, so every git
+ * call of a checkout takes at least that long and the checkout's share of an attempt's time is
+ * known. The gate commands do not see it: only git calls get `options.env`.
+ */
+const slowGit = (name: string, seconds: number): Pick<GateOptions, "env"> => {
+  const dir = tempDir(name);
+  NodeFS.writeFileSync(
+    NodePath.join(dir, "git"),
+    `#!/bin/sh\nsleep ${seconds}\nPATH="\${PATH#*:}" exec git "$@"\n`,
+    { mode: 0o755 },
+  );
+  return { env: { PATH: `${dir}:${globalThis.process.env.PATH ?? ""}` } };
+};
+
+/** The `total_ms` of the run's one `gate_finished` line. */
+const totalMs = (dataDir: string, run: GateInput["run"]): number => {
+  const finished = entries(dataDir, run).filter((l) => l.event === "gate_finished");
+  assert.strictEqual(finished.length, 1);
+  return (finished[0]!.data as { total_ms: number }).total_ms;
+};
+
+it.live("the attempt's time covers the checkout, not only the commands", () =>
+  Effect.gen(function* () {
+    // A checkout of a head that holds the base makes six git calls, each at least 0.3 s here:
+    // what the commands took cannot account for the total on its own.
+    const remote = makeRemote("gate-timing");
+    const dataDir = tempDir("gate-timing-data");
+    const run = newRunId(REPO, "10", 1);
+    const sha = remote.push([["README", "pushed\n"]]);
+    Ledger.create(dataDir, run, { clock: ticking(T0, 1000) }).close();
+    const input = baseInput(remote, dataDir, run, sha, sha);
+    const out = yield* (yield* FactoryGate).run({
+      ...input,
+      gate: ["true"],
+      options: { ...input.options, ...slowGit("gate-timing-git", 0.3) },
+    });
+    assert.strictEqual(out._tag, "pass");
+    if (out._tag !== "pass") return;
+    const commands = out.commands.reduce((sum, c) => sum + c.durationMs, 0);
+    assert.isAtLeast(totalMs(dataDir, run), commands + 1_500);
+  }).pipe(provided),
+);
+
 it.live(
   "the gate runs in a fresh checkout of the pr head and never in the session's worktree",
   () =>
@@ -1812,10 +1856,12 @@ it.live("a conflict with the base is a failed attempt with no command run", () =
     Ledger.create(dataDir, run, { clock: ticking(T0, 1000) }).close();
     const marker = NodePath.join(dataDir, "ran");
     const gate = yield* FactoryGate;
+    const input = baseInput(remote, dataDir, run, pr, base);
     const out = yield* gate.run({
-      ...baseInput(remote, dataDir, run, pr, base),
+      ...input,
       provision: [`touch '${marker}'`],
       gate: [`touch '${marker}'`],
+      options: { ...input.options, ...slowGit("gate-conflict-git", 0.3) },
     });
     const dir = NodePath.join(dataDir, "gate/rawphp__softfac__10__1/1");
     assert.deepStrictEqual(out, { _tag: "conflict", dir, paths: ["README"] });
@@ -1833,7 +1879,8 @@ it.live("a conflict with the base is a failed attempt with no command run", () =
       duration_ms: 0,
     });
     assert.strictEqual((lines[2]!.data as { attempt: number }).attempt, 1);
-    assert.isTrue(Number.isInteger((lines[2]!.data as { total_ms: number }).total_ms));
+    // Nine git calls at 0.3 s or more each, up to and including the aborted merge.
+    assert.isAtLeast((lines[2]!.data as { total_ms: number }).total_ms, 2_000);
     assert.deepStrictEqual(lines[1]!.cause, {
       step: "gate",
       reason: "gate-merge-conflict",

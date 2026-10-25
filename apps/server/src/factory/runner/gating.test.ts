@@ -2922,9 +2922,10 @@ describe("gate: the decision that the gate passed is in the ledger", () => {
 });
 
 /** The commit the checks are read for is the one that was gated. */
-const checksRead = (pairs: ReadonlyArray<readonly [string, string]>): Line => ({
+/** The `checks_read` line of a read on `sha`, the first gate's head unless said otherwise. */
+const checksRead = (pairs: ReadonlyArray<readonly [string, string]>, sha = HEAD): Line => ({
   event: "checks_read",
-  data: { sha: HEAD, checks: pairs.map(([name, state]) => ({ name, state })) },
+  data: { sha, checks: pairs.map(([name, state]) => ({ name, state })) },
 });
 
 const checksCall = (names: ReadonlyArray<string>) => `checks ${HEAD} ${names.join(",")}`;
@@ -4277,12 +4278,6 @@ describe("last_pass: what the pass reads before it starts the gate", () => {
   );
 });
 
-/** The `checks_read` line of a read on `sha`. */
-const checksReadOn = (sha: string, pairs: ReadonlyArray<readonly [string, string]>): Line => ({
-  event: "checks_read",
-  data: { sha, checks: pairs.map(([name, state]) => ({ name, state })) },
-});
-
 const againComments = (rig: Rig) =>
   rig.gh.world.prComments.filter((c) => c.startsWith("**Factory gate: passed again**"));
 
@@ -4309,7 +4304,7 @@ describe("regate: a re-gate pass waits for the required checks", () => {
       assert.strictEqual(rig.gh.calls[0], "pullRequest 12");
       assert.strictEqual(rig.gh.calls[1], `checks ${PUSHED} gate`);
       assert.deepStrictEqual(eventsOf(rig, "checks_read"), [
-        checksReadOn(PUSHED, [["gate", "passed"]]),
+        checksRead([["gate", "passed"]], PUSHED),
       ]);
       // The results are posted once, and the pass is complete.
       assert.deepStrictEqual(againComments(rig), [againComment(2, BASE, PUSHED_SHORT)]);
@@ -4334,7 +4329,7 @@ describe("regate: a re-gate pass waits for the required checks", () => {
       // session's first message, naming the check.
       assert.deepStrictEqual(againComments(rig), []);
       assert.deepStrictEqual(eventsOf(rig, "checks_read"), [
-        checksReadOn(PUSHED, [["gate", "failed"]]),
+        checksRead([["gate", "failed"]], PUSHED),
       ]);
       const req = rig.t3.launches[0]!;
       assert.ok(
@@ -4378,7 +4373,7 @@ describe("regate: a re-gate pass waits for the required checks", () => {
         [PUSHED, OTHER_HEAD],
       );
       assert.deepStrictEqual(eventsOf(rig, "checks_read"), [
-        checksReadOn(OTHER_HEAD, [["gate", "passed"]]),
+        checksRead([["gate", "passed"]], OTHER_HEAD),
       ]);
       assert.deepStrictEqual(againComments(rig), [againComment(3, BASE, OTHER_HEAD.slice(0, 7))]);
     }),
@@ -4401,11 +4396,222 @@ describe("regate: a re-gate pass waits for the required checks", () => {
       if (step.kind !== "stuck") return;
       assert.strictEqual(step.reason, "the required checks did not finish within 10 minutes");
       assert.deepStrictEqual(eventsOf(rig, "checks_read"), [
-        checksReadOn(PUSHED, [["gate", "pending"]]),
+        checksRead([["gate", "pending"]], PUSHED),
       ]);
       assert.deepStrictEqual(againComments(rig), []);
       assert.strictEqual(rig.gh.world.state, "stuck");
     }),
+  );
+
+  it.effect("a failed check on a re-gate with no retries left sends the issue to stuck", () =>
+    Effect.gen(function* () {
+      const rig = yield* prOpenRun();
+      rig.project = { ...rig.project, requiredChecks: ["gate"] };
+      withLimits(rig, { gateRetries: 0 });
+      scriptChecks(rig, [["failed"]]);
+      headMoved(rig);
+      const step = yield* regateStep(rig);
+      assert.strictEqual(step.kind, "stuck");
+      if (step.kind !== "stuck") return;
+      assert.ok(step.reason.startsWith("the required checks failed after 1 attempt"), step.reason);
+      assert.deepStrictEqual(eventsOf(rig, "checks_read"), [
+        checksRead([["gate", "failed"]], PUSHED),
+      ]);
+      // Nothing is launched after the last attempt, and nothing of the pass is posted.
+      assert.deepStrictEqual(rig.t3.launches, []);
+      assert.deepStrictEqual(eventsOf(rig, "regate_relaunching"), []);
+      assert.deepStrictEqual(againComments(rig), []);
+      assert.strictEqual(rig.gh.world.state, "stuck");
+    }),
+  );
+
+  it.effect(
+    "a check that fails after a pending read relaunches the session on the resumed call",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* prOpenRun();
+        rig.project = { ...rig.project, requiredChecks: ["gate"] };
+        scriptChecks(rig, [["pending"], ["failed"]]);
+        headMoved(rig);
+        assert.deepStrictEqual(yield* regateStep(rig), { kind: "checks-pending" });
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* regateStep(rig), { kind: "sent-back", attempt: 2 });
+        assert.deepStrictEqual(rig.ws.calls, []);
+        assert.deepStrictEqual(eventsOf(rig, "checks_read"), [
+          checksRead([["gate", "failed"]], PUSHED),
+        ]);
+        assert.deepStrictEqual(againComments(rig), []);
+        assert.ok(rig.t3.launches[0]!.message.includes("Check: gate"), rig.t3.launches[0]!.message);
+        // The new session starts from the pull request's branch as it is now, not the old one.
+        assert.strictEqual(rig.t3.launches[0]!.baseRef, "t3code/abc");
+        assertRelaunched(rig);
+      }),
+  );
+
+  it.effect("a changed issue text stops a re-gate before its checks' pass is posted", () =>
+    Effect.gen(function* () {
+      const rig = yield* prOpenRun();
+      rig.project = { ...rig.project, requiredChecks: ["gate"] };
+      scriptChecks(rig, [["pending"], ["passed"]]);
+      headMoved(rig);
+      assert.deepStrictEqual(yield* regateStep(rig), { kind: "checks-pending" });
+      // Someone who is not an instructor edited the issue while the checks ran.
+      rig.gh.unchanged.push(false);
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* regateStep(rig), {
+        kind: "stuck",
+        reason: CHANGED_DURING_BUILD_TEXT,
+      });
+      assert.deepStrictEqual(againComments(rig), []);
+      assert.deepStrictEqual(eventsOf(rig, "checks_read"), []);
+      assert.strictEqual(rig.gh.world.state, "stuck");
+    }),
+  );
+
+  it.effect(
+    "a changed issue text stops a re-gate before a failed check relaunches the session",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* prOpenRun();
+        rig.project = { ...rig.project, requiredChecks: ["gate"] };
+        scriptChecks(rig, [["pending"], ["failed"]]);
+        headMoved(rig);
+        assert.deepStrictEqual(yield* regateStep(rig), { kind: "checks-pending" });
+        rig.gh.unchanged.push(false);
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* regateStep(rig), {
+          kind: "stuck",
+          reason: CHANGED_DURING_BUILD_TEXT,
+        });
+        assert.deepStrictEqual(rig.t3.launches, []);
+        assert.deepStrictEqual(eventsOf(rig, "regate_relaunching"), []);
+        assert.deepStrictEqual(eventsOf(rig, "checks_read"), [
+          checksRead([["gate", "failed"]], PUSHED),
+        ]);
+        assert.strictEqual(rig.gh.world.state, "stuck");
+      }),
+  );
+
+  it.effect(
+    "an issue a person closed while the re-gate waited for its checks abandons the run",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* prOpenRun();
+        rig.project = { ...rig.project, requiredChecks: ["gate"] };
+        scriptChecks(rig, [["pending"], ["failed"]]);
+        headMoved(rig);
+        assert.deepStrictEqual(yield* regateStep(rig), { kind: "checks-pending" });
+        rig.gh.closed = true;
+        const comments = rig.gh.world.prComments.length;
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* regateStep(rig), { kind: "abandoned" });
+        // The person took the work over: the checks are not read, nothing is launched or posted,
+        // and the run is finished.
+        assert.ok(!rig.gh.calls.some((c) => c.startsWith("checks ")), rig.gh.calls.join("; "));
+        assert.deepStrictEqual(rig.t3.launches, []);
+        assert.deepStrictEqual(eventsOf(rig, "regate_relaunching"), []);
+        assert.strictEqual(rig.gh.world.prComments.length, comments);
+        assert.strictEqual(linesOf(rig).at(-1)?.event, "finished");
+      }),
+  );
+
+  it.effect("a pull request a reviewer drafted while the checks ran is not made ready again", () =>
+    Effect.gen(function* () {
+      const rig = yield* prOpenRun();
+      rig.project = { ...rig.project, requiredChecks: ["gate"] };
+      scriptChecks(rig, [["pending"], ["passed"]]);
+      headMoved(rig);
+      assert.deepStrictEqual(yield* regateStep(rig), { kind: "checks-pending" });
+      // A reviewer converted the pull request to a draft and took the issue.
+      rig.gh.pr = { ...rig.gh.pr!, isDraft: true };
+      rig.gh.world.prReady = false;
+      rig.gh.world.assignees = ["alice"];
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* regateStep(rig), { kind: "passed", pr: 12 });
+      // Nothing was cut short before the pass, so there is nothing to set again: the results
+      // are posted and the reviewer's draft and assignment stand.
+      assert.ok(!rig.gh.calls.includes("markPrReady 12"), rig.gh.calls.join("; "));
+      assert.isFalse(rig.gh.world.prReady);
+      assert.deepStrictEqual(rig.gh.world.assignees, ["alice"]);
+      assert.deepStrictEqual(againComments(rig), [againComment(2, BASE, PUSHED_SHORT)]);
+    }),
+  );
+
+  it.effect(
+    "a checks-failed relaunch cut short before its send is recorded is finished without a second launch",
+    () =>
+      Effect.gen(function* () {
+        const setup = () =>
+          Effect.map(prOpenRun(), (rig) => {
+            rig.project = { ...rig.project, requiredChecks: ["gate"] };
+            scriptChecks(rig, [["failed"]]);
+            headMoved(rig);
+            return rig;
+          });
+        // The pull request cannot be drafted: the call dies after the session was launched.
+        const probe = yield* setup();
+        yield* regateIn(probe);
+        const rig = yield* setup();
+        rig.gh.failAt = probe.gh.calls.indexOf("markPrDraft 12");
+        assert.strictEqual((yield* Effect.result(regateIn(rig)))._tag, "Failure");
+        assert.strictEqual(rig.t3.launches.length, 1);
+        // And before `gate_sent_back` reached the ledger: drop that last line.
+        dropLines(rig, '"gate_sent_back"');
+        rig.gh.failAt = null;
+        clearCalls(rig);
+        rig.t3.launches.length = 0;
+        assert.deepStrictEqual(yield* regateStep(rig), { kind: "sent-back", attempt: 2 });
+        assert.deepStrictEqual(rig.t3.launches, [], "the session is not launched again");
+        assert.strictEqual(rig.t3.made.size, 1, "T3 made one thread for the one launch call");
+        assert.deepStrictEqual(rig.ws.calls, [], "nothing is run again");
+        assert.deepStrictEqual(eventsOf(rig, "checks_read").length, 1);
+        assertRelaunched(rig);
+      }),
+  );
+
+  it.effect("the re-gate pass with required checks survives a failure of each call", () =>
+    gateCrashMatrix(
+      "regate-checks-pass",
+      () =>
+        Effect.map(prOpenRun(), (rig) => {
+          rig.project = { ...rig.project, requiredChecks: ["gate"] };
+          scriptChecks(rig, [["passed"]]);
+          headMoved(rig);
+          return rig;
+        }),
+      { kind: "passed", pr: 12 },
+      { at: -1, on: "pr" },
+      settledLedger,
+      REGATE_DRIVERS,
+    ),
+  );
+
+  it.effect("the re-gate failed check with required checks survives a failure of each call", () =>
+    gateCrashMatrix(
+      "regate-checks-fail",
+      () =>
+        Effect.map(prOpenRun(), (rig) => {
+          rig.project = { ...rig.project, requiredChecks: ["gate"] };
+          scriptChecks(rig, [["failed"]]);
+          headMoved(rig);
+          return rig;
+        }),
+      { kind: "sent-back", attempt: 2 },
+      null,
+      // A failure sent after a crash is built from the ledger, which keeps only the names of
+      // the checks that failed: the message then has no result and no link.
+      (events) =>
+        settledLedger(events).map((e) => {
+          if (e.event !== "regate_relaunching") return e;
+          const data = e.data as { attempt: number; branch: string; message: string };
+          const message = data.message
+            .split("\n")
+            .filter((l) => !l.startsWith("Result: ") && !l.startsWith("Details: "))
+            .join("\n");
+          return { ...e, data: { ...data, message } };
+        }),
+      REGATE_DRIVERS,
+    ),
   );
 });
 
