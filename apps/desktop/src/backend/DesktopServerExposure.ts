@@ -572,6 +572,7 @@ export const make = Effect.gen(function* () {
       port: state.port,
       serveEnabled: state.tailscaleServeEnabled,
       servePort: state.tailscaleServePort,
+      localHttpUrl: state.localHttpUrl,
       networkInterfaces: currentNetworkInterfaces,
       readStatus: Cache.get(
         tailscaleStatusCache,

@@ -17,6 +17,7 @@ import * as NodeOS from "node:os";
 import { isTailnetHost } from "@t3tools/shared/hostClassification";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "./ServerEnvironment.ts";
 import {
   formatHostForUrl,
   isLoopbackHost,
@@ -111,6 +112,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
+  const serverEnvironment = yield* ServerEnvironment.ServerEnvironmentIdentity;
   // Only the service default listens on every interface without being asked,
   // so only it checks once whether it runs in a cloud. The check starts now so
   // the first client does not wait for its timeout.
@@ -138,7 +140,10 @@ export const make = Effect.gen(function* () {
             magicDnsName,
             servePort: config.tailscaleServePort,
           });
-          return probeTailscaleHttpsEndpoint({ baseUrl: httpBaseUrl }).pipe(
+          return serverEnvironment.getEnvironmentId.pipe(
+            Effect.flatMap((environmentId) =>
+              probeTailscaleHttpsEndpoint({ baseUrl: httpBaseUrl, environmentId }),
+            ),
             Effect.map((reachable) => (reachable ? httpBaseUrl : null)),
           );
         }),

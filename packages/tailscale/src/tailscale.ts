@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientRequest } from "effect/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 export const DEFAULT_TAILSCALE_SERVE_PORT = 443;
@@ -593,19 +593,33 @@ export const releaseTailscaleServe = Effect.fn("tailscale.releaseTailscaleServe"
   return true;
 });
 
-export const probeTailscaleHttpsEndpoint = Effect.fn("tailscale.probeTailscaleHttpsEndpoint")(
+const T3EnvironmentIdentity = Schema.Struct({ environmentId: Schema.String });
+
+/** The environment id the T3 server at `baseUrl` reports, if one answers there. */
+export const readT3EnvironmentId = Effect.fn("tailscale.readT3EnvironmentId")(
   function* (input: { readonly baseUrl: string; readonly timeout?: Duration.Input }) {
     const client = yield* HttpClient.HttpClient;
-    const response = yield* Effect.gen(function* () {
-      const url = new URL("/.well-known/t3/environment", input.baseUrl);
-      const request = HttpClientRequest.get(url.toString());
-      return yield* client.execute(request);
-    }).pipe(Effect.timeoutOption(input.timeout ?? TAILSCALE_PROBE_TIMEOUT));
-
-    return Option.match(response, {
-      onNone: () => false,
-      onSome: (httpResponse) => httpResponse.status >= 200 && httpResponse.status < 300,
-    });
+    const url = new URL("/.well-known/t3/environment", input.baseUrl);
+    const identity = yield* client
+      .execute(HttpClientRequest.get(url.toString()))
+      .pipe(
+        Effect.flatMap(HttpClientResponse.filterStatusOk),
+        Effect.flatMap(HttpClientResponse.schemaBodyJson(T3EnvironmentIdentity)),
+        Effect.timeoutOption(input.timeout ?? TAILSCALE_PROBE_TIMEOUT),
+      );
+    return Option.map(identity, (body) => body.environmentId);
   },
-  Effect.orElseSucceed(() => false),
+  Effect.orElseSucceed(() => Option.none<string>()),
+);
+
+/** Serve keys a mapping by port alone, so another server on this host can answer the URL. */
+export const probeTailscaleHttpsEndpoint = Effect.fn("tailscale.probeTailscaleHttpsEndpoint")(
+  function* (input: {
+    readonly baseUrl: string;
+    readonly environmentId: string;
+    readonly timeout?: Duration.Input;
+  }) {
+    const served = yield* readT3EnvironmentId(input);
+    return Option.contains(served, input.environmentId);
+  },
 );
