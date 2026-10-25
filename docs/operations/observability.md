@@ -636,7 +636,7 @@ or `web`. The server's `t3code.server.managed_by` is `desktop` when the desktop 
 
 Every resource also carries a `service.instance.id`: random per process for the server and desktop,
 per page load for the UI, and the Expo session on mobile. A `service.instance.id` in
-`OTEL_RESOURCE_ATTRIBUTES` replaces the generated one.
+`OTEL_RESOURCE_ATTRIBUTES` replaces the generated one on the server and desktop.
 
 If the OTLP URLs are unset, local tracing still works, metrics stay in-process only, and logs stay
 on stdout only.
