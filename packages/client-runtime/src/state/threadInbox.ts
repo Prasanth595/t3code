@@ -130,7 +130,7 @@ export function createInboxReturnTracker() {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let version = 0;
   const now = () => {
-    // @effect-diagnostics-next-line globalDate:off
+    // @effect-diagnostics-next-line globalDate:off - The grace deadline is wall-clock time shared by web and native clients.
     return Date.now();
   };
   const schedule = () => {
@@ -179,7 +179,7 @@ export function createInboxReturnTracker() {
       }
       const present = new Set<string>();
       const at = now();
-      // @effect-diagnostics-next-line globalDate:off
+      // @effect-diagnostics-next-line globalDate:off - Snooze checks compare wall-clock ISO times.
       const observedAt = new Date(at).toISOString();
       for (const thread of threads) {
         const key = keyOf(thread);
