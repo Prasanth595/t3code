@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 
 import { readableProviderErrorMessage } from "./providerErrorMessage.ts";
 
-const CLOUDFLARE_TUNNEL_PAGE = `<!doctype html><html><head><title>Cloudflare Tunnel error | llm.thirdamendment.ai | Cloudflare</title></head><body>error code: 1033</body></html>`;
+const CLOUDFLARE_TUNNEL_PAGE = `<!doctype html><html><head><title>Cloudflare Tunnel error | llm.example.com | Cloudflare</title></head><body>error code: 1033</body></html>`;
 
 describe("readableProviderErrorMessage", () => {
   // regression: OpenCode stores AI_APICallError as the message "<none>" when the
@@ -16,7 +16,7 @@ describe("readableProviderErrorMessage", () => {
           statusCode: 530,
           responseBody: CLOUDFLARE_TUNNEL_PAGE,
         }),
-        "Cloudflare Tunnel error | llm.thirdamendment.ai | Cloudflare (HTTP 530).",
+        "Cloudflare Tunnel error | llm.example.com | Cloudflare (HTTP 530).",
       );
     }),
   );
