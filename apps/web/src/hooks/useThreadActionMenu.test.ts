@@ -157,6 +157,7 @@ const createMenu = (options: { readonly withFind?: boolean } = {}) =>
     projectCwd: "/project",
     onStartRename: () => recordEffect("rename"),
     ...(options.withFind ? { onFind: () => recordEffect("find") } : {}),
+    canShareWithGuest: false,
   });
 
 beforeEach(() => {
