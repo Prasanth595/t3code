@@ -606,6 +606,8 @@ export function filterCommandPaletteGroups(input: {
       )
       .slice(0, limit)
       .map(({ item, match }) => {
+        // Suggestion titles are the query restated, so bolding them bolds the whole row.
+        if (group.value === "nested-search") return item;
         if (match.ranges.length > 0) return { ...item, titleRanges: match.ranges };
         // Built only for the rows shown.
         const matchHint = match.explain?.();
