@@ -3193,7 +3193,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     ["a normalized idle command", "agent", "server", undefined, true, " \t\u00a0/COMPACT\u3000\n"],
     ["an ordinary prompt with idle metadata", "user", "web", "onReturn", false, "Continue"],
   ] as const)(
-    "marks the shell's latest run silent only for %s",
+    "keeps the shell on the user's last turn only during %s",
     ([name, createdBy, creationSource, idleCompaction, silent, text]) =>
       Effect.gen(function* () {
         const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
@@ -3270,23 +3270,45 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             userMessageId: messageId,
             rootNodeId: null,
             activeAttemptId: null,
-            status: "completed",
+            status: "running",
             requestedAt: now,
             startedAt: now,
-            completedAt: now,
+            completedAt: null,
             checkpointId: null,
             contextHandoffId: null,
           },
         });
 
-        const sqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
-          (thread) => thread.id === threadId,
-        );
-        const memoryShell = ProjectionStore.threadShellFromProjection(
-          yield* projectionStore.getThreadProjection(threadId),
-        );
-        assert.equal(sqlShell?.latestRunSilent, silent);
-        assert.equal(memoryShell.latestRunSilent, silent);
+        const presented = Effect.gen(function* () {
+          const sqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
+            (thread) => thread.id === threadId,
+          );
+          const memoryShell = ProjectionStore.threadShellFromProjection(
+            yield* projectionStore.getThreadProjection(threadId),
+          );
+          return [sqlShell, memoryShell].map((shell) => ({
+            latestRunId: shell?.latestRunId ?? null,
+            activityRunStatus: shell?.activityRunStatus ?? null,
+            activeRunId: shell?.activeRunId ?? null,
+            latestUserMessageAt: shell?.latestUserMessageAt != null,
+          }));
+        });
+        const visible = {
+          latestRunId: runId,
+          activityRunStatus: "running" as const,
+          activeRunId: runId,
+          latestUserMessageAt: true,
+        };
+        const hidden = {
+          latestRunId: null,
+          activityRunStatus: null,
+          activeRunId: null,
+          latestUserMessageAt: false,
+        };
+        assert.deepStrictEqual(yield* presented, [
+          silent ? hidden : visible,
+          silent ? hidden : visible,
+        ]);
 
         // Claude can finish the run successfully even when its /compact failed.
         yield* projectionStore.apply({
@@ -3315,17 +3337,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             updatedAt: now,
           },
         });
-        assert.equal(
-          (yield* projectionStore.getShellSnapshot()).threads.find(
-            (thread) => thread.id === threadId,
-          )?.latestRunSilent,
-          false,
-        );
-        assert.equal(
-          ProjectionStore.threadShellFromProjection(
-            yield* projectionStore.getThreadProjection(threadId),
-          ).latestRunSilent,
-          false,
+        // A failure needs the user, so it surfaces even though its prompt stays hidden.
+        assert.deepStrictEqual(
+          yield* presented,
+          [visible, visible].map((shell) =>
+            silent ? { ...shell, latestUserMessageAt: false } : shell,
+          ),
         );
       }),
   );
