@@ -373,7 +373,8 @@ describe("ssh tunnel scripts", () => {
 
 describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("launch script", () => {
   // Stands in for `t3 serve`: answers HTTP and writes its home's runtime file.
-  const FAKE_SERVER = `const fs = require("node:fs");
+  const FAKE_SERVER = `process.title = "t3 (srv) test";
+const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const args = process.argv.slice(2);
@@ -442,7 +443,7 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
                   ),
                 }
               : {}),
-            env: { PATH: process.env.PATH ?? "", HOME: home },
+            env: { PATH: `${home}/bin:${process.env.PATH ?? ""}`, HOME: home },
             extendEnv: false,
           }),
         );
@@ -468,7 +469,13 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
           serverKind: string;
         };
       });
-    return { fs, stateDir, readManagedPid, launch, launchScript };
+    const overrideProcessStart = (value: string) =>
+      Effect.gen(function* () {
+        yield* fs.makeDirectory(`${home}/bin`, { recursive: true });
+        yield* fs.writeFileString(`${home}/bin/ps`, `#!/bin/sh\nprintf '%s\\n' '${value}'\n`);
+        yield* fs.chmod(`${home}/bin/ps`, 0o700);
+      });
+    return { fs, stateDir, readManagedPid, launch, launchScript, overrideProcessStart };
   });
 
   it.live("keeps managing its server after the connection's state key changes", () =>
@@ -559,4 +566,42 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
       assert.isTrue(isAlive(pid));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("Linux process identity", () => {
+    it.live("keeps ownership when the wall-clock start time changes", () =>
+      Effect.gen(function* () {
+        const { fs, stateDir, readManagedPid, launch, overrideProcessStart } = yield* prepareLaunch;
+        const launched = yield* launch("old-alias");
+        const pid = yield* readManagedPid("old-alias");
+        yield* overrideProcessStart("a corrected wall-clock start time");
+
+        assert.deepEqual(yield* launch("new-alias"), launched);
+        assert.equal(yield* readManagedPid("new-alias"), pid);
+        const stat = yield* fs.readFileString(`/proc/${pid}/stat`);
+        const bootId = (yield* fs.readFileString("/proc/sys/kernel/random/boot_id")).trim();
+        const startTicks = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
+        assert.equal(
+          yield* fs.readFileString(`${stateDir("new-alias")}/process-start`),
+          `linux:${bootId}:${startTicks}\n`,
+        );
+        assert.isTrue(isAlive(pid));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+
+    it.live("migrates a matching legacy start time before transferring ownership", () =>
+      Effect.gen(function* () {
+        const { fs, stateDir, readManagedPid, launch, overrideProcessStart } = yield* prepareLaunch;
+        const launched = yield* launch("old-alias");
+        const pid = yield* readManagedPid("old-alias");
+        const legacyStart = "Thu Oct  1 00:00:00 2026";
+        yield* fs.writeFileString(`${stateDir("old-alias")}/process-start`, `${legacyStart}\n`);
+        yield* overrideProcessStart(legacyStart);
+
+        assert.deepEqual(yield* launch("new-alias"), launched);
+        assert.equal(yield* readManagedPid("new-alias"), pid);
+        assert.match(yield* fs.readFileString(`${stateDir("new-alias")}/process-start`), /^linux:/);
+        assert.isFalse(yield* fs.exists(`${stateDir("old-alias")}/managed`));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+  });
 });

@@ -556,7 +556,29 @@ trap 'exit 130' INT
 trap 'exit 141' PIPE
 trap 'exit 143' TERM
 process_start() {
-  LC_ALL=C TZ=UTC ps -p "$1" -o lstart= 2>/dev/null
+  # Boot identity and start ticks survive clock corrections without matching across reboots.
+  if [ -r /proc/sys/kernel/random/boot_id ]; then
+    PROCESS_STAT="$(cat "/proc/$1/stat" 2>/dev/null)" || return 1
+    BOOT_ID="$(cat /proc/sys/kernel/random/boot_id)" || return 1
+    # Strip the command, which may contain spaces or parentheses, before field 22.
+    set -- \${PROCESS_STAT##*) }
+    [ "$#" -ge 20 ] || return 1
+    shift 19
+    case "$1" in ''|*[!0-9]*) return 1 ;; esac
+    printf 'linux:%s:%s\\n' "$BOOT_ID" "$1"
+  else
+    LC_ALL=C TZ=UTC ps -p "$1" -o lstart= 2>/dev/null
+  fi
+}
+matches_process_start() {
+  RECORDED_START="$(cat "$2" 2>/dev/null || true)"
+  [ -n "$RECORDED_START" ] || return 1
+  CURRENT_START="$(process_start "$1")" || return 1
+  [ "$CURRENT_START" = "$RECORDED_START" ] && return 0
+  case "$RECORDED_START" in linux:*) return 1 ;; esac
+  # Upgrade legacy ps records only while their original identity still matches.
+  [ "$(LC_ALL=C TZ=UTC ps -p "$1" -o lstart= 2>/dev/null)" = "$RECORDED_START" ] || return 1
+  printf '%s\\n' "$CURRENT_START" >"$2"
 }
 `;
 
@@ -680,7 +702,7 @@ launcher_state_dir_for_pid() {
     # server after PID reuse. Only transfer a recorded process identity.
     RECORDED_START="$(cat "$OTHER_STATE_DIR/process-start" 2>/dev/null || true)"
     [ -n "$RECORDED_START" ] && [ -f "$OTHER_STATE_DIR/active-runner.sh" ] || continue
-    [ "$(process_start "$1" || true)" = "$RECORDED_START" ] || continue
+    matches_process_start "$1" "$OTHER_STATE_DIR/process-start" || continue
     printf '%s\\n' "$OTHER_STATE_DIR"
     return 0
   done
@@ -690,7 +712,7 @@ REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 RECORDED_START="$(cat "$PROCESS_START_FILE" 2>/dev/null || true)"
-if [ -n "$RECORDED_START" ] && [ "$(process_start "$REMOTE_PID" || true)" != "$RECORDED_START" ]; then
+if [ -n "$RECORDED_START" ] && ! matches_process_start "$REMOTE_PID" "$PROCESS_START_FILE"; then
   REMOTE_PID=""
   REMOTE_MANAGED=""
   rm -f "$PID_FILE" "$PROCESS_START_FILE" "$MANAGED_FILE"
@@ -845,7 +867,7 @@ MANAGED_FILE="$STATE_DIR/managed"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 RECORDED_START="$(cat "$PROCESS_START_FILE" 2>/dev/null || true)"
-if [ -n "$RECORDED_START" ] && [ "$(process_start "$REMOTE_PID" || true)" != "$RECORDED_START" ]; then
+if [ -n "$RECORDED_START" ] && ! matches_process_start "$REMOTE_PID" "$PROCESS_START_FILE"; then
   REMOTE_PID=""
 fi
 if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
