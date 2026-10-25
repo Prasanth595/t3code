@@ -1338,7 +1338,7 @@ it.live(
       const lines = entries(dataDir, run);
       assert.deepStrictEqual(
         lines.map((l) => l.event),
-        ["gate_checkout", "gate_command", "gate_command"],
+        ["gate_checkout", "gate_command", "gate_command", "gate_finished"],
       );
       assert.deepStrictEqual(lines[0]!.data, { attempt: 1, dir, sha, base_sha: sha });
       assert.deepStrictEqual(lines[0]!.cause, {
@@ -1360,6 +1360,17 @@ it.live(
           attempt: 1,
         });
       });
+      // The attempt ends with how long it took, from the start of the checkout to the end of
+      // the last command: at least what the commands themselves took.
+      const finished = lines.at(-1)!;
+      const total = (finished.data as { attempt: number; total_ms: number }).total_ms;
+      assert.strictEqual((finished.data as { attempt: number }).attempt, 1);
+      assert.isTrue(Number.isInteger(total), String(total));
+      assert.isAtLeast(
+        total,
+        out.commands.reduce((sum, c) => sum + c.durationMs, 0),
+      );
+      assert.deepStrictEqual(finished.cause, { step: "gate", reason: "gate-finished", attempt: 1 });
       // The primary checkout was not used: no new worktree, and the commit is not in its object
       // store.
       assert.notStrictEqual(spawnGit(remote.primary, ["cat-file", "-e", sha]).status, 0);
@@ -1411,7 +1422,7 @@ it.live("provision runs before the gate and a failing provision command stops th
     const lines = entries(dataDir, run2);
     assert.deepStrictEqual(
       lines.map((l) => l.event),
-      ["gate_checkout", "gate_command", "gate_command"],
+      ["gate_checkout", "gate_command", "gate_command", "gate_finished"],
     );
     assert.deepStrictEqual(
       lines
@@ -1453,7 +1464,7 @@ it.live("a failing gate command ends the attempt and the later commands do not r
     const lines = entries(dataDir, run);
     assert.deepStrictEqual(
       lines.map((l) => l.event),
-      ["gate_checkout", "gate_command", "gate_command"],
+      ["gate_checkout", "gate_command", "gate_command", "gate_finished"],
     );
     assert.strictEqual((lines[2]!.data as { exit_code: number }).exit_code, 4);
   }).pipe(provided),
@@ -1736,6 +1747,29 @@ it.live("a command line whose sync fails is in the ledger, so the attempt is use
   }).pipe(provided),
 );
 
+it.live("a timing line that cannot be written leaves the attempt's result as it is", () =>
+  Effect.gen(function* () {
+    // Write 1 is gate_checkout, 2 the command's line, 3 the timing line.
+    const remote = makeRemote("gate-record-timing");
+    const dataDir = tempDir("gate-record-timing-data");
+    const run = newRunId(REPO, "10", 1);
+    const sha = remote.push([["README", "pushed\n"]]);
+    Ledger.create(dataDir, run, { clock: ticking(T0, 1000) }).close();
+    const input = baseInput(remote, dataDir, run, sha, sha);
+    const out = yield* (yield* FactoryGate).run({
+      ...input,
+      gate: ["true"],
+      options: { ...input.options, ledgerIo: failingLedgerIo({ write: 3 }) },
+    });
+    assert.strictEqual(out._tag, "pass");
+    assert.strictEqual(gateLocksHeld(dataDir), 0);
+    assert.deepStrictEqual(
+      entries(dataDir, run).map((l) => l.event),
+      ["gate_checkout", "gate_command"],
+    );
+  }).pipe(provided),
+);
+
 it.live("a ledger failure before any command line went in uses no attempt", () =>
   Effect.gen(function* () {
     const { error, events } = yield* gateWithLedgerIo(
@@ -1789,7 +1823,7 @@ it.live("a conflict with the base is a failed attempt with no command run", () =
     const lines = entries(dataDir, run);
     assert.deepStrictEqual(
       lines.map((l) => l.event),
-      ["gate_checkout", "gate_command"],
+      ["gate_checkout", "gate_command", "gate_finished"],
     );
     assert.deepStrictEqual(lines[0]!.data, { attempt: 1, dir, sha: pr, base_sha: base });
     assert.deepStrictEqual(lines[1]!.data, {
@@ -1798,6 +1832,8 @@ it.live("a conflict with the base is a failed attempt with no command run", () =
       exit_code: 1,
       duration_ms: 0,
     });
+    assert.strictEqual((lines[2]!.data as { attempt: number }).attempt, 1);
+    assert.isTrue(Number.isInteger((lines[2]!.data as { total_ms: number }).total_ms));
     assert.deepStrictEqual(lines[1]!.cause, {
       step: "gate",
       reason: "gate-merge-conflict",
@@ -1865,9 +1901,9 @@ it.live("a checkout that cannot be removed leaves a gate_cleanup_failed line", (
       const lines = entries(dataDir, run);
       assert.deepStrictEqual(
         lines.map((l) => l.event),
-        ["gate_checkout", "gate_command", "gate_cleanup_failed"],
+        ["gate_checkout", "gate_command", "gate_finished", "gate_cleanup_failed"],
       );
-      const failed = lines[2]!;
+      const failed = lines[3]!;
       const data = failed.data as { dir: string; error: string };
       assert.strictEqual(data.dir, dir);
       assert.isTrue(data.error.startsWith(`could not remove the checkout: ${dir}: `), data.error);
@@ -1904,7 +1940,7 @@ it.live("a leftover of a call the server died in is removed before the next chec
     assert.isFalse(NodeFS.existsSync(root));
     assert.deepStrictEqual(
       entries(dataDir, run).map((l) => l.event),
-      ["gate_checkout", "gate_command", "gate_command"],
+      ["gate_checkout", "gate_command", "gate_command", "gate_finished"],
     );
   }).pipe(provided),
 );

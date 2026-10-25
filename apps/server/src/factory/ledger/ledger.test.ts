@@ -225,6 +225,10 @@ const sampleEvents: ReadonlyArray<{ readonly event: RunEvent; readonly line: str
     ),
   },
   {
+    event: { event: "gate_finished", data: { attempt: 2, total_ms: 754321 } },
+    line: lineAtT0("gate_finished", `{"attempt":2,"total_ms":754321}`),
+  },
+  {
     event: {
       event: "gate_regate",
       data: {
@@ -632,9 +636,9 @@ describe("append", () => {
       expect(readText(ledger.path), event.event).toBe(line);
       seen.add(event.event);
     });
-    // Every one of the 31 event types has at least one exact line.
+    // Every one of the 32 event types has at least one exact line.
     expect([...seen].sort()).toEqual(Object.keys(RUN_EVENT_FIELDS).sort());
-    expect(seen.size).toBe(31);
+    expect(seen.size).toBe(32);
   });
 
   it("event name is the snake case type, and data holds exactly the field list in order", () => {
