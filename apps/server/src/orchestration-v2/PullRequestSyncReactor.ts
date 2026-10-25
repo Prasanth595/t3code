@@ -1,6 +1,7 @@
 import {
   CommandId,
   isOrchestrationV2WorkActive,
+  type OrchestrationV2TurnItem,
   type PullRequestSummary,
   type ThreadId,
   type ThreadPullRequestKey,
@@ -48,6 +49,59 @@ const isChangeRequestCloseCommand = (command: string) =>
   sourceControlDefinitions.definitions.some(
     (definition) => definition.changeRequestCloseCommand?.test(command) === true,
   );
+
+// Where a shell starts a command, past `NAME=value` assignments and wrappers like `timeout 60`.
+// A create command anywhere else, as in `echo "gh pr create"`, is text, not a command that runs.
+const COMMAND_START =
+  "(?:^|[;&|({`\\n]|\\b(?:do|then|else)\\s)\\s*(?:(?:\\w+=\\S*|env|time|nohup|timeout\\s+\\S+)\\s+)*";
+const CREATE_COMMANDS = sourceControlDefinitions.definitions.flatMap(
+  ({ changeRequestCreateCommand: command }) =>
+    command === undefined
+      ? []
+      : [{ command, run: new RegExp(COMMAND_START + command.source, "u") }],
+);
+const runsChangeRequestCreateCommand = (script: string) =>
+  CREATE_COMMANDS.some(({ run }) => run.test(script));
+
+// Codex runs each command as `/bin/zsh -lc "<script>"`.
+const SHELL_WRAPPER = /^\s*(?:\S*\/)?(?:ba|z|da|k)?sh\s+-l?c\s+(["'])([\s\S]*)\1\s*$/u;
+// A heredoc body is text a command writes, such as a pull request body, not commands it runs.
+const HEREDOC_BODY = /<<-?[ \t]*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?(?:\n[ \t]*\2[ \t]*(?=\n|$)|$)/gu;
+const COMMAND_SEPARATOR = /&&|\|\||[;|\n]/u;
+const URL_LINE = /^[ \t]*(https?:\/\/\S+)[ \t]*$/gmu;
+
+function shellScript(input: string): string {
+  const [, quote, script] = SHELL_WRAPPER.exec(input) ?? [];
+  if (script === undefined) return input;
+  return quote === '"' ? script.replace(/\\(["\\$`])/gu, "$1") : script;
+}
+
+type CommandExecution = Extract<OrchestrationV2TurnItem, { readonly type: "command_execution" }>;
+
+/**
+ * The change requests a shell command opened: URLs on lines of their own in the output of a
+ * command that runs a host's create command. One the command also names, as `gh pr view 12`
+ * does, existed before it ran.
+ */
+function changeRequestsCreatedBy(input: string, output: string) {
+  if (!CREATE_COMMANDS.some(({ command }) => command.test(input))) return [];
+  const script = shellScript(input).replace(HEREDOC_BODY, "<<");
+  if (!runsChangeRequestCreateCommand(script)) return [];
+  const otherCommands = script
+    .split(COMMAND_SEPARATOR)
+    .filter((part) => !runsChangeRequestCreateCommand(part))
+    .join("\n");
+  const created = new Map<string, ThreadPullRequestKey & { readonly url: string }>();
+  for (const [, url = ""] of output.matchAll(URL_LINE)) {
+    const link = sourceControlDefinitions.parseChangeRequestUrl(url)?.link;
+    if (link === undefined) continue;
+    const named = new RegExp(`(?:^|(?<=[\\s#/=('"]))${link.number}(?=$|[\\s'");&|/])`, "u");
+    if (named.test(otherCommands)) continue;
+    const key = normalizeThreadPullRequestKey(link);
+    created.set(threadPullRequestKeyOf(key), { ...key, url });
+  }
+  return [...created.values()];
+}
 
 const isPullRequestProviderError = Schema.is(PullRequestProviderError);
 
@@ -500,6 +554,32 @@ export const make = Effect.gen(function* () {
       Effect.catchCause(logSkipped("pull request refresh after run skipped", { threadId })),
     );
 
+  // An agent that opens a pull request from a shell gets it linked as link_pull_request would.
+  const linkCreatedChangeRequests = (threadId: ThreadId, item: CommandExecution) =>
+    isOrchestrationV2WorkActive(item.status)
+      ? Effect.void
+      : Effect.forEach(
+          changeRequestsCreatedBy(item.input, item.output ?? ""),
+          (created) =>
+            engine
+              .dispatch({
+                type: "thread.pull-request.link",
+                // Stable per command, so a repeated settlement cannot relink one the user unlinked.
+                commandId: CommandId.make(
+                  `server:pr-created-link:${threadId}:${item.id}:${threadPullRequestKeyOf(created)}`,
+                ),
+                threadId,
+                ...created,
+                source: "created",
+              })
+              .pipe(
+                Effect.catchCause(
+                  logSkipped("linking a pull request a command created failed", { threadId }),
+                ),
+              ),
+          { discard: true },
+        );
+
   const start: PullRequestSyncReactor["Service"]["start"] = Effect.fn(
     "PullRequestSyncReactor.start",
   )(function* () {
@@ -532,14 +612,14 @@ export const make = Effect.gen(function* () {
           // ends. Read again when the run ends, since `merge --auto` returns before it merges.
           case "turn-item.updated": {
             const item = event.payload;
-            if (item.type !== "command_execution" || !isChangeRequestCloseCommand(item.input)) {
-              return Effect.void;
-            }
+            if (item.type !== "command_execution") return Effect.void;
+            const linked = linkCreatedChangeRequests(event.threadId, item);
+            if (!isChangeRequestCloseCommand(item.input)) return linked;
             const ended = closeCommands.get(event.threadId) ?? new Set<string>();
             closeCommands.set(event.threadId, ended);
-            if (isOrchestrationV2WorkActive(item.status) || ended.has(item.id)) return Effect.void;
+            if (isOrchestrationV2WorkActive(item.status) || ended.has(item.id)) return linked;
             ended.add(item.id);
-            return refreshOpenLinks(event.threadId);
+            return Effect.andThen(linked, refreshOpenLinks(event.threadId));
           }
           case "run.updated":
             return isTerminalRunStatus(event.payload.status) && closeCommands.delete(event.threadId)
