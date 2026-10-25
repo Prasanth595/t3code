@@ -84,12 +84,20 @@ try {
     await NodeFSP.writeFile(NodePath.join(cwd, "input.txt"), "version-a");
   }
   console.log("First checkout:\n" + (await run("a")));
-  const reader = JSON.parse(
-    await NodeFSP.readFile(
-      NodePath.join(NodeOS.homedir(), ".config/t3-task-cache/ci-reader.json"),
-      "utf8",
-    ),
-  );
+  const readerFile = NodePath.join(NodeOS.homedir(), ".config/t3-task-cache/ci-reader.json");
+  let reader;
+  try {
+    reader = JSON.parse(await NodeFSP.readFile(readerFile, "utf8"));
+  } catch (error) {
+    if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+    const credentials = JSON.parse(
+      await NodeFSP.readFile(
+        NodePath.join(NodeOS.homedir(), ".config/t3-task-cache/credentials.json"),
+        "utf8",
+      ),
+    );
+    reader = credentials[endpoint];
+  }
   const otherHome = NodePath.join(root, "other-developer");
   await NodeFSP.mkdir(NodePath.join(otherHome, ".config/t3-task-cache"), { recursive: true });
   await NodeFSP.writeFile(
