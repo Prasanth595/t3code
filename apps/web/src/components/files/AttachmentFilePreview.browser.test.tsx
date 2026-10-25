@@ -109,6 +109,12 @@ describe("bounded binary previews", () => {
       const entry = await request({ type: "entry", path: "café\n9 size=1\nname.txt" });
       if (entry.type !== "entry") throw new Error("Expected entry");
       expect(new TextDecoder().decode(entry.bytes)).toBe("hello");
+      expect(entry.bytes.buffer.byteLength).toBe(5);
+      entry.bytes[0] = 0;
+      const reopened = await request({ type: "entry", path: entry.path });
+      if (reopened.type !== "entry") throw new Error("Expected entry");
+      expect(new TextDecoder().decode(reopened.bytes)).toBe("hello");
+      expect(reopened.bytes.buffer.byteLength).toBe(5);
     } finally {
       worker.terminate();
     }

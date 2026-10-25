@@ -130,7 +130,7 @@ function tarEntries(bytes: Uint8Array<ArrayBuffer>) {
         directory: type === "5",
         modified: Number.isNaN(date.getTime()) ? null : date.toISOString(),
       });
-      if (type !== "5") files.set(path, content);
+      if (type !== "5") files.set(path, content.slice());
     }
     offset += 512 + Math.ceil(size / 512) * 512;
   }
