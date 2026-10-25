@@ -242,6 +242,14 @@ export interface Seen {
   readonly regateMoved: Moved | null;
   /** That re-gate recorded its pass (`gate-passed`), and the results are not posted yet. */
   readonly regatePassed: boolean;
+  /**
+   * The pass on record was written by a re-gate call that resumed an earlier one (its cause says
+   * `gate-passed-resumed`): a stuck path the earlier call did not finish may have drafted the
+   * pull request or relabelled the issue, so finishing the pass sets the ready state again. A
+   * pass a first call recorded has nothing to set again, and a person's draft or assignment
+   * made while the checks ran stands.
+   */
+  readonly regatePassReassert: boolean;
   /** That re-gate's failure was recorded as sent back, and the state has not changed yet. */
   readonly regateSentBack: boolean;
   /** The newest `regate_relaunching` or `feedback_relaunching` line, until the state changes. */
@@ -343,6 +351,8 @@ export const COMMENT_DROPPED = "comment-dropped";
 export const GATE_SENDING = "gate-sending";
 /** The ledger step that records the decision that an attempt passed: `gate-passed <sha> <n>`. */
 export const GATE_PASSED = "gate-passed";
+/** The cause reason of a `gate-passed` step a resumed re-gate call wrote; `gate-passed` otherwise. */
+export const GATE_PASSED_RESUMED = "gate-passed-resumed";
 /** The ledger step that says the gate results are on the pull request. */
 export const GATE_RESULTS_POSTED = "gate-results-posted";
 
@@ -454,6 +464,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let regating = false;
   let regateMoved: Moved | null = null;
   let regatePassed = false;
+  let regatePassReassert = false;
   let regateSentBack = false;
   let relaunch: Relaunch | null = null;
   let launchedSinceSending = false;
@@ -584,6 +595,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
           checksPassed = null;
           checksFailed = null;
           regatePassed = regating;
+          regatePassReassert = entry.cause?.reason === GATE_PASSED_RESUMED;
           // The step's own cause names the attempt; a ledger from before it did is read by the
           // last command.
           const fromCause = entry.cause === null ? undefined : entry.cause.attempt;
@@ -900,6 +912,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     regating,
     regateMoved,
     regatePassed,
+    regatePassReassert,
     regateSentBack,
     relaunch,
     launchedSinceSending,
