@@ -114,8 +114,8 @@ export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
           {children}
         </table>
       </ScrollArea>
-      {/* Pulls the icon buttons' padding out so the glyphs line up with the cell text. */}
-      <div className="mt-0.5 -mx-1.5 flex items-center justify-between select-none">
+      {/* Stays within the row's px-1: the chat lane clips sideways overflow. */}
+      <div className="mt-0.5 -mx-1 flex items-center justify-between select-none">
         {hasClippedCells ? (
           <Tooltip>
             <TooltipTrigger
