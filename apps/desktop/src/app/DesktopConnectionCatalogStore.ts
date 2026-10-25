@@ -234,7 +234,7 @@ const writeDocument = Effect.fn("desktop.connectionCatalogStore.writeDocument")(
       ),
     );
     if (input.flush) {
-      // Windows requires a writable handle for sync; close it before renaming.
+      // Windows requires a writable handle for sync.
       yield* input.fileSystem.open(tempPath, { flag: "r+" }).pipe(
         Effect.flatMap((file) => file.sync),
         Effect.scoped,
@@ -469,8 +469,7 @@ export const make = Effect.gen(function* () {
     function* (bytes: Uint8Array) {
       const digest = Hex.encode(yield* crypto.digest("SHA-256", bytes));
       const backupPath = `${catalogPath}.corrupt.${digest}`;
-      // Preserve the failed snapshot, never move a file another process may have replaced.
-      // Atomic replacement also repairs a partial backup left by an earlier crash.
+      // Back up the failed snapshot without moving a concurrent replacement.
       yield* writeDocument({
         fileSystem,
         path,
