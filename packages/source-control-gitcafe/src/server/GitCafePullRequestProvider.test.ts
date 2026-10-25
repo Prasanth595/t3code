@@ -191,6 +191,26 @@ describe("GitCafePullRequestProvider changed paths", () => {
     }).pipe(Effect.provide(server.layer));
   });
 
+  it.effect.each(["getDiff", "getDiffFilePaths"] as const)(
+    "%s rejects a repeated continuation cursor",
+    (method) => {
+      const server = fakeGitCafe({
+        "GET /repos/owner/repo/pulls/7": pull,
+        "GET /repos/owner/repo/pulls/7/changes": { ...snapshot, items: [], next: "same-page" },
+      });
+      return Effect.gen(function* () {
+        const provider = yield* GitCafePullRequestProvider.make;
+        const first = yield* provider[method]!(target);
+        const input = { ...target, cursor: first.nextCursor! };
+        const result =
+          method === "getDiff"
+            ? yield* provider.getDiff(input).pipe(Effect.result)
+            : yield* provider.getDiffFilePaths!(input).pipe(Effect.result);
+        assert.strictEqual(result._tag, "Failure");
+      }).pipe(Effect.provide(server.layer));
+    },
+  );
+
   // getDiff cases guard parity with the existing patch path; getDiffFilePaths must refuse the same pages.
   it.effect.each(
     (["getDiff", "getDiffFilePaths"] as const).flatMap((method) =>
