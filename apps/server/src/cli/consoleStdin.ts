@@ -5,42 +5,26 @@ import * as NodeTty from "node:tty";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 /**
- * Electron's Windows executable is a GUI program, so `t3.cmd` under
- * `ELECTRON_RUN_AS_NODE` gets the console for stdout and stderr but no stdin.
- * Piped or redirected input and runs whose output is not a console are left alone.
+ * Electron's Windows GUI executable can start with missing or non-TTY stdin.
+ * Pipes, files, and runs whose output is not a console are left alone.
  */
-function needsConsoleStdin(input: {
-  readonly platform: NodeJS.Platform;
-  readonly env: NodeJS.ProcessEnv;
-  readonly stdinOpen: boolean;
-  readonly stdoutIsConsole: boolean;
-}): boolean {
-  return (
-    input.platform === "win32" &&
-    // Set only by the launcher (DesktopCliShim), never for the desktop backend.
-    input.env.T3CODE_DESKTOP_CLI_LAUNCHER === "1" &&
-    !input.stdinOpen &&
-    input.stdoutIsConsole
-  );
-}
-
-const isOpen = (fd: number) => {
+const needsConsoleStdin = () => {
+  if (NodeTty.isatty(0)) return false;
   try {
-    NodeFS.fstatSync(fd);
-    return true;
+    // Electron can leave stdin open on a non-TTY character device instead of closing it.
+    return NodeFS.fstatSync(0).isCharacterDevice();
   } catch {
-    return false;
+    return true;
   }
 };
 
 /** Call before reading process.stdin. Returns the reopened fd for children, or undefined without changing stdin. */
 export function attachConsoleStdin(): number | undefined {
-  const needed = needsConsoleStdin({
-    platform: HostProcess.Platform.defaultValue(),
-    env: process.env,
-    stdinOpen: isOpen(0),
-    stdoutIsConsole: NodeTty.isatty(1),
-  });
+  const needed =
+    HostProcess.Platform.defaultValue() === "win32" &&
+    process.env.T3CODE_DESKTOP_CLI_LAUNCHER === "1" &&
+    NodeTty.isatty(1) &&
+    needsConsoleStdin();
   // The launcher marker must not propagate to child shells or t3 processes.
   delete process.env.T3CODE_DESKTOP_CLI_LAUNCHER;
   if (!needed) return undefined;
