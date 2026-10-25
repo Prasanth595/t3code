@@ -47,7 +47,7 @@ const RELEASE_RECORD = ".install-complete.json";
 const LAUNCHER_SETUP =
   /^[\s@]*(?:$|::|rem(?:\s|$)|(?:echo|set|setlocal|endlocal|exit)(?:\s[^&|]*)?$)/iu;
 const LAUNCHER_COMMAND =
-  /^[\s@]*(?:"([^"]*agy_acp_server\.exe)"|([^\s"&|<>()@]*agy_acp_server\.exe)(?=[\s&|<>()]|$))/iu;
+  /^[\s@]*(?:"([^"]*agy_acp_server\.exe)"|([^\s"&|<>()@]*agy_acp_server\.exe))(?:\s[^&|]*)?$/iu;
 
 const ReleaseId = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
 const ActiveRelease = Schema.Struct({ releaseId: ReleaseId });

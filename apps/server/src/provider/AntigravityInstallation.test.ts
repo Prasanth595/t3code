@@ -706,6 +706,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
           "conditional.cmd",
           `if defined AGY_TARGET "%AGY_TARGET%" %* & exit /b\r\n"${runtimeExecutable}"`,
         ],
+        ["chained.cmd", `"${runtimeExecutable}" --version && "%AGY_TARGET%"`],
       ] as const) {
         const uncertain = yield* writeLauncher(name, launch);
         expect(yield* installation.resolve(uncertain).pipe(Effect.flip)).toMatchObject({
