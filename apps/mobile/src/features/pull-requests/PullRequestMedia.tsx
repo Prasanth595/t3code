@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { pullRequestMediaSource, pullRequestImageSource } from "./pullRequestMediaSource";
 import { useFilePreviewGallery } from "../../components/FilePreviewGallery";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -7,11 +7,15 @@ import {
   type AssetResource,
   type EnvironmentId,
 } from "@t3tools/contracts";
+import { assetUrlStateFromResult } from "@t3tools/client-runtime/state/assets";
 import { videoMimeType } from "@t3tools/shared/video";
 import { Pressable, View } from "react-native";
 import { Image } from "expo-image";
 import { AppText } from "../../components/ui/AppText";
-import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
+import { assetEnvironment, useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
+import { usePreparedConnection } from "../../state/session";
+import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
+import type { MarkdownImageSourceResolver } from "../../native/SelectableMarkdownText";
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
 import { VideoAttachmentTile } from "../../components/VideoAttachmentTile";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
@@ -45,6 +49,31 @@ export function usePullRequestMediaUrl(url: string) {
     source: pullRequestMediaSource(url, context),
     resolvePlaybackUri: resource ? async () => (await refresh()) ?? null : undefined,
   };
+}
+
+/** Images Enriched draws natively, such as one inside a list item, load like the standalone ones. */
+export function usePullRequestImageSource(
+  resolve: (url: string) => string,
+): MarkdownImageSourceResolver {
+  const context = useContext(PullRequestMediaContext);
+  const connection = usePreparedConnection(context?.environmentId ?? null);
+  const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
+  const createUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
+  return useCallback(
+    async (image) => {
+      const url = resolve(image.href);
+      const fetchUrl = sourceControlClients.mediaUrl(url)?.fetchUrl;
+      if (!context || !fetchUrl) return /^https?:\/\//i.test(url) ? { uri: url } : null;
+      const resource = { _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd: context.cwd, url: fetchUrl };
+      const state = assetUrlStateFromResult(
+        await createUrl({ environmentId: context.environmentId, input: { resource } }),
+        httpBaseUrl,
+      );
+      if (state._tag !== "Success") throw new Error("Pull request image is unavailable");
+      return { uri: state.url };
+    },
+    [context, createUrl, httpBaseUrl, resolve],
+  );
 }
 
 export function PullRequestMedia(props: {
