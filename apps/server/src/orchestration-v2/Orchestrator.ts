@@ -11005,8 +11005,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // Callers hold the parent lock; detach takes the child lock, as follow-up intake does.
       // A started or startable run, such as a follow-up or monitor wake, keeps the session
       // until it ends. Held queued work, like a later follow-up, resumes the native thread.
+      // A finalized task keeps its own outcome; a later non-task run cannot qualify it.
+      const taskStatus = options.finalized === true ? options.task.status : terminalStatus;
       const releaseSession =
-        terminalStatus !== "completed" && terminalStatus !== "failed"
+        (terminalStatus !== "completed" && terminalStatus !== "failed") ||
+        (taskStatus !== "completed" && taskStatus !== "failed")
           ? Effect.void
           : threadDispatch
               .withLock(
@@ -11016,7 +11019,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     "runs",
                     "providerSessions",
                   ]);
+                  const latestRun = child.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
                   if (
+                    latestRun === undefined ||
                     child.runs.some(
                       (run) =>
                         isBlockingRun(run) || (run.status === "queued" && run.queueHeld !== true),
@@ -11030,8 +11035,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     (session) =>
                       dispatchWithReceiptEffect({
                         type: "provider-session.detach",
+                        // A later run reattaches the same session id, so each run gets its own receipt.
                         commandId: CommandId.make(
-                          `command:system:delegated-task-release:${options.task.id}:${session.id}`,
+                          `command:system:delegated-task-release:${options.task.id}:${session.id}:${latestRun.id}`,
                         ),
                         threadId: childThreadId,
                         providerSessionId: session.id,
