@@ -4072,76 +4072,66 @@ it.effect(
     }),
 );
 
-it.effect.each([
-  "commit",
-  "change request",
-  "repository",
-  "credential",
-  "refresh",
-  "expiry",
-] as const)("does not reuse loaded diff membership after changing %s", (boundary) =>
-  Effect.gen(function* () {
-    let credential = "broad";
-    let diffReads = 0;
-    let contentReads = 0;
-    const service = yield* makeService({
-      projects: [
-        project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
-        project({ id: "p2", title: "api", workspaceRoot: "/b", repository: "acme/api" }),
-      ],
-      providers: [
-        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
-          withVerifiedCredential: (_, use) =>
-            Effect.suspend(() =>
-              use({ accountId: "101", viewer: "octocat", credentialFingerprint: credential }),
-            ),
-          getDiff: () =>
-            Effect.sync(() => ({
-              patch:
-                ++diffReads === 1
-                  ? `diff --git a/private.ts b/private.ts\n--- a/private.ts\n+++ b/private.ts\n+${"x".repeat(300_000)}\n`
-                  : "",
-              truncated: false,
-              nextCursor: null,
-            })),
-          getDiffFileContents: () =>
-            Effect.sync(() => {
-              contentReads += 1;
-              return { oldContents: "old", newContents: "new" };
-            }),
-        }),
-      ],
-    });
-    const ref = {
-      projectId: "p1" as ProjectId,
-      repository: "acme/web",
-      number: 1,
-      host: "github.com",
-      expectedAccountId: "101",
-    };
-    yield* service.withRoutingCredential(ref, service.diff(ref));
-    if (boundary === "credential") credential = "restricted";
-    if (boundary === "refresh") yield* service.invalidate({ reference: ref });
-    if (boundary === "expiry") yield* TestClock.adjust("61 seconds");
-    const input = {
-      ...ref,
-      ...(boundary === "commit" ? { commit: "a".repeat(40) } : {}),
-      ...(boundary === "change request" ? { number: 2 } : {}),
-      ...(boundary === "repository"
-        ? { projectId: "p2" as ProjectId, repository: "acme/api" }
-        : {}),
-      changeType: "change" as const,
-      oldPath: "private.ts",
-      newPath: "private.ts",
-    };
-    const error = yield* service
-      .withRoutingCredential(input, service.diffFileContents(input))
-      .pipe(Effect.flip);
-    assert.strictEqual(error._tag, "PullRequestOperationError");
-    assert.strictEqual(error.reason, "not-found");
-    assert.strictEqual(diffReads, 2);
-    assert.strictEqual(contentReads, 0);
-  }),
+// Refresh and expiry are covered by the in-flight test below; repository and number share the ref key.
+it.effect.each(["commit", "credential"] as const)(
+  "does not reuse loaded diff membership after changing %s",
+  (boundary) =>
+    Effect.gen(function* () {
+      let credential = "broad";
+      let diffReads = 0;
+      let contentReads = 0;
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            withVerifiedCredential: (_, use) =>
+              Effect.suspend(() =>
+                use({ accountId: "101", viewer: "octocat", credentialFingerprint: credential }),
+              ),
+            getDiff: () =>
+              Effect.sync(() => ({
+                patch:
+                  ++diffReads === 1
+                    ? `diff --git a/private.ts b/private.ts\n--- a/private.ts\n+++ b/private.ts\n+${"x".repeat(300_000)}\n`
+                    : "",
+                truncated: false,
+                nextCursor: null,
+              })),
+            getDiffFileContents: () =>
+              Effect.sync(() => {
+                contentReads += 1;
+                return { oldContents: "old", newContents: "new" };
+              }),
+          }),
+        ],
+      });
+      const ref = {
+        projectId: "p1" as ProjectId,
+        repository: "acme/web",
+        number: 1,
+        host: "github.com",
+        expectedAccountId: "101",
+      };
+      // Load at a commit and expand without one so the commit must be part of the membership key.
+      const loaded = boundary === "commit" ? { ...ref, commit: "a".repeat(40) } : ref;
+      yield* service.withRoutingCredential(loaded, service.diff(loaded));
+      if (boundary === "credential") credential = "restricted";
+      const input = {
+        ...ref,
+        changeType: "change" as const,
+        oldPath: "private.ts",
+        newPath: "private.ts",
+      };
+      const error = yield* service
+        .withRoutingCredential(input, service.diffFileContents(input))
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "PullRequestOperationError");
+      assert.strictEqual(error.reason, "not-found");
+      assert.strictEqual(diffReads, 2);
+      assert.strictEqual(contentReads, 0);
+    }),
 );
 
 it.effect.each(["expiry", "refresh"] as const)(
