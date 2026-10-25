@@ -163,6 +163,7 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         <UserMessageIntentMarker intent={row.message.inputIntent} />
       ) : null}
       <div
+        data-message-bubble
         className={cn(
           "min-w-0 max-w-[80%] rounded-2xl bg-message text-message-foreground",
           expanded && "w-full",
@@ -450,6 +451,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         <UserMessageIntentMarker intent={row.message.inputIntent} />
       ) : null}
       <div
+        data-message-bubble
         className={cn(
           "relative min-w-0 max-w-[80%] rounded-2xl text-message-foreground",
           userMessage.attribution === "guest" ? guestBubbleClassName(false) : "bg-message",

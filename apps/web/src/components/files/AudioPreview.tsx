@@ -111,7 +111,7 @@ function AudioChip(props: AudioPreviewProps) {
     <ContextChip
       kind="file"
       {...(props.failed ? { state: "invalid" as const } : {})}
-      className="relative isolate overflow-hidden has-[button:enabled]:hover:border-(--context-chip-border-hover) has-[button:enabled]:hover:bg-(--context-chip-accent)/17"
+      className="relative isolate overflow-hidden"
       title={props.failed ? "Audio unavailable. Open the file or retry playback." : props.name}
     >
       <span

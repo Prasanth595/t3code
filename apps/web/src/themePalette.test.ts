@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { converter } from "culori/fn";
 import { BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
 
+import { CONTEXT_CHIP_ACCENTS, contextChipColorVariable } from "./lib/contextChipAccents";
+
 import {
+  contextChipVariables,
   getThemeColorsForMode,
   getThemeModes,
   getCustomThemes,
@@ -536,6 +539,59 @@ describe("theme files", () => {
 
     vi.unstubAllGlobals();
     invalidateCustomThemes();
+  });
+});
+
+describe("context chip colors", () => {
+  const toOklch = converter("oklch");
+  const palettes = [
+    getStandardThemeColors("light"),
+    getStandardThemeColors("dark"),
+    ...BUILT_IN_THEMES.flatMap((theme) =>
+      getThemeModes(theme).map((mode) => getThemeColorsForMode(theme, mode)!),
+    ),
+  ];
+
+  it("reads at 5:1 on every chip surface of every built-in theme and keeps each hue", () => {
+    for (const colors of palettes) {
+      const variables = contextChipVariables(colors);
+      expect(variables["--context-chip-message"]).toBeUndefined();
+      for (const [kind, accent] of Object.entries(CONTEXT_CHIP_ACCENTS)) {
+        const chip =
+          variables[contextChipColorVariable(kind as keyof typeof CONTEXT_CHIP_ACCENTS)]!;
+        for (const surface of [
+          colors.canvas,
+          colors.surface,
+          colors.surfaceRaised,
+          colors.messageSurface,
+        ]) {
+          expect(contrastRatio(chip, surface)).toBeGreaterThanOrEqual(5);
+        }
+        const solved = toOklch(chip)!;
+        if ((solved.c ?? 0) > 0.04) {
+          const drift = Math.abs((((solved.h ?? 0) - toOklch(accent)!.h! + 540) % 360) - 180);
+          expect(drift).toBeLessThan(4);
+        }
+      }
+    }
+  });
+
+  it("leaves a bubble with opposite-shade text out of the shared solve", () => {
+    const colors = {
+      ...getStandardThemeColors("light"),
+      messageSurface: "#1b4ed8",
+      messageForeground: "#ffffff",
+    };
+    const variables = contextChipVariables(colors);
+    expect(variables["--context-chip-message"]).toBe("#ffffff");
+    for (const kind of Object.keys(CONTEXT_CHIP_ACCENTS) as Array<
+      keyof typeof CONTEXT_CHIP_ACCENTS
+    >) {
+      expect(
+        contrastRatio(variables[contextChipColorVariable(kind)]!, colors.canvas),
+      ).toBeGreaterThanOrEqual(5);
+    }
+    expect(toOklch(variables[contextChipColorVariable("file")])!.c).toBeGreaterThan(0.08);
   });
 });
 
