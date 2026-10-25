@@ -269,6 +269,14 @@ function isOutdatedProvider(provider: ServerProvider | undefined): boolean {
   return provider?.versionAdvisory?.status === "behind_latest";
 }
 
+function isAlreadyOnLatest(provider: ServerProvider | undefined): boolean {
+  return (
+    provider !== undefined &&
+    isStillInstalled(provider) &&
+    provider.versionAdvisory?.status === "current"
+  );
+}
+
 function isStillInstalled(provider: ServerProvider): boolean {
   return provider.installed;
 }
@@ -315,12 +323,13 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       }),
   });
 
-  const verifyRefreshedProvider = (
+  const verifyFromRefresh = (
+    refresh: Effect.Effect<ReadonlyArray<ServerProvider>>,
     provider: ProviderDriverKind,
     maintenanceCapabilities: ProviderMaintenanceCapabilities,
     instanceId: ProviderInstanceId,
   ): Effect.Effect<VerifiedProviderRefresh> =>
-    providerRegistry.refreshAfterUpdate(provider, instanceId).pipe(
+    refresh.pipe(
       Effect.flatMap((providers) => {
         const refreshedProviders = providers.filter(
           (candidate) => candidate.driver === provider && candidate.instanceId === instanceId,
@@ -362,6 +371,18 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
           ),
         );
       }),
+    );
+
+  const verifyRefreshedProvider = (
+    provider: ProviderDriverKind,
+    maintenanceCapabilities: ProviderMaintenanceCapabilities,
+    instanceId: ProviderInstanceId,
+  ): Effect.Effect<VerifiedProviderRefresh> =>
+    verifyFromRefresh(
+      providerRegistry.refreshAfterUpdate(provider, instanceId),
+      provider,
+      maintenanceCapabilities,
+      instanceId,
     );
 
   const updateProvider: ProviderMaintenanceRunnerShape["updateProvider"] = Effect.fn(
@@ -481,6 +502,32 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 }),
               );
             }
+
+            // Re-probe before spawning. A stale behind_latest advisory must
+            // not run the installer when the binary is already current.
+            // Unknown version stays on the installer path.
+            if (targetVersion === undefined) {
+              const precheck = yield* verifyFromRefresh(
+                providerRegistry.refreshInstance(instanceId),
+                provider,
+                fresh,
+                instanceId,
+              );
+              const alreadyCurrent =
+                precheck.verifiedProviders.length > 0 &&
+                precheck.verifiedProviders.every(isAlreadyOnLatest);
+              if (alreadyCurrent) {
+                return yield* finish(
+                  makeUpdateState({
+                    status: "succeeded",
+                    startedAt,
+                    finishedAt: yield* nowIso,
+                    message: "Already up to date.",
+                  }),
+                );
+              }
+            }
+
             yield* setRunningMessage(`Running ${describeCommand(command)}`);
             const result = yield* runMaintenanceCommand(command, setRunningMessage);
             const finishedAt = yield* nowIso;
