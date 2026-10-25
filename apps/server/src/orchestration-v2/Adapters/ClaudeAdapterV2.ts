@@ -4158,8 +4158,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // and hydrate the original subagent node instead of being dropped.
         const sessionSubagentsByTaskId = yield* Ref.make(new Map<string, ActiveClaudeSubagent>());
         const sessionSubagentTaskIdsByToolUseId = yield* Ref.make(new Map<string, string>());
-        // Requests that move a running subagent to the background before a
-        // steer, by the tool call that started its run. Claude may never
+        // Requests that move a running subagent or Bash command to the
+        // background before a steer, by the tool call that started it. Claude may never
         // answer one, so a later steer waits on it rather than asking again.
         const backgroundMovesByToolUseId = new Map<string, Fiber.Fiber<void>>();
         const subagentToolCalls = new Map<string, ActiveClaudeToolCall>();

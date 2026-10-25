@@ -3120,13 +3120,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("moves a running Bash command to the background so a steer is read now", () =>
+  it.effect("moves a running Bash command to the background before sending a steer", () =>
     Effect.gen(function* () {
-      const backgrounded: Array<string> = [];
+      const backgrounded: Array<{ readonly toolUseId: string; readonly offered: number }> = [];
+      let offeredMessages: ReadonlyArray<SDKUserMessage> = [];
       const harness = yield* makeWakeHarnessWithOptions({
         backgroundTasks: (toolUseId) =>
-          Effect.sync(() => backgrounded.push(toolUseId)).pipe(Effect.as(true)),
+          Effect.sync(() => backgrounded.push({ toolUseId, offered: offeredMessages.length })).pipe(
+            Effect.as(true),
+          ),
       });
+      offeredMessages = harness.offeredMessages;
       const input = makeClaudeTestTurnInput({
         threadId: harness.threadId,
         providerThread: harness.providerThread,
@@ -3178,7 +3182,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         },
       });
 
-      assert.deepEqual(backgrounded, ["toolu-steer-bash"]);
+      assert.deepEqual(backgrounded, [{ toolUseId: "toolu-steer-bash", offered }]);
       assert.equal(harness.offeredMessages.length, offered + 1);
       assert.equal(harness.offeredMessages.at(-1)?.priority, "now");
     }).pipe(
