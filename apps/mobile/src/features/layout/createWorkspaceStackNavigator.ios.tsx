@@ -19,7 +19,16 @@ import {
   type NativeStackNavigatorProps,
   type NativeStackTypeBag,
 } from "@react-navigation/native-stack";
-import { use, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import {
+  Fragment,
+  use,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 import { View } from "react-native";
 import { Split, type SplitHostCommands } from "react-native-screens";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -30,7 +39,6 @@ import { workspaceUsesColumns } from "../workspace/workspace-tabs-state";
 import { isSettingsRoute, settingsOpenIn } from "../settings/settings-navigation";
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
 import { setNativelyPoppingWorkspaceRoute } from "../workspace/workspace-detail-selection";
-import { useWorkspaceSidebarHeaderItem } from "./useWorkspaceSidebarHeaderItem";
 import { useDeviceType, useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 
 import { useAdaptiveWorkspaceLayout } from "./AdaptiveWorkspaceLayout";
@@ -85,26 +93,15 @@ function ColumnScreen(props: {
   readonly onDismiss: (routeKey: string, native: boolean) => void;
   readonly onAppearance: (type: "willAppear" | "didAppear" | "willDisappear", key: string) => void;
   readonly onCompose?: () => void;
-  /** Settings pages don't draw their own sidebar toggle, unlike threads and pull requests. */
-  readonly sidebarToggle?: boolean;
   readonly navigation: ViewProps["navigation"];
 }) {
   const { descriptor } = props;
   // Options a screen set inside this workspace tab slot, over its route's.
-  const slotOptions = slotScreenOptions(
+  const options = slotScreenOptions(
     use(WorkspaceSlotOptionsContext),
     descriptor.route.key,
     descriptor.options,
   );
-  const sidebarItem = useWorkspaceSidebarHeaderItem();
-  // Swapping header components would unmount the native header config, which hides the bar.
-  const options =
-    props.sidebarToggle && !slotOptions.unstable_headerLeftItems
-      ? ({
-          ...slotOptions,
-          unstable_headerLeftItems: () => [sidebarItem],
-        } as AppNativeStackNavigationOptions as typeof slotOptions)
-      : slotOptions;
   const [presented, setPresented] = useState(false);
   const primaryColumn = useMemo(
     () =>
@@ -158,14 +155,14 @@ function ColumnScreen(props: {
             }
           />
           <ColumnContent
-            key={key}
             primary={props.primary}
             insetHorizontally={
               (options as AppNativeStackNavigationOptions).nativeContentInsetHorizontally
             }
           >
             <NativePrimaryColumnContext value={primaryColumn}>
-              {descriptor.render()}
+              {/* The Settings slot swaps pages here; its column keeps its measured insets. */}
+              <Fragment key={key}>{descriptor.render()}</Fragment>
             </NativePrimaryColumnContext>
           </ColumnContent>
         </NavigationRouteContext>
@@ -411,7 +408,6 @@ function WorkspaceColumns(
                 key={screenKey}
                 screenKey={screenKey}
                 descriptor={descriptor}
-                sidebarToggle={inSettingsSlot}
                 attached={props.detail.some((current) => current.key === route.key)}
                 onDismiss={handleNativeDismiss}
                 onAppearance={followCollapsedSplit}
