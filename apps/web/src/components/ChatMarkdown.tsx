@@ -803,7 +803,7 @@ function useChatMarkdownState({
     });
     if (metadata._tag !== "Success" || metadata.value.entries[0] !== null) return null;
     const named = candidates.filter(
-      (_, index) => (metadata.value.entries[index + 1] ?? null) !== null,
+      (_, index) => metadata.value.entries[index + 1]?.kind === "file",
     );
     if (named.length > 1) return null;
     if (named[0] !== undefined)

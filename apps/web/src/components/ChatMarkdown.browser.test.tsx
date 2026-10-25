@@ -284,12 +284,25 @@ describe("ChatMarkdown workspace file opens", () => {
     });
     expect(workspaceSearch).not.toHaveBeenCalled();
 
-    // Both named folders hold the path, so guessing could open the wrong one.
+    // A directory by that name is not the file the chip names.
     filesystemMetadata.mockResolvedValue(
-      AsyncResult.success({ entries: [null, { kind: "file" }, { kind: "file" }] }),
+      AsyncResult.success({ entries: [null, { kind: "directory" }, { kind: "file" }] }),
     );
     await screen.rerender(
       message("`/tmp/work/backend/.notes/audit/` and `/tmp/work/frontend/.notes/audit/`"),
+    );
+    await act(async () => fileChip(screen.container, "A-findings.md").click());
+    await vi.waitFor(() =>
+      expect(openFile).toHaveBeenLastCalledWith(
+        threadRef,
+        "frontend/.notes/audit/phase2/A-findings.md",
+        undefined,
+      ),
+    );
+
+    // Both named folders hold the file, so guessing could open the wrong one.
+    filesystemMetadata.mockResolvedValue(
+      AsyncResult.success({ entries: [null, { kind: "file" }, { kind: "file" }] }),
     );
     await act(async () => fileChip(screen.container, "A-findings.md").click());
     await vi.waitFor(() =>
