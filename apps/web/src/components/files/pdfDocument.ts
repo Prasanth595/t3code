@@ -1,5 +1,6 @@
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import fallbackUrl from "pdfjs-dist/wasm/openjpeg_nowasm_fallback.js?url";
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -35,6 +36,8 @@ export function openPdf(bytes: ArrayBuffer) {
     useSystemFonts: true,
     useWorkerFetch: false,
     BinaryDataFactory,
+    // PDF.js imports JavaScript decoders directly, bypassing BinaryDataFactory.
+    wasmUrl: new URL(".", new URL(fallbackUrl, window.location.href)).href,
     canvasMaxAreaInBytes: 32 * 1024 * 1024,
     useWasm: true,
   });
