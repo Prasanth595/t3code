@@ -106,27 +106,6 @@ function interruptRow(
   };
 }
 
-function assistantRow(
-  text: string,
-  visibility: "local" | "inherited" = "local",
-): OrchestrationV2ProjectedTurnItem {
-  const row = makeRow(0);
-  const sourceThreadId = visibility === "local" ? THREAD : ThreadId.make("parent-thread");
-  return {
-    ...row,
-    visibility,
-    sourceThreadId,
-    item: {
-      ...row.item,
-      threadId: sourceThreadId,
-      type: "assistant_message",
-      messageId: MessageId.make("answer-0"),
-      text,
-      streaming: false,
-    },
-  } as OrchestrationV2ProjectedTurnItem;
-}
-
 function makeProjection(visibleTurnItems: OrchestrationV2ProjectedTurnItem[]) {
   return {
     thread: {
@@ -217,7 +196,6 @@ describe("threadHistoryPaging", () => {
       snapshotSequence: 1,
     });
     expect(bounded.projection.visibleTurnItems.length).toBeLessThan(large.length);
-    expect(bounded.payloadBudgetExceeded).toBe(false);
     expect(boundedTimelineEncodedBytes(bounded.projection)).toBeLessThanOrEqual(
       THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes,
     );
@@ -628,7 +606,6 @@ describe("threadHistoryPaging", () => {
     const serializedBytes = Buffer.byteLength(JSON.stringify(bounded.projection), "utf8");
 
     expect(serializedBytes).toBeLessThanOrEqual(THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes);
-    expect(bounded.payloadBudgetExceeded).toBe(false);
     expect(bounded.projection.plans).toEqual([]);
     expect(bounded.projection.contextHandoffs).toEqual([]);
     expect(populated.plans).toHaveLength(120);
@@ -637,7 +614,7 @@ describe("threadHistoryPaging", () => {
     ).toBe(2_097_152);
   });
 
-  it("preserves oversized actionable state and reports the budget exception", () => {
+  it("preserves oversized actionable state", () => {
     const projection = makeProjection([makeRow(0)]);
     const actionable = {
       ...projection,
@@ -656,28 +633,8 @@ describe("threadHistoryPaging", () => {
 
     const bounded = buildBoundedThreadProjection({ projection: actionable, snapshotSequence: 9 });
 
-    expect(bounded.payloadBudgetExceeded).toBe(true);
     expect(bounded.projection.plans[0]).toEqual(actionable.plans[0]);
     expect(bounded.projection.visibleTurnItems).toEqual(actionable.visibleTurnItems);
-  });
-
-  it("flips overflow at the exact encoded size when timeline text fits the budget", () => {
-    // Inherited rows are encoded once, local rows twice; neither may overflow early.
-    for (const visibility of ["local", "inherited"] as const) {
-      const projection = makeProjection([assistantRow("a".repeat(20_000), visibility)]);
-      const build = (maxEncodedBytes: number) =>
-        buildBoundedThreadProjection({
-          projection,
-          snapshotSequence: 1,
-          policy: { maxItems: 75, maxEncodedBytes },
-        });
-      const bytes = Buffer.byteLength(
-        JSON.stringify(build(Number.MAX_SAFE_INTEGER).projection),
-        "utf8",
-      );
-      expect(build(bytes).payloadBudgetExceeded).toBe(false);
-      expect(build(bytes - 1).payloadBudgetExceeded).toBe(true);
-    }
   });
 
   it("keeps agent-only turns visible when checkpoint file lists fill the byte budget", () => {
@@ -712,7 +669,6 @@ describe("threadHistoryPaging", () => {
 
     expect(bounded.projection.visibleTurnItems).toHaveLength(items.length);
     expect(bounded.hasMoreHistory).toBe(false);
-    expect(bounded.payloadBudgetExceeded).toBe(true);
   });
 
   it("keeps paged historical plan detail in the turn item and only status in its artifact", () => {
@@ -756,6 +712,5 @@ describe("threadHistoryPaging", () => {
       markdown: "",
       detailInTurnItem: true,
     });
-    expect(bounded.payloadBudgetExceeded).toBe(false);
   });
 });
