@@ -31,7 +31,7 @@ The install waits up to 90 seconds for the server to answer on port 3876 and to 
 
 ### Tools the server can see
 
-launchd gives the server only the `PATH` its plist sets, which covers Homebrew, `/usr/bin` and `vp`. Gates and sessions often need more, such as `claude`, `cargo`, `php` or `composer`. Put those in `~/.config/t3fac/env`, which the job sources before it starts the server:
+launchd starts the server with the `PATH` its plist sets, which covers Homebrew, `/usr/bin` and `vp`. At startup the server also reads your login shell's `PATH` and adds it, so agent sessions see the tools your shell does. Provision and gate commands get the plist's `PATH` first, then the login shell's entries, so a tool you name in `~/.config/t3fac/env` wins over a same-named one in `/usr/bin`. Put tools gates need there, such as `claude`, `cargo`, `php`, `composer` or a specific `python3`; the job sources the file before it starts the server:
 
 ```sh
 PATH="$PATH:$HOME/.cargo/bin"
