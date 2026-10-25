@@ -166,7 +166,11 @@ export function createInboxReturnTracker() {
       };
     },
     getSnapshot: () => version,
-    observe(threads: readonly TrackedInboxThread[] | null): {
+    // Explicit invalidation survives React Compiler removing unused memo dependencies.
+    observe(
+      threads: readonly TrackedInboxThread[] | null,
+      _version?: number,
+    ): {
       readonly isWorking: (thread: WorkingThreadInput & ThreadKeyInput) => boolean;
       readonly returnedAt: (thread: ThreadKeyInput) => number | undefined;
     } {

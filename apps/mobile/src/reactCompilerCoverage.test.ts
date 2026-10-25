@@ -180,6 +180,27 @@ describe("React Compiler coverage", () => {
     }
   });
 
+  it("invalidates the Working shelf observation when its grace timer expires", () => {
+    const result = compileLikeMetro("src/features/threads/useThreadListV2.ts", [], { ast: true });
+    const invalidations: string[] = [];
+    if (typeof result === "object" && result !== null && "ast" in result) {
+      walkAst(result.ast, (node, ancestors) => {
+        if (
+          node.type !== "CallExpression" ||
+          !isAstNode(node.callee) ||
+          node.callee.type !== "MemberExpression" ||
+          !isAstNode(node.callee.property) ||
+          node.callee.property.name !== "observe"
+        )
+          return;
+        for (const ancestor of ancestors) {
+          if (ancestor.type === "IfStatement") invalidations.push(JSON.stringify(ancestor.test));
+        }
+      });
+    }
+    expect(invalidations.some((test) => test.includes('"name":"inboxVersion"'))).toBe(true);
+  });
+
   // The compiler once silently dropped this cache, so every
   // ThreadFeed render rebuilt the feed and handed LegendList a new data array.
   it("caches the thread feed derivation", () => {

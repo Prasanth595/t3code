@@ -53,6 +53,48 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
 }
 
 describe("v2 thread shell lists", () => {
+  it.each(["completed", "input"] as const)(
+    "replaces navigation shells when a running thread is %s",
+    (status) => {
+      const { registry, threads, snapshotAtom } = makeHarness();
+      const running = {
+        ...v2ThreadShell,
+        latestRunId: RunId.make("run"),
+        activeRunId: RunId.make("run"),
+        status: "running" as const,
+      };
+      const snapshot = { ...v2ShellSnapshot, threads: [running] };
+      registry.set(snapshotAtom(environmentId), snapshot);
+      const dispose = registry.mount(threads.navigationThreadShellsAtom);
+      const before = registry.get(threads.navigationThreadShellsAtom);
+      expect(isThreadWorking(before[0]!)).toBe(true);
+      registry.set(
+        snapshotAtom(environmentId),
+        applyShellStreamEvent(snapshot, {
+          kind: "thread.updated",
+          location: "active",
+          sequence: 1,
+          thread: {
+            ...running,
+            status: status === "completed" ? "completed" : "running",
+            activeRunId: status === "completed" ? null : running.activeRunId,
+            pendingRuntimeRequest:
+              status === "input"
+                ? { id: RuntimeRequestId.make("question"), kind: "user_input", createdAt: v2Now }
+                : null,
+          },
+        }),
+      );
+      const after = registry.get(threads.navigationThreadShellsAtom);
+      expect(after).not.toBe(before);
+      expect(after[0]).not.toBe(before[0]);
+      expect(isThreadWorking(after[0]!)).toBe(false);
+      expect(isThreadWorking(before[0]!)).toBe(true);
+      dispose();
+      registry.dispose();
+    },
+  );
+
   it("preserves ordered reference arrays when a middle thread changes", () => {
     const { registry, threads, snapshotAtom } = makeHarness();
     const snapshot = {
