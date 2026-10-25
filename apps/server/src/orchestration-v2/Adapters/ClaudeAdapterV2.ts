@@ -1273,11 +1273,8 @@ export function claudeQueryEnvironment(
   return { ...environment, CLAUDE_CODE_PROMPT_CACHE_TTL: subagentPromptCacheTtl };
 }
 
-// Claude Code's auto tool search (ENABLE_TOOL_SEARCH=auto or auto:N) sends every MCP schema in
-// full while they fit under a share of the context window. T3's own tools fit under it on 1M
-// models, so every request carries them, and an MCP server that connects after the first request
-// changes the tool list and misses the prompt cache. Returns "true", which keeps tool search on,
-// when the user picked an auto mode. auto:0 already means on and auto:100 means off, so those stay.
+// Claude Code's auto tool search sends every MCP schema in full while they fit under a share of the
+// context window, which T3's tools do on 1M models. auto:0 already means on and auto:100 off.
 export function claudeToolSearchOverride(value: string | undefined): "true" | undefined {
   if (value === undefined) return undefined;
   if (value === "auto") return "true";
@@ -1334,8 +1331,7 @@ export function makeClaudeQueryOptions(input: {
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
   readonly appendSystemPromptFileText?: string;
-  // From claudeToolSearchOverride. It travels in flag settings because a user's settings.json
-  // env beats the process env in Claude Code.
+  // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);
@@ -4007,8 +4003,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       Effect.orElseSucceed(() => undefined),
     );
   // A worktree's .git file points at <main>/.git/worktrees/<name>, whose commondir leads back to
-  // <main>/.git. A bare repository's worktree has no such main checkout, and Claude Code keeps its
-  // local file in the worktree, as it does for anything else that is not a git directory.
+  // <main>/.git. A bare repository has no main checkout, so its worktree keeps its own file.
   const mainCheckoutRoot = (checkout: string) =>
     fileSystem.readFileString(path.join(checkout, ".git")).pipe(
       Effect.flatMap((pointer) => {
@@ -4024,11 +4019,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       }),
       Effect.orElseSucceed(() => checkout),
     );
-  // Where Claude Code keeps .claude/settings.local.json: the repository root, or the main
-  // checkout's root in a worktree. It stays in the working directory outside a repository, on
-  // Windows, or when the root is the home directory. Claude Code also stays there when the root
-  // belongs to another user; that check is skipped, and the cost of missing it is tool search on,
-  // which is Claude Code's default.
+  // Claude Code keeps .claude/settings.local.json at the repository root, or in cwd outside a
+  // repository, on Windows, or when the root is home. Its owner check is skipped: missing it only
+  // leaves tool search on, Claude Code's default.
   const localSettingsDirectory = Effect.fn("ClaudeAdapterV2.localSettingsDirectory")(function* (
     cwd: string,
   ) {
@@ -4044,10 +4037,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       if (path.dirname(directory) === directory) return cwd;
     }
   });
-  // The ENABLE_TOOL_SEARCH value Claude Code will see: settings env, local over project over
-  // user, beats the process env. A local file that an older Claude Code left in the working
-  // directory still applies under the root one. Plain file reads keep this off the per-turn
-  // resolveSettings path. An auto mode gets pinned on; see claudeToolSearchOverride.
+  // Settings env beats the process env, local over project over user, and a local file an older
+  // Claude Code left in cwd applies under the root one. resolveSettings reads local from cwd only.
   const resolveToolSearchOverride = Effect.fn("ClaudeAdapterV2.resolveToolSearchOverride")(
     function* (cwd: string | null) {
       const localDirectory = cwd === null ? null : yield* localSettingsDirectory(cwd);
