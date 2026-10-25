@@ -21,6 +21,7 @@ export class Bindings extends Context.Service<
   Bindings,
   ProtocolBindings & {
     readonly developerKeys: string;
+    readonly readerKeys: string;
     readonly readLimit: Cloudflare.RateLimit;
     readonly storeLimit: Cloudflare.RateLimit;
   }
@@ -43,7 +44,7 @@ const make = Effect.gen(function* () {
   const savings = yield* Savings.Savings;
   // The source-only protocol dependency is bundled for Workers, never evaluated by Node during deployment.
   const {
-    authorize,
+    authorizeCacheWrite,
     authorizeTelemetry,
     keys,
     cborResponse,
@@ -128,6 +129,16 @@ const make = Effect.gen(function* () {
                   ),
                 ),
               );
+              if (!writing && operation !== "telemetry") {
+                const developer = yield* developerIdentity(request, bindings.developerKeys);
+                const reader =
+                  developer ?? (yield* developerIdentity(request, bindings.readerKeys));
+                if (typeof reader !== "string")
+                  return yield* new CacheError({
+                    status: request.headers.has("authorization") ? 403 : 401,
+                    reason: "read_denied",
+                  });
+              }
               const scope = yield* protocol(() => getScope(bindings.INDEX, "t3code", stats));
               if (operation === "telemetry") {
                 const developer = yield* developerIdentity(request, bindings.developerKeys);
@@ -170,7 +181,7 @@ const make = Effect.gen(function* () {
                 const now = yield* Clock.currentTimeMillis;
                 const identity =
                   developer === undefined
-                    ? yield* protocol(() => authorize(request, scope, keys))
+                    ? yield* protocol(() => authorizeCacheWrite(request, scope, keys))
                     : {
                         exp: Math.floor(now / 1000) + 900,
                         repository_id: scope.repository_id,

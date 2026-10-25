@@ -1,6 +1,5 @@
 import { githubKeys } from "../vendor/vite-plus-remote-cache-cloudflare/src/auth.ts";
 
-export { authorize } from "../vendor/vite-plus-remote-cache-cloudflare/src/auth.ts";
 export { cborResponse } from "../vendor/vite-plus-remote-cache-cloudflare/src/cbor.ts";
 export {
   cleanup,
@@ -19,4 +18,4 @@ export { Observations } from "../vendor/vite-plus-remote-cache-cloudflare/src/ob
 
 export const keys = githubKeys();
 
-export { authorizeTelemetry } from "./telemetryAuth.ts";
+export { authorizeCacheWrite, authorizeTelemetry } from "./telemetryAuth.ts";

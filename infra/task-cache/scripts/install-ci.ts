@@ -19,6 +19,15 @@ await NodeFSP.writeFile(
 const { endpoint } = JSON.parse(
   await NodeFSP.readFile(NodePath.join(root, ".task-cache.json"), "utf8"),
 );
+const token = process.env.T3_TASK_CACHE_READ_TOKEN;
+if (!token || token.length < 32) throw new Error("Missing task-cache read credential");
+const credentialFile = NodePath.join(NodeOS.homedir(), ".config/t3-task-cache/credentials.json");
+await NodeFSP.mkdir(NodePath.dirname(credentialFile), { recursive: true, mode: 0o700 });
+await NodeFSP.writeFile(
+  credentialFile,
+  JSON.stringify({ [endpoint]: { name: "ci-reader", token } }),
+  { mode: 0o600 },
+);
 const githubEnv = process.env.GITHUB_ENV;
 if (!githubEnv) throw new Error("Missing GitHub Actions environment file");
 const directory = process.env.RUNNER_TEMP;
@@ -37,4 +46,4 @@ await NodeFSP.writeFile(
     "",
   ].join("\n"),
 );
-await NodeFSP.appendFile(githubEnv, `VP_REMOTE_CACHE_URL=${endpoint}\nBASH_ENV=${shellSetup}\n`);
+await NodeFSP.appendFile(githubEnv, `BASH_ENV=${shellSetup}\n`);

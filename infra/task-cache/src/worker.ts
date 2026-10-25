@@ -27,6 +27,7 @@ export const layer = Worker.make(
     const database = yield* Cloudflare.D1.QueryDatabase(yield* Resources.Index);
     const artifacts = yield* Cloudflare.R2.ReadWriteBucket(yield* Resources.Artifacts);
     const developerKeys = yield* Config.Redacted("DEVELOPER_KEYS");
+    const readerKeys = yield* Config.Redacted("READER_KEYS");
     const reads = yield* Cloudflare.RateLimit("READ_LIMITER", {
       namespaceId: "1001",
       simple: { limit: 600, period: 60 },
@@ -41,6 +42,7 @@ export const layer = Worker.make(
         ARTIFACTS: (yield* artifacts.raw) as unknown as ProtocolBindings["ARTIFACTS"],
         GC_BATCH_SIZE: "16",
         developerKeys: Redacted.value(developerKeys),
+        readerKeys: Redacted.value(readerKeys),
         readLimit: yield* reads.raw,
         storeLimit: yield* writes.raw,
       });

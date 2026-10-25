@@ -15,7 +15,7 @@ cd infra/task-cache
 alchemy deploy --stage prod
 ```
 
-The stack reads writer digests from `~/.config/t3-task-cache/writers.json` and supplies them as a redacted Worker secret. Preserve that file to administer existing writers. Deployment uses the `prod` stage and the existing endpoint in `.task-cache.json`. The upstream protocol is loaded only inside the Worker runtime and bundled by Alchemy, so deployment runs on Node without an extra TypeScript loader. An explicit `DEVELOPER_KEYS` environment variable overrides the local registry, including on deployment hosts without that file. Deployment fails when neither source exists, so a missing local file cannot silently revoke existing writers.
+The stack reads read-only credential digests from `~/.config/t3-task-cache/readers.json` (or `READER_KEYS`) and writer digests from `~/.config/t3-task-cache/writers.json` and supplies them as a redacted Worker secret. Preserve that file to administer existing writers. Deployment uses the `prod` stage and the existing endpoint in `.task-cache.json`. The upstream protocol is loaded only inside the Worker runtime and bundled by Alchemy, so deployment runs on Node without an extra TypeScript loader. An explicit `DEVELOPER_KEYS` environment variable overrides the local registry, including on deployment hosts without that file. Deployment fails when neither source exists, so a missing local file cannot silently revoke existing writers.
 
 The production database's existing `scopes` and `deployment` records control repository access, quotas, and retention. Adopting it does not overwrite those policies. Provisioning a separate cache requires its own repository policy; a new empty database does not grant uploads.
 
@@ -37,7 +37,7 @@ Uninstall with `bash infra/task-cache/install.sh --uninstall`, then restart exis
 
 Explicit environment settings take precedence: `VP_REMOTE_CACHE_URL` may contain the URL-encoded developer name and token as HTTP Basic credentials, and `VP_REMOTE_CACHE=read-write` enables uploads. These can be supplied by a secret manager instead of saved credentials. Do not put credentials in shell command history or commit them. Use separate writer names for separate people. Repeating `add-writer` rotates the token; `revoke-writer <name>` removes it. Deploy again to apply either change.
 
-Our repository’s CI explicitly installs the Vite+ hook; fork CI does not. Default-branch push jobs upload with GitHub OIDC, and PR jobs read. Deployment credentials are never needed on contributor machines or CI runners. Reads are public, as in the upstream service. Trusted writers can publish artifacts that developers and CI consume.
+Our repository’s CI explicitly installs the Vite+ hook. Same-repository PR and default-branch push jobs read and write; fork PRs receive no cache credentials and run normally without remote caching. All artifact reads require authentication, including downloads by blob ID. Trusted maintainers automatically upload artifacts that other authenticated maintainers and CI consume. Deployment credentials are never needed on contributor machines or CI runners.
 
 ## Verify
 
@@ -47,7 +47,7 @@ vp run --filter @t3tools/task-cache test
 vp run --filter @t3tools/task-cache typecheck
 ```
 
-The smoke check uploads a unique fixture, restores its output into a cold second directory, changes its input, and confirms recomputation. It also checks that anonymous uploads are rejected. Cacheable commands must run through `vp run`; direct `vp test` or `vp check` invocations do not use this cache.
+The smoke check uploads a unique fixture, restores its output into a cold second directory, changes its input, and confirms recomputation. It also checks that anonymous reads and uploads are rejected. Cacheable commands must run through `vp run`; direct `vp test` or `vp check` invocations do not use this cache.
 
 ## Current limits
 
@@ -60,7 +60,7 @@ The smoke check uploads a unique fixture, restores its output into a cold second
 
 Alchemy also owns the `t3-task-cache-traces` Axiom dataset, its ingest-only Worker token, a savings dashboard, and a separate retained D1 database for lifetime counters. Deployment needs an Axiom Alchemy profile or `AXIOM_TOKEN`/`AXIOM_ORG_ID` as well as Cloudflare credentials. Contributor machines never receive the Axiom token.
 
-Both `vp run` and its `vpr` shortcut invoke the hook. The hook observes Vite+'s atomic `last-summary.json` files, including nested runs. It reports package/task names, confirmed local and remote hits, avoided task runtime, developer identity, host, OS/architecture, and CI run ID. It does not send commands, arguments, source paths, environment variables, or task output. Developer identity comes from the authenticated cache writer; CI uses GitHub's verified OIDC actor. PR telemetry authorization does not grant artifact uploads. Fork jobs do not install the hook or report telemetry.
+Both `vp run` and its `vpr` shortcut invoke the hook. The hook observes Vite+'s atomic `last-summary.json` files, including nested runs. It reports package/task names, confirmed local and remote hits, avoided task runtime, developer identity, host, OS/architecture, and CI run ID. It does not send commands, arguments, source paths, environment variables, or task output. Developer identity comes from the authenticated cache writer; CI uses GitHub's verified OIDC actor. Same-repository PRs may upload artifacts as well as telemetry. Fork jobs do not install the hook or report telemetry.
 
 Reports spool locally and retry on subsequent commands. The completion hook queues the final summary, including failed runs. Local runs start a detached, short-lived Node process; CI awaits its bounded flush before the runner can terminate it. Collection or export failures never change the task exit status. No background service is installed. Queues retain at most 2,000 reports, each sent with a three-second timeout and a 15-second budget per flush. Stable report IDs and transactional D1 receipts prevent duplicate lifetime increments. Receipts expire after 31 days; accepted reports must be less than 30 days old. Lifetime totals survive raw trace expiration and are re-exported hourly, including inactive developers and hosts. Collection starts when the hook is installed; existing cache history is not backfilled.
 

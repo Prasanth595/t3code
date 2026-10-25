@@ -3,7 +3,7 @@ import { authorize } from "../vendor/vite-plus-remote-cache-cloudflare/src/auth.
 import type { Scope } from "../vendor/vite-plus-remote-cache-cloudflare/src/database.ts";
 import { HttpError } from "../vendor/vite-plus-remote-cache-cloudflare/src/errors.ts";
 
-export async function authorizeTelemetry(request: Request, scope: Scope, keys: JWTVerifyGetKey) {
+function pullRequestScope(request: Request, scope: Scope) {
   const authorization = request.headers.get("authorization");
   if (!authorization || authorization.length > 16 * 1024) throw new HttpError(401, "invalid_token");
   let payload;
@@ -12,12 +12,33 @@ export async function authorizeTelemetry(request: Request, scope: Scope, keys: J
   } catch {
     throw new HttpError(401, "invalid_token");
   }
-  // Reports grant no artifact writes. Any PR base in this repository may report;
-  // authorize still verifies the signature, issuer, audience, repository and owner.
+  // The decoded base only selects policy; authorize verifies all claims and the signature.
   const branch =
     payload.event_name === "pull_request" && typeof payload.base_ref === "string"
       ? `refs/heads/${payload.base_ref}`
       : scope.branch;
-  await authorize(request, { ...scope, branch, writes_enabled: 1, pull_requests: 1 }, keys);
+  let endpoint = scope.endpoint;
+  if (typeof payload.aud === "string") {
+    try {
+      const audience = new URL(payload.aud);
+      audience.username = "";
+      audience.password = "";
+      // Vite+ uses the configured URL, including read credentials, as its OIDC audience.
+      if (audience.href.replace(/\/$/, "") === scope.endpoint.replace(/\/$/, ""))
+        endpoint = payload.aud;
+    } catch {
+      // The verified authorization below rejects malformed and foreign audiences.
+    }
+  }
+  return { ...scope, branch, endpoint, pull_requests: 1 };
+}
+
+export async function authorizeCacheWrite(request: Request, scope: Scope, keys: JWTVerifyGetKey) {
+  return authorize(request, pullRequestScope(request, scope), keys);
+}
+
+export async function authorizeTelemetry(request: Request, scope: Scope, keys: JWTVerifyGetKey) {
+  await authorizeCacheWrite(request, { ...scope, writes_enabled: 1 }, keys);
+  const payload = decodeJwt(request.headers.get("authorization")!.slice(7));
   return `github/${typeof payload.actor === "string" ? payload.actor : "unknown"}`;
 }

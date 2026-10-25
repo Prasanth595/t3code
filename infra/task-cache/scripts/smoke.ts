@@ -48,6 +48,15 @@ try {
   const { endpoint } = JSON.parse(
     await NodeFSP.readFile(NodePath.join(project, ".task-cache.json"), "utf8"),
   );
+  for (const [path, method] of [
+    ["fetch", "POST"],
+    ["blob/12345678-1234-1234-1234-123456789abc", "GET"],
+  ] as const) {
+    const response = await fetch(`${endpoint}/${path}`, { method });
+    await response.body?.cancel();
+    if (response.status !== 401)
+      throw new Error(`Anonymous ${path} returned ${response.status}, expected 401.`);
+  }
   const unauthorized = await fetch(`${endpoint}/store`, { method: "POST" });
   await unauthorized.body?.cancel();
   if (unauthorized.status !== 401)
@@ -75,12 +84,18 @@ try {
     await NodeFSP.writeFile(NodePath.join(cwd, "input.txt"), "version-a");
   }
   console.log("First checkout:\n" + (await run("a")));
+  const reader = JSON.parse(
+    await NodeFSP.readFile(
+      NodePath.join(NodeOS.homedir(), ".config/t3-task-cache/ci-reader.json"),
+      "utf8",
+    ),
+  );
   const otherHome = NodePath.join(root, "other-developer");
   await NodeFSP.mkdir(NodePath.join(otherHome, ".config/t3-task-cache"), { recursive: true });
   await NodeFSP.writeFile(
     NodePath.join(otherHome, ".config/t3-task-cache/credentials.json"),
     JSON.stringify({
-      [endpoint]: { name: "other-developer", token: "public-reads-need-no-writer-token" },
+      [endpoint]: reader,
     }),
   );
   const second = await run("b", otherHome);

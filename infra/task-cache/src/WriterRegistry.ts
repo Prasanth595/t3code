@@ -22,7 +22,7 @@ class ManagementError extends Schema.TaggedError<ManagementError>()("ManagementE
   message: Schema.String,
 }) {}
 export const isWriterName = (name: string) =>
-  /^(?!writers$|credentials$)[a-z0-9-]{1,64}$/.test(name);
+  /^(?!writers$|credentials$|readers$|ci-reader$)[a-z0-9-]{1,64}$/.test(name);
 
 const encodeCredential = Schema.encodeEffect(Credential);
 

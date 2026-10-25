@@ -213,7 +213,14 @@ export async function flushTelemetry(home = NodeOS.homedir(), env = process.env)
             }
           : credentials[endpoint];
       let authorization: string;
-      if (credential)
+      if (
+        credential &&
+        !(
+          env.GITHUB_ACTIONS === "true" &&
+          env.ACTIONS_ID_TOKEN_REQUEST_URL &&
+          env.ACTIONS_ID_TOKEN_REQUEST_TOKEN
+        )
+      )
         authorization = `Basic ${Buffer.from(`${credential.name}:${credential.token}`).toString("base64")}`;
       else if (env.ACTIONS_ID_TOKEN_REQUEST_URL && env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) {
         const tokenUrl = new URL(env.ACTIONS_ID_TOKEN_REQUEST_URL);

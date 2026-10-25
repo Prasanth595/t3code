@@ -20,6 +20,9 @@ it.effect("includes successful blob downloads in exported R2 usage", () =>
   Effect.gen(function* () {
     const get = vi.fn(async () => ({ size: 4, body: new Blob(["data"]).stream() }));
     const bindings = {
+      developerKeys: JSON.stringify({
+        julius: "210eb3d2c67a7207923e1999751300a87a2dd22839b258b80c3d805a6fe64984",
+      }),
       ARTIFACTS: { get },
       readLimit: { limit: async () => ({ success: true }) },
     } as unknown as Cache.Bindings["Service"];
@@ -29,6 +32,11 @@ it.effect("includes successful blob downloads in exported R2 usage", () =>
       return yield* cache.handle(
         new Request(
           "https://cache.example/projects/t3code/blob/12345678-1234-1234-1234-123456789abc",
+          {
+            headers: {
+              authorization: `Basic ${btoa("julius:fixture-token-012345678901234567890123456789")}`,
+            },
+          },
         ),
         { waitUntil: () => {} },
       );
@@ -71,6 +79,9 @@ it.effect("aborts the upstream deadline before disposing it on interruption", ()
       originalDispose.call(this);
     });
     const bindings = {
+      developerKeys: JSON.stringify({
+        julius: "210eb3d2c67a7207923e1999751300a87a2dd22839b258b80c3d805a6fe64984",
+      }),
       ARTIFACTS: {
         get: () => {
           Deferred.doneUnsafe(entered, Effect.void);
@@ -85,6 +96,11 @@ it.effect("aborts the upstream deadline before disposing it on interruption", ()
         .handle(
           new Request(
             "https://cache.example/projects/t3code/blob/12345678-1234-1234-1234-123456789abc",
+            {
+              headers: {
+                authorization: `Basic ${btoa("julius:fixture-token-012345678901234567890123456789")}`,
+              },
+            },
           ),
           { waitUntil: () => {} },
         )
@@ -188,3 +204,56 @@ it.effect("authenticates setup probes without recording empty savings", () => {
     ),
   );
 });
+
+it.effect("keeps artifacts private and limits CI reader credentials to reads", () =>
+  Effect.gen(function* () {
+    const cache = yield* Cache.Cache;
+    const context = { waitUntil: () => {} };
+    const blob = "https://cache.example/projects/t3code/blob/12345678-1234-1234-1234-123456789abc";
+    for (const url of [blob, "https://cache.example/projects/t3code/fetch"]) {
+      const method = url === blob ? "GET" : "POST";
+      expect((yield* cache.handle(new Request(url, { method }), context)).status).toBe(401);
+      expect(
+        (yield* cache.handle(
+          new Request(url, {
+            method,
+            headers: { authorization: `Basic ${btoa("ci-reader:wrong")}` },
+          }),
+          context,
+        )).status,
+      ).toBe(403);
+    }
+    const headers = {
+      authorization: `Basic ${btoa("ci-reader:fixture-token-012345678901234567890123456789")}`,
+    };
+    expect((yield* cache.handle(new Request(blob, { headers }), context)).status).toBe(200);
+    expect(
+      (yield* cache.handle(
+        new Request("https://cache.example/projects/t3code/store", { method: "POST", headers }),
+        context,
+      )).status,
+    ).toBe(403);
+  }).pipe(
+    Effect.provide(
+      Cache.layer.pipe(
+        Layer.provide([
+          Layer.succeed(Cache.Bindings, {
+            developerKeys: "{}",
+            readerKeys: JSON.stringify({
+              "ci-reader": "210eb3d2c67a7207923e1999751300a87a2dd22839b258b80c3d805a6fe64984",
+            }),
+            ARTIFACTS: { get: vi.fn(async () => ({ size: 4, body: new Blob(["data"]).stream() })) },
+            readLimit: { limit: async () => ({ success: true }) },
+            storeLimit: { limit: async () => ({ success: true }) },
+          } as unknown as Cache.Bindings["Service"]),
+          Admission.layer,
+          Layer.succeed(Savings.Savings, {
+            record: () => Effect.void,
+            emitTotals: () => Effect.void,
+            cleanup: Effect.void,
+          }),
+        ]),
+      ),
+    ),
+  ),
+);

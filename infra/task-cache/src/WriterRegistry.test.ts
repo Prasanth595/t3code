@@ -21,6 +21,10 @@ it.effect("loads the private writer registry as deployment configuration", () =>
     const home = yield* fs.makeTempDirectoryScoped();
     yield* fs.makeDirectory(`${home}/.config/t3-task-cache`, { recursive: true });
     yield* fs.writeFileString(`${home}/.config/t3-task-cache/writers.json`, '{"maria":"digest"}');
+    yield* fs.writeFileString(
+      `${home}/.config/t3-task-cache/readers.json`,
+      '{"ci-reader":"digest"}',
+    );
     const keys = yield* readKeys.pipe(
       Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ HOME: home }))),
     );
@@ -32,7 +36,9 @@ it.effect("uses explicit deployment credentials without requiring a local regist
   Effect.gen(function* () {
     const keys = yield* readKeys.pipe(
       Effect.provide(
-        ConfigProvider.layer(ConfigProvider.fromUnknown({ DEVELOPER_KEYS: '{"theo":"digest"}' })),
+        ConfigProvider.layer(
+          ConfigProvider.fromUnknown({ DEVELOPER_KEYS: '{"theo":"digest"}', READER_KEYS: "{}" }),
+        ),
       ),
     );
     expect(JSON.parse(Redacted.value(keys))).toEqual({ theo: "digest" });
@@ -62,7 +68,7 @@ it.live("rejects reserved writer names without modifying credential stores", () 
     const credentials = '{"https://cache.example":{"name":"maria","token":"secret"}}';
     yield* fs.writeFileString(`${state}/writers.json`, writers);
     yield* fs.writeFileString(`${state}/credentials.json`, credentials);
-    for (const name of ["writers", "credentials"]) {
+    for (const name of ["writers", "credentials", "readers", "ci-reader"]) {
       const code = yield* spawner.exitCode(
         ChildProcess.make(
           "node",
