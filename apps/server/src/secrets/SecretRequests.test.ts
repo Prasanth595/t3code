@@ -391,6 +391,35 @@ it.effect("a file request moves its value to an owner-only file, once", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("a failed file write keeps the value, so the request can retry", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "secret-files-test-" });
+    yield* withService(
+      ({ service }) =>
+        Effect.gen(function* () {
+          yield* service.answer({
+            threadId,
+            turnItemId,
+            answer: { type: "save", secret: "cf_token" },
+          });
+          const ref = Option.getOrThrow(yield* service.savedRef({ threadId, turnItemId }));
+          const name = ref.slice("secret-ref:".length);
+          // A non-empty directory where the partial file goes makes the write fail.
+          const partial = path.join(directory, "files", `${name}.partial`);
+          yield* fs.makeDirectory(path.join(partial, "block"), { recursive: true });
+          const failed = yield* service.saveToFile({ threadId, turnItemId }).pipe(Effect.flip);
+          assert.equal(failed.reason, "store_failed");
+          yield* fs.remove(partial, { recursive: true });
+          const file = yield* service.saveToFile({ threadId, turnItemId });
+          assert.equal(yield* fs.readFileString(file), "cf_token");
+        }),
+      { delivery: "file", directory },
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("a secret the card promised to keep from the agent is never written to a file", () =>
   withService(({ service, stored }) =>
     Effect.gen(function* () {

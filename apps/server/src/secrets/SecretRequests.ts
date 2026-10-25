@@ -32,7 +32,7 @@ const storeName = (ref: SecretRef) => `secret-request-${ref.slice(SECRET_REF_PRE
 const REF_PATTERN = /^secret-ref:[0-9a-f]{32}$/;
 const SECRET_REF_TTL_MS = 24 * 60 * 60 * 1000;
 const STORE_NAME_PATTERN = /^(secret-request-[0-9a-f]{32})\.bin$/;
-const FILE_NAME_PATTERN = /^[0-9a-f]{32}$/;
+const FILE_NAME_PATTERN = /^[0-9a-f]{32}(\.partial)?$/;
 
 const refFor = (salt: string, threadId: ThreadId, turnItemId: string) =>
   SecretRef.make(
@@ -195,7 +195,8 @@ const make = Effect.gen(function* () {
       Effect.withSpan("SecretRequests.consume"),
     );
 
-  const consumeRef = Effect.fn("SecretRequests.consumeRef")(function* (input: {
+  /** A live ref's value, left in the store. */
+  const readRef = Effect.fn("SecretRequests.readRef")(function* (input: {
     readonly ref: SecretRef;
     readonly projectId: ProjectId;
   }) {
@@ -214,12 +215,20 @@ const make = Effect.gen(function* () {
       yield* removeLogged(storeName(input.ref));
       return yield* new SecretRequestError({ reason: "ref_expired" });
     }
+    return decoded.value.value;
+  });
+
+  const consumeRef = Effect.fn("SecretRequests.consumeRef")(function* (input: {
+    readonly ref: SecretRef;
+    readonly projectId: ProjectId;
+  }) {
+    const value = yield* readRef(input);
     // One use: the value moves into whatever consumed it. If it cannot be
     // deleted, it is not handed out, so a ref is never used twice.
     if (!(yield* removeLogged(storeName(input.ref)))) {
       return yield* new SecretRequestError({ reason: "consume_failed" });
     }
-    return decoded.value.value;
+    return value;
   });
 
   const saveToFile: SecretRequests["Service"]["saveToFile"] = Effect.fn(
@@ -246,15 +255,23 @@ const make = Effect.gen(function* () {
     return yield* Effect.gen(function* () {
       // A retry with the same clientRequestId gets the file the first call wrote.
       if (yield* fileSystem.exists(file).pipe(Effect.orElseSucceed(() => false))) return file;
-      const value = yield* consumeRef({ ref, projectId: records.thread.projectId });
+      // The stored value goes only after the file is complete, so a failed write can retry.
+      const value = yield* readRef({ ref, projectId: records.thread.projectId });
+      const partial = `${file}.partial`;
       yield* fileSystem.makeDirectory(filesDir, { recursive: true, mode: 0o700 }).pipe(
         Effect.andThen(fileSystem.chmod(filesDir, 0o700)),
+        Effect.andThen(fileSystem.remove(partial, { force: true })),
         // `wx` never follows or replaces an existing path.
         Effect.andThen(
-          fileSystem.writeFile(file, new TextEncoder().encode(value), { flag: "wx", mode: 0o600 }),
+          fileSystem.writeFile(partial, new TextEncoder().encode(value), {
+            flag: "wx",
+            mode: 0o600,
+          }),
         ),
+        Effect.andThen(fileSystem.rename(partial, file)),
         Effect.mapError((cause) => new SecretRequestError({ reason: "store_failed", cause })),
       );
+      yield* removeLogged(storeName(ref));
       return file;
     }).pipe(consumeLock.withPermits(1));
   });
