@@ -453,9 +453,9 @@ type OpenLinkListener = (event: DesktopPreviewOpenLinkEvent) => Effect.Effect<vo
 const POPUP_PROTOCOLS = new Set(["http:", "https:"]);
 
 /**
- * The in-place path runs `loadURL`, a browser-initiated navigation, which Chromium lets reach
- * local and inline documents a page cannot open as a top-level page itself. Any frame in the
- * guest can call `window.open`, so `javascript:` would also run in the top page's origin.
+ * The in-place path runs `loadURL`, a browser-initiated load, so a `data:` popup skips the check
+ * that stops a page from navigating its own top frame to `data:`. The other local schemes are
+ * denied too, so this does not depend on how Chromium filters them before the handler runs.
  */
 const IN_PLACE_DENIED_PROTOCOLS = new Set([
   "about:",

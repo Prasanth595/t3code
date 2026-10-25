@@ -112,8 +112,8 @@ describe("previewWindowOpenAction", () => {
   });
 
   it("denies local and inline schemes that no page could open in place itself", () => {
-    // `loadURL` is a browser-initiated navigation, which Chromium lets reach these
-    // even though it blocks a page from opening them as a top-level document.
+    // `loadURL` is a browser-initiated load, so `data:` would get past the check that
+    // stops a page from opening it as a top-level document.
     for (const url of [
       "file:///etc/passwd",
       "data:text/html,<h1>hi</h1>",
