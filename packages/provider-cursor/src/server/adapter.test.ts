@@ -1,6 +1,12 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Exercises the installed SDK converter without starting a provider.
+import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
+import * as NodeVM from "node:vm";
+import { expect } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import type { InteractionUpdate } from "@cursor/sdk";
+import { InteractionUpdateSchema, type InteractionUpdate } from "@cursor/sdk";
 import {
   EnvironmentId,
   MessageId,
@@ -38,6 +44,138 @@ import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import { ConfigurationError } from "./sdk.ts";
 
 const decodeCursorSettings = Schema.decodeEffect(CursorSettings);
+
+const groupedGrepInput = {
+  result: {
+    case: "content",
+    value: {
+      matches: [
+        {
+          file: "src/one.ts",
+          matches: [
+            { lineNumber: 10, content: "above", isContextLine: true },
+            { lineNumber: 11, content: "needle one", isContextLine: false },
+            { lineNumber: 12, content: "below", isContextLine: true },
+          ],
+        },
+        {
+          file: "src/two.ts",
+          matches: [{ lineNumber: 3, content: "needle two", isContextLine: false }],
+        },
+      ],
+      totalLines: 4,
+      totalMatchedLines: 2,
+    },
+  },
+};
+
+function convertGrepOutput(input: unknown): unknown {
+  const require = NodeModule.createRequire(import.meta.url);
+  const source = NodeFS.readFileSync(
+    NodePath.join(NodePath.dirname(require.resolve("@cursor/sdk")), "689.js"),
+    "utf8",
+  );
+  const start = source.indexOf("function _x(e){");
+  const end = source.indexOf("function Px(e){", start);
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  const convert: (value: unknown) => unknown = NodeVM.runInNewContext(
+    `(${source.slice(start, end)})`,
+    Object.create(null),
+  );
+  return convert(input);
+}
+
+function grepUpdate(output: unknown) {
+  return {
+    type: "tool-call-completed",
+    callId: "grep-call",
+    modelCallId: "grep-model-call",
+    toolCall: {
+      type: "grep",
+      args: { pattern: "needle", path: "/workspace", outputMode: "content" },
+      result: {
+        status: "success",
+        value: { workspaceResults: { "/workspace": output } },
+      },
+    },
+  };
+}
+
+describe("Cursor grep output", () => {
+  it("preserves grouped match text, line numbers, context, and total before SDK update validation", () => {
+    const output = convertGrepOutput(groupedGrepInput);
+    expect(output).toEqual({
+      type: "content",
+      output: {
+        matches: [
+          {
+            file: "src/one.ts",
+            lineNumber: 11,
+            line: "needle one",
+            beforeContext: ["above"],
+            afterContext: ["below"],
+          },
+          { file: "src/two.ts", lineNumber: 3, line: "needle two" },
+        ],
+        totalMatches: 2,
+      },
+    });
+    expect(() => InteractionUpdateSchema.parse(grepUpdate(output))).not.toThrow();
+  });
+
+  it("preserves the reported match total when results are truncated", () => {
+    expect(
+      convertGrepOutput({
+        result: {
+          case: "content",
+          value: {
+            matches: [
+              {
+                file: "src/one.ts",
+                matches: [{ lineNumber: 1, content: "needle", isContextLine: false }],
+              },
+            ],
+            totalMatchedLines: 123,
+          },
+        },
+      }),
+    ).toEqual({
+      type: "content",
+      output: {
+        matches: [{ file: "src/one.ts", lineNumber: 1, line: "needle" }],
+        totalMatches: 123,
+      },
+    });
+  });
+
+  it("keeps legacy flat matches unchanged", () => {
+    const value = {
+      matches: [{ file: "src/one.ts", lineNumber: 7, line: "needle", beforeContext: ["above"] }],
+      totalMatches: 1,
+    };
+    expect(convertGrepOutput({ result: { case: "content", value } })).toEqual({
+      type: "content",
+      output: value,
+    });
+  });
+
+  it("still rejects malformed match text and invalid call IDs", () => {
+    const output = {
+      type: "content",
+      output: { matches: [{ file: "src/one.ts", line: 123 }], totalMatches: 1 },
+    };
+    expect(() => InteractionUpdateSchema.parse(grepUpdate(output))).toThrow();
+    const validOutput = {
+      type: "content",
+      output: { matches: [{ file: "src/one.ts", line: "needle" }], totalMatches: 1 },
+    };
+    expect(() => InteractionUpdateSchema.parse(grepUpdate(validOutput))).not.toThrow();
+    expect(() =>
+      InteractionUpdateSchema.parse({ ...grepUpdate(validOutput), callId: 123 }),
+    ).toThrow();
+  });
+});
 
 describe("CursorAdapterV2", () => {
   it.effect.each([
@@ -614,6 +752,7 @@ describe("CursorAdapterV2", () => {
         numFiles: 0,
       };
       const updates: ReadonlyArray<InteractionUpdate> = [
+        InteractionUpdateSchema.parse(grepUpdate(convertGrepOutput(groupedGrepInput))),
         ...(["tool-call-started", "tool-call-completed"] as const).map((type) => ({
           type,
           modelCallId: "native-model-call",
@@ -938,6 +1077,14 @@ describe("CursorAdapterV2", () => {
           results: item.results,
         })),
         [
+          {
+            pattern: "needle",
+            status: "completed",
+            results: [
+              { fileName: "src/one.ts", line: 11, preview: "needle one" },
+              { fileName: "src/two.ts", line: 3, preview: "needle two" },
+            ],
+          },
           {
             pattern: workspace,
             status: "completed",
