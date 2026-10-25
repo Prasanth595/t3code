@@ -18,6 +18,11 @@ describe("t3code/require-registered-list-scroll", () => {
   );
 
   rule.invalid(
+    "reports a list given the other list's scroll prop",
+    `const el = <LegendList data={rows} ScrollViewComponent={NativeScrollView} />;`,
+  );
+
+  rule.invalid(
     "reports a list with the default scroll view",
     `const el = <AnimatedLegendList data={rows} renderItem={renderRow} />;`,
     (output) => {
