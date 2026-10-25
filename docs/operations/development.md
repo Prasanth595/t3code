@@ -42,9 +42,9 @@ With `origin` on git.cafe, work through GitCafe and leave GitHub's API alone:
 - Read checks with `cafe pr status <n>`.
 - Write closing references as `Fixes pingdotgg/t3code#<n>`. GitCafe turns a bare `#<n>` in text it
   syncs to GitHub into a git.cafe link, and GitHub does not close issues from those.
-- Two things still need `gh`: CI logs and reruns (`gh run view`), and merging, with
-  `gh pr merge <n> --match-head-commit <sha>`, because `cafe pr merge` cannot pin the commit you
-  reviewed.
+- Two things still need `gh`: CI logs and reruns (`gh run view --log`, `gh run rerun`), and
+  merging, with `gh pr merge <n> --match-head-commit <sha>`, because `cafe pr merge` cannot pin
+  the commit you reviewed.
 - `cafe` flags differ from `gh`: `--repo` not `-R`, `cafe issue comments <n>` not `--comments`,
   `cafe pr status` not `pr checks`. `cafe api` paths omit `/api` (`cafe api /repos/...`).
 
