@@ -112,7 +112,7 @@ export class ServerConfig extends Context.Service<
 export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config);
 
 export const otlpResource = (
-  config: Pick<ServerConfig["Service"], "mode" | "devUrl" | "otelEnvironment">,
+  config: Pick<ServerConfig["Service"], "mode" | "otelEnvironment">,
   hostName: string,
 ) => ({
   serviceName: "t3code-server",

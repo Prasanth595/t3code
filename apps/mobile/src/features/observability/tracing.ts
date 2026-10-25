@@ -31,7 +31,10 @@ export function resolveTracingConfig(): TracingConfig | null {
 }
 
 export function layerFromConfig(config: TracingConfig | null, resource: TracingResource) {
-  const channel = RELEASE_CHANNEL_BY_VARIANT[resource.appVariant];
+  const channel =
+    typeof __DEV__ !== "undefined" && __DEV__
+      ? "dev"
+      : RELEASE_CHANNEL_BY_VARIANT[resource.appVariant];
   return RelayTracing.layer(config, {
     serviceName: "t3code-mobile",
     serviceVersion: resource.serviceVersion,
