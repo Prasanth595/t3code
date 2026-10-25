@@ -274,12 +274,18 @@ export function taskToDraft(task: ScheduledTask): DraftState {
 export function resolveScheduledTaskModelSelection(
   selection: ModelSelection | null,
   saved: ModelSelection | null,
+  settings: ServerSettings,
+  project: (LegacyProjectSettingsFields & { readonly id: ProjectId }) | null,
 ): ModelSelection | null {
-  return selection !== null &&
-    saved?.instanceId === selection.instanceId &&
-    saved.model === selection.model
-    ? saved
-    : selection;
+  if (selection === null) return null;
+  const configured = resolveProjectSettings(settings, project?.id ?? null, project).settings
+    .defaultModelSelection;
+  return (
+    [saved, configured, settings.defaultModelSelection].find(
+      (candidate) =>
+        candidate?.instanceId === selection.instanceId && candidate.model === selection.model,
+    ) ?? selection
+  );
 }
 
 export function scheduledTaskDefaultModel(

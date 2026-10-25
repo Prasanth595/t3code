@@ -320,19 +320,103 @@ describe("scheduled task model options", () => {
   };
 
   it("uses the same saved reasoning and speed options for display and saving", () => {
-    expect(resolveScheduledTaskModelSelection({ instanceId, model: "model-a" }, saved)).toBe(saved);
+    expect(
+      resolveScheduledTaskModelSelection(
+        { instanceId, model: "model-a" },
+        saved,
+        DEFAULT_SERVER_SETTINGS,
+        null,
+      ),
+    ).toBe(saved);
   });
 
   it("does not carry options into a different model or provider", () => {
     const differentModel = { instanceId, model: "model-b" };
     const differentProvider = { instanceId: ProviderInstanceId.make("other"), model: "model-a" };
-    expect(resolveScheduledTaskModelSelection(differentModel, saved)).toBe(differentModel);
-    expect(resolveScheduledTaskModelSelection(differentProvider, saved)).toBe(differentProvider);
+    const settings = { ...DEFAULT_SERVER_SETTINGS, defaultModelSelection: saved };
+    expect(resolveScheduledTaskModelSelection(differentModel, saved, settings, null)).toBe(
+      differentModel,
+    );
+    expect(resolveScheduledTaskModelSelection(differentProvider, saved, settings, null)).toBe(
+      differentProvider,
+    );
   });
 
-  it("retains project default options and cannot revive an unavailable selection", () => {
-    expect(resolveScheduledTaskModelSelection(saved, null)).toBe(saved);
-    expect(resolveScheduledTaskModelSelection(null, saved)).toBeNull();
+  it("retains selected default options and cannot revive an unavailable selection", () => {
+    const settings = { ...DEFAULT_SERVER_SETTINGS, defaultModelSelection: saved };
+    expect(resolveScheduledTaskModelSelection(saved, null, settings, null)).toBe(saved);
+    expect(resolveScheduledTaskModelSelection(null, saved, settings, null)).toBeNull();
+  });
+
+  it.each(["environment", "project override", "legacy project"] as const)(
+    "restores configured reasoning and speed when switching to the %s default",
+    (scope) => {
+      const projectId = ProjectId.make("project");
+      const destination = { instanceId, model: "model-b" };
+      const configured = {
+        ...destination,
+        options: [
+          { id: "reasoningEffort", value: "high" },
+          { id: "serviceTier", value: "priority" },
+        ],
+      };
+      const settings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        defaultModelSelection: scope === "environment" ? configured : saved,
+        projectSettingsOverrides:
+          scope === "project override"
+            ? { [projectId]: { defaultModelSelection: configured } }
+            : {},
+      };
+      const project =
+        scope === "legacy project"
+          ? { id: projectId, defaultModelSelection: configured }
+          : { id: projectId };
+
+      expect(resolveScheduledTaskModelSelection(destination, null, settings, project)).toEqual(
+        configured,
+      );
+    },
+  );
+
+  it("prefers project options while preserving explicitly cleared task options", () => {
+    const projectId = ProjectId.make("project");
+    const projectDefault = {
+      ...saved,
+      options: [{ id: "reasoningEffort", value: "low" }],
+    };
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      defaultModelSelection: saved,
+      projectSettingsOverrides: { [projectId]: { defaultModelSelection: projectDefault } },
+    };
+    const selection = { instanceId, model: saved.model };
+    const cleared = { ...selection, options: [] };
+    expect(
+      resolveScheduledTaskModelSelection(selection, null, settings, { id: projectId }),
+    ).toEqual(projectDefault);
+    expect(
+      resolveScheduledTaskModelSelection(selection, cleared, settings, { id: projectId }),
+    ).toEqual(cleared);
+    expect(
+      resolveScheduledTaskModelSelection(selection, saved, settings, { id: projectId }),
+    ).toEqual(saved);
+  });
+
+  it("uses matching environment options when the project defaults to another model", () => {
+    const settings = { ...DEFAULT_SERVER_SETTINGS, defaultModelSelection: saved };
+    const project = {
+      id: ProjectId.make("project"),
+      defaultModelSelection: { ...saved, model: "model-b" },
+    };
+    expect(
+      resolveScheduledTaskModelSelection(
+        { instanceId, model: saved.model },
+        null,
+        settings,
+        project,
+      ),
+    ).toEqual(saved);
   });
 });
 

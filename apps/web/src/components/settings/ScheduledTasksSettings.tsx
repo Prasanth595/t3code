@@ -1171,6 +1171,8 @@ function ScheduledTaskEditorForm({
   const activeSelection = resolveScheduledTaskModelSelection(
     pickedSelection,
     draft.baseModelSelection,
+    settings,
+    selectedProject ?? null,
   );
   const activeInstanceId =
     activeSelection?.instanceId ?? firstInstance?.instanceId ?? ("" as ProviderInstanceId);
