@@ -72,25 +72,26 @@ const make = Effect.gen(function* () {
         }),
     });
 
+  const checkLimit = Effect.fn("TaskCache.checkLimit")(function* (operation: string) {
+    const allowed = yield* protocol(() =>
+      (operation === "store" ? bindings.storeLimit : bindings.readLimit).limit({
+        key: `t3code:${operation.startsWith("blob/") ? "blob" : operation}`,
+      }),
+    );
+    if (!allowed.success) return yield* new CacheError({ status: 429, reason: "rate_limit" });
+  });
+
   const handle = Effect.fn("TaskCache.handle")(
     function* (request: Request, context: Pick<Cloudflare.ExecutionContext, "waitUntil">) {
       const url = new URL(request.url);
       const route = /^\/projects\/t3code\/(fetch|store|telemetry|blob\/([0-9a-f-]{36}))$/.exec(
         url.pathname,
       );
-      const operation = route?.[1];
+      const operation = route?.[1] ?? "unknown";
       const writing = operation === "store";
       yield* Effect.annotateCurrentSpan({
         "cache.operation": operation?.startsWith("blob/") ? "blob" : (operation ?? "unknown"),
       });
-      const allowed = yield* protocol(() =>
-        (writing ? bindings.storeLimit : bindings.readLimit).limit({
-          key: route
-            ? `t3code:${writing ? "store" : operation === "fetch" || operation === "telemetry" ? operation : "blob"}`
-            : "unknown",
-        }),
-      );
-      if (!allowed.success) return yield* new CacheError({ status: 429, reason: "rate_limit" });
       if (
         !route ||
         url.search ||
@@ -138,6 +139,7 @@ const make = Effect.gen(function* () {
                     status: request.headers.has("authorization") ? 403 : 401,
                     reason: "read_denied",
                   });
+                yield* checkLimit(operation);
               }
               const scope = yield* protocol(() => getScope(bindings.INDEX, "t3code", stats));
               if (operation === "telemetry") {
@@ -148,6 +150,7 @@ const make = Effect.gen(function* () {
                 if (identity === undefined) {
                   identity = yield* protocol(() => authorizeTelemetry(request, scope, keys));
                 }
+                yield* checkLimit(operation);
                 const bytes = yield* protocol(() => readBody(request.body, 256 * 1024, deadline));
                 const summary = yield* decodeSummary(new TextDecoder().decode(bytes)).pipe(
                   Effect.mapError(() => new CacheError({ status: 400, reason: "invalid_summary" })),
@@ -187,6 +190,7 @@ const make = Effect.gen(function* () {
                         repository_id: scope.repository_id,
                         workflow_ref: `developer/${developer}`,
                       };
+                yield* checkLimit(operation);
                 return yield* protocol(() =>
                   store(request, bindings, context, scope, identity, defaults, deadline, stats),
                 );

@@ -40,32 +40,40 @@ it("accepts signed stacked PR telemetry without granting cache writes or trustin
       new Request(scope.endpoint, { headers: { Authorization: `Bearer ${token}` } });
     const keys = async () => publicKey;
     const valid = request(await token("123"));
+    const allowed = {
+      ...scope,
+      writes_enabled: 1,
+      pull_requests: 1,
+      branch: "refs/heads/feature/parent",
+    };
     expect(
       await authorizeCacheWrite(
         request(await token("123", "https://ci-reader:secret@cache.example/projects/t3code")),
-        { ...scope, writes_enabled: 1 },
+        allowed,
         keys,
       ),
     ).toMatchObject({ repository_id: "123" });
     await expect(
       authorizeCacheWrite(
         request(await token("123", "https://ci-reader:secret@other.example/projects/t3code")),
-        { ...scope, writes_enabled: 1 },
+        allowed,
         keys,
       ),
     ).rejects.toMatchObject({ status: 403 });
     expect(await authorizeTelemetry(valid, scope, keys)).toBe("github/maria");
+    await expect(
+      authorizeCacheWrite(valid, { ...allowed, pull_requests: 0 }, keys),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(
+      authorizeCacheWrite(valid, { ...allowed, branch: "refs/heads/main" }, keys),
+    ).rejects.toMatchObject({ status: 403 });
     await expect(authorize(valid, scope, keys)).rejects.toMatchObject({ status: 403 });
     await expect(authorizeCacheWrite(valid, scope, keys)).rejects.toMatchObject({ status: 403 });
-    expect(await authorizeCacheWrite(valid, { ...scope, writes_enabled: 1 }, keys)).toMatchObject({
+    expect(await authorizeCacheWrite(valid, allowed, keys)).toMatchObject({
       repository_id: "123",
     });
     await expect(
-      authorizeCacheWrite(
-        request(await token("another-repo")),
-        { ...scope, writes_enabled: 1 },
-        keys,
-      ),
+      authorizeCacheWrite(request(await token("another-repo")), allowed, keys),
     ).rejects.toMatchObject({ status: 403 });
     await expect(
       authorizeTelemetry(request(await token("another-repo")), scope, keys),

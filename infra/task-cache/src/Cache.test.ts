@@ -126,17 +126,39 @@ it.effect("aborts the upstream deadline before disposing it on interruption", ()
   }),
 );
 
-it.effect("gives telemetry a rate-limit budget separate from artifact downloads", () => {
+it.effect("does not charge authenticated budgets for anonymous or malformed requests", () => {
   const limit = vi.fn(async (_options: { key: string }) => ({ success: true }));
   return Effect.gen(function* () {
     const cache = yield* Cache.Cache;
-    yield* cache.handle(new Request("https://cache.example/projects/t3code/telemetry"), {
-      waitUntil: () => {},
-    });
+    for (const operation of [
+      "fetch",
+      "store",
+      "telemetry",
+      "blob/12345678-1234-1234-1234-123456789abc",
+    ]) {
+      for (const method of ["GET", "POST"]) {
+        yield* cache.handle(
+          new Request(`https://cache.example/projects/t3code/${operation}`, { method }),
+          { waitUntil: () => {} },
+        );
+      }
+    }
+    expect(limit).not.toHaveBeenCalled();
+    const headers = {
+      authorization: `Basic ${btoa("julius:fixture-token-012345678901234567890123456789")}`,
+    };
+    yield* cache.handle(
+      new Request("https://cache.example/projects/t3code/telemetry", {
+        method: "POST",
+        headers,
+        body: "{}",
+      }),
+      { waitUntil: () => {} },
+    );
     yield* cache.handle(
       new Request(
         "https://cache.example/projects/t3code/blob/12345678-1234-1234-1234-123456789abc",
-        { method: "POST" },
+        { headers },
       ),
       { waitUntil: () => {} },
     );
@@ -146,7 +168,13 @@ it.effect("gives telemetry a rate-limit budget separate from artifact downloads"
       Cache.layer.pipe(
         Layer.provide([
           Layer.succeed(Cache.Bindings, {
+            developerKeys: JSON.stringify({
+              julius: "210eb3d2c67a7207923e1999751300a87a2dd22839b258b80c3d805a6fe64984",
+            }),
+            readerKeys: "{}",
             readLimit: { limit },
+            storeLimit: { limit },
+            ARTIFACTS: { get: async () => ({ size: 4, body: new Blob(["data"]).stream() }) },
           } as unknown as Cache.Bindings["Service"]),
           Admission.layer,
           Layer.succeed(Savings.Savings, {
