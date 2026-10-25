@@ -635,7 +635,7 @@ or `web`. The server's `t3code.server.managed_by` is `desktop` when the desktop 
 `standalone` otherwise. The desktop main process reports `t3code.desktop.mode` as `development` or
 `packaged` (formerly `service.mode`; dashboards filtering on that key must switch). Node processes
 also report the semantic `process.runtime.name`, `process.runtime.version`, and
-`process.runtime.description`, and the UI reports `browser.language`, `user_agent.original`, and,
+`process.runtime.description`, and UI traces report `browser.language`, `user_agent.original`, and,
 in Chromium, `browser.platform`, `browser.mobile`, and `browser.brands`.
 
 If the OTLP URLs are unset, local tracing still works, metrics stay in-process only, and logs stay
