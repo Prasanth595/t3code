@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import { expect, it } from "@effect/vitest";
 
-import { developerIdentity } from "./developer-auth.ts";
+import { developerIdentity } from "./developerAuth.ts";
 
 const token = "fixture-token-012345678901234567890123456789";
 const keys = JSON.stringify({

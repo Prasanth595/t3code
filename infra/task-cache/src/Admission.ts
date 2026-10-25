@@ -13,14 +13,16 @@ export class Admission extends Context.Service<
   }
 >()("@t3tools/task-cache/Admission") {}
 
-export const layer = Layer.effect(
-  Admission,
-  Effect.gen(function* () {
-    // Bound simultaneous upload buffers; Effect cancels queued waiters and releases permits.
-    const stores = yield* Semaphore.make(2);
-    const reads = yield* Semaphore.make(4);
-    return Admission.of({
-      withPermit: (store, task) => (store ? stores : reads).withPermits(1)(task),
-    });
-  }),
-);
+const make = Effect.gen(function* () {
+  // Bound simultaneous upload buffers; Effect cancels queued waiters and releases permits.
+  const stores = yield* Semaphore.make(2);
+  const reads = yield* Semaphore.make(4);
+  return Admission.of({
+    // The caller owns the request span; admission adds no second span per request.
+    withPermit: Effect.fnUntraced(function* (store, task) {
+      return yield* (store ? stores : reads).withPermits(1)(task);
+    }),
+  });
+});
+
+export const layer = Layer.effect(Admission, make);

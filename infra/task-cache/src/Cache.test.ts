@@ -7,7 +7,8 @@ import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 import { Observations } from "@voidzero-dev/vite-plus-remote-cache-cloudflare/src/observations.ts";
 import * as Admission from "./Admission.ts";
-import { Bindings, Cache, layer } from "./Cache.ts";
+import * as Cache from "./Cache.ts";
+import * as Savings from "./Savings.ts";
 
 vi.mock("@voidzero-dev/vite-plus-remote-cache-cloudflare/src/database.ts", () => ({
   getScope: async () => ({}),
@@ -21,10 +22,10 @@ it.effect("includes successful blob downloads in exported R2 usage", () =>
     const bindings = {
       ARTIFACTS: { get },
       readLimit: { limit: async () => ({ success: true }) },
-    } as unknown as typeof Bindings.Service;
+    } as unknown as Cache.Bindings["Service"];
     using observations = vi.spyOn(Observations.prototype, "toJSON");
     const response = yield* Effect.gen(function* () {
-      const cache = yield* Cache;
+      const cache = yield* Cache.Cache;
       return yield* cache.handle(
         new Request(
           "https://cache.example/projects/t3code/blob/12345678-1234-1234-1234-123456789abc",
@@ -33,7 +34,17 @@ it.effect("includes successful blob downloads in exported R2 usage", () =>
       );
     }).pipe(
       Effect.provide(
-        layer.pipe(Layer.provide([Layer.succeed(Bindings, bindings), Admission.layer])),
+        Cache.layer.pipe(
+          Layer.provide([
+            Layer.succeed(Cache.Bindings, bindings),
+            Admission.layer,
+            Layer.succeed(Savings.Savings, {
+              record: () => Effect.void,
+              emitTotals: () => Effect.void,
+              cleanup: Effect.void,
+            }),
+          ]),
+        ),
       ),
     );
     expect(response.status).toBe(200);
@@ -67,9 +78,9 @@ it.effect("aborts the upstream deadline before disposing it on interruption", ()
         },
       },
       readLimit: { limit: async () => ({ success: true }) },
-    } as unknown as typeof Bindings.Service;
+    } as unknown as Cache.Bindings["Service"];
     yield* Effect.gen(function* () {
-      const cache = yield* Cache;
+      const cache = yield* Cache.Cache;
       const fiber = yield* cache
         .handle(
           new Request(
@@ -83,7 +94,17 @@ it.effect("aborts the upstream deadline before disposing it on interruption", ()
       expect(cancelled).toEqual([true]);
     }).pipe(
       Effect.provide(
-        layer.pipe(Layer.provide([Layer.succeed(Bindings, bindings), Admission.layer])),
+        Cache.layer.pipe(
+          Layer.provide([
+            Layer.succeed(Cache.Bindings, bindings),
+            Admission.layer,
+            Layer.succeed(Savings.Savings, {
+              record: () => Effect.void,
+              emitTotals: () => Effect.void,
+              cleanup: Effect.void,
+            }),
+          ]),
+        ),
       ),
     );
   }),

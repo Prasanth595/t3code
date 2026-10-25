@@ -8,7 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Redacted from "effect/Redacted";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { WriterSecrets } from "./writers.ts";
+import { WriterSecrets } from "./deploymentConfig.ts";
 
 const readKeys = Config.Redacted("DEVELOPER_KEYS").pipe(Effect.provide(WriterSecrets));
 
@@ -61,12 +61,16 @@ it.live("rejects reserved writer names without modifying credential stores", () 
     yield* fs.writeFileString(`${state}/credentials.json`, credentials);
     for (const name of ["writers", "credentials"]) {
       const code = yield* spawner.exitCode(
-        ChildProcess.make("node", [`${import.meta.dirname}/manage.ts`, "add-writer", name], {
-          env: { HOME: home },
-          extendEnv: true,
-          stdout: "ignore",
-          stderr: "ignore",
-        }),
+        ChildProcess.make(
+          "node",
+          [`${import.meta.dirname}/../scripts/manage.ts`, "add-writer", name],
+          {
+            env: { HOME: home },
+            extendEnv: true,
+            stdout: "ignore",
+            stderr: "ignore",
+          },
+        ),
       );
       expect(code).not.toBe(0);
       expect(yield* fs.readFileString(`${state}/writers.json`)).toBe(writers);

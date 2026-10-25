@@ -6,7 +6,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { cacheEnvironment } from "./vp.ts";
+import { cacheEnvironment } from "../src/launcher/vp.ts";
 
 const project = NodePath.join(import.meta.dirname, "../../..");
 const env = cacheEnvironment(project, process.env);
@@ -18,7 +18,7 @@ async function run(directory: string) {
   return new Promise<string>((resolve, reject) => {
     const child = NodeChildProcess.spawn(
       process.execPath,
-      [NodePath.join(import.meta.dirname, "vp.ts"), "run", "--cache", "build"],
+      [NodePath.join(import.meta.dirname, "../src/launcher/vp.ts"), "run", "--cache", "build"],
       {
         cwd: NodePath.join(root, directory),
         env: {

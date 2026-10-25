@@ -3,8 +3,7 @@
   "compilerOptions": {
     "lib": ["ESNext", "DOM"],
     "types": ["node"],
-    // The pinned upstream protocol uses parameter properties; Alchemy bundles it.
     "erasableSyntaxOnly": false
   },
-  "include": ["alchemy.run.ts", "src/**/*.ts"]
+  "include": ["alchemy.run.ts", "src/**/*.ts", "scripts/**/*.ts", "types/**/*.d.ts"]
 }

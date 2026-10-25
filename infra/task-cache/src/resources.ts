@@ -43,7 +43,7 @@ export const Savings = cacheName.pipe(
   Effect.flatMap((name) =>
     Cloudflare.D1.Database("Savings", {
       name: `${name}-savings`,
-      migrations: NodeURL.fileURLToPath(new URL("../telemetry-migrations", import.meta.url)),
+      migrations: NodeURL.fileURLToPath(new URL("../migrations/savings", import.meta.url)),
     }).pipe(retain()),
   ),
 );

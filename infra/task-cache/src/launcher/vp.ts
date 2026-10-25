@@ -6,7 +6,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
-import { flushTelemetry, observeSummaries } from "./launcher-telemetry.ts";
+import { flushTelemetry, observeSummaries } from "./launcherTelemetry.ts";
 
 export function cacheEnvironment(
   cwd: string,

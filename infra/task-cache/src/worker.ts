@@ -1,7 +1,6 @@
 import * as Axiom from "alchemy/Axiom";
 import { Observability } from "./observability.ts";
 import * as Cloudflare from "alchemy/Cloudflare";
-import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -9,13 +8,14 @@ import * as Redacted from "effect/Redacted";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Admission from "./Admission.ts";
 import * as Cache from "./Cache.ts";
-import { emitTotals } from "./Savings.ts";
-import { Artifacts, Index, Savings, cacheName } from "./resources.ts";
+import * as Savings from "./Savings.ts";
+import type { ProtocolBindings } from "./protocolTypes.ts";
+import * as Resources from "./resources.ts";
 
 export class Worker extends Cloudflare.Worker<Worker, {}>()("Cache") {}
 
-const layer = Worker.make(
-  cacheName.pipe(
+export const layer = Worker.make(
+  Resources.cacheName.pipe(
     Effect.map((name) => ({
       name,
       main: import.meta.filename,
@@ -23,9 +23,9 @@ const layer = Worker.make(
     })),
   ),
   Effect.gen(function* () {
-    const savings = yield* Cloudflare.D1.QueryDatabase(yield* Savings);
-    const database = yield* Cloudflare.D1.QueryDatabase(yield* Index);
-    const artifacts = yield* Cloudflare.R2.ReadWriteBucket(yield* Artifacts);
+    const savings = yield* Cloudflare.D1.QueryDatabase(yield* Resources.Savings);
+    const database = yield* Cloudflare.D1.QueryDatabase(yield* Resources.Index);
+    const artifacts = yield* Cloudflare.R2.ReadWriteBucket(yield* Resources.Artifacts);
     const developerKeys = yield* Config.Redacted("DEVELOPER_KEYS");
     const reads = yield* Cloudflare.RateLimit("READ_LIMITER", {
       namespaceId: "1001",
@@ -38,8 +38,7 @@ const layer = Worker.make(
     const bindings = Effect.gen(function* () {
       return Cache.Bindings.of({
         INDEX: yield* database.raw,
-        savings: yield* savings.raw,
-        ARTIFACTS: (yield* artifacts.raw) as unknown as Env["ARTIFACTS"],
+        ARTIFACTS: (yield* artifacts.raw) as unknown as ProtocolBindings["ARTIFACTS"],
         GC_BATCH_SIZE: "16",
         developerKeys: Redacted.value(developerKeys),
         readLimit: yield* reads.raw,
@@ -47,10 +46,14 @@ const layer = Worker.make(
       });
     });
     const admission = yield* Admission.Admission.pipe(Effect.provide(Admission.layer));
+    const savingsLayer = Savings.layer.pipe(
+      Layer.provide(Layer.effect(Savings.Database, savings.raw)),
+    );
     const runtime = Cache.layer.pipe(
       Layer.provide([
         Layer.succeed(Admission.Admission, admission),
         Layer.effect(Cache.Bindings, bindings),
+        savingsLayer,
       ]),
     );
     yield* Cloudflare.Workers.cron("*/5 * * * *", () =>
@@ -61,17 +64,11 @@ const layer = Worker.make(
       ),
     );
     yield* Cloudflare.Workers.cron("0 * * * *", () =>
-      Effect.gen(function* () {
-        const db = yield* savings.raw;
-        const now = yield* Clock.currentTimeMillis;
-        yield* Effect.promise(() =>
-          db
-            .prepare("DELETE FROM receipts WHERE recorded_at < ?")
-            .bind(now - 31 * 86400_000)
-            .run(),
-        );
-        yield* emitTotals(db);
-      }).pipe(Effect.orDie),
+      Savings.Savings.pipe(
+        Effect.flatMap((savings) => savings.cleanup.pipe(Effect.andThen(savings.emitTotals()))),
+        Effect.provide(savingsLayer),
+        Effect.orDie,
+      ),
     );
     return {
       fetch: Effect.gen(function* () {
@@ -95,5 +92,5 @@ const layer = Worker.make(
     ]),
   ),
 );
-
+// Alchemy's generated Worker entry imports the runtime layer as the default export.
 export default layer;

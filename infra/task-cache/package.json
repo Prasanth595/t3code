@@ -5,10 +5,10 @@
   "scripts": {
     "test": "vp test run --config ../../vite.config.ts --dir .",
     "typecheck": "tsc --noEmit",
-    "smoke": "node src/smoke.ts",
+    "smoke": "node scripts/smoke.ts",
     "deploy": "alchemy deploy --stage prod",
     "install:launcher": "node install.mjs",
-    "writers": "node src/manage.ts"
+    "writers": "node scripts/manage.ts"
   },
   "dependencies": {
     "@voidzero-dev/vite-plus-remote-cache-cloudflare": "https://codeload.github.com/voidzero-dev/vite-plus-remote-cache-cloudflare/tar.gz/5b06c2c10d84ea441735ba07c46f6d1b7cb2ff3b",

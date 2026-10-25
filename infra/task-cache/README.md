@@ -22,7 +22,7 @@ The production database's existing `scopes` and `deployment` records control rep
 ## Add a contributor or machine
 
 ```sh
-node infra/task-cache/src/manage.ts add-writer maria
+node infra/task-cache/scripts/manage.ts add-writer maria
 ```
 
 This updates the local writer registry and writes `~/.config/t3-task-cache/maria.json`. Run `alchemy deploy --stage prod` from `infra/task-cache` to apply the registry, then transfer that file through a private channel. The recipient runs:
@@ -38,7 +38,7 @@ CI installs the launcher through `setup-ci-deps`; default-branch push jobs uploa
 ## Verify
 
 ```sh
-node infra/task-cache/src/smoke.ts
+node infra/task-cache/scripts/smoke.ts
 vp run --filter @t3tools/task-cache test
 vp run --filter @t3tools/task-cache typecheck
 ```

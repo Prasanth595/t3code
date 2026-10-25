@@ -4,7 +4,8 @@ import * as NodeFS from "node:fs";
 import * as Effect from "effect/Effect";
 import type * as Cloudflare from "@cloudflare/workers-types";
 import { expect, it } from "@effect/vitest";
-import { persistSavings } from "./Savings.ts";
+import * as Savings from "./Savings.ts";
+import * as Layer from "effect/Layer";
 
 it.effect(
   "increments lifetime totals once per receipt, including retries and different hosts",
@@ -14,13 +15,13 @@ it.effect(
       try {
         sqlite.exec(
           NodeFS.readFileSync(
-            new URL("../telemetry-migrations/0001_savings.sql", import.meta.url),
+            new URL("../migrations/savings/0001_savings.sql", import.meta.url),
             "utf8",
           ),
         );
         sqlite.exec(
           NodeFS.readFileSync(
-            new URL("../telemetry-migrations/0002_unspecified_tier.sql", import.meta.url),
+            new URL("../migrations/savings/0002_unspecified_tier.sql", import.meta.url),
             "utf8",
           ),
         );
@@ -39,6 +40,9 @@ it.effect(
             return [];
           },
         } as unknown as Cloudflare.D1Database;
+        const savings = yield* Savings.Savings.pipe(
+          Effect.provide(Savings.layer.pipe(Layer.provide(Layer.succeed(Savings.Database, db)))),
+        );
         const summary = {
           id: "a".repeat(64),
           recordedAt: 1,
@@ -49,10 +53,10 @@ it.effect(
           runId: "",
           tasks: [{ package: "server", task: "check", source: "remote" as const, savedMs: 900 }],
         };
-        yield* persistSavings(db, summary, "alice");
-        yield* persistSavings(db, summary, "alice");
-        yield* persistSavings(db, { ...summary, id: "b".repeat(64), host: "linux" }, "bob");
-        yield* persistSavings(db, { ...summary, id: "c".repeat(64) }, "alice");
+        yield* savings.record(summary, "alice");
+        yield* savings.record(summary, "alice");
+        yield* savings.record({ ...summary, id: "b".repeat(64), host: "linux" }, "bob");
+        yield* savings.record({ ...summary, id: "c".repeat(64) }, "alice");
         const rows = sqlite
           .prepare("SELECT developer, host, remote_ms, remote_hits FROM savings ORDER BY developer")
           .all();

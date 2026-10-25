@@ -6,8 +6,8 @@ import { Observability } from "./src/observability.ts";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Secrets from "alchemy/Secrets";
-import { WriterSecrets } from "./src/writers.ts";
-import workerLayer, { Worker } from "./src/worker.ts";
+import { WriterSecrets } from "./src/deploymentConfig.ts";
+import * as Worker from "./src/worker.ts";
 
 export default Alchemy.Stack(
   "T3TaskCache",
@@ -17,12 +17,12 @@ export default Alchemy.Stack(
     secrets: [Secrets.DotEnv(), Secrets.ProcessEnv(), WriterSecrets],
   },
   Effect.gen(function* () {
-    const worker = yield* Worker;
+    const worker = yield* Worker.Worker;
     const observability = yield* Observability;
     return {
       url: worker.url,
       workerName: worker.workerName,
       dashboard: observability.dashboard.uid,
     };
-  }).pipe(Effect.provide(workerLayer), adopt(true)),
+  }).pipe(Effect.provide(Worker.layer), adopt(true)),
 );
