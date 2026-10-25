@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - real HTTP servers stand in for an outbound proxy and the metadata server.
+import * as NodeHttp from "node:http";
+import type * as NodeNet from "node:net";
+
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -7,7 +11,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
-import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
@@ -16,6 +20,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as Ndjson from "effect/encoding/Ndjson";
 import * as AcpErrors from "effect-acp/errors";
+import * as Undici from "undici";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 import {
@@ -32,6 +37,7 @@ import {
   parseAntigravityAuthorizationUrl,
   prepareAntigravityProfile,
   probeGoogleMetadataServer,
+  probeMetadataServer,
   resolveAntigravityInstanceDirectories,
 } from "./antigravityAuthSupport.ts";
 
@@ -754,5 +760,51 @@ it.layer(NodeServices.layer)("Antigravity Agent Platform credentials", (it) => {
       yield* TestClock.adjust("1 second");
       expect(yield* Fiber.join(unanswered)).toBe(false);
     }),
+  );
+});
+
+describe("Google metadata server probe", () => {
+  it.live("reaches the metadata server directly when outbound fetch uses an env proxy", () =>
+    Effect.gen(function* () {
+      const listen = (handler: NodeHttp.RequestListener) =>
+        Effect.acquireRelease(
+          Effect.promise(async () => {
+            const server = NodeHttp.createServer(handler);
+            await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+            return server;
+          }),
+          (server) => Effect.promise(() => new Promise((resolve) => server.close(resolve))),
+        ).pipe(
+          Effect.map(
+            (server) => `http://127.0.0.1:${(server.address() as NodeNet.AddressInfo).port}`,
+          ),
+        );
+      const metadataServer = yield* listen((_request, response) =>
+        response.writeHead(200, { "Metadata-Flavor": "Google" }).end(),
+      );
+      const proxied: Array<string | undefined> = [];
+      const proxy = yield* listen((request, response) => {
+        proxied.push(request.url);
+        response.writeHead(403).end();
+      });
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const previous = Undici.getGlobalDispatcher();
+          const envProxy = new Undici.EnvHttpProxyAgent({ httpProxy: proxy, noProxy: "" });
+          Undici.setGlobalDispatcher(envProxy);
+          return { previous, envProxy };
+        }),
+        ({ previous, envProxy }) =>
+          Effect.promise(() => {
+            Undici.setGlobalDispatcher(previous);
+            return envProxy.destroy();
+          }),
+      );
+
+      const onGoogleCloud = yield* probeMetadataServer(metadataServer).pipe(
+        Effect.provide(FetchHttpClient.layer),
+      );
+      expect({ onGoogleCloud, proxied }).toEqual({ onGoogleCloud: true, proxied: [] });
+    }).pipe(Effect.scoped),
   );
 });

@@ -8,7 +8,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
-import { HttpClient } from "effect/http";
+import { FetchHttpClient, HttpClient } from "effect/http";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -23,6 +23,7 @@ import {
   antigravityUserSkillDirectories,
   resolveAntigravityUserHome,
 } from "./Drivers/AntigravitySkills.ts";
+import { makeDirectFetch } from "../outboundHttp.ts";
 
 export const ANTIGRAVITY_AUTH_STDOUT_PREFIX =
   "Open the following link to authenticate the ACP server: ";
@@ -175,12 +176,23 @@ export const antigravityAuthIssue = Effect.fn("antigravityAuthIssue")(function* 
     : "Agent Platform without an API key needs Google Cloud application default credentials. Run `gcloud auth application-default login`, or enter an API key in the Antigravity provider settings.";
 });
 
-// The Go client's metadata server check. Unreachable link-local addresses can hang, so bound it.
-export const probeGoogleMetadataServer = HttpClient.get("http://169.254.169.254").pipe(
-  Effect.map((response) => response.headers["metadata-flavor"] === "Google"),
-  Effect.timeoutOrElse({ duration: "1 second", orElse: () => Effect.succeed(false) }),
-  Effect.orElseSucceed(() => false),
-);
+// The Go client's metadata server check. Like Go's transport it never uses a proxy, which cannot
+// reach this host's link-local address. Unreachable link-local addresses can hang, so bound it.
+export const probeMetadataServer = (url: string) =>
+  Effect.acquireUseRelease(
+    Effect.try(makeDirectFetch),
+    (direct) =>
+      HttpClient.get(url).pipe(
+        Effect.map((response) => response.headers["metadata-flavor"] === "Google"),
+        Effect.provideService(FetchHttpClient.Fetch, direct.fetch),
+      ),
+    (direct) => Effect.promise(direct.close),
+  ).pipe(
+    Effect.timeoutOrElse({ duration: "1 second", orElse: () => Effect.succeed(false) }),
+    Effect.orElseSucceed(() => false),
+  );
+
+export const probeGoogleMetadataServer = probeMetadataServer("http://169.254.169.254");
 
 /**
  * `auth.type` names the selected method so a native logout clears only that method's credentials
