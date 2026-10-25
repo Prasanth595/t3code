@@ -2626,16 +2626,17 @@ it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as c
 );
 
 it.effect.each([
-  { status: "completed", failure: "later-stream" },
-  { status: "failed", failure: "later-stream" },
-  { status: "completed", failure: "terminal-ingest" },
+  { status: "completed", failure: "later-stream", interrupt: "succeeds" },
+  { status: "failed", failure: "later-stream", interrupt: "succeeds" },
+  { status: "completed", failure: "terminal-ingest", interrupt: "succeeds" },
+  { status: "completed", failure: "terminal-ingest", interrupt: "fails" },
 ] as const)(
-  "keeps a $status root provider turn durable after a $failure failure",
-  ({ status, failure }) =>
+  "keeps a $status root provider turn durable after a $failure failure when the interrupt $interrupt",
+  ({ status, failure, interrupt }) =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
       const terminalAt = DateTime.subtract(now, { seconds: 1 });
-      const key = `terminal-snapshot:${status}:${failure}`;
+      const key = `terminal-snapshot:${status}:${failure}:${interrupt}`;
       const durableTurns = yield* Ref.make<
         ReadonlyMap<ProviderTurnId, OrchestrationV2ProviderTurn>
       >(new Map());
@@ -2692,7 +2693,21 @@ it.effect.each([
                   }),
                 )
               : persist(event.providerTurn).pipe(Effect.as([])),
-        interruptTurn: (input) => Ref.update(interrupts, (current) => [...current, input]),
+        interruptTurn: (input) =>
+          Ref.update(interrupts, (current) => [...current, input]).pipe(
+            Effect.andThen(
+              interrupt === "fails"
+                ? Effect.fail(
+                    new ProviderAdapter.ProviderAdapterInterruptError({
+                      driver,
+                      providerThreadId: input.providerThread.id,
+                      providerTurnId: input.providerTurnId,
+                      cause: "provider already exited",
+                    }),
+                  )
+                : Effect.void,
+            ),
+          ),
         beforeTerminalWrite: (request) =>
           Effect.forEach(request.events, (event) =>
             event.type === "provider-turn.updated" ? persist(event.payload) : Effect.void,
@@ -2704,10 +2719,9 @@ it.effect.each([
       assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
       assert.isTrue(finalEvents.some((event) => event.type === "run.updated"));
       const durable = (yield* Ref.get(durableTurns)).get(ids.rootProviderTurnId);
-      assert.deepEqual(
-        { status: durable?.status, completedAt: durable?.completedAt },
-        { status, completedAt: terminalAt },
-      );
+      // A failed interrupt keeps the stored turn running for the next start to retry.
+      assert.equal(durable?.status, interrupt === "fails" ? "running" : status);
+      assert.deepEqual(durable?.completedAt, interrupt === "fails" ? null : terminalAt);
     }),
 );
 

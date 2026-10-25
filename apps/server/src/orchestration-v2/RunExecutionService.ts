@@ -1499,21 +1499,19 @@ export const layer: Layer.Layer<
                                 { runId: input.run.id, cause: interruptCause },
                               ).pipe(Effect.as(false)),
                           ),
-                          // The snapshot is cached before it is published, so it may not be
-                          // stored: replay a terminal one as-is. An active turn whose interrupt
-                          // failed stays running so the next start retries the interrupt.
+                          // A failed interrupt leaves the stored turn running so the next start
+                          // retries it. The snapshot is cached before it is published, so it may
+                          // not be stored: replay a terminal one as-is.
                           Effect.map((interrupted) =>
-                            rootProviderTurn === null
+                            !interrupted || rootProviderTurn === null
                               ? null
                               : isTerminalProviderTurnStatus(rootProviderTurn.status)
                                 ? rootProviderTurn
-                                : interrupted
-                                  ? {
-                                      ...rootProviderTurn,
-                                      status: "interrupted" as const,
-                                      completedAt,
-                                    }
-                                  : null,
+                                : {
+                                    ...rootProviderTurn,
+                                    status: "interrupted" as const,
+                                    completedAt,
+                                  },
                           ),
                         )
                     : null;
