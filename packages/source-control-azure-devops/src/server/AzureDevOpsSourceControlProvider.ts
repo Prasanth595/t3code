@@ -63,9 +63,8 @@ export const discovery = {
   executable: "az",
   versionArgs: ["--version"],
   authArgs: AzureDevOpsCli.connectionDataArgs,
-  // `az` boots a fresh Python interpreter on every invocation, so even `az --version` takes ~6s
-  // on Windows and overruns the default budget, leaving the provider reported as missing on
-  // machines where it is installed.
+  // `az --version` starts Python and takes ~6s on Windows, exceeding the default probe timeout.
+
   probeTimeoutMs: 20_000,
   parseAuth: parseAzureAuth,
   installHint:
