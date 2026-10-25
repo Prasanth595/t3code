@@ -6,6 +6,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import { flushTelemetry, observeSummaries } from "./launcher-telemetry.ts";
 
 export function cacheEnvironment(
   cwd: string,
@@ -50,24 +51,66 @@ if (
   process.argv[1] &&
   NodeFS.realpathSync(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url)
 ) {
+  if (process.argv[2] === "--t3-flush-telemetry") {
+    await flushTelemetry();
+    process.exit(0);
+  }
   const self = NodeFS.realpathSync(process.argv[1]);
+  const args = process.argv.slice(2);
+  if (NodePath.basename(process.argv[1]) === "vpr") {
+    const at = args[0] === "-C" ? 2 : args[0]?.startsWith("-C") ? 1 : 0;
+    args.splice(at, 0, "run");
+  }
   const executable = (process.env.PATH ?? "")
     .split(NodePath.delimiter)
     .map((directory) => NodePath.join(directory, "vp"))
     .find((candidate) => NodeFS.existsSync(candidate) && NodeFS.realpathSync(candidate) !== self);
   if (!executable) throw new Error("Install Vite+ before enabling the task cache.");
-  const child = NodeChildProcess.spawn(executable, process.argv.slice(2), {
-    env: cacheEnvironment(process.cwd(), process.env, NodeOS.homedir(), process.argv.slice(2)),
+  const env = cacheEnvironment(process.cwd(), process.env, NodeOS.homedir(), args);
+  let stopObserving = () => {};
+  if (env !== process.env && env.T3_TASK_CACHE_TELEMETRY !== "off") {
+    let root = process.cwd();
+    if (args[0] === "-C" && args[1]) root = NodePath.resolve(root, args[1]);
+    else if (args[0]?.startsWith("-C")) root = NodePath.resolve(root, args[0].slice(2));
+    while (!NodeFS.existsSync(NodePath.join(root, ".task-cache.json")))
+      root = NodePath.dirname(root);
+    const endpoint = new URL(env.VP_REMOTE_CACHE_URL!);
+    endpoint.username = "";
+    endpoint.password = "";
+    stopObserving = observeSummaries(root, endpoint.href.replace(/\/$/, ""), env);
+  }
+  const child = NodeChildProcess.spawn(executable, args, {
+    env: env === process.env ? env : { ...env, T3_TASK_CACHE_PARENT: "1" },
     stdio: "inherit",
   });
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
     process.on(signal, () => child.kill(signal));
   }
   child.on("error", (error) => {
+    stopObserving();
     console.error(error.message);
     process.exitCode = 1;
   });
   child.on("exit", (code, signal) => {
+    stopObserving();
+    if (
+      env !== process.env &&
+      !process.env.T3_TASK_CACHE_PARENT &&
+      env.T3_TASK_CACHE_TELEMETRY !== "off"
+    ) {
+      if (env.GITHUB_ACTIONS === "true") {
+        // Runners terminate background processes when a step ends.
+        void flushTelemetry().finally(() => {
+          process.exitCode = code ?? 1;
+        });
+      } else {
+        NodeChildProcess.spawn(process.execPath, [self, "--t3-flush-telemetry"], {
+          detached: true,
+          stdio: "ignore",
+          env,
+        }).unref();
+      }
+    }
     if (signal) {
       process.removeAllListeners(signal);
       process.kill(process.pid, signal);

@@ -18,10 +18,17 @@ import {
 import { fetchMetadata } from "@voidzero-dev/vite-plus-remote-cache-cloudflare/src/fetch.ts";
 import { defaults } from "@voidzero-dev/vite-plus-remote-cache-cloudflare/src/limits.ts";
 import { store } from "@voidzero-dev/vite-plus-remote-cache-cloudflare/src/store.ts";
-import { Deadline } from "@voidzero-dev/vite-plus-remote-cache-cloudflare/src/streams.ts";
+import { Summary, recordSummary } from "./Summary.ts";
+import { readBody, Deadline } from "@voidzero-dev/vite-plus-remote-cache-cloudflare/src/streams.ts";
 import { Observations } from "@voidzero-dev/vite-plus-remote-cache-cloudflare/src/observations.ts";
+import { emitTotals, persistSavings } from "./Savings.ts";
 import * as Admission from "./Admission.ts";
 import { developerIdentity } from "./developer-auth.ts";
+
+const decodeActor = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ actor: Schema.optional(Schema.String) })),
+);
+const decodeSummary = Schema.decodeEffect(Schema.fromJsonString(Summary));
 
 export class CacheError extends Schema.TaggedError<CacheError>()("CacheError", {
   status: Schema.Number,
@@ -43,6 +50,7 @@ export class Bindings extends Context.Service<
   Bindings,
   Env & {
     readonly developerKeys: string;
+    readonly savings: Cloudflare.D1Database;
     readonly githubKeys: ReturnType<typeof githubKeys>;
     readonly readLimit: Cloudflare.RateLimit;
     readonly storeLimit: Cloudflare.RateLimit;
@@ -70,11 +78,12 @@ export const layer = Layer.effect(
     const handle = Effect.fn("TaskCache.handle")(
       function* (request: Request, context: Pick<ExecutionContext, "waitUntil">) {
         const url = new URL(request.url);
-        const route = /^\/projects\/t3code\/(fetch|store|blob\/([0-9a-f-]{36}))$/.exec(
+        const route = /^\/projects\/t3code\/(fetch|store|telemetry|blob\/([0-9a-f-]{36}))$/.exec(
           url.pathname,
         );
         const operation = route?.[1];
         const writing = operation === "store";
+        yield* Effect.annotateCurrentSpan({ "cache.operation": operation ?? "unknown" });
         const allowed = yield* protocol(() =>
           (writing ? bindings.storeLimit : bindings.readLimit).limit({
             key: route
@@ -110,7 +119,63 @@ export const layer = Layer.effect(
                   (value) => Effect.sync(() => value.dispose()),
                 );
                 const stats = new Observations();
+                yield* Effect.addFinalizer(() =>
+                  Effect.annotateCurrentSpan(
+                    Object.fromEntries(
+                      Object.entries(stats.toJSON()).map(([key, value]) => [`cache.${key}`, value]),
+                    ),
+                  ),
+                );
                 const scope = yield* protocol(() => getScope(bindings.INDEX, "t3code", stats));
+                if (operation === "telemetry") {
+                  const developer = yield* developerIdentity(request, bindings.developerKeys);
+                  if (developer === null)
+                    return yield* new CacheError({ status: 403, reason: "invalid_identity" });
+                  let identity = developer;
+                  if (identity === undefined) {
+                    // Reporting PR savings grants no artifact-write permission.
+                    yield* protocol(() => authorize(request, { ...scope, pull_requests: 1 }, keys));
+                    const payload = yield* decodeActor(
+                      atob(
+                        request.headers
+                          .get("authorization")!
+                          .slice(7)
+                          .split(".")[1]!
+                          .replace(/-/g, "+")
+                          .replace(/_/g, "/"),
+                      ),
+                    ).pipe(
+                      Effect.mapError(
+                        () => new CacheError({ status: 400, reason: "invalid_identity" }),
+                      ),
+                    );
+                    identity = `github/${typeof payload.actor === "string" ? payload.actor : "unknown"}`;
+                  }
+                  const bytes = yield* protocol(() => readBody(request.body, 256 * 1024, deadline));
+                  const summary = yield* decodeSummary(new TextDecoder().decode(bytes)).pipe(
+                    Effect.mapError(
+                      () => new CacheError({ status: 400, reason: "invalid_summary" }),
+                    ),
+                  );
+                  const now = yield* Clock.currentTimeMillis;
+                  if (
+                    summary.recordedAt > now + 60_000 ||
+                    summary.recordedAt < now - 30 * 86400_000
+                  )
+                    return yield* new CacheError({ status: 400, reason: "summary_expired" });
+                  yield* persistSavings(bindings.savings, summary, identity).pipe(
+                    Effect.mapError(
+                      () => new CacheError({ status: 503, reason: "telemetry_unavailable" }),
+                    ),
+                  );
+                  yield* recordSummary(summary, identity);
+                  yield* emitTotals(bindings.savings, identity, summary.host).pipe(
+                    Effect.mapError(
+                      () => new CacheError({ status: 503, reason: "telemetry_unavailable" }),
+                    ),
+                  );
+                  return new Response(null, { status: 204 });
+                }
                 if (writing) {
                   const developer = yield* developerIdentity(request, bindings.developerKeys);
                   if (developer === null || (developer !== undefined && !scope.writes_enabled)) {

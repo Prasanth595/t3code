@@ -26,7 +26,13 @@ NodeFS.mkdirSync(bin, { recursive: true });
 const installed = NodePath.join(NodePath.dirname(bin), "vp.ts");
 NodeFS.copyFileSync(NodePath.join(import.meta.dirname, "vp.ts"), installed);
 NodeFS.chmodSync(installed, 0o755);
+NodeFS.copyFileSync(
+  NodePath.join(import.meta.dirname, "launcher-telemetry.ts"),
+  NodePath.join(NodePath.dirname(bin), "launcher-telemetry.ts"),
+);
 if (!NodeFS.existsSync(NodePath.join(bin, "vp")))
   NodeFS.symlinkSync("../vp.ts", NodePath.join(bin, "vp"));
+if (!NodeFS.existsSync(NodePath.join(bin, "vpr")))
+  NodeFS.symlinkSync("../vp.ts", NodePath.join(bin, "vpr"));
 if (process.env.GITHUB_PATH) NodeFS.appendFileSync(process.env.GITHUB_PATH, `${bin}\n`);
 console.log("Task-cache launcher installed. It only changes projects containing .task-cache.json.");

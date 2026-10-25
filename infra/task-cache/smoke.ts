@@ -17,11 +17,14 @@ const name = `t3-cache-probe-${NodeCrypto.randomUUID()}`;
 async function run(directory: string) {
   return new Promise<string>((resolve, reject) => {
     const child = NodeChildProcess.spawn(
-      NodePath.join(project, "node_modules/.bin/vp"),
-      ["run", "--cache", "build"],
+      process.execPath,
+      [NodePath.join(import.meta.dirname, "vp.ts"), "run", "--cache", "build"],
       {
         cwd: NodePath.join(root, directory),
-        env,
+        env: {
+          ...env,
+          PATH: `${NodePath.join(project, "node_modules/.bin")}${NodePath.delimiter}${env.PATH}`,
+        },
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
@@ -48,6 +51,7 @@ try {
   for (const directory of ["a", "b"]) {
     const cwd = NodePath.join(root, directory);
     await NodeFSP.mkdir(cwd);
+    await NodeFSP.writeFile(NodePath.join(cwd, ".task-cache.json"), JSON.stringify({ endpoint }));
     await NodeFSP.writeFile(
       NodePath.join(cwd, "package.json"),
       JSON.stringify({ name, private: true, scripts: { build: `node build.cjs ${name}` } }),
