@@ -1929,7 +1929,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
         const recordInstructions = Effect.fnUntraced(function* (
-          context: ActiveAcpTurn,
+          context: Pick<ActiveAcpTurn, "nativeThreadId" | "nativeMetadata">,
           receipt: NonNullable<
             OrchestrationV2ProviderThreadNativeMetadata["acpInstructions"]
           > | null,
@@ -4507,6 +4507,34 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           const context = yield* Ref.get(activeTurn);
           const update = notification.update;
+          if (
+            (context === null || context.finalized) &&
+            notification.sessionId === (yield* Ref.get(activeSessionId)) &&
+            update.sessionUpdate === "compaction_update" &&
+            update.status === "completed"
+          ) {
+            const known = (yield* Ref.get(providerThreadByNativeSessionId)).get(
+              notification.sessionId,
+            );
+            yield* recordInstructions(
+              {
+                nativeThreadId: notification.sessionId,
+                nativeMetadata:
+                  (yield* Ref.get(nativeMetadataBySessionId)).get(notification.sessionId) ??
+                  known?.nativeMetadata ??
+                  null,
+              },
+              null,
+            );
+            yield* Ref.update(promptInstructionStates, (current) => {
+              const updated = new Map(current);
+              updated.delete(notification.sessionId);
+              return updated;
+            });
+            yield* Ref.update(compactionMarkers, (current) =>
+              new Map(current).set(notification.sessionId, Symbol()),
+            );
+          }
           if (
             followsAgentWorkState &&
             flavor.extractSubagentSessionEvent !== undefined &&
@@ -8370,6 +8398,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         yield* Ref.set(activeSelection, null);
                         yield* Ref.set(activeInteractionMode, null);
                         yield* Ref.set(promptInstructionStates, new Map());
+                        yield* Ref.update(nativeMetadataBySessionId, (current) =>
+                          new Map(current).set(candidate.sessionId, {
+                            ...current.get(candidate.sessionId),
+                            acpInstructions: null,
+                          }),
+                        );
                         yield* Ref.set(compactionMarkers, new Map());
                         yield* Ref.set(providerTurns, new Map());
                         yield* Ref.set(snapshot, {

@@ -307,6 +307,7 @@ const pollProtocolMethods = (events: Queue.Queue<EffectAcpProtocol.AcpProtocolLo
 const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
   environment: Readonly<Record<string, string>>,
   followAgentWorkState = false,
+  drainPromptEvents = true,
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const path = yield* Path.Path;
@@ -317,6 +318,9 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
   const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
   const instanceId = ProviderInstanceId.make("acp-test-instruction-compaction");
   const threadId = ThreadId.make("thread-acp-instruction-compaction");
+  let sessionUpdate:
+    | Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["handleSessionUpdate"]>[0]
+    | undefined;
   yield* (yield* McpProviderSessions.McpProviderSessions).set({
     environmentId: EnvironmentId.make("environment-acp-instruction-compaction"),
     threadId,
@@ -340,9 +344,15 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
         environment,
         wrapRuntime: (runtime) => ({
           ...runtime,
+          handleSessionUpdate: (handler) => {
+            sessionUpdate = handler;
+            return runtime.handleSessionUpdate(handler);
+          },
           // Make compaction during prompt completion deterministic at the adapter boundary.
           prompt: (payload, options) =>
-            runtime.prompt(payload, options).pipe(Effect.tap(() => runtime.drainEvents)),
+            runtime
+              .prompt(payload, options)
+              .pipe(Effect.tap(() => (drainPromptEvents ? runtime.drainEvents : Effect.void))),
         }),
       }),
     },
@@ -380,11 +390,36 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
   return Effect.fnUntraced(function* (
     messageText: string,
     expectedStatus = "completed",
-    reopen = false,
+    reopen: boolean | "rollback" | "compact" = false,
     interactionMode: "default" | "plan" = "default",
   ) {
     const turnRuntimePolicy = { ...runtimePolicy, interactionMode };
-    if (reopen) {
+    if (reopen === "compact") {
+      if (sessionUpdate === undefined) return yield* Effect.die("Missing session handler");
+      const sessionId = providerThread.nativeThreadRef?.nativeId;
+      if (sessionId == null) return yield* Effect.die("Missing native session");
+      yield* sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "compaction_update",
+          compactionId: "idle-compact",
+          status: "completed",
+        },
+      });
+    }
+    if (reopen === "rollback") {
+      const result = yield* session.runtime.rollbackThread({
+        providerThread,
+        providerThreadTurns: [],
+        target: {
+          type: "thread_start",
+          checkpointId: CheckpointId.make("instruction-rollback"),
+          appRunOrdinal: 0,
+        },
+      });
+      providerThread = result.providerThread;
+    }
+    if (reopen === true) {
       const nativeSessionId = providerThread.nativeThreadRef?.nativeId;
       if (nativeSessionId == null) return yield* Effect.die("Expected a persisted native session");
       yield* Scope.close(session.scope, Exit.void);
@@ -438,6 +473,22 @@ function assertReinjectedInstructions(
 }
 
 describe("AcpAdapterV2", () => {
+  it.live.each(["rollback", "compact"] as const)(
+    "reinjects instructions after idle %s with no continuation consumer",
+    (transition) =>
+      Effect.gen(function* () {
+        const runTurn = yield* makeInstructionCompactionHarness(
+          {},
+          false,
+          transition !== "rollback",
+        );
+        assertReinjectedInstructions(yield* runTurn("Start work."), "Start work.");
+        assertReinjectedInstructions(
+          yield* runTurn("Continue after reset.", "completed", transition),
+          "Continue after reset.",
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
   it.live.each(["details", "none"] as const)(
     "fails the turn on an ACP v2 idle error with %s, settles its open tool, and accepts the next prompt",
     (details) =>
