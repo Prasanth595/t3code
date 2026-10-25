@@ -9,7 +9,7 @@ export const routePrefix = "/projects/t3code/native-clients/";
 
 export class NativeClientsError extends Schema.TaggedError<NativeClientsError>()(
   "NativeClientsError",
-  { status: Schema.Number, reason: Schema.String },
+  { status: Schema.Number, reason: Schema.String, cause: Schema.optional(Schema.Defect()) },
 ) {}
 
 export class Bindings extends Context.Service<
@@ -49,7 +49,8 @@ const make = Effect.gen(function* () {
   const r2 = <A>(run: () => Promise<A>) =>
     Effect.tryPromise({
       try: run,
-      catch: () => new NativeClientsError({ status: 503, reason: "storage_unavailable" }),
+      catch: (cause) =>
+        new NativeClientsError({ status: 503, reason: "storage_unavailable", cause }),
     });
 
   const limit = Effect.fn("NativeClients.limit")(function* (writing: boolean) {
@@ -145,7 +146,11 @@ const make = Effect.gen(function* () {
         return Response.json({ uploadId: upload.uploadId });
       }
 
-      const upload = bindings.CLIENTS.resumeMultipartUpload(key, decodeURIComponent(uploadId!));
+      const decodedId = yield* Effect.try({
+        try: () => decodeURIComponent(uploadId!),
+        catch: () => new NativeClientsError({ status: 400, reason: "invalid_upload_id" }),
+      });
+      const upload = bindings.CLIENTS.resumeMultipartUpload(key, decodedId);
       if (operation === "abort") {
         yield* r2(() => upload.abort());
         return new Response(null, { status: 204 });
@@ -158,9 +163,11 @@ const make = Effect.gen(function* () {
         );
         return Response.json({ etag: uploaded.etag });
       }
-      const body = yield* decodeComplete(
-        yield* r2(() => request.text().then((text) => text.slice(0, 64 * 1024))),
-      ).pipe(
+      // A missing length would let text() buffer an unbounded body.
+      const length = request.headers.get("content-length");
+      if (length === null || !(Number(length) <= 64 * 1024))
+        return yield* new NativeClientsError({ status: 413, reason: "parts_too_large" });
+      const body = yield* decodeComplete(yield* r2(() => request.text())).pipe(
         Effect.mapError(() => new NativeClientsError({ status: 400, reason: "invalid_parts" })),
       );
       yield* r2(() => upload.complete([...body.parts]));

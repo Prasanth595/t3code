@@ -69,14 +69,6 @@ export const ensureClient = Effect.fn("ensureClient")(function* <E, R, E2, R2>(o
     yield* operations.installedBinary,
     yield* operations.readRecord,
   );
-  const verifyInputs = Effect.gen(function* () {
-    if ((yield* operations.fingerprint) !== fingerprint) {
-      return yield* new NativeClientError({
-        message:
-          "Native inputs changed during verification. Run ensure again; this build was not recorded.",
-      });
-    }
-  });
   if (status === "compatible") {
     return { status, installed: false, fingerprint };
   }
@@ -86,7 +78,6 @@ export const ensureClient = Effect.fn("ensureClient")(function* <E, R, E2, R2>(o
     return yield* new NativeClientError({
       message: "Install finished but the development client is not on the device.",
     });
-  if (source === "build") yield* verifyInputs;
   yield* operations.saveRecord({ fingerprint, binary });
   return { status: "compatible" as const, installed: true, source, fingerprint };
 });
@@ -502,8 +493,9 @@ const download = Effect.fn("nativeClient.download")(function* (
   return yield* Effect.gen(function* () {
     if (platform === "ios") {
       const archive = `${staging}.tgz`;
-      yield* response.stream.pipe(Stream.run(fs.sink(archive)));
-      yield* command("tar", ["-xzf", archive, "-C", staging]).pipe(
+      yield* response.stream.pipe(
+        Stream.run(fs.sink(archive)),
+        Effect.andThen(command("tar", ["-xzf", archive, "-C", staging])),
         Effect.ensuring(fs.remove(archive, { force: true }).pipe(Effect.ignore)),
       );
     } else {
@@ -600,6 +592,7 @@ const build = Effect.fn("nativeClient.build")(function* (
   platform: NativePlatform,
   abi: string | null,
   target: string,
+  expected: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -661,6 +654,11 @@ const build = Effect.fn("nativeClient.build")(function* (
         path.join(staging, artifactNames.android),
       );
     }
+    // Native edits during the build would publish this binary under a fingerprint it doesn't match.
+    if ((yield* fingerprint(platform)) !== expected)
+      return yield* new NativeClientError({
+        message: "Native inputs changed during the build, so it was discarded. Run this again.",
+      });
     yield* publish(staging, target);
   }).pipe(
     Effect.scoped,
@@ -715,6 +713,9 @@ export const resolveArtifact = Effect.fn("nativeClient.resolveArtifact")(functio
   const artifact = { directory, file: path.join(directory, artifactNames[platform]) };
   if (yield* fs.exists(artifact.file)) {
     yield* Console.error(`Using cached client ${key}.`);
+    // Pruning keeps the most recently used, so a client another checkout is installing stays.
+    const now = yield* Clock.currentTimeMillis;
+    yield* fs.utimes(directory, now / 1000, now / 1000).pipe(Effect.ignore);
     return { ...artifact, source: "local" as const, buildMs: yield* readBuildMs(directory) };
   }
   yield* fs.makeDirectory(path.dirname(directory), { recursive: true });
@@ -737,7 +738,7 @@ export const resolveArtifact = Effect.fn("nativeClient.resolveArtifact")(functio
     `No cached client for ${key}. Building it once for every machine (5-15 min)${log ? `. Log: ${log}` : ""}`,
   );
   const started = yield* Clock.currentTimeMillis;
-  yield* build(platform, abi, directory);
+  yield* build(platform, abi, directory, fingerprint);
   yield* writeBuildMs(directory, (yield* Clock.currentTimeMillis) - started);
   yield* prune(path.dirname(directory), fingerprint);
   if (remote && (yield* HostProcess.Environment).T3_NATIVE_CLIENT_CACHE !== "read") {

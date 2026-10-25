@@ -111,6 +111,7 @@ it.effect("serves a writer's multipart upload to readers with its digest", () =>
       name: "julius",
       method: "POST",
       body: JSON.stringify({ parts }),
+      headers: { "content-length": String(JSON.stringify({ parts }).length) },
     });
     expect(completed.status).toBe(204);
 
