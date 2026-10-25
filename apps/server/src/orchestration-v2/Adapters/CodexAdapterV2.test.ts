@@ -915,6 +915,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
+    resolveRuntime?: CodexAdapterV2.CodexAdapterV2Options["resolveRuntime"],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -958,6 +959,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_CODEX_SETTINGS,
         environment: {},
+        ...(resolveRuntime === undefined ? {} : { resolveRuntime }),
         clientFactory,
         crypto: yield* Crypto.Crypto,
         fileSystem,
@@ -1147,28 +1149,34 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
-  it.effect.each([
-    {
-      code: "unauthorized",
-      message:
-        "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.",
-      stale: true,
-    },
-    {
-      code: "unauthorized",
-      message:
-        "Error running remote compact task: Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.",
-      stale: true,
-    },
-    {
-      code: "unauthorized",
-      message:
-        "Your access token could not be refreshed because your refresh token has expired. Please log out and sign in again.",
-      stale: false,
-    },
-  ])(
-    "marks only external account mismatch for idle recovery: $message",
-    ({ code, message, stale }) =>
+  it.effect.each(
+    [
+      {
+        code: "unauthorized",
+        message:
+          "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.",
+        stale: true,
+      },
+      {
+        code: "unauthorized",
+        message:
+          "Error running remote compact task: Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.",
+        stale: true,
+      },
+      {
+        code: "unauthorized",
+        message:
+          "Your access token could not be refreshed because your refresh token has expired. Please log out and sign in again.",
+        stale: false,
+      },
+    ].flatMap((failure) =>
+      [false, true].flatMap((managed) =>
+        [false, true].map((notifyError) => ({ ...failure, managed, notifyError })),
+      ),
+    ),
+  )(
+    "handles auth failure with managed=$managed, notifyError=$notifyError: $message",
+    ({ code, message, stale, managed, notifyError }) =>
       Effect.scoped(
         Effect.gen(function* () {
           const nativeThreadId = "auth-change-thread";
@@ -1179,19 +1187,23 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               scenario: "external-auth-change",
               entries: [
                 ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "hello" }),
-                {
-                  type: "emit_inbound",
-                  label: "error",
-                  frame: {
-                    method: "error",
-                    params: {
-                      threadId: nativeThreadId,
-                      turnId: nativeTurnId,
-                      error,
-                      willRetry: false,
-                    },
-                  },
-                },
+                ...(notifyError
+                  ? [
+                      {
+                        type: "emit_inbound" as const,
+                        label: "error",
+                        frame: {
+                          method: "error",
+                          params: {
+                            threadId: nativeThreadId,
+                            turnId: nativeTurnId,
+                            error,
+                            willRetry: false,
+                          },
+                        },
+                      },
+                    ]
+                  : []),
                 {
                   type: "emit_inbound",
                   label: "failed",
@@ -1208,6 +1220,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 },
               ],
             }),
+            undefined,
+            undefined,
+            undefined,
+            managed
+              ? Effect.succeed({
+                  config: DEFAULT_CODEX_SETTINGS,
+                  environment: {},
+                  revision: "managed-test",
+                })
+              : undefined,
           );
           yield* harness.runtime.startTurn(
             makeCodexTestTurnInput({
@@ -1219,10 +1241,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             }),
           );
           yield* harness.firstTerminal;
-          assert.equal(yield* harness.runtime.hasStaleCredentials ?? Effect.succeed(false), stale);
+          assert.equal(
+            yield* harness.runtime.hasStaleCredentials ?? Effect.succeed(false),
+            stale && !managed,
+          );
           assert.equal(harness.terminalEvents()[0]?.status, "failed");
           assert.include(harness.terminalEvents()[0]?.failure?.message, message);
-          if (stale) {
+          if (managed) {
+            assert.isUndefined(harness.runtime.hasStaleCredentials);
+            assert.equal(harness.terminalEvents()[0]?.failure?.message, message);
+          }
+          if (stale && !managed) {
             const replacement = yield* harness.adapter.openSession({
               threadId: harness.threadId,
               providerSessionId: ProviderSessionId.make("auth-change-replacement"),

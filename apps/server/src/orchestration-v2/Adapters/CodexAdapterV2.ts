@@ -345,8 +345,12 @@ function isCodexAccountMismatch(message: string, code: string | null | undefined
   );
 }
 
-function codexAuthRecoveryMessage(message: string | undefined, code: string | null | undefined) {
-  return message !== undefined && isCodexAccountMismatch(message, code)
+function codexAuthRecoveryMessage(
+  message: string | undefined,
+  code: string | null | undefined,
+  allowAuthRecovery: boolean,
+) {
+  return allowAuthRecovery && message !== undefined && isCodexAccountMismatch(message, code)
     ? `${message} Let other Codex turns and background work finish, then send your message again. If it still fails, run codex login in this provider's home and restart T3 when Codex is idle.`
     : message;
 }
@@ -4567,6 +4571,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     message: codexAuthRecoveryMessage(
                       payload.error.additionalDetails?.trim() || payload.error.message,
                       notificationCode,
+                      resolvedRuntime === undefined,
                     ),
                     code: notificationCode,
                     class: codexUsageLimitError(notificationCode, payload.error.codexErrorInfo)
@@ -5669,7 +5674,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ? previousFailure.failure
                   : withCodexManagedFailure(
                       makeProviderFailure({
-                        message: codexAuthRecoveryMessage(input.failureMessage, failureCode),
+                        message: codexAuthRecoveryMessage(
+                          input.failureMessage,
+                          failureCode,
+                          resolvedRuntime === undefined,
+                        ),
                         code: failureCode,
                         class: failureClass,
                       }),
