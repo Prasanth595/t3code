@@ -53,8 +53,9 @@ export function WorkspaceToolbar(props: {
   const searchLabel = SEARCH_LABELS[selectedTab === "usage" ? "threads" : selectedTab];
   const { isTabActive: isListTabActive } = workspace;
   const isTabActive = useCallback(
-    (tab: typeof selectedTab) => tab === "settings" || isListTabActive(tab),
-    [isListTabActive],
+    // A retained tab slot stays mounted while another is shown.
+    (tab: typeof selectedTab) => (tab === "settings" ? tabActive : isListTabActive(tab)),
+    [tabActive, isListTabActive],
   );
   const foldedSearch = deviceType === "duo-folded";
   const primaryColumn = use(NativePrimaryColumnContext);
