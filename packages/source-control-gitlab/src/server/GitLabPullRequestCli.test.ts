@@ -1043,15 +1043,16 @@ layer("GitLabPullRequestCli.layer", (it) => {
         );
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
-      for (const _ of ["read fails", "page is full"]) {
+      for (const scenario of ["read fails", "page is full"]) {
         const detail = yield* cli.getMergeRequestDetail({
           cwd: "/w",
           repository: "acme/web",
           number: 7,
         });
-        expect(detail.checks.map((check) => [check.name, check.status])).toEqual([
-          ["Pipeline", "success"],
-        ]);
+        expect(
+          detail.checks.map((check) => [check.name, check.status]),
+          scenario,
+        ).toEqual([["Pipeline", "success"]]);
       }
     }),
   );
@@ -1070,13 +1071,14 @@ layer("GitLabPullRequestCli.layer", (it) => {
       );
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
-      const permissions = yield* cli.getMergeRequestPermissions({
+      const detail = yield* cli.getMergeRequestDetail({
         cwd: "/w",
         repository: "acme/web",
         number: 7,
+        downstreamChecks: false,
       });
 
-      expect(permissions).toEqual({ viewerCanMerge: false });
+      expect(detail.viewerCanMerge).toBe(false);
       expect(mockedExecute).toHaveBeenCalledTimes(1);
     }),
   );

@@ -212,7 +212,7 @@ export const make = Effect.gen(function* () {
 
     getViewerPermissions: (input) =>
       cli
-        .getMergeRequestPermissions(input)
+        .getMergeRequestDetail({ ...input, downstreamChecks: false })
         .pipe(Effect.mapError(fail("getViewerPermissions")), Effect.map(gitLabViewerPermissions)),
 
     getDiff: (input) => cli.getMergeRequestDiff(input).pipe(Effect.mapError(fail("getDiff"))),

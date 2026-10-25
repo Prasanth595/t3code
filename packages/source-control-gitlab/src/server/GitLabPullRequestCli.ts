@@ -236,13 +236,9 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly cwd: string;
       readonly repository: string;
       readonly number: number;
+      /** `false` skips the trigger job read; the permission check before every write does. */
+      readonly downstreamChecks?: boolean;
     }) => Effect.Effect<GitLabMergeRequestDetail, GitLabPullRequestCliError>;
-
-    readonly getMergeRequestPermissions: (input: {
-      readonly cwd: string;
-      readonly repository: string;
-      readonly number: number;
-    }) => Effect.Effect<{ readonly viewerCanMerge: boolean }, GitLabPullRequestCliError>;
 
     readonly listNotes: (input: {
       readonly cwd: string;
@@ -1176,7 +1172,7 @@ export const make = Effect.gen(function* () {
     getMergeRequestDetail: Effect.fn("GitLabPullRequestCli.getMergeRequestDetail")(
       function* (input) {
         const detail = yield* mergeRequestDetail(input);
-        if (detail.headPipeline === undefined) return detail;
+        if (input.downstreamChecks === false || detail.headPipeline === undefined) return detail;
         const downstream = yield* triggerJobChecks({
           cwd: input.cwd,
           pipeline: detail.headPipeline,
@@ -1186,10 +1182,6 @@ export const make = Effect.gen(function* () {
           : { ...detail, checks: [...detail.checks, ...downstream] };
       },
     ),
-
-    // Runs before every write and picker, so it skips the trigger job read the checks need.
-    getMergeRequestPermissions: (input) =>
-      mergeRequestDetail(input).pipe(Effect.map(({ viewerCanMerge }) => ({ viewerCanMerge }))),
 
     listNotes: (input) => notesPage({ ...input, page: 1, collected: [] }),
 
