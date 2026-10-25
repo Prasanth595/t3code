@@ -402,3 +402,274 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it.effect.each([
+  {
+    name: "archived",
+    error: () =>
+      new ThreadManagementService.ThreadManagementThreadArchivedError({
+        threadId: ThreadId.make("thread:gone"),
+      }),
+  },
+  {
+    name: "deleted",
+    error: () =>
+      new ThreadManagementService.ThreadManagementThreadNotFoundError({
+        projectId: ProjectId.make("project:test"),
+        threadId: ThreadId.make("thread:gone"),
+      }),
+  },
+])("pauses a bound task whose thread was $name before it fired", ({ error }) =>
+  Effect.gen(function* () {
+    const sends = yield* Ref.make(0);
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            launch: () => Effect.die("bound tasks must not launch a replacement thread"),
+          }),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            sendToThread: () =>
+              Ref.update(sends, (n) => n + 1).pipe(Effect.andThen(Effect.fail(error()))),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Scheduler.layer,
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:bound-to-gone-thread"),
+        title: "Check orchestration",
+        prompt: "Check progress",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: ProjectId.make("project:test"),
+        threadId: ThreadId.make("thread:gone"),
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      // The poll loop delays before its first pass; then let several intervals elapse.
+      for (let tick = 0; tick < 4; tick++) yield* TestClock.adjust("61 seconds");
+
+      const [current] = (yield* service.list()).tasks;
+      assert.equal(current?.id, task.id);
+      assert.equal(current?.lastRunStatus, "failed");
+      assert.equal(yield* Ref.get(sends), 1, "a gone destination must not be retried every tick");
+      assert.isFalse(current?.enabled, "the bound task stays enabled after a permanent failure");
+      assert.isNull(current?.nextRunAt);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+const boundTaskLayer = (
+  sendToThread: ThreadManagementService.ThreadManagementService["Service"]["sendToThread"],
+) =>
+  ScheduledTaskService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({ sendToThread }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          isScratchProject: () => Effect.succeed(false),
+        }),
+        NodeCrypto.layer,
+        Scheduler.layer,
+      ),
+    ),
+  );
+
+const boundTaskInput = (id: string) => ({
+  id: ScheduledTaskId.make(id),
+  title: "Check orchestration",
+  prompt: "Check progress",
+  enabled: true,
+  schedule: { type: "interval", everyMs: 60_000 } as const,
+  projectId: ProjectId.make("project:test"),
+  threadId: ThreadId.make("thread:bound"),
+  workspaceStrategy: { type: "root" } as const,
+  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+  runtimeMode: "full-access" as const,
+  interactionMode: "default" as const,
+});
+
+it.effect("a bound task keeps firing after a transient failure and recovers", () =>
+  Effect.gen(function* () {
+    const sends = yield* Ref.make(0);
+    const layer = boundTaskLayer(() =>
+      Ref.updateAndGet(sends, (n) => n + 1).pipe(
+        Effect.flatMap((n) =>
+          n === 1
+            ? Effect.fail(
+                new ThreadManagementService.ThreadManagementProjectionLoadError({
+                  projectId: ProjectId.make("project:test"),
+                  threadId: ThreadId.make("thread:bound"),
+                  cause: "database busy",
+                }),
+              )
+            : Effect.succeed({} as never),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      yield* service.upsert(boundTaskInput("task:transient"));
+      for (let tick = 0; tick < 2; tick++) yield* TestClock.adjust("61 seconds");
+
+      const [current] = (yield* service.list()).tasks;
+      assert.equal(yield* Ref.get(sends), 2);
+      assert.isTrue(current?.enabled);
+      assert.equal(current?.lastRunStatus, "succeeded");
+      assert.isNotNull(current?.nextRunAt);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("pausing a thread's tasks mid-run is not undone when the run finishes", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const layer = boundTaskLayer(() =>
+      Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Deferred.await(release)),
+        Effect.as({} as never),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert(boundTaskInput("task:paused-mid-run"));
+      const run = yield* service.runNow({ id: task.id }).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* service.pauseForThread(ThreadId.make("thread:bound"));
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(run);
+
+      const [current] = (yield* service.list()).tasks;
+      assert.equal(current?.lastRunStatus, "succeeded");
+      assert.equal(current?.lastRunError, "Paused because its thread was archived.");
+      assert.isFalse(current?.enabled);
+      assert.isNull(current?.nextRunAt);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a bound task pauses after repeated transient failures until resumed", () =>
+  Effect.gen(function* () {
+    const sends = yield* Ref.make(0);
+    const layer = boundTaskLayer(() =>
+      Ref.update(sends, (n) => n + 1).pipe(
+        Effect.andThen(
+          Effect.fail(
+            new ThreadManagementService.ThreadManagementProjectionLoadError({
+              projectId: ProjectId.make("project:test"),
+              threadId: ThreadId.make("thread:bound"),
+              cause: "database busy",
+            }),
+          ),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert(boundTaskInput("task:outage"));
+      for (let tick = 0; tick < 8; tick++) yield* TestClock.adjust("61 seconds");
+
+      const [paused] = (yield* service.list()).tasks;
+      assert.equal(yield* Ref.get(sends), 5);
+      assert.isFalse(paused?.enabled);
+      assert.isNull(paused?.nextRunAt);
+      assert.equal(paused?.lastRunStatus, "failed");
+      assert.include(paused?.lastRunError, "Paused after 5 failed runs in a row.");
+
+      // Resuming grants a fresh budget rather than pausing on the next failure.
+      yield* service.setEnabled({ id: task.id, enabled: true });
+      for (let tick = 0; tick < 2; tick++) yield* TestClock.adjust("61 seconds");
+      const [resumed] = (yield* service.list()).tasks;
+      assert.isAbove(yield* Ref.get(sends), 5);
+      assert.isTrue(resumed?.enabled);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a run that fails at its old thread does not pause the task rebound mid-run", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const layer = boundTaskLayer((input) =>
+      input.threadId === ThreadId.make("thread:bound")
+        ? Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.andThen(
+              Effect.fail(
+                new ThreadManagementService.ThreadManagementThreadArchivedError({
+                  threadId: input.threadId,
+                }),
+              ),
+            ),
+          )
+        : Effect.succeed({} as never),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert(boundTaskInput("task:rebound-mid-run"));
+      const run = yield* service.runNow({ id: task.id }).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* service.upsert({
+        ...boundTaskInput("task:rebound-mid-run"),
+        threadId: ThreadId.make("thread:healthy"),
+      });
+      yield* Deferred.succeed(release, undefined);
+      const { task: reported } = yield* Fiber.join(run);
+
+      const [current] = (yield* service.list()).tasks;
+      assert.equal(current?.threadId, ThreadId.make("thread:healthy"));
+      assert.equal(current?.lastRunStatus, "failed");
+      assert.isTrue(current?.enabled, "the healthy new destination must keep firing");
+      assert.isNotNull(current?.nextRunAt);
+      assert.isTrue(reported.enabled);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a successful run resets the failure count toward pausing", () =>
+  Effect.gen(function* () {
+    const sends = yield* Ref.make(0);
+    const layer = boundTaskLayer(() =>
+      Ref.updateAndGet(sends, (n) => n + 1).pipe(
+        Effect.flatMap((n) =>
+          n === 5
+            ? Effect.succeed({} as never)
+            : Effect.fail(
+                new ThreadManagementService.ThreadManagementProjectionLoadError({
+                  projectId: ProjectId.make("project:test"),
+                  threadId: ThreadId.make("thread:bound"),
+                  cause: "database busy",
+                }),
+              ),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      yield* service.upsert(boundTaskInput("task:intermittent"));
+      // Four failures, one success, then four more failures: never five in a row.
+      for (let tick = 0; tick < 9; tick++) yield* TestClock.adjust("61 seconds");
+
+      const [current] = (yield* service.list()).tasks;
+      assert.equal(yield* Ref.get(sends), 9);
+      assert.equal(current?.lastRunStatus, "failed");
+      assert.isTrue(current?.enabled);
+      assert.isNotNull(current?.nextRunAt);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);

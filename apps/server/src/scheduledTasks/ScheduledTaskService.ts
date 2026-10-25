@@ -240,6 +240,8 @@ export class ScheduledTaskService extends Context.Service<
     ) => Effect.Effect<ScheduledTaskDeleteResult, ScheduledTaskError>;
     /** Deletes only tasks that still target this thread, including their webhook deliveries. */
     readonly deleteForThread: (threadId: ThreadId) => Effect.Effect<void, ScheduledTaskError>;
+    /** Pauses tasks that still target this archived thread; restoring it does not resume them. */
+    readonly pauseForThread: (threadId: ThreadId) => Effect.Effect<void, ScheduledTaskError>;
     /** The dispatched thread, or null if dispatch failed; leaves the task's binding unchanged. */
     readonly runNow: (
       input: ScheduledTaskRunNowInput,
@@ -276,6 +278,16 @@ function iso(value: DateTime.DateTime): string {
 }
 
 const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
+
+// Bounds an outage that outlives several occurrences; the user resumes the task.
+const MAX_CONSECUTIVE_FAILED_RUNS = 5;
+
+const isGoneThreadError = Schema.is(
+  Schema.Union([
+    ThreadManagementService.ThreadManagementThreadArchivedError,
+    ThreadManagementService.ThreadManagementThreadNotFoundError,
+  ]),
+);
 
 function nextRunAt(
   task: Pick<ScheduledTask, "enabled" | "schedule">,
@@ -590,6 +602,10 @@ export const layer = Layer.effect(
           title = excluded.title,
           prompt = excluded.prompt,
           enabled = excluded.enabled,
+          consecutive_failures = CASE
+            WHEN excluded.enabled = 1 AND scheduled_tasks.enabled = 0 THEN 0
+            ELSE scheduled_tasks.consecutive_failures
+          END,
           schedule_json = excluded.schedule_json,
           project_id = excluded.project_id,
           thread_id = excluded.thread_id,
@@ -661,13 +677,30 @@ export const layer = Layer.effect(
       readonly status: "succeeded" | "failed";
       readonly error: string | null;
       readonly startedAtIso: string;
-    }) =>
-      sql`
+      readonly pause: boolean;
+      /** Pauses only while the task still targets this gone destination; an edit may rebind it mid-run. */
+      readonly pauseIfBoundTo: { readonly projectId: string; readonly threadId: string } | null;
+      readonly consecutiveFailures: number;
+    }) => {
+      const pause = input.pause ? 1 : 0;
+      const goneProjectId = input.pauseIfBoundTo?.projectId ?? null;
+      const goneThreadId = input.pauseIfBoundTo?.threadId ?? null;
+      // A pause may land mid-run; it must not be undone by the next occurrence.
+      return sql`
         UPDATE scheduled_tasks
         SET updated_at = ${input.completedAtIso},
-            next_run_at = ${input.nextRunAtIso},
+            enabled = CASE
+              WHEN ${pause} = 1 OR (project_id = ${goneProjectId} AND thread_id = ${goneThreadId}) THEN 0
+              ELSE enabled END,
+            next_run_at = CASE
+              WHEN enabled = 0 OR ${pause} = 1 OR (project_id = ${goneProjectId} AND thread_id = ${goneThreadId}) THEN NULL
+              ELSE ${input.nextRunAtIso} END,
             last_run_status = ${input.status},
-            last_run_error = ${input.error},
+            -- markRunning cleared the error, so one present now is a mid-run pause note.
+            last_run_error = CASE WHEN enabled = 0 AND last_run_error IS NOT NULL
+              THEN COALESCE(${input.error} || ' ', '') || last_run_error
+              ELSE ${input.error} END,
+            consecutive_failures = ${input.consecutiveFailures},
             run_count = run_count + 1
         WHERE task_id = ${input.id}
           AND last_run_status = 'running'
@@ -677,6 +710,7 @@ export const layer = Layer.effect(
           taskError("Could not record schedule task run.", { taskId: input.id, cause }),
         ),
       );
+    };
 
     // A failure between markRunning and markCompleted must still write a terminal record:
     // runDueTasks skips 'running' rows forever, and the dispatch may already have gone out,
@@ -855,10 +889,41 @@ export const layer = Layer.effect(
         if (webhook !== undefined && runSucceeded) yield* Ref.set(webhook.dispatched, true);
         const completedAt = yield* localNow;
         const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
-        const lastRunError = runSucceeded ? null : errorMessage(result.cause);
         const threadId = runSucceeded ? result.value : null;
+        // Every later occurrence would fail the same way, so stop firing at a
+        // bound thread that is gone. Other failures retry on the next occurrence
+        // until MAX_CONSECUTIVE_FAILED_RUNS.
+        const destinationGone =
+          !runSucceeded &&
+          active.threadId !== null &&
+          Option.exists(Cause.findErrorOption<unknown>(result.cause), isGoneThreadError);
+        // activeRuns serializes runs of a task, so this read cannot race another completion.
+        const [failureRow] = yield* sql<{ consecutive_failures: number }>`
+          SELECT consecutive_failures FROM scheduled_tasks WHERE task_id = ${task.id}
+        `.pipe(
+          Effect.mapError((cause) =>
+            taskError("Could not read schedule task failures.", { taskId: task.id, cause }),
+          ),
+        );
+        const consecutiveFailures = runSucceeded ? 0 : (failureRow?.consecutive_failures ?? 0) + 1;
+        // A webhook task runs when its sender calls; pausing it would drop later requests.
+        const failuresExhausted =
+          !destinationGone &&
+          active.schedule.type !== "webhook" &&
+          consecutiveFailures >= MAX_CONSECUTIVE_FAILED_RUNS;
+        const lastRunError = runSucceeded
+          ? null
+          : failuresExhausted
+            ? `${errorMessage(result.cause)} Paused after ${MAX_CONSECUTIVE_FAILED_RUNS} failed runs in a row.`
+            : errorMessage(result.cause);
         const current = yield* findTask(task.id);
-        const scheduleSource = current ?? task;
+        const pausesCurrent =
+          failuresExhausted ||
+          (destinationGone &&
+            current?.projectId === active.projectId &&
+            current.threadId === active.threadId);
+        const scheduleSource =
+          current === null ? task : pausesCurrent ? { ...current, enabled: false } : current;
         const completed: ScheduledTask = {
           ...scheduleSource,
           updatedAt: iso(completedAt),
@@ -875,10 +940,17 @@ export const layer = Layer.effect(
           const completion = markCompleted({
             id: task.id,
             completedAtIso: completed.updatedAt,
-            nextRunAtIso: completed.nextRunAt,
+            // The UPDATE re-checks the binding, so pass the unpaused occurrence.
+            nextRunAtIso: nextRunAt(current, completedAt),
             status: lastRunStatus,
             error: lastRunError,
             startedAtIso,
+            pause: failuresExhausted,
+            pauseIfBoundTo:
+              destinationGone && active.threadId !== null
+                ? { projectId: active.projectId, threadId: active.threadId }
+                : null,
+            consecutiveFailures,
           });
           if (webhook === undefined) yield* completion;
           else
@@ -1178,6 +1250,7 @@ export const layer = Layer.effect(
           UPDATE scheduled_tasks
           SET enabled = ${input.enabled ? 1 : 0},
               next_run_at = ${next},
+              consecutive_failures = 0,
               updated_at = ${iso(now)}
           WHERE task_id = ${input.id}
           RETURNING task_id
@@ -1260,6 +1333,26 @@ export const layer = Layer.effect(
         discard: true,
       });
       if (removed.length > 0) yield* notifyChanged;
+    });
+
+    const pauseForThread = Effect.fn("ScheduledTaskService.pauseForThread")(function* (
+      threadId: ThreadId,
+    ) {
+      const now = yield* localNow;
+      const paused = yield* sql<{ task_id: ScheduledTaskId }>`
+        UPDATE scheduled_tasks
+        SET enabled = 0,
+            next_run_at = NULL,
+            updated_at = ${iso(now)},
+            last_run_error = COALESCE(last_run_error || ' ', '') || 'Paused because its thread was archived.'
+        WHERE thread_id = ${threadId} AND enabled = 1
+        RETURNING task_id
+      `.pipe(
+        Effect.mapError((cause) =>
+          taskError("Could not pause thread's schedule tasks.", { cause }),
+        ),
+      );
+      if (paused.length > 0) yield* notifyChanged;
     });
 
     const runNow: ScheduledTaskService["Service"]["runNow"] = Effect.fn(
@@ -2138,6 +2231,7 @@ export const layer = Layer.effect(
       setEnabled,
       delete: deleteTask,
       deleteForThread,
+      pauseForThread,
       runNow,
       rotateWebhookToken,
       listWebhookDeliveries,
