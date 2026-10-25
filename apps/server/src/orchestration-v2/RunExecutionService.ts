@@ -1,4 +1,5 @@
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
+import { withProviderMessageOrigin } from "./providerMessageOrigin.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isOrchestrationV2WorkActive,
@@ -1638,7 +1639,13 @@ export const layer: Layer.Layer<
                 cause: "This provider does not support context compaction.",
               }),
             ))
-          : input.session.startTurn(turnInput);
+          : input.session.startTurn({
+              ...turnInput,
+              message: {
+                ...turnInput.message,
+                text: withProviderMessageOrigin(turnInput.message, turnInput.message.text),
+              },
+            });
         yield* Effect.andThen(shouldStart, startTurn).pipe(
           // Wait for acceptance so abandoned startup cannot leave a refresher
           // on the already-detached ingestion fiber.

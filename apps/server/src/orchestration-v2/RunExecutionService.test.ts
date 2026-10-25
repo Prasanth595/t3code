@@ -1028,7 +1028,13 @@ it.effect(
         { text: " /compact ", attachments: [], expected: "compact" },
         { text: "/compact", attachments: [attachment], expected: "prompt" },
         { text: "Continue the work", attachments: [], expected: "prompt" },
-      ];
+      ].flatMap((testCase) =>
+        [
+          { createdBy: "user", senderThreadId: ThreadId.make("thread:sender") },
+          { createdBy: "agent", senderThreadId: ThreadId.make("thread:sender") },
+          { createdBy: "agent" },
+        ].map((origin) => ({ ...testCase, ...origin })),
+      );
       for (const [index, testCase] of cases.entries()) {
         const threadId = ThreadId.make(`thread:compact-routing:${index}`);
         const attemptId = RunAttemptId.make(`attempt:compact-routing:${index}`);
@@ -1038,12 +1044,21 @@ it.effect(
           providerSessionId: ProviderSessionId.make(`session:compact-routing:${index}`),
           session: {
             events: Stream.never,
-            startTurn: () =>
+            startTurn: (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
               Effect.sync(() => {
+                if (testCase.createdBy === "agent" && testCase.senderThreadId !== undefined) {
+                  assert.include(input.message.text, 'thread "thread:sender"');
+                  assert.include(input.message.text, "not a message from the human user");
+                  assert.isTrue(input.message.text.endsWith(`\n\n${testCase.text}`));
+                } else {
+                  assert.equal(input.message.text, testCase.text);
+                }
+                assert.deepEqual(input.message.attachments, testCase.attachments);
                 calls.push("prompt");
               }),
-            compactThread: () =>
+            compactThread: (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
               Effect.sync(() => {
+                assert.equal(input.message.text, testCase.text);
                 calls.push("compact");
               }),
           } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
@@ -1070,8 +1085,11 @@ it.effect(
             messageId: MessageId.make(`message:compact-routing:${index}`),
             text: testCase.text,
             attachments: testCase.attachments,
-            createdBy: "user",
+            createdBy: testCase.createdBy as "user" | "agent",
             creationSource: "web",
+            ...(testCase.senderThreadId === undefined
+              ? {}
+              : { senderThreadId: testCase.senderThreadId }),
           },
           modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
           runtimePolicy: {
