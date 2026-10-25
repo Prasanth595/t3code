@@ -243,6 +243,12 @@ export interface Seen {
   /** That re-gate recorded its pass (`gate-passed`), and the results are not posted yet. */
   readonly regatePassed: boolean;
   /**
+   * The newest `checks_read` line of the pass on record with nothing failed and not everything
+   * passed: a read is recorded like that only when the wait ran out, so it is the decision to go
+   * `stuck`, and it stands as a recorded failure does. `missing` says a check never appeared.
+   */
+  readonly checksTimedOut: { readonly sha: string; readonly missing: boolean } | null;
+  /**
    * The pass on record was written by a re-gate call that resumed an earlier one (its cause says
    * `gate-passed-resumed`): a stuck path the earlier call did not finish may have drafted the
    * pull request or relabelled the issue, so finishing the pass sets the ready state again. A
@@ -461,6 +467,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let readyOutside = false;
   let checksPassed: string | null = null;
   let checksFailed: Seen["checksFailed"] = null;
+  let checksTimedOut: Seen["checksTimedOut"] = null;
   let regating = false;
   let regateMoved: Moved | null = null;
   let regatePassed = false;
@@ -594,6 +601,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
           // A read of the checks is about the pass before it: this one's are read afresh.
           checksPassed = null;
           checksFailed = null;
+          checksTimedOut = null;
           regatePassed = regating;
           regatePassReassert = entry.cause?.reason === GATE_PASSED_RESUMED;
           // The step's own cause names the attempt; a ledger from before it did is read by the
@@ -807,10 +815,9 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
           break;
         }
         const read: ReadonlyArray<unknown> = checks;
-        checksPassed =
-          read.length > 0 && read.every((check) => dataField(check, "state") === "passed")
-            ? sha.toLowerCase()
-            : null;
+        const allPassed =
+          read.length > 0 && read.every((check) => dataField(check, "state") === "passed");
+        checksPassed = allPassed ? sha.toLowerCase() : null;
         const failed = read.flatMap((check): Array<CheckStatus> => {
           const name = dataField(check, "name");
           if (dataField(check, "state") !== "failed" || typeof name !== "string") return [];
@@ -818,6 +825,12 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
           return [{ name, state: "failed", conclusion: "", url: null }];
         });
         if (failed.length > 0) checksFailed = { sha: sha.toLowerCase(), failed };
+        else if (!allPassed && read.length > 0) {
+          checksTimedOut = {
+            sha: sha.toLowerCase(),
+            missing: read.some((check) => dataField(check, "state") === "missing"),
+          };
+        }
         break;
       }
       case "regate_relaunching": {
@@ -909,6 +922,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     readyOutside,
     checksPassed,
     checksFailed,
+    checksTimedOut,
     regating,
     regateMoved,
     regatePassed,
