@@ -376,21 +376,11 @@ export function collectLimitPools(
     else byDriver.set(account.driver, [account]);
   }
   return [...byDriver].map(([driver, members]) => {
-    const orderWindow = members
-      .flatMap((account) => account.limits.windows)
-      .sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind])[0];
-    const orderReset = (account: LimitAccount) => {
-      const window = account.limits.windows.find(
-        (window) => orderWindow && poolKey(driver, window) === poolKey(driver, orderWindow),
-      );
-      return (
-        (window ? resetMillis(poolMember(account, window, now).window) : null) ??
-        Number.POSITIVE_INFINITY
-      );
-    };
+    // Pooled accounts keep a stable place in the bar: sorting by reset time
+    // moved an account every time its session reset, so the same position
+    // showed a different account from one look to the next (#24531).
     const sorted = [...members].sort(
       (left, right) =>
-        orderReset(left) - orderReset(right) ||
         accountSortName(left).localeCompare(accountSortName(right)) ||
         left.key.localeCompare(right.key),
     );
@@ -400,6 +390,30 @@ export function collectLimitPools(
 
 function accountSortName(account: LimitAccount): string {
   return (account.displayName ?? account.email ?? account.key).toLowerCase();
+}
+
+/** The two-letter chip shown for an account: first letter of the local part
+ *  plus first letter of the domain, e.g. both `alice@gmail.com` and
+ *  `alan@gmail.com` give `AG`. */
+export function accountInitials(email: string): string {
+  const [local = "", domain = ""] = email.split("@");
+  return `${local[0] ?? ""}${domain[0] ?? ""}`.toUpperCase() || "?";
+}
+
+/** Keys of accounts whose initials collide with another account in the list,
+ *  so the UI can show a distinguishing label (plan, else email) for them. */
+export function collidingAccountKeys(
+  accounts: readonly { readonly key: string; readonly email: string | undefined }[],
+): ReadonlySet<string> {
+  const byInitials = new Map<string, string[]>();
+  for (const account of accounts) {
+    if (!account.email) continue;
+    const initials = accountInitials(account.email);
+    const list = byInitials.get(initials);
+    if (list) list.push(account.key);
+    else byInitials.set(initials, [account.key]);
+  }
+  return new Set([...byInitials.values()].flatMap((keys) => (keys.length > 1 ? keys : [])));
 }
 
 // Codex ids name slots, so pool by kind; other drivers' ids identify distinct allowances.

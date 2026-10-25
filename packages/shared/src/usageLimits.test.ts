@@ -12,6 +12,8 @@ import {
   collectProviderUsageLimits,
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
+  accountInitials,
+  collidingAccountKeys,
   collectLimitAccounts,
   collectExternalUsageLinks,
   collectLimitNotices,
@@ -790,10 +792,11 @@ describe("pooled account columns", () => {
       ]),
     ];
     const [pool] = collectLimitPools(accounts, now);
-    expect(pool!.accounts.map((account) => account.key)).toEqual(["b", "a"]);
+    // #24531: columns stay in stable name order even though b resets first.
+    expect(pool!.accounts.map((account) => account.key)).toEqual(["a", "b"]);
     expect(keys(pool!)).toEqual([
-      ["b", "a"],
-      ["b", "a"],
+      ["a", "b"],
+      ["a", "b"],
     ]);
     expect(pool!.windows[1]!.resets.map((reset) => reset.member.account.key)).toEqual(["a", "b"]);
     expect(pool!.windows[1]!.remainingPercent).toBe(50);
@@ -821,7 +824,7 @@ describe("pooled account columns", () => {
     },
   );
 
-  it("orders by usable session refill and clears suppression after a fresh weekly reading", () => {
+  it("clears suppression after a fresh weekly reading without moving accounts", () => {
     const blocked = account("blocked", [
       { ...window, resetsAt: "2026-09-03T13:00:00.000Z" },
       { ...weekly, usedPercent: 100, resetsAt: "2026-09-03T15:00:00.000Z" },
@@ -838,7 +841,9 @@ describe("pooled account columns", () => {
       },
     };
     const [after] = collectLimitPools([refreshed, available], now);
-    expect(after!.accounts.map((account) => account.key)).toEqual(["blocked", "available"]);
+    // #24531: the refreshed account keeps its stable place, it does not
+    // move ahead of "available" just because its session becomes usable.
+    expect(after!.accounts.map((account) => account.key)).toEqual(["available", "blocked"]);
     expect(after!.windows[0]!.remainingPercent).toBe(60);
     expect(after!.windows[0]!.resets[0]).toMatchObject({
       at: Date.parse("2026-09-03T13:00:00.000Z"),
@@ -867,7 +872,7 @@ describe("pooled account columns", () => {
     expect(pool!.windows[1]!.resets.map((reset) => reset.restoresPercent)).toEqual([40, 20]);
   });
 
-  it("falls back to weekly resets when no account reports a session", () => {
+  it("does not order by weekly resets when no account reports a session", () => {
     const [pool] = collectLimitPools(
       [
         account("a", [{ ...weekly, resetsAt: "2026-09-06T12:00:00.000Z" }]),
@@ -875,7 +880,43 @@ describe("pooled account columns", () => {
       ],
       now,
     );
-    expect(keys(pool!)).toEqual([["b", "a"]]);
+    // #24531: stable name order, not the earlier weekly reset first.
+    expect(keys(pool!)).toEqual([["a", "b"]]);
+  });
+
+  // regression: #24531 pooled accounts must keep their place in the bar when
+  // a session resets, instead of re-sorting by reset time.
+  it("keeps pooled account order stable when reset times change", () => {
+    const early = account("zeta", [
+      { ...window, usedPercent: 10, resetsAt: "2026-09-03T13:00:00.000Z" },
+    ]);
+    const late = account("alpha", [
+      { ...window, usedPercent: 90, resetsAt: "2026-09-03T15:00:00.000Z" },
+    ]);
+    const [pool] = collectLimitPools([early, late], now);
+    expect(pool!.accounts.map((account) => account.key)).toEqual(["alpha", "zeta"]);
+    expect(keys(pool!)).toEqual([["alpha", "zeta"]]);
+    // The earlier-resetting account starts a new session; its place must not move.
+    const refreshed = {
+      ...early,
+      limits: {
+        checkedAt: "2026-09-03T13:30:00.000Z",
+        windows: [{ ...window, usedPercent: 5, resetsAt: "2026-09-03T18:00:00.000Z" }],
+      },
+    };
+    const [after] = collectLimitPools([refreshed, late], now);
+    expect(after!.accounts.map((account) => account.key)).toEqual(["alpha", "zeta"]);
+  });
+
+  // regression: #24531 two accounts sharing initials must be distinguishable.
+  it("marks accounts whose initials collide with another pooled account", () => {
+    expect(accountInitials("eg@example.com")).toBe("EE");
+    const colliding = collidingAccountKeys([
+      { key: "a", email: "alice@gmail.com" },
+      { key: "b", email: "alan@gmail.com" },
+      { key: "c", email: "zoe@outlook.com" },
+    ]);
+    expect([...colliding].sort()).toEqual(["a", "b"]);
   });
 });
 

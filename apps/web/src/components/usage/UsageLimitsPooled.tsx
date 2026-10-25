@@ -1,5 +1,7 @@
 import {
   CHATGPT_USAGE_URL,
+  accountInitials,
+  collidingAccountKeys,
   collectLimitAccounts,
   collectExternalUsageLinks,
   collectLimitNotices,
@@ -46,11 +48,6 @@ import {
   resetCreditsSummary,
   useResetCredit,
 } from "./UsageLimits";
-
-function accountInitials(email: string): string {
-  const [local = "", domain = ""] = email.split("@");
-  return `${local[0] ?? ""}${domain[0] ?? ""}`.toUpperCase() || "?";
-}
 
 function accountHue(email: string): number {
   let hash = 0;
@@ -104,15 +101,22 @@ function AccountAvatar({
 function AccountName({
   account,
   className,
+  initialsCollide,
 }: {
   readonly account: LimitAccount;
   readonly className?: string;
+  readonly initialsCollide?: boolean;
 }) {
   if (account.displayName) return <span className={className}>{account.displayName}</span>;
   if (account.email) {
+    // Two accounts sharing initials get identical chips, so when this
+    // account's initials collide, show its plan (else its email) next to
+    // the chip instead of the chip alone.
+    const distinguishing = initialsCollide ? (account.plan ?? account.email) : null;
     return (
-      <span className={cn("inline-flex min-w-0 items-center", className)}>
+      <span className={cn("inline-flex min-w-0 items-center gap-1.5", className)}>
         <AccountChip email={account.email} />
+        {distinguishing ? <span className="min-w-0 truncate">{distinguishing}</span> : null}
       </span>
     );
   }
@@ -287,6 +291,7 @@ function PoolSegment({
   readonly now: number;
   readonly index: number;
   readonly showAccountName: boolean;
+  readonly initialsCollide: boolean;
 }) {
   return account.redeem ? (
     <RedeemableSegment account={account} redeemAt={account.redeem} {...props} />
@@ -314,7 +319,11 @@ function RedeemableSegment({
       {/* The popover closed before the confirm, so progress and the outcome need a home outside it. */}
       {redeem.busy || redeem.status ? (
         <span role="status" className="col-span-full text-xs text-muted-foreground">
-          <AccountName account={props.account} className="font-medium text-foreground" />{" "}
+          <AccountName
+            account={props.account}
+            className="font-medium text-foreground"
+            initialsCollide={props.initialsCollide}
+          />{" "}
           {redeem.busy ? "Using reset credit…" : redeem.status}
         </span>
       ) : null}
@@ -332,12 +341,14 @@ function SegmentTriggers({
   now,
   index,
   showAccountName,
+  initialsCollide,
 }: SegmentPayload & {
   readonly refillPercent: number;
   readonly color: string;
   readonly now: number;
   readonly index: number;
   readonly showAccountName: boolean;
+  readonly initialsCollide: boolean;
 }) {
   const popover = use(SegmentPopoverContext) ?? undefined;
   const payload: SegmentPayload = { account, window, reset, redeem };
@@ -400,6 +411,7 @@ function SegmentTriggers({
             <AccountName
               account={account}
               className="min-w-0 truncate font-medium text-foreground"
+              initialsCollide={initialsCollide}
             />
           ) : null}
           <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
@@ -423,7 +435,13 @@ function SegmentTriggers({
           ) : null}
         </div>
       </PopoverTrigger>
-      <LegendRow payload={payload} color={color} now={now} index={index} />
+      <LegendRow
+        payload={payload}
+        color={color}
+        now={now}
+        index={index}
+        initialsCollide={initialsCollide}
+      />
     </>
   );
 }
@@ -433,11 +451,13 @@ function LegendRow({
   color,
   now,
   index,
+  initialsCollide,
 }: {
   readonly payload: SegmentPayload;
   readonly color: string;
   readonly now: number;
   readonly index: number;
+  readonly initialsCollide: boolean;
 }) {
   const popover = use(SegmentPopoverContext) ?? undefined;
   const { account, window } = payload;
@@ -461,7 +481,11 @@ function LegendRow({
         <span className="sr-only">Segment </span>
         <span className="relative">{index}</span>
       </span>
-      <AccountName account={account} className="min-w-0 truncate font-medium text-foreground" />
+      <AccountName
+        account={account}
+        className="min-w-0 truncate font-medium text-foreground"
+        initialsCollide={initialsCollide}
+      />
       <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
       <span className="ms-auto flex shrink-0 items-center gap-1.5 text-2xs text-muted-foreground tabular-nums">
         {resetsIn?.replace("resets in ", "↻ ") ?? ""}
@@ -495,6 +519,7 @@ function PoolBar({
   readonly now: number;
 }) {
   const restores = new Map(pool.resets.map((reset) => [reset.member.account.key, reset]));
+  const colliding = collidingAccountKeys(pool.columns.map((member) => member.account));
   return (
     <div className="@container/pool min-w-0">
       <div
@@ -513,6 +538,7 @@ function PoolBar({
               now={now}
               index={position + 1}
               showAccountName={pool.columns.length > 1}
+              initialsCollide={colliding.has(member.account.key)}
             />
           ) : null,
         )}
