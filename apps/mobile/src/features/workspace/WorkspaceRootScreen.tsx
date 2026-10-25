@@ -106,9 +106,9 @@ function WorkspaceRootContent() {
     ),
     [width, navigation],
   );
-  const tab = state.tabs[state.selectedTab];
   // Settings is a workspace tab too; its list takes the place of the selected tab's.
   const settingsOpen = workspace.settingsOpen;
+  const tab = state.tabs[settingsOpen ? "settings" : state.selectedTab];
   const bottomClearance =
     layout.primarySidebarOverlaysContent && state.selectedTab === "usage"
       ? workspaceDockBottomClearance({ bottomInset: insets.bottom, keyboardHeight })
@@ -199,10 +199,7 @@ function WorkspaceRootContent() {
           }
         >
           {settingsOpen ? (
-            <>
-              <NativeStackScreenOptions options={{ headerSearchBarOptions: undefined }} />
-              <SettingsRouteScreen />
-            </>
+            <SettingsRouteScreen />
           ) : enabled.length === 0 ? (
             <WorkspaceNoTabs />
           ) : state.selectedTab === "threads" ? (
@@ -216,14 +213,12 @@ function WorkspaceRootContent() {
         {deviceType !== "pad" && deviceType !== "phone" && sidebarPicker ? (
           <WorkspaceSidebarTabs />
         ) : null}
-        {enabled.length === 0 && !settingsOpen ? null : !settingsOpen &&
-          (state.selectedTab === "threads" || state.selectedTab === "pullRequests") ? (
+        {enabled.length === 0 && !settingsOpen ? null : settingsOpen ||
+          state.selectedTab === "threads" ||
+          state.selectedTab === "pullRequests" ? (
           <WorkspaceToolbar sidebar={sidebarNavigation} onNewTask={startNewTask} />
         ) : (
-          <WorkspaceSectionToolbar
-            onNewTask={startNewTask}
-            showCompose={!settingsOpen && state.selectedTab !== "usage"}
-          />
+          <WorkspaceSectionToolbar onNewTask={startNewTask} showCompose={false} />
         )}
       </View>
     </WorkspaceTabsContext>

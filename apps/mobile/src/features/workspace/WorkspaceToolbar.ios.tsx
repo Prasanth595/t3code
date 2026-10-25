@@ -19,6 +19,12 @@ import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { useCompactWorkspaceTabs, useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
 import { WorkspaceTabToolbarButtons } from "./WorkspaceSectionToolbar";
 
+const SEARCH_LABELS = {
+  threads: "Search threads",
+  pullRequests: "Search pull requests",
+  settings: "Search settings",
+} as const;
+
 export function WorkspaceToolbar(props: {
   readonly onNewTask: () => void;
   readonly sidebar?: boolean;
@@ -34,15 +40,22 @@ export function WorkspaceToolbar(props: {
   const nativeToolbarCompose =
     Platform.OS === "ios" &&
     deviceType === "duo-folded" &&
+    !workspace.settingsOpen &&
     workspace.state.selectedTab === "threads" &&
     activeNewTask === null;
-  const { isTabActive } = workspace;
   const tabActive = use(NativeWorkspaceTabActivityContext)?.active ?? true;
   const focused = useIsFocused();
   const { panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const searchRef = useRef<SearchBarCommands>(null);
-  const tab = workspace.state.tabs[workspace.state.selectedTab];
-  const selectedTab = workspace.state.selectedTab;
+  // The Settings list takes the selected tab's place, so search follows it.
+  const selectedTab = workspace.settingsOpen ? "settings" : workspace.state.selectedTab;
+  const tab = workspace.state.tabs[selectedTab];
+  const searchLabel = SEARCH_LABELS[selectedTab === "usage" ? "threads" : selectedTab];
+  const { isTabActive: isListTabActive } = workspace;
+  const isTabActive = useCallback(
+    (tab: typeof selectedTab) => tab === "settings" || isListTabActive(tab),
+    [isListTabActive],
+  );
   const foldedSearch = deviceType === "duo-folded";
   const primaryColumn = use(NativePrimaryColumnContext);
   // UIKit hosts integrated search outside the sidebar's sliding content.
@@ -60,11 +73,11 @@ export function WorkspaceToolbar(props: {
     if (props.sidebar && !panes.primarySidebarVisible) togglePrimarySidebar();
   }, [workspace, selectedTab, props.sidebar, panes.primarySidebarVisible, togglePrimarySidebar]);
   const focusSearch = useCallback(() => {
-    if (!workspace.isTabActive(selectedTab)) return false;
+    if (!isTabActive(selectedTab)) return false;
     if (duoSearch || !NATIVE_LIQUID_GLASS_SUPPORTED) enterSearch();
     searchRef.current?.focus();
     return true;
-  }, [workspace, selectedTab, enterSearch, duoSearch]);
+  }, [isTabActive, selectedTab, enterSearch, duoSearch]);
   const cancelSearch = useCallback(() => {
     workspace.recordScrollOffset(selectedTab, tab.searchEntryOffset);
     workspace.dispatch({ type: "cancel", tab: selectedTab });
@@ -124,13 +137,7 @@ export function WorkspaceToolbar(props: {
   const searchButton = foldedSearch ? (
     <Toolbar.Button
       identifier="workspace-search"
-      accessibilityLabel={
-        searchVisible
-          ? "Close search"
-          : selectedTab === "pullRequests"
-            ? "Search pull requests"
-            : "Search threads"
-      }
+      accessibilityLabel={searchVisible ? "Close search" : searchLabel}
       icon={searchVisible ? "xmark" : "magnifyingglass"}
       onPress={searchVisible ? () => searchRef.current?.cancelSearch() : focusSearch}
       separateBackground
@@ -160,8 +167,7 @@ export function WorkspaceToolbar(props: {
                     NATIVE_LIQUID_GLASS_SUPPORTED &&
                     deviceType !== "phone" &&
                     sidebarTabs !== "picker",
-                  placeholder:
-                    selectedTab === "pullRequests" ? "Search pull requests" : "Search threads",
+                  placeholder: searchLabel,
                   cancelButtonHidden: foldedSearch,
                   onFocus: searchFocused,
                   onBlur: () => workspace.dispatch({ type: "expand", tab: selectedTab }),
@@ -195,9 +201,7 @@ export function WorkspaceToolbar(props: {
         )}
         {NATIVE_LIQUID_GLASS_SUPPORTED ? null : (
           <Toolbar.Button
-            accessibilityLabel={
-              selectedTab === "pullRequests" ? "Search pull requests" : "Search threads"
-            }
+            accessibilityLabel={searchLabel}
             icon="magnifyingglass"
             onPress={focusSearch}
           />
