@@ -1563,6 +1563,12 @@ describe("PullRequestSyncReactor", () => {
       linked: [3],
     },
     {
+      name: "a new pull request whose number appears in the create command",
+      input: "timeout 60 gh pr create --fill",
+      output: "https://github.com/owner/repository/pull/60",
+      linked: [60],
+    },
+    {
       name: "a read with no create",
       input: "gh pr view 124 --json url --jq .url",
       output: "https://github.com/owner/repository/pull/124",

@@ -88,6 +88,37 @@ function shellScript(input: string): string {
       ).join("");
 }
 
+/** A script split at command separators that sit outside quotes. */
+function shellSegments(script: string): ReadonlyArray<string> {
+  const segments: Array<string> = [];
+  let current = "";
+  let quote: string | null = null;
+  for (let index = 0; index < script.length; index++) {
+    const char = script[index] ?? "";
+    if (quote !== null) {
+      current += char;
+      if (char === "\\" && quote === '"') current += script[++index] ?? "";
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"') quote = char;
+    if (char === "\\") {
+      current += char + (script[++index] ?? "");
+      continue;
+    }
+    const pair = script.slice(index, index + 2);
+    if (pair === "&&" || pair === "||" || char === ";" || char === "|" || char === "\n") {
+      segments.push(current);
+      current = "";
+      if (pair === "&&" || pair === "||") index++;
+      continue;
+    }
+    current += char;
+  }
+  segments.push(current);
+  return segments;
+}
+
 /** The commands a script runs, without the text it carries. */
 const shellCode = (script: string) =>
   script.replace(HEREDOC_BODY, "<<").replace(QUOTED_OR_COMMENT, "''");
@@ -111,6 +142,9 @@ function changeRequestsCreatedBy(input: string, output: string) {
     .filter((part) => createCommandCount(part) === 0)
     .join("\n");
   if (LISTS_CHANGE_REQUESTS.test(otherCommands)) return [];
+  const otherScript = shellSegments(script)
+    .filter((segment) => createCommandCount(shellCode(segment)) === 0)
+    .join("\n");
   const creators = new Set(
     CREATE_COMMANDS.filter(({ run }) => code.match(run) !== null).map(({ kind }) => kind),
   );
@@ -121,8 +155,8 @@ function changeRequestsCreatedBy(input: string, output: string) {
     if (parsed === null || !creators.has(parsed.definition.kind)) continue;
     const { link } = parsed;
     const named = new RegExp(`(?:^|(?<=[\\s#/=("']))${link.number}(?=$|[\\s);&|/"'])`, "u");
-    // Quoted text counts here: the command that creates a change request cannot name its number.
-    if (named.test(script)) continue;
+    // Quoted text in the other commands counts, as in `printf '.../pull/12'`.
+    if (named.test(otherScript)) continue;
     const key = normalizeThreadPullRequestKey(link);
     created.set(threadPullRequestKeyOf(key), { ...key, url });
   }
