@@ -10,6 +10,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -26,6 +27,13 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   // Reporting no autofill type keeps terminal input out of credential autofill.
   private val inputView = object : EditText(context) {
     override fun getAutofillType(): Int = View.AUTOFILL_TYPE_NONE
+
+    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? =
+      super.onCreateInputConnection(outAttrs)?.let { connection ->
+        TerminalInputConnection(connection) { count ->
+          if (!readOnly) onInput(mapOf("data" to "\u007F".repeat(count)))
+        }
+      }
   }
   private val onInput by EventDispatcher()
   private val onResize by EventDispatcher()
