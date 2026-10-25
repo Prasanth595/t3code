@@ -4,6 +4,7 @@ import {
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { useAtomValue } from "@effect/atom-react";
 import type { PullRequestComment } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useRef, useState } from "react";
@@ -55,6 +56,23 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
     params.field === "comment"
       ? permissions.canEditComment(params.comment)
       : permissions.canEditChangeRequest;
+  const canWrite = useAtomValue(
+    (params.field === "comment"
+      ? composerPullRequests.updateComment
+      : composerPullRequests.update
+    ).permissionAtom(target.environmentId),
+  );
+  // Name the first thing in the way, so the notice says what would actually fix it.
+  const readOnlyReason =
+    !pr || allowed
+      ? null
+      : !permissions.connected
+        ? "Reconnect to save changes."
+        : !canWrite
+          ? "This device isn't allowed to change source control on this environment."
+          : params.field === "comment"
+            ? "You can't edit this comment."
+            : `You can't edit this ${singular}.`;
   const unchanged = draft === null || draft === original;
   const invalid = params.field === "title" && value.trim().length === 0;
   const save = async () => {
@@ -138,12 +156,8 @@ export function PullRequestEditScreen({ route }: StaticScreenProps<PullRequestEd
         }
         style={params.field === "title" ? undefined : { textAlignVertical: "top" }}
       />
-      {!allowed && pr ? (
-        <Text className="text-xs text-foreground-muted">
-          {params.field === "comment"
-            ? "This provider does not let you edit this comment."
-            : `This provider does not let you edit this ${singular}.`}
-        </Text>
+      {readOnlyReason ? (
+        <Text className="text-xs text-foreground-muted">{readOnlyReason}</Text>
       ) : null}
       {error || detail.error ? (
         <Text selectable className="text-sm text-danger-foreground">

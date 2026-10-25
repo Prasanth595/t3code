@@ -31,6 +31,17 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
     canWrite &&
     pr?.capabilities.labels === true &&
     pr.viewerPermissions.labels !== false;
+  // Name the first thing in the way, so the notice says what would actually fix it.
+  const readOnlyReason =
+    !pr || allowed
+      ? null
+      : !connected
+        ? "Reconnect to change labels."
+        : !canWrite
+          ? "This device isn't allowed to change source control on this environment."
+          : pr.capabilities.labels !== true
+            ? "This provider doesn't support changing labels."
+            : "Changing labels needs triage access on this repository.";
   const result = useEnvironmentQuery(composerPullRequests.labelCandidates(target));
   const setLabels = useAtomCommand(composerPullRequests.setLabels, { reportFailure: false });
   const [query, setQuery] = useState("");
@@ -80,12 +91,10 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom }}
           ListHeaderComponent={
-            (!allowed && pr) || error ? (
+            readOnlyReason || error ? (
               <View className="gap-2 pb-3">
-                {!allowed && pr ? (
-                  <Text className="text-xs text-foreground-muted">
-                    Changing labels needs triage access on this repository.
-                  </Text>
+                {readOnlyReason ? (
+                  <Text className="text-xs text-foreground-muted">{readOnlyReason}</Text>
                 ) : null}
                 {error ? (
                   <Text selectable className="text-sm text-danger-foreground">
