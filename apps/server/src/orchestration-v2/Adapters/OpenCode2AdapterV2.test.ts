@@ -1255,6 +1255,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* answered;
       assert.equal(yield* ended, "completed");
       yield* TestClock.adjust("10 seconds");
+      // TestClock resumes an expired sleep synchronously, so a bounded steer has returned by now.
+      assert.isDefined(steer.pollUnsafe(), "the steer still waits for the background reply");
       yield* Fiber.join(steer);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
