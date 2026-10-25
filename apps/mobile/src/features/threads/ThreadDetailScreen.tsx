@@ -1,3 +1,5 @@
+import { useScreenActive } from "../../lib/use-screen-active";
+import { useStreamingHaptics } from "./use-streaming-haptics";
 import { useSidebarWorkspaceTabs } from "../workspace/useSystemWorkspaceTabBar";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import {
@@ -301,76 +303,6 @@ export interface ThreadDetailScreenProps {
   readonly showContent?: boolean;
 }
 
-function latestStreamingAssistantMessage(
-  feed: ReadonlyArray<ThreadFeedEntry>,
-): { readonly id: string; readonly textLength: number } | null {
-  for (let index = feed.length - 1; index >= 0; index -= 1) {
-    const entry = feed[index];
-    if (entry?.type !== "message") {
-      continue;
-    }
-    if (entry.message.role !== "assistant" || !entry.message.streaming) {
-      continue;
-    }
-    return {
-      id: entry.message.id,
-      textLength: entry.message.text.length,
-    };
-  }
-
-  return null;
-}
-
-function useStreamingHaptics(threadId: ThreadId, feed: ReadonlyArray<ThreadFeedEntry>) {
-  const lastStreamingAssistantRef = useRef<{
-    readonly id: string;
-    readonly textLength: number;
-  } | null>(null);
-  const lastStreamHapticAtRef = useRef(0);
-  const hydratedRef = useRef(false);
-  const previousThreadIdRef = useRef(threadId);
-
-  useEffect(() => {
-    if (previousThreadIdRef.current !== threadId) {
-      previousThreadIdRef.current = threadId;
-      hydratedRef.current = false;
-    }
-
-    const latestStreamingMessage = latestStreamingAssistantMessage(feed);
-
-    if (!hydratedRef.current) {
-      hydratedRef.current = true;
-      lastStreamingAssistantRef.current = latestStreamingMessage;
-      return;
-    }
-
-    if (!latestStreamingMessage) {
-      lastStreamingAssistantRef.current = null;
-      return;
-    }
-
-    const previousStreamingMessage = lastStreamingAssistantRef.current;
-    lastStreamingAssistantRef.current = latestStreamingMessage;
-
-    const isNewStream = previousStreamingMessage?.id !== latestStreamingMessage.id;
-    const textGrew =
-      previousStreamingMessage?.id === latestStreamingMessage.id &&
-      latestStreamingMessage.textLength > previousStreamingMessage.textLength;
-
-    if (!isNewStream && !textGrew) {
-      return;
-    }
-
-    const now = Date.now();
-    if (!isNewStream && now - lastStreamHapticAtRef.current < 320) {
-      return;
-    }
-
-    lastStreamHapticAtRef.current = now;
-    void Haptics.selectionAsync();
-  }, [threadId, feed]);
-}
-
 const USAGE_LIMITS_PANEL_GAP = 12;
 const USAGE_LIMITS_PANEL_MIN_HEIGHT = 44;
 
@@ -391,7 +323,8 @@ function ThreadVisitWatermark(props: {
     threadId: props.selectedThread.id,
   });
   const thread = liveThread ?? props.selectedThread;
-  const showContent = props.showContent;
+  const screenActive = useScreenActive();
+  const showContent = props.showContent && screenActive;
   const selectedThreadKey = scopedThreadKey(props.environmentId, thread.id);
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const lastDispatchedVisitRef = useRef<string | null>(null);
@@ -1202,7 +1135,15 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       : { width: "auto", right: controlInsets.right },
   );
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
-  useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
+  useStreamingHaptics(
+    props.selectedThread.id,
+    props.selectedThreadFeed,
+    showContent &&
+      !props.draftMode &&
+      !reduceMotion &&
+      props.connectionStateLabel === "connected" &&
+      props.threadSyncStatus === "live",
+  );
   const selectedProviderSkills = (() => {
     const provider = props.serverConfig?.providers.find(
       (candidate) => candidate.instanceId === selectedInstanceId,
