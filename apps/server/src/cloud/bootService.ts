@@ -214,8 +214,15 @@ const STOP_STEP_TIMEOUT = Duration.seconds(120);
  * window, which is otherwise the only thing standing between a version update
  * and a service that keeps running the release it was meant to replace.
  */
-const LAUNCHD_RETRY_INTERVAL = Duration.millis(250);
-const LAUNCHD_RETRY_ATTEMPTS = 20;
+const LAUNCHD_RETRY_BASE_MS = 250;
+const LAUNCHD_RETRY_CAP_MS = 2_000;
+// 250ms doubling to a 2s cap. A short drain resolves on the first or second
+// attempt; the 17 attempts add up to about 30s, which covers a plist's default
+// ExitTimeOut without making a broken install wait the full 90s.
+const LAUNCHD_RETRY_ATTEMPTS = 17;
+
+const launchdRetryDelay = (attempt: number) =>
+  Duration.millis(Math.min(LAUNCHD_RETRY_BASE_MS * 2 ** attempt, LAUNCHD_RETRY_CAP_MS));
 
 export interface BootServiceManager {
   readonly kind: "systemd" | "launchd";
@@ -678,23 +685,34 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       );
     const attempt = invoke(args);
     const retryable = options?.retryOnExitCodes;
-    const primary =
-      retryable === undefined
-        ? attempt
-        : attempt.pipe(
-            Effect.retry({
-              // A fixed spacing keeps a drain that never ends from stalling the
-              // step past its timeout instead of reporting the failure.
-              schedule: Schedule.spaced(LAUNCHD_RETRY_INTERVAL),
-              times: LAUNCHD_RETRY_ATTEMPTS,
-              while: (error) => error.exitCode !== undefined && retryable.includes(error.exitCode),
-            }),
-          );
+    const primary = retryable === undefined ? attempt : retryableStep(attempt, retryable);
     const fallback = options?.fallbackArgs;
     return yield* (
       fallback === undefined ? primary : primary.pipe(Effect.catch(() => invoke(fallback)))
     ).pipe(Effect.tapError(logFailure));
   });
+
+  const retryableStep = (
+    // The cap keeps a drain that never ends from stalling the step past its
+    // timeout instead of reporting the failure.
+    step: Effect.Effect<ProcessRunner.ProcessRunOutput, BootServiceCommandError>,
+    codes: ReadonlyArray<number>,
+  ): Effect.Effect<ProcessRunner.ProcessRunOutput, BootServiceCommandError> => {
+    const attempt = (
+      remaining: number,
+    ): Effect.Effect<ProcessRunner.ProcessRunOutput, BootServiceCommandError> =>
+      step.pipe(
+        Effect.catchIf(
+          (error) =>
+            error.exitCode !== undefined && codes.includes(error.exitCode) && remaining > 0,
+          () =>
+            Effect.sleep(launchdRetryDelay(LAUNCHD_RETRY_ATTEMPTS - remaining)).pipe(
+              Effect.andThen(attempt(remaining - 1)),
+            ),
+        ),
+      );
+    return attempt(LAUNCHD_RETRY_ATTEMPTS);
+  };
 
   const runSteps = (steps: ReadonlyArray<BootServiceStep>) =>
     Effect.forEach(
