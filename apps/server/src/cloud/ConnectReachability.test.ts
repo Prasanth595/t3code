@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import { T3_CONNECT_TROUBLESHOOTING_SECTIONS } from "@t3tools/contracts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -334,6 +335,46 @@ describe("ConnectReachability stale connector recovery", () => {
 
       yield* Ref.set(fixture.publicAnswer, "530");
       yield* TestClock.adjust(Duration.minutes(2));
+      yield* fixture.reachability.check;
+      expect(fixture.killed).toEqual([]);
+    }),
+  );
+
+  it.effect("does not apply an older failure after a newer check resets recovery", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeConnectFixture();
+      yield* fixture.runtime.applyConfig(tunnelConfig);
+      yield* fixture.nextConnector;
+      const clock = yield* Clock.Clock;
+      const recoveryReached = yield* Deferred.make<void>();
+      const releaseRecovery = yield* Deferred.make<void>();
+      let clockReads = 0;
+      const older = yield* fixture.reachability.check.pipe(
+        Effect.provideService(Clock.Clock, {
+          ...clock,
+          currentTimeMillis: Effect.suspend(() => {
+            // The first read dates the published result; the second dates recovery.
+            if (++clockReads !== 2) return clock.currentTimeMillis;
+            return Deferred.succeed(recoveryReached, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseRecovery)),
+              Effect.andThen(clock.currentTimeMillis),
+            );
+          }),
+        }),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.await(recoveryReached);
+      expect(Option.getOrThrow(yield* fixture.reachability.latest)).toMatchObject({
+        cause: "no_connector",
+      });
+      yield* Ref.set(fixture.publicAnswer, "200");
+      expect(yield* fixture.reachability.check).toMatchObject({ status: "reachable" });
+      yield* TestClock.adjust(Duration.minutes(2));
+      yield* Deferred.succeed(releaseRecovery, undefined);
+      expect(yield* Fiber.join(older)).toMatchObject({ cause: "no_connector" });
+
+      yield* TestClock.adjust(Duration.minutes(2));
+      yield* Ref.set(fixture.publicAnswer, "530");
       yield* fixture.reachability.check;
       expect(fixture.killed).toEqual([]);
     }),

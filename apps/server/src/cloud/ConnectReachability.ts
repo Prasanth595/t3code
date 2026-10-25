@@ -277,6 +277,7 @@ const make = Effect.gen(function* () {
   const restartDeadConnector = Effect.fnUntraced(function* (
     facts: ReachabilityFacts,
     result: EnvironmentConnectReachability,
+    order: number,
   ) {
     const now = yield* Clock.currentTimeMillis;
     const { connector } = facts;
@@ -289,6 +290,8 @@ const make = Effect.gen(function* () {
         : null;
     yield* SynchronizedRef.updateEffect(deadConnectorRef, (state) =>
       Effect.gen(function* () {
+        const latest = yield* Ref.get(latestRef);
+        if (Option.isSome(latest) && latest.value.order > order) return state;
         if (result.status === "reachable") {
           return {
             streak: null,
@@ -324,7 +327,7 @@ const make = Effect.gen(function* () {
         : [current, Option.some({ order, result })],
     );
     if (previous === null) return result;
-    yield* restartDeadConnector(facts, result);
+    yield* restartDeadConnector(facts, result, order);
     const changed = Option.match(previous, {
       onNone: () => true,
       onSome: ({ result: last }) =>
