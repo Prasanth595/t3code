@@ -112,6 +112,7 @@ const make = Effect.gen(function* () {
 
       if (operation === "download") {
         const object = yield* r2(() => bindings.CLIENTS.get(key));
+        yield* Effect.annotateCurrentSpan({ "native.result": object ? "hit" : "miss" });
         if (!object) return yield* new NativeClientsError({ status: 404, reason: "missing" });
         return new Response(object.body as unknown as ReadableStream, {
           headers: {
@@ -119,6 +120,7 @@ const make = Effect.gen(function* () {
             "Content-Length": String(object.size),
             "Cache-Control": "no-store",
             "X-T3-Digest": object.customMetadata?.digest ?? "",
+            "X-T3-Build-Ms": object.customMetadata?.buildMs ?? "0",
           },
         });
       }
@@ -126,10 +128,18 @@ const make = Effect.gen(function* () {
         const digest = request.headers.get("x-t3-digest") ?? "";
         if (!digestPattern.test(digest))
           return yield* new NativeClientsError({ status: 400, reason: "invalid_digest" });
-        if (yield* r2(() => bindings.CLIENTS.head(key))) return Response.json({ exists: true });
+        if (yield* r2(() => bindings.CLIENTS.head(key))) {
+          yield* Effect.annotateCurrentSpan({ "native.result": "exists" });
+          return Response.json({ exists: true });
+        }
+        const buildMs = request.headers.get("x-t3-build-ms") ?? "";
         const upload = yield* r2(() =>
           bindings.CLIENTS.createMultipartUpload(key, {
-            customMetadata: { digest, writer: developer! },
+            customMetadata: {
+              digest,
+              writer: developer!,
+              buildMs: /^\d{1,10}$/.test(buildMs) ? buildMs : "0",
+            },
           }),
         );
         return Response.json({ uploadId: upload.uploadId });
@@ -154,6 +164,7 @@ const make = Effect.gen(function* () {
         Effect.mapError(() => new NativeClientsError({ status: 400, reason: "invalid_parts" })),
       );
       yield* r2(() => upload.complete([...body.parts]));
+      yield* Effect.annotateCurrentSpan({ "native.result": "stored" });
       return new Response(null, { status: 204 });
     },
     Effect.catchTags({

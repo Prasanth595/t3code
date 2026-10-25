@@ -93,7 +93,7 @@ it.effect("serves a writer's multipart upload to readers with its digest", () =>
     const created = yield* request("/uploads", {
       name: "julius",
       method: "POST",
-      headers: { "x-t3-digest": digest },
+      headers: { "x-t3-digest": digest, "x-t3-build-ms": "540000" },
     });
     const { uploadId } = (yield* Effect.promise(() => created.json())) as { uploadId: string };
     const parts = [];
@@ -117,6 +117,7 @@ it.effect("serves a writer's multipart upload to readers with its digest", () =>
     const download = yield* request("", { name: "ci-reader", method: "GET" });
     expect(download.status).toBe(200);
     expect(download.headers.get("x-t3-digest")).toBe(digest);
+    expect(download.headers.get("x-t3-build-ms")).toBe("540000");
     expect(yield* Effect.promise(() => download.text())).toBe("native client");
 
     const again = yield* request("/uploads", {
