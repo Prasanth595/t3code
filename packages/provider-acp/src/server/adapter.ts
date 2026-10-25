@@ -46,6 +46,7 @@ import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Hex from "effect/encoding/Hex";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -1022,6 +1023,11 @@ interface AcpNativeBuildConfiguration {
 }
 
 interface ActiveAcpTurn {
+  readonly instructionDelivery?: {
+    readonly state: T3AcpInstructionState;
+    readonly digest: string;
+    readonly compactionMarker: symbol | undefined;
+  };
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly nativeThreadId: string;
@@ -1922,6 +1928,31 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
+        const recordInstructions = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          receipt: NonNullable<
+            OrchestrationV2ProviderThreadNativeMetadata["acpInstructions"]
+          > | null,
+        ) {
+          const metadata = { ...context.nativeMetadata, acpInstructions: receipt };
+          context.nativeMetadata = metadata;
+          yield* Ref.update(nativeMetadataBySessionId, (current) =>
+            new Map(current).set(context.nativeThreadId, metadata),
+          );
+          const known = (yield* Ref.get(providerThreadByNativeSessionId)).get(
+            context.nativeThreadId,
+          );
+          if (known === undefined) return;
+          const providerThread = {
+            ...known,
+            nativeMetadata: metadata,
+            updatedAt: yield* DateTime.now,
+          };
+          yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+            new Map(current).set(context.nativeThreadId, providerThread),
+          );
+          yield* emitProviderEvent({ type: "provider_thread.updated", driver, providerThread });
+        });
         let scheduleDeferredFinalize: (context: ActiveAcpTurn) => Effect.Effect<void> = () =>
           Effect.void;
 
@@ -3650,6 +3681,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 : { beforeTokenCount: context.contextUsage.usedTokens }),
             };
             if (status === "completed") {
+              yield* recordInstructions(context, null);
               context.contextUsage = null;
               yield* Ref.update(contextUsageBySessionId, (current) => {
                 const updated = new Map(current);
@@ -6914,6 +6946,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* emitProviderRetry(context, settledStatus);
           }
           const now = yield* DateTime.now;
+          const delivery = context.instructionDelivery;
+          if (
+            settledStatus === "completed" &&
+            delivery !== undefined &&
+            (yield* Ref.get(compactionMarkers)).get(context.nativeThreadId) ===
+              delivery.compactionMarker
+          ) {
+            yield* recordInstructions(context, {
+              nativeSessionId: context.nativeThreadId,
+              digest: delivery.digest,
+            });
+            yield* Ref.update(promptInstructionStates, (current) =>
+              new Map(current).set(context.nativeThreadId, delivery.state),
+            );
+            yield* Ref.update(compactionMarkers, (current) => {
+              const updated = new Map(current);
+              updated.delete(context.nativeThreadId);
+              return updated;
+            });
+          }
           if (
             flavor.supportsCompaction === true &&
             context.input.message.text.trim() === "/compact" &&
@@ -6921,6 +6973,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             settledStatus === "completed"
           ) {
             const nativeItemId = `${context.nativeTurnId}:compaction`;
+            yield* recordInstructions(context, null);
             yield* Ref.update(compactionMarkers, (current) => {
               const updated = new Map(current);
               updated.set(context.nativeThreadId, Symbol());
@@ -7092,7 +7145,27 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             interactionMode: turnInput.runtimePolicy.interactionMode,
             hasT3Mcp: (yield* readMcpContext(turnInput.threadId)).servers.length > 0,
           } satisfies T3AcpInstructionState;
-          const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
+          const instructionDigest = yield* crypto
+            .digest(
+              "SHA-256",
+              new TextEncoder().encode(
+                t3AcpPromptWithInstructions({ prompt: "", state: instructionState }),
+              ),
+            )
+            .pipe(Effect.map(Hex.encode), Effect.orDie);
+          const rememberedInstructions = (yield* Ref.get(nativeMetadataBySessionId)).get(
+            sessionId,
+          )?.acpInstructions;
+          const recordedInstructions =
+            rememberedInstructions === undefined
+              ? turnInput.providerThread.nativeMetadata?.acpInstructions
+              : rememberedInstructions;
+          const previousInstructionState =
+            (yield* Ref.get(promptInstructionStates)).get(sessionId) ??
+            (recordedInstructions?.nativeSessionId === sessionId &&
+            recordedInstructions.digest === instructionDigest
+              ? instructionState
+              : undefined);
           const compactionMarker = (yield* Ref.get(compactionMarkers)).get(sessionId);
           const userText =
             flavor.rewriteUserText === undefined
@@ -7173,6 +7246,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return {
             prompt,
             instructionState: text === messageText ? undefined : instructionState,
+            instructionDigest,
             compactionMarker,
           };
         });
@@ -7308,6 +7382,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               );
             }
             const context: ActiveAcpTurn = {
+              ...(promptParts?.instructionState === undefined
+                ? {}
+                : {
+                    instructionDelivery: {
+                      state: promptParts.instructionState,
+                      digest: promptParts.instructionDigest,
+                      compactionMarker: promptParts.compactionMarker,
+                    },
+                  }),
               input: turnInput,
               providerTurnId,
               nativeThreadId: requestedSessionId,
@@ -7477,28 +7560,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
             yield* runtime.prompt({ prompt: promptParts!.prompt }).pipe(
-              Effect.tap(() =>
-                Ref.update(promptInstructionStates, (current) => {
-                  if (promptParts?.instructionState === undefined) return current;
-                  const updated = new Map(current);
-                  updated.set(requestedSessionId, promptParts.instructionState);
-                  return updated;
-                }),
-              ),
-              Effect.tap(() =>
-                Ref.update(compactionMarkers, (current) => {
-                  if (promptParts?.instructionState === undefined) return current;
-                  const observedMarker = promptParts.compactionMarker;
-                  if (
-                    observedMarker === undefined ||
-                    current.get(requestedSessionId) !== observedMarker
-                  )
-                    return current;
-                  const updated = new Map(current);
-                  updated.delete(requestedSessionId);
-                  return updated;
-                }),
-              ),
               // Wire settlement precedes the completion callback's permit request so
               // settled-soft classification can observe the native return even when
               // the completion fiber has not yet set promptSettled under the permit.
@@ -8334,6 +8395,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       nativeConversationHeadRef: null,
                       nativeMetadata: {
                         ...rollbackInput.providerThread.nativeMetadata,
+                        acpInstructions: null,
                         itemIdentityVersion: 2 as const,
                       },
                       status: "idle" as const,
