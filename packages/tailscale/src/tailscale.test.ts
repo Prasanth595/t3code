@@ -6,16 +6,20 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { NetService } from "@t3tools/shared/Net";
 
 import {
+  claimTailscaleServe,
   ensureTailscaleServe,
   parseTailscaleExitNode,
   parseTailscaleSshEnabled,
   parseTailscaleStatus,
   readTailscaleSshEnabled,
   readTailscaleStatus,
+  releaseTailscaleServe,
   TailscaleCommandExitError,
   TailscaleCommandSpawnError,
+  TailscaleServeOccupiedError,
   TailscaleStatusParseError,
 } from "./tailscale.ts";
 
@@ -91,6 +95,34 @@ function layerMockSpawner(
       return Effect.succeed(mockHandle(handler(childProcess.command, childProcess.args)));
     }),
   );
+}
+
+function layerServeFixture(input: {
+  readonly rootProxy: string;
+  readonly listeningPorts: ReadonlyArray<number>;
+}) {
+  const writes: Array<ReadonlyArray<string>> = [];
+  const serveStatus = JSON.stringify({
+    TCP: { "443": { HTTPS: true } },
+    Web: {
+      "desktop.tail.ts.net:443": {
+        Handlers: { "/": { Proxy: input.rootProxy }, "/keep/": { Proxy: "http://127.0.0.1:8081" } },
+      },
+    },
+  });
+  const layer = Layer.merge(
+    layerMockSpawner((_command, args) => {
+      if (args.join(" ") === "serve status --json") {
+        return { stdout: serveStatus };
+      }
+      writes.push(args);
+      return {};
+    }),
+    Layer.mock(NetService, {
+      hasListenerOnHost: (port) => Effect.succeed(input.listeningPorts.includes(port)),
+    }),
+  );
+  return { layer, writes };
 }
 
 describe("tailscale", () => {
@@ -243,6 +275,53 @@ describe("tailscale", () => {
       yield* readTailscaleStatus.pipe(Effect.provide(layer));
       yield* readTailscaleSshEnabled.pipe(Effect.provide(layer));
       assert.deepEqual(killGraces, [500, 500]);
+    });
+  });
+
+  it.effect("leaves a Serve root that fronts another running server in place", () => {
+    const fixture = layerServeFixture({
+      rootProxy: "http://127.0.0.1:3773",
+      listeningPorts: [3773, 3774],
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* claimTailscaleServe({ localPort: 3774 }).pipe(
+        Effect.flip,
+        Effect.provide(fixture.layer),
+      );
+      assert.instanceOf(error, TailscaleServeOccupiedError);
+      assert.deepEqual(fixture.writes, []);
+    });
+  });
+
+  it.effect("replaces a Serve root left behind by a stopped server", () => {
+    const fixture = layerServeFixture({
+      rootProxy: "http://127.0.0.1:3774",
+      listeningPorts: [3773],
+    });
+
+    return Effect.gen(function* () {
+      yield* claimTailscaleServe({ localPort: 3773 }).pipe(Effect.provide(fixture.layer));
+      assert.deepEqual(fixture.writes, [["serve", "--bg", "--https=443", "http://127.0.0.1:3773"]]);
+    });
+  });
+
+  it.effect("removes only its own Serve root on release", () => {
+    const fixture = layerServeFixture({
+      rootProxy: "http://127.0.0.1:3773",
+      listeningPorts: [3773],
+    });
+
+    return Effect.gen(function* () {
+      assert.isFalse(
+        yield* releaseTailscaleServe({ localPort: 3774 }).pipe(Effect.provide(fixture.layer)),
+      );
+      assert.deepEqual(fixture.writes, []);
+
+      assert.isTrue(
+        yield* releaseTailscaleServe({ localPort: 3773 }).pipe(Effect.provide(fixture.layer)),
+      );
+      assert.deepEqual(fixture.writes, [["serve", "--https=443", "--set-path=/", "off"]]);
     });
   });
 });

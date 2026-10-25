@@ -192,7 +192,7 @@ import * as OrchestrationHttp from "./orchestration-v2/http.ts";
 import * as ProjectHttp from "./project/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
-import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
+import { claimTailscaleServe, releaseTailscaleServe } from "@t3tools/tailscale";
 import * as ServerActivation from "./serverActivation.ts";
 
 // Escaped MCP handoff provenance can exceed find-my-way's 100-character segment default.
@@ -801,12 +801,13 @@ const layerMakeServer = Layer.unwrap(
               }
 
               const localPort = address.port;
-              return yield* ensureTailscaleServe({
+              const target = {
                 localPort,
                 servePort: config.tailscaleServePort,
                 localHost: loopbackUrlHostForAddress(address),
-              }).pipe(
-                Effect.as({ localPort, servePort: config.tailscaleServePort }),
+              };
+              return yield* claimTailscaleServe(target).pipe(
+                Effect.as(target),
                 Effect.tap(() =>
                   Effect.logInfo("Tailscale Serve configured", {
                     localPort,
@@ -824,11 +825,14 @@ const layerMakeServer = Layer.unwrap(
             }),
             (configured) =>
               configured
-                ? disableTailscaleServe({ servePort: configured.servePort }).pipe(
-                    Effect.tap(() =>
-                      Effect.logInfo("Tailscale Serve disabled", {
-                        servePort: configured.servePort,
-                      }),
+                ? releaseTailscaleServe(configured).pipe(
+                    Effect.tap((released) =>
+                      Effect.logInfo(
+                        released
+                          ? "Tailscale Serve disabled"
+                          : "Tailscale Serve no longer points at this server; leaving it in place",
+                        { servePort: configured.servePort },
+                      ),
                     ),
                     Effect.catch((cause) =>
                       Effect.logWarning("Failed to disable Tailscale Serve", {
@@ -839,7 +843,7 @@ const layerMakeServer = Layer.unwrap(
                   )
                 : Effect.void,
           ),
-        )
+        ).pipe(Layer.provide(NetService.layer))
       : Layer.empty;
     const layerCloudDesiredLinkReconcile = Layer.effectDiscard(
       Effect.gen(function* () {

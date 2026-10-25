@@ -1,4 +1,5 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { NetService } from "@t3tools/shared/Net";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -222,7 +223,7 @@ export const parseTailscaleStatus = (
   );
 
 const readTailscaleOutput = Effect.fn("tailscale.readTailscaleOutput")(function* (
-  subcommand: "status" | "debug",
+  subcommand: "status" | "debug" | "serve",
   args: readonly string[],
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -427,14 +428,20 @@ const runTailscaleCommand = Effect.fn("tailscale.runTailscaleCommand")(function*
   );
 });
 
-export const ensureTailscaleServe = (input: {
+interface TailscaleServeTarget {
   readonly localPort: number;
   readonly servePort?: number;
   readonly localHost?: string;
-}): Effect.Effect<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> => {
+}
+
+const serveProxyTarget = (input: TailscaleServeTarget): string =>
+  `http://${input.localHost ?? "127.0.0.1"}:${input.localPort}`;
+
+export const ensureTailscaleServe = (
+  input: TailscaleServeTarget,
+): Effect.Effect<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> => {
   const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
-  const localHost = input.localHost ?? "127.0.0.1";
-  const args = ["serve", "--bg", `--https=${servePort}`, `http://${localHost}:${input.localPort}`];
+  const args = ["serve", "--bg", `--https=${servePort}`, serveProxyTarget(input)];
   return runTailscaleCommand(args, TAILSCALE_SERVE_TIMEOUT);
 };
 
@@ -448,6 +455,122 @@ export const disableTailscaleServe = Effect.fn("tailscale.disableTailscaleServe"
     ["serve", `--https=${servePort}`, "off"],
     TAILSCALE_SERVE_TIMEOUT,
   );
+});
+
+export class TailscaleServeOccupiedError extends Schema.TaggedError<TailscaleServeOccupiedError>()(
+  "TailscaleServeOccupiedError",
+  { servePort: Schema.Number },
+) {
+  override get message(): string {
+    return `Tailscale Serve HTTPS port ${this.servePort} already fronts another running server; leaving it in place.`;
+  }
+}
+
+const TailscaleServeConfigFields = {
+  TCP: Schema.optional(
+    Schema.Record(Schema.String, Schema.Struct({ TCPForward: Schema.optional(Schema.String) })),
+  ),
+  Web: Schema.optional(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        Handlers: Schema.optional(
+          Schema.Record(Schema.String, Schema.Struct({ Proxy: Schema.optional(Schema.String) })),
+        ),
+      }),
+    ),
+  ),
+};
+
+const TailscaleServeConfigJson = Schema.Struct({
+  ...TailscaleServeConfigFields,
+  Foreground: Schema.optional(
+    Schema.Record(Schema.String, Schema.Struct(TailscaleServeConfigFields)),
+  ),
+});
+
+const decodeTailscaleServeConfigJson = Schema.decodeEffect(
+  Schema.fromJsonString(TailscaleServeConfigJson),
+);
+
+const readTailscaleServeConfig = readTailscaleOutput("serve", ["serve", "status", "--json"]).pipe(
+  Effect.flatMap((stdout) =>
+    decodeTailscaleServeConfigJson(stdout.trim() === "" ? "{}" : stdout).pipe(
+      Effect.mapError((cause) => new TailscaleStatusParseError({ cause })),
+    ),
+  ),
+);
+
+type TailscaleServePortHolder =
+  | { readonly _tag: "free" }
+  | { readonly _tag: "proxy"; readonly target: string }
+  | { readonly _tag: "other" };
+
+const servePortHolder = (
+  config: typeof TailscaleServeConfigJson.Type,
+  servePort: number,
+): TailscaleServePortHolder => {
+  for (const scope of [config, ...Object.values(config.Foreground ?? {})]) {
+    for (const [hostPort, web] of Object.entries(scope.Web ?? {})) {
+      const root = hostPort.endsWith(`:${servePort}`) ? web.Handlers?.["/"] : undefined;
+      if (root !== undefined) {
+        return root.Proxy !== undefined ? { _tag: "proxy", target: root.Proxy } : { _tag: "other" };
+      }
+    }
+    if (scope.TCP?.[String(servePort)]?.TCPForward !== undefined) {
+      return { _tag: "other" };
+    }
+  }
+  return { _tag: "free" };
+};
+
+const LOOPBACK_PROXY_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+/** Only a loopback target can be proven stopped, so any other target counts as live. */
+const proxyTargetIsLive = Effect.fn("tailscale.proxyTargetIsLive")(function* (target: string) {
+  const url = URL.canParse(target) ? new URL(target) : undefined;
+  if (url === undefined || !LOOPBACK_PROXY_HOSTS.has(url.hostname)) {
+    return true;
+  }
+  const net = yield* NetService;
+  const port = Number(url.port || (url.protocol === "http:" ? 80 : 443));
+  return yield* net.hasListenerOnHost(port, url.hostname.replace(/^\[(.*)\]$/u, "$1"));
+});
+
+/**
+ * Publishes `localPort` unless the root of `servePort` already fronts another
+ * running server. A mapping left behind by a server that has stopped is replaced.
+ */
+export const claimTailscaleServe = Effect.fn("tailscale.claimTailscaleServe")(function* (
+  input: TailscaleServeTarget,
+) {
+  const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
+  const holder = servePortHolder(yield* readTailscaleServeConfig, servePort);
+  if (
+    holder._tag === "other" ||
+    (holder._tag === "proxy" &&
+      holder.target !== serveProxyTarget(input) &&
+      (yield* proxyTargetIsLive(holder.target)))
+  ) {
+    return yield* new TailscaleServeOccupiedError({ servePort });
+  }
+  yield* ensureTailscaleServe(input);
+});
+
+/** Removes the root of `servePort` only while it still points at this server. */
+export const releaseTailscaleServe = Effect.fn("tailscale.releaseTailscaleServe")(function* (
+  input: TailscaleServeTarget,
+) {
+  const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
+  const holder = servePortHolder(yield* readTailscaleServeConfig, servePort);
+  if (holder._tag !== "proxy" || holder.target !== serveProxyTarget(input)) {
+    return false;
+  }
+  yield* runTailscaleCommand(
+    ["serve", `--https=${servePort}`, "--set-path=/", "off"],
+    TAILSCALE_SERVE_TIMEOUT,
+  );
+  return true;
 });
 
 export const probeTailscaleHttpsEndpoint = Effect.fn("tailscale.probeTailscaleHttpsEndpoint")(
