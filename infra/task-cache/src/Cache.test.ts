@@ -2,15 +2,15 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
-import { Deadline } from "@voidzero-dev/vite-plus-remote-cache-cloudflare/src/streams.ts";
+import { Deadline } from "../vendor/vite-plus-remote-cache-cloudflare/src/streams.ts";
 import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
-import { Observations } from "@voidzero-dev/vite-plus-remote-cache-cloudflare/src/observations.ts";
+import { Observations } from "../vendor/vite-plus-remote-cache-cloudflare/src/observations.ts";
 import * as Admission from "./Admission.ts";
 import * as Cache from "./Cache.ts";
 import * as Savings from "./Savings.ts";
 
-vi.mock("@voidzero-dev/vite-plus-remote-cache-cloudflare/src/database.ts", () => ({
+vi.mock("../vendor/vite-plus-remote-cache-cloudflare/src/database.ts", () => ({
   getScope: async () => ({}),
   selectBlob: async () => ({ blob_object: "artifact", blob_size: 4 }),
   cleanup: async () => {},

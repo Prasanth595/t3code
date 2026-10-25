@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import * as Console from "effect/Console";
 import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
+import * as Flag from "effect/cli/Flag";
 import * as Argument from "effect/cli/Argument";
 import * as Command from "effect/cli/Command";
 
@@ -16,7 +17,11 @@ const decodeDeployment = Schema.decodeEffect(
 );
 
 const name = Argument.String("name").pipe(Argument.withDescription("Lowercase writer name"));
-const updateWriter = Effect.fn("TaskCache.manageWriter")(function* (name: string, revoke: boolean) {
+const updateWriter = Effect.fn("TaskCache.manageWriter")(function* (
+  name: string,
+  revoke: boolean,
+  initialize = false,
+) {
   const registry = yield* WriterRegistry.WriterRegistry;
   let endpoint: string | undefined;
   if (!revoke && WriterRegistry.isWriterName(name)) {
@@ -39,7 +44,7 @@ const updateWriter = Effect.fn("TaskCache.manageWriter")(function* (name: string
     const deployed = yield* decodeDeployment(output);
     endpoint = new URL("/projects/t3code", deployed.url).href;
   }
-  const file = yield* registry.update(name, revoke, endpoint);
+  const file = yield* registry.update(name, revoke, endpoint, initialize);
   yield* Console.log(
     file === undefined
       ? `Removed ${name} from the local writer registry.`
@@ -52,7 +57,11 @@ const updateWriter = Effect.fn("TaskCache.manageWriter")(function* (name: string
 
 const command = Command.make("task-cache").pipe(
   Command.withSubcommands([
-    Command.make("add-writer", { name }, ({ name }) => updateWriter(name, false)),
+    Command.make(
+      "add-writer",
+      { name, newRegistry: Flag.Boolean("new-registry") },
+      ({ name, newRegistry }) => updateWriter(name, false, newRegistry),
+    ),
     Command.make("revoke-writer", { name }, ({ name }) => updateWriter(name, true)),
   ]),
 );

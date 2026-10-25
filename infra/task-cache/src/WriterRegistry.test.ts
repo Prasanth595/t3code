@@ -88,7 +88,7 @@ it.effect("writes credentials for the supplied deployed worker endpoint", () =>
     const home = yield* fs.makeTempDirectoryScoped();
     const endpoint = "https://preview-cache.example/projects/t3code";
     const file = yield* WriterRegistry.WriterRegistry.pipe(
-      Effect.flatMap((registry) => registry.update("maria", false, endpoint)),
+      Effect.flatMap((registry) => registry.update("maria", false, endpoint, true)),
       Effect.provide(
         WriterRegistry.layer.pipe(
           Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ HOME: home }))),
@@ -185,5 +185,23 @@ it.effect("preserves filesystem errors when acquiring the registry lock", () =>
       Effect.flip,
     );
     expect(error).toBe(denied);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("refuses to initialize a missing writer registry implicitly", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const home = yield* fs.makeTempDirectoryScoped();
+    const result = yield* WriterRegistry.WriterRegistry.pipe(
+      Effect.flatMap((registry) => registry.update("theo", false, "https://cache.example")),
+      Effect.provide(
+        WriterRegistry.layer.pipe(
+          Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ HOME: home }))),
+        ),
+      ),
+      Effect.exit,
+    );
+    expect(Exit.isFailure(result)).toBe(true);
+    expect(yield* fs.exists(`${home}/.config/t3-task-cache/writers.json`)).toBe(false);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

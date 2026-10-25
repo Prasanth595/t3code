@@ -9,11 +9,31 @@ import { expect, it } from "vite-plus/test";
 it("uses one machine hook across fresh worktrees without modifying Vite+", async () => {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "task-cache-hook-"));
   const reports: { authorization: string | undefined; body: string }[] = [];
+  let firstExit!: () => void;
+  const firstExited = new Promise<void>((resolve) => {
+    firstExit = resolve;
+  });
+  let completedReports = 0;
+  let notified: (() => void) | undefined;
+  let firstDisconnected = false;
+  const report = (count: number) =>
+    completedReports >= count
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => {
+          notified = resolve;
+        });
   const server = NodeHttp.createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += chunk;
     reports.push({ authorization: request.headers.authorization, body });
+    if (reports.length === 1) {
+      await firstExited;
+      firstDisconnected = response.destroyed;
+    }
     response.writeHead(204).end();
+    completedReports++;
+    notified?.();
+    notified = undefined;
   });
   try {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -80,18 +100,24 @@ it("uses one machine hook across fresh worktrees without modifying Vite+", async
           stderr += chunk;
         });
         child.once("error", reject);
-        child.once("close", (code) =>
-          code !== 0 && task !== "fail" ? reject(new Error(stderr)) : resolve(code),
-        );
+        child.once("close", (code) => {
+          firstExit();
+          code !== 0 && task !== "fail" ? reject(new Error(stderr)) : resolve(code);
+        });
       });
     expect(await run("build")).toBe(0);
+    await report(1);
+    expect(firstDisconnected).toBe(false);
     expect(await run("build")).toBe(0);
+    await report(2);
     expect(await run("fail")).toBe(7);
+    await report(3);
     const secondWorktree = NodePath.join(root, "second-worktree");
     await NodeFSP.mkdir(secondWorktree);
     for (const file of ["package.json", ".task-cache.json"])
       await NodeFSP.copyFile(NodePath.join(root, file), NodePath.join(secondWorktree, file));
     expect(await run("build", secondWorktree)).toBe(0);
+    await report(4);
     expect(await NodeFSP.readFile(entrypoint, "utf8")).toBe(originalEntrypoint);
     expect(reports).toHaveLength(4);
     expect(
@@ -223,6 +249,11 @@ it("installs without masking .profile and configures CI through bash", async () 
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Missing HTTP address");
     await NodeFSP.writeFile(NodePath.join(home, ".profile"), "export EXISTING_PROFILE=preserved\n");
+    await NodeFSP.mkdir(NodePath.join(home, ".config/t3-task-cache"), { recursive: true });
+    await NodeFSP.writeFile(
+      NodePath.join(home, ".config/t3-task-cache/credentials.json"),
+      "{partial",
+    );
     await run(
       [
         process.execPath,

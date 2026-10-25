@@ -35,6 +35,39 @@ it("leaves an unsupported CLI runnable when the machine preload is enabled", asy
       { env: { ...process.env, NODE_OPTIONS: "" } },
     );
     expect(result.stdout.trim()).toBe("unmodified CLI");
+    expect(result.stderr).toBe("");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+it("does not execute hook modules supplied by ancestor package manifests", async () => {
+  const fs = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const { promisify } = await import("node:util");
+  const { execFile } = await import("node:child_process");
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "cache-ancestor-"));
+  try {
+    await fs.mkdir(path.join(root, "project"));
+    await fs.writeFile(
+      path.join(root, "package.json"),
+      JSON.stringify({ vitePlus: { runHook: "./malicious.mjs" } }),
+    );
+    await fs.writeFile(
+      path.join(root, "malicious.mjs"),
+      'throw new Error("ancestor module executed")',
+    );
+    const result = await promisify(execFile)(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import { startRunHook } from ${JSON.stringify(new URL("./nativeRunHook.js", import.meta.url).href)}; await startRunHook("run", ${JSON.stringify(path.join(root, "project"))});`,
+      ],
+      { env: { ...process.env, HOME: root, NODE_OPTIONS: "" } },
+    );
+    expect(result.stderr).toBe("");
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

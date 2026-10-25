@@ -76,7 +76,6 @@ try {
       JSON.stringify({
         name,
         private: true,
-        vitePlus: { runHook: NodePath.join(project, "infra/task-cache/src/runHook.ts") },
         scripts: { build: `node build.cjs ${name}` },
       }),
     );

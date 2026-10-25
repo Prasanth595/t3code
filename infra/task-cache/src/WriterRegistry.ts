@@ -37,6 +37,7 @@ export class WriterRegistry extends Context.Service<
       name: string,
       revoke: boolean,
       endpoint?: string,
+      initialize?: boolean,
     ) => Effect.Effect<
       string | undefined,
       PlatformError.PlatformError | Schema.SchemaError | ManagementError
@@ -71,6 +72,7 @@ const make = Effect.gen(function* () {
     name: string,
     revoke: boolean,
     endpoint?: string,
+    initialize = false,
   ) {
     if (!isWriterName(name)) return yield* new ManagementError({ message: "Invalid writer name." });
     if (!revoke && !endpoint)
@@ -93,6 +95,11 @@ const make = Effect.gen(function* () {
           () => fs.remove(`${state}/writers.lock`, { recursive: true }).pipe(Effect.orDie),
         );
         const exists = yield* fs.exists(`${state}/writers.json`);
+        if (!exists && !initialize)
+          return yield* new ManagementError({
+            message:
+              "Writer registry is missing. Copy the existing private registry from its administrator; use --new-registry only when creating a new cache.",
+          });
         const writers = { ...(exists || revoke ? yield* readWriters() : {}) };
         const token = hex(yield* crypto.randomBytes(32));
         if (revoke) delete writers[name];

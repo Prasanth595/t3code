@@ -10,9 +10,9 @@
     "writers": "node scripts/manage.ts"
   },
   "dependencies": {
-    "@voidzero-dev/vite-plus-remote-cache-cloudflare": "https://codeload.github.com/voidzero-dev/vite-plus-remote-cache-cloudflare/tar.gz/5b06c2c10d84ea441735ba07c46f6d1b7cb2ff3b",
     "alchemy": "2.0.0-beta.80",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "jose": "6.2.13"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260601.1",

@@ -70,7 +70,11 @@ try {
     await NodeFSP.readFile(NodePath.join(state, "credentials.json"), "utf8"),
   );
 } catch (error) {
-  if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  if (
+    !(error instanceof SyntaxError) &&
+    !(error instanceof Error && "code" in error && error.code === "ENOENT")
+  )
+    throw error;
 }
 const prompt = NodeReadlinePromises.createInterface({
   input: process.stdin,
@@ -86,38 +90,42 @@ try {
     endpoint = (await prompt.question(`Cache URL [${endpoint}]: `)).trim() || endpoint;
     name = (await prompt.question(`Developer name${name ? ` [${name}]` : ""}: `)).trim() || name;
     prompt.close();
-    if (!token || endpoint !== initialEndpoint || name !== initialName) {
+    if (process.stdin.isTTY || !token || endpoint !== initialEndpoint || name !== initialName) {
+      const savedToken = endpoint === initialEndpoint && name === initialName ? token : undefined;
       if (!process.stdin.isTTY)
         throw new Error("Use T3_CACHE_SETUP_TOKEN for non-interactive setup.");
-      process.stdout.write("Credential token (hidden): ");
+      process.stdout.write(
+        `Credential token (hidden)${savedToken ? " [Enter keeps saved token]" : ""}: `,
+      );
       process.stdin.setRawMode(true);
       process.stdin.resume();
-      token = await new Promise<string>((resolve, reject) => {
-        let value = "";
-        const data = (chunk: Buffer) => {
-          for (const character of chunk.toString()) {
-            if (character === "\u0003") {
-              cleanup();
-              reject(new Error("Cancelled"));
-              return;
+      token =
+        (await new Promise<string>((resolve, reject) => {
+          let value = "";
+          const data = (chunk: Buffer) => {
+            for (const character of chunk.toString()) {
+              if (character === "\u0003") {
+                cleanup();
+                reject(new Error("Cancelled"));
+                return;
+              }
+              if (character === "\r" || character === "\n") {
+                cleanup();
+                resolve(value);
+                return;
+              }
+              if (character === "\u007f") value = value.slice(0, -1);
+              else value += character;
             }
-            if (character === "\r" || character === "\n") {
-              cleanup();
-              resolve(value);
-              return;
-            }
-            if (character === "\u007f") value = value.slice(0, -1);
-            else value += character;
-          }
-        };
-        const cleanup = () => {
-          process.stdin.off("data", data);
-          process.stdin.setRawMode(false);
-          process.stdin.pause();
-          process.stdout.write("\n");
-        };
-        process.stdin.on("data", data);
-      });
+          };
+          const cleanup = () => {
+            process.stdin.off("data", data);
+            process.stdin.setRawMode(false);
+            process.stdin.pause();
+            process.stdout.write("\n");
+          };
+          process.stdin.on("data", data);
+        })) || savedToken;
     }
   }
 } finally {
@@ -194,6 +202,7 @@ await NodeFSP.mkdir(installed, { recursive: true });
 await NodeFSP.writeFile(NodePath.join(installed, "package.json"), '{"type":"module"}\n');
 for (const file of [
   "runHook.ts",
+  "flush.ts",
   "telemetry.ts",
   "nativeHook.js",
   "nativeRunHook.js",
@@ -226,10 +235,13 @@ for (const file of [
   await NodeFSP.rm(NodePath.join(installed, file), { recursive: true, force: true });
 await NodeFSP.mkdir(state, { recursive: true, mode: 0o700 });
 credentials[endpoint] = { name, token };
-await NodeFSP.writeFile(NodePath.join(state, "credentials.json"), JSON.stringify(credentials), {
-  mode: 0o600,
-});
-await NodeFSP.chmod(NodePath.join(state, "credentials.json"), 0o600);
+const temporaryCredentials = NodePath.join(state, `.credentials-${NodeCrypto.randomUUID()}.tmp`);
+try {
+  await NodeFSP.writeFile(temporaryCredentials, JSON.stringify(credentials), { mode: 0o600 });
+  await NodeFSP.rename(temporaryCredentials, NodePath.join(state, "credentials.json"));
+} finally {
+  await NodeFSP.rm(temporaryCredentials, { force: true });
+}
 
 const environmentFile = NodePath.join(state, "env");
 const preload = NodeURL.pathToFileURL(NodePath.join(installed, "preload.mjs")).href;

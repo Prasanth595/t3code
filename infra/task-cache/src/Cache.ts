@@ -10,9 +10,6 @@ import type { ProtocolBindings } from "./protocolTypes.ts";
 import * as Admission from "./Admission.ts";
 import { developerIdentity } from "./developerAuth.ts";
 
-const decodeActor = Schema.decodeEffect(
-  Schema.fromJsonString(Schema.Struct({ actor: Schema.optional(Schema.String) })),
-);
 const decodeSummary = Schema.decodeEffect(Schema.fromJsonString(Summary));
 
 export class CacheError extends Schema.TaggedError<CacheError>()("CacheError", {
@@ -47,6 +44,7 @@ const make = Effect.gen(function* () {
   // The source-only protocol dependency is bundled for Workers, never evaluated by Node during deployment.
   const {
     authorize,
+    authorizeTelemetry,
     keys,
     cborResponse,
     cleanup,
@@ -137,23 +135,7 @@ const make = Effect.gen(function* () {
                   return yield* new CacheError({ status: 403, reason: "invalid_identity" });
                 let identity = developer;
                 if (identity === undefined) {
-                  // Reporting PR savings grants no artifact-write permission.
-                  yield* protocol(() => authorize(request, { ...scope, pull_requests: 1 }, keys));
-                  const payload = yield* decodeActor(
-                    atob(
-                      request.headers
-                        .get("authorization")!
-                        .slice(7)
-                        .split(".")[1]!
-                        .replace(/-/g, "+")
-                        .replace(/_/g, "/"),
-                    ),
-                  ).pipe(
-                    Effect.mapError(
-                      () => new CacheError({ status: 400, reason: "invalid_identity" }),
-                    ),
-                  );
-                  identity = `github/${typeof payload.actor === "string" ? payload.actor : "unknown"}`;
+                  identity = yield* protocol(() => authorizeTelemetry(request, scope, keys));
                 }
                 const bytes = yield* protocol(() => readBody(request.body, 256 * 1024, deadline));
                 const summary = yield* decodeSummary(new TextDecoder().decode(bytes)).pipe(

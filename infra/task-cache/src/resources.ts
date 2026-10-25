@@ -5,10 +5,7 @@ import { retain } from "alchemy/RemovalPolicy";
 import * as Effect from "effect/Effect";
 import * as NodeURL from "node:url";
 
-const protocol = new URL(
-  "./",
-  import.meta.resolve("@voidzero-dev/vite-plus-remote-cache-cloudflare/package.json"),
-);
+const protocol = new URL("../vendor/vite-plus-remote-cache-cloudflare/", import.meta.url);
 
 export const cacheName = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack;

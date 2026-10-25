@@ -20,9 +20,8 @@ export async function startRunHook(command, cwd = process.cwd()) {
     );
     let root = cwd;
     while (true) {
-      const manifest = await readJson(NodePath.join(root, "package.json"));
-      let hook = manifest?.vitePlus?.runHook;
-      if (!hook && configured?.rootMarker && configured?.module) {
+      let hook;
+      if (configured?.rootMarker && configured?.module) {
         try {
           await NodeFSP.access(NodePath.join(root, configured.rootMarker));
           hook = configured.module;
