@@ -72,7 +72,7 @@ catalog:
   tailwindcss: 4.3.3
   tldts: 7.4.2
   typescript: npm:@tsc-rs/typescript@0.8.0
-  undici: 8.11.2
+  undici: 8.12.2
   vite: npm:@voidzero-dev/vite-plus-core@1.4.0
   vite-plus: 1.4.0
   ws: 8.22.0
@@ -225,6 +225,13 @@ minimumReleaseAgeExclude:
   - "@pierre/theming@1.0.2"
 
 overrides:
+  # Security fixes for transitive dependencies, including the mobile Markdown peer.
+  "fast-uri@^3": 3.1.9
+  katex: 0.18.2
+  "seroval@^1": 1.6.3
+  "shell-quote@^1": 1.11.0
+  "undici@^6": 6.29.1
+  "undici@^7": 7.30.1
   # Pin every patched package, including transitive dependencies, so lockfile-free
   # release installs cannot drift past the patch. Update these with patchedDependencies.
   react-native-image-viewing: 0.2.2
