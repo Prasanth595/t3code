@@ -61,6 +61,9 @@ import {
   type ThreadUserInputQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
 import {
+  BACKGROUND_WORK_STOP_RETRY_AFTER_MS,
+  type BackgroundWorkStopRequest,
+  isBackgroundWorkStopPending,
   presentPendingBackgroundWork,
   presentProviderGoal,
 } from "@t3tools/client-runtime/state/thread-execution";
@@ -669,8 +672,19 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const unsettleThread = useAtomCommand(threadEnvironment.unsettle, { reportFailure: false });
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata, { reportFailure: false });
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
-  const [statusRequest, setStatusRequest] = useState<{ threadKey: string } | null>(null);
-  const statusPending = statusRequest?.threadKey === selectedThreadKey;
+  const [statusRequest, setStatusRequest] = useState<BackgroundWorkStopRequest | null>(null);
+  const statusPending = isBackgroundWorkStopPending(
+    statusRequest,
+    selectedThreadKey,
+    props.selectedThread.pendingBackgroundTasks,
+  );
+  useEffect(() => {
+    if (statusRequest?.accepted !== true) return;
+    const timer = setTimeout(() => {
+      setStatusRequest((current) => (current === statusRequest ? null : current));
+    }, BACKGROUND_WORK_STOP_RETRY_AFTER_MS);
+    return () => clearTimeout(timer);
+  }, [statusRequest]);
   const [lifecycleNow, setLifecycleNow] = useState(() => new Date().toISOString());
   useFocusEffect(
     useCallback(() => {
@@ -707,7 +721,14 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   });
   const runStatusAction = async (action: "stop" | "wake" | "unsettle" | "dismiss") => {
     if (statusPending || !props.canOperateThread) return;
-    const request = { threadKey: selectedThreadKey };
+    const request: BackgroundWorkStopRequest = {
+      threadKey: selectedThreadKey,
+      taskIds:
+        action === "stop"
+          ? props.selectedThread.pendingBackgroundTasks.map((task) => task.taskId)
+          : [],
+      accepted: false,
+    };
     setStatusRequest(request);
     const target = {
       environmentId: props.environmentId,
@@ -742,8 +763,13 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                 ...target,
                 input: { ...target.input, visitedAt: wokeAt ?? lifecycleNow },
               });
-    // An accepted interrupt can leave tasks running. Release the action for retry.
-    setStatusRequest((current) => (current === request ? null : current));
+    setStatusRequest((current) =>
+      current !== request
+        ? current
+        : action === "stop" && result._tag !== "Failure"
+          ? { ...request, accepted: true }
+          : null,
+    );
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
