@@ -1,5 +1,6 @@
+import * as NodeNet from "node:net";
+
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { NetService } from "@t3tools/shared/Net";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -457,7 +458,7 @@ export const disableTailscaleServe = Effect.fn("tailscale.disableTailscaleServe"
   );
 });
 
-export class TailscaleServeOccupiedError extends Schema.TaggedError<TailscaleServeOccupiedError>()(
+class TailscaleServeOccupiedError extends Schema.TaggedError<TailscaleServeOccupiedError>()(
   "TailscaleServeOccupiedError",
   { servePort: Schema.Number },
 ) {
@@ -526,16 +527,27 @@ const servePortHolder = (
 
 const LOOPBACK_PROXY_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
-/** Only a loopback target can be proven stopped, so any other target counts as live. */
-const proxyTargetIsLive = Effect.fn("tailscale.proxyTargetIsLive")(function* (target: string) {
+/** Only a refused loopback connection proves a target stopped; anything else counts as live. */
+const proxyTargetIsLive = (target: string): Effect.Effect<boolean> => {
   const url = URL.canParse(target) ? new URL(target) : undefined;
   if (url === undefined || !LOOPBACK_PROXY_HOSTS.has(url.hostname)) {
-    return true;
+    return Effect.succeed(true);
   }
-  const net = yield* NetService;
   const port = Number(url.port || (url.protocol === "http:" ? 80 : 443));
-  return yield* net.hasListenerOnHost(port, url.hostname.replace(/^\[(.*)\]$/u, "$1"));
-});
+  const host = url.hostname.replace(/^\[(.*)\]$/u, "$1");
+  return Effect.callback<boolean>((resume) => {
+    const socket = NodeNet.createConnection({ host, port });
+    const settle = (live: boolean) => {
+      socket.destroy();
+      resume(Effect.succeed(live));
+    };
+    socket.setTimeout(Duration.toMillis(TAILSCALE_PROBE_TIMEOUT));
+    socket.once("connect", () => settle(true));
+    socket.once("timeout", () => settle(true));
+    socket.once("error", (error: NodeJS.ErrnoException) => settle(error.code !== "ECONNREFUSED"));
+    return Effect.sync(() => socket.destroy());
+  });
+};
 
 /**
  * Publishes `localPort` unless the root of `servePort` already fronts another

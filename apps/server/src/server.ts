@@ -843,7 +843,7 @@ const layerMakeServer = Layer.unwrap(
                   )
                 : Effect.void,
           ),
-        ).pipe(Layer.provide(NetService.layer))
+        )
       : Layer.empty;
     const layerCloudDesiredLinkReconcile = Layer.effectDiscard(
       Effect.gen(function* () {

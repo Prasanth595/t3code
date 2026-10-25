@@ -1,3 +1,5 @@
+import * as NodeNet from "node:net";
+
 import { assert, describe, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -7,7 +9,6 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { NetService } from "@t3tools/shared/Net";
 
 import {
   claimTailscaleServe,
@@ -20,7 +21,6 @@ import {
   releaseTailscaleServe,
   TailscaleCommandExitError,
   TailscaleCommandSpawnError,
-  TailscaleServeOccupiedError,
   TailscaleStatusParseError,
 } from "./tailscale.ts";
 
@@ -98,33 +98,42 @@ function layerMockSpawner(
   );
 }
 
-function layerServeFixture(input: {
-  readonly rootProxy: string;
-  readonly listeningPorts: ReadonlyArray<number>;
-}) {
+function layerServeFixture(rootProxy: string) {
   const writes: Array<ReadonlyArray<string>> = [];
   const serveStatus = JSON.stringify({
     TCP: { "443": { HTTPS: true } },
     Web: {
       "desktop.tail.ts.net:443": {
-        Handlers: { "/": { Proxy: input.rootProxy }, "/keep/": { Proxy: "http://127.0.0.1:8081" } },
+        Handlers: { "/": { Proxy: rootProxy }, "/keep/": { Proxy: "http://127.0.0.1:8081" } },
       },
     },
   });
-  const layer = Layer.merge(
-    layerMockSpawner((_command, args) => {
-      if (args.join(" ") === "serve status --json") {
-        return { stdout: serveStatus };
-      }
-      writes.push(args);
-      return {};
-    }),
-    Layer.mock(NetService, {
-      hasListenerOnHost: (port) => Effect.succeed(input.listeningPorts.includes(port)),
-    }),
-  );
+  const layer = layerMockSpawner((_command, args) => {
+    if (args.join(" ") === "serve status --json") {
+      return { stdout: serveStatus };
+    }
+    writes.push(args);
+    return {};
+  });
   return { layer, writes };
 }
+
+/** A loopback port with a listener for the rest of the scope. */
+const listenOnLoopback = Effect.acquireRelease(
+  Effect.callback<NodeNet.Server>((resume) => {
+    const server = NodeNet.createServer();
+    server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+  }),
+  (server) =>
+    Effect.callback<void>((resume) => {
+      server.close(() => resume(Effect.void));
+    }),
+).pipe(
+  Effect.map((server) => {
+    const address = server.address();
+    return typeof address === "object" && address !== null ? address.port : 0;
+  }),
+);
 
 describe("tailscale", () => {
   it.effect("parses status facts", () =>
@@ -279,41 +288,34 @@ describe("tailscale", () => {
     });
   });
 
-  it.effect("leaves a Serve root that fronts another running server in place", () => {
-    const fixture = layerServeFixture({
-      rootProxy: "http://127.0.0.1:3773",
-      listeningPorts: [3773, 3774],
-    });
+  it.live("leaves a Serve root that fronts another running server in place", () =>
+    Effect.gen(function* () {
+      const runningPort = yield* listenOnLoopback;
+      const fixture = layerServeFixture(`http://127.0.0.1:${runningPort}`);
 
-    return Effect.gen(function* () {
       const claimed = yield* claimTailscaleServe({ localPort: 3774 }).pipe(
         Effect.result,
         Effect.provide(fixture.layer),
       );
       assert.deepEqual(fixture.writes, []);
       assert.isTrue(
-        Result.isFailure(claimed) && claimed.failure instanceof TailscaleServeOccupiedError,
+        Result.isFailure(claimed) && claimed.failure._tag === "TailscaleServeOccupiedError",
       );
-    });
-  });
+    }).pipe(Effect.scoped),
+  );
 
-  it.effect("replaces a Serve root left behind by a stopped server", () => {
-    const fixture = layerServeFixture({
-      rootProxy: "http://127.0.0.1:3774",
-      listeningPorts: [3773],
-    });
+  it.live("replaces a Serve root left behind by a stopped server", () =>
+    Effect.gen(function* () {
+      const stoppedPort = yield* Effect.scoped(listenOnLoopback);
+      const fixture = layerServeFixture(`http://127.0.0.1:${stoppedPort}`);
 
-    return Effect.gen(function* () {
       yield* claimTailscaleServe({ localPort: 3773 }).pipe(Effect.provide(fixture.layer));
       assert.deepEqual(fixture.writes, [["serve", "--bg", "--https=443", "http://127.0.0.1:3773"]]);
-    });
-  });
+    }),
+  );
 
   it.effect("removes only its own Serve root on release", () => {
-    const fixture = layerServeFixture({
-      rootProxy: "http://127.0.0.1:3773",
-      listeningPorts: [3773],
-    });
+    const fixture = layerServeFixture("http://127.0.0.1:3773");
 
     return Effect.gen(function* () {
       const releasedOther = yield* releaseTailscaleServe({ localPort: 3774 }).pipe(
