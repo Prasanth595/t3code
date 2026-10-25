@@ -357,6 +357,11 @@ export class GitVcsDriver extends Context.Service<
       input: VcsCreateWorktreeInput,
       options?: CreateWorktreeOptions,
     ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
+    /** Checks out the submodules of the worktree's current revision, as `createWorktree` does. */
+    readonly updateWorktreeSubmodules: (
+      worktreePath: string,
+      options?: CreateWorktreeOptions,
+    ) => Effect.Effect<void, never>;
     /** Force-updates local `branch` to the primary remote's `ref`. */
     readonly fetchRefIntoBranch: (
       input: GitFetchRefInput & { readonly branch: string },

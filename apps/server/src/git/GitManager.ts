@@ -2809,6 +2809,11 @@ export const make = Effect.gen(function* () {
       const localPullRequestBranch =
         resolvePullRequestWorktreeLocalBranchName(pullRequestWithRemoteInfo);
 
+      const readWorktreeSubmodules = projectSettingsFor(input).pipe(
+        Effect.map(({ settings }) => settings.worktreeSubmodules),
+        Effect.orElseSucceed(() => null),
+      );
+
       // Git refuses to move a branch that is checked out in a worktree, so the
       // reuse paths cannot go through materializePullRequestHeadBranch and instead
       // advance the checkout from inside the worktree.
@@ -2888,6 +2893,13 @@ export const make = Effect.gen(function* () {
           ),
         );
 
+        // A new worktree checked out its submodules for the commit it was created at.
+        if (isNewWorktree && refreshed.moved) {
+          yield* gitCore.updateWorktreeSubmodules(worktreePath, {
+            submodules: yield* readWorktreeSubmodules,
+          });
+        }
+
         // Only when the checkout actually moved: another thread may be running in this worktree,
         // and re-running the setup script under it buys nothing when the code did not change.
         if (refreshed.moved || isNewWorktree) {
@@ -2945,10 +2957,7 @@ export const make = Effect.gen(function* () {
           },
           {
             worktreesDirectory: yield* readWorktreesDirectory,
-            submodules: yield* projectSettingsFor(input).pipe(
-              Effect.map(({ settings }) => settings.worktreeSubmodules),
-              Effect.orElseSucceed(() => null),
-            ),
+            submodules: yield* readWorktreeSubmodules,
           },
         );
       });

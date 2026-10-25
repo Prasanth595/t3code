@@ -4411,6 +4411,70 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
+  it.effect("checks out the submodules of the head an existing PR branch moves onto", () =>
+    Effect.gen(function* () {
+      // Git refuses `file:` submodule transports by default (CVE-2022-39253) and ignores
+      // repo-level config for it, so a local fixture needs the env allowance.
+      const previousAllowedProtocol = process.env.GIT_ALLOW_PROTOCOL;
+      process.env.GIT_ALLOW_PROTOCOL = "file";
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          if (previousAllowedProtocol === undefined) {
+            delete process.env.GIT_ALLOW_PROTOCOL;
+          } else {
+            process.env.GIT_ALLOW_PROTOCOL = previousAllowedProtocol;
+          }
+        }),
+      );
+
+      const submoduleDir = yield* makeTempDir("t3code-git-submodule-");
+      yield* initRepo(submoduleDir);
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-existing"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-existing"]);
+      yield* runGit(repoDir, ["checkout", "-b", "author-push"]);
+      yield* runGit(repoDir, ["submodule", "add", submoduleDir, "shared"]);
+      yield* runGit(repoDir, ["commit", "-m", "Add shared submodule"]);
+      yield* runGit(repoDir, ["push", "origin", "author-push:feature/pr-existing"]);
+      const pullHead = (yield* runGit(repoDir, ["rev-parse", "author-push"])).stdout.trim();
+      yield* runGit(repoDir, ["checkout", "main"]);
+
+      const { manager } = yield* makeManager({
+        providerScenario: {
+          pullRequest: {
+            number: 89,
+            title: "Submodule PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/89",
+            baseRefName: "main",
+            headRefName: "feature/pr-existing",
+            state: "open",
+            isCrossRepository: false,
+            headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
+            headRepositoryOwnerLogin: "pingdotgg",
+          },
+          repositoryCloneUrls: {
+            "pingdotgg/codething-mvp": { url: remoteDir, sshUrl: remoteDir },
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "89",
+        mode: "worktree",
+      });
+
+      const worktreePath = result.worktreePath as string;
+      expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(pullHead);
+      expect(NodeFS.existsSync(NodePath.join(worktreePath, "shared", "README.md"))).toBe(true);
+      expect(result).toMatchObject({ isOnPullRequestHead: true });
+    }),
+  );
+
   it.effect("refreshes a reused PR worktree onto the updated pull request head", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
