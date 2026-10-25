@@ -1046,6 +1046,24 @@ export function resolveWorkingStartedAt(
   return resolveThreadWorkingStartedAt(thread);
 }
 
+const AWAITING_INPUT_PILL: ThreadStatusPill = {
+  label: "Awaiting Input",
+  colorClass: "text-indigo-600 dark:text-indigo-300/90",
+  dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
+  pulse: false,
+};
+
+/** Shown beside Working while an async question waits, which the status pill alone would hide. */
+export function resolveAsyncQuestionPill(
+  thread: Pick<SidebarThreadSummary, "hasPendingAsyncQuestion">,
+  statusPill: ThreadStatusPill | null,
+): ThreadStatusPill | null {
+  return thread.hasPendingAsyncQuestion === true &&
+    (statusPill?.label === "Working" || statusPill?.label === "Connecting")
+    ? AWAITING_INPUT_PILL
+    : null;
+}
+
 export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
 }): ThreadStatusPill | null {
@@ -1061,12 +1079,7 @@ export function resolveThreadStatusPill(input: {
   }
 
   if (thread.hasPendingUserInput || thread.pendingSubagentRequest === "user_input") {
-    return {
-      label: "Awaiting Input",
-      colorClass: "text-indigo-600 dark:text-indigo-300/90",
-      dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
-      pulse: false,
-    };
+    return AWAITING_INPUT_PILL;
   }
 
   if ((thread.pendingGuestMessageCount ?? 0) > 0) {

@@ -80,6 +80,12 @@ interface StatusLabel {
   readonly className: string;
   readonly iconTintClassName: string;
 }
+const INPUT_STATUS_LABEL: StatusLabel = {
+  label: "Input",
+  icon: "questionmark.bubble",
+  className: "text-adaptive-indigo-600-300",
+  iconTintClassName: "accent-adaptive-indigo-600-300",
+};
 const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> = {
   approval: {
     label: "Approval",
@@ -87,12 +93,7 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
     className: "text-warning-foreground",
     iconTintClassName: "accent-warning-foreground",
   },
-  input: {
-    label: "Input",
-    icon: "questionmark.bubble",
-    className: "text-adaptive-indigo-600-300",
-    iconTintClassName: "accent-adaptive-indigo-600-300",
-  },
+  input: INPUT_STATUS_LABEL,
   request: {
     label: "Request",
     icon: "person.crop.circle",
@@ -652,6 +653,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, selected);
 
   const status = resolveThreadListV2Status(thread);
+  const hasAsyncQuestion = status === "working" && thread.hasPendingAsyncQuestion === true;
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
   const workingLabel = STATUS_LABEL_BY_STATUS[status];
   const showsWoke = status === "ready" && props.wokeAt !== null;
@@ -659,7 +661,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     (status === "working" && workingLabel !== undefined && thread.goal?.status === "active"
       ? { ...workingLabel, label: "Goal" }
       : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
-  const recede = shouldRecedeThreadRow({ status, selected });
+  const recede = !hasAsyncQuestion && shouldRecedeThreadRow({ status, selected });
   const timeLabel = props.timeLabel;
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
@@ -1070,6 +1072,31 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             </Pressable>
           ) : statusLabel ? (
             <View className="flex-row items-center gap-1">
+              {hasAsyncQuestion ? (
+                <>
+                  <SymbolView
+                    name={INPUT_STATUS_LABEL.icon}
+                    size={13}
+                    tintColorClassName={
+                      selected
+                        ? selectedThreadRowColors.iconTintClassName
+                        : INPUT_STATUS_LABEL.iconTintClassName
+                    }
+                    type="monochrome"
+                    weight="semibold"
+                  />
+                  <Text
+                    className={cn(
+                      "me-1.5 text-xs font-t3-bold",
+                      selected
+                        ? selectedThreadRowColors.foregroundClassName
+                        : INPUT_STATUS_LABEL.className,
+                    )}
+                  >
+                    {INPUT_STATUS_LABEL.label}
+                  </Text>
+                </>
+              ) : null}
               <SymbolView
                 name={statusLabel.icon}
                 size={13}
@@ -1088,7 +1115,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
                 )}
               >
-                {statusLabel.label}
+                {hasAsyncQuestion ? null : statusLabel.label}
                 {status === "working" ? (
                   <ThreadListV2Duration startedAt={resolveThreadWorkingStartedAt(thread)} />
                 ) : status === "waiting" ? (

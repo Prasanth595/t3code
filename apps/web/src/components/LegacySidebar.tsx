@@ -202,6 +202,7 @@ import {
   isTrailingDoubleClick,
   resolveProjectStatusIndicator,
   resolveThreadLastVisitedAt,
+  resolveAsyncQuestionPill,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
@@ -459,6 +460,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       lastVisitedAt,
     },
   });
+  const asyncQuestionStatus = resolveAsyncQuestionPill(thread, threadStatus);
   const linkedPullRequestStatus = useLinkedThreadPullRequest(
     thread.environmentId,
     thread.linkedPullRequest,
@@ -736,6 +738,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               <PullRequestGlyph.pullRequest className="size-3" />
             </a>
           ) : null}
+          {asyncQuestionStatus && <ThreadStatusLabel status={asyncQuestionStatus} />}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}
           {canOperateThread && renamingThreadKey === threadKey ? (
             <input

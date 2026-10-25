@@ -42,6 +42,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import {
   pullRequestMatchesSearchQuery,
   resolveThreadLastVisitedAt,
+  resolveAsyncQuestionPill,
   resolveThreadStatusPill,
   type ThreadStatusPill,
   useRetainedValue,
@@ -912,6 +913,7 @@ export function ThreadRowLeadingStatus({
       lastVisitedAt,
     },
   });
+  const asyncQuestionStatus = resolveAsyncQuestionPill(thread, threadStatus);
 
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
   const pendingLink =
@@ -949,6 +951,7 @@ export function ThreadRowLeadingStatus({
           aria-label={`${changeRequestTerminologyForUrl(pendingLink.url).shortLabel} #${pendingLink.number}, status pending`}
         />
       ) : null}
+      {asyncQuestionStatus ? <ThreadStatusLabel status={asyncQuestionStatus} /> : null}
       {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}
     </span>
   );

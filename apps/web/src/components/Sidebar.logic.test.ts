@@ -17,6 +17,7 @@ import {
   resolveSidebarSweepKeys,
   resolveSidebarThreadStatus,
   resolveSidebarV2TopStatus,
+  resolveAsyncQuestionPill,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreads,
@@ -456,6 +457,36 @@ describe("resolveThreadStatusPill", () => {
       label: "Working",
       pulse: true,
     });
+  });
+
+  it("pairs Working with Awaiting Input while an async question waits", () => {
+    const asking = { ...baseThread, hasPendingAsyncQuestion: true };
+    const working = resolveThreadStatusPill({ thread: asking });
+    expect(working).toMatchObject({ label: "Working" });
+    expect(resolveAsyncQuestionPill(asking, working)).toMatchObject({ label: "Awaiting Input" });
+
+    const approval = resolveThreadStatusPill({
+      thread: { ...asking, pendingSubagentRequest: "approval" },
+    });
+    expect(resolveAsyncQuestionPill(asking, approval)).toBeNull();
+
+    const connectingThread = {
+      ...asking,
+      runtime: { ...baseThread.runtime, status: "starting" as const },
+    };
+    const connecting = resolveThreadStatusPill({ thread: connectingThread });
+    expect(connecting).toMatchObject({ label: "Connecting" });
+    expect(resolveAsyncQuestionPill(connectingThread, connecting)).toMatchObject({
+      label: "Awaiting Input",
+    });
+
+    const guest = resolveThreadStatusPill({ thread: { ...asking, pendingGuestMessageCount: 1 } });
+    expect(guest).toMatchObject({ label: "Guest Request" });
+    expect(resolveAsyncQuestionPill(asking, guest)).toBeNull();
+
+    const notAsking = { ...baseThread, hasPendingAsyncQuestion: false };
+    expect(resolveAsyncQuestionPill(notAsking, working)).toBeNull();
+    expect(resolveAsyncQuestionPill({}, working)).toBeNull();
   });
 
   it("shows waiting for an idle thread with pending background tasks", () => {

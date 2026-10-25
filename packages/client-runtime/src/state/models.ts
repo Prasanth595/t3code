@@ -155,6 +155,8 @@ export interface EnvironmentThreadShell {
   readonly latestUserAuthoredMessageAt?: string | null;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
+  /** An unanswered async question while the run keeps working; the thread still reads as Working. */
+  readonly hasPendingAsyncQuestion?: boolean;
   readonly pendingSubagentRequest?: PendingSubagentRequest | null;
   /** Guest messages waiting for the owner to send or dismiss. */
   readonly pendingGuestMessageCount?: number;
@@ -313,6 +315,10 @@ export function presentThreadShell(
     hasPendingUserInput:
       thread.pendingRuntimeRequest?.kind === "user_input" &&
       (thread.pendingRuntimeRequest.blocking !== false || !runtimeIsWorking),
+    hasPendingAsyncQuestion:
+      thread.pendingRuntimeRequest?.kind === "user_input" &&
+      thread.pendingRuntimeRequest.blocking === false &&
+      runtimeIsWorking,
     pendingSubagentRequest,
     pendingGuestMessageCount: thread.pendingGuestMessageCount ?? 0,
     hasActionableProposedPlan: thread.hasActionableProposedPlan,

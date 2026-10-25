@@ -158,6 +158,12 @@ function JumpHintBadge(props: { label: string }) {
   );
 }
 
+const INPUT_STATUS = {
+  label: "Input",
+  icon: "input",
+  className: "text-indigo-600 dark:text-indigo-300",
+} as const;
+
 function WorkingDuration(props: { startedAt: string | null }) {
   const startedMs = props.startedAt !== null ? Date.parse(props.startedAt) : Number.NaN;
   if (Number.isNaN(startedMs)) return null;
@@ -683,19 +689,22 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarThreadStatus(thread);
+  const hasAsyncQuestion = status === "working" && thread.hasPendingAsyncQuestion === true;
   const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
   const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
   const isWoke =
     wokeAtDate !== null &&
     (lastVisitedDate === null || lastVisitedDate < wokeAtDate) &&
     thread.settledOverride !== "settled";
-  const shouldRecede = shouldRecedeSidebarThread({
-    status,
-    isUnread,
-    isWoke,
-    isActive: props.isActive,
-    isSelected,
-  });
+  const shouldRecede =
+    !hasAsyncQuestion &&
+    shouldRecedeSidebarThread({
+      status,
+      isUnread,
+      isWoke,
+      isActive: props.isActive,
+      isSelected,
+    });
   const topStatus =
     status === "working"
       ? {
@@ -716,11 +725,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               className: "text-warning-foreground",
             }
           : status === "input"
-            ? {
-                label: "Input",
-                icon: "input" as const,
-                className: "text-indigo-600 dark:text-indigo-300",
-              }
+            ? INPUT_STATUS
             : status === "request"
               ? {
                   label: "Request",
@@ -964,7 +969,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const accessibility = resolveSidebarRowAccessibility({
     title: thread.title,
-    statusLabel: topStatus?.label ?? null,
+    statusLabel: hasAsyncQuestion ? "Input, still working" : (topStatus?.label ?? null),
     projectDisplayName: props.projectDisplayName,
     isActive: props.isActive,
   });
@@ -987,7 +992,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               "truncate",
               shouldRecede
                 ? "text-secondary-label redesign:text-foreground/75 redesign:group-hover/sidebar-row:text-foreground redesign:group-focus-visible/sidebar-row:text-foreground"
-                : isUnread || isWoke || status === "input" || status === "request"
+                : isUnread ||
+                    isWoke ||
+                    status === "input" ||
+                    status === "request" ||
+                    hasAsyncQuestion
                   ? "text-foreground"
                   : status === "failed"
                     ? "text-foreground/95"
@@ -997,7 +1006,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               "truncate group-focus-within/sidebar-row:text-foreground group-hover/sidebar-row:text-foreground",
               shouldRecede
                 ? "text-secondary-label/70 redesign:text-secondary-label"
-                : props.isActive || isWoke || status === "input" || status === "request"
+                : props.isActive ||
+                    isWoke ||
+                    status === "input" ||
+                    status === "request" ||
+                    hasAsyncQuestion
                   ? "text-foreground"
                   : isUnread
                     ? "text-muted-foreground"
@@ -1365,6 +1378,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             topStatus.className,
                           )}
                         >
+                          {hasAsyncQuestion ? (
+                            <span
+                              className={cn(
+                                "me-1.5 inline-flex items-center gap-1",
+                                INPUT_STATUS.className,
+                              )}
+                            >
+                              <MessageCircleQuestionIcon aria-hidden className="size-4 shrink-0" />
+                              {INPUT_STATUS.label}
+                            </span>
+                          ) : null}
                           {topStatus.icon === "working" ? (
                             <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
                           ) : topStatus.icon === "waiting" ? (
@@ -1383,7 +1407,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           {/* Not a live region: a collapsed sidebar is inert, so
                             BackgroundThreadAnnouncer and the open thread's
                             timeline speak status changes instead. */}
-                          {topStatus.label}
+                          {hasAsyncQuestion ? null : topStatus.label}
                           {status === "working" ? (
                             <span aria-hidden>
                               <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
