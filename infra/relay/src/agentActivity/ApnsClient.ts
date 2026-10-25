@@ -123,9 +123,9 @@ function liveActivityAlertPayload(alert: ApnsLiveActivityAlert) {
 // still overflow APNs' 4 KB limit and every update is rejected. Like
 // fitFcmData on Android, shorten titles and alert text until the encoded
 // payload fits; the card clips each title to one line anyway. Deep links and
-// ids can't be shortened, so when they alone overflow, drop the
-// lowest-priority rows (the aggregate lists them last) instead of sending a
-// payload APNs rejects.
+// ids can't be shortened, so when the shortest text still overflows, drop the
+// lowest-priority row (the aggregate lists them last) and fit the rest again
+// instead of sending a payload APNs rejects.
 function makeLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLiveActivityRequest {
   let request = buildLiveActivityRequest(input);
   const state = input.state;
@@ -151,14 +151,18 @@ function makeLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLiveA
           }
         : null,
     });
-  let maxTextLength = MAX_SUMMARY_TEXT_LENGTH;
-  while (maxTextLength > MIN_FITTED_TEXT_LENGTH && !fitsLiveActivityLimit(request)) {
-    maxTextLength = Math.floor(maxTextLength * 0.8);
-    request = fit(maxTextLength, state.activities.length);
-  }
   let rowCount = state.activities.length;
-  while (rowCount > 0 && !fitsLiveActivityLimit(request)) {
-    rowCount -= 1;
+  let maxTextLength = MAX_SUMMARY_TEXT_LENGTH;
+  while (
+    !fitsLiveActivityLimit(request) &&
+    (rowCount > 0 || maxTextLength > MIN_FITTED_TEXT_LENGTH)
+  ) {
+    if (maxTextLength > MIN_FITTED_TEXT_LENGTH) {
+      maxTextLength = Math.floor(maxTextLength * 0.8);
+    } else {
+      rowCount -= 1;
+      maxTextLength = MAX_SUMMARY_TEXT_LENGTH;
+    }
     request = fit(maxTextLength, rowCount);
   }
   return request;
