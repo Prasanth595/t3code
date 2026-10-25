@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
@@ -285,12 +286,14 @@ describe("tailscale", () => {
     });
 
     return Effect.gen(function* () {
-      const error = yield* claimTailscaleServe({ localPort: 3774 }).pipe(
-        Effect.flip,
+      const claimed = yield* claimTailscaleServe({ localPort: 3774 }).pipe(
+        Effect.result,
         Effect.provide(fixture.layer),
       );
-      assert.instanceOf(error, TailscaleServeOccupiedError);
       assert.deepEqual(fixture.writes, []);
+      assert.isTrue(
+        Result.isFailure(claimed) && claimed.failure instanceof TailscaleServeOccupiedError,
+      );
     });
   });
 
@@ -313,15 +316,17 @@ describe("tailscale", () => {
     });
 
     return Effect.gen(function* () {
-      assert.isFalse(
-        yield* releaseTailscaleServe({ localPort: 3774 }).pipe(Effect.provide(fixture.layer)),
+      const releasedOther = yield* releaseTailscaleServe({ localPort: 3774 }).pipe(
+        Effect.provide(fixture.layer),
       );
       assert.deepEqual(fixture.writes, []);
+      assert.isFalse(releasedOther);
 
-      assert.isTrue(
-        yield* releaseTailscaleServe({ localPort: 3773 }).pipe(Effect.provide(fixture.layer)),
+      const releasedOwn = yield* releaseTailscaleServe({ localPort: 3773 }).pipe(
+        Effect.provide(fixture.layer),
       );
       assert.deepEqual(fixture.writes, [["serve", "--https=443", "--set-path=/", "off"]]);
+      assert.isTrue(releasedOwn);
     });
   });
 });
