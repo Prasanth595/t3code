@@ -2212,11 +2212,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       ]);
       const text = yield* providerTextForTurn({
         text: "/hello WORLD",
-        attachments: [],
         createdBy: "agent",
         senderThreadId: ThreadId.make("thread:child-review"),
-        driver: OPENCODE_PROVIDER,
-        nativeSurface: { slashCommands: [{ name: "hello" }], skills: [] },
         readSenderTitle: () => Effect.die("commands do not look up a sender"),
         readReceiverSubagents: () => Effect.die("commands do not look up a sender"),
       });
@@ -2232,6 +2229,45 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       });
       const collected = yield* Fiber.join(events);
       assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps an agent /hello with a file on the raw prompt", () =>
+    Effect.gen(function* () {
+      const prompts: Array<{ readonly text?: string }> = [];
+      const notes = ChatFileAttachment.make({
+        type: "file",
+        id: ChatAttachmentId.make("thread-opencode2-adapter-45678901-1234-1234-1234-123456789abc"),
+        name: "notes.txt",
+        mimeType: "text/plain",
+        sizeBytes: 4,
+      });
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { onPrompt: (input) => prompts.push(input as { readonly text?: string }) },
+      );
+      const text = yield* providerTextForTurn({
+        text: "/hello WORLD",
+        createdBy: "agent",
+        senderThreadId: ThreadId.make("thread:child-review"),
+        readSenderTitle: () => Effect.die("commands do not look up a sender"),
+        readReceiverSubagents: () => Effect.die("commands do not look up a sender"),
+      });
+      assert.equal(text, "/hello WORLD");
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const input = turnInput(thread);
+      yield* runtime.startTurn({
+        ...input,
+        message: { ...input.message, text, attachments: [notes] },
+      });
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      assert.equal(prompts.length, 1);
+      assert.match(prompts[0]?.text ?? "", /^\/hello WORLD/);
+      assert.notMatch(prompts[0]?.text ?? "", /Agent-authored/);
     }).pipe(Effect.scoped),
   );
 

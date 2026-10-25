@@ -239,13 +239,6 @@ export function makeGrokAcpAdapterFlavor(
     supportsCompaction: true,
     // Grok expands only a leading `/name`, while the `$` picker inserts `$name` from the
     // `grok inspect` catalog. Ask that catalog again so other `$` text is left alone.
-    nativeSkills: (cwd) =>
-      discoverGrokSkills(options.settings, options.environment, cwd ?? undefined).pipe(
-        Effect.map((skills) =>
-          skills.map((skill) => ({ name: skill.name, enabled: skill.enabled })),
-        ),
-        Effect.orElseSucceed(() => []),
-      ),
     rewriteUserText: (text, turnInput) => {
       const mention = leadingGrokSkillMention(text);
       if (mention === undefined) return Effect.succeed(text);

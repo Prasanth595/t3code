@@ -165,7 +165,6 @@ interface FakePi {
   readonly deferNextLifecycle: (type: "switch_session" | "new_session" | "fork") => void;
   readonly deferNextModelSelection: () => void;
   readonly queueModels: (models: ReadonlyArray<unknown>) => void;
-  readonly queueCommands: (data: unknown) => void;
   readonly vetoNextNewSession: () => void;
   readonly allRequests: () => ReadonlyArray<PiRpcRecord>;
   readonly queueStats: (data: unknown) => void;
@@ -204,7 +203,6 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   let vetoSwitch = false;
   let vetoNewSession = false;
   let deferredLifecycle: string | undefined;
-  let commandsData: unknown = { commands: [] };
   let sessionFile = FAKE_SESSION_FILE;
   let sessionGeneration = 0;
   let models: ReadonlyArray<unknown> = [];
@@ -255,8 +253,6 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         return base;
       case "get_available_models":
         return { ...base, data: { models } };
-      case "get_commands":
-        return { ...base, data: commandsData };
       case "new_session": {
         const cancelled = vetoNewSession;
         vetoNewSession = false;
@@ -376,9 +372,6 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     },
     queueModels: (value) => {
       models = value;
-    },
-    queueCommands: (data) => {
-      commandsData = data;
     },
     vetoNextNewSession: () => {
       vetoNewSession = true;
@@ -529,23 +522,16 @@ describe("PiAdapterV2", () => {
   it.effect("keeps an agent custom command at the start of the prompt", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
-      fake.queueCommands({
-        commands: [{ name: "my-command", description: "Custom", source: "extension" }],
-      });
       const { runtime } = yield* openRuntime(fake);
       const providerThread = yield* runtime.ensureThread({
         threadId: THREAD_ID,
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
-      const surface = yield* runtime.nativeInvocationSurface!({});
       const text = yield* providerTextForTurn({
         text: "/my-command",
-        attachments: [],
         createdBy: "agent",
         senderThreadId: ThreadId.make("thread:child-review"),
-        driver: PI_PROVIDER,
-        nativeSurface: surface,
         readSenderTitle: () => Effect.die("commands do not look up a sender"),
         readReceiverSubagents: () => Effect.die("commands do not look up a sender"),
       });

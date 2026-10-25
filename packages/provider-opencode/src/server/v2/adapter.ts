@@ -3336,19 +3336,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       events: Stream.fromQueue(events),
       // Idle release must wait for background children and held wakes after parent settlement.
       hasPendingBackgroundWork: Effect.sync(() => [...threads.values()].some(owesWork)),
-      nativeInvocationSurface: (surfaceInput) =>
-        client.command
-          .list({
-            location: { directory: surfaceInput.cwd ?? host.paths.cwd },
-          })
-          .pipe(
-            Effect.timeout(INVENTORY_TIMEOUT),
-            Effect.map((list) => ({
-              slashCommands: list.data.map((command) => ({ name: command.name })),
-              skills: [],
-            })),
-            Effect.orElseSucceed(() => ({ slashCommands: [], skills: [] })),
-          ),
       hasPendingBackgroundWorkForThread: (providerThread) =>
         Effect.sync(() => {
           const nativeId = providerThread.nativeThreadRef?.nativeId;

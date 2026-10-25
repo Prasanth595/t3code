@@ -1166,14 +1166,10 @@ describe("OpenCodeAdapterV2", () => {
         sessionId,
         client,
       );
-      const surface = yield* commandHarness.runtime.nativeInvocationSurface!({});
       const commandText = yield* providerTextForTurn({
         text: "/review staged changes",
-        attachments: [],
         createdBy: "agent",
         senderThreadId: ThreadId.make("thread:child-review"),
-        driver: OPENCODE_PROVIDER,
-        nativeSurface: surface,
         readSenderTitle: () => Effect.die("commands do not look up a sender"),
         readReceiverSubagents: () => Effect.die("commands do not look up a sender"),
       });
@@ -1222,19 +1218,14 @@ describe("OpenCodeAdapterV2", () => {
       );
       const prose = yield* providerTextForTurn({
         text: "/please review this",
-        attachments: [],
         createdBy: "agent",
         senderThreadId: ThreadId.make("thread:child-review"),
-        driver: OPENCODE_PROVIDER,
-        nativeSurface: surface,
-        readSenderTitle: () => Effect.succeed("Review the PR"),
-        readReceiverSubagents: () => Effect.succeed([]),
+        readSenderTitle: () => Effect.die("a leading slash does not look up a sender"),
+        readReceiverSubagents: () => Effect.die("a leading slash does not look up a sender"),
       });
       yield* proseHarness.startTurn(prose);
-      assert.equal(
-        prompted,
-        `Agent-authored message from "Review the PR", not the user.\n/please review this`,
-      );
+      assert.equal(prose, "/please review this");
+      assert.equal(prompted, "/please review this");
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,

@@ -2974,15 +2974,6 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           providerSession: sessionEntity,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           hasPendingBackgroundWork: Effect.sync(() => busySessionIds.size > 0),
-          nativeInvocationSurface: () =>
-            OpenCodeRuntime.loadOpenCodeCommands(client).pipe(
-              Effect.timeout("10 seconds"),
-              Effect.map((commands) => ({
-                slashCommands: commands.map((command) => ({ name: command.name })),
-                skills: [],
-              })),
-              Effect.orElseSucceed(() => ({ slashCommands: [], skills: [] })),
-            ),
           ensureThread: Effect.fn("OpencodeAdapter.ensureThread")(
             function* (threadInput) {
               if (threadInput.existingProviderThread?.nativeThreadRef != null) {

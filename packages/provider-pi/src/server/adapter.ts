@@ -42,12 +42,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import {
-  parsePiCompactCommand,
-  parsePiDiscoveredCommands,
-  withPiBuiltinSlashCommands,
-  type PiCompactCommand,
-} from "./commands.ts";
+import { parsePiCompactCommand, type PiCompactCommand } from "./commands.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -2325,12 +2320,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         return { message, images };
       });
 
-      let piCommandSurface:
-        | {
-            readonly slashCommands: ReadonlyArray<{ readonly name: string }>;
-            readonly skills: ReadonlyArray<{ readonly name: string; readonly enabled: boolean }>;
-          }
-        | undefined;
       const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
         instanceId: options.instanceId,
         driver: PI_PROVIDER,
@@ -2340,26 +2329,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         },
         events: Stream.fromQueue(events),
         hasPendingBackgroundWork: Effect.sync(() => pendingWake !== null),
-        nativeInvocationSurface: () => {
-          if (piCommandSurface !== undefined) return Effect.succeed(piCommandSurface);
-          return request({ type: "get_commands" }).pipe(
-            Effect.map((data) => {
-              const discovered = parsePiDiscoveredCommands(data);
-              const surface = {
-                slashCommands: withPiBuiltinSlashCommands(discovered.slashCommands).map(
-                  (command) => ({ name: command.name }),
-                ),
-                skills: discovered.skills.map((skill) => ({
-                  name: skill.name,
-                  enabled: skill.enabled,
-                })),
-              };
-              piCommandSurface = surface;
-              return surface;
-            }),
-            Effect.orElseSucceed(() => ({ slashCommands: [], skills: [] })),
-          );
-        },
         hasPendingBackgroundWorkForThread: (providerThread) =>
           Effect.sync(
             () => pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id,

@@ -1,32 +1,9 @@
-import type {
-  ChatAttachment,
-  OrchestrationV2Actor,
-  OrchestrationV2Subagent,
-  ProviderDriverKind,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { OrchestrationV2Actor, OrchestrationV2Subagent, ThreadId } from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
-import { leadingGrokSkillMention } from "@t3tools/provider-grok/server/skills";
-import { parsePiCompactCommand } from "@t3tools/provider-pi/server/commands";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { parseCodexGoalCommand } from "./Adapters/CodexAdapterV2.ts";
-import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
-
-/**
- * Commands and skills the receiving driver would actually invoke.
- * An empty surface preserves only that driver's built-in forms.
- */
-export interface ReceiverNativeSurface {
-  readonly slashCommands: ReadonlyArray<{ readonly name: string }>;
-  readonly skills: ReadonlyArray<{ readonly name: string; readonly enabled: boolean }>;
-}
-
-const emptyNativeSurface = {
-  slashCommands: [],
-  skills: [],
-} as const satisfies ReceiverNativeSurface;
+const SKILL_AT_START = new RegExp(SKILL_MENTION_PATTERN.source, "u");
 
 /**
  * Agent thread sends are stored with a sender, but the provider only receives the body.
@@ -38,23 +15,18 @@ export const providerTextForTurn = Effect.fn("providerTextForTurn")(function* <
   SubagentError,
 >(input: {
   readonly text: string;
-  readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly createdBy: OrchestrationV2Actor;
   readonly senderThreadId?: ThreadId | undefined;
-  readonly restartContinuation?: boolean;
-  readonly driver: ProviderDriverKind;
-  readonly nativeSurface?: ReceiverNativeSurface;
   readonly readSenderTitle: (senderThreadId: ThreadId) => Effect.Effect<string, TitleError>;
   readonly readReceiverSubagents: () => Effect.Effect<
     ReadonlyArray<Pick<OrchestrationV2Subagent, "origin" | "childThreadId">>,
     SubagentError
   >;
 }) {
-  if (
-    input.createdBy !== "agent" ||
-    input.senderThreadId === undefined ||
-    preservesNativeInvocation(input)
-  ) {
+  if (input.createdBy !== "agent" || input.senderThreadId === undefined) {
+    return input.text;
+  }
+  if (preservesNativeSyntax(input.text)) {
     return input.text;
   }
   const senderThreadId = input.senderThreadId;
@@ -69,53 +41,11 @@ export const providerTextForTurn = Effect.fn("providerTextForTurn")(function* <
   return `Agent-authored message from ${source}, not the user.\n${input.text}`;
 });
 
-const SLASH_COMMAND = /^\/([^\s/]+)(?:\s+([\s\S]*))?$/u;
-
-function preservesNativeInvocation(input: {
-  readonly text: string;
-  readonly attachments: ReadonlyArray<ChatAttachment>;
-  readonly restartContinuation?: boolean;
-  readonly driver: ProviderDriverKind;
-  readonly nativeSurface?: ReceiverNativeSurface;
-}): boolean {
-  const surface = input.nativeSurface ?? emptyNativeSurface;
-  const driver = input.driver;
-  if (
-    driver === "codex" &&
-    input.attachments.length === 0 &&
-    input.restartContinuation !== true &&
-    parseCodexGoalCommand(input.text) !== null
-  ) {
-    return true;
-  }
-  if (driver === "pi" && parsePiCompactCommand(input.text) !== null) return true;
-  if (driver === "grok") {
-    const mention = leadingGrokSkillMention(input.text);
-    if (
-      mention !== undefined &&
-      surface.skills.some((skill) => skill.enabled && skill.name === mention.name)
-    ) {
-      return true;
-    }
-  }
-  if (isNativeMaintenanceCommand(input)) return true;
-  const command = SLASH_COMMAND.exec(input.text.trim());
-  const name = command?.[1];
-  if (name === undefined) return false;
-  // Exact /compact and /logout are the maintenance check. Argument forms are Pi-only.
-  if (name === "compact" || name === "logout") return false;
-  if (surface.slashCommands.some((entry) => entry.name === name)) return true;
-  if (
-    driver === "pi" &&
-    name.startsWith("skill:") &&
-    surface.skills.some((skill) => skill.enabled && skill.name === name.slice("skill:".length))
-  ) {
-    return true;
-  }
-  return (
-    (driver === "claude" || driver === "grok" || driver === "cursor") &&
-    surface.skills.some((skill) => skill.enabled && skill.name === name)
-  );
+function preservesNativeSyntax(text: string): boolean {
+  const trimmed = text.trimStart();
+  if (trimmed.startsWith("/")) return true;
+  const mention = SKILL_AT_START.exec(trimmed);
+  return mention !== null && mention.index === 0 && mention[1] === "";
 }
 
 // Skill parsers accept any currency sigil. A word joiner keeps the title from matching.

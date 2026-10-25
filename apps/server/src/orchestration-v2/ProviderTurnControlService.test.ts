@@ -1,7 +1,5 @@
 import { assert, it } from "@effect/vitest";
 import {
-  ChatAttachmentId,
-  ChatFileAttachment,
   MessageId,
   type ModelSelection,
   NodeId,
@@ -358,11 +356,6 @@ function steerProviderText(input: {
   readonly senderLookupFails?: boolean;
   readonly text?: string;
   readonly attachments?: OrchestrationV2ConversationMessage["attachments"];
-  readonly driver?: ProviderDriverKind;
-  readonly nativeSurface?: {
-    readonly slashCommands: ReadonlyArray<{ readonly name: string }>;
-    readonly skills: ReadonlyArray<{ readonly name: string; readonly enabled: boolean }>;
-  };
   readonly subagents?: ReadonlyArray<{
     readonly origin: "app_owned" | "provider_native";
     readonly childThreadId: ThreadId | null;
@@ -376,16 +369,15 @@ function steerProviderText(input: {
     const providerThreadId = ProviderThreadId.make("provider-thread:steer-provenance");
     const providerTurnId = ProviderTurnId.make("provider-turn:steer-provenance");
     const messageId = MessageId.make("message:steer-provenance");
-    const sessionDriver = input.driver ?? driver;
     const providerThread: OrchestrationV2ProviderThread = {
       id: providerThreadId,
-      driver: sessionDriver,
+      driver,
       providerInstanceId,
       providerSessionId,
       appThreadId: threadId,
       ownerNodeId: null,
       nativeThreadRef: {
-        driver: sessionDriver,
+        driver,
         nativeId: "native-thread:steer-provenance",
         strength: "strong",
       },
@@ -416,14 +408,11 @@ function steerProviderText(input: {
     const steered = yield* Ref.make<string | undefined>(undefined);
     const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
       instanceId: providerInstanceId,
-      driver: sessionDriver,
-      ...(input.nativeSurface === undefined
-        ? {}
-        : { nativeInvocationSurface: () => Effect.succeed(input.nativeSurface!) }),
+      driver,
       providerSessionId,
       providerSession: {
         id: providerSessionId,
-        driver: sessionDriver,
+        driver,
         providerInstanceId,
         status: "running",
         cwd: "/workspace",
@@ -472,27 +461,31 @@ function steerProviderText(input: {
                     } as OrchestrationV2ThreadProjection["runs"][number],
                   }),
                 getThread: (requestedThreadId) =>
-                  input.senderLookupFails === true
-                    ? Effect.fail(
-                        new ProjectionStore.ProjectionStoreReadError({
-                          threadId: requestedThreadId,
-                          cause: "sender lookup failed",
-                        }),
-                      )
-                    : Effect.succeed({
-                        title: input.senderTitle ?? "Sender",
-                      } as never),
+                  input.createdBy === "user"
+                    ? Effect.die("user messages do not look up a sender")
+                    : input.senderLookupFails === true
+                      ? Effect.fail(
+                          new ProjectionStore.ProjectionStoreReadError({
+                            threadId: requestedThreadId,
+                            cause: "sender lookup failed",
+                          }),
+                        )
+                      : Effect.succeed({
+                          title: input.senderTitle ?? "Sender",
+                        } as never),
                 getThreadRecords: () =>
-                  input.subagentLookupFails === true
-                    ? Effect.fail(
-                        new ProjectionStore.ProjectionStoreReadError({
-                          threadId,
-                          cause: "subagent lookup failed",
-                        }),
-                      )
-                    : Effect.succeed({
-                        subagents: input.subagents ?? [],
-                      } as never),
+                  input.createdBy === "user"
+                    ? Effect.die("user messages do not look up a sender")
+                    : input.subagentLookupFails === true
+                      ? Effect.fail(
+                          new ProjectionStore.ProjectionStoreReadError({
+                            threadId,
+                            cause: "subagent lookup failed",
+                          }),
+                        )
+                      : Effect.succeed({
+                          subagents: input.subagents ?? [],
+                        } as never),
               }),
             ),
           ),
@@ -579,44 +572,22 @@ it.effect.each([
     expected: steerBody,
   },
   {
-    label: "a Codex /compact with a file is an ordinary steer",
+    label: "an agent Cursor /compress stays raw",
     createdBy: "agent" as const,
     creationSource: "mcp" as const,
     senderThreadId: steerChildThreadId,
     senderTitle: "Review the PR",
-    text: "/compact",
-    attachments: [
-      ChatFileAttachment.make({
-        type: "file",
-        id: ChatAttachmentId.make("compact-file-12345678-1234-1234-1234-123456789abc"),
-        name: "notes.txt",
-        mimeType: "text/plain",
-        sizeBytes: 1,
-      }),
-    ],
-    expected: `Agent-authored message from "Review the PR", not the user.\n/compact`,
+    text: "/compress",
+    expected: "/compress",
   },
   {
-    label: "an unknown Grok skill is an ordinary steer",
+    label: "a mid-message skill mention still names the sender",
     createdBy: "agent" as const,
     creationSource: "mcp" as const,
     senderThreadId: steerChildThreadId,
     senderTitle: "Review the PR",
-    text: "$HOME is unset; use the fallback.",
-    driver: ProviderDriverKind.make("grok"),
-    nativeSurface: { slashCommands: [], skills: [] },
-    expected: `Agent-authored message from "Review the PR", not the user.\n$HOME is unset; use the fallback.`,
-  },
-  {
-    label: "a disabled Grok skill is an ordinary steer",
-    createdBy: "agent" as const,
-    creationSource: "mcp" as const,
-    senderThreadId: steerChildThreadId,
-    senderTitle: "Review the PR",
-    text: "$deploy ship it",
-    driver: ProviderDriverKind.make("grok"),
-    nativeSurface: { slashCommands: [], skills: [{ name: "deploy", enabled: false }] },
-    expected: `Agent-authored message from "Review the PR", not the user.\n$deploy ship it`,
+    text: "Ship $deploy now",
+    expected: `Agent-authored message from "Review the PR", not the user.\nShip $deploy now`,
   },
 ])("steers provider text so $label", (input) =>
   Effect.gen(function* () {

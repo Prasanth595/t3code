@@ -578,11 +578,6 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly startTurn: (
     input: ProviderAdapterV2TurnInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
-  /** Slash commands and skills this session would invoke, from the driver's own catalog. */
-  readonly nativeInvocationSurface?: (input: { readonly cwd?: string | null }) => Effect.Effect<{
-    readonly slashCommands: ReadonlyArray<{ readonly name: string }>;
-    readonly skills: ReadonlyArray<{ readonly name: string; readonly enabled: boolean }>;
-  }>;
   readonly compactThread?: (
     input: ProviderAdapterV2TurnInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
