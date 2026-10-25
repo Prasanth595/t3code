@@ -475,7 +475,11 @@ describe("GitCafePullRequestProvider", () => {
       assert.isTrue(server.sent.every((request) => request.host === "staging.git.cafe"));
       assert.deepStrictEqual(
         server.sent.map((request) => `${request.method} ${request.path}`),
-        ["GET /repos/owner/repo/pulls/7", "GET /repos/owner/repo/pulls/7"],
+        [
+          "GET /repos/owner/repo/pulls/7",
+          "GET /repos/owner/repo/pulls/7",
+          "GET /repos/owner/repo/pulls/7/changes",
+        ],
       );
     }).pipe(Effect.provide(server.layer));
   });
