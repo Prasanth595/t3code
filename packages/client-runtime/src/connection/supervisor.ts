@@ -969,8 +969,12 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         continue;
       }
 
-      failureCount += 1;
       const now = yield* Clock.currentTimeMillis;
+      if (reconnectUntil > 0 && now >= reconnectUntil) {
+        reconnectUntil = 0;
+        resetRetryLadder();
+      }
+      failureCount += 1;
       const delayMs = retryDelayMs(
         failureCount - 1,
         yield* Random.next,

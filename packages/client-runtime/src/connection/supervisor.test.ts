@@ -549,7 +549,7 @@ describe("EnvironmentSupervisor", () => {
         const delay = retrying.retryAt! - (yield* Clock.currentTimeMillis);
         const windowExpired = (yield* Clock.currentTimeMillis) - lostAt >= 120_000;
         if (windowExpired) {
-          expect(delay).toBeGreaterThan(5_000);
+          expect(delay).toBeLessThanOrEqual(2_000);
           yield* Deferred.succeed(restarted, undefined);
         } else {
           expect(delay).toBeLessThanOrEqual(5_000);
