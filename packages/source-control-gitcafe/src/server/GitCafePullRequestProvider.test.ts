@@ -247,6 +247,21 @@ describe("GitCafePullRequestProvider changed paths", () => {
     },
   );
 
+  it.effect.each(["getDiff", "getDiffFilePaths"] as const)(
+    "%s reads a pull that reports no head yet",
+    (method) => {
+      const server = fakeGitCafe({
+        "GET /repos/owner/repo/pulls/7": { ...pull, headOid: null },
+        "GET /repos/owner/repo/pulls/7/changes": { ...snapshot, items: [], next: null },
+      });
+      return Effect.gen(function* () {
+        const provider = yield* GitCafePullRequestProvider.make;
+        const result = yield* provider[method]!(target);
+        assert.isNull(result.nextCursor);
+      }).pipe(Effect.provide(server.layer));
+    },
+  );
+
   it.effect.each([{ version: 5 }, { headOid: baseOid }])(
     "refuses initial changed paths from a different pull revision (%j)",
     (changed) => {

@@ -56,6 +56,8 @@ const AUTHOR_DISCOVERY_PAGES = 5;
 const KNOWN_AUTHORS_LIMIT = 10_000;
 /** GitCafe's cap on paths per `/diff-files` read, and so one diff page. */
 const DIFF_FILES_BATCH = 64;
+/** Changed-path pages carry no hunks, so they can be read in larger pages. */
+const CHANGES_PAGE_LIMIT = 500;
 /** Line totals require hunk reads; omit them for large PRs. */
 const LINE_STATS_MAX_FILES = DIFF_FILES_BATCH * 4;
 const MAX_CHANGE_PAGES = 20;
@@ -535,16 +537,16 @@ export const make = Effect.gen(function* () {
         : yield* decodeDiffCursor(input.cursor).pipe(
             Effect.mapError((cause) => failure(operation, "Invalid GitCafe diff cursor.", cause)),
           );
-    const pull = cursor === null ? yield* readPull(operation, input) : null;
-    const version = cursor?.version ?? pull!.version;
-    const headOid = cursor?.headOid ?? pull!.headOid;
+    // A pull without a head yet has nothing to pin; its version still is.
+    const expected = cursor ?? (yield* readPull(operation, input));
+    const version = expected.version;
     const path = yield* pullPath(operation, input);
     const query = new URLSearchParams({ expectedVersion: String(version), limit: String(limit) });
     if (cursor !== null) query.set("after", cursor.after);
     const page = yield* read(operation, input, { path: `${path}/changes?${query}` }, Changes);
     if (
       page.version !== version ||
-      page.headOid !== headOid ||
+      (expected.headOid !== null && page.headOid !== expected.headOid) ||
       (cursor !== null && cursor.baseOid !== page.comparisonBaseOid)
     )
       return yield* failure(
@@ -644,7 +646,10 @@ export const make = Effect.gen(function* () {
     let revision: { version: number; headOid: string; baseOid: string } | undefined;
     let after: string | null = null;
     for (let page = 0; page < MAX_CHANGE_PAGES; page++) {
-      const query = new URLSearchParams({ expectedVersion: String(version), limit: "500" });
+      const query = new URLSearchParams({
+        expectedVersion: String(version),
+        limit: String(CHANGES_PAGE_LIMIT),
+      });
       if (after !== null) query.set("after", after);
       const batch: typeof Changes.Type = yield* read(
         "getChangeRequest",
@@ -1013,7 +1018,7 @@ export const make = Effect.gen(function* () {
       };
     }),
     getDiffFilePaths: Effect.fn("GitCafePullRequestProvider.getDiffFilePaths")(function* (input) {
-      const page = yield* readDiffPage("getDiffFilePaths", input, 500);
+      const page = yield* readDiffPage("getDiffFilePaths", input, CHANGES_PAGE_LIMIT);
       return {
         files: page.items.map((file) => ({
           oldPath: file.oldPath ?? file.path,
