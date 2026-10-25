@@ -261,8 +261,10 @@ describe("DesktopConnectionCatalogStore", () => {
         ];
         for (const bytes of damaged) {
           yield* fileSystem.writeFile(catalogPath, bytes);
-          assert.deepStrictEqual(yield* store.get, Option.none());
-          assert.deepStrictEqual(yield* store.get, Option.none());
+          assert.deepStrictEqual(
+            yield* Effect.all([store.get, store.get], { concurrency: "unbounded" }),
+            [Option.none(), Option.none()],
+          );
           assert.deepStrictEqual(yield* fileSystem.readFile(catalogPath), bytes);
         }
         const backups = (yield* fileSystem.readDirectory(environment.stateDir)).filter((name) =>
