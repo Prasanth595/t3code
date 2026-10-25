@@ -12,20 +12,36 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], manifest = Config.NONE)
 class TerminalInputConnectionTest {
+  private val input = EditText(RuntimeEnvironment.getApplication())
+  private val sentText = TerminalSentText()
+  private val deletes = mutableListOf<Int>()
+  private val connection = TerminalInputConnection(
+    input.onCreateInputConnection(EditorInfo())!!,
+    sentText,
+  ) { deletes += it }
+
+  private fun type(text: String) {
+    connection.commitText(text, 1)
+    sentText.append(input.text)
+    input.text.clear()
+  }
+
   @Test
   fun imeDeletionReachesTheTerminalAfterTheInputClears() {
-    val input = EditText(RuntimeEnvironment.getApplication())
-    val deletes = mutableListOf<Int>()
-    val connection = TerminalInputConnection(input.onCreateInputConnection(EditorInfo())!!) {
-      deletes += it
-    }
-
-    connection.commitText("abc", 1)
-    input.text.clear()
+    type("abc")
     connection.deleteSurroundingText(1, 0)
     connection.deleteSurroundingTextInCodePoints(2, 0)
     connection.deleteSurroundingText(Int.MAX_VALUE, 0)
 
     assertEquals(listOf(1, 2, 1024), deletes)
+  }
+
+  @Test
+  fun utf16DeletionOfAnEmojiSendsOneDelete() {
+    type("a😀")
+    connection.deleteSurroundingText(2, 0)
+    connection.deleteSurroundingText(1, 0)
+
+    assertEquals(listOf(1, 1), deletes)
   }
 }
