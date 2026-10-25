@@ -16,11 +16,9 @@ client of a restarted server reconnects in the same second; with a short cap, a
 client that can never connect retries all day. Offline states and authentication
 failures wait for a wakeup instead of spending attempts on unchanged conditions.
 
-Route ranking applies when establishing a connection, including routes learned
-from the current session. A better route answering discovery does not prove its
-socket will work, so it never replaces a healthy session. The next necessary
-connection uses the latest routes; there is no second session to synchronize or
-handoff while the current one is healthy.
+A healthy session stays on its current route: discovery does not prove that a
+better route can establish a socket. Necessary reconnects use the latest ranked
+routes, including those learned from the current session.
 
 Foregrounding, an explicit retry, and an offline report probe the established
 session, and only a failed probe reconnects. Offline reports are often wrong, for

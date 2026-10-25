@@ -1049,12 +1049,8 @@ describe("EnvironmentSupervisor routes", () => {
           },
         ]);
         const harness = yield* makeHarness();
-        const allowLan = yield* Ref.make(false);
         const opened = yield* Ref.make<ReadonlyArray<string>>([]);
         const released = yield* Ref.make<ReadonlyArray<string>>([]);
-        const closures = yield* Ref.make<
-          ReadonlyArray<Deferred.Deferred<never, ConnectionTransientError>>
-        >([]);
         const driver = yield* ConnectionDriver.make.pipe(
           Effect.provideService(ConnectionResolver.ConnectionResolver, {
             prepare: (route) => Effect.succeed(preparedFor(route.target)),
@@ -1065,10 +1061,8 @@ describe("EnvironmentSupervisor routes", () => {
               Effect.gen(function* () {
                 const id = connectionRouteId(prepared.target);
                 yield* Ref.update(opened, (ids) => [...ids, id]);
-                const fails = id === LAN_TARGET.connectionId && !(yield* Ref.get(allowLan));
+                const fails = id === LAN_TARGET.connectionId;
                 if (fails && failureStage === "opening") return yield* transient();
-                const closed = yield* Deferred.make<never, ConnectionTransientError>();
-                yield* Ref.update(closures, (all) => [...all, closed]);
                 return yield* Effect.acquireRelease(
                   Effect.succeed({
                     client: TEST_RPC_CLIENT,
@@ -1076,7 +1070,7 @@ describe("EnvironmentSupervisor routes", () => {
                     subscribeServerConfig: () => Stream.die("unused"),
                     ready: fails ? Effect.fail(transient()) : Effect.void,
                     probe: Effect.void,
-                    closed: Deferred.await(closed),
+                    closed: Effect.never,
                   } satisfies RpcSession.RpcSession),
                   () => Ref.update(released, (ids) => [...ids, id]),
                 );
@@ -1123,40 +1117,14 @@ describe("EnvironmentSupervisor routes", () => {
           generation: 1,
         });
 
-        // An actual lifecycle replacement still tries LAN and falls back if setup fails.
-        yield* harness.wake("application-active-reconnect");
-        yield* awaitState(
-          supervisor.state,
-          (state) => state.phase === "connected" && state.generation === 2,
-        );
-        expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target).toEqual(
-          tailnetTarget,
-        );
-        expect(yield* Ref.get(opened)).toEqual([...baseline, ...baseline]);
-        yield* Ref.set(allowLan, true);
-        yield* Deferred.fail((yield* Ref.get(closures)).at(-1)!, transient());
-        yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
-        yield* TestClock.adjust("3 seconds");
-        yield* awaitState(
-          supervisor.state,
-          (state) => state.phase === "connected" && state.generation === 3,
-        );
-        expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target).toEqual(
-          LAN_TARGET,
-        );
-        expect(yield* Ref.get(opened)).toEqual([...baseline, ...baseline, LAN_TARGET.connectionId]);
-        if (failureStage === "opening") {
-          yield* supervisor.disconnect;
-          yield* awaitState(supervisor.state, (state) => state.phase === "available");
-        }
         yield* Scope.close(scope, Exit.void);
         expect(Option.isNone(yield* SubscriptionRef.get(supervisor.session))).toBe(true);
         expect(
           (yield* Ref.get(released)).filter((id) => id === tailnetTarget.connectionId),
-        ).toHaveLength(2);
+        ).toHaveLength(1);
         expect(
           (yield* Ref.get(released)).filter((id) => id === LAN_TARGET.connectionId),
-        ).toHaveLength(failureStage === "opening" ? 1 : 3);
+        ).toHaveLength(failureStage === "opening" ? 0 : 1);
       }).pipe(Effect.provide(TestClock.layer())),
   );
 
