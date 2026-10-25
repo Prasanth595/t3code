@@ -70,7 +70,11 @@ const make = Effect.gen(function* () {
       const source = yield* threads.getThreadRecords(threadId, ["messages", "runs"], {
         messageRoles: ["user", "assistant"],
       });
-      const ordinals = new Map(source.runs.map((run) => [run.id, run.ordinal]));
+      const ordinals = new Map(
+        source.runs
+          .filter((run) => run.status !== "rolled_back")
+          .map((run) => [run.id, run.ordinal]),
+      );
       const forkOrdinal = ordinals.get(runId) ?? -1;
       const messages = source.messages.filter((message) => {
         if (message.streaming) return false;

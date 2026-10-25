@@ -152,13 +152,14 @@ function dispatchUserMessage(input: {
   });
 }
 
-/** Records a finished source run with one exchange, as a provider turn would. */
-function recordCompletedRun(input: {
+/** Records a settled source run with one exchange, as a provider turn would. */
+function recordRun(input: {
   readonly threadId: ThreadId;
   readonly runId: RunId;
   readonly ordinal: number;
   readonly user: string;
   readonly assistant: string;
+  readonly status?: "completed" | "rolled_back";
 }) {
   return Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;
@@ -203,7 +204,7 @@ function recordCompletedRun(input: {
             userMessageId: MessageId.make(`${input.runId}:user`),
             rootNodeId: null,
             activeAttemptId: null,
-            status: "completed",
+            status: input.status ?? "completed",
             requestedAt: now,
             startedAt: now,
             completedAt: now,
@@ -383,18 +384,26 @@ describe("ThreadTitleRegenerationService", () => {
           command: "command:title:fork:create",
           thread: "thread:title:fork:source",
         });
+        yield* recordRun({
+          threadId: sourceThreadId,
+          runId: RunId.make("run:title:fork:0"),
+          ordinal: 1,
+          user: "Rolled back attempt",
+          assistant: "Discarded.",
+          status: "rolled_back",
+        });
         const forkRunId = RunId.make("run:title:fork:1");
-        yield* recordCompletedRun({
+        yield* recordRun({
           threadId: sourceThreadId,
           runId: forkRunId,
-          ordinal: 1,
+          ordinal: 2,
           user: "Move session storage from Redis to Postgres",
           assistant: "Sessions now persist in the Postgres sessions table.",
         });
-        yield* recordCompletedRun({
+        yield* recordRun({
           threadId: sourceThreadId,
           runId: RunId.make("run:title:fork:2"),
-          ordinal: 2,
+          ordinal: 3,
           user: "Later work the fork never saw",
           assistant: "Done.",
         });
@@ -436,6 +445,7 @@ describe("ThreadTitleRegenerationService", () => {
         assert.include(call?.forkSource?.history, "Move session storage from Redis to Postgres");
         assert.include(call?.forkSource?.history, "Sessions now persist in the Postgres");
         assert.notInclude(call?.forkSource?.history, "Later work the fork never saw");
+        assert.notInclude(call?.forkSource?.history, "Rolled back attempt");
         const fork = yield* threads.getThreadProjection(forkThreadId);
         assert.equal(fork.thread.title, "Generated title");
       }).pipe(Effect.provide(harness.layer));
