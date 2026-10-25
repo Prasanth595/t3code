@@ -514,6 +514,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             // not run the installer when the binary is already current.
             // Unknown version stays on the installer path.
             if (targetVersion === undefined) {
+              const providersBeforeProbe = yield* providerRegistry.getProviders;
               const precheck = yield* verifyFromRefresh(
                 providerRegistry.refreshInstance(instanceId),
                 provider,
@@ -521,10 +522,16 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 instanceId,
                 "pre-update",
               );
+              const liveProbedProviders = precheck.verifiedProviders.filter((verified) => {
+                const prior = providersBeforeProbe.find(
+                  (candidate) => candidate.instanceId === verified.instanceId,
+                );
+                return prior !== undefined && prior.checkedAt !== verified.checkedAt;
+              });
               const alreadyCurrent =
                 precheck.advisoryEnriched &&
-                precheck.verifiedProviders.length > 0 &&
-                precheck.verifiedProviders.every(isAlreadyOnLatest);
+                liveProbedProviders.length > 0 &&
+                liveProbedProviders.every(isAlreadyOnLatest);
               if (alreadyCurrent) {
                 return yield* finish(
                   makeUpdateState({

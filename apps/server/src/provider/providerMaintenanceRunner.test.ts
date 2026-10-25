@@ -317,7 +317,13 @@ describe("providerMaintenanceRunner", () => {
           refreshedInstanceIds.push(instanceId);
           return Ref.updateAndGet(providersRef, (providers) =>
             providers.map((provider) =>
-              provider.instanceId === instanceId ? { ...provider, version: "2.1.310" } : provider,
+              provider.instanceId === instanceId
+                ? {
+                    ...provider,
+                    version: "2.1.310",
+                    checkedAt: "2026-04-10T00:00:01.000Z",
+                  }
+                : provider,
             ),
           );
         },
@@ -346,6 +352,44 @@ describe("providerMaintenanceRunner", () => {
           ["succeeded", "Already up to date."],
         ],
       );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("2.1.310"),
+          layerMockSpawner((command, args) => {
+            calls.push({ command, args });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("still runs the installer when refreshInstance returns the cached snapshot", () => {
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry({
+        ...baseProvider,
+        version: "2.1.310",
+      });
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.succeed(
+            makeProviderMaintenanceCapabilities({
+              provider: CODEX_DRIVER,
+              packageName: "@anthropic-ai/claude-code",
+              updateExecutable: "claude",
+              updateArgs: ["update"],
+              updateLockKey: "claudeAgent-native",
+            }),
+          ),
+      });
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+      assert.deepStrictEqual(calls, [{ command: "claude", args: ["update"] }]);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
