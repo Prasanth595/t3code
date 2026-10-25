@@ -637,33 +637,48 @@ function SidebarFooter({ className, ...props }: React.ComponentProps<"div">) {
 function SidebarContent({
   className,
   fixedHeader,
+  renderScrollFrame,
+  children,
   ...props
 }: React.ComponentProps<"div"> & {
   fixedHeader?: React.ReactNode;
+  /**
+   * Lays out one or more scroll regions below the fixed header in place of
+   * the single one that holds `children`.
+   */
+  renderScrollFrame?:
+    | ((renderScrollArea: (content: React.ReactNode) => React.ReactNode) => React.ReactNode)
+    | undefined;
 }) {
+  const renderScrollArea = (content: React.ReactNode) => (
+    <ScrollArea
+      hideScrollbars
+      scrollFade
+      scrollFadePadding={false}
+      // Thread rows provide keyboard access to this scroll region. Keeping
+      // Base UI's viewport out of the tab order lets its presentational role
+      // flatten in WebKit instead of becoming a VoiceOver interaction group.
+      viewportTabIndex={-1}
+      className="h-auto min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:[--fade-size:0.75rem]"
+    >
+      <div
+        className={cn(
+          "flex w-full min-w-0 flex-col [overflow-anchor:none] group-data-[collapsible=icon]:overflow-hidden [&>[data-sidebar=group]+[data-sidebar=group]]:pt-0",
+          fixedHeader && "[&>[data-sidebar=group]:first-child]:pt-0",
+          className,
+        )}
+        data-sidebar="content"
+        data-slot="sidebar-content"
+        {...props}
+      >
+        {content}
+      </div>
+    </ScrollArea>
+  );
   return (
     <>
       {fixedHeader ? <div className="w-full shrink-0">{fixedHeader}</div> : null}
-      <ScrollArea
-        hideScrollbars
-        scrollFade
-        scrollFadePadding={false}
-        // Rows provide keyboard access; exclude the viewport from tab order to flatten VoiceOver's WebKit
-        // interaction boundary.
-        viewportTabIndex={-1}
-        className="h-auto min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:[--fade-size:0.75rem]"
-      >
-        <div
-          className={cn(
-            "flex w-full min-w-0 flex-col [overflow-anchor:none] group-data-[collapsible=icon]:overflow-hidden [&>[data-sidebar=group]+[data-sidebar=group]]:pt-0",
-            fixedHeader && "[&>[data-sidebar=group]:first-child]:pt-0",
-            className,
-          )}
-          data-sidebar="content"
-          data-slot="sidebar-content"
-          {...props}
-        />
-      </ScrollArea>
+      {renderScrollFrame ? renderScrollFrame(renderScrollArea) : renderScrollArea(children)}
     </>
   );
 }

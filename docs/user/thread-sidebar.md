@@ -133,6 +133,14 @@ choice.
 While this is on, the active list is ordered by when each thread last came back to you, so you
 cannot drag or move threads within it. Your saved order returns when you turn it off.
 
+### Swipe between projects
+
+Turn on **Settings → General → Swipe between projects (beta)** on web and desktop to swipe
+sideways with a trackpad anywhere over the sidebar and move to the next or previous project
+in the project filter's order. With a mouse, hold **Shift** and scroll the wheel. A search stays
+open as you switch and shows the matches in each project. It is not available with the legacy
+sidebar and does not change the mobile app. Each device keeps its own choice.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

@@ -440,6 +440,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
+    ...(settings.sidebarProjectSwitcherEnabled !==
+    DEFAULT_UNIFIED_SETTINGS.sidebarProjectSwitcherEnabled
+      ? ["Swipe between projects"]
+      : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? ["Auto-settle inactive threads"]
       : []),
@@ -608,6 +612,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarProjectSwitcherEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSwitcherEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -965,6 +970,34 @@ export function GeneralSettingsPanel() {
                 updateSettings({ snoozeLimitedThreads: Boolean(checked) })
               }
               aria-label="Snooze until limits reset"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("project-switcher")}
+          description="Swipe sideways anywhere over the sidebar to move to the next or previous project in the project filter. Not available with the legacy sidebar."
+          resetAction={
+            settings.sidebarProjectSwitcherEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarProjectSwitcherEnabled ? (
+              <SettingResetButton
+                label="swipe between projects"
+                onClick={() =>
+                  updateSettings({
+                    sidebarProjectSwitcherEnabled:
+                      DEFAULT_UNIFIED_SETTINGS.sidebarProjectSwitcherEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarProjectSwitcherEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarProjectSwitcherEnabled: Boolean(checked) })
+              }
+              aria-label="Swipe between projects (beta)"
             />
           }
         />

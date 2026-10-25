@@ -370,6 +370,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta share guest invite link teammate watch t3 connect tunnel"],
   },
   {
+    id: "project-switcher",
+    title: "Swipe between projects (beta)",
+    to: "/settings/general",
+    searchTerms: ["sidebar project switcher swipe trackpad gesture filter"],
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/general",

@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type ComponentProps,
+  type ReactNode,
   type RefObject,
 } from "react";
 
@@ -19,15 +20,22 @@ const TooltipProvider = TooltipPrimitive.Provider;
 
 type TooltipActionsRef = RefObject<TooltipPrimitive.Root.Actions | null>;
 
-// The compiler freezes context values; update hovered tooltips through calls instead of shared ref writes.
-function createTooltipHoverTracker() {
+// Context values are frozen to the compiler, so consumers update the hovered
+// and open tooltips through these calls rather than by writing to a shared ref.
+function createTooltipTracker() {
   let hovered: { trigger: HTMLElement; actionsRef: TooltipActionsRef } | null = null;
+  // Hover only reaches tooltips opened by the mouse; a focused one is tracked once open.
+  const open = new Set<TooltipActionsRef>();
   return {
     hover(trigger: HTMLElement, actionsRef: TooltipActionsRef) {
       hovered = { trigger, actionsRef };
     },
+    opened(actionsRef: TooltipActionsRef) {
+      open.add(actionsRef);
+    },
     release(actionsRef: TooltipActionsRef) {
       if (hovered?.actionsRef === actionsRef) hovered = null;
+      open.delete(actionsRef);
     },
     dismissUnfocused() {
       const tooltip = hovered;
@@ -38,17 +46,26 @@ function createTooltipHoverTracker() {
       // Base UI also cancels delayed hover opens through this action.
       tooltip.actionsRef.current?.close();
     },
+    dismissAll() {
+      const tooltips = new Set(open);
+      if (hovered) tooltips.add(hovered.actionsRef);
+      hovered = null;
+      open.clear();
+      // Closing blocks the hover open until the pointer re-enters the trigger,
+      // so a cursor held still over it does not bring the tooltip back.
+      for (const actionsRef of tooltips) actionsRef.current?.close();
+    },
   };
 }
 
-type TooltipHoverTracker = ReturnType<typeof createTooltipHoverTracker>;
+type TooltipTracker = ReturnType<typeof createTooltipTracker>;
 const TooltipHoverContext = createContext<TooltipActionsRef | null>(null);
-const TooltipScrollContext = createContext<TooltipHoverTracker | null>(null);
+const TooltipTrackerContext = createContext<TooltipTracker | null>(null);
 
 function TooltipScrollDismissArea({ onScrollCapture, ...props }: ComponentProps<"div">) {
-  const [tracker] = useState(createTooltipHoverTracker);
+  const [tracker] = useState(createTooltipTracker);
   return (
-    <TooltipScrollContext value={tracker}>
+    <TooltipTrackerContext value={tracker}>
       <div
         {...props}
         onScrollCapture={(event) => {
@@ -56,12 +73,27 @@ function TooltipScrollDismissArea({ onScrollCapture, ...props }: ComponentProps<
           tracker.dismissUnfocused();
         }}
       />
-    </TooltipScrollContext>
+    </TooltipTrackerContext>
   );
 }
 
+/**
+ * Tooltips inside, portalled popups included, can be closed together with
+ * `useDismissTooltips`, whether hovered, focused or waiting on their delay.
+ */
+function TooltipDismissScope({ children }: { children: ReactNode }) {
+  const [tracker] = useState(createTooltipTracker);
+  return <TooltipTrackerContext value={tracker}>{children}</TooltipTrackerContext>;
+}
+
+const noop = () => {};
+
+function useDismissTooltips() {
+  return use(TooltipTrackerContext)?.dismissAll ?? noop;
+}
+
 function Tooltip<Payload>(props: TooltipPrimitive.Root.Props<Payload>) {
-  const tracker = use(TooltipScrollContext);
+  const tracker = use(TooltipTrackerContext);
   const localActionsRef = useRef<TooltipPrimitive.Root.Actions | null>(null);
   const actionsRef = props.actionsRef ?? localActionsRef;
   useEffect(() => () => tracker?.release(actionsRef), [actionsRef, tracker]);
@@ -74,7 +106,9 @@ function Tooltip<Payload>(props: TooltipPrimitive.Root.Props<Payload>) {
         actionsRef={actionsRef}
         onOpenChange={(open, details) => {
           props.onOpenChange?.(open, details);
-          if (!open && !details.isCanceled) tracker.release(actionsRef);
+          if (details.isCanceled) return;
+          if (open) tracker.opened(actionsRef);
+          else tracker.release(actionsRef);
         }}
       />
     </TooltipHoverContext>
@@ -82,7 +116,7 @@ function Tooltip<Payload>(props: TooltipPrimitive.Root.Props<Payload>) {
 }
 
 function TooltipTrigger(props: TooltipPrimitive.Trigger.Props) {
-  const tracker = use(TooltipScrollContext);
+  const tracker = use(TooltipTrackerContext);
   const actionsRef = use(TooltipHoverContext);
   if (!tracker || !actionsRef) {
     return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />;
@@ -161,4 +195,12 @@ function TooltipPopup({
   );
 }
 
-export { TooltipProvider, Tooltip, TooltipTrigger, TooltipPopup, TooltipScrollDismissArea };
+export {
+  TooltipProvider,
+  Tooltip,
+  TooltipTrigger,
+  TooltipPopup,
+  TooltipScrollDismissArea,
+  TooltipDismissScope,
+  useDismissTooltips,
+};

@@ -141,6 +141,15 @@ const browserTestProject = {
         resetPointer: async ({ page }) => {
           await page.mouse.move(-1, -1);
         },
+        // Real wheel input scrolls natively, so it follows scroll chaining and
+        // overscroll-behavior. Synthetic WheelEvents only run listeners.
+        wheel: async ({ page, iframe }, selector: string, deltaX: number, deltaY: number) => {
+          await iframe.locator(selector).hover();
+          await page.mouse.wheel(deltaX, deltaY);
+        },
+        emulateReducedMotion: async ({ page }, reduce: boolean) => {
+          await page.emulateMedia({ reducedMotion: reduce ? "reduce" : "no-preference" });
+        },
       },
     },
   },
