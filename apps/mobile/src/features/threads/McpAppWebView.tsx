@@ -1,3 +1,4 @@
+import { useEmbeddedContentActive } from "./use-embedded-content-active";
 import { Button } from "../../components/ui/Button";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import * as Dialog from "../../components/ui/Dialog";
@@ -23,7 +24,7 @@ import {
 import * as Predicate from "effect/Predicate";
 import Constants from "expo-constants";
 import { useNavigation } from "@react-navigation/native";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
@@ -33,7 +34,7 @@ import { shareGeneratedAttachment } from "../../lib/attachmentDownload";
 import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { uuidv4 } from "../../lib/uuid";
-import { useAssetUrlState } from "../../state/assets";
+import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import { useThreadShell } from "../../state/entities";
 import { mcpAppEnvironment } from "../../state/mcpApps";
 import { orchestrationEnvironment } from "../../state/orchestration";
@@ -45,10 +46,10 @@ import { MCP_APP_INLINE_MAX_HEIGHT, mcpAppInlineHeight } from "./mcpAppSizing";
 
 const ROW_BOTTOM_MARGIN = 8;
 
-// Android exposes `ReactNativeWebView` to every frame, so a frame nested in the
-// app could post to React Native directly. The outer page therefore wraps what
-// it relays with a secret only it holds, and React Native drops anything else.
-// The relay also attests activation; the sandboxed app cannot set that flag.
+// Android exposes the native bridge to nested frames; only the outer page's
+// secret and activation attestation authenticate messages from the sandbox.
+// Subframe HTTP failures can still fire load, so bound the initial handshake
+// with a one-shot timeout that ends on initialization or WebView disposal.
 function outerDocument(src: string, allow: string, secret: string) {
   const attribute = (value: string) =>
     value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
@@ -57,8 +58,9 @@ function outerDocument(src: string, allow: string, secret: string) {
 <body><iframe id="app" sandbox="allow-scripts allow-forms" allow="${attribute(allow)}"></iframe>
 <script>(function(){var frame=document.getElementById("app"),secret=${JSON.stringify(secret)},loads=0,live=true;
 var send=function(m){var u=navigator.userActivation;window.ReactNativeWebView.postMessage(JSON.stringify({secret:secret,active:!!(u&&u.isActive)&&document.activeElement===frame,message:m}));};
-frame.addEventListener("load",function(){loads+=1;if(loads>1&&live){live=false;send({t3:"navigated"});}});
-window.addEventListener("message",function(e){if(live&&e.source===frame.contentWindow)send(e.data);});
+var handshakeTimer=setTimeout(function(){if(live){live=false;send({t3:"handshake-timeout"});}},30000);
+frame.addEventListener("load",function(){loads+=1;if(loads>1&&live){live=false;clearTimeout(handshakeTimer);send({t3:"navigated"});}});
+window.addEventListener("message",function(e){if(!live||e.source!==frame.contentWindow)return;var m=e.data;if(m&&m.jsonrpc==="2.0"&&m.method==="ui/notifications/initialized")clearTimeout(handshakeTimer);send(m);});
 window.__t3McpAppReceive=function(m){live&&frame.contentWindow&&frame.contentWindow.postMessage(m,"*");};
 frame.src=${JSON.stringify(src).replace(/</g, "\\u003c")};})();</script></body></html>`;
 }
@@ -114,6 +116,12 @@ export function ThreadMcpApp(props: {
   const [closed, setClosed] = useState(false);
   const [presentedFullscreen, setPresentedFullscreen] = useState(false);
   const [documentKey, setDocumentKeyState] = useState(0);
+  const screenActive = useEmbeddedContentActive(!fullscreen);
+  const active = screenActive && !closed && !presentedFullscreen;
+  const activeRef = useRef(active);
+  useLayoutEffect(() => {
+    activeRef.current = active;
+  }, [active]);
 
   const { themeId, themeAppearance, themeVariables, systemColorsActive } =
     useAppearancePreferences();
@@ -139,31 +147,92 @@ export function ThreadMcpApp(props: {
     }),
     [app],
   );
-  const asset = useAssetUrlState(props.environmentId, resource);
-  // The view keeps its first URL: a re-minted one would reload the app.
+  const asset = useAssetUrlState(active ? props.environmentId : null, active ? resource : null);
+  const refreshAsset = useRefreshAssetUrl(
+    active ? props.environmentId : null,
+    active ? resource : null,
+  );
+  // Pin only a usable URL for this document; routine refreshes must not reload it.
   const [uri, setUri] = useState<string | null>(null);
-  if (uri === null && asset._tag === "Success") setUri(asset.url);
+  const [rejectedUri, setRejectedUri] = useState<string | null>(null);
+  const [loadRetried, setLoadRetried] = useState(false);
+  const usableAssetUrl = () =>
+    asset._tag === "Success" && asset.expiresAt > Date.now() && asset.url !== rejectedUri
+      ? asset.url
+      : null;
   const [loaded, setLoaded] = useState(false);
   const [navigatedAway, setNavigatedAway] = useState(false);
   const [generation, setGeneration] = useState(0);
   const [crashed, setCrashed] = useState(false);
+  const [wasActive, setWasActive] = useState(active);
+  if (wasActive !== active) {
+    setWasActive(active);
+    if (!active) {
+      // Preserve dimensions, the app reference and tool result, but remint the
+      // document URL and handshake on return. Page-local state is not durable.
+      setUri(null);
+      setLoaded(false);
+      setCrashed(false);
+      setNavigatedAway(false);
+      setGeneration(0);
+      setRejectedUri(null);
+      setLoadRetried(false);
+    }
+  }
+  const assetUrl = asset._tag === "Success" ? asset.url : null;
+  const expiresAt = asset._tag === "Success" ? asset.expiresAt : null;
+  useEffect(() => {
+    if (!active || uri !== null || assetUrl === null || expiresAt === null) return;
+    if (expiresAt > Date.now() && assetUrl !== rejectedUri) {
+      setCrashed(false);
+      setUri(assetUrl);
+      return;
+    }
+    let cancelled = false;
+    // Cached Success can outlive its credential while background timers pause.
+    void refreshAsset()
+      .then((url) => {
+        if (cancelled) return;
+        // HTML signing buckets can mint the same valid URL. Reject stale
+        // cached values above, but allow an explicit mint to load a new document.
+        if (url === null) setCrashed(true);
+        else {
+          setCrashed(false);
+          setUri(url);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setCrashed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A restarted document must replace any in-flight URL refresh.
+  }, [active, uri, assetUrl, expiresAt, rejectedUri, refreshAsset, documentKey, generation]);
+
   const restart = () => {
+    if (!activeRef.current || currentSecret.current !== secret) return;
     if (generation > 0) {
       setCrashed(true);
       return;
     }
     setLoaded(false);
     setHeight(MCP_APP_INLINE_MAX_HEIGHT);
-    // Use the asset query's refreshed token when creating a replacement view.
-    if (asset._tag === "Success") setUri(asset.url);
+    // Use the refreshed asset token when creating a replacement view.
+    setUri(usableAssetUrl());
     setGeneration(1);
   };
-  const [secret] = useState(uuidv4);
+  // oxlint-disable-next-line react/memo-dependencies -- Replaced documents need a new bridge secret even when they load the same URL.
+  const secret = useMemo(() => uuidv4(), [active, uri, app, generation, documentKey]);
+  const currentSecret = useRef(secret);
+  useLayoutEffect(() => {
+    currentSecret.current = secret;
+  }, [secret]);
   const setDocumentKey = (next: (value: number) => number) => {
     setLoaded(false);
     setHeight(MCP_APP_INLINE_MAX_HEIGHT);
     setNavigatedAway(false);
-    if (asset._tag === "Success") setUri(asset.url);
+    setUri(usableAssetUrl());
     setDocumentKeyState(next);
   };
   const openNewDocument = useRef(setDocumentKey);
@@ -180,10 +249,12 @@ export function ThreadMcpApp(props: {
 
   // The feed omits tool input and output; the app needs both.
   const detail = useEnvironmentQuery(
-    orchestrationEnvironment.turnItem({
-      environmentId: props.environmentId,
-      input: { threadId: props.threadId, itemId: props.itemId, revision: props.revision },
-    }),
+    active
+      ? orchestrationEnvironment.turnItem({
+          environmentId: props.environmentId,
+          input: { threadId: props.threadId, itemId: props.itemId, revision: props.revision },
+        })
+      : null,
   );
   const storedItem = detail.data?.item;
   const toolCall = useMemo(() => {
@@ -225,6 +296,7 @@ export function ThreadMcpApp(props: {
     latest.current = live;
   });
   useEffect(() => {
+    if (!active) return;
     let cancelled = false;
     void latest.current
       .toolInfo({
@@ -239,14 +311,23 @@ export function ThreadMcpApp(props: {
     return () => {
       cancelled = true;
     };
-  }, [props.environmentId, props.threadId, props.itemId, app.tool]);
+  }, [active, props.environmentId, props.threadId, props.itemId, app.tool]);
   const webView = useRef<WebView<object>>(null);
   const hostRef = useRef<McpAppHost | null>(null);
   const userActive = useRef(false);
+  const disposeHost = useRef(() => {});
 
   useEffect(() => {
-    if (uri === null) return;
+    if (!active || uri === null || navigatedAway || crashed) return;
+    let disposed = false;
+    const isCurrentDocument = () =>
+      !disposed && activeRef.current && currentSecret.current === secret;
+    const assertCurrentDocument = () => {
+      if (!isCurrentDocument())
+        throw new McpAppHostRefusal("This app document is no longer active.");
+    };
     const scope = () => {
+      assertCurrentDocument();
       const { environmentId, threadId, itemId } = latest.current.props;
       return { environmentId, input: { threadId, itemId } };
     };
@@ -288,6 +369,7 @@ export function ThreadMcpApp(props: {
       callTool: async ({ name, arguments: args }) => {
         const { environmentId, input } = scope();
         const info = await latest.current.toolInfo({ environmentId, input: { ...input, name } });
+        assertCurrentDocument();
         if (info._tag !== "Success") throw commandFailure(info);
         if (!info.value.callable) throw new McpAppHostRefusal("This app cannot call that tool.");
         if (
@@ -300,6 +382,7 @@ export function ThreadMcpApp(props: {
         ) {
           throw new McpAppHostRefusal("Declined by the user.");
         }
+        assertCurrentDocument();
         const result = await latest.current.callTool({
           environmentId,
           input: { ...input, name, arguments: args },
@@ -317,18 +400,22 @@ export function ThreadMcpApp(props: {
         return result.value;
       },
       openLink: async (url) => {
-        // WebViews cannot prove user activation; confirm links to prevent timer-driven navigation out of T3.
+        assertCurrentDocument();
+        // Confirm links because WebViews cannot prove user activation.
         if (!(await confirm(`Open a link from ${app.server}?`, url, "Open"))) {
           throw new McpAppHostRefusal("Declined by the user.");
         }
+        assertCurrentDocument();
         if (!(await tryOpenExternalUrl(url, "mcp-app"))) {
           throw new McpAppHostRefusal("The link could not be opened.");
         }
       },
       sendMessage: async (text) => {
+        assertCurrentDocument();
         if (!(await confirm(`Send this message from ${app.server}?`, text, "Send"))) {
           throw new McpAppHostRefusal("Declined by the user.");
         }
+        assertCurrentDocument();
         await enqueueThreadOutboxMessage({
           environmentId: latest.current.props.environmentId,
           threadId: latest.current.props.conversationThreadId,
@@ -353,6 +440,7 @@ export function ThreadMcpApp(props: {
         if (result._tag !== "Success") throw commandFailure(result);
       },
       requestDisplayMode: async (mode) => {
+        assertCurrentDocument();
         const current = latest.current.props;
         // receive dispatches synchronously; read activation before awaiting teardown.
         if (
@@ -364,9 +452,14 @@ export function ThreadMcpApp(props: {
           return current.displayMode ?? "inline";
         }
         if (mode === "fullscreen" && current.displayMode !== "fullscreen") {
-          await hostRef.current?.teardown();
+          await next.teardown();
+          assertCurrentDocument();
           // Approval arrival or navigation during the wait requires reloading inline.
-          if (latest.current.awaitingUser || !latest.current.navigation.isFocused()) {
+          if (
+            !activeRef.current ||
+            latest.current.awaitingUser ||
+            !latest.current.navigation.isFocused()
+          ) {
             openNewDocument.current((value) => value + 1);
             return "inline";
           }
@@ -381,18 +474,21 @@ export function ThreadMcpApp(props: {
           return "fullscreen";
         }
         if (mode === "inline" && current.displayMode === "fullscreen") {
-          await hostRef.current?.teardown();
+          await next.teardown();
+          assertCurrentDocument();
           current.onExitFullscreen?.();
           return "inline";
         }
         return current.displayMode ?? "inline";
       },
       downloadFile: async (files) => {
+        assertCurrentDocument();
         const names = files.map((file) => file.name).join(", ");
         if (!(await confirm(`Save a file from ${app.server}?`, names, "Save"))) {
           throw new McpAppHostRefusal("Declined by the user.");
         }
         for (const file of files) {
+          assertCurrentDocument();
           let bytes: Uint8Array | undefined;
           let mimeType = file.mimeType ?? "application/octet-stream";
           if (file._tag === "embedded") {
@@ -413,6 +509,7 @@ export function ThreadMcpApp(props: {
           if (bytes.byteLength > MAX_DOWNLOAD_BYTES) {
             throw new McpAppHostRefusal(`${file.name} is too large to save.`);
           }
+          assertCurrentDocument();
           const shared = await shareGeneratedAttachment({
             bytes,
             attachment: { name: file.name, mimeType },
@@ -422,12 +519,13 @@ export function ThreadMcpApp(props: {
         }
       },
       onRequestTeardown: () => {
+        if (!isCurrentDocument()) return;
         const current = latest.current.props;
-        if (current.displayMode === "fullscreen") {
-          void hostRef.current?.teardown().then(() => current.onExitFullscreen?.());
-        } else {
-          void hostRef.current?.teardown().then(() => setClosed(true));
-        }
+        void next.teardown().then(() => {
+          if (!isCurrentDocument()) return;
+          if (current.displayMode === "fullscreen") current.onExitFullscreen?.();
+          else setClosed(true);
+        });
       },
       onSizeChanged: (size) => {
         if (latest.current.props.displayMode === "fullscreen") return;
@@ -436,13 +534,17 @@ export function ThreadMcpApp(props: {
       },
     });
     hostRef.current = next;
-    return () => {
-      // An unmount cannot wait: the request goes out before the view does.
-      void next.teardown();
-      hostRef.current = null;
+    const dispose = () => {
+      disposed = true;
+      // Fullscreen handoff explicitly awaits teardown above. A hidden or
+      // unmounted document cannot answer it; dispose without a background timer.
+      next.dispose();
+      if (hostRef.current === next) hostRef.current = null;
     };
+    disposeHost.current = dispose;
+    return dispose;
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A restarted view needs a new host.
-  }, [uri, app, generation, documentKey]);
+  }, [active, uri, app, generation, documentKey, secret, navigatedAway, crashed]);
 
   useEffect(() => {
     hostRef.current?.updateHostContext();
@@ -451,7 +553,20 @@ export function ThreadMcpApp(props: {
   useEffect(() => {
     if (toolCall !== undefined) hostRef.current?.setToolCall(toolCall);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each new document needs the call.
-  }, [toolCall, uri, generation, documentKey]);
+  }, [active, toolCall, uri, generation, documentKey]);
+
+  const retryFailedLoad = () => {
+    if (currentSecret.current !== secret || !activeRef.current) return;
+    disposeHost.current();
+    if (loadRetried) {
+      setCrashed(true);
+      return;
+    }
+    setLoadRetried(true);
+    setRejectedUri(uri);
+    setUri(null);
+    setLoaded(false);
+  };
 
   const source = useMemo(
     () =>
@@ -497,7 +612,9 @@ export function ThreadMcpApp(props: {
 
   return (
     <View style={fullscreen ? { flex: 1 } : { height, marginBottom: ROW_BOTTOM_MARGIN }}>
-      {navigatedAway ? (
+      {!active ? (
+        <View className="flex-1" />
+      ) : navigatedAway ? (
         <View className="flex-1 items-center justify-center">
           <Text className="text-sm text-foreground-muted">
             The {app.server} app left its page and was stopped
@@ -521,10 +638,28 @@ export function ThreadMcpApp(props: {
             request.url === "about:blank"
           }
           setSupportMultipleWindows={false}
-          onLoadEnd={() => setLoaded(true)}
-          onError={() => setCrashed(true)}
-          onHttpError={() => setCrashed(true)}
+          onLoadEnd={() => {
+            if (activeRef.current && currentSecret.current === secret) setLoaded(true);
+          }}
+          onError={() => {
+            if (!activeRef.current || currentSecret.current !== secret) return;
+            disposeHost.current();
+            setCrashed(true);
+          }}
+          onHttpError={(event) => {
+            if (currentSecret.current !== secret || !activeRef.current) return;
+            // iOS can report subresource errors too; only the app URL can
+            // invalidate this document. Expired asset credentials return 404.
+            if (event.nativeEvent.url !== uri) return;
+            const status = event.nativeEvent.statusCode;
+            if (status === 401 || status === 403 || status === 404) retryFailedLoad();
+            else {
+              disposeHost.current();
+              setCrashed(true);
+            }
+          }}
           onMessage={(event: WebViewMessageEvent) => {
+            if (!activeRef.current || currentSecret.current !== secret) return;
             let envelope: unknown;
             try {
               envelope = JSON.parse(event.nativeEvent.data);
@@ -534,8 +669,12 @@ export function ThreadMcpApp(props: {
             if (!Predicate.isObject(envelope) || envelope.secret !== secret) return;
             const message = envelope.message;
             if (Predicate.isObject(message) && message.t3 === "navigated") {
-              hostRef.current?.dispose();
+              disposeHost.current();
               setNavigatedAway(true);
+              return;
+            }
+            if (Predicate.isObject(message) && message.t3 === "handshake-timeout") {
+              retryFailedLoad();
               return;
             }
             userActive.current = envelope.active === true;
@@ -548,7 +687,7 @@ export function ThreadMcpApp(props: {
           <Text className="text-sm text-foreground-muted">Unable to load the {app.server} app</Text>
         </View>
       ) : null}
-      {uri !== null && !loaded && !crashed && !navigatedAway ? (
+      {active && uri !== null && !loaded && !crashed && !navigatedAway ? (
         <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
           <AppActivityIndicator />
         </View>

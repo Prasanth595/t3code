@@ -1,4 +1,4 @@
-import { createContext, useContext } from "react";
+import { useContext } from "react";
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import {
@@ -7,7 +7,7 @@ import {
   type MediaVideoPreviewSource,
 } from "../../lib/videoPreviewSource";
 
-export const ThreadMediaVisibleContext = createContext(false);
+import { ThreadMediaVisibleContext } from "./thread-media-visibility";
 
 export function ThreadMarkdownVideo(props: {
   readonly source: MediaVideoPreviewSource;

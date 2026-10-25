@@ -1,3 +1,4 @@
+import { useScreenActive } from "../../lib/use-screen-active";
 import { useEffect, useState } from "react";
 import { BackHandler, Platform, View } from "react-native";
 import { WebView } from "react-native-webview";
@@ -26,6 +27,8 @@ function DocumentWebPreview(props: { readonly uri: string }) {
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [linkedPdf, setLinkedPdf] = useState<string | null>(null);
+  const screenActive = useScreenActive();
+  const documentActive = Platform.OS !== "android" || (screenActive && linkedPdf === null);
 
   useEffect(() => {
     if (linkedPdf === null) return;
@@ -66,41 +69,43 @@ function DocumentWebPreview(props: { readonly uri: string }) {
             <Text className="mt-0.5 text-xs leading-snug text-foreground-muted">{loadError}</Text>
           </View>
         ) : null}
-        <WebView
-          source={{ uri: props.uri }}
-          originWhitelist={["*"]}
-          allowsBackForwardNavigationGestures
-          allowsFullscreenVideo
-          setSupportMultipleWindows={false}
-          onShouldStartLoadWithRequest={(request) => {
-            if (request.isTopFrame !== false && isPdfPreviewUri(request.url)) {
-              setLinkedPdf(request.url);
-              return false;
-            }
-            return true;
-          }}
-          startInLoadingState
-          onLoadProgress={(event) => {
-            setLoadProgress(event.nativeEvent.progress);
-          }}
-          onLoadStart={() => {
-            setLoadProgress(0.05);
-            setLoadError(null);
-          }}
-          onLoadEnd={() => {
-            setLoadProgress(0);
-          }}
-          onError={(event) => {
-            setLoadProgress(0);
-            setLoadError(event.nativeEvent.description || "The file could not be rendered.");
-          }}
-          renderLoading={() => (
-            <View className="absolute inset-0 items-center justify-center bg-card">
-              <AppActivityIndicator />
-            </View>
-          )}
-          style={{ flex: 1, backgroundColor: "transparent" }}
-        />
+        {documentActive ? (
+          <WebView
+            source={{ uri: props.uri }}
+            originWhitelist={["*"]}
+            allowsBackForwardNavigationGestures
+            allowsFullscreenVideo
+            setSupportMultipleWindows={false}
+            onShouldStartLoadWithRequest={(request) => {
+              if (request.isTopFrame !== false && isPdfPreviewUri(request.url)) {
+                setLinkedPdf(request.url);
+                return false;
+              }
+              return true;
+            }}
+            startInLoadingState
+            onLoadProgress={(event) => {
+              setLoadProgress(event.nativeEvent.progress);
+            }}
+            onLoadStart={() => {
+              setLoadProgress(0.05);
+              setLoadError(null);
+            }}
+            onLoadEnd={() => {
+              setLoadProgress(0);
+            }}
+            onError={(event) => {
+              setLoadProgress(0);
+              setLoadError(event.nativeEvent.description || "The file could not be rendered.");
+            }}
+            renderLoading={() => (
+              <View className="absolute inset-0 items-center justify-center bg-card">
+                <AppActivityIndicator />
+              </View>
+            )}
+            style={{ flex: 1, backgroundColor: "transparent" }}
+          />
+        ) : null}
       </View>
     </View>
   );

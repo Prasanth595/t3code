@@ -1,3 +1,4 @@
+import { useEmbeddedContentActive } from "./use-embedded-content-active";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -78,6 +79,18 @@ function readOverflowMessage(data: string): Overflow | null {
 const withoutFragment = (url: string) => url.split("#", 1)[0];
 
 export function HtmlRenderWebView(props: {
+  readonly uri: string;
+  readonly title: string;
+  readonly nested: boolean;
+  readonly onLoadError?: () => void;
+}) {
+  const active = useEmbeddedContentActive(props.nested);
+  // Keep the resource and row size outside this boundary. Arbitrary documents
+  // cannot acknowledge a reliable pause, so destroy their runtime while hidden.
+  return active ? <ActiveHtmlRenderWebView {...props} /> : <View style={{ flex: 1 }} />;
+}
+
+function ActiveHtmlRenderWebView(props: {
   readonly uri: string;
   readonly title: string;
   readonly nested: boolean;
