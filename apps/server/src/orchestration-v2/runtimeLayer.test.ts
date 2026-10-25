@@ -3854,7 +3854,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("settles past held automatic runs but not held user messages", () =>
+  it.effect("settles past held automatic messages but preserves a held user queue", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
@@ -3886,20 +3886,37 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         modelSelection,
         dispatchMode: { type: "start_immediately" },
       });
-      const queueMessage = (id: string, automatic: boolean) =>
+      const queueMessage = (
+        id: string,
+        sender: "notification" | "agent" | "scheduled" | "system" | "user",
+      ) =>
         orchestrator.dispatch({
           type: "message.dispatch",
-          createdBy: automatic ? "agent" : "user",
-          creationSource: automatic ? "provider" : "web",
-          ...(automatic
+          ...(sender === "notification"
             ? {
+                createdBy: "agent" as const,
+                creationSource: "provider" as const,
                 notification: {
                   source: { kind: "background_task" as const },
                   outcome: "updated" as const,
                   summary: "Background activity updated",
                 },
               }
-            : {}),
+            : sender === "agent"
+              ? {
+                  createdBy: "agent" as const,
+                  creationSource: "mcp" as const,
+                  senderThreadId: ThreadId.make("settle-automatic-sender"),
+                }
+              : sender === "scheduled"
+                ? {
+                    createdBy: "user" as const,
+                    creationSource: "web" as const,
+                    scheduledTaskId: ScheduledTaskId.make("settle-automatic-schedule"),
+                  }
+                : sender === "system"
+                  ? { createdBy: "system" as const, creationSource: "server" as const }
+                  : { createdBy: "user" as const, creationSource: "web" as const }),
           commandId: CommandId.make(id),
           threadId,
           messageId: MessageId.make(id),
@@ -3908,7 +3925,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           modelSelection,
           dispatchMode: { type: "queue_after_active" },
         });
-      yield* queueMessage("settle-automatic-notification", true);
+      yield* queueMessage("settle-automatic-notification", "notification");
+      yield* queueMessage("settle-automatic-agent", "agent");
+      yield* queueMessage("settle-automatic-scheduled", "scheduled");
+      yield* queueMessage("settle-automatic-system", "system");
 
       const holdQueueAfterRestart = (commandId: string) =>
         Effect.gen(function* () {
@@ -3964,7 +3984,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         modelSelection,
         dispatchMode: { type: "start_immediately" },
       });
-      yield* queueMessage("settle-automatic-user-queued", false);
+      yield* queueMessage("settle-automatic-user-queued", "user");
+      yield* queueMessage("settle-automatic-agent-queued-2", "agent");
       yield* holdQueueAfterRestart("settle-automatic-restart-2");
       const error = yield* orchestrator
         .dispatch({
@@ -3977,6 +3998,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal(
         error.cause,
         `Thread ${threadId} has a queued message. Send it or remove it from the queue before settling.`,
+      );
+      const blocked = yield* orchestrator.getThreadProjection(threadId);
+      assert.isNull(blocked.thread.settledAt);
+      assert.deepEqual(
+        blocked.runs.filter((run) => run.status === "queued").map((run) => run.userMessageId),
+        ["settle-automatic-user-queued", "settle-automatic-agent-queued-2"],
       );
     }),
   );
