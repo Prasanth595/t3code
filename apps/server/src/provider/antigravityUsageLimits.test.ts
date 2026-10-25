@@ -79,14 +79,14 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
       }),
     );
   if (!options.missingToken) yield* writeToken(options.refreshToken ?? "refresh-a");
-  const requests: Array<{ url: string; body: string }> = [];
+  const requests: Array<{ url: string; body: string; userAgent?: string }> = [];
   const http = HttpClient.make((request, url, _signal, fiber) =>
     Effect.sync(() => {
       const init = Context.getOrUndefined(fiber.context, FetchHttpClient.RequestInit);
       expect(init?.redirect).toBe("manual");
       const body =
         request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
-      requests.push({ url: request.url, body });
+      requests.push({ url: request.url, body, userAgent: request.headers["user-agent"] });
       if (request.url.endsWith("/token")) {
         expect(new URLSearchParams(body).get("grant_type")).toBe("refresh_token");
         return HttpClientResponse.fromWeb(
@@ -125,6 +125,35 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
 });
 
 describe("Antigravity subscription limits", () => {
+  it.effect("labels the Gemini Argon bucket separately and probes as the ACP client", () =>
+    Effect.gen(function* () {
+      const { probe, requests } = yield* fixture({
+        summary: {
+          groups: [
+            ...summary.groups,
+            {
+              displayName: "Gemini 4 Argon",
+              buckets: [
+                { bucketId: "gemini-argon-wtu-weekly", window: "weekly", remainingFraction: 0.9 },
+              ],
+            },
+          ],
+        },
+      });
+      const limits = yield* probe;
+      const byId = new Map(limits.windows.map((window) => [window.id, window]));
+      expect(byId.get("gemini-weekly")?.label).toBe("Gemini · Weekly");
+      expect(byId.get("gemini-argon-wtu-weekly")?.label).toBe("Gemini 4 Argon · Weekly");
+      const quotaRequests = requests.filter((request) =>
+        request.url.endsWith(":retrieveUserQuotaSummary"),
+      );
+      expect(quotaRequests.length).toBeGreaterThan(0);
+      for (const request of quotaRequests) {
+        expect(request.userAgent).toMatch(/^antigravity\/acp\//);
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("reports separate Gemini and shared Claude/GPT five-hour and weekly limits", () =>
     Effect.gen(function* () {
       const { probe, requests } = yield* fixture();
