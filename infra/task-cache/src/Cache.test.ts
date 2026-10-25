@@ -1,5 +1,8 @@
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import { Deadline } from "@voidzero-dev/vite-plus-remote-cache-cloudflare/src/streams.ts";
 import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 import { Observations } from "@voidzero-dev/vite-plus-remote-cache-cloudflare/src/observations.ts";
@@ -37,5 +40,51 @@ it.effect("includes successful blob downloads in exported R2 usage", () =>
     expect(yield* Effect.promise(() => response.text())).toBe("data");
     expect(get).toHaveBeenCalledWith("artifact");
     expect(observations.mock.results.at(-1)?.value.r2_operations).toBe(1);
+  }),
+);
+
+it.effect("aborts the upstream deadline before disposing it on interruption", () =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>();
+    const cancelled: boolean[] = [];
+    const originalDispose = Deadline.prototype.dispose;
+    using _dispose = vi.spyOn(Deadline.prototype, "dispose").mockImplementation(function (
+      this: Deadline,
+    ) {
+      try {
+        this.check();
+        cancelled.push(false);
+      } catch {
+        cancelled.push(true);
+      }
+      originalDispose.call(this);
+    });
+    const bindings = {
+      ARTIFACTS: {
+        get: () => {
+          Deferred.doneUnsafe(entered, Effect.void);
+          return new Promise(() => {});
+        },
+      },
+      readLimit: { limit: async () => ({ success: true }) },
+    } as unknown as typeof Bindings.Service;
+    yield* Effect.gen(function* () {
+      const cache = yield* Cache;
+      const fiber = yield* cache
+        .handle(
+          new Request(
+            "https://cache.example/projects/t3code/blob/12345678-1234-1234-1234-123456789abc",
+          ),
+          { waitUntil: () => {} },
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(entered);
+      yield* Fiber.interrupt(fiber);
+      expect(cancelled).toEqual([true]);
+    }).pipe(
+      Effect.provide(
+        layer.pipe(Layer.provide([Layer.succeed(Bindings, bindings), Admission.layer])),
+      ),
+    );
   }),
 );

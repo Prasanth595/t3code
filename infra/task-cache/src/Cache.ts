@@ -115,7 +115,11 @@ export const layer = Layer.effect(
                         AbortSignal.any([request.signal, controller.signal]),
                       ),
                   ),
-                  (value) => Effect.sync(() => value.dispose()),
+                  (value) =>
+                    Effect.sync(() => {
+                      controller.abort();
+                      value.dispose();
+                    }),
                 );
                 const stats = new Observations();
                 yield* Effect.addFinalizer(() =>
