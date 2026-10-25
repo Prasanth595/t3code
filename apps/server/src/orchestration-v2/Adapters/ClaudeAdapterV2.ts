@@ -1855,9 +1855,21 @@ function isSupportedClaudeImageMimeType(
   return supportedClaudeImageMimeTypes.has(mimeType);
 }
 
+// Claude's trust gates, like artifact comment auto-replies, need typed input stamped human.
+function claudeMessageOrigin(
+  message: ProviderAdapter.ProviderAdapterV2TurnMessage,
+): SDKUserMessage["origin"] {
+  return message.createdBy === "user" &&
+    (message.creationSource === "web" || message.creationSource === "mobile") &&
+    message.scheduledTaskId === undefined
+    ? { kind: "human" }
+    : undefined;
+}
+
 export function makeClaudeUserMessage(input: {
   readonly text: string;
   readonly priority?: SDKUserMessage["priority"];
+  readonly origin?: SDKUserMessage["origin"];
   readonly skills?: ReadonlyMap<string, ClaudeSkillTarget>;
   readonly uuid?: SDKUserMessage["uuid"];
 }): SDKUserMessage {
@@ -1880,6 +1892,7 @@ export function makeClaudeUserMessage(input: {
     },
     parent_tool_use_id: null,
     ...(input.priority === undefined ? {} : { priority: input.priority }),
+    ...(input.origin === undefined ? {} : { origin: input.origin }),
     ...(input.uuid === undefined ? {} : { uuid: input.uuid }),
   };
 }
@@ -1888,6 +1901,7 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly priority?: SDKUserMessage["priority"];
+  readonly origin?: SDKUserMessage["origin"];
   readonly uuid?: SDKUserMessage["uuid"];
   readonly attachmentsDir: string;
   readonly fileSystem: FileSystem.FileSystem;
@@ -1898,6 +1912,7 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
       text: input.text,
       ...(input.skills === undefined ? {} : { skills: input.skills }),
       ...(input.priority === undefined ? {} : { priority: input.priority }),
+      ...(input.origin === undefined ? {} : { origin: input.origin }),
       ...(input.uuid === undefined ? {} : { uuid: input.uuid }),
     });
   }
@@ -1976,6 +1991,7 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
     },
     parent_tool_use_id: null,
     ...(input.priority === undefined ? {} : { priority: input.priority }),
+    ...(input.origin === undefined ? {} : { origin: input.origin }),
     ...(input.uuid === undefined ? {} : { uuid: input.uuid }),
   } satisfies SDKUserMessage;
 });
@@ -9532,6 +9548,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     attachmentsDir,
                     fileSystem,
                     skills: yield* userInvocableSkills(turnInput.runtimePolicy.cwd),
+                    origin: claudeMessageOrigin(turnInput.message),
                     uuid: promptUuid,
                   });
             const querySession = yield* openQuery(turnInput, nativeThreadId);
@@ -9958,6 +9975,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ),
               attachments: turnInput.message.attachments,
               priority: "now",
+              origin: claudeMessageOrigin(turnInput.message),
               attachmentsDir,
               fileSystem,
               skills: yield* userInvocableSkills(currentTurn.input.runtimePolicy.cwd),
