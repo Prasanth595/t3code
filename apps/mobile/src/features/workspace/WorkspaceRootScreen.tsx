@@ -218,9 +218,12 @@ function WorkspaceRootContent() {
         {deviceType !== "pad" && deviceType !== "phone" && sidebarPicker ? (
           <WorkspaceSidebarTabs />
         ) : null}
-        {enabled.length === 0 && !settingsOpen ? null : (settingsOpen && Platform.OS === "ios") || // Android's Settings list carries its own search in its app bar.
-          state.selectedTab === "threads" ||
-          state.selectedTab === "pullRequests" ? (
+        {/* Android's Settings list carries its own search in its app bar. */}
+        {enabled.length === 0 && !settingsOpen ? null : (
+            settingsOpen
+              ? Platform.OS === "ios"
+              : state.selectedTab === "threads" || state.selectedTab === "pullRequests"
+          ) ? (
           <WorkspaceToolbar sidebar={sidebarNavigation} onNewTask={startNewTask} />
         ) : (
           <WorkspaceSectionToolbar onNewTask={startNewTask} showCompose={false} />
