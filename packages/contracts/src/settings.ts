@@ -644,11 +644,8 @@ export const IDLE_COMPACTION_MODES = [
 export const IdleCompactionMode = Schema.Literals(IDLE_COMPACTION_MODES.map((mode) => mode.value));
 export type IdleCompactionMode = typeof IdleCompactionMode.Type;
 
-// `compactIdleThreads` was a beta on/off switch for compacting before the cache
-// expires. Shipped clients decode it as a boolean and drop the whole server config
-// otherwise, so it stays a boolean on the wire and the mode lives in
-// `idleCompaction`. Servers before that split sent the mode here, so a string is
-// still read.
+// Shipped clients reject the whole server config unless `compactIdleThreads` is boolean.
+// Keep the mode in `idleCompaction`, but accept strings from older servers.
 const LegacyCompactIdleThreads = Schema.Union([Schema.Boolean, IdleCompactionMode]);
 
 const INSTANCE_IDLE_COMPACTION_MODES = [

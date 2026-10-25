@@ -370,11 +370,9 @@ export const OrchestrationV2LimitRecoveryUpdate = Schema.Struct({
 export type OrchestrationV2LimitRecoveryUpdate = typeof OrchestrationV2LimitRecoveryUpdate.Type;
 
 /**
- * How often the user opens a thread, for search ranking. `score` is an open
- * count that halves every two weeks, as of `openedAt`. `picks` holds the last
- * few palette queries that picked the thread, folded to lowercase, newest
- * first, each with when it was picked. Times are epoch milliseconds: ranking
- * does arithmetic on them.
+ * `score` is an open count that halves every two weeks, as of `openedAt`.
+ * `picks` stores lowercase palette queries, newest first.
+ * Times are epoch milliseconds for ranking arithmetic.
  */
 export const OrchestrationV2ThreadOpens = Schema.Struct({
   openedAt: Schema.Finite,

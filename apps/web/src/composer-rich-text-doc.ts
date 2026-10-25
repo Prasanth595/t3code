@@ -169,11 +169,8 @@ export const ComposerBoldSelectionOnlyExtension = Extension.create({
 });
 
 /**
- * Tiptap's block extensions each bind a chord that turns the current block into
- * their node (Mod-Shift-8 for a list, Mod-Alt-c for a fence, and so on). The
- * composer does not offer them, and they are not harmless: run inside a quote
- * they nest a block the quote serializer cannot write, and the text in it drops
- * out of the stored draft.
+ * Tiptap's block chords can nest blocks inside quotes that the serializer cannot write,
+ * silently dropping their text from stored drafts.
  */
 function withoutBlockChords<Shortcuts extends Record<string, unknown>>(
   shortcuts: Shortcuts | undefined,
