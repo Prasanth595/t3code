@@ -580,6 +580,11 @@ launch_lock_is_stale() {
 # Only the process holding "<lock>.reclaim" may remove a stale <lock>. A dead
 # owner cannot release, so the record cannot change between that holder's
 # check and its removal. A stranded ".reclaim" is recovered the same way.
+release_launch_lock_marker() {
+  # A signal after unlink must not let EXIT cleanup remove a successor's marker.
+  LAUNCH_LOCK_MARKER=""
+  rm -f "$1"
+}
 reclaim_launch_lock() {
   RECLAIM_TARGET="$LAUNCH_LOCK"
   while RECLAIM_OWNER="$(cat "$RECLAIM_TARGET" 2>/dev/null)" && launch_lock_is_stale "$RECLAIM_OWNER"; do
@@ -588,8 +593,7 @@ reclaim_launch_lock() {
       if RECLAIM_OWNER="$(cat "$RECLAIM_TARGET" 2>/dev/null)" && launch_lock_is_stale "$RECLAIM_OWNER"; then
         rm -f "$RECLAIM_TARGET"
       fi
-      rm -f "$LAUNCH_LOCK_MARKER"
-      LAUNCH_LOCK_MARKER=""
+      release_launch_lock_marker "$LAUNCH_LOCK_MARKER"
       return 0
     fi
     RECLAIM_TARGET="$RECLAIM_TARGET.reclaim"
@@ -601,11 +605,11 @@ LAUNCH_LOCK_HELD=0
 LAUNCH_LOCK_MARKER=""
 release_launch_lock() {
   if [ -n "$LAUNCH_LOCK_MARKER" ]; then
-    rm -f "$LAUNCH_LOCK_MARKER"
+    release_launch_lock_marker "$LAUNCH_LOCK_MARKER"
   fi
   if [ "$LAUNCH_LOCK_HELD" = 1 ]; then
-    rm -f "$LAUNCH_LOCK"
     LAUNCH_LOCK_HELD=0
+    rm -f "$LAUNCH_LOCK"
   fi
   rm -f "$LAUNCH_LOCK_RECORD"
 }

@@ -514,6 +514,7 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
     });
     return {
       fs,
+      home,
       stateDir,
       readManagedPid,
       run,
@@ -733,6 +734,83 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
       assert.equal((yield* Fiber.join(next)).serverKind, "managed");
       assert.isFalse(yield* fs.exists(lockPath));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live(
+    "does not remove the next reclaimer's marker when signalled after releasing its own",
+    () =>
+      Effect.gen(function* () {
+        const { fs, home, run, launch, writeVariant, lockPath, exitedPid } = yield* prepareLaunch;
+        const deadOwner = `${yield* exitedPid}\n`;
+        yield* fs.makeDirectory(lockPath.slice(0, lockPath.lastIndexOf("/")), { recursive: true });
+        yield* fs.writeFileString(lockPath, deadOwner);
+        yield* fs.makeDirectory(`${home}/bin`, { recursive: true });
+        // Interrupt only the first marker release, after unlink but before returning to sh.
+        yield* fs.writeFileString(
+          `${home}/bin/rm`,
+          `#!/bin/sh
+if [ "$1" = "-f" ] && [ "\${2:-}" = "$HOME/.t3/ssh-launch/.ownership.lock.reclaim" ] && mkdir "$HOME/removal-gated" 2>/dev/null; then
+  /bin/rm "$@"
+  printf 'marker-removed\\n'
+  read -r release
+  kill -TERM "$PPID"
+else
+  exec /bin/rm "$@"
+fi
+`,
+        );
+        yield* fs.chmod(`${home}/bin/rm`, 0o700);
+        const markerRemoved = yield* Deferred.make<void>();
+        const signalFirst = yield* Deferred.make<void>();
+        const first = yield* run("first-alias", {
+          onLine: (line) =>
+            line === "marker-removed"
+              ? Deferred.succeed(markerRemoved, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          release: Deferred.await(signalFirst),
+        }).pipe(Effect.forkScoped);
+        yield* Deferred.await(markerRemoved);
+
+        yield* fs.writeFileString(lockPath, deadOwner);
+        const nextChecked = yield* Deferred.make<void>();
+        const releaseNext = yield* Deferred.make<void>();
+        const nextScript = yield* writeVariant("rechecked", [
+          [
+            '        rm -f "$RECLAIM_TARGET"',
+            '        printf "rechecked\\n"; read -r release; rm -f "$RECLAIM_TARGET"',
+          ],
+        ]);
+        const next = yield* launch(
+          "next-alias",
+          {
+            onLine: (line) =>
+              line === "rechecked"
+                ? Deferred.succeed(nextChecked, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+            release: Deferred.await(releaseNext),
+          },
+          nextScript,
+        ).pipe(Effect.forkScoped);
+        yield* Deferred.await(nextChecked);
+        const nextMarker = yield* fs.readFileString(`${lockPath}.reclaim`);
+
+        yield* Deferred.succeed(signalFirst, undefined);
+        assert.equal((yield* Fiber.join(first)).exitCode, 143);
+        assert.isTrue(
+          yield* fs.exists(`${lockPath}.reclaim`),
+          "signal cleanup removed the next reclaimer's marker",
+        );
+        assert.equal(yield* fs.readFileString(`${lockPath}.reclaim`), nextMarker);
+        const contenderScript = yield* writeVariant("blocked", [FAIL_FAST]);
+        const contender = yield* run("third-alias", undefined, contenderScript);
+        assert.equal(contender.exitCode, 1, contender.stderr);
+        assert.equal(yield* fs.readFileString(`${lockPath}.reclaim`), nextMarker);
+
+        yield* Deferred.succeed(releaseNext, undefined);
+        assert.equal((yield* Fiber.join(next)).serverKind, "managed");
+        assert.isFalse(yield* fs.exists(lockPath));
+        assert.isFalse(yield* fs.exists(`${lockPath}.reclaim`));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("Linux process identity", () => {
