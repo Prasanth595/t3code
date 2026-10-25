@@ -424,6 +424,45 @@ describe("AssetAccess", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.skipIf(!symlinksSupported)(
+    "rejects a draft media path swapped after workspace containment validation",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-draft-swap-" });
+        const root = path.join(directory, "workspace");
+        yield* fs.makeDirectory(root);
+        const filePath = path.join(root, "video.mp4");
+        const outside = path.join(directory, "outside.mp4");
+        yield* fs.writeFileString(filePath, "workspace video");
+        yield* fs.writeFileString(outside, "outside video");
+        const canonicalFile = yield* fs.realPath(filePath);
+        let swapped = false;
+        const swappingFileSystem = FileSystem.FileSystem.of({
+          ...fs,
+          stat: Effect.fn(function* (requestedPath) {
+            const info = yield* fs.stat(requestedPath);
+            if (requestedPath === canonicalFile && !swapped) {
+              swapped = true;
+              yield* fs.remove(filePath);
+              yield* fs.symlink(outside, filePath);
+            }
+            return info;
+          }),
+        });
+        const result = yield* issueAssetUrl({
+          resource: { _tag: "draft-workspace-file", cwd: root, path: "video.mp4" },
+          workspaceRoot: root,
+        }).pipe(Effect.result, Effect.provideService(FileSystem.FileSystem, swappingFileSystem));
+        expect(swapped).toBe(true);
+        expect(result).toMatchObject({
+          _tag: "Failure",
+          failure: { _tag: "AssetWorkspaceAssetNotFoundError" },
+        });
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("resolves home-relative media paths independently of the workspace", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

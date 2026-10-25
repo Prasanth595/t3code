@@ -378,7 +378,12 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
         (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
       ),
     );
-    if (!canonicalFile) {
+    // Draft paths already passed canonical workspace containment; never follow a
+    // replacement symlink to a different file during this second resolution.
+    if (
+      !canonicalFile ||
+      (input.resource._tag === "draft-workspace-file" && canonicalFile !== requestedPath)
+    ) {
       return yield* new AssetWorkspaceAssetNotFoundError({
         resource: input.resource,
         checkedPath: input.requestedPath,
