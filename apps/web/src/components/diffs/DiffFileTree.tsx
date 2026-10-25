@@ -23,8 +23,6 @@ import {
 
 export type { DiffFileTreeEntry } from "./diffFileTree.logic";
 
-const FOCUS_MOVE_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
-
 interface DiffFileTreeProps {
   readonly entries: ReadonlyArray<DiffFileTreeEntry>;
   readonly onSelectFile: (path: string) => void;
@@ -34,8 +32,6 @@ interface DiffFileTreeProps {
   readonly headerAccessory?: ReactNode;
   readonly footer?: ReactNode;
   readonly className?: string;
-  /** Arrow keys select the file they land on instead of only moving focus. */
-  readonly followFocus?: boolean;
 }
 
 export function DiffFileTree({
@@ -47,7 +43,6 @@ export function DiffFileTree({
   headerAccessory,
   footer,
   className,
-  followFocus = false,
 }: DiffFileTreeProps) {
   const { resolvedTheme } = useTheme();
   const paths = entries.map((entry) => entry.path);
@@ -176,12 +171,11 @@ export function DiffFileTree({
       if (directory !== null && "expand" in directory) directory.expand();
     }
     item.select();
-    if (followFocus) model.focusPath(modelPath);
     model.scrollToPath(modelPath, { offset: "nearest" });
     queueMicrotask(() => {
       syncingSelectionRef.current = false;
     });
-  }, [followFocus, model, presented, revealRequestId, selectedPath]);
+  }, [model, presented, revealRequestId, selectedPath]);
 
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col bg-background", className)}>
@@ -223,12 +217,6 @@ export function DiffFileTree({
       <FileTree
         model={model}
         aria-label={ariaLabel}
-        onKeyUp={(event) => {
-          if (!followFocus || !FOCUS_MOVE_KEYS.has(event.key)) return;
-          // The tree stops its arrow keydowns, so follow the focus it moved once the key is up.
-          const path = model.getFocusedPath();
-          if (path && modelPaths.includes(path)) onSelectFile(presented.selectionPath(path));
-        }}
         onClickCapture={(event) => {
           if (
             event.defaultPrevented ||

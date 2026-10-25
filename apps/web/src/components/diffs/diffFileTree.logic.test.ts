@@ -1,11 +1,7 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  buildDiffFileTreeUpdates,
-  diffFileTreeEntries,
-  orderLikeDiffFileTree,
-} from "./diffFileTree.logic";
+import { buildDiffFileTreeUpdates, diffFileTreeEntries } from "./diffFileTree.logic";
 
 function file(type: FileDiffMetadata["type"], name: string, prevName = name): FileDiffMetadata {
   return { type, name, prevName } as FileDiffMetadata;
@@ -41,19 +37,6 @@ describe("buildDiffFileTreeUpdates", () => {
     expect(buildDiffFileTreeUpdates(["src/lib/a.ts", "src/b.ts"], ["src/b.ts"])).toEqual([
       { type: "remove", path: "src/lib/a.ts" },
       { type: "remove", path: "src/lib/", recursive: true },
-    ]);
-  });
-});
-
-describe("orderLikeDiffFileTree", () => {
-  it("keeps a folder's files together, placing each folder at its first file", () => {
-    const paths = ["src/a.ts", "README.md", "src/lib/b.ts", "docs/c.md", "src/d.ts"];
-    expect(orderLikeDiffFileTree(paths, (path) => path)).toEqual([
-      "src/a.ts",
-      "src/lib/b.ts",
-      "src/d.ts",
-      "README.md",
-      "docs/c.md",
     ]);
   });
 });

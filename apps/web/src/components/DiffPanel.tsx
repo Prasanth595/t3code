@@ -59,8 +59,8 @@ import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/Ann
 import { DiffFileTree } from "./diffs/DiffFileTree";
 import {
   createDiffFocusNavigation,
+  DiffFocusFileList,
   DiffFocusKeyboard,
-  DiffFocusKeyHints,
   useDiffFocusLayoutWidth,
   type DiffFocusSelection,
 } from "./diffs/DiffFocusLayout";
@@ -1190,20 +1190,21 @@ export default function DiffPanel({
                     />
                   </div>
                 )}
-                {fileTreeOpen || wideLayout ? (
+                {wideLayout ? (
+                  <aside className="flex w-[min(20rem,32%)] min-w-56 shrink-0 border-l border-border/60">
+                    <DiffFocusFileList
+                      ariaLabel={`${reviewSectionTitle} files`}
+                      navigation={focusNavigation}
+                    />
+                  </aside>
+                ) : fileTreeOpen ? (
                   <aside className="flex w-[min(16rem,40%)] min-w-40 shrink-0 border-l border-border/60">
                     <DiffFileTree
                       ariaLabel={`${reviewSectionTitle} files`}
                       entries={fileTreeEntries}
-                      selectedPath={
-                        wideLayout ? (focusNavigation.selected?.path ?? null) : selectedFilePath
-                      }
+                      selectedPath={selectedFilePath}
                       revealRequestId={selectedFileRevealRequestId}
                       onSelectFile={revealDiffFile}
-                      followFocus={wideLayout}
-                      footer={
-                        wideLayout ? <DiffFocusKeyHints navigation={focusNavigation} /> : null
-                      }
                     />
                   </aside>
                 ) : null}

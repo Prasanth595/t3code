@@ -1,5 +1,6 @@
 import type { CodeViewScrollTarget, FileDiffMetadata } from "@pierre/diffs";
-import { useState, type KeyboardEvent, type ReactNode } from "react";
+import type { GitStatus } from "@pierre/trees";
+import { useId, useState, type KeyboardEvent, type ReactNode } from "react";
 
 import { isEditableFocused } from "~/lib/editableFocus";
 import { observeResize } from "~/lib/observeResize";
@@ -11,7 +12,7 @@ import {
   stepDiffChange,
   type DiffFocusPosition,
 } from "./diffFocusNavigation.logic";
-import { orderLikeDiffFileTree } from "./diffFileTree.logic";
+import { toGitStatus } from "./diffFileTree.logic";
 
 const DIFF_FOCUS_LAYOUT_MIN_WIDTH = 960;
 
@@ -37,21 +38,17 @@ export interface DiffFocusSelection {
   readonly changeIndex: number;
 }
 
-/** Steps files in the order the file tree shows them, not the diff's order. */
 export function createDiffFocusNavigation<TFile extends DiffFocusFile>({
-  files: diffFiles,
+  files,
   position,
   setPosition,
   reveal,
-  onSelect,
 }: {
   files: ReadonlyArray<TFile>;
   position: DiffFocusSelection | null;
   setPosition: (position: DiffFocusSelection) => void;
   reveal: (fileKey: string, target?: CodeViewScrollTarget) => void;
-  onSelect?: (file: TFile) => void;
 }) {
-  const files = orderLikeDiffFileTree(diffFiles, (file) => file.path);
   const foundIndex =
     position === null ? -1 : files.findIndex((file) => file.fileKey === position.fileKey);
   const fileIndex = Math.max(0, foundIndex);
@@ -63,7 +60,6 @@ export function createDiffFocusNavigation<TFile extends DiffFocusFile>({
     const file = files[next.fileIndex];
     if (file === undefined) return;
     setPosition({ fileKey: file.fileKey, changeIndex: next.changeIndex });
-    onSelect?.(file);
     const change =
       next.changeIndex < 0 ? undefined : diffChangeTargets(file.fileDiff)[next.changeIndex];
     reveal(
@@ -79,19 +75,23 @@ export function createDiffFocusNavigation<TFile extends DiffFocusFile>({
           },
     );
   };
+  const selectFile = (index: number) => {
+    const clamped = Math.min(files.length - 1, Math.max(0, index));
+    if (clamped !== fileIndex || changeIndex !== -1) goTo({ fileIndex: clamped, changeIndex: -1 });
+  };
 
   return {
+    files,
     selected,
+    fileIndex,
     changeIndex,
     changeCount,
+    selectFile,
     selectPath: (path: string) => {
       const index = files.findIndex((file) => file.path === path);
       if (index >= 0) goTo({ fileIndex: index, changeIndex: -1 });
     },
-    stepFile: (delta: 1 | -1) => {
-      const index = Math.min(files.length - 1, Math.max(0, fileIndex + delta));
-      if (index !== fileIndex) goTo({ fileIndex: index, changeIndex: -1 });
-    },
+    stepFile: (delta: 1 | -1) => selectFile(fileIndex + delta),
     stepChange: (delta: 1 | -1) => {
       const next = stepDiffChange(
         { fileIndex, changeIndex },
@@ -144,24 +144,124 @@ export function DiffFocusKeyboard({
   );
 }
 
-export function DiffFocusKeyHints({ navigation }: { navigation: DiffFocusNavigation }) {
+const STATUS_BADGES: Record<GitStatus, { letter: string; label: string; className: string }> = {
+  added: { letter: "A", label: "Added", className: "text-success" },
+  untracked: { letter: "A", label: "Added", className: "text-success" },
+  modified: { letter: "M", label: "Modified", className: "text-info" },
+  renamed: { letter: "R", label: "Renamed", className: "text-warning" },
+  deleted: { letter: "D", label: "Deleted", className: "text-destructive" },
+  ignored: { letter: "I", label: "Ignored", className: "text-muted-foreground" },
+};
+
+const LIST_KEYS: Record<string, (navigation: DiffFocusNavigation) => void> = {
+  ArrowDown: (navigation) => navigation.stepFile(1),
+  ArrowUp: (navigation) => navigation.stepFile(-1),
+  Home: (navigation) => navigation.selectFile(0),
+  End: (navigation) => navigation.selectFile(navigation.files.length - 1),
+};
+
+// scrollIntoView would also scroll the panel's overflow-hidden ancestors.
+function keepRowInView(row: HTMLElement | null) {
+  const list = row?.parentElement;
+  if (!row || !list) return;
+  const top = row.offsetTop - list.clientTop;
+  const bottom = top + row.offsetHeight;
+  if (top < list.scrollTop) list.scrollTop = top;
+  else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
+}
+
+export function DiffFocusFileList({
+  ariaLabel,
+  navigation,
+  footer,
+}: {
+  ariaLabel: string;
+  navigation: DiffFocusNavigation;
+  footer?: ReactNode;
+}) {
+  const idPrefix = useId();
+  const { files } = navigation;
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/60 px-3 py-2 text-2xs text-muted-foreground">
-      <span className="flex items-center gap-1">
-        <Kbd>j</Kbd>
-        <Kbd>k</Kbd>
-        file
-      </span>
-      <span className="flex items-center gap-1">
-        <Kbd>n</Kbd>
-        <Kbd>p</Kbd>
-        change
-      </span>
-      {navigation.changeCount > 0 ? (
-        <span className="ml-auto tabular-nums">
-          {navigation.changeIndex < 0 ? "–" : navigation.changeIndex + 1} / {navigation.changeCount}
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+      <div
+        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 text-xs text-muted-foreground in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
+        data-surface-subheader
+      >
+        <span className="px-1 font-medium text-foreground">Files</span>
+        <span className="ml-auto px-1 tabular-nums">{files.length}</span>
+      </div>
+      <div
+        role="listbox"
+        aria-label={ariaLabel}
+        aria-activedescendant={
+          navigation.selected ? `${idPrefix}-${navigation.fileIndex}` : undefined
+        }
+        tabIndex={0}
+        className="group/list relative min-h-0 flex-1 overflow-y-auto p-1 outline-none"
+        onKeyDown={(event) => {
+          const action = LIST_KEYS[event.key];
+          if (action === undefined || event.metaKey || event.ctrlKey || event.altKey) return;
+          event.preventDefault();
+          action(navigation);
+        }}
+      >
+        {files.map((file, index) => {
+          const selected = index === navigation.fileIndex;
+          const status = STATUS_BADGES[toGitStatus(file.fileDiff)];
+          const slash = file.path.lastIndexOf("/");
+          return (
+            <div
+              key={file.fileKey}
+              id={`${idPrefix}-${index}`}
+              ref={selected ? keepRowInView : undefined}
+              role="option"
+              aria-selected={selected}
+              className={cn(
+                "flex h-6 cursor-default items-center gap-2 rounded-md px-2 text-xs [contain-intrinsic-size:auto_1.5rem] [content-visibility:auto]",
+                selected
+                  ? "bg-foreground/12 group-focus/list:bg-primary/20"
+                  : "hover:bg-foreground/7",
+              )}
+              onClick={() => navigation.selectFile(index)}
+            >
+              <span className="min-w-0 flex-1 truncate text-left" dir="rtl">
+                <bdi>
+                  {slash >= 0 ? (
+                    <span className="text-muted-foreground">{file.path.slice(0, slash + 1)}</span>
+                  ) : null}
+                  <span className="font-medium text-foreground">{file.path.slice(slash + 1)}</span>
+                </bdi>
+              </span>
+              <span
+                role="img"
+                aria-label={status.label}
+                className={cn("shrink-0 font-mono text-2xs font-medium", status.className)}
+              >
+                {status.letter}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/60 px-3 py-2 text-2xs text-muted-foreground">
+        <span className="flex items-center gap-1">
+          <Kbd>j</Kbd>
+          <Kbd>k</Kbd>
+          file
         </span>
-      ) : null}
+        <span className="flex items-center gap-1">
+          <Kbd>n</Kbd>
+          <Kbd>p</Kbd>
+          change
+        </span>
+        {navigation.changeCount > 0 ? (
+          <span className="ml-auto tabular-nums">
+            {navigation.changeIndex < 0 ? "–" : navigation.changeIndex + 1} /{" "}
+            {navigation.changeCount}
+          </span>
+        ) : null}
+      </div>
+      {footer}
     </div>
   );
 }

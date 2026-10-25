@@ -14,7 +14,7 @@ export interface DiffFileTreeEntry {
   readonly status: GitStatus;
 }
 
-function toGitStatus(file: FileDiffMetadata): GitStatus {
+export function toGitStatus(file: FileDiffMetadata): GitStatus {
   switch (file.type) {
     case "new":
       return "added";
@@ -96,34 +96,6 @@ export function diffFileTreePositions(paths: ReadonlyArray<string>): ReadonlyMap
     }
   });
   return positions;
-}
-
-/** Orders files as the tree lists them: grouped by folder, folders placed by their first file. */
-export function orderLikeDiffFileTree<T>(
-  items: ReadonlyArray<T>,
-  pathOf: (item: T) => string,
-): ReadonlyArray<T> {
-  const positions = diffFileTreePositions(items.map(pathOf));
-  const node = (segments: ReadonlyArray<string>, depth: number) => {
-    const isFile = depth === segments.length - 1;
-    const path = segments.slice(0, depth + 1).join("/") + (isFile ? "" : "/");
-    return { path, position: positions.get(path) ?? Number.MAX_SAFE_INTEGER };
-  };
-  return items.toSorted((left, right) => {
-    const leftSegments = pathOf(left).split("/");
-    const rightSegments = pathOf(right).split("/");
-    let depth = 0;
-    while (
-      depth < leftSegments.length - 1 &&
-      depth < rightSegments.length - 1 &&
-      leftSegments[depth] === rightSegments[depth]
-    ) {
-      depth += 1;
-    }
-    const leftNode = node(leftSegments, depth);
-    const rightNode = node(rightSegments, depth);
-    return leftNode.position - rightNode.position || leftNode.path.localeCompare(rightNode.path);
-  });
 }
 
 export function compareDiffFileTreeEntries(

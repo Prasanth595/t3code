@@ -80,8 +80,8 @@ import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { DiffFileTree } from "../diffs/DiffFileTree";
 import {
   createDiffFocusNavigation,
+  DiffFocusFileList,
   DiffFocusKeyboard,
-  DiffFocusKeyHints,
   useDiffFocusLayoutWidth,
   type DiffFocusSelection,
 } from "../diffs/DiffFocusLayout";
@@ -1369,6 +1369,26 @@ function PullRequestCodeTab({
     else orphanFiles.set(thread.path, [thread]);
   }
 
+  const loadMoreFiles =
+    nextCursor === null ? null : (
+      <div className="shrink-0 border-t border-border/60 p-2">
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          className="w-full"
+          disabled={diffQuery.isPending}
+          onClick={diffQuery.error !== null ? () => diffQuery.refresh() : loadNextSlice}
+        >
+          {diffQuery.error !== null
+            ? "Retry"
+            : diffQuery.isPending
+              ? "Loading more files..."
+              : "Load more files"}
+        </Button>
+      </div>
+    );
+
   return (
     <div ref={measureLayout} className="flex h-full min-h-0 flex-col">
       {toolbar}
@@ -1477,39 +1497,21 @@ function PullRequestCodeTab({
             />
           </FileViewedToggleContext>
         </div>
-        {fileTreeOpen || wideLayout ? (
+        {wideLayout ? (
+          <aside className="flex w-[min(20rem,32%)] min-w-56 shrink-0 border-l border-border/60">
+            <DiffFocusFileList
+              ariaLabel={`${capitalizeTerm(term)} #${detail.number} files`}
+              navigation={focusNavigation}
+              footer={loadMoreFiles}
+            />
+          </aside>
+        ) : fileTreeOpen ? (
           <aside className="flex w-[min(20rem,40%)] min-w-48 shrink-0 border-l border-border/60">
             <DiffFileTree
               ariaLabel={`${capitalizeTerm(term)} #${detail.number} files`}
               entries={fileTreeEntries}
-              selectedPath={wideLayout ? (focusNavigation.selected?.path ?? null) : null}
               onSelectFile={revealFile}
-              followFocus={wideLayout}
-              footer={
-                <>
-                  {wideLayout ? <DiffFocusKeyHints navigation={focusNavigation} /> : null}
-                  {nextCursor === null ? null : (
-                    <div className="shrink-0 border-t border-border/60 p-2">
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant="outline"
-                        className="w-full"
-                        disabled={diffQuery.isPending}
-                        onClick={
-                          diffQuery.error !== null ? () => diffQuery.refresh() : loadNextSlice
-                        }
-                      >
-                        {diffQuery.error !== null
-                          ? "Retry"
-                          : diffQuery.isPending
-                            ? "Loading more files..."
-                            : "Load more files"}
-                      </Button>
-                    </div>
-                  )}
-                </>
-              }
+              footer={loadMoreFiles}
             />
           </aside>
         ) : null}
