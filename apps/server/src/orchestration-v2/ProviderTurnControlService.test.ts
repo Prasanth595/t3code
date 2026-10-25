@@ -1,5 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
+  ChatAttachmentId,
+  ChatFileAttachment,
   MessageId,
   type ModelSelection,
   NodeId,
@@ -354,6 +356,13 @@ function steerProviderText(input: {
   readonly senderThreadId?: ThreadId;
   readonly senderTitle?: string;
   readonly senderLookupFails?: boolean;
+  readonly text?: string;
+  readonly attachments?: OrchestrationV2ConversationMessage["attachments"];
+  readonly driver?: ProviderDriverKind;
+  readonly nativeSurface?: {
+    readonly slashCommands: ReadonlyArray<{ readonly name: string }>;
+    readonly skills: ReadonlyArray<{ readonly name: string; readonly enabled: boolean }>;
+  };
   readonly subagents?: ReadonlyArray<{
     readonly origin: "app_owned" | "provider_native";
     readonly childThreadId: ThreadId | null;
@@ -367,15 +376,16 @@ function steerProviderText(input: {
     const providerThreadId = ProviderThreadId.make("provider-thread:steer-provenance");
     const providerTurnId = ProviderTurnId.make("provider-turn:steer-provenance");
     const messageId = MessageId.make("message:steer-provenance");
+    const sessionDriver = input.driver ?? driver;
     const providerThread: OrchestrationV2ProviderThread = {
       id: providerThreadId,
-      driver,
+      driver: sessionDriver,
       providerInstanceId,
       providerSessionId,
       appThreadId: threadId,
       ownerNodeId: null,
       nativeThreadRef: {
-        driver,
+        driver: sessionDriver,
         nativeId: "native-thread:steer-provenance",
         strength: "strong",
       },
@@ -394,8 +404,8 @@ function steerProviderText(input: {
       runId: RunId.make("run:steer-provenance"),
       nodeId: NodeId.make("node:steer-provenance"),
       role: "user",
-      text: steerBody,
-      attachments: [],
+      text: input.text ?? steerBody,
+      attachments: input.attachments ?? [],
       streaming: false,
       createdBy: input.createdBy,
       creationSource: input.creationSource,
@@ -406,11 +416,14 @@ function steerProviderText(input: {
     const steered = yield* Ref.make<string | undefined>(undefined);
     const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
       instanceId: providerInstanceId,
-      driver,
+      driver: sessionDriver,
+      ...(input.nativeSurface === undefined
+        ? {}
+        : { nativeInvocationSurface: () => Effect.succeed(input.nativeSurface!) }),
       providerSessionId,
       providerSession: {
         id: providerSessionId,
-        driver,
+        driver: sessionDriver,
         providerInstanceId,
         status: "running",
         cwd: "/workspace",
@@ -564,6 +577,46 @@ it.effect.each([
     createdBy: "agent" as const,
     creationSource: "server" as const,
     expected: steerBody,
+  },
+  {
+    label: "a Codex /compact with a file is an ordinary steer",
+    createdBy: "agent" as const,
+    creationSource: "mcp" as const,
+    senderThreadId: steerChildThreadId,
+    senderTitle: "Review the PR",
+    text: "/compact",
+    attachments: [
+      ChatFileAttachment.make({
+        type: "file",
+        id: ChatAttachmentId.make("compact-file-12345678-1234-1234-1234-123456789abc"),
+        name: "notes.txt",
+        mimeType: "text/plain",
+        sizeBytes: 1,
+      }),
+    ],
+    expected: `Agent-authored message from "Review the PR", not the user.\n/compact`,
+  },
+  {
+    label: "an unknown Grok skill is an ordinary steer",
+    createdBy: "agent" as const,
+    creationSource: "mcp" as const,
+    senderThreadId: steerChildThreadId,
+    senderTitle: "Review the PR",
+    text: "$HOME is unset; use the fallback.",
+    driver: ProviderDriverKind.make("grok"),
+    nativeSurface: { slashCommands: [], skills: [] },
+    expected: `Agent-authored message from "Review the PR", not the user.\n$HOME is unset; use the fallback.`,
+  },
+  {
+    label: "a disabled Grok skill is an ordinary steer",
+    createdBy: "agent" as const,
+    creationSource: "mcp" as const,
+    senderThreadId: steerChildThreadId,
+    senderTitle: "Review the PR",
+    text: "$deploy ship it",
+    driver: ProviderDriverKind.make("grok"),
+    nativeSurface: { slashCommands: [], skills: [{ name: "deploy", enabled: false }] },
+    expected: `Agent-authored message from "Review the PR", not the user.\n$deploy ship it`,
   },
 ])("steers provider text so $label", (input) =>
   Effect.gen(function* () {

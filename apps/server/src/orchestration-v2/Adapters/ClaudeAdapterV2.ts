@@ -10087,6 +10087,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           getModelContextWindow: (selection) =>
             resolveClaudeCatalogContextWindowTokens(BUNDLED_CLAUDE_MODEL_CATALOG, selection),
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          nativeInvocationSurface: (surfaceInput) =>
+            userInvocableSkills(surfaceInput.cwd ?? null).pipe(
+              Effect.map((skills) => ({
+                slashCommands: [...skills.keys()].map((name) => ({ name })),
+                skills: [...skills.keys()].map((name) => ({ name, enabled: true })),
+              })),
+              Effect.orElseSucceed(() => ({ slashCommands: [], skills: [] })),
+            ),
           backgroundTasksEndWithProcess: true,
           hasPendingBackgroundWork: Effect.gen(function* () {
             for (const roster of (yield* Ref.get(pendingBackgroundTasksByNativeThread)).values()) {

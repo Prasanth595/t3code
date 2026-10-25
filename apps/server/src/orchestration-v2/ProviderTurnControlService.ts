@@ -346,6 +346,15 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
+          const runtime = loaded.session.value;
+          const nativeSurface = runtime.nativeInvocationSurface
+            ? yield* runtime.nativeInvocationSurface({ cwd: runtime.providerSession.cwd }).pipe(
+                Effect.orElseSucceed(() => ({
+                  slashCommands: [],
+                  skills: [],
+                })),
+              )
+            : { slashCommands: [], skills: [] };
           const text = yield* providerTextForTurn({
             text: projectComposerContextForProvider({
               text: message.text,
@@ -354,6 +363,8 @@ export const layer: Layer.Layer<
             attachments: message.attachments,
             createdBy: message.createdBy,
             senderThreadId: message.senderThreadId,
+            driver: runtime.driver,
+            nativeSurface,
             readSenderTitle: (senderThreadId) =>
               projections.getThread(senderThreadId).pipe(Effect.map((thread) => thread.title)),
             readReceiverSubagents: () =>

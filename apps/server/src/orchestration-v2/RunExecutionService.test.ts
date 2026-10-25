@@ -1028,6 +1028,7 @@ it.effect("an agent /compact still compacts", () =>
       attachments: [],
       createdBy: "agent",
       senderThreadId: ThreadId.make("thread:agent-compact-sender"),
+      driver,
       readSenderTitle: () => Effect.die("commands do not look up a sender"),
       readReceiverSubagents: () => Effect.die("commands do not look up a sender"),
     });

@@ -36,6 +36,7 @@ import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
+import { providerTextForTurn } from "../../../../apps/server/src/orchestration-v2/agentSendProvenance.ts";
 import {
   advanceOpenCodePromptAdmission,
   cancelOpenCodePromptAdmission,
@@ -1116,6 +1117,124 @@ describe("OpenCodeAdapterV2", () => {
       yield* Fiber.join(start);
       assert.equal(promptCalls, 0);
       release.resolve();
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("keeps an agent /review on the native command after the sender line", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const release = promiseGate<void>();
+      const calls = yield* Queue.unbounded<{
+        messageID: string;
+        command: string;
+        arguments: string;
+      }>();
+      let prompted = "";
+      const sessionId = "native-command-provenance";
+      const client = {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        command: { list: async () => ({ data: [{ name: "review" }] }) },
+        session: {
+          create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+          command: async (input: { command: string; arguments: string; messageID: string }) => {
+            Queue.offerUnsafe(calls, input);
+            await release.promise;
+            return { data: true };
+          },
+          promptAsync: async (input: {
+            parts?: ReadonlyArray<{ type: string; text?: string }>;
+          }) => {
+            prompted = (input.parts ?? [])
+              .flatMap((part) =>
+                part.type === "text" && part.text !== undefined ? [part.text] : [],
+              )
+              .join("\n");
+            return { data: true };
+          },
+        },
+      };
+      const commandHarness = yield* makeOpenCodeRuntimeHarness(
+        "native-command-provenance",
+        sessionId,
+        client,
+      );
+      const surface = yield* commandHarness.runtime.nativeInvocationSurface!({});
+      const commandText = yield* providerTextForTurn({
+        text: "/review staged changes",
+        attachments: [],
+        createdBy: "agent",
+        senderThreadId: ThreadId.make("thread:child-review"),
+        driver: OPENCODE_PROVIDER,
+        nativeSurface: surface,
+        readSenderTitle: () => Effect.die("commands do not look up a sender"),
+        readReceiverSubagents: () => Effect.die("commands do not look up a sender"),
+      });
+      const start = yield* commandHarness.startTurn(commandText).pipe(Effect.forkScoped);
+      const call = yield* Queue.take(calls);
+      assert.equal(commandText, "/review staged changes");
+      assert.equal(call.command, "review");
+      assert.equal(call.arguments, "staged changes");
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: sessionId,
+            info: {
+              id: call.messageID,
+              sessionID: sessionId,
+              role: "user",
+              time: { created: DateTime.toEpochMillis(commandHarness.now) },
+            },
+          },
+        }),
+      );
+      release.resolve();
+      yield* Fiber.join(start);
+      assert.equal(prompted, "");
+
+      const proseEvents = asyncEventStream();
+      const proseHarness = yield* makeOpenCodeRuntimeHarness(
+        "native-command-prose",
+        "native-command-prose",
+        {
+          ...client,
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => proseEvents.close(), { once: true });
+              return { stream: proseEvents.stream };
+            },
+          },
+          session: {
+            ...client.session,
+            create: async () => ({
+              data: { id: "native-command-prose", time: { created: 1, updated: 1 } },
+            }),
+          },
+        },
+      );
+      const prose = yield* providerTextForTurn({
+        text: "/please review this",
+        attachments: [],
+        createdBy: "agent",
+        senderThreadId: ThreadId.make("thread:child-review"),
+        driver: OPENCODE_PROVIDER,
+        nativeSurface: surface,
+        readSenderTitle: () => Effect.succeed("Review the PR"),
+        readReceiverSubagents: () => Effect.succeed([]),
+      });
+      yield* proseHarness.startTurn(prose);
+      assert.equal(
+        prompted,
+        `Agent-authored message from "Review the PR", not the user.\n/please review this`,
+      );
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,

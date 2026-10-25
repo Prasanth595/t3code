@@ -3,6 +3,8 @@ import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  ChatAttachmentId,
+  ChatFileAttachment,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -285,6 +287,12 @@ function makeLocalCommandHarness(input: {
   readonly senderTitles?: Readonly<Record<string, string>>;
   readonly senderLookupFails?: boolean;
   readonly handlePromptCommand?: boolean;
+  readonly attachments?: OrchestrationV2ThreadProjection["messages"][number]["attachments"];
+  readonly driver?: ProviderDriverKind;
+  readonly nativeSurface?: {
+    readonly slashCommands: ReadonlyArray<{ readonly name: string }>;
+    readonly skills: ReadonlyArray<{ readonly name: string; readonly enabled: boolean }>;
+  };
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
@@ -317,7 +325,7 @@ function makeLocalCommandHarness(input: {
   };
   const providerThread: OrchestrationV2ThreadProjection["providerThreads"][number] = {
     id: providerThreadId,
-    driver: ProviderDriverKind.make("codex"),
+    driver: input.driver ?? ProviderDriverKind.make("codex"),
     providerInstanceId: newInstanceId,
     providerSessionId,
     appThreadId: threadId,
@@ -339,7 +347,7 @@ function makeLocalCommandHarness(input: {
     nodeId: rootNodeId,
     role: "user",
     text: input.text,
-    attachments: [],
+    attachments: input.attachments ?? [],
     streaming: false,
     createdBy: input.createdBy ?? "user",
     creationSource: input.creationSource ?? "web",
@@ -615,6 +623,11 @@ function makeLocalCommandHarness(input: {
                   },
                   ensureThread: () => Effect.succeed(providerThread),
                   resumeThread: () => Effect.succeed(projection.providerThreads[0]),
+                  ...(input.nativeSurface === undefined
+                    ? {}
+                    : {
+                        nativeInvocationSurface: () => Effect.succeed(input.nativeSurface),
+                      }),
                 } as never)
               : Effect.die("A local command must not open a native session."),
   );
@@ -1372,5 +1385,57 @@ effectIt.effect.each([
     expect(harness.projection().messages.at(-1)?.text).toBe(text);
     expect(harness.startRootRun.mock.calls[0]?.[0].message.text).toBe(text);
     expect(harness.tryHandlePromptCommand).toHaveBeenCalled();
+  }),
+);
+
+const compactFile = ChatFileAttachment.make({
+  type: "file",
+  id: ChatAttachmentId.make("compact-file-12345678-1234-1234-1234-123456789abc"),
+  name: "notes.txt",
+  mimeType: "text/plain",
+  sizeBytes: 1,
+});
+
+effectIt.effect.each([
+  {
+    label: "a Codex /compact with a file is an ordinary prompt",
+    text: "/compact",
+    attachments: [compactFile],
+    driver: ProviderDriverKind.make("codex"),
+  },
+  {
+    label: "an unknown Grok skill is ordinary text",
+    text: "$HOME is unset; use the fallback.",
+    driver: ProviderDriverKind.make("grok"),
+    nativeSurface: { slashCommands: [], skills: [] },
+  },
+  {
+    label: "a disabled Grok skill is ordinary text",
+    text: "$deploy ship it",
+    driver: ProviderDriverKind.make("grok"),
+    nativeSurface: { slashCommands: [], skills: [{ name: "deploy", enabled: false }] },
+  },
+])("assembles provider text so $label", (input) =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: input.text,
+      attachments: "attachments" in input ? input.attachments : [],
+      previousMessages: ["Earlier turn"],
+      previousTurn: settledPreviousTurn,
+      createdBy: "agent",
+      creationSource: "mcp",
+      senderThreadId: childThreadId,
+      senderTitles: { [childThreadId]: "Review the PR" },
+      driver: input.driver,
+      ...("nativeSurface" in input ? { nativeSurface: input.nativeSurface } : {}),
+      handlePromptCommand: false,
+    });
+
+    yield* harness.start;
+
+    expect(harness.projection().messages.at(-1)?.text).toBe(input.text);
+    expect(harness.startRootRun.mock.calls[0]?.[0].message.text).toBe(
+      `Agent-authored message from "Review the PR", not the user.\n${input.text}`,
+    );
   }),
 );

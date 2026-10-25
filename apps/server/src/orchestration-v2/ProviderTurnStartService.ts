@@ -1026,6 +1026,14 @@ export const layer: Layer.Layer<
       const routableSubagents = projection.subagents.filter((subagent) =>
         RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
+      const nativeSurface = session.nativeInvocationSurface
+        ? yield* session.nativeInvocationSurface({ cwd: resolvedRuntimePolicy.cwd }).pipe(
+            Effect.orElseSucceed(() => ({
+              slashCommands: [],
+              skills: [],
+            })),
+          )
+        : { slashCommands: [], skills: [] };
       const userText = yield* providerTextForTurn({
         text: projectComposerContextForProvider({
           text: message.text,
@@ -1035,6 +1043,8 @@ export const layer: Layer.Layer<
         createdBy: message.createdBy,
         senderThreadId: message.senderThreadId,
         restartContinuation: run.restartContinuationOfRunId !== undefined,
+        driver: session.driver,
+        nativeSurface,
         readSenderTitle: (senderThreadId) =>
           projectionStore.getThread(senderThreadId).pipe(Effect.map((thread) => thread.title)),
         readReceiverSubagents: () => Effect.succeed(projection.subagents),

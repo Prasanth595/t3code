@@ -38,6 +38,7 @@ import * as Exit from "effect/Exit";
 import { TestClock } from "effect/testing";
 
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { providerTextForTurn } from "../agentSendProvenance.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -2163,6 +2164,73 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           : [],
       );
       assert.include(texts, "HELLO WORLD");
+      assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps an agent /hello on the native command after the sender line", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("command.list", "<any>"),
+        reply("command.list", { location: { directory: WORK }, data: [{ name: "hello" }] }),
+        out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
+        reply("message.list", {
+          data: [
+            { id: "msg_idle_before", time: { created: 1 }, type: "idle", outcome: "succeeded" },
+          ],
+          cursor: {},
+        }),
+        out("session.command", { sessionID: SESSION, name: "hello", text: "WORLD" }),
+        reply("session.command", null),
+        { type: "runtime_exit", status: "success" } as const,
+        out("event.subscribe"),
+        out("session.active"),
+        replyData("session.active", {}),
+        out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
+        reply("message.list", {
+          data: [
+            { id: "msg_idle_cmd", time: { created: 4 }, type: "idle", outcome: "succeeded" },
+            {
+              id: "msg_assistant_cmd",
+              time: { created: 3 },
+              type: "assistant",
+              agent: "build",
+              model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+              content: [{ type: "text", text: "HELLO WORLD" }],
+              finish: "stop",
+            },
+            {
+              id: "msg_user_cmd",
+              time: { created: 2 },
+              text: "Reply with exactly: HELLO WORLD",
+              type: "user",
+            },
+            { id: "msg_idle_before", time: { created: 1 }, type: "idle", outcome: "succeeded" },
+          ],
+          cursor: {},
+        }),
+      ]);
+      const text = yield* providerTextForTurn({
+        text: "/hello WORLD",
+        attachments: [],
+        createdBy: "agent",
+        senderThreadId: ThreadId.make("thread:child-review"),
+        driver: OPENCODE_PROVIDER,
+        nativeSurface: { slashCommands: [{ name: "hello" }], skills: [] },
+        readSenderTitle: () => Effect.die("commands do not look up a sender"),
+        readReceiverSubagents: () => Effect.die("commands do not look up a sender"),
+      });
+      assert.equal(text, "/hello WORLD");
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn({
+        ...turnInput(thread),
+        message: { ...turnInput(thread).message, text },
+      });
+      const collected = yield* Fiber.join(events);
       assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
     }).pipe(Effect.scoped),
   );

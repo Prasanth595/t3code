@@ -226,6 +226,13 @@ export interface AcpAdapterV2Flavor {
     text: string,
     turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
   ) => Effect.Effect<string, never, ChildProcessSpawner.ChildProcessSpawner>;
+  readonly nativeSkills?: (
+    cwd?: string | null,
+  ) => Effect.Effect<
+    ReadonlyArray<{ readonly name: string; readonly enabled: boolean }>,
+    never,
+    ChildProcessSpawner.ChildProcessSpawner
+  >;
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly clientCapabilitiesMeta?: NonNullable<
@@ -1575,6 +1582,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
         const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
         const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
+        const availableCommandNames = yield* Ref.make<ReadonlyArray<string>>([]);
         // Unique markers keep delayed prompt completions from clearing later compactions.
         const compactionMarkers = yield* Ref.make(new Map<string, symbol>());
         const runtimeRestartRequired = yield* Ref.make(false);
@@ -5758,6 +5766,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       clientTerminals.readOutputSnapshot,
                     );
               if (notification.update.sessionUpdate === "available_commands_update") {
+                yield* Ref.set(
+                  availableCommandNames,
+                  notification.update.availableCommands.map((command) => command.name),
+                );
                 yield* (
                   flavor.onAvailableCommandsUpdate?.(notification.update.availableCommands) ??
                     Effect.void
@@ -7667,6 +7679,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const sessionRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: options.instanceId,
           driver,
+          nativeInvocationSurface: Effect.fn("AcpAdapterV2.nativeInvocationSurface")(
+            function* (surfaceInput) {
+              const names = yield* Ref.get(availableCommandNames);
+              const skills =
+                flavor.nativeSkills === undefined
+                  ? []
+                  : yield* flavor
+                      .nativeSkills(surfaceInput.cwd)
+                      .pipe(
+                        Effect.provideService(
+                          ChildProcessSpawner.ChildProcessSpawner,
+                          childProcessSpawner,
+                        ),
+                      );
+              return {
+                slashCommands: names.map((name) => ({ name })),
+                skills,
+              };
+            },
+          ),
           providerSessionId: input.providerSessionId,
           providerSession,
           events: Stream.fromEffectRepeat(Queue.take(events)),
