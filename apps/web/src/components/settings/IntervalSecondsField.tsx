@@ -14,7 +14,7 @@ import { normalizeIntervalSeconds } from "./SettingsPanels.logic";
  */
 export function IntervalSecondsField({
   label,
-  inputLabel = `${label.charAt(0).toUpperCase()}${label.slice(1)} in seconds`,
+  inputLabel,
   value,
   min,
   step,
@@ -54,7 +54,9 @@ export function IntervalSecondsField({
     >
       <NumberFieldGroup>
         <NumberFieldDecrement aria-label={`Decrease ${label}`} />
-        <NumberFieldInput aria-label={inputLabel} />
+        <NumberFieldInput
+          aria-label={inputLabel ?? `${label.charAt(0).toUpperCase()}${label.slice(1)} in seconds`}
+        />
         <NumberFieldIncrement aria-label={`Increase ${label}`} />
       </NumberFieldGroup>
     </NumberField>
