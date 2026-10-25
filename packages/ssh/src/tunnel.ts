@@ -876,7 +876,16 @@ if [ -z "$REMOTE_PORT" ]; then
   fi
   nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
-  process_start "$REMOTE_PID" >"$PROCESS_START_FILE" || true
+  rm -f "$PID_FILE" "$MANAGED_FILE"
+  if ! REMOTE_PROCESS_START="$(process_start "$REMOTE_PID")" || [ -z "$REMOTE_PROCESS_START" ]; then
+    printf "Failed to record the remote T3 server's process identity.\\n" >&2
+    rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE" "$PROCESS_START_FILE"
+    kill "$REMOTE_PID" 2>/dev/null || true
+    wait_for_pid_exit "$REMOTE_PID"
+    wait "$REMOTE_PID" 2>/dev/null || true
+    exit 1
+  fi
+  printf '%s\\n' "$REMOTE_PROCESS_START" >"$PROCESS_START_FILE"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
   printf 'managed\\n' >"$MANAGED_FILE"

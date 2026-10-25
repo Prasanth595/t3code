@@ -647,6 +647,49 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.live.each(["fails", "returns an empty identity"] as const)(
+    "does not publish managed state when the process identity probe %s",
+    (failure) =>
+      Effect.gen(function* () {
+        const { fs, run, stateDir, writeVariant, lockPath } = yield* prepareLaunch;
+        let launchedPid: number | undefined;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            if (launchedPid !== undefined && isAlive(launchedPid))
+              process.kill(launchedPid, "SIGKILL");
+          }),
+        );
+        const script = yield* writeVariant("missing-identity", [
+          [
+            '  REMOTE_PID="$!"',
+            `  REMOTE_PID="$!"
+  printf 'launched:%s\\n' "$REMOTE_PID"
+  process_start() { return ${failure === "fails" ? 1 : 0}; }`,
+          ],
+        ]);
+        const result = yield* run(
+          "alias",
+          {
+            onLine: (line) =>
+              Effect.sync(() => {
+                if (line.startsWith("launched:"))
+                  launchedPid = Number(line.slice("launched:".length));
+              }),
+            release: Effect.void,
+          },
+          script,
+        );
+        assert.equal(result.exitCode, 1, result.stderr);
+        assert.include(result.stderr, "Failed to record the remote T3 server's process identity");
+        if (launchedPid === undefined) assert.fail("the launch did not report its spawned PID");
+        assert.isFalse(isAlive(launchedPid));
+        for (const file of ["pid", "port", "managed", "process-start"]) {
+          assert.isFalse(yield* fs.exists(`${stateDir("alias")}/${file}`), file);
+        }
+        assert.isFalse(yield* fs.exists(lockPath));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.live("does not take over a server whose recorded process identity differs", () =>
     Effect.gen(function* () {
       const { fs, stateDir, readManagedPid, launch } = yield* prepareLaunch;
