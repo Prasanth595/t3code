@@ -1,4 +1,5 @@
 import { requireOptionalNativeModule } from "expo";
+import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Socket from "effect/socket/Socket";
 import { Platform } from "react-native";
@@ -141,30 +142,62 @@ class NativeWebSocket implements Socket.WebSocketLike {
   }
 }
 
-function makeNativeWebSocketConstructor(
-  module: T3WebSocketNativeModule,
-): (url: string, options?: Socket.WebSocketConstructorOptions) => Socket.WebSocketLike {
-  const sockets = new Map<number, NativeWebSocket>();
-  let nextId = 1;
-  for (const eventName of ["onOpen", "onMessage", "onClose", "onError"] as const) {
-    module.addListener(eventName, (payload) => sockets.get(payload.id)?.handle(eventName, payload));
-  }
+// Fast Refresh can re-evaluate this module while URLSession tasks from the
+// previous evaluation still report events, so ids keep counting across it.
+const nextIdKey = Symbol.for("t3.mobile.native-websocket-next-id");
 
-  return (url, options) => {
-    if (options !== undefined && typeof options !== "string" && !Array.isArray(options)) {
-      throw new TypeError("WebSocket client options are not supported by the iOS WebSocket");
-    }
-    const id = nextId++;
-    const socket = new NativeWebSocket(module, id, () => sockets.delete(id));
-    sockets.set(id, socket);
-    try {
-      module.connect(id, url, options === undefined ? [] : [options].flat());
-    } catch (error) {
-      sockets.delete(id);
-      throw error;
-    }
-    return socket;
-  };
+type NativeWebSocketGlobal = typeof globalThis & { [nextIdKey]?: number };
+
+function allocateId(): number {
+  const runtimeGlobal = globalThis as NativeWebSocketGlobal;
+  const id = runtimeGlobal[nextIdKey] ?? 1;
+  runtimeGlobal[nextIdKey] = id + 1;
+  return id;
+}
+
+function layerNativeWebSocketConstructor(
+  module: T3WebSocketNativeModule,
+): Layer.Layer<Socket.WebSocketConstructor> {
+  return Layer.effect(
+    Socket.WebSocketConstructor,
+    Effect.gen(function* () {
+      const sockets = new Map<number, NativeWebSocket>();
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          (["onOpen", "onMessage", "onClose", "onError"] as const).map((eventName) =>
+            module.addListener(eventName, (payload) =>
+              sockets.get(payload.id)?.handle(eventName, payload),
+            ),
+          ),
+        ),
+        (subscriptions) =>
+          Effect.sync(() => {
+            for (const subscription of subscriptions) subscription.remove();
+            // Their native close can no longer reach them, so close them here.
+            for (const [id, socket] of sockets) {
+              socket.close(1001);
+              socket.handle("onClose", { id, code: 1001 });
+            }
+          }),
+      );
+
+      return (url, options) => {
+        if (options !== undefined && typeof options !== "string" && !Array.isArray(options)) {
+          throw new TypeError("WebSocket client options are not supported by the iOS WebSocket");
+        }
+        const id = allocateId();
+        const socket = new NativeWebSocket(module, id, () => sockets.delete(id));
+        sockets.set(id, socket);
+        try {
+          module.connect(id, url, options === undefined ? [] : [options].flat());
+        } catch (error) {
+          sockets.delete(id);
+          throw error;
+        }
+        return socket;
+      };
+    }),
+  );
 }
 
 const nativeModule =
@@ -176,4 +209,4 @@ const nativeModule =
 export const layerWebSocketConstructor: Layer.Layer<Socket.WebSocketConstructor> =
   nativeModule === null
     ? Socket.layerWebSocketConstructorGlobal
-    : Layer.succeed(Socket.WebSocketConstructor, makeNativeWebSocketConstructor(nativeModule));
+    : layerNativeWebSocketConstructor(nativeModule);

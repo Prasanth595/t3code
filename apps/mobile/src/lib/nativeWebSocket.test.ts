@@ -7,14 +7,18 @@ import { vi } from "vite-plus/test";
 // frame and acknowledges a close, as a server would.
 const native = vi.hoisted(() => {
   type Payload = Record<string, unknown> & { readonly id: number };
-  const listeners = new Map<string, (payload: Payload) => void>();
-  const state = { connected: true, lastId: 0, dialed: [] as Array<string> };
-  const emit = (event: string, payload: Payload) => listeners.get(event)?.(payload);
+  const listeners = new Set<{ readonly event: string; readonly listener: (p: Payload) => void }>();
+  const state = { connected: true, acknowledgeClose: true, lastId: 0, dialed: [] as Array<string> };
+  const emit = (event: string, payload: Payload) => {
+    for (const entry of listeners) if (entry.event === event) entry.listener(payload);
+  };
   return {
     state,
     emit,
+    listeners,
     setup() {
       state.connected = true;
+      state.acknowledgeClose = true;
       state.dialed = [];
     },
     module: {
@@ -30,11 +34,12 @@ const native = vi.hoisted(() => {
         emit("onMessage", { id, data: base64, binary: true });
       },
       close(id: number, code: number, reason: string) {
-        if (state.connected) emit("onClose", { id, code, reason });
+        if (state.connected && state.acknowledgeClose) emit("onClose", { id, code, reason });
       },
       addListener(event: string, listener: (payload: Payload) => void) {
-        listeners.set(event, listener);
-        return { remove: () => listeners.delete(event) };
+        const entry = { event, listener };
+        listeners.add(entry);
+        return { remove: () => listeners.delete(entry) };
       },
     },
   };
@@ -96,5 +101,35 @@ describe("iOS WebSocket constructor", () => {
       expect(opened).toEqual([]);
       expect(socket.readyState).toBe(2);
     }).pipe(Effect.provide(layerWebSocketConstructor)),
+  );
+
+  it.effect("keeps a socket made after Fast Refresh away from the old socket's late close", () =>
+    Effect.gen(function* () {
+      native.setup();
+      native.state.acknowledgeClose = false;
+      const freshModule = () => {
+        vi.resetModules();
+        return Effect.promise(() => import("./nativeWebSocket"));
+      };
+      const replaced = yield* freshModule();
+      const oldId = yield* Effect.gen(function* () {
+        (yield* Socket.WebSocketConstructor)("wss://host.test/ws").close(1000);
+        return native.state.lastId;
+      }).pipe(Effect.provide(replaced.layerWebSocketConstructor));
+
+      const replacement = yield* freshModule();
+      yield* Effect.gen(function* () {
+        const socket = (yield* Socket.WebSocketConstructor)("wss://host.test/ws");
+        const closes: Array<unknown> = [];
+        socket.addEventListener("close", (event) => closes.push(event));
+
+        // URLSession reports the old task's close after the new one opened.
+        native.emit("onClose", { id: oldId, code: 1000, reason: "" });
+
+        expect(closes).toEqual([]);
+        expect(socket.readyState).toBe(1);
+        expect(native.listeners.size).toBe(4);
+      }).pipe(Effect.provide(replacement.layerWebSocketConstructor));
+    }),
   );
 });
