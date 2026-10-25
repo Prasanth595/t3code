@@ -534,17 +534,27 @@ export const make = Effect.gen(function* () {
   const fullSweeps = yield* makeDrainableWorker(() => runSweep(null));
   const threadSweeps = yield* FiberSet.make<void>();
   const threadSweepSlots = yield* Semaphore.make(8);
-  const queuedThreads = new Set<ThreadId>();
+  // One sweep per thread at a time; events during a running sweep coalesce into one more pass.
+  const threadSweepStates = new Map<ThreadId, "queued" | "running" | "rerun">();
+  const sweepThread = (threadId: ThreadId): Effect.Effect<void> =>
+    Effect.sync(() => threadSweepStates.set(threadId, "running")).pipe(
+      Effect.andThen(runSweep(null, threadId)),
+      threadSweepSlots.withPermits(1),
+      Effect.andThen(
+        Effect.suspend(() => {
+          if (threadSweepStates.get(threadId) === "rerun") return sweepThread(threadId);
+          threadSweepStates.delete(threadId);
+          return Effect.void;
+        }),
+      ),
+    );
   const enqueueThread = (threadId: ThreadId) =>
     Effect.suspend(() => {
-      if (queuedThreads.has(threadId)) return Effect.void;
-      queuedThreads.add(threadId);
-      return Effect.sync(() => queuedThreads.delete(threadId)).pipe(
-        Effect.andThen(runSweep(null, threadId)),
-        threadSweepSlots.withPermits(1),
-        FiberSet.run(threadSweeps),
-        Effect.asVoid,
-      );
+      const state = threadSweepStates.get(threadId);
+      if (state === "running") threadSweepStates.set(threadId, "rerun");
+      if (state !== undefined) return Effect.void;
+      threadSweepStates.set(threadId, "queued");
+      return sweepThread(threadId).pipe(FiberSet.run(threadSweeps), Effect.asVoid);
     });
 
   // Skip settle scripts in shared checkouts where other threads may still work.

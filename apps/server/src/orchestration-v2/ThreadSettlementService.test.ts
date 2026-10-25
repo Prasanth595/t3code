@@ -1026,6 +1026,10 @@ describe("ThreadSettlementServiceV2 worker", () => {
           yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
           yield* fixture.publishEvent(backgroundEnded(slow.id));
           yield* Deferred.await(slowLookupStarted);
+          // More events for the slow thread coalesce into one more pass, not more sweeps.
+          for (let index = 0; index < 9; index++) {
+            yield* fixture.publishEvent(backgroundEnded(slow.id));
+          }
 
           yield* Ref.set(
             fixture.snapshots,
@@ -1040,6 +1044,8 @@ describe("ThreadSettlementServiceV2 worker", () => {
           );
           yield* Deferred.succeed(releaseSlowLookup, undefined);
           yield* reactor.drain;
+          // The startup sweep, the first per-thread sweep, and one coalesced rerun.
+          assert.strictEqual(yield* Ref.get(branchLookupCount), 3);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
