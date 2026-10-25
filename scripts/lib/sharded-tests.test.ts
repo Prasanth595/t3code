@@ -26,13 +26,14 @@ it("uses the configured sequencer and discovers every file exactly once", async 
            return files.sort((a,b)=>a.moduleId.localeCompare(b.moduleId)).filter((_,i)=>i%count===index-1);
          }
        }
-       export default {test:{include:["included/*.test.ts"],sequence:{sequencer:Sequencer}}};`,
+       export default {test:{include:["included/*.{test,spec}.ts"],sequence:{sequencer:Sequencer}}};`,
     );
     await NodeFSP.mkdir(NodePath.join(root, "included"));
     for (const file of [
       "included/a.test.ts",
       "included/b.test.ts",
       "included/c.test.ts",
+      "included/d.spec.ts",
       "excluded.test.ts",
     ]) {
       await NodeFSP.writeFile(NodePath.join(root, file), "export {};");
@@ -42,8 +43,11 @@ it("uses the configured sequencer and discovers every file exactly once", async 
     expect(first).toEqual(
       ["a", "c"].map((file) => NodePath.join(root, `included/${file}.test.ts`)),
     );
-    expect(second).toEqual([NodePath.join(root, "included/b.test.ts")]);
-    expect(new Set([...first, ...second]).size).toBe(3);
+    expect(second).toEqual([
+      NodePath.join(root, "included/b.test.ts"),
+      NodePath.join(root, "included/d.spec.ts"),
+    ]);
+    expect(new Set([...first, ...second]).size).toBe(4);
     await expect(shardedTestFiles(root, "0/2")).rejects.toThrow("Shard must be");
   } finally {
     await NodeFSP.rm(root, { recursive: true, force: true });

@@ -48,6 +48,13 @@ describe("cachedTestTasks", () => {
     }
   });
 
+  it("accepts spec files discovered by Vitest", () => {
+    const tasks = cachedTestTasks(JSON.stringify({ files: ["src/example.spec.ts"], groupSize: 1 }));
+    expect(
+      Object.values(tasks).some((task) => task.command === "vp test run 'src/example.spec.ts'"),
+    ).toBe(true);
+  });
+
   it("does not add tasks without an explicit request", () => {
     expect(cachedTestTasks(undefined)).toEqual({});
   });

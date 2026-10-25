@@ -49,13 +49,17 @@ const candidates = values.shard
       { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
     ).split("\0");
 const filters = positionals.map((path) => NodePath.relative(root, NodePath.resolve(path)));
-const files = [...new Set(candidates)].filter(
-  (file) =>
-    /\.test\.[cm]?[jt]sx?$/.test(file) &&
-    !file.startsWith(".repos/") &&
-    NodeFS.existsSync(NodePath.join(root, file)) &&
-    matchesTestPath(file, filters),
-);
+const isSelectable = (file: string) =>
+  /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file) &&
+  !file.startsWith(".repos/") &&
+  NodeFS.existsSync(NodePath.join(root, file)) &&
+  matchesTestPath(file, filters);
+if (values.shard) {
+  const rejected = candidates.filter((file) => !isSelectable(file));
+  if (rejected.length)
+    throw new Error(`Discovered tests cannot be selected: ${rejected.join(", ")}`);
+}
+const files = [...new Set(candidates)].filter(isSelectable);
 if (files.length === 0) {
   console.error("No test files matched");
   process.exit(values.shard ? 0 : 1);

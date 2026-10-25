@@ -50,7 +50,7 @@ export function cachedTestTasks(
       typeof file !== "string" ||
       NodePath.isAbsolute(file) ||
       file.split(/[\\/]/).includes("..") ||
-      !/\.test\.[cm]?[jt]sx?$/.test(file)
+      !/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file)
     ) {
       throw new Error("Cached tests must be test files inside the checkout");
     }
