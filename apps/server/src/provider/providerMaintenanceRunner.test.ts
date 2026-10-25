@@ -235,6 +235,7 @@ const makeTestRunner = (
       ranges: [],
     })),
   },
+  latestVersions: Layer.Layer<ProviderLatestVersions.ProviderLatestVersions> = ProviderLatestVersions.layer,
 ) =>
   Effect.service(ProviderMaintenanceRunner.ProviderMaintenanceRunner).pipe(
     Effect.provide(
@@ -248,12 +249,27 @@ const makeTestRunner = (
               forceRefresh: Effect.succeed(manifest),
               refreshInBackground: Effect.void,
             }),
-            ProviderLatestVersions.layer,
+            latestVersions,
           ),
         ),
       ),
     ),
   );
+
+function layerFailingLatestLookupAfterFirst() {
+  let lookups = 0;
+  return Layer.succeed(ProviderLatestVersions.ProviderLatestVersions, {
+    cached: (_key, lookup) =>
+      Effect.gen(function* () {
+        lookups += 1;
+        if (lookups > 1) {
+          return yield* Effect.fail(new Error("latest lookup failed"));
+        }
+        return yield* lookup;
+      }),
+    invalidate: () => Effect.void,
+  });
+}
 
 describe("providerMaintenanceRunner", () => {
   it.effect("runs the allowlisted provider update command and records success", () => {
@@ -386,6 +402,65 @@ describe("providerMaintenanceRunner", () => {
             }),
           ),
       });
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+      assert.deepStrictEqual(calls, [{ command: "claude", args: ["update"] }]);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("2.1.310"),
+          layerMockSpawner((command, args) => {
+            calls.push({ command, args });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("still runs the installer when precheck advisory enrichment fails", () => {
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    return Effect.gen(function* () {
+      const { registry, providersRef } = yield* makeRegistry({
+        ...baseProvider,
+        version: "2.1.310",
+        versionAdvisory: {
+          status: "current",
+          currentVersion: "2.1.310",
+          latestVersion: "2.1.310",
+          updateCommand: "claude update",
+          canUpdate: true,
+          checkedAt: "2026-04-10T00:00:00.000Z",
+          message: null,
+        },
+      });
+      const updater = yield* makeTestRunner(
+        {
+          ...registry,
+          refreshInstance: (instanceId) =>
+            Ref.updateAndGet(providersRef, (providers) =>
+              providers.map((provider) =>
+                provider.instanceId === instanceId
+                  ? { ...provider, checkedAt: "2026-04-10T00:00:01.000Z" }
+                  : provider,
+              ),
+            ),
+          getProviderMaintenanceCapabilitiesForInstance: () =>
+            Effect.succeed(
+              makeProviderMaintenanceCapabilities({
+                provider: CODEX_DRIVER,
+                packageName: "@anthropic-ai/claude-code",
+                updateExecutable: "claude",
+                updateArgs: ["update"],
+                updateLockKey: "claudeAgent-native",
+              }),
+            ),
+        },
+        undefined,
+        layerFailingLatestLookupAfterFirst(),
+      );
 
       const result = yield* updater.updateProvider(CODEX_DRIVER);
       assert.deepStrictEqual(calls, [{ command: "claude", args: ["update"] }]);
