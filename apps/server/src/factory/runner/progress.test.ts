@@ -793,6 +793,32 @@ describe("readProgress: the checks read", () => {
       null,
     );
   });
+
+  it("checksTimedOut is the read the wait running out wrote, and no other unfinished read", () => {
+    const pending = [
+      { name: "gate", state: "passed" },
+      { name: "lint", state: "pending" },
+    ];
+    const timedOut = (checks: ReadonlyArray<{ name: string; state: string }>) => ({
+      ...checksRead(1, checks),
+      cause: { step: "gate", reason: "checks-timed-out", attempt: 1 },
+    });
+    assert.deepStrictEqual(readProgress([timedOut(pending)]).checksTimedOut, {
+      sha: sha.toLowerCase(),
+      missing: false,
+    });
+    assert.deepStrictEqual(
+      readProgress([timedOut([{ name: "gate", state: "missing" }])]).checksTimedOut,
+      {
+        sha: sha.toLowerCase(),
+        missing: true,
+      },
+    );
+    // A read with checks still running that the wait did not end decides nothing.
+    assert.strictEqual(readProgress([checksRead(1, pending)]).checksTimedOut, null);
+    const recorded = { ...checksRead(1, pending), cause: { step: "gate", reason: "progress" } };
+    assert.strictEqual(readProgress([recorded]).checksTimedOut, null);
+  });
 });
 
 describe("readProgress: gating again", () => {
@@ -896,6 +922,22 @@ describe("readProgress: gating again", () => {
     assert.strictEqual(posted.regatePassed, false);
     // A pass that is not a re-gate's is not a regate pass.
     assert.strictEqual(readProgress([launched(1), command(2), passed(3)]).regatePassed, false);
+  });
+
+  it("a re-gate pass owes the ready state again unless its cause says it is clean", () => {
+    const before = [...PASS, regated(8, HEAD, MOVED, BASE), command(9)];
+    const clean = {
+      ...passed(10),
+      cause: { step: "gate", reason: "gate-passed-clean", attempt: 1 },
+    };
+    assert.strictEqual(readProgress([...before, clean]).regatePassReassert, false);
+    // `gate-passed` is what a resumed call writes, and what every pass said before the clean
+    // reason existed, when every resumed pass set the ready state again.
+    assert.strictEqual(readProgress([...before, passed(10)]).regatePassReassert, true);
+    assert.strictEqual(
+      readProgress([...before, { ...passed(10), cause: null }]).regatePassReassert,
+      true,
+    );
   });
 
   it("records a failure of the re-gate as sent back, until the state changes", () => {

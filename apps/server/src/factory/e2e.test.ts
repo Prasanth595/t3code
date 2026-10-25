@@ -643,6 +643,8 @@ const describe = (entry: Entry): string => {
       return `gate_checkout attempt ${String(data.attempt)}`;
     case "gate_command":
       return `gate_command attempt ${String(data.attempt)} exit ${String(data.exit_code)}: ${String(data.command)}`;
+    case "gate_finished":
+      return `gate_finished attempt ${String(data.attempt)}`;
     case "gate_sent_back":
       return `gate_sent_back attempt ${String(data.attempt)} run ${String(data.run_ordinal)}`;
     default:
@@ -741,6 +743,7 @@ it.live("takes one issue from ready to pr-open: claim, build, gate, ready for re
         ...STARTED_AND_PR_OPENED,
         "gate_checkout attempt 1",
         "gate_command attempt 1 exit 0: true",
+        "gate_finished attempt 1",
         ...passTail(result.baseSha),
       ],
       result.diagnosis(),
@@ -760,10 +763,12 @@ it.live("sends a failed gate back into the session, then passes it on the second
         ...STARTED_AND_PR_OPENED,
         "gate_checkout attempt 1",
         `gate_command attempt 1 exit 1: ${command}`,
+        "gate_finished attempt 1",
         "step_changed gate-sending 1 1",
         "gate_sent_back attempt 1 run 1",
         "gate_checkout attempt 2",
         `gate_command attempt 2 exit 0: ${command}`,
+        "gate_finished attempt 2",
         `step_changed gate-passed ${result.baseSha} 1`,
         "worktree_removed",
         "step_changed gate-results-posted",

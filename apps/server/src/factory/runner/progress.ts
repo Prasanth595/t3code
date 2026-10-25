@@ -87,6 +87,17 @@ export interface Relaunch {
   readonly message: string;
 }
 
+/**
+ * `seen` as the `gate-passed` step of a new pass leaves it: no read of the checks, since one in
+ * the ledger was about the pass before. For a pass recorded in this call, which `seen` predates.
+ */
+export const withoutCheckReads = (seen: Seen): Seen => ({
+  ...seen,
+  checksPassed: null,
+  checksFailed: null,
+  checksTimedOut: null,
+});
+
 /** The gate attempt a re-gate relaunch fixes; `null` for a feedback relaunch, which is no attempt. */
 export const regateAttempt = (relaunch: Relaunch): number | null =>
   relaunch.fixes.kind === "regate" ? relaunch.fixes.attempt : null;
@@ -242,6 +253,21 @@ export interface Seen {
   readonly regateMoved: Moved | null;
   /** That re-gate recorded its pass (`gate-passed`), and the results are not posted yet. */
   readonly regatePassed: boolean;
+  /**
+   * The newest `checks_read` line of the pass on record that the wait running out wrote (its
+   * cause says `checks-timed-out`): the decision to go `stuck`, which stands as a recorded
+   * failure does. `missing` says a check never appeared.
+   */
+  readonly checksTimedOut: { readonly sha: string; readonly missing: boolean } | null;
+  /**
+   * Finishing the pass on record sets the ready state again: a stuck path an earlier call did
+   * not finish may have drafted the pull request or relabelled the issue. False only for a pass
+   * whose cause says `gate-passed-clean`, which a re-gate call writes when it began the re-gate
+   * itself: it has nothing to set again, and a person's draft or assignment made while the
+   * checks ran stands. A pass recorded before that reason existed owes it, as every resumed
+   * pass did then.
+   */
+  readonly regatePassReassert: boolean;
   /** That re-gate's failure was recorded as sent back, and the state has not changed yet. */
   readonly regateSentBack: boolean;
   /** The newest `regate_relaunching` or `feedback_relaunching` line, until the state changes. */
@@ -343,6 +369,10 @@ export const COMMENT_DROPPED = "comment-dropped";
 export const GATE_SENDING = "gate-sending";
 /** The ledger step that records the decision that an attempt passed: `gate-passed <sha> <n>`. */
 export const GATE_PASSED = "gate-passed";
+/** The cause reason of a re-gate's `gate-passed` step with nothing cut short before it to repair. */
+export const GATE_PASSED_CLEAN = "gate-passed-clean";
+/** The cause reason of the `checks_read` line written when the wait for the checks ran out. */
+export const CHECKS_TIMED_OUT = "checks-timed-out";
 /** The ledger step that says the gate results are on the pull request. */
 export const GATE_RESULTS_POSTED = "gate-results-posted";
 
@@ -451,9 +481,11 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let readyOutside = false;
   let checksPassed: string | null = null;
   let checksFailed: Seen["checksFailed"] = null;
+  let checksTimedOut: Seen["checksTimedOut"] = null;
   let regating = false;
   let regateMoved: Moved | null = null;
   let regatePassed = false;
+  let regatePassReassert = false;
   let regateSentBack = false;
   let relaunch: Relaunch | null = null;
   let launchedSinceSending = false;
@@ -583,7 +615,9 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
           // A read of the checks is about the pass before it: this one's are read afresh.
           checksPassed = null;
           checksFailed = null;
+          checksTimedOut = null;
           regatePassed = regating;
+          regatePassReassert = entry.cause?.reason !== GATE_PASSED_CLEAN;
           // The step's own cause names the attempt; a ledger from before it did is read by the
           // last command.
           const fromCause = entry.cause === null ? undefined : entry.cause.attempt;
@@ -806,6 +840,12 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
           return [{ name, state: "failed", conclusion: "", url: null }];
         });
         if (failed.length > 0) checksFailed = { sha: sha.toLowerCase(), failed };
+        else if (entry.cause?.reason === CHECKS_TIMED_OUT) {
+          checksTimedOut = {
+            sha: sha.toLowerCase(),
+            missing: read.some((check) => dataField(check, "state") === "missing"),
+          };
+        }
         break;
       }
       case "regate_relaunching": {
@@ -897,9 +937,11 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     readyOutside,
     checksPassed,
     checksFailed,
+    checksTimedOut,
     regating,
     regateMoved,
     regatePassed,
+    regatePassReassert,
     regateSentBack,
     relaunch,
     launchedSinceSending,
