@@ -1,5 +1,4 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import { parseGitCafePullRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -21,6 +20,7 @@ import {
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import { parsePullRequestUrl } from "../shared/definition.ts";
 
 import * as GitCafeApi from "./GitCafeApi.ts";
 import * as GitCafeCredentials from "./GitCafeCredentials.ts";
@@ -241,7 +241,7 @@ export const make = Effect.gen(function* () {
     readonly context?: SourceControlProvider.SourceControlProviderContext;
     readonly reference: string;
   }) {
-    const match = parseGitCafePullRequestUrl(input.reference.trim());
+    const match = parsePullRequestUrl(input.reference.trim());
     const urlHost = match === null ? null : GitCafeHosts.gitCafeHost(match.host);
     const target: Target =
       urlHost && match
