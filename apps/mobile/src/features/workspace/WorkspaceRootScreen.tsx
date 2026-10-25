@@ -54,16 +54,17 @@ function WorkspaceRootTitle(props: {
   readonly maxWidth: number;
   readonly onOpenEnvironments: () => void;
 }) {
-  const { state } = useWorkspaceTabs()!;
+  const { state, settingsOpen } = useWorkspaceTabs()!;
   const enabled = useEnabledNavigationTabs();
+  const tabTitle = settingsOpen
+    ? "Settings"
+    : enabled.length
+      ? TAB_TITLES[state.selectedTab]
+      : "Navigation";
   return (
     <View style={{ width: props.maxWidth, minHeight: 32, justifyContent: "center" }}>
       <WorkspaceConnectionTitle
-        brand={
-          <CompactBrandTitle
-            accessibilityLabel={`T3 Code, ${enabled.length ? TAB_TITLES[state.selectedTab] : "Navigation"}`}
-          />
-        }
+        brand={<CompactBrandTitle accessibilityLabel={`T3 Code, ${tabTitle}`} />}
         maxWidth={props.maxWidth}
         onPress={props.onOpenEnvironments}
       />
@@ -217,7 +218,7 @@ function WorkspaceRootContent() {
         {deviceType !== "pad" && deviceType !== "phone" && sidebarPicker ? (
           <WorkspaceSidebarTabs />
         ) : null}
-        {enabled.length === 0 && !settingsOpen ? null : settingsOpen ||
+        {enabled.length === 0 && !settingsOpen ? null : (settingsOpen && Platform.OS === "ios") || // Android's Settings list carries its own search in its app bar.
           state.selectedTab === "threads" ||
           state.selectedTab === "pullRequests" ? (
           <WorkspaceToolbar sidebar={sidebarNavigation} onNewTask={startNewTask} />

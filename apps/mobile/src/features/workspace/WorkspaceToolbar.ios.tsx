@@ -149,8 +149,13 @@ export function WorkspaceToolbar(props: {
         optionsVersion={[selectedTab, tab.searchMode]}
         listeners={{ transitionEnd: restoreSearch }}
         options={{
+          // Without Liquid Glass, Settings keeps its search field out instead of a search button,
+          // which would take the header's trailing items from the scope filter.
           headerSearchBarOptions:
-            (NATIVE_LIQUID_GLASS_SUPPORTED || tab.searchMode !== "resting") && searchVisible
+            (NATIVE_LIQUID_GLASS_SUPPORTED ||
+              tab.searchMode !== "resting" ||
+              workspace.settingsOpen) &&
+            searchVisible
               ? {
                   ref: searchRef,
                   autoFocus: tab.searchMode === "active",
@@ -185,7 +190,7 @@ export function WorkspaceToolbar(props: {
       />
       {/* UIKit lays trailing items out from the edge inward. A trailing toolbar replaces the
           header's own items, so an empty one would hide the Settings scope filter. */}
-      {workspace.settingsOpen && !foldedSearch && NATIVE_LIQUID_GLASS_SUPPORTED ? null : (
+      {workspace.settingsOpen && !foldedSearch ? null : (
         <Toolbar placement="right">
           {searchButton}
           {nativeToolbarCompose && foldedSearch ? <Toolbar.Spacer width={8} /> : null}
