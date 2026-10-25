@@ -353,6 +353,7 @@ const readImageDimensionsFromHeader = (filePath: string) =>
 const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMediaFileAsset")(
   function* (input: {
     readonly requestedPath: string;
+    readonly expectedCanonicalPath?: string;
     readonly workspaceRoot: string | undefined;
     readonly resource: AssetResource;
     readonly expiresAt: number;
@@ -378,11 +379,11 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
         (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
       ),
     );
-    // Draft paths already passed canonical workspace containment; never follow a
+    // The workspace caller pins its containment-checked path; never follow a
     // replacement symlink to a different file during this second resolution.
     if (
       !canonicalFile ||
-      (input.resource._tag === "draft-workspace-file" && canonicalFile !== requestedPath)
+      (input.expectedCanonicalPath !== undefined && canonicalFile !== input.expectedCanonicalPath)
     ) {
       return yield* new AssetWorkspaceAssetNotFoundError({
         resource: input.resource,
@@ -488,6 +489,7 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
       return yield* finalizeAbsoluteMediaFileAsset({
         ...input,
         requestedPath: canonicalFile,
+        expectedCanonicalPath: canonicalFile,
       });
     }
     const canonicalWorkspaceRoot = yield* fileSystem.realPath(input.workspaceRoot).pipe(

@@ -425,6 +425,31 @@ describe("AssetAccess", () => {
   );
 
   it.effect.skipIf(!symlinksSupported)(
+    "preserves absolute draft previews through stable symlinks",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-draft-absolute-" });
+        for (const extension of ["png", "mp4", "wav"]) {
+          const target = path.join(root, `target.${extension}`);
+          const alias = path.join(root, `alias.${extension}`);
+          yield* fs.writeFileString(target, "preview bytes");
+          yield* fs.symlink(target, alias);
+          const result = yield* issueAssetUrl({
+            resource: { _tag: "draft-workspace-file", cwd: root, path: alias },
+            workspaceRoot: root,
+          });
+          const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+          const separator = suffix.indexOf("/");
+          expect(
+            yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1)),
+          ).toMatchObject({ kind: "file", path: yield* fs.realPath(target) });
+        }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
     "rejects a draft media path swapped after workspace containment validation",
     () =>
       Effect.gen(function* () {
