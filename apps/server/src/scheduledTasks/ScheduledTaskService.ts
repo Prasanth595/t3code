@@ -699,7 +699,7 @@ export const layer = Layer.effect(
             next_run_at = ${input.nextRunAtIso},
             last_run_status = ${input.status},
             last_run_error = ${input.error},
-            enabled = CASE WHEN ${input.pause} THEN 0 ELSE enabled END,
+            enabled = CASE WHEN ${input.pause ? 1 : 0} = 1 THEN 0 ELSE enabled END,
             run_count = run_count + 1
         WHERE task_id = ${input.id}
           AND last_run_status = 'running'
@@ -724,7 +724,7 @@ export const layer = Layer.effect(
           UPDATE scheduled_tasks
           SET last_run_status = 'failed',
               last_run_error = ${next.error ? `${message}\n${next.error}` : message},
-              enabled = CASE WHEN ${next.error !== null} THEN 0 ELSE enabled END,
+              enabled = CASE WHEN ${next.error !== null ? 1 : 0} = 1 THEN 0 ELSE enabled END,
               next_run_at = ${next.nextRunAt},
               updated_at = ${iso(now)},
               run_count = run_count + CASE WHEN EXISTS (
@@ -970,9 +970,9 @@ export const layer = Layer.effect(
       yield* sql`
         UPDATE scheduled_tasks
         SET next_run_at = ${next.nextRunAt},
-            enabled = CASE WHEN ${next.error !== null} THEN 0 ELSE enabled END,
-            last_run_status = CASE WHEN ${next.error !== null} THEN 'failed' ELSE last_run_status END,
-            last_run_error = CASE WHEN ${next.error !== null} THEN ${next.error} ELSE last_run_error END,
+            enabled = CASE WHEN ${next.error !== null ? 1 : 0} = 1 THEN 0 ELSE enabled END,
+            last_run_status = CASE WHEN ${next.error !== null ? 1 : 0} = 1 THEN 'failed' ELSE last_run_status END,
+            last_run_error = CASE WHEN ${next.error !== null ? 1 : 0} = 1 THEN ${next.error} ELSE last_run_error END,
             updated_at = ${iso(now)}
         WHERE task_id = ${task.id}
       `.pipe(
@@ -1024,7 +1024,7 @@ export const layer = Layer.effect(
                 UPDATE scheduled_tasks
                 SET last_run_status = 'failed',
                     last_run_error = ${next.error ? `Run was interrupted by a server restart.\n${next.error}` : "Run was interrupted by a server restart."},
-                    enabled = CASE WHEN ${next.error !== null} THEN 0 ELSE enabled END,
+                    enabled = CASE WHEN ${next.error !== null ? 1 : 0} = 1 THEN 0 ELSE enabled END,
                     next_run_at = ${next.nextRunAt},
                     updated_at = ${iso(now)},
                     run_count = run_count + CASE WHEN EXISTS (
