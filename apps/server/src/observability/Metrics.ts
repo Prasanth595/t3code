@@ -16,7 +16,7 @@ export const rpcRequestDuration = Metric.timer("t3_rpc_request_duration", {
 });
 
 export const orchestrationCommandsTotal = Metric.counter("t3_orchestration_commands_total", {
-  description: "Total orchestration commands dispatched by result.",
+  description: "Total orchestration commands dispatched, by outcome.",
 });
 
 export const orchestrationCommandDuration = Metric.timer("t3_orchestration_command_duration", {
