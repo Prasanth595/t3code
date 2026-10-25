@@ -6,7 +6,8 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { clearConnectOnboardingRequest, connectOnboardingRequestAtom } from "./connectOnboarding";
 import { isConnectOnboardingOptedOut } from "./connectOnboardingOptOut";
 
-// Wait for Settings sign-in transitions to settle before presenting another formSheet.
+// Sign-in happens in its own modal; give its session-state transition a beat to
+// settle before presenting another formSheet on top.
 const PRESENT_ONBOARDING_DELAY_MS = 600;
 
 /** Keep @react-navigation out of non-navigation consumers' import graphs. */

@@ -1,4 +1,4 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
@@ -33,7 +33,7 @@ import type {
   AzureDevOpsPullRequest,
   AzureDevOpsRepositoryLocation,
 } from "./azureDevOpsPullRequestJson.ts";
-import { definition } from "../client/definition.ts";
+import { definition } from "../shared/definition.ts";
 
 /** Each file pays for two Python startups. */
 const DIFF_FILE_CONCURRENCY = 4;
@@ -60,7 +60,17 @@ const CAPABILITIES: PullRequestCapabilities = {
   viewedFiles: "environment",
 };
 
-/** Resolving permissions missing from the CLI would add several calls per PR. */
+const UNAVAILABLE_REQUIREMENT = {
+  missing:
+    "Azure CLI (`az`) with the Azure DevOps extension is required. Install `az`, then run `az extension add --name azure-devops`.",
+  unauthenticated: "Azure CLI is not signed in. Run `az login` and retry.",
+};
+
+/**
+ * Azure DevOps states no permission anywhere `az repos pr show` or `az repos pr list` reach: the
+ * answer lives in the security namespaces, behind identity descriptors and token paths that would
+ * be several calls per pull request to resolve.
+ */
 const AZURE_DEVOPS_VIEWER_PERMISSIONS: PullRequestViewerPermissions = {
   actions: CAPABILITIES.actions,
   comment: CAPABILITIES.comment,
@@ -231,6 +241,7 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("azure-devops"),
     capabilities: CAPABILITIES,
+    unavailableRequirement: UNAVAILABLE_REQUIREMENT,
     // The bare repository name repeats across an organization; the project path does not.
     repositoryKey: ({ canonicalKey }) => canonicalKey,
 
@@ -247,6 +258,10 @@ export const make = Effect.gen(function* () {
           viewer: input.viewer,
           limit: input.limit,
           cursor: input.cursor,
+          author:
+            input.filters?.author === undefined
+              ? undefined
+              : resolvePullRequestAuthorFilter(input.filters.author, input.viewer),
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),

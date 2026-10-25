@@ -1,3 +1,4 @@
+import type { ThemeAppearance } from "@t3tools/shared/themePalettes";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -397,7 +398,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     );
   });
 
-  const openPage = Effect.fnUntraced(function* (width: number) {
+  const openPage = Effect.fnUntraced(function* (width: number, appearance: ThemeAppearance) {
     const { targetId } = yield* send(
       "Target.createTarget",
       { url: "about:blank" },
@@ -420,7 +421,14 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     yield* send("Page.enable", {}, Ignored, sessionId);
     yield* send("Runtime.enable", {}, Ignored, sessionId);
     yield* send("Log.enable", {}, Ignored, sessionId);
-    // Disable WebRTC before scripts in every frame; ICE can resolve names outside the proxy.
+    yield* send(
+      "Emulation.setEmulatedMedia",
+      { features: [{ name: "prefers-color-scheme", value: appearance }] },
+      Ignored,
+      sessionId,
+    );
+    // Previews have no use for WebRTC, whose ICE servers can make the browser
+    // resolve names outside the proxy. Runs before page scripts in every frame.
     yield* send(
       "Page.addScriptToEvaluateOnNewDocument",
       {
@@ -532,6 +540,7 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
     readonly html: string;
     readonly width: number;
     readonly urlFragment: string;
+    readonly appearance: ThemeAppearance;
   }) {
     const path = yield* Path.Path;
     const directory = yield* scratchDirectory;
@@ -540,7 +549,7 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
       noSandbox: input.noSandbox,
       profileDirectory: path.join(directory, "profile"),
     });
-    const page = yield* browser.openPage(input.width);
+    const page = yield* browser.openPage(input.width, input.appearance);
     const contentHeight = yield* page.load(pageBody(input.html), input.urlFragment);
     const capturedHeight = Math.max(1, Math.min(contentHeight, MAX_CAPTURE_HEIGHT));
     const png = yield* page.screenshot(capturedHeight);
@@ -577,7 +586,7 @@ export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")
   return yield* Effect.forEach(
     input.widths,
     (width) =>
-      browser.openPage(width).pipe(
+      browser.openPage(width, "dark").pipe(
         Effect.flatMap((page) =>
           page.load(body, input.urlFragment).pipe(Effect.ensuring(page.close)),
         ),

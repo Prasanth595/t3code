@@ -1068,6 +1068,23 @@ async function captureIos(
   if (capture.device.orientation === "landscape") {
     await ensureIosFullScreenAppsMode(simulator.udid);
   }
+  if (capture.device.fold) {
+    const command = NodeProcess.env.AGENT_DEVICE_PATH ?? "agent-device";
+    const target = [
+      "--platform",
+      "ios",
+      "--udid",
+      simulator.udid,
+      "--session",
+      `showcase-${simulator.udid}`,
+    ];
+    await runCommand(command, ["open", ...target]);
+    try {
+      await runCommand(command, ["fold", capture.device.fold, ...target]);
+    } finally {
+      await runCommand(command, ["close", ...target]);
+    }
+  }
   await normalizeIosSimulator(capture.appearance, simulator.udid);
   if (appPath) {
     await runCommand("xcrun", ["simctl", "uninstall", simulator.udid, ANDROID_PACKAGE]).catch(
@@ -1140,12 +1157,19 @@ async function captureIos(
       showcaseCaptureDirectory(outputDirectory, capture),
       `${scene}.png`,
     );
-    await runCommand("xcrun", ["simctl", "io", simulator.udid, "screenshot", destination]);
+    await runCommand("xcrun", [
+      "simctl",
+      "io",
+      simulator.udid,
+      "screenshot",
+      ...(capture.device.fold ? ["--display", capture.device.fold === "closed" ? "1" : "3"] : []),
+      destination,
+    ]);
     if (capture.device.orientation === "landscape") {
       // Headless displays stay portrait despite app rotation; post-rotate only captures still in portrait.
       const { width, height } = readPngDimensions(await NodeFSP.readFile(destination));
       if (height > width) {
-        await runCommand("sips", ["--rotate", "270", destination]);
+        await runCommand("sips", ["--rotate", capture.device.fold ? "90" : "270", destination]);
       }
     }
     if (scene === "agent-activity") await unlockIosSimulator(simulator.udid);
@@ -1501,7 +1525,19 @@ async function main(): Promise<void> {
       showcaseServers.push(server);
       await waitForPort(port, `${environment.label} server`);
       await seedShowcaseEnvironment({ baseDir, projectIds: environment.projectIds });
-      // Listening precedes environment-ID persistence; wait for the file.
+      // Legacy fixture threads are imported into V2 during server startup.
+      await stopProcess(server);
+      const seededServer = startShowcaseServer(
+        baseDir,
+        workspaceRoot,
+        port,
+        shellPath,
+        labelProbeDirectory,
+      );
+      showcaseServers.push(seededServer);
+      await waitForPort(port, `${environment.label} seeded server`);
+      // The server begins listening before the ServerEnvironment layer
+      // persists the environment id, so poll rather than read once.
       const environmentId = await waitForFileContent(
         NodePath.join(baseDir, "userdata", "environment-id"),
         `${environment.label} environment id`,

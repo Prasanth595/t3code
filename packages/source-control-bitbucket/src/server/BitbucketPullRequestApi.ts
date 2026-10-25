@@ -140,6 +140,9 @@ export class BitbucketPullRequestApi extends Context.Service<
       readonly limit: number;
       readonly query?: string | undefined;
       readonly cursor?: ProviderListCursor | undefined;
+      /** Matched against the login a row shows, which is the nickname or else the display name. */
+      readonly author?: string | undefined;
+      readonly draft?: boolean | undefined;
     }) => Effect.Effect<BitbucketPullRequestBatch, BitbucketPullRequestApiError>;
 
     readonly getPullRequest: (input: {
@@ -310,6 +313,15 @@ function searchFilter(query: string): string {
   return `(title ~ "${literal}" OR description ~ "${literal}")`;
 }
 
+function authorFilter(login: string): string {
+  const literal = filterLiteral(login);
+  return `(author.nickname = "${literal}" OR author.display_name = "${literal}")`;
+}
+
+/**
+ * The backslash is escaped first, or escaping the quote would only produce a literal
+ * backslash followed by a live quote.
+ */
 function filterLiteral(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }
@@ -535,6 +547,8 @@ export const make = Effect.gen(function* () {
         // Exclude already-sent IDs at the inclusive timestamp before applying the page limit.
         const predicates = [
           ...(search.length === 0 ? [] : [searchFilter(search)]),
+          ...(input.author === undefined ? [] : [authorFilter(input.author)]),
+          ...(input.draft === undefined ? [] : [`draft = ${input.draft}`]),
           ...(input.cursor === undefined ? [] : [`updated_on <= ${input.cursor.updatedBefore}`]),
           ...(input.cursor?.seenAt ?? []).map((number) => `id != ${number}`),
         ];

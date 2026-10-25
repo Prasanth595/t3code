@@ -15,6 +15,7 @@ import { Italic, starInputRegex, starPasteRegex } from "@tiptap/extension-italic
 import {
   type Command,
   type Editor,
+  Extension,
   markInputRule,
   markPasteRule,
   mergeAttributes,
@@ -126,8 +127,14 @@ function codePairCaretPlugin(type: MarkType) {
  */
 export const ComposerCodeExtension = Code.extend({
   excludes: "code",
-  // Styled-edge caret stops handle ArrowRight; disable the stock exit that inserts a space.
+  // The forward arrow leaves code through the caret stops at styled edges, so
+  // the stock exit (inserting a space at the end of a line) is not needed.
   exitable: false,
+  // Code reads left to right inside an Arabic or Hebrew line, and the isolate
+  // keeps its punctuation from trading places with the text around it.
+  addOptions() {
+    return { ...this.parent!(), HTMLAttributes: { dir: "ltr" } };
+  },
   addProseMirrorPlugins() {
     return [...(this.parent?.() ?? []), codePairCaretPlugin(this.type)];
   },
@@ -147,7 +154,27 @@ export const ComposerItalicExtension = Italic.extend({
   },
 });
 
-// Block chords can nest blocks in quotes that the serializer silently drops.
+/**
+ * Mod+B bolds selected text only. Without a selection Tiptap would toggle bold
+ * for the next typed text, which users hit by accident when they mean the
+ * sidebar toggle. Runs ahead of the Bold extension and swallows the chord.
+ */
+export const ComposerBoldSelectionOnlyExtension = Extension.create({
+  name: "composerBoldSelectionOnly",
+  priority: 1000,
+  addKeyboardShortcuts() {
+    const ignoreWithoutSelection = () => this.editor.state.selection.empty;
+    return { "Mod-b": ignoreWithoutSelection, "Mod-B": ignoreWithoutSelection };
+  },
+});
+
+/**
+ * Tiptap's block extensions each bind a chord that turns the current block into
+ * their node (Mod-Shift-8 for a list, Mod-Alt-c for a fence, and so on). The
+ * composer does not offer them, and they are not harmless: run inside a quote
+ * they nest a block the quote serializer cannot write, and the text in it drops
+ * out of the stored draft.
+ */
 function withoutBlockChords<Shortcuts extends Record<string, unknown>>(
   shortcuts: Shortcuts | undefined,
   drop: readonly string[],

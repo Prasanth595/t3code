@@ -242,7 +242,9 @@ export const make = Effect.gen(function* () {
     Scope.close(scope, Exit.void),
   );
   const cacheRef = yield* Ref.make(new Map<string, CachedVcsStatus>());
-  // Serialize remote cache writes per cwd so slow polls cannot overwrite turn-end PR refreshes with stale nulls.
+  // One permit per cwd for remote reads that write the cache. Without it a
+  // periodic poll that started before an agent creates a PR can finish after the
+  // turn-end refresh and overwrite the fresh PR with its stale `pr: null`.
   const remoteWriteLocks = yield* KeyedLock.make<string>();
   const withRemoteWriteLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
     remoteWriteLocks.withLock(cwd, effect);

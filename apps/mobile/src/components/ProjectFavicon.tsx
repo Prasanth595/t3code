@@ -14,8 +14,10 @@ import { Atom } from "effect/reactivity";
 import { projectFaviconUrlAtom } from "../state/assets";
 import {
   countGlyphs,
+  projectAutoMonogram,
   projectIconColorClassNames,
   resolveProjectIconGlyph,
+  resolveProjectIconSymbol,
   type ProjectIconGlyph,
 } from "../lib/projectIcon";
 
@@ -39,6 +41,7 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
   readonly projectIcon?: ProjectIconOverride | null;
 }) {
   const size = props.size ?? 42;
+  const symbol = resolveProjectIconSymbol(props.projectIcon);
   const glyph = resolveProjectIconGlyph(props.projectIcon, props.projectTitle);
   const faviconUrl = useAtomValue(
     props.workspaceRoot == null || glyph !== null
@@ -71,6 +74,17 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
         : null,
     [renderableFaviconUrl, props.environmentId, props.workspaceRoot, props.faviconPath],
   );
+
+  if (symbol !== null) {
+    return (
+      <SymbolView
+        name={symbol.name}
+        size={size}
+        tintColorClassName={projectIconColorClassNames(symbol.color).tint}
+        type="monochrome"
+      />
+    );
+  }
 
   if (glyph !== null) {
     return <ProjectIconGlyphView glyph={glyph} size={size} />;
@@ -166,6 +180,7 @@ function ProjectFaviconImage(props: {
 
   const requestIsActive = faviconRequest !== null && activeFaviconRequest === faviconRequest;
   const showImage = requestIsActive && status === "loaded";
+  const fallbackGlyph = showImage ? null : projectAutoMonogram(props.projectTitle);
 
   return (
     <View
@@ -176,14 +191,16 @@ function ProjectFaviconImage(props: {
         justifyContent: "center",
       }}
     >
-      {!showImage ? (
+      {showImage ? null : fallbackGlyph ? (
+        <ProjectIconGlyphView glyph={fallbackGlyph} size={props.size} />
+      ) : (
         <SymbolView
           name={{ ios: "folder.fill", android: props.open ? "folder_open" : "folder" }}
           size={props.size}
           tintColorClassName={"accent-icon-subtle"}
           type="monochrome"
         />
-      ) : null}
+      )}
 
       {requestIsActive ? (
         <Image

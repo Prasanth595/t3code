@@ -1,7 +1,7 @@
 import type { AssetResource } from "@t3tools/contracts";
 import {
   AssetAttachmentNotFoundError,
-  AssetGitHubMediaUrlValidationError,
+  AssetSourceControlMediaUrlValidationError,
   AssetPreviewTypeValidationError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
@@ -13,6 +13,7 @@ import {
   AssetWorkspacePathValidationError,
   AssetWorkspaceResolutionError,
   AssetWorkspaceRootNormalizationError,
+  SOURCE_CONTROL_MEDIA_ASSET,
   ThreadId,
   ToolActivityNativeAppReference,
   TurnItemId,
@@ -30,7 +31,6 @@ import {
   readImageDimensions,
   type ImageDimensions,
 } from "@t3tools/shared/imageDimensions";
-import { githubMediaFetchUrl, githubMediaFileName } from "@t3tools/shared/githubMedia";
 import { MCP_APP_MAX_HTML_BYTES } from "@t3tools/shared/mcpApp";
 import {
   isProjectFaviconPath,
@@ -64,6 +64,7 @@ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import { isWithinRoot } from "../workspace/KnownWorkspaces.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { extractIcnsPng } from "./icns.ts";
 import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -159,8 +160,8 @@ const AssetClaimsSchema = Schema.Union([
   }),
   Schema.Struct({
     version: Schema.Literal(1),
-    kind: Schema.Literal("github-media"),
-    /** The signature preserves mint-time GitHub media host validation. */
+    kind: Schema.Literal(SOURCE_CONTROL_MEDIA_ASSET),
+    /** A host's `fetchUrl`, narrowed at mint time; the signature is what keeps it there. */
     url: Schema.String,
     cwd: Schema.String,
     expiresAt: Schema.Number,
@@ -188,7 +189,7 @@ export type ResolvedAsset =
       readonly mimeType: string;
     }
   | {
-      readonly kind: "github-media";
+      readonly kind: "source-control-media";
       readonly url: string;
       readonly cwd: string;
       readonly expiresAt: number;
@@ -390,6 +391,7 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
                 : Effect.succeed(null),
               (dimensions) => ({
                 identity: { device: file.info.dev.toString(), inode: file.info.ino.toString() },
+                fileRevision: `${file.info.dev}:${file.info.ino}:${file.info.size}:${file.info.mtimeNs}:${file.info.ctimeNs}`,
                 dimensions,
               }),
             ),
@@ -414,6 +416,7 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
         expiresAt: input.expiresAt,
       },
       fileName: path.basename(canonicalFile),
+      fileRevision: opened.fileRevision,
       imageDimensions: opened.dimensions,
     };
   },
@@ -516,6 +519,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   let fileName: string;
   let sourcePath: string | undefined;
   let imageDimensions: ImageDimensions | null = null;
+  let fileRevision: string | undefined;
 
   switch (input.resource._tag) {
     case "media-file": {
@@ -543,6 +547,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       claims = finalized.claims;
       fileName = finalized.fileName;
       imageDimensions = finalized.imageDimensions;
+      fileRevision = finalized.fileRevision;
       break;
     }
     case "workspace-file": {
@@ -586,6 +591,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         claims = finalized.claims;
         fileName = finalized.fileName;
         imageDimensions = finalized.imageDimensions;
+        fileRevision = finalized.fileRevision;
         break;
       }
       const workspaceRoot = yield* workspacePaths.normalizeWorkspaceRoot(draftWorkspaceRoot).pipe(
@@ -792,19 +798,19 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = "native-app-icon.png";
       break;
     }
-    case "github-media": {
-      const fetchUrl = githubMediaFetchUrl(input.resource.url);
-      if (fetchUrl === null) {
-        return yield* new AssetGitHubMediaUrlValidationError({});
+    case SOURCE_CONTROL_MEDIA_ASSET: {
+      const media = sourceControlDefinitions.mediaUrl(input.resource.url);
+      if (media === null) {
+        return yield* new AssetSourceControlMediaUrlValidationError({});
       }
       claims = {
         version: 1,
-        kind: "github-media",
-        url: fetchUrl,
+        kind: SOURCE_CONTROL_MEDIA_ASSET,
+        url: media.fetchUrl,
         cwd: input.resource.cwd,
         expiresAt,
       };
-      fileName = githubMediaFileName(fetchUrl);
+      fileName = media.fileName;
       break;
     }
   }
@@ -839,6 +845,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
     expiresAt,
     ...(sourcePath !== undefined ? { sourcePath } : {}),
     ...(imageDimensions !== null ? { imageDimensions } : {}),
+    ...(fileRevision !== undefined ? { fileRevision } : {}),
   };
 });
 
@@ -912,9 +919,9 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     return faviconPath === claims.filePath ? yield* projectFaviconAsset(faviconPath) : null;
   }
 
-  if (claims.kind === "github-media") {
+  if (claims.kind === SOURCE_CONTROL_MEDIA_ASSET) {
     return {
-      kind: "github-media",
+      kind: "source-control-media",
       url: claims.url,
       cwd: claims.cwd,
       expiresAt: claims.expiresAt,

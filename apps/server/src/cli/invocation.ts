@@ -38,8 +38,17 @@ const InstallManifest = Schema.Struct({
 });
 const decodeInstallManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(InstallManifest));
 
-/** The launcher variable is inherited; trust it only when its package matches this exact version. */
-const resolveEntryPath = Effect.gen(function* () {
+/**
+ * The script this CLI was started through: the `t3` npm launcher that
+ * downloaded and ran this executable (it names itself in
+ * `T3CODE_NPM_LAUNCHER_PATH`), or the Node entry script of a build run from
+ * source. A standalone executable has none and reports its own path.
+ *
+ * The variable is inherited by everything the server spawns, so a launcher
+ * counts only when its package is this exact version: a different `t3` run
+ * from an agent's shell must not claim to be the npm install.
+ */
+export const resolveEntryPath = Effect.gen(function* () {
   const npmLauncher = (yield* HostProcess.Environment).T3CODE_NPM_LAUNCHER_PATH?.trim();
   if (npmLauncher) {
     const fs = yield* FileSystem.FileSystem;

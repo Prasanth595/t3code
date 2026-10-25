@@ -8,6 +8,7 @@ import {
   Text,
 } from "@expo/ui/jetpack-compose";
 import { defaultMinSize, padding, size, width } from "@expo/ui/jetpack-compose/modifiers";
+import type { MenuAction } from "@react-native-menu/menu";
 import { Pressable } from "react-native";
 import { resolveScaledTextRole } from "../../lib/appearancePreferences";
 
@@ -19,6 +20,7 @@ import { isAppSymbolName, SymbolView, type AppSymbolName } from "./AppSymbol";
 // The Compose glyph host consumes touches; run the action here and keep accessibility on the row.
 function MenuIcon(props: {
   readonly name: AppSymbolName;
+  readonly color?: MenuAction["imageColor"];
   readonly onPress: () => void;
   readonly destructive?: boolean;
   readonly disabled?: boolean;
@@ -38,13 +40,15 @@ function MenuIcon(props: {
           name={props.name}
           size={iconSize}
           type="monochrome"
-          tintColorClassName={
-            props.disabled
-              ? "accent-icon-subtle"
-              : props.destructive
-                ? "accent-danger-foreground"
-                : "accent-foreground"
-          }
+          {...(typeof props.color === "string" && !props.disabled
+            ? { tintColor: props.color }
+            : {
+                tintColorClassName: props.disabled
+                  ? "accent-icon-subtle"
+                  : props.destructive
+                    ? "accent-danger-foreground"
+                    : "accent-foreground",
+              })}
         />
       </Pressable>
     </RNHostView>
@@ -93,6 +97,7 @@ export function MenuPopup(props: MenuPopupProps) {
             <DropdownMenuItem.LeadingIcon>
               <MenuIcon
                 name={action.image}
+                color={action.imageColor}
                 onPress={() => props.onPress(action)}
                 destructive={action.attributes?.destructive}
                 disabled={action.attributes?.disabled}

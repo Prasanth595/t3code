@@ -378,7 +378,10 @@ export const replayAndBufferProjectedLiveEvents = <
           Effect.map((highWater) => {
             throughSequence = Math.max(highWater, input.afterSequence ?? 0);
             return input.replay(highWater).pipe(
-              // Charge database replay per item; a finite page can exceed the live budget without overflowing.
+              // The finite database page is independent of the live tail.
+              // Charge only the item being delivered so a fast reader can
+              // consume a page larger than the budget without overflowing.
+              Stream.filter((event) => input.filter?.(event) ?? true),
               Stream.rechunk(1),
               Stream.mapEffect((event) => budget.retain(input.project(event))),
             );

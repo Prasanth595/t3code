@@ -14,11 +14,6 @@ export type StackedThreadToastOptions = {
   data?: Omit<ThreadToastData, "actionLayout">;
 };
 
-/** Clear toast actions with defined empty children; undefined actionProps is a no-op on update. */
-export const hiddenToastActionProps = {
-  children: null,
-} as const satisfies Pick<ComponentPropsWithoutRef<"button">, "children">;
-
 export function stackedThreadToast(
   options: StackedThreadToastOptions,
 ): ToastManagerAddOptions<ThreadToastData> {

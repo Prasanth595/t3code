@@ -14,7 +14,7 @@ import {
   type ProviderChangeRequestDetail,
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
-import { definition } from "../client/definition.ts";
+import { definition } from "../shared/definition.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
@@ -38,7 +38,17 @@ const CAPABILITIES: PullRequestCapabilities = {
   edit: { changeRequest: true, comment: true },
 };
 
-/** GitLab exposes no narrower branch-rewrite permission; gate rebases with can_merge too. */
+const UNAVAILABLE_REQUIREMENT = {
+  missing:
+    "GitLab CLI (`glab`) is required to browse change requests on this host. Install it from https://gitlab.com/gitlab-org/cli and reload.",
+  unauthenticated: "GitLab CLI is not authenticated. Run `glab auth login` and retry.",
+};
+
+/**
+ * The actions `user.can_merge` answers for. Rebasing writes to the source branch rather than to
+ * the target, so it is not literally the same permission — but GitLab reports nothing narrower,
+ * and someone it will not let land this change has no business rewriting its branch either.
+ */
 const MERGE_ACTIONS: ReadonlySet<string> = new Set([
   "merge",
   "update-branch",
@@ -104,6 +114,7 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("gitlab"),
     capabilities: CAPABILITIES,
+    unavailableRequirement: UNAVAILABLE_REQUIREMENT,
 
     getViewer: (input) =>
       cli.getViewerUsername({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
@@ -119,6 +130,7 @@ export const make = Effect.gen(function* () {
           limit: input.limit,
           query: input.query,
           cursor: input.cursor,
+          filters: input.filters,
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
@@ -215,6 +227,16 @@ export const make = Effect.gen(function* () {
           number: input.number,
         })
         .pipe(Effect.mapError(fail("listReviewerCandidates"))),
+
+    listRepositoryLabels: (input) =>
+      cli
+        .listProjectLabels({ cwd: input.cwd, repository: input.repository, search: input.query })
+        .pipe(Effect.mapError(fail("listRepositoryLabels"))),
+
+    searchRepositoryAuthors: (input) =>
+      cli
+        .listProjectUsers({ cwd: input.cwd, repository: input.repository, search: input.query })
+        .pipe(Effect.mapError(fail("searchRepositoryAuthors"))),
 
     setReviewerRequest: (input) =>
       cli
