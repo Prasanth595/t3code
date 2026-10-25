@@ -30,6 +30,10 @@ export class CursorSdkCatalogError extends Schema.TaggedError<CursorSdkCatalogEr
   get planRequired(): boolean {
     return this.cause instanceof CursorSdkError && this.cause.code === "plan_required";
   }
+
+  get featureUnavailable(): boolean {
+    return this.cause instanceof CursorSdkError && this.cause.code === "feature_unavailable";
+  }
 }
 
 export class CursorSdkCatalog extends Context.Service<
@@ -83,13 +87,13 @@ export const makeCursorSdkCatalog = Effect.fn("CursorSdkCatalog.make")(function*
       Effect.all(
         {
           // Enterprise teams can block /v1/me while models and local runs work.
-          // The key name and email only label the account, so only a rejected
-          // key fails the read.
+          // The key name and email only label the account, so that block alone
+          // does not fail the read. Other /v1/me failures still do.
           user: probes
             .readUser(apiKey)
             .pipe(
               Effect.catch((error) =>
-                error.authenticationFailure ? Effect.fail(error) : Effect.undefined,
+                error.featureUnavailable ? Effect.undefined : Effect.fail(error),
               ),
             ),
           models: Cache.get(modelCache, apiKey),
