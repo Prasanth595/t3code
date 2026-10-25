@@ -25,6 +25,23 @@ describe("images inside running text", () => {
     expect(markdownWithBlockImages("- [x] Done ![a](a.png)")).toBe("- [x] Done\n\n  ![a](a.png)");
   });
 
+  it("keeps text after an image from opening a block", () => {
+    for (const [suffix, escaped] of [
+      ["# x", "\\# x"],
+      ["- x", "\\- x"],
+      ["* x", "\\* x"],
+      ["2. x", "2\\. x"],
+      ["> x", "\\> x"],
+      ["---", "\\---"],
+      ["***", "\\***"],
+      ["*emphasis* x", "*emphasis* x"],
+    ]) {
+      expect(markdownWithBlockImages(`See ![a](a.png) ${suffix}`)).toBe(
+        `See\n\n![a](a.png)\n\n${escaped}`,
+      );
+    }
+  });
+
   it("leaves images that already start their own line", () => {
     for (const markdown of [
       "Text\n\n![a](a.png)",

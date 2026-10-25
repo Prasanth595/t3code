@@ -348,6 +348,9 @@ export function markdownWithTableBreaks(markdown: string): string {
   return markdown;
 }
 
+// Matches up to where a backslash escapes a heading, quote, list or thematic break marker.
+const BLOCK_MARKER = /^(?:\d{1,9}(?=[.)])|(?=[#>+-]|\*[ \t]|([*_])(?:[ \t]*\1){2,}[ \t]*$))/m;
+
 /** md4c draws an image that follows text on its line as a 20pt glyph; give each its own paragraph. */
 export function markdownWithBlockImages(markdown: string): string {
   if (!markdown.includes("![")) return markdown;
@@ -380,6 +383,12 @@ export function markdownWithBlockImages(markdown: string): string {
         const after = /^[ \t]*(?:\\?\r?\n[ \t>]*)?/.exec(markdown.slice(imageEnd, end))![0];
         previousEnd = imageEnd + after.length;
         edits.push({ start: imageEnd, end: previousEnd, content: paragraphBreak });
+        // The text after the image now starts a paragraph, where a leading marker would open a block.
+        const marker = BLOCK_MARKER.exec(markdown.slice(previousEnd, end));
+        if (marker) {
+          const offset = previousEnd + marker[0].length;
+          edits.push({ start: offset, end: offset, content: "\\" });
+        }
       }
     }
   };
