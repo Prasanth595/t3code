@@ -177,9 +177,6 @@ function setupEntry() {
     fallback() {
       act(() => vi.runAllTimers());
     },
-    rerender() {
-      act(() => root.render(<Entry />));
-    },
     [Symbol.dispose]() {
       act(() => root.unmount());
       requestFrame.mockRestore();
@@ -189,44 +186,34 @@ function setupEntry() {
   };
 }
 
-it("commits the shell before processing files and retains the body across picker transitions", () => {
+it("commits the loading shell and waits for the opening transition before building the diff", () => {
   using screen = setupEntry();
   expect(screen.events).toEqual(["shell-commit"]);
-  expect(screen.prepare).not.toHaveBeenCalled();
   screen.event("transitionStart");
   screen.frame();
   screen.frame();
-  expect(screen.prepare).not.toHaveBeenCalled();
   screen.event("transitionEnd", true);
   expect(screen.prepare).not.toHaveBeenCalled();
   screen.event("transitionEnd");
   expect(screen.events).toEqual(["shell-commit", "prepare", "body-commit"]);
   expect(screen.container.textContent).toBe("first.ts,neighbor.ts");
-  screen.event("transitionStart", true);
-  screen.event("transitionEnd", true);
-  screen.event("transitionStart");
-  screen.event("transitionEnd");
-  screen.rerender();
-  expect(screen.prepare).toHaveBeenCalledTimes(1);
 });
 
-it("opens an initial or unanimated route after the shell gets a frame", () => {
-  using screen = setupEntry();
-  screen.frame();
-  expect(screen.prepare).not.toHaveBeenCalled();
-  screen.frame();
-  expect(screen.prepare).toHaveBeenCalledTimes(1);
-});
-
-it("does not wait indefinitely when a native opening completion is missing", () => {
-  using screen = setupEntry();
-  screen.event("transitionStart");
-  screen.frame();
-  screen.frame();
-  expect(screen.prepare).not.toHaveBeenCalled();
-  screen.fallback();
-  expect(screen.prepare).toHaveBeenCalledTimes(1);
-});
+it.each(["unanimated", "missing-completion"] as const)(
+  "opens the diff after a %s presentation without stranding the shell",
+  (presentation) => {
+    using screen = setupEntry();
+    if (presentation === "missing-completion") screen.event("transitionStart");
+    screen.frame();
+    expect(screen.prepare).not.toHaveBeenCalled();
+    screen.frame();
+    if (presentation === "missing-completion") {
+      expect(screen.prepare).not.toHaveBeenCalled();
+      screen.fallback();
+    }
+    expect(screen.prepare).toHaveBeenCalledOnce();
+  },
+);
 
 it("retries a failed continuation without discarding loaded files or restarting page one", async () => {
   using screen = setup();

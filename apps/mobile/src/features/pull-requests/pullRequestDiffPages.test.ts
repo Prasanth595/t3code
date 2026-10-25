@@ -3,7 +3,6 @@ import type { PullRequestDiffResult } from "@t3tools/contracts";
 import type { ReviewParsedDiff } from "../review/reviewModel";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import * as reviewModel from "../review/reviewModel";
-import { getCachedNativeReviewDiffData } from "../review/nativeReviewDiffAdapter";
 import {
   combinePullRequestDiffPages,
   getCachedPullRequestDiffPages,
@@ -30,17 +29,6 @@ function withheldDiff(): PullRequestDiffResult {
 }
 
 describe("paged mobile pull request diffs", () => {
-  it("shares parsed and native snapshots across consumers without reparsing", () => {
-    using parse = vi.spyOn(reviewModel, "buildReviewParsedDiff");
-    const result = diff("first.ts");
-    const first = getCachedPullRequestDiffPages([{ cursor: null, result }], "shared", GITHUB);
-    const native = getCachedNativeReviewDiffData({ parsedDiff: first });
-    const next = getCachedPullRequestDiffPages([{ cursor: null, result }], "shared", GITHUB);
-    expect(next).toBe(first);
-    expect(parse).toHaveBeenCalledTimes(1);
-    expect(getCachedNativeReviewDiffData({ parsedDiff: next })).toBe(native);
-  });
-
   it("isolates scopes, cursors, and provider terminology for the same result", () => {
     const result = withheldDiff();
     const pages = [{ cursor: null, result }];

@@ -4020,6 +4020,7 @@ it.effect("authorizes cold source reads with paginated paths without fetching pa
     });
     for (const [oldPath, newPath] of [
       [".env", ".env"],
+      ["../after.ts", "../after.ts"],
       ["secret.ts", "after.ts"],
     ] as const) {
       const error = yield* service

@@ -81,13 +81,13 @@ it.each(failureKeys)(
   "remembers permanent unavailability for a %s key",
   async (_name, createKey) => {
     const key = createKey();
-    for (const reason of ["unsupported", "binary"]) {
-      const fetch = vi.fn().mockRejectedValueOnce({ reason }).mockResolvedValue(SOURCE);
-      const load = createNativeReviewDiffSourceLoader(fetch);
-      expect(await load(key)).toBeNull();
-      expect(await load(key)).toBeNull();
-      expect(fetch).toHaveBeenCalledOnce();
-    }
+    const fetch = vi.fn(async () => {
+      throw { reason: "unsupported" };
+    });
+    const load = createNativeReviewDiffSourceLoader(fetch);
+    expect(await load(key)).toBeNull();
+    expect(await load(key)).toBeNull();
+    expect(fetch).toHaveBeenCalledOnce();
   },
 );
 

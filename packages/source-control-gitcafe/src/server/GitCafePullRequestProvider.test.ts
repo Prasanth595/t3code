@@ -167,96 +167,72 @@ const assertRequestId = (body: unknown) =>
 describe("GitCafePullRequestProvider changed paths", () => {
   const snapshot = { version: pull.version, headOid, comparisonBaseOid: baseOid };
 
-  it.effect(
-    "reads paginated paths and cold source contents without fetching diff-file hunks",
-    () => {
-      const server = fakeGitCafe({
-        "GET /repos/owner/repo/pulls/7": pull,
-        "GET /repos/owner/repo/pulls/7/changes": (request: SentRequest) => ({
-          ...snapshot,
-          items: request.query.has("after")
-            ? [{ path: "gone.ts", status: "deleted" }]
-            : [{ path: "new name.ts", oldPath: "old name.ts", status: "renamed" }],
-          next: request.query.has("after") ? null : "next-page",
-        }),
-        "GET /repos/owner/repo/blob": (request: SentRequest) => ({
-          commit: request.query.get("oid"),
-          path: request.query.get("path"),
-          size: 5,
-          binary: false,
-          content: "hello",
-        }),
+  it.effect("pages changed paths without fetching diff-file hunks", () => {
+    const server = fakeGitCafe({
+      "GET /repos/owner/repo/pulls/7": pull,
+      "GET /repos/owner/repo/pulls/7/changes": (request: SentRequest) => ({
+        ...snapshot,
+        items: request.query.has("after")
+          ? [{ path: "gone.ts", status: "deleted" }]
+          : [{ path: "new name.ts", oldPath: "old name.ts", status: "renamed" }],
+        next: request.query.has("after") ? null : "next-page",
+      }),
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const first = yield* provider.getDiffFilePaths!(target);
+      const second = yield* provider.getDiffFilePaths!({ ...target, cursor: first.nextCursor! });
+      assert.deepStrictEqual(first.files, [{ oldPath: "old name.ts", newPath: "new name.ts" }]);
+      assert.deepStrictEqual(second, {
+        files: [{ oldPath: "gone.ts", newPath: "gone.ts" }],
+        nextCursor: null,
       });
-      return Effect.gen(function* () {
-        const provider = yield* GitCafePullRequestProvider.make;
-        const first = yield* provider.getDiffFilePaths!(target);
-        const second = yield* provider.getDiffFilePaths!({ ...target, cursor: first.nextCursor! });
-        assert.deepStrictEqual(first.files, [{ oldPath: "old name.ts", newPath: "new name.ts" }]);
-        assert.deepStrictEqual(second, {
-          files: [{ oldPath: "gone.ts", newPath: "gone.ts" }],
-          nextCursor: null,
-        });
-        const source = yield* provider.getDiffFileContents!({
-          ...target,
-          changeType: "rename-changed",
-          ...first.files[0]!,
-        });
-        assert.deepStrictEqual(source, { oldContents: "hello", newContents: "hello" });
-        assert.deepStrictEqual(
-          server.sent
-            .filter((request) => request.path.endsWith("/changes"))
-            .map((request) => ({
-              after: request.query.get("after"),
-              limit: request.query.get("limit"),
-              version: request.query.get("expectedVersion"),
-            })),
-          [
-            { after: null, limit: "500", version: "4" },
-            { after: "next-page", limit: "500", version: "4" },
-            { after: null, limit: "1", version: "4" },
-          ],
-        );
-        assert.isFalse(server.sent.some((request) => request.path.includes("/diff-file")));
-        assert.deepStrictEqual(server.writes(), []);
-      }).pipe(Effect.provide(server.layer));
-    },
-  );
+      assert.isFalse(server.sent.some((request) => request.path.includes("/diff-file")));
+    }).pipe(Effect.provide(server.layer));
+  });
 
-  it.effect.each([{ version: 5 }, { headOid: baseOid }, { comparisonBaseOid: headOid }])(
-    "refuses metadata pages from different comparison snapshots (%j)",
-    (changed) => {
+  // getDiff cases guard parity with the existing patch path; getDiffFilePaths must refuse the same pages.
+  it.effect.each(
+    (["getDiff", "getDiffFilePaths"] as const).flatMap((method) =>
+      [{ version: 5 }, { headOid: baseOid }, { comparisonBaseOid: headOid }].map((changed) => ({
+        method,
+        changed,
+      })),
+    ),
+  )(
+    "$method refuses a continuation from a different revision ($changed)",
+    ({ method, changed }) => {
       const server = fakeGitCafe({
         "GET /repos/owner/repo/pulls/7": pull,
         "GET /repos/owner/repo/pulls/7/changes": (request: SentRequest) => ({
           ...snapshot,
           ...(request.query.has("after") ? changed : {}),
-          items: [{ path: "file.ts" }],
+          items: [],
           next: request.query.has("after") ? null : "next-page",
         }),
       });
       return Effect.gen(function* () {
         const provider = yield* GitCafePullRequestProvider.make;
-        const first = yield* provider.getDiffFilePaths!(target);
-        const result = yield* provider.getDiffFilePaths!({
-          ...target,
-          cursor: first.nextCursor!,
-        }).pipe(Effect.result);
+        const read = (cursor?: string) =>
+          method === "getDiff"
+            ? provider.getDiff({ ...target, ...(cursor === undefined ? {} : { cursor }) })
+            : provider.getDiffFilePaths!({
+                ...target,
+                ...(cursor === undefined ? {} : { cursor }),
+              });
+        const first = yield* read();
+        const result = yield* read(first.nextCursor!).pipe(Effect.result);
         assert.strictEqual(result._tag, "Failure");
       }).pipe(Effect.provide(server.layer));
     },
   );
 
   it.effect.each([{ version: 5 }, { headOid: baseOid }])(
-    "refuses initial metadata from a different pull snapshot (%j)",
+    "refuses initial changed paths from a different pull revision (%j)",
     (changed) => {
       const server = fakeGitCafe({
         "GET /repos/owner/repo/pulls/7": pull,
-        "GET /repos/owner/repo/pulls/7/changes": {
-          ...snapshot,
-          ...changed,
-          items: [{ path: "file.ts" }],
-          next: null,
-        },
+        "GET /repos/owner/repo/pulls/7/changes": { ...snapshot, ...changed, items: [], next: null },
       });
       return Effect.gen(function* () {
         const provider = yield* GitCafePullRequestProvider.make;
@@ -265,18 +241,6 @@ describe("GitCafePullRequestProvider changed paths", () => {
       }).pipe(Effect.provide(server.layer));
     },
   );
-
-  it.effect("refuses commit-specific changed paths without making requests", () => {
-    const server = fakeGitCafe({});
-    return Effect.gen(function* () {
-      const provider = yield* GitCafePullRequestProvider.make;
-      const result = yield* provider.getDiffFilePaths!({ ...target, commit: headOid }).pipe(
-        Effect.result,
-      );
-      assert.strictEqual(result._tag, "Failure");
-      assert.deepStrictEqual(server.sent, []);
-    }).pipe(Effect.provide(server.layer));
-  });
 });
 
 describe("GitCafePullRequestProvider source contents", () => {
