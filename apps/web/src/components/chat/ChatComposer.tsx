@@ -2436,6 +2436,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       questionAttachmentTarget,
       attachmentTargetKey,
       fileStagingLimit,
+      pastedTextAttachmentThreshold: settings.pastedTextAttachmentThreshold,
       promptRef,
       composerImagesRef,
       composerFilesRef,
