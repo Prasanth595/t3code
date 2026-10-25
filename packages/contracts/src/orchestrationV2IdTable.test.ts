@@ -10,6 +10,7 @@ const Page = withRecordIdTable(
         id: Schema.String,
         count: Schema.Number,
         parentIds: Schema.Array(Schema.String),
+        mergedId: Schema.optional(Schema.String),
         item: Schema.Struct({ ownerId: Schema.NullOr(Schema.String), legacyId: Schema.Number }),
       }),
     ),
@@ -40,6 +41,15 @@ describe("record ID table", () => {
     expect(decode(wire)).toEqual(value);
     // The table is consumed, so a second decode of the same object cannot remap numbers.
     expect(decode(wire)).toEqual(value);
+  });
+
+  it("rejects an index outside the table, even in an optional slot", () => {
+    const wire = {
+      rows: [{ id: 0, count: 1, parentIds: [], mergedId: 5, item: { ownerId: null, legacyId: 0 } }],
+      ids: ["row:a"],
+    };
+
+    expect(() => decode(wire)).toThrow(/mergedId/);
   });
 
   it("sends and reads the plain form without the marker", () => {
