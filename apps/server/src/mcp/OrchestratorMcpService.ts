@@ -2866,7 +2866,7 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(threadManagementFailure));
       const status = result.run === null ? "idle" : runOutcome(result.run);
       const taskId = result.run?.delegatedTaskId;
-      const wakesCaller =
+      const ownedTask =
         result.timedOut &&
         status !== "waiting" &&
         parent?.subagents.some(
@@ -2877,6 +2877,14 @@ const make = Effect.gen(function* () {
             task.childThreadId === input.threadId &&
             task.completionDelivery?.state !== "disposed",
         ) === true;
+      // A child waiting on a question or approval needs an answer, not a wake.
+      const childRequests = ownedTask
+        ? (yield* threadManagement
+            .getThreadRecords(input.threadId, ["runtimeRequests"])
+            .pipe(Effect.mapError(threadManagementFailure))).runtimeRequests
+        : [];
+      const wakesCaller =
+        ownedTask && !childRequests.some((request) => request.status === "pending");
       return {
         threadId: input.threadId,
         runId: result.run?.id ?? null,
