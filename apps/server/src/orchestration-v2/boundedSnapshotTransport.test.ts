@@ -594,6 +594,15 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
             boundedSnapshotProjection(decodeBounded(dedupedBody)),
             boundedSnapshotProjection(decodeBounded(compactBody)),
           );
+          // The client sends both opt-ins: bodies restore after the ID table resolves.
+          const tabledBody = await (
+            await get(`${base}?compactTurnItems=1&dedupeBodies=1&compactIds=1`)
+          ).text();
+          assert.property(JSON.parse(tabledBody), "ids");
+          assert.deepStrictEqual(
+            boundedSnapshotProjection(decodeBounded(tabledBody)),
+            boundedSnapshotProjection(decodeBounded(compactBody)),
+          );
         }),
     );
 
