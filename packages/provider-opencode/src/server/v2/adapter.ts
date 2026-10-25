@@ -1109,11 +1109,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           retryDelayMs: Math.max(0, Math.trunc(delayMs)),
         },
         failure: makeProviderFailure({
-          message: readableProviderErrorMessage({
-            message: error.message,
-            statusCode: error.status,
-            responseBody: error.response?.body,
-          }),
+          message: readableProviderErrorMessage(error.message, error.status, error.response?.body),
           code: error.type,
           class: "provider_error",
           retryable: true,
@@ -2196,11 +2192,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return yield* endExecution(state, turn, {
             status: "failed",
             failure: makeProviderFailure({
-              message: readableProviderErrorMessage({
-                message,
-                statusCode: status,
-                responseBody: response?.body,
-              }),
+              message: readableProviderErrorMessage(message, status, response?.body),
               code: type,
               class: usageLimit ? "usage_limit" : "provider_error",
             }),

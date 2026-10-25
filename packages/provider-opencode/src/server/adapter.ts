@@ -862,11 +862,11 @@ function openCodeErrorMessage(event: Extract<OpenCodeEvent, { type: "session.err
   if (error === undefined) return "OpenCode session failed without an error payload.";
   const statusCode = recordValue(error.data, "statusCode");
   return (
-    readableProviderErrorMessage({
-      message: recordString(error.data, "message"),
-      statusCode: typeof statusCode === "number" ? statusCode : undefined,
-      responseBody: recordString(error.data, "responseBody"),
-    }) ?? error.name
+    readableProviderErrorMessage(
+      recordString(error.data, "message"),
+      typeof statusCode === "number" ? statusCode : undefined,
+      recordString(error.data, "responseBody"),
+    ) ?? error.name
   );
 }
 
