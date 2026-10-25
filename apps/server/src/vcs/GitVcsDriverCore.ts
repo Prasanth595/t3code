@@ -3781,50 +3781,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* progress.onWorktreeClaimed(worktreePath);
     }
 
-    yield* updateWorktreeSubmodules(worktreePath, options);
-
-    const newRefName = input.newRefName;
-    if (newRefName && input.baseRefName) {
-      const base = yield* resolveBranchBase(input.cwd, input.baseRefName);
-      if (base) {
-        yield* Effect.gen(function* () {
-          yield* runGit("GitVcsDriver.createWorktree.configureBaseRef", input.cwd, [
-            "config",
-            branchBaseConfigKey(newRefName),
-            base.branchName,
-          ]);
-          if (base.baseRef.startsWith("refs/remotes/")) {
-            // The base key names a branch on the host; this one keeps the remote it came from.
-            yield* runGit("GitVcsDriver.createWorktree.configureComparisonRef", input.cwd, [
-              "config",
-              `branch.${input.newRefName}.t3-merge-base-ref`,
-              base.baseRef,
-            ]);
-          }
-        }).pipe(
-          Effect.catchTags({
-            GitCommandError: () =>
-              Effect.logWarning(
-                "worktree base-ref configuration failed; using base-branch fallback",
-              ),
-          }),
-        );
-      }
-    }
-
-    return {
-      worktree: {
-        path: worktreePath,
-        refName: targetBranch,
-      },
-    };
-  });
-
-  const updateWorktreeSubmodules = Effect.fn("updateWorktreeSubmodules")(function* (
-    worktreePath: string,
-    options?: GitVcsDriver.CreateWorktreeOptions,
-  ) {
-    const progress = options?.progress;
     // `git worktree add` leaves submodules empty, so a repo that keeps agent
     // skills, tooling or source in one gets a worktree that is quietly missing
     // them.
@@ -3892,6 +3848,42 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         }),
       );
     }
+
+    const newRefName = input.newRefName;
+    if (newRefName && input.baseRefName) {
+      const base = yield* resolveBranchBase(input.cwd, input.baseRefName);
+      if (base) {
+        yield* Effect.gen(function* () {
+          yield* runGit("GitVcsDriver.createWorktree.configureBaseRef", input.cwd, [
+            "config",
+            branchBaseConfigKey(newRefName),
+            base.branchName,
+          ]);
+          if (base.baseRef.startsWith("refs/remotes/")) {
+            // The base key names a branch on the host; this one keeps the remote it came from.
+            yield* runGit("GitVcsDriver.createWorktree.configureComparisonRef", input.cwd, [
+              "config",
+              `branch.${input.newRefName}.t3-merge-base-ref`,
+              base.baseRef,
+            ]);
+          }
+        }).pipe(
+          Effect.catchTags({
+            GitCommandError: () =>
+              Effect.logWarning(
+                "worktree base-ref configuration failed; using base-branch fallback",
+              ),
+          }),
+        );
+      }
+    }
+
+    return {
+      worktree: {
+        path: worktreePath,
+        refName: targetBranch,
+      },
+    };
   });
 
   const fetchRefIntoBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchRefIntoBranch"] = Effect.fn(
@@ -4530,7 +4522,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     listRefs,
     createWorktree: (input, options) =>
       withListRefsInvalidation(input.cwd, createWorktree(input, options)),
-    updateWorktreeSubmodules,
     fetchRefIntoBranch: (input) => withListRefsInvalidation(input.cwd, fetchRefIntoBranch(input)),
     fetchRefCommit,
     resolveCommit,
