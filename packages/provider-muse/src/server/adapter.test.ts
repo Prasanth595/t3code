@@ -708,6 +708,42 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("keeps the selected effort as the session default for turns Muse starts itself", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      for (const [index, effort] of ["max", "max", "low"].entries()) {
+        const input = yield* turnInput(harness.providerThread, index + 1);
+        const selection = {
+          ...input.modelSelection,
+          options: [{ id: "reasoningEffort", value: effort }],
+        };
+        yield* harness.runtime.startTurn({
+          ...input,
+          modelSelection: selection,
+          appThread: { ...input.appThread, modelSelection: selection },
+        });
+        const turn = yield* fake.takeCall("turn/start");
+        yield* fake.emit("turn/completed", { turnId: turn.commandId!, terminal: "completed" });
+        yield* harness.takeEvent("turn.terminal");
+      }
+      assert.deepStrictEqual(
+        fake.calls.flatMap((call) =>
+          call.method === "session/setReasoningEffort" || call.method === "turn/start"
+            ? [`${call.method} ${String(call.params.reasoningEffort)}`]
+            : [],
+        ),
+        [
+          "session/setReasoningEffort max",
+          "turn/start max",
+          "turn/start max",
+          "session/setReasoningEffort low",
+          "turn/start low",
+        ],
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("settles partial messages and pending approvals before a provider failure", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();

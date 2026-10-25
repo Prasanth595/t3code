@@ -323,6 +323,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       // Only idle host failures can be retried on this runtime.
       let relaunchable = false;
       let nativeSessionId: string | undefined;
+      // Muse starts background-work continuations itself, at the session default effort.
+      let sessionEffort: string | undefined;
       let thread: OrchestrationV2ProviderThread | undefined;
       let active: ActiveTurn | undefined;
       let lastProviderTurn: OrchestrationV2ProviderTurn | undefined;
@@ -1894,6 +1896,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             ...session,
             model: result.session.modelId ?? args.modelSelection.model,
           };
+          sessionEffort = undefined;
           yield* emit({
             type: "provider_thread.updated",
             driver: MUSE_PROVIDER,
@@ -1979,6 +1982,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             model: { modelId: targetModel, providerId: "meta" },
           });
           session = { ...session, model: targetModel };
+        }
+        if (effort && effort !== sessionEffort) {
+          yield* request("session/setReasoningEffort", { reasoningEffort: effort });
+          sessionEffort = effort;
         }
         const nativeId = adopted?.nativeId ?? host.connection.mintCommandId();
         const startedAt = yield* DateTime.now;
