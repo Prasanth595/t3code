@@ -1318,7 +1318,10 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                 estimatedOverlayHeight +
                 (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0)
               }
-              placeholderBottomInset={collapsedComposerHeight}
+              placeholderBottomInset={
+                collapsedComposerHeight +
+                (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0)
+              }
               contentMaxWidth={contentMaxWidth}
               historyControls={props.historyControls}
               contentSideInsets={nativeMetrics?.safeArea}
