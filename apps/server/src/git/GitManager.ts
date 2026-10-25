@@ -1859,6 +1859,7 @@ export const make = Effect.gen(function* () {
         headSelector,
         state: "all",
         limit: probe.limit,
+        allowCached: true,
       });
 
       for (const pr of pullRequests.map(toPullRequestInfo)) {
