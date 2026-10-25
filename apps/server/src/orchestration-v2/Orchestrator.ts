@@ -11002,11 +11002,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ) {
         return;
       }
+      // A finalized task keeps its own outcome; a later non-task run cannot qualify it.
+      // After a follow-up task, the latest follow-up's outcome decides instead.
+      const followUpRun =
+        taskRuns.length === 0
+          ? childControls.runs
+              .filter((run) => run.delegatedTaskId !== undefined && run.status !== "queued")
+              .toSorted((a, b) => b.ordinal - a.ordinal)[0]
+          : undefined;
+      const taskStatus =
+        options.finalized !== true
+          ? terminalStatus
+          : followUpRun === undefined
+            ? options.task.status
+            : delegatedTaskTerminalStatus(runOutcome(followUpRun));
       // Callers hold the parent lock; detach takes the child lock, as follow-up intake does.
       // A started or startable run, such as a follow-up or monitor wake, keeps the session
       // until it ends. Held queued work, like a later follow-up, resumes the native thread.
-      // A finalized task keeps its own outcome; a later non-task run cannot qualify it.
-      const taskStatus = options.finalized === true ? options.task.status : terminalStatus;
       const releaseSession =
         (terminalStatus !== "completed" && terminalStatus !== "failed") ||
         (taskStatus !== "completed" && taskStatus !== "failed")
@@ -11019,15 +11031,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     "runs",
                     "providerSessions",
                   ]);
-                  const latestRun = child.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
                   if (
-                    latestRun === undefined ||
                     child.runs.some(
                       (run) =>
                         isBlockingRun(run) || (run.status === "queued" && run.queueHeld !== true),
                     )
                   )
                     return;
+                  // Each started run reattaches the same session id, so each gets its own receipt.
+                  // Held work that has not started yet must not spend its run's receipt here.
+                  const attachedRun = child.runs
+                    .filter((run) => run.startedAt !== null)
+                    .toSorted((a, b) => b.ordinal - a.ordinal)[0];
                   yield* Effect.forEach(
                     child.providerSessions.filter(
                       (session) => session.status !== "stopped" && session.status !== "error",
@@ -11035,9 +11050,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     (session) =>
                       dispatchWithReceiptEffect({
                         type: "provider-session.detach",
-                        // A later run reattaches the same session id, so each run gets its own receipt.
                         commandId: CommandId.make(
-                          `command:system:delegated-task-release:${options.task.id}:${session.id}:${latestRun.id}`,
+                          `command:system:delegated-task-release:${options.task.id}:${session.id}:${attachedRun?.id ?? "unstarted"}`,
                         ),
                         threadId: childThreadId,
                         providerSessionId: session.id,

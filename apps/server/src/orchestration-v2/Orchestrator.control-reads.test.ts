@@ -1471,6 +1471,9 @@ it.effect.each([
   { outcome: "completed", delegated: true, queued: "monitor", released: true },
   { outcome: "completed", delegated: true, queued: "monitor again", released: true },
   { outcome: "interrupted", delegated: true, queued: "later run", released: false },
+  { outcome: "failed", delegated: true, queued: "held monitor", released: true },
+  { outcome: "completed", delegated: true, queued: "interrupted follow-up", released: false },
+  { outcome: "completed", delegated: true, queued: "cancelled follow-up", released: false },
 ] as const)(
   "releases the session only when a delegated task ends completed or failed ($outcome, delegated: $delegated, queued: $queued)",
   ({ outcome, delegated, queued, released }) =>
@@ -1556,7 +1559,7 @@ it.effect.each([
               .childThreadId!;
           }
           const finishTurn = (
-            status: "completed" | "failed" | "interrupted",
+            status: "completed" | "failed" | "interrupted" | "cancelled",
             awaits: "task" | "release" | "run" = "task",
           ) =>
             Effect.gen(function* () {
@@ -1636,10 +1639,10 @@ it.effect.each([
               yield* worker.drain();
             });
           // Run updates finalize on a background stream; recovering the child finalizes in step.
-          const finishLaterRun = (id: string, kind: "monitor" | "command") =>
+          const finishLaterRun = <E, R>(start: Effect.Effect<void, E, R>) =>
             Effect.gen(function* () {
               const running = yield* turnRunning();
-              yield* queueNotification(id, kind);
+              yield* start;
               yield* Fiber.join(running);
               const { turn, providerSessionId } = turns.findLast(
                 (entry) => entry.turn.threadId === threadId,
@@ -1650,6 +1653,10 @@ it.effect.each([
               yield* worker.drain();
               return providerSessionId;
             });
+          if (queued === "held monitor") {
+            // The task's provider failure holds this wake, which has not started when the task releases.
+            yield* queueNotification("held-monitor", "monitor");
+          }
           if (queued === "monitor" || queued === "monitor again") {
             // The wake queues behind the task's turn, so it is pending or running when the task finalizes.
             yield* queueNotification("monitor", "monitor");
@@ -1720,11 +1727,65 @@ it.effect.each([
           yield* worker.drain();
           if (queued === "monitor again") {
             // A second wake reattaches the released session, which its end must release again.
-            assert.equal(yield* finishLaterRun("monitor-again", "monitor"), providerSessionId);
+            assert.equal(
+              yield* finishLaterRun(queueNotification("monitor-again", "monitor")),
+              providerSessionId,
+            );
           }
           if (queued === "later run") {
             // A later non-task run is not the interrupted task's end, so it releases nothing.
-            assert.equal(yield* finishLaterRun("later-run", "command"), providerSessionId);
+            assert.equal(
+              yield* finishLaterRun(queueNotification("later-run", "command")),
+              providerSessionId,
+            );
+          }
+          if (queued === "held monitor") {
+            // Resuming starts the held wake, which reattaches the released session.
+            assert.isFalse(yield* sessions.isLive(providerSessionId));
+            const heldRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+              (run) => run.status === "queued",
+            )!;
+            const resume = Effect.gen(function* () {
+              yield* orchestrator.dispatch({
+                type: "queue.resume",
+                commandId: CommandId.make("resume-session-release-held-monitor"),
+                threadId,
+              });
+              yield* worker.drain();
+            });
+            assert.equal(yield* finishLaterRun(resume), providerSessionId);
+            assert.equal(
+              turns.findLast((entry) => entry.turn.threadId === threadId)!.turn.runId,
+              heldRun.id,
+            );
+          }
+          if (queued === "interrupted follow-up" || queued === "cancelled follow-up") {
+            // The completed task released its session; a follow-up task now owns the child.
+            assert.isFalse(yield* sessions.isLive(providerSessionId));
+            const followUpRunning = yield* turnRunning();
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("start-session-release-ended-follow-up"),
+              threadId,
+              messageId: MessageId.make("message:session-release-ended-follow-up"),
+              text: "Check the fix",
+              attachments: [],
+              dispatchMode: { type: "start_immediately" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            yield* worker.drain();
+            yield* Fiber.join(followUpRunning);
+            assert.equal(
+              turns.findLast((entry) => entry.turn.threadId === threadId)!.providerSessionId,
+              providerSessionId,
+            );
+            yield* finishTurn(queued === "interrupted follow-up" ? "interrupted" : "cancelled");
+            // A later non-task run is not the ended follow-up's end, so it releases nothing.
+            assert.equal(
+              yield* finishLaterRun(queueNotification("after-follow-up", "command")),
+              providerSessionId,
+            );
           }
 
           const child = yield* orchestrator.getThreadProjection(threadId);
@@ -1752,11 +1813,25 @@ it.effect.each([
                           ["interrupted", false],
                           ["completed", false],
                         ]
-                      : [
-                          ["completed", false],
-                          ["completed", false],
-                          ["running", false],
-                        ],
+                      : queued === "held monitor"
+                        ? [
+                            ["failed", false],
+                            ["completed", false],
+                          ]
+                        : queued === "interrupted follow-up" || queued === "cancelled follow-up"
+                          ? [
+                              ["completed", false],
+                              [
+                                queued === "interrupted follow-up" ? "interrupted" : "cancelled",
+                                false,
+                              ],
+                              ["completed", false],
+                            ]
+                          : [
+                              ["completed", false],
+                              ["completed", false],
+                              ["running", false],
+                            ],
             );
           }
           assert.equal(yield* sessions.isLive(providerSessionId), !released);
