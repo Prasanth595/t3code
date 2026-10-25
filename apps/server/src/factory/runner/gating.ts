@@ -543,7 +543,8 @@ const awaitChecks = Effect.fn("RunnerGating.awaitChecks")(function* (
 /**
  * What is left of a passing re-gate when the project names required checks: as `awaitChecks`,
  * for a pull request that is ready already. `pull` is the pull request as the caller read it,
- * open and at the gated commit `pass.sha`. The pull request stays ready while the checks run:
+ * open, and at the gated commit `pass.sha` unless a read on record already decided the pass,
+ * which is finished whatever the head holds. The pull request stays ready while the checks run:
  * the pass before it was decided, and the new one is not posted until its checks are. All
  * passed: the issue text is judged again, the read is recorded and the pass is posted
  * (`finishRegatePass`, with `reassert` as the caller says). One failed: the read is recorded
@@ -551,7 +552,8 @@ const awaitChecks = Effect.fn("RunnerGating.awaitChecks")(function* (
  * (`relaunchForRegate`) under the pass's attempt, unless the retries since the last pass are
  * used up, which goes `stuck`. Pending: `checks-pending` and nothing is written, until
  * `limits.checks_minutes` after the pass, when the read is recorded and the issue goes `stuck`.
- * A head that moved meanwhile never comes here: `regate` compares and gates the new head.
+ * A head that moved while the pass was undecided never comes here: `regate` compares and gates
+ * the new head.
  */
 const awaitRegateChecks = Effect.fn("RunnerGating.awaitRegateChecks")(function* (
   ctx: GateContext,
@@ -919,9 +921,10 @@ const buildingMode = (
 };
 
 /**
- * `gateAttempts` for a pull request that is ready for review (`regate`). `resumed` is a re-gate
- * an earlier call began (`Seen.regating`): a stuck decision that call did not finish may have put
- * the pull request back to draft, so a pass sets the ready state again.
+ * `gateAttempts` for a pull request that is ready for review (`regate`). With `reassert`, a stuck
+ * decision an earlier call did not finish may have drafted the pull request or relabelled the
+ * issue, so a pass sets the ready state again, and is recorded as owing that
+ * (`GATE_PASSED_RESUMED`) in case it is finished by a later call.
  */
 const readyMode = (
   ctx: GateContext,
@@ -930,12 +933,12 @@ const readyMode = (
   seen: Seen,
   at: Progress,
   gating: {
-    readonly resumed: boolean;
+    readonly reassert: boolean;
     readonly pr: number;
     readonly prUrl: string;
   },
 ): GateMode => {
-  const { resumed, pr, prUrl } = gating;
+  const { reassert, pr, prUrl } = gating;
   const issue = Number(run.issue);
   // A ready pull request that a person merged or closed is done with, and not stuck.
   const ended = Effect.fn("RunnerGating.ended")(function* (pull: PullRequest | null) {
@@ -945,7 +948,7 @@ const readyMode = (
   return {
     pr,
     prUrl,
-    passReason: resumed ? GATE_PASSED_RESUMED : GATE_PASSED,
+    passReason: reassert ? GATE_PASSED_RESUMED : GATE_PASSED,
     // A re-gate does not depend on the session, which has been stopped since the pass: a failure
     // starts a new one (`relaunchFailedRegate`). One whose launch is recorded and whose send is
     // not was finished by `regate` before this attempt; one whose launch is not recorded is run
@@ -977,9 +980,9 @@ const readyMode = (
             ? awaitRegateChecks(ctx, out, run, seen, at, pass, pull, {
                 pr,
                 prUrl,
-                reassert: resumed,
+                reassert,
               })
-            : finishRegatePass(ctx, out, issue, at, pass, pr, resumed),
+            : finishRegatePass(ctx, out, issue, at, pass, pr, reassert),
         beforeFailure: () => Effect.succeed(null),
         // No session to send the failure to: its worktree was removed at the pass.
         failed: (pull, text) =>
@@ -1559,12 +1562,14 @@ export const regate = (ctx: GateContext, run: RunId): Effect.Effect<Regated, Gat
             const step = yield* finishRegatePass(ctx, out, issue, at, pass, last.pr, reassert);
             return { step, moved: seen.regateMoved };
           }
-          // A wait that ran out is a stuck decision on record, and the call that wrote it may
-          // have drafted the pull request before it died: it is finished whatever the head holds
-          // now (`decideChecks`). A failed read is a decision only once a relaunch records it,
-          // which `owedRegateSend` and the relaunch entry recover.
-          const timedOut = seen.checksTimedOut !== null && seen.checksTimedOut.sha === pass.sha;
-          if (pull.headSha.toLowerCase() !== pass.sha && !timedOut) {
+          // A read on record for this pass is a decision (`decideChecks`): a wait that ran out,
+          // or a failure, whose retries may be used up. The call that wrote it may have drafted
+          // the pull request on a stuck path before it died, so it is finished whatever the head
+          // holds now, and only an undecided pass is left behind for the new head.
+          const recorded =
+            (seen.checksFailed !== null && seen.checksFailed.sha === pass.sha) ||
+            (seen.checksTimedOut !== null && seen.checksTimedOut.sha === pass.sha);
+          if (pull.headSha.toLowerCase() !== pass.sha && !recorded) {
             // No check on another commit says anything about this pass, and nothing of it is
             // posted: the new head is what the pull request holds now.
             movedOn = pull;
@@ -1664,10 +1669,11 @@ export const regate = (ctx: GateContext, run: RunId): Effect.Effect<Regated, Gat
         seen,
         at,
         readyMode(ctx, out, run, seen, at, {
-          // A head that moved on during the checks wait is gated fresh: nothing of an earlier
-          // call is resumed, so nothing is set again when it passes, unless the pass it leaves
-          // behind still owed that repair (`Seen.regatePassReassert`), which carries over.
-          resumed: entry.kind === "resume" && (movedOn === null || seen.regatePassReassert),
+          // A re-gate an earlier call began may have a cut-short stuck path to repair. A head
+          // that moved on during the checks wait is gated fresh and repairs nothing, unless the
+          // pass it leaves behind still owed that repair (`Seen.regatePassReassert`), which
+          // carries over.
+          reassert: entry.kind === "resume" && (movedOn === null || seen.regatePassReassert),
           pr: last.pr,
           prUrl: last.url,
         }),
