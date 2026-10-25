@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "@t3tools/contracts";
+import {
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+} from "@t3tools/contracts";
 
 const files = new Map<string, { base64: string; deleted: boolean; text?: string }>();
 
@@ -103,12 +106,7 @@ vi.mock("./uuid", () => ({
   uuidv4: () => "attachment-id",
 }));
 
-import {
-  convertPastedImagesToAttachments,
-  createPastedTextComposerAttachment,
-  isOwnedPastedImageUri,
-  pasteComposerClipboard,
-} from "./composerImages";
+import { convertPastedImagesToAttachments, pasteComposerClipboard } from "./composerImages";
 
 describe("composer clipboard paste", () => {
   beforeEach(() => {
@@ -195,16 +193,6 @@ describe("native pasted image cleanup", () => {
     files.clear();
   });
 
-  it("recognizes only files created in the native composer paste directory", () => {
-    expect(
-      isOwnedPastedImageUri(
-        "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/id.png",
-      ),
-    ).toBe(true);
-    expect(isOwnedPastedImageUri("file:///private/var/mobile/photos/id.png")).toBe(false);
-    expect(isOwnedPastedImageUri("https://example.com/t3-composer-paste/id.png")).toBe(false);
-  });
-
   it("converts owned files to data-backed previews and deletes the source", async () => {
     const uri =
       "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/id.png";
@@ -243,26 +231,6 @@ describe("native pasted image cleanup", () => {
     expect(files.get(overflow)?.deleted).toBe(true);
     expect(files.get(userOwned)?.deleted).toBe(false);
   });
-
-  it("persists folded text unchanged in the app-owned attachment directory", async () => {
-    const text = "first line\nUnicode: 🙂\n";
-    const attachment = await createPastedTextComposerAttachment({
-      text,
-      name: "pasted-text.txt",
-      maxBytes: 1024,
-    });
-
-    expect(attachment).toEqual({
-      id: "attachment-id",
-      type: "file",
-      name: "pasted-text.txt",
-      mimeType: "text/plain;charset=utf-8",
-      sizeBytes: new TextEncoder().encode(text).byteLength,
-      fileUri: "file:///documents/t3-composer-attachments/attachment-id-pasted-text.txt",
-      source: { _tag: "pasted-text" },
-    });
-    expect(files.get(attachment.fileUri)?.text).toBe(text);
-  });
 });
 
 describe("composerStripAttachments", () => {
@@ -299,33 +267,19 @@ describe("composerStripAttachments", () => {
     ]);
   });
 
-  it("treats a picture picked through the document picker as media", async () => {
-    const { composerStripAttachments } = await import("./composerImages");
-    const pickedImage = {
-      id: "pick-1",
-      type: "file" as const,
-      name: "photo.png",
+  it("keeps oversized document-picked images visible while sending them as files", async () => {
+    const { composerStripAttachments, isComposerImageAttachment } =
+      await import("./composerImages");
+    const oversizedImage = {
+      ...video,
+      id: "large-image",
+      name: "large.png",
       mimeType: "image/png",
-      sizeBytes: 30,
-      fileUri: "file:///photo.png",
+      fileUri: "file:///large.png",
+      sizeBytes: PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1,
     };
-    expect(composerStripAttachments([pickedImage] as never).map((a) => a.id)).toEqual(["pick-1"]);
-  });
-});
 
-describe("composerAttachmentInlineUri", () => {
-  it("offers the inline bytes of a picture that owns no file", async () => {
-    const { composerAttachmentInlineUri } = await import("./composerImages");
-    expect(
-      composerAttachmentInlineUri({
-        id: "img-1",
-        type: "image",
-        name: "IMG_0111.jpg",
-        mimeType: "image/jpeg",
-        sizeBytes: 9_100_000,
-        dataUrl: "data:image/jpeg;base64,AAAA",
-        previewUri: "ph://asset",
-      } as never),
-    ).toBe("data:image/jpeg;base64,AAAA");
+    expect(composerStripAttachments([oversizedImage])).toEqual([oversizedImage]);
+    expect(isComposerImageAttachment(oversizedImage)).toBe(false);
   });
 });

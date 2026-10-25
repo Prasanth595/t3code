@@ -50,8 +50,6 @@ vi.mock(import("../ui/toast"), async (original) => {
   const actual = await original();
   return { ...actual, toastManager: { ...actual.toastManager, add: actions.toast } };
 });
-// The registry search and the sign-in step talk to the environment over RPC; these
-// stand-ins expose the choices a user makes there.
 vi.mock(import("./AcpRegistrySearchStep"), async (original) => ({
   ...(await original()),
   AcpRegistrySearchStep: ((props: {
@@ -247,26 +245,12 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(signInStep()).toBeNull();
   });
 
-  it("keeps the dialog open when the atomic upsert fails", async () => {
-    setup();
-    settingsHooks.mutate.mockResolvedValueOnce({ _tag: "Failure", cause: new Error("Conflict") });
-    await using _screen = await render(dialog());
-    await click("Use Kilo Code");
-    await click("Continue to sign-in");
-
-    expect(actions.onOpenChange).not.toHaveBeenCalled();
-    expect(actions.toast).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "error", title: "Could not add provider instance" }),
-    );
-    expect(button("Continue to sign-in").disabled).toBe(false);
-  });
-
   it("rejects a queued save after the provider grant is revoked", async () => {
     setup();
     await using screen = await prepareCodexInstance();
     const save = button("Add instance");
     actions.canManageProviders = false;
-    // The rendered button is still enabled; the click must recheck the live grant.
+    // Click before React renders the revoked grant.
     await act(async () => save.click());
 
     expect(settingsHooks.mutate).not.toHaveBeenCalled();

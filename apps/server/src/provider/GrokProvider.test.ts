@@ -304,7 +304,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
   );
 
   // An expired access token prints the logged-out banner, then the CLI refreshes it in the
-  // same run, so the next `grok models` reports the login (#14285).
+  // same run, so the next `grok models` reports the login.
   it.effect("reports authenticated when `grok models` logs in after refreshing a token", () =>
     Effect.gen(function* () {
       const snapshot = yield* Effect.scoped(
@@ -425,6 +425,7 @@ describe("Grok usage limits", () => {
     }
   });
 
+  // regression: #17061 show zero-use Grok billing periods
   it("rejects impossible calendar dates at either period boundary", () => {
     for (const [start, end] of [
       ["2026-02-30T00:00:00.000Z", "2026-03-09T00:00:00.000Z"],

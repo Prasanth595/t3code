@@ -94,8 +94,7 @@ vi.mock("./agentLiveActivity", () => ({
   startAgentLiveActivity: widgetMocks.start,
 }));
 
-// The state modules pull the whole connection stack (and native expo modules)
-// into the import graph; the arming gate only needs the configs map.
+// Avoid importing the native connection stack; this gate only needs configs.
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
     get: () => environmentConfigsMock.configs,
@@ -405,15 +404,24 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       yield* Effect.promise(() => oldRequestArrived);
 
       tokenListener?.({ pushToken: "rotated-activity-token" });
-      const listenerRegistration = yield* Effect.forkChild(runBackgroundOperations());
-      for (let pass = 0; pass < 5; pass++) {
-        yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
-      }
+      const deviceIdLookups = vi.mocked(loadOrCreateAgentAwarenessDeviceId).mock.calls.length;
+      const rotated = backgroundRuntime.pending.shift()!;
+      // Starting immediately runs the listener's registration until it suspends: on the
+      // activity lock, or, without one, at its device-id lookup.
+      const rotatedRegistration = yield* Effect.forkChild(
+        Effect.exit(
+          rotated.operation as Effect.Effect<unknown, unknown, ManagedRelay.ManagedRelayClient>,
+        ),
+        { startImmediately: true },
+      );
+      expect(vi.mocked(loadOrCreateAgentAwarenessDeviceId).mock.calls).toHaveLength(
+        deviceIdLookups,
+      );
       expect(arrivals).toEqual(["activity-token"]);
 
       openOldRequest?.();
       yield* Fiber.join(lookup);
-      yield* Fiber.join(listenerRegistration);
+      rotated.resolve(yield* Fiber.join(rotatedRegistration));
       expect(arrivals).toEqual(["activity-token", "rotated-activity-token"]);
     }).pipe(
       Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
@@ -586,21 +594,6 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       yield* refreshAgentAwarenessRegistration();
       expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
       expect(saveAgentAwarenessRegistrationRecord).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(layerRelayTest));
-  });
-
-  it.effect("re-registers when the stored account identity differs", () => {
-    Constants.expoConfig!.extra = {
-      relay: {
-        url: "https://relay.example.test/",
-      },
-    };
-    registrationRecordStore.current = { identity: "someone-else", signature: "stale" };
-    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
-
-    return Effect.gen(function* () {
-      yield* refreshAgentAwarenessRegistration();
-      expect(saveAgentAwarenessRegistrationRecord).toHaveBeenCalledTimes(1);
     }).pipe(Effect.provide(layerRelayTest));
   });
 

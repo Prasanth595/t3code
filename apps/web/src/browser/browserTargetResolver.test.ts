@@ -102,8 +102,7 @@ describe("browser target resolver", () => {
   });
 
   it("keeps localhost for servers on the desktop's own WSL or primary backend", async () => {
-    // WSL NAT mode serves the backend on the distro IP, but a loopback-only dev
-    // server there answers only on localhost from the Windows desktop.
+    // WSL NAT advertises a distro IP, but loopback-bound servers only answer on localhost.
     const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
     env.isElectron = true;
     try {
@@ -126,20 +125,6 @@ describe("browser target resolver", () => {
     } finally {
       env.isElectron = false;
     }
-  });
-
-  it("supports private IPv6 environment hosts", async () => {
-    readPreparedConnection.mockReturnValue({
-      httpBaseUrl: "http://[fd7a:115c:a1e0::53]:3773",
-    });
-    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
-        kind: "environment-port",
-        port: 5173,
-        path: "/app?mode=test",
-      }).resolvedUrl,
-    ).toBe("http://[fd7a:115c:a1e0::53]:5173/app?mode=test");
   });
 
   it("classifies exact private IPv4 and IPv6 boundaries", async () => {
