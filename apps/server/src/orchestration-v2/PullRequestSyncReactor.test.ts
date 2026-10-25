@@ -1575,6 +1575,12 @@ describe("PullRequestSyncReactor", () => {
       linked: [],
     },
     {
+      name: "a create after an empty heredoc",
+      input: "cat > /tmp/notes.md <<'EOF'\nEOF\ngh pr create --fill",
+      output: "https://github.com/owner/repository/pull/124",
+      linked: [124],
+    },
+    {
       name: "a read with no create",
       input: "gh pr view 124 --json url --jq .url",
       output: "https://github.com/owner/repository/pull/124",
