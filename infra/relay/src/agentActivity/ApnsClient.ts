@@ -27,7 +27,7 @@ const DISMISS_AFTER_SECONDS = 5 * 60;
 // parading stale state for the full window.
 const CONTENTLESS_DISMISS_AFTER_SECONDS = 15;
 const MAX_LIVE_ACTIVITY_PAYLOAD_BYTES = 4096;
-const MIN_FITTED_TITLE_LENGTH = 8;
+const MIN_FITTED_TEXT_LENGTH = 8;
 
 const ApnsLiveActivityEventSchema = Schema.Literals(["start", "update", "end"]);
 export type ApnsLiveActivityEvent = typeof ApnsLiveActivityEventSchema.Type;
@@ -119,37 +119,56 @@ function liveActivityAlertPayload(alert: ApnsLiveActivityAlert) {
   };
 }
 
-// The sanitizer caps titles by characters, so five rows of multibyte titles
+// The sanitizer caps text by characters, so five rows of multibyte titles
 // still overflow APNs' 4 KB limit and every update is rejected. Like
-// fitFcmData on Android, shorten titles until the encoded payload fits; the
-// card clips each title to one line anyway.
+// fitFcmData on Android, shorten titles and alert text until the encoded
+// payload fits; the card clips each title to one line anyway. Deep links and
+// ids can't be shortened, so when they alone overflow, drop the
+// lowest-priority rows (the aggregate lists them last) instead of sending a
+// payload APNs rejects.
 function makeLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLiveActivityRequest {
   let request = buildLiveActivityRequest(input);
   const state = input.state;
-  let maxTitleLength = MAX_SUMMARY_TEXT_LENGTH;
-  while (
-    state !== null &&
-    maxTitleLength > MIN_FITTED_TITLE_LENGTH &&
-    payloadByteLength(request.payload) > MAX_LIVE_ACTIVITY_PAYLOAD_BYTES
-  ) {
-    maxTitleLength = Math.floor(maxTitleLength * 0.8);
-    request = buildLiveActivityRequest({
+  if (state === null) {
+    return request;
+  }
+  const fit = (maxTextLength: number, rowCount: number) =>
+    buildLiveActivityRequest({
       ...input,
       state: {
         ...state,
-        activities: state.activities.map((row) => ({
+        activities: state.activities.slice(0, rowCount).map((row) => ({
           ...row,
-          projectTitle: truncateText(row.projectTitle, maxTitleLength),
-          threadTitle: truncateText(row.threadTitle, maxTitleLength),
+          projectTitle: truncateText(row.projectTitle, maxTextLength),
+          threadTitle: truncateText(row.threadTitle, maxTextLength),
+          modelTitle: truncateText(row.modelTitle, maxTextLength),
         })),
       },
+      alert: input.alert
+        ? {
+            title: truncateText(input.alert.title, maxTextLength),
+            body: truncateText(input.alert.body, maxTextLength),
+          }
+        : null,
     });
+  let maxTextLength = MAX_SUMMARY_TEXT_LENGTH;
+  while (maxTextLength > MIN_FITTED_TEXT_LENGTH && !fitsLiveActivityLimit(request)) {
+    maxTextLength = Math.floor(maxTextLength * 0.8);
+    request = fit(maxTextLength, state.activities.length);
+  }
+  let rowCount = state.activities.length;
+  while (rowCount > 0 && !fitsLiveActivityLimit(request)) {
+    rowCount -= 1;
+    request = fit(maxTextLength, rowCount);
   }
   return request;
 }
 
-function payloadByteLength(payload: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(payload)).byteLength;
+function fitsLiveActivityLimit(request: ApnsLiveActivityRequest): boolean {
+  return (
+    new TextEncoder().encode(JSON.stringify(request.payload)).byteLength <=
+    MAX_LIVE_ACTIVITY_PAYLOAD_BYTES
+  );
 }
 
 function buildLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLiveActivityRequest {
