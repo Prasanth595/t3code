@@ -168,8 +168,6 @@ export interface CommandPaletteItem {
   readonly timestamp?: string;
   /** Thread rows rank by this, with use history, instead of by `searchTerms`. */
   readonly threadSearch?: ThreadSearchSubject;
-  /** Title ranges the current query matched, for highlighting. */
-  readonly titleRanges?: ReadonlyArray<SearchRange>;
   /** Shown in place of the description when the match is not in the title. */
   readonly matchHint?: SearchMatchHint;
   readonly icon: ReactNode;
@@ -606,9 +604,7 @@ export function filterCommandPaletteGroups(input: {
       )
       .slice(0, limit)
       .map(({ item, match }) => {
-        // Suggestion titles are the query restated, so bolding them bolds the whole row.
-        if (group.value === "nested-search") return item;
-        if (match.ranges.length > 0) return { ...item, titleRanges: match.ranges };
+        if (match.ranges.length > 0) return item;
         // Built only for the rows shown.
         const matchHint = match.explain?.();
         return matchHint ? { ...item, matchHint } : item;
