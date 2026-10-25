@@ -83,10 +83,14 @@ const make = Effect.gen(function* () {
         }),
       catch: (cause) => new DocumentTextError({ operation: "extract", path, extension, cause }),
     }).pipe(
-      Effect.tapError(() => {
+      Effect.tapError(({ cause }) => {
         if (failed.size >= 1024) failed.delete(failed.keys().next().value!);
-        // Worker errors include transient spawn, I/O and process failures.
-        failed.set(path, clock.currentTimeMillisUnsafe() + 1_000);
+        failed.set(
+          path,
+          cause instanceof Error && "code" in cause && cause.code === 2
+            ? Infinity
+            : clock.currentTimeMillisUnsafe() + 1_000,
+        );
         return Effect.logWarning("Document text extraction failed.", { extension });
       }),
     );
