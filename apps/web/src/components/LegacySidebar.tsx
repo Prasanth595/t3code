@@ -1896,7 +1896,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const confirmed = await api.dialogs.confirm(
         [
           `Delete ${count} thread${count === 1 ? "" : "s"}?`,
-          "These threads can't be restored. Their history stays in T3 Code's database.",
+          "You can't restore them. Their conversation history stays in T3 Code's database.",
         ].join("\n"),
         { variant: "destructive" },
       );
@@ -2255,7 +2255,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         const confirmed = await api.dialogs.confirm(
           [
             `Delete thread "${thread.title}"?`,
-            "The thread can't be restored. Its history stays in T3 Code's database.",
+            "You can't restore it. Its conversation history stays in T3 Code's database.",
           ].join("\n"),
           { variant: "destructive" },
         );
