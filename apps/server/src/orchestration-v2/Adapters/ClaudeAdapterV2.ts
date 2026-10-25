@@ -319,16 +319,9 @@ const CLAUDE_GROUP_WATCH_SCRIPT = [
 ].join("\n");
 
 /**
- * When the CLI exits it stops the MCP servers it started, but not their children: a plugin's
- * `bun run start` wrapper dies and its `bun server.ts` keeps running, writing to a pipe nobody
- * reads (#3089). Those stay in the CLI's group, so the rest of the group gets SIGKILL once the
- * CLI exits for any reason. `onExit` then stops the CLI's agent scope, for daemons a tool
- * detached from the group with setsid.
- *
- * That cleanup needs this server alive, and the CLI finishes its turn after its pipes close. A
- * server that crashes or is killed would leave the CLI working next to the session it resumes
- * (#23370), so a watcher in the group reads a pipe only this server holds and stops the group at
- * its end-of-file.
+ * Kill the CLI's group on exit to stop MCP grandchildren; `onExit` stops its agent scope for
+ * setsid daemons. The CLI keeps working after its pipes close, so a watcher stops the group on
+ * EOF from a pipe only this server holds, including when the server crashes.
  */
 export function spawnClaudeProcessGroup(
   options: ClaudeSpawnOptions,

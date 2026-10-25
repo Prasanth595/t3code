@@ -158,12 +158,8 @@ function publishPushFailureDetail(input: {
 }
 
 /**
- * Adding a project clones over SSH for most hosts, and a machine with no SSH
- * key there would fail every time, while the host's HTTPS credential helper
- * may be set up. A clone whose SSH login was refused is retried once over
- * HTTPS, unless the caller asked for SSH. A looked-up repository has the
- * provider's own HTTPS URL; any other URL is rewritten, which is refused
- * where it would have to guess.
+ * SSH rejection can be retried over HTTPS when the host's credential helper is available.
+ * Explicit SSH requests must not fall back; unknown URL shapes must not be guessed.
  */
 function httpsFallbackUrl(
   input: SourceControlCloneRepositoryInput,

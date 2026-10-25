@@ -995,11 +995,9 @@ export const make = Effect.gen(function* () {
 
       if (repositoryNameWithOwner.length === 0) {
         yield* fetchChangeRequestHeadIntoBranch(cwd, pullRequest.number, localBranch).pipe(
-          // Without the host's head ref, a head in the same repository is a branch on the
-          // primary remote, so it is fetched by name instead, but only when that remote is the
-          // pull request's own repository: a host can find a change request by number outside
-          // the checkout's repository. Only while it is open, too: the branch of a closed one
-          // may have moved on past the head it was closed with.
+          // Fall back to a branch fetch only for an open PR in the primary remote's repository.
+          // A host can resolve a PR number from another repository, so verify the repository first.
+          // Closed PR branches may have moved past the head recorded at closure.
           Effect.catch((cause) =>
             pullRequest.isCrossRepository === true || pullRequest.state !== "open"
               ? Effect.fail(cause)

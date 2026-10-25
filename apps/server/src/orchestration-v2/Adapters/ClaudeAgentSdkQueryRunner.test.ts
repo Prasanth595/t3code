@@ -185,7 +185,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
   );
 
   // The CLI keeps running its turn after its pipes close, so a server that
-  // crashed would leave it working next to the session it resumes (#23370).
+  // crashed would leave it working next to the session it resumes.
   it.effect("stops the CLI when the server that started it goes away", () =>
     Effect.gen(function* () {
       const cli = fakeClaudeCli(['dir=$(dirname "$0")', 'sleep 600 > "$dir/alive"'].join("\n"));

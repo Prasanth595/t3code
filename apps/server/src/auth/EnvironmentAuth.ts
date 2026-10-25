@@ -1253,11 +1253,9 @@ export const make = Effect.gen(function* () {
             });
           }
           if (session.proofKeyThumbprint) {
-            // A WebSocket cannot set headers, so the proof rides in the query.
-            // The ticket is the token the proof hashes, and the proof's jti is
-            // consumed like any other, so a captured socket URL is dead once the
-            // client has used it. Beating the client to first use still needs an
-            // active interceptor, which only encrypted transport rules out.
+            // WebSocket clients cannot set headers, so the proof travels in the query.
+            // The proof hashes the ticket; consuming its jti prevents replay after first use.
+            // Only encrypted transport prevents an active interceptor from racing that use.
             const proof =
               request.headers.dpop ??
               requestUrl.value.searchParams.get(WEBSOCKET_PROOF_QUERY_PARAM) ??

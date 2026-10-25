@@ -106,7 +106,7 @@ const probeCloudMetadata = Effect.callback<boolean>((resume) => {
   return Effect.sync(() => socket.destroy());
 });
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
