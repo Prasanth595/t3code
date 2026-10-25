@@ -490,6 +490,9 @@ export function HomeScreen(props: HomeScreenProps) {
     // unchanged: after a clamped fire (wake beyond the 32-bit setTimeout
     // range) the boundary string is identical and the chain would die.
   }, [nextSnoozeWakeAt, snoozeWakeTick]);
+  // Called as `props.onSelectThread(...)`, the compiler would cache this handler on the whole
+  // props object, which is new on every render of Home's parent.
+  const { onSelectThread } = props;
   // A row listed for a message match opens the thread at that message, by
   // tap or by shortcut.
   const selectThread = (thread: EnvironmentThreadShell) => {
@@ -500,7 +503,7 @@ export function HomeScreen(props: HomeScreenProps) {
     if (messageId) {
       requestThreadMessageJump(scopedThreadKey(thread.environmentId, thread.id), messageId);
     }
-    props.onSelectThread(thread);
+    onSelectThread(thread);
   };
   useThreadJumpShortcuts(threadListV2Items, selectThread);
   useEffect(() => {
