@@ -1328,6 +1328,8 @@ const CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS = `
 ### Background work you wait on
 
 To wait for a background command or Monitor you started (tests, a build), call \`t3_background_wait\` with its task ID before you end your turn. Do not mark work you leave running, or PRs. T3 MCP tools are deferred: load one with ToolSearch before you call it.
+
+Native subagents must wait for their commands to finish before returning. Claude kills a foreground subagent's background commands and Monitors when it returns; \`t3_background_wait\` cannot keep that work alive and returns subagent-owned task IDs as unmatched. Use \`delegate_task\` for work that must outlive the calling turn.
 `;
 
 export function makeClaudeQueryOptions(input: {
@@ -10584,7 +10586,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 yield* Ref.get(pendingBackgroundTasksByNativeThread),
                 nativeThreadId,
               );
-              const matched = [...new Set(taskIds)].filter((taskId) => roster.has(taskId));
+              // Claude reaps a native subagent's shell tasks when it returns; marking them
+              // awaited cannot extend their lifetime. Still allow clearing an existing mark.
+              const matched = [...new Set(taskIds)].filter((taskId) => {
+                const task = roster.get(taskId);
+                return task !== undefined && (!awaited || task.parentTaskId === undefined);
+              });
               if (matched.length === 0) return { matched };
               if (awaited) {
                 yield* addTaskIdsToNativeThreadSet(

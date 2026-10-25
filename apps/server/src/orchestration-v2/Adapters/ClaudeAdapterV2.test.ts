@@ -7398,7 +7398,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("holds only the background tasks the agent marks awaited, until they end", () =>
+  it.effect("marks only session-owned background tasks awaited, until they end", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
@@ -7415,6 +7415,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               task_id: taskId,
               task_type: "local_bash",
               description: taskId,
+              ...(taskId === "subagent-tests" ? { parent_task_id: "foreground-agent" } : {}),
             })),
             uuid,
             session_id: WAKE_NATIVE_SESSION,
@@ -7443,13 +7444,23 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         yield* Queue.offer(
           harness.sdkMessages,
-          roster([WAKE_TASK_ID, "dev-server"], "00000000-0000-4000-8000-000000000301"),
+          roster(
+            [WAKE_TASK_ID, "dev-server", "subagent-tests"],
+            "00000000-0000-4000-8000-000000000301",
+          ),
         );
-        yield* nextRoster((tasks) => tasks.length === 2);
+        yield* nextRoster((tasks) => tasks.length === 3);
+
+        const subagentWait = yield* awaitBackgroundTasks({
+          providerThread: harness.providerThread,
+          taskIds: ["subagent-tests"],
+          awaited: true,
+        });
+        assert.deepStrictEqual(subagentWait.matched, []);
 
         const marked = yield* awaitBackgroundTasks({
           providerThread: harness.providerThread,
-          taskIds: [WAKE_TASK_ID, "already-finished"],
+          taskIds: [WAKE_TASK_ID, "subagent-tests", "foreground-agent", "already-finished"],
           awaited: true,
         });
         assert.deepStrictEqual(marked.matched, [WAKE_TASK_ID]);
@@ -7458,8 +7469,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           [
             [WAKE_TASK_ID, true],
             ["dev-server", false],
+            ["subagent-tests", false],
           ],
         );
+        const subagentRelease = yield* awaitBackgroundTasks({
+          providerThread: harness.providerThread,
+          taskIds: ["subagent-tests"],
+          awaited: false,
+        });
+        assert.deepStrictEqual(subagentRelease.matched, ["subagent-tests"]);
         yield* Queue.offer(harness.sdkMessages, turnOneResult);
         yield* Queue.take(harness.terminalReceipts);
 
