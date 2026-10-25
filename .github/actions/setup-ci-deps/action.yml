@@ -65,3 +65,14 @@ runs:
     - name: Install dependencies
       shell: bash
       run: vp install
+
+    - name: Enable shared task cache
+      if: hashFiles('.task-cache.json') != ''
+      shell: bash
+      run: |
+        node infra/task-cache/manage.ts install
+        if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main ]]; then
+          echo 'VP_REMOTE_CACHE=read-write' >> "$GITHUB_ENV"
+        else
+          echo 'VP_REMOTE_CACHE=read' >> "$GITHUB_ENV"
+        fi

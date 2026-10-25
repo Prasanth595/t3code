@@ -1,0 +1,56 @@
+diff --git a/src/index.ts b/src/index.ts
+index 5b7c0cb..186b6ce 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -1,4 +1,5 @@
+ import { authorize, githubKeys, type WriteIdentity } from './auth.ts';
++import { developerIdentity } from './developer-auth.ts';
+ import { cborResponse } from './cbor.ts';
+ import { cleanup, getScope, selectBlob } from './database.ts';
+ import { errorResponse, HttpError, unavailable } from './errors.ts';
+@@ -6,11 +7,11 @@ import { fetchMetadata } from './fetch.ts';
+ import { limitsFrom } from './limits.ts';
+ import { store } from './store.ts';
+ import { Deadline } from './streams.ts';
+-import { Admission } from './admission.ts';
++import { Admission } from './queued-admission.ts';
+ import { Observations } from './observations.ts';
+ 
+ const keys = githubKeys();
+-const admission = new Admission();
++const admission = new Admission(() => new HttpError(503, 'concurrency_limit'));
+ 
+ export default {
+   async fetch(request, env, ctx) {
+@@ -57,10 +58,16 @@ export default {
+       if (!rateLimit.success) throw new HttpError(429, 'rate_limit');
+       if (!known || url.search || request.method !== (operation === 'blob' ? 'GET' : 'POST'))
+         throw new HttpError(404, 'unknown_route');
+-      release = admission.acquire(operation === 'store');
++      release = await admission.acquire(operation === 'store');
+       const scope = await deadline.run(getScope(env.INDEX, scopeId, stats));
+       if (operation === 'store') {
+-        identity = await deadline.run(authorize(request, scope, keys));
++        const developer = await developerIdentity(request, (env as Env & { DEVELOPER_KEYS?: string }).DEVELOPER_KEYS);
++        if (developer === null || (developer !== undefined && !scope.writes_enabled))
++          throw new HttpError(403, 'developer_write_denied');
++        identity = developer === undefined
++          ? await deadline.run(authorize(request, scope, keys))
++          : { exp: Math.floor(Date.now() / 1000) + 900, repository_id: scope.repository_id,
++              workflow_ref: `developer/${developer}` };
+         response = await store(request, env, ctx, scope, identity, limits, deadline, stats);
+         outcome = 'stored';
+       } else if (operation === 'fetch') {
+diff --git a/wrangler.jsonc b/wrangler.jsonc
+index df77d4f..a1ac2cf 100644
+--- a/wrangler.jsonc
++++ b/wrangler.jsonc
+@@ -20,7 +20,7 @@
+   // Local defaults. Operator setup/upgrade derives stable IDs for each Worker and binding.
+   "ratelimits": [
+     { "name": "READ_LIMITER", "namespace_id": "1001", "simple": { "limit": 600, "period": 60 } },
+-    { "name": "STORE_LIMITER", "namespace_id": "1002", "simple": { "limit": 30, "period": 60 } },
++    { "name": "STORE_LIMITER", "namespace_id": "1002", "simple": { "limit": 600, "period": 60 } },
+   ],
+   "vars": {
+     // Deploy to Cloudflare inputs. Set the repository before running pnpm deploy.
