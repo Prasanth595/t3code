@@ -8,19 +8,30 @@ import { OtlpExporter, OtlpSerialization, OtlpTracer } from "effect/observabilit
 import { settleAsyncResult, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary";
+import { cliReleaseChannelOf } from "@t3tools/shared/cliRelease";
+import { releaseResourceAttributes } from "@t3tools/shared/releaseResource";
 import * as ClientTracer from "./clientTracer";
-import { clientTracingResource } from "./clientResource";
 import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer";
 import { isElectron } from "../env";
 import { APP_VERSION } from "~/branding";
 
 const DEFAULT_EXPORT_INTERVAL_MS = 1_000;
-const CLIENT_TRACING_RESOURCE = clientTracingResource({
-  version: APP_VERSION,
-  isDevelopment: import.meta.env.DEV,
-  releaseChannel: import.meta.env.VITE_RELEASE_CHANNEL,
-  surface: isElectron ? "desktop" : "web",
-});
+// PR previews can't mark themselves in APP_VERSION without breaking the version-skew check against the server.
+const RELEASE_CHANNEL = import.meta.env.DEV
+  ? "dev"
+  : import.meta.env.VITE_RELEASE_CHANNEL === "preview"
+    ? "preview"
+    : cliReleaseChannelOf(APP_VERSION);
+const CLIENT_TRACING_RESOURCE = {
+  serviceName: "t3code-web",
+  attributes: {
+    "service.namespace": "t3code",
+    ...releaseResourceAttributes(RELEASE_CHANNEL),
+    "service.runtime": "t3-web",
+    "t3code.client.surface": isElectron ? "desktop" : "web",
+    "service.version": APP_VERSION,
+  },
+} as const;
 
 const layerDelegateRuntime = Layer.mergeAll(
   PrimaryEnvironmentHttpLayer.layer,

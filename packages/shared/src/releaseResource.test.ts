@@ -4,25 +4,20 @@ import { releaseResourceAttributes } from "./releaseResource.ts";
 
 describe("releaseResourceAttributes", () => {
   it.each([
-    ["1.2.3-nightly.20261023.4", true, {}, undefined, "dev", "development"],
-    ["1.2.3", false, {}, undefined, "stable", "production"],
-    ["1.2.3-nightly.20261023.4", false, {}, undefined, "nightly", "production"],
-    ["1.2.3-preview.20261023.1", false, {}, undefined, "preview", "staging"],
-    ["1.2.3", false, {}, "preview", "preview", "staging"],
+    ["dev", {}, "dev", "development"],
+    ["stable", {}, "stable", "production"],
+    ["nightly", {}, "nightly", "production"],
+    ["preview", {}, "preview", "staging"],
     [
-      "1.2.3",
-      false,
+      "stable",
       { "deployment.environment.name": "staging", "t3code.release.channel": "" },
-      undefined,
       "stable",
       "staging",
     ],
   ] as const)(
-    "%s (development: %s, operator: %o, channel: %s) reports %s in %s",
-    (version, isDevelopment, operatorAttributes, channel, expectedChannel, environment) => {
-      expect(
-        releaseResourceAttributes({ version, isDevelopment, operatorAttributes, channel }),
-      ).toEqual({
+    "%s (operator: %o) reports %s in %s",
+    (channel, operatorAttributes, expectedChannel, environment) => {
+      expect(releaseResourceAttributes(channel, operatorAttributes)).toEqual({
         "t3code.release.channel": expectedChannel,
         "deployment.environment.name": environment,
       });
