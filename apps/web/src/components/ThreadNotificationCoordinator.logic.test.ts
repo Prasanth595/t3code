@@ -1,8 +1,11 @@
 import { WORKING_EXIT_GRACE_MS } from "@t3tools/client-runtime/state/thread-inbox";
+import { RunId, RuntimeRequestId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createThreadNotificationGate,
+  resolveThreadAttention,
   type ThreadNotificationObservation,
 } from "./ThreadNotificationCoordinator.logic";
 
@@ -189,5 +192,27 @@ describe("createThreadNotificationGate", () => {
     observe(completed(2), { ...visible, quiet: true });
     vi.advanceTimersByTime(WORKING_EXIT_GRACE_MS * 2);
     expect(notify).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveThreadAttention", () => {
+  const shell = (requestId: string, runId: string) => ({
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    pendingSubagentRequest: null,
+    latestRun: { runId: RunId.make(runId) },
+    source: {
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make(requestId),
+        kind: "user_input" as const,
+        createdAt: DateTime.makeUnsafe(0),
+      },
+    },
+  });
+
+  it("follows the thread's own request rather than its latest run", () => {
+    const question = resolveThreadAttention(shell("question", "run-1"), "input");
+    expect(resolveThreadAttention(shell("question", "run-2"), "input")).toBe(question);
+    expect(resolveThreadAttention(shell("secret", "run-1"), "input")).not.toBe(question);
   });
 });

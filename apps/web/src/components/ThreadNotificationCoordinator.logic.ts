@@ -1,9 +1,13 @@
 import { WORKING_EXIT_GRACE_MS } from "@t3tools/client-runtime/state/thread-inbox";
 
+import type { SidebarThreadSummary } from "../types";
+import { resolveBackgroundThreadRequest } from "./backgroundThreadAnnouncement";
+import type { SidebarThreadStatus } from "./Sidebar.logic";
+
 export type ThreadNotificationKind = "input" | "completion";
 
 export interface ThreadNotificationObservation {
-  /** Run and status key while the thread needs attention, otherwise null. */
+  /** Request or run, and status, while the thread needs attention, otherwise null. */
   readonly attention: string | null;
   /** The thread is idle and its latest run completed. */
   readonly settled: boolean;
@@ -75,4 +79,24 @@ export function createThreadNotificationGate<Key>(
       lastSettled.clear();
     },
   };
+}
+
+/** The thread's own request keys its attention, so a queued run cannot renotify it. */
+export function resolveThreadAttention(
+  thread: Parameters<typeof resolveBackgroundThreadRequest>[0] & {
+    readonly latestRun: Pick<NonNullable<SidebarThreadSummary["latestRun"]>, "runId"> | null;
+  },
+  status: SidebarThreadStatus,
+): string | null {
+  if (
+    status !== "input" &&
+    status !== "request" &&
+    status !== "approval" &&
+    status !== "failed" &&
+    status !== "limited"
+  ) {
+    return null;
+  }
+  const { requestId } = resolveBackgroundThreadRequest(thread);
+  return `${requestId ?? thread.latestRun?.runId ?? ""}:${status}`;
 }
