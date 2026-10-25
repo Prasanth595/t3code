@@ -17,10 +17,7 @@ import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "../
 import { SecretInput } from "./SecretInput";
 import { Label } from "../ui/label";
 
-/**
- * Dots and dashes in the host are kept so `foo-bar.com` and `foo.bar.com` do
- * not collide; anything else (a port's colon, a path) is folded to a dash.
- */
+/** Keep dots and dashes so `foo-bar.com` and `foo.bar.com` stay distinct; fold anything else to a dash. */
 function sourceIdFromUrl(url: string, kind: "cliproxy" | "credits"): UsageLimitSourceId {
   let host = url;
   try {
@@ -33,10 +30,7 @@ function sourceIdFromUrl(url: string, kind: "cliproxy" | "credits"): UsageLimitS
   return UsageLimitSourceId.make(`${kind}-${slug || "hub"}`);
 }
 
-/**
- * The management key is sent once and kept in that server's secret store; settings only ever
- * carry a redaction marker for it afterwards.
- */
+/** Send the management key once to server secret storage; settings retain only a redaction marker. */
 export function AddUsageLimitSourceDialog({
   open,
   onOpenChange,
