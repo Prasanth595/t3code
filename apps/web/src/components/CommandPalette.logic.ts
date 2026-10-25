@@ -626,17 +626,25 @@ export function filterCommandPaletteGroups(input: {
 /** Every option inside a submenu as one row, e.g. "New thread in t3code" or "Change theme: Dracula". */
 export function buildNestedSearchItems(
   items: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>,
+  query: string,
 ): CommandPaletteActionItem[] {
+  const nameOf = (item: CommandPaletteItem) =>
+    typeof item.title === "string" ? item.title : item.searchTitle;
+  const topLevelNames = new Set(items.map(nameOf));
+  const foldedQuery = foldSearchQuery(query);
   return items.flatMap((parent) => {
     if (parent.kind !== "submenu" || typeof parent.title !== "string") return [];
     const stem = parent.title.replace(/(\.\.\.|…)$/u, "");
+    // A query that only names the submenu ("new thread in") wants the submenu row itself.
+    if (foldSearchQuery(stem).startsWith(foldedQuery)) return [];
     const prefix = stem === parent.title ? `${stem}: ` : `${stem.trimEnd()} `;
     return parent.groups.flatMap((group) =>
       group.items.flatMap((child) => {
-        const name = typeof child.title === "string" ? child.title : child.searchTitle;
+        const name = nameOf(child);
         if (child.kind !== "action" || name === undefined) return [];
-        const { searchTitle: _searchTitle, ...rest } = child;
         const title = `${prefix}${name}`;
+        if (topLevelNames.has(title)) return [];
+        const { searchTitle: _searchTitle, ...rest } = child;
         // Only the combined title: child keywords like "theme" would list every theme.
         return [{ ...rest, title, searchTerms: [title] }];
       }),

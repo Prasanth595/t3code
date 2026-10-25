@@ -1683,7 +1683,12 @@ function OpenCommandPaletteDialog(props: {
     query: deferredQuery,
     isInSubmenu: currentView !== null,
     ...(deferredQuery.trim().length > 0
-      ? { allOptions: { rootGroups, nestedItems: buildNestedSearchItems(actionItems) } }
+      ? {
+          allOptions: {
+            rootGroups,
+            nestedItems: buildNestedSearchItems(actionItems, deferredQuery),
+          },
+        }
       : {}),
     projectSearchItems: projectSearchItems,
     settingsSearchItems,

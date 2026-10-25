@@ -190,16 +190,15 @@ describe("buildThreadActionItems", () => {
     };
     const addProject = action("action:add-project", "Add project");
     const rootGroups = [{ value: "actions", label: "Actions", items: [newThreadIn, addProject] }];
-    const allOptions = {
-      rootGroups,
-      nestedItems: buildNestedSearchItems([newThreadIn, addProject]),
-    };
     const search = (query: string, isInSubmenu: boolean) =>
       filterCommandPaletteGroups({
         activeGroups: isInSubmenu ? newThreadIn.groups : rootGroups,
         query,
         isInSubmenu,
-        allOptions,
+        allOptions: {
+          rootGroups,
+          nestedItems: buildNestedSearchItems([newThreadIn, addProject], query),
+        },
         projectSearchItems: [],
         threadSearchItems: [
           ...buildThreadActionItems({
@@ -215,6 +214,7 @@ describe("buildThreadActionItems", () => {
       "Suggestions",
       ["New thread in t3code"],
     ]);
+    expect(search("new thread", false).map(([label]) => label)).not.toContain("Suggestions");
     expect(search("t3", true)).toEqual([["Projects", ["t3code"]]]);
     expect(search("add project", true)).toEqual([["Actions", ["Add project"]]]);
   });
