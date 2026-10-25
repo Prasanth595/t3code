@@ -181,4 +181,23 @@ describe("Forgejo uploads", () => {
       `![shot](/attachments/${uuid})`,
     );
   });
+
+  it("keeps an upload link written as code or escaped as it was written", () => {
+    const pasted = `![shot](/attachments/${uuid})`;
+    const literal = [
+      "```md",
+      pasted,
+      "```",
+      "",
+      `    ${pasted}`,
+      "",
+      `Paste writes \`${pasted}\` or \`\`<img src="/attachments/${uuid}">\`\`.`,
+      `\\[shot\\](/attachments/${uuid}) and &lt;img src="/attachments/${uuid}"&gt;`,
+    ];
+    const body = [pasted, ...literal, `- list\n    ${pasted}`].join("\n");
+    const resolved = `![shot](https://git.example.test/attachments/${uuid})`;
+    expect(resolve(body, "https://git.example.test/team/repo/pulls/7")).toBe(
+      [resolved, ...literal, `- list\n    ${resolved}`].join("\n"),
+    );
+  });
 });
