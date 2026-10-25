@@ -850,8 +850,7 @@ const layerMakeServer = Layer.unwrap(
           ),
           Effect.asVoid,
         );
-        // Trials own cleanup immediately after the old server exits, retaining tunnels for commit/rollback unless explicitly stopped.
-        // Other runtimes wait for activation so failed standbys cannot tear down active tunnels.
+        // Trials own cleanup even if startup fails before the launcher commits.
         const cleanupBeforeActivation = yield* pendingServiceUpdateExists;
         if (cleanupBeforeActivation) {
           yield* Effect.addFinalizer(() => releaseManagedTunnel);

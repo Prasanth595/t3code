@@ -235,11 +235,10 @@ it.effect.each([
         if (scenario === "slow-recovery") {
           yield* Deferred.await(recoveryStarted);
           yield* startup.awaitConnectionReady;
-          const readyBeforeRecovery = yield* Effect.raceFirst(
-            startup.awaitCommandReady.pipe(Effect.as(true)),
-            Effect.succeed(false),
-          );
-          assert.isFalse(readyBeforeRecovery);
+          const acceptingCommands = yield* Effect.forkChild(startup.awaitCommandReady, {
+            startImmediately: true,
+          });
+          assert.isUndefined(acceptingCommands.pollUnsafe());
           assert.isFalse(events.some((event) => event.type === "ready"));
           yield* Deferred.succeed(allowRecovery, undefined);
         }

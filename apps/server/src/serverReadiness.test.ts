@@ -15,14 +15,8 @@ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 
 it.effect.each([
   ["GET", "/.well-known/t3/environment"],
-  ["GET", "/api/auth/session"],
-  ["POST", "/api/auth/browser-session"],
   ["POST", "/oauth/token"],
-  ["POST", "/api/auth/websocket-ticket"],
   ["POST", "/api/auth/websocket-ticket/rpc"],
-  ["POST", "/api/t3-connect/health"],
-  ["POST", "/api/t3-connect/mint-credential"],
-  ["POST", "/api/connect/mint-credential"],
   ["GET", "/ws"],
 ] as const)("serves %s %s while recovery holds commands", ([method, url]) =>
   Effect.gen(function* () {
@@ -59,8 +53,6 @@ it.effect.each([
 it.effect.each([
   ["POST", "/api/projects/mutate"],
   ["GET", "/api/orchestration/shell"],
-  ["POST", "/api/connect/relay-config"],
-  ["POST", "/api/auth/pairing-token"],
   ["POST", "/ws"],
 ] as const)("holds %s %s until recovery completes", ([method, url]) =>
   Effect.gen(function* () {

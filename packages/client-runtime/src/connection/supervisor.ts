@@ -40,7 +40,6 @@ import {
 
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 300_000;
-// A recently working host may be restarting; keep retries short while it recovers.
 const RECONNECT_RETRY_MAX_DELAY_MS = 5_000;
 const RECONNECT_RETRY_WINDOW_MS = 120_000;
 // A cold server with a large database can take longer than 15 seconds to
