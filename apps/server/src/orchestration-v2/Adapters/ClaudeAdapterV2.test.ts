@@ -3073,6 +3073,75 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
     );
 
+    it.effect.each(["withdrawn", "accept", "cancel"] as const)(
+      "settles only a provider-withdrawn approval: %s",
+      (answer) =>
+        Effect.gen(function* () {
+          const turn = yield* openPlanTurn("full-access");
+          const controller = new AbortController();
+          const decision = yield* Effect.promise(() =>
+            turn.canUseTool(
+              "Bash",
+              { command: "git status" },
+              {
+                signal: controller.signal,
+                toolUseID: "withdrawn-command",
+                requestId: "withdrawn-request",
+              },
+            ),
+          ).pipe(Effect.forkScoped);
+          const { runtimeRequest: request } = yield* Queue.take(turn.runtimeRequestReceipts);
+          if (answer === "withdrawn") controller.abort();
+          else {
+            yield* turn.runtime.respondToRuntimeRequest({
+              requestId: request.id,
+              decision: answer,
+            });
+          }
+          const result = yield* Fiber.join(decision);
+          assert.equal(result?.behavior, answer === "accept" ? "allow" : "deny");
+          controller.abort();
+          yield* turn.offerAndWait(makeResultFrame({ uuid: "withdrawal-result", result: "Done." }));
+          yield* Queue.take(turn.terminalReceipts);
+          const requests = turn.events.flatMap((event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.id === request.id
+              ? [event.runtimeRequest]
+              : [],
+          );
+          const nodes = turn.events.flatMap((event) =>
+            event.type === "node.updated" && event.node.id === request.nodeId ? [event.node] : [],
+          );
+          const items = turn.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "approval_request" &&
+            event.turnItem.requestId === request.id
+              ? [event.turnItem]
+              : [],
+          );
+          if (answer === "withdrawn") {
+            assert.equal(requests.at(-1)?.status, "cancelled");
+            assert.isNotNull(requests.at(-1)?.resolvedAt);
+            assert.equal(nodes.at(-1)?.status, "cancelled");
+            assert.isNotNull(nodes.at(-1)?.completedAt);
+            assert.equal(items.at(-1)?.status, "cancelled");
+            assert.isNotNull(items.at(-1)?.completedAt);
+          } else {
+            assert.lengthOf(
+              requests,
+              1,
+              "the adapter must not overwrite the orchestrator's answer",
+            );
+            assert.lengthOf(nodes, 1);
+            assert.lengthOf(items, 1);
+          }
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
+
     it.effect("denies Plan writes without asking when approvals are never allowed", () =>
       Effect.gen(function* () {
         const turn = yield* openPlanTurn("full-access", "never");

@@ -9093,6 +9093,34 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ),
           );
 
+          if (!(yield* Deferred.isDone(decision))) {
+            const completedAt = yield* DateTime.now;
+            yield* emitProviderEvent({
+              type: "runtime_request.updated",
+              driver: CLAUDE_PROVIDER,
+              runtimeRequest: {
+                ...artifacts.request,
+                status: "cancelled",
+                resolvedAt: completedAt,
+              },
+            });
+            yield* emitProviderEvent({
+              type: "node.updated",
+              driver: CLAUDE_PROVIDER,
+              node: { ...artifacts.node, status: "cancelled", completedAt },
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem: {
+                ...artifacts.turnItem,
+                status: "cancelled",
+                completedAt,
+                updatedAt: completedAt,
+              },
+            });
+          }
+
           return permissionResultFromDecision({
             toolName,
             ...resolvedDecision,
