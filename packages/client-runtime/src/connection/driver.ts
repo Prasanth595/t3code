@@ -14,13 +14,7 @@ import type {
 } from "./model.ts";
 import { ConnectionTransientError } from "./model.ts";
 import * as ConnectionResolver from "./resolver.ts";
-import {
-  connectionRoutes,
-  routeEntry,
-  routeHttpBaseUrl,
-  sendsTokenInClear,
-  usableRoutes,
-} from "./routes.ts";
+import { connectionRoutes, routeEntry, routeHttpBaseUrl, usableRoutes } from "./routes.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 
@@ -43,7 +37,7 @@ export type RouteCheck = "answered" | "silent" | "unchecked";
 const ROUTE_CHECK_TIMEOUT_MS = 2_500;
 // Preferred direct routes share one head start, so a relay connection does not
 // wait the full probe timeout for a LAN the device has already left. A route
-// that misses it connects over relay, then upgrades with a second reconnect.
+// that misses it can be selected on the next connection attempt.
 const ROUTE_CHECK_HEAD_START_MS = 500;
 
 export class ConnectionDriver extends Context.Service<
@@ -57,10 +51,6 @@ export class ConnectionDriver extends Context.Service<
       entry: ConnectionCatalogEntry,
       route: ConnectionRoute,
     ) => Effect.Effect<RouteCheck>;
-    readonly preflight: (
-      entry: ConnectionCatalogEntry,
-      route: ConnectionRoute,
-    ) => Effect.Effect<boolean>;
   }
 >()("@t3tools/client-runtime/connection/driver/ConnectionDriver") {}
 
@@ -187,23 +177,7 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const preflight = (entry: ConnectionCatalogEntry, route: ConnectionRoute) =>
-    (sendsTokenInClear(connectionRoutes(entry), route)
-      ? Effect.succeed("silent" as const)
-      : checkRoute(entry, route)
-    ).pipe(
-      Effect.flatMap((check) =>
-        check === "answered"
-          ? resolver.prepare(routeEntry(entry, route)).pipe(
-              Effect.as(true),
-              Effect.orElseSucceed(() => false),
-            )
-          : Effect.succeed(false),
-      ),
-      Effect.withSpan("ConnectionDriver.preflight"),
-    );
-
-  return ConnectionDriver.of({ connect, checkRoute, preflight });
+  return ConnectionDriver.of({ connect, checkRoute });
 });
 
 export const layer = Layer.effect(ConnectionDriver, make);

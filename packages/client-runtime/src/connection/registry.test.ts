@@ -430,8 +430,6 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         ),
       ),
     checkRoute: (_entry, route) => checkRoute(route),
-    preflight: (_entry, route) =>
-      checkRoute(route).pipe(Effect.map((check) => check === "answered")),
   });
 
   const layerCache = Layer.succeed(Persistence.EnvironmentCacheStore, cacheStore);
