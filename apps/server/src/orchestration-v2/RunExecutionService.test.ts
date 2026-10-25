@@ -2631,7 +2631,7 @@ it.effect.each([
   { status: "completed", failure: "terminal-ingest", interrupt: "succeeds" },
   { status: "completed", failure: "terminal-ingest", interrupt: "fails" },
 ] as const)(
-  "keeps a $status root provider turn durable after a $failure failure when the interrupt $interrupt",
+  "stores a $status root provider turn snapshot after a $failure failure only if the interrupt succeeds (it $interrupt)",
   ({ status, failure, interrupt }) =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
