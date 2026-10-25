@@ -17,7 +17,6 @@ import { Route as ConnectAgentRouteImport } from './routes/connect-agent'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
-import { Route as SettingsFactoryRouteImport } from './routes/settings.factory'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as FactoryRunIdRouteImport } from './routes/factory_.$runId'
 import { Route as ChatUsageRouteImport } from './routes/_chat.usage'
@@ -35,6 +34,7 @@ import { Route as ChatSettingsOpenSourceLicensesRouteImport } from './routes/_ch
 import { Route as ChatSettingsKeybindingsRouteImport } from './routes/_chat.settings.keybindings'
 import { Route as ChatSettingsIntegrationsRouteImport } from './routes/_chat.settings.integrations'
 import { Route as ChatSettingsGeneralRouteImport } from './routes/_chat.settings.general'
+import { Route as ChatSettingsFactoryRouteImport } from './routes/_chat.settings.factory'
 import { Route as ChatSettingsDiagnosticsRouteImport } from './routes/_chat.settings.diagnostics'
 import { Route as ChatSettingsConnectionsRouteImport } from './routes/_chat.settings.connections'
 import { Route as ChatSettingsBetaRouteImport } from './routes/_chat.settings.beta'
@@ -81,11 +81,6 @@ const ChatIndexRoute = ChatIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => ChatRoute,
-} as any)
-const SettingsFactoryRoute = SettingsFactoryRouteImport.update({
-  id: '/settings/factory',
-  path: '/settings/factory',
-  getParentRoute: () => rootRouteImport,
 } as any)
 const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
   id: '/projects/$projectKey',
@@ -177,6 +172,11 @@ const ChatSettingsGeneralRoute = ChatSettingsGeneralRouteImport.update({
   path: '/general',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
+const ChatSettingsFactoryRoute = ChatSettingsFactoryRouteImport.update({
+  id: '/factory',
+  path: '/factory',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
 const ChatSettingsDiagnosticsRoute = ChatSettingsDiagnosticsRouteImport.update({
   id: '/diagnostics',
   path: '/diagnostics',
@@ -228,7 +228,6 @@ export interface FileRoutesByFullPath {
   '/usage': typeof ChatUsageRoute
   '/factory/$runId': typeof FactoryRunIdRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
-  '/settings/factory': typeof SettingsFactoryRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/settings/appearance': typeof ChatSettingsAppearanceRoute
@@ -236,6 +235,7 @@ export interface FileRoutesByFullPath {
   '/settings/beta': typeof ChatSettingsBetaRoute
   '/settings/connections': typeof ChatSettingsConnectionsRoute
   '/settings/diagnostics': typeof ChatSettingsDiagnosticsRoute
+  '/settings/factory': typeof ChatSettingsFactoryRoute
   '/settings/general': typeof ChatSettingsGeneralRoute
   '/settings/integrations': typeof ChatSettingsIntegrationsRoute
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
@@ -261,7 +261,6 @@ export interface FileRoutesByTo {
   '/usage': typeof ChatUsageRoute
   '/factory/$runId': typeof FactoryRunIdRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
-  '/settings/factory': typeof SettingsFactoryRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -270,6 +269,7 @@ export interface FileRoutesByTo {
   '/settings/beta': typeof ChatSettingsBetaRoute
   '/settings/connections': typeof ChatSettingsConnectionsRoute
   '/settings/diagnostics': typeof ChatSettingsDiagnosticsRoute
+  '/settings/factory': typeof ChatSettingsFactoryRoute
   '/settings/general': typeof ChatSettingsGeneralRoute
   '/settings/integrations': typeof ChatSettingsIntegrationsRoute
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
@@ -297,7 +297,6 @@ export interface FileRoutesById {
   '/_chat/usage': typeof ChatUsageRoute
   '/factory_/$runId': typeof FactoryRunIdRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
-  '/settings/factory': typeof SettingsFactoryRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -306,6 +305,7 @@ export interface FileRoutesById {
   '/_chat/settings/beta': typeof ChatSettingsBetaRoute
   '/_chat/settings/connections': typeof ChatSettingsConnectionsRoute
   '/_chat/settings/diagnostics': typeof ChatSettingsDiagnosticsRoute
+  '/_chat/settings/factory': typeof ChatSettingsFactoryRoute
   '/_chat/settings/general': typeof ChatSettingsGeneralRoute
   '/_chat/settings/integrations': typeof ChatSettingsIntegrationsRoute
   '/_chat/settings/keybindings': typeof ChatSettingsKeybindingsRoute
@@ -334,7 +334,6 @@ export interface FileRouteTypes {
     | '/usage'
     | '/factory/$runId'
     | '/projects/$projectKey'
-    | '/settings/factory'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/settings/appearance'
@@ -342,6 +341,7 @@ export interface FileRouteTypes {
     | '/settings/beta'
     | '/settings/connections'
     | '/settings/diagnostics'
+    | '/settings/factory'
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
@@ -367,7 +367,6 @@ export interface FileRouteTypes {
     | '/usage'
     | '/factory/$runId'
     | '/projects/$projectKey'
-    | '/settings/factory'
     | '/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
@@ -376,6 +375,7 @@ export interface FileRouteTypes {
     | '/settings/beta'
     | '/settings/connections'
     | '/settings/diagnostics'
+    | '/settings/factory'
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
@@ -402,7 +402,6 @@ export interface FileRouteTypes {
     | '/_chat/usage'
     | '/factory_/$runId'
     | '/projects/$projectKey'
-    | '/settings/factory'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
@@ -411,6 +410,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/beta'
     | '/_chat/settings/connections'
     | '/_chat/settings/diagnostics'
+    | '/_chat/settings/factory'
     | '/_chat/settings/general'
     | '/_chat/settings/integrations'
     | '/_chat/settings/keybindings'
@@ -434,7 +434,6 @@ export interface RootRouteChildren {
   WelcomeRoute: typeof WelcomeRoute
   FactoryRunIdRoute: typeof FactoryRunIdRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
-  SettingsFactoryRoute: typeof SettingsFactoryRoute
   FactoryEnvironmentIdRunIdRoute: typeof FactoryEnvironmentIdRunIdRoute
 }
 
@@ -495,13 +494,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof ChatIndexRouteImport
       parentRoute: typeof ChatRoute
-    }
-    '/settings/factory': {
-      id: '/settings/factory'
-      path: '/settings/factory'
-      fullPath: '/settings/factory'
-      preLoaderRoute: typeof SettingsFactoryRouteImport
-      parentRoute: typeof rootRouteImport
     }
     '/projects/$projectKey': {
       id: '/projects/$projectKey'
@@ -622,6 +614,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsGeneralRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/settings/factory': {
+      id: '/_chat/settings/factory'
+      path: '/factory'
+      fullPath: '/settings/factory'
+      preLoaderRoute: typeof ChatSettingsFactoryRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
     '/_chat/settings/diagnostics': {
       id: '/_chat/settings/diagnostics'
       path: '/diagnostics'
@@ -680,6 +679,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsBetaRoute: typeof ChatSettingsBetaRoute
   ChatSettingsConnectionsRoute: typeof ChatSettingsConnectionsRoute
   ChatSettingsDiagnosticsRoute: typeof ChatSettingsDiagnosticsRoute
+  ChatSettingsFactoryRoute: typeof ChatSettingsFactoryRoute
   ChatSettingsGeneralRoute: typeof ChatSettingsGeneralRoute
   ChatSettingsIntegrationsRoute: typeof ChatSettingsIntegrationsRoute
   ChatSettingsKeybindingsRoute: typeof ChatSettingsKeybindingsRoute
@@ -698,6 +698,7 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsBetaRoute: ChatSettingsBetaRoute,
   ChatSettingsConnectionsRoute: ChatSettingsConnectionsRoute,
   ChatSettingsDiagnosticsRoute: ChatSettingsDiagnosticsRoute,
+  ChatSettingsFactoryRoute: ChatSettingsFactoryRoute,
   ChatSettingsGeneralRoute: ChatSettingsGeneralRoute,
   ChatSettingsIntegrationsRoute: ChatSettingsIntegrationsRoute,
   ChatSettingsKeybindingsRoute: ChatSettingsKeybindingsRoute,
@@ -746,7 +747,6 @@ const rootRouteChildren: RootRouteChildren = {
   WelcomeRoute: WelcomeRoute,
   FactoryRunIdRoute: FactoryRunIdRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
-  SettingsFactoryRoute: SettingsFactoryRoute,
   FactoryEnvironmentIdRunIdRoute: FactoryEnvironmentIdRunIdRoute,
 }
 export const routeTree = rootRouteImport
