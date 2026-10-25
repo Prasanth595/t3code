@@ -5,6 +5,7 @@ import {
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
 import {
+  markdownWithBlockImages,
   markdownWithHtml,
   markdownWithInlineFileLinks,
   markdownWithTableBreaks,
@@ -159,7 +160,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     () =>
       markdownWithTableBreaks(
         markdownWithInlineFileLinks(
-          markdownWithHtml(props.markdown),
+          markdownWithBlockImages(markdownWithHtml(props.markdown)),
           ENRICHED_INLINE_FILE_LINK_REGEX,
         ),
       ),

@@ -348,6 +348,37 @@ export function markdownWithTableBreaks(markdown: string): string {
   return markdown;
 }
 
+/** md4c draws an image that follows text on its line as a 20pt glyph; give each its own paragraph. */
+export function markdownWithBlockImages(markdown: string): string {
+  if (!markdown.includes("![")) return markdown;
+  const edits: Array<{ offset: number; content: string }> = [];
+  const visit = (node: MarkdownNode) => {
+    if (!("children" in node)) return;
+    if (node.type !== "paragraph") return node.children.forEach(visit);
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (start === undefined || end === undefined) return;
+    // Container markers become spaces, except ">", so the new paragraphs stay in the list or quote.
+    const markers = markdown
+      .slice(markdown.lastIndexOf("\n", start - 1) + 1, start)
+      .replace(/[^>\s]/g, " ");
+    const paragraphBreak = `\n${markers.trimEnd()}\n${markers}`;
+    for (const child of node.children) {
+      if (child.type !== "image") continue;
+      const imageStart = child.position?.start.offset;
+      const imageEnd = child.position?.end.offset;
+      if (imageStart !== undefined && imageStart > start)
+        edits.push({ offset: imageStart, content: paragraphBreak });
+      if (imageEnd !== undefined && imageEnd < end)
+        edits.push({ offset: imageEnd, content: paragraphBreak });
+    }
+  };
+  visit(parser.parse(markdown));
+  for (const edit of edits.reverse())
+    markdown = markdown.slice(0, edit.offset) + edit.content + markdown.slice(edit.offset);
+  return markdown;
+}
+
 export function parseMarkdownDocument(markdown: string): Root {
   return parser.parse(markdownWithHtml(markdown));
 }
