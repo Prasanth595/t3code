@@ -3303,18 +3303,17 @@ export const make = Effect.gen(function* () {
         ? (lastGoodSummary.peek(refCacheKey(input))?.updatedAt ?? null)
         : null,
     ]);
-    const read = Cache.get(diffCache, key).pipe(
-      Effect.tap(() =>
-        Cache.entries(diffCache).pipe(
-          Effect.flatMap((entries) =>
-            Effect.forEach(
-              diffCacheEvictions(Array.from(entries, ([key, read]) => [key, read.value] as const)),
-              (evicted) => Cache.invalidate(diffCache, evicted),
-            ),
-          ),
-          Effect.uninterruptible,
+    const evictDiffs = Cache.entries(diffCache).pipe(
+      Effect.flatMap((entries) =>
+        Effect.forEach(
+          diffCacheEvictions(Array.from(entries, ([key, read]) => [key, read.value] as const)),
+          (evicted) => Cache.invalidate(diffCache, evicted),
         ),
       ),
+      Effect.uninterruptible,
+    );
+    const read = Cache.get(diffCache, key).pipe(
+      Effect.ensuring(evictDiffs),
       Effect.ensuring(Effect.sync(armDiffSweep)),
     );
     return { key, read };
