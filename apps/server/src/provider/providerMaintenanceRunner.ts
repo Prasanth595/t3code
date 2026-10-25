@@ -83,6 +83,7 @@ class ProviderMaintenanceCommandError extends Data.TaggedError("ProviderMaintena
 interface VerifiedProviderRefresh {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly verifiedProviders: ReadonlyArray<ServerProvider>;
+  readonly advisoryEnriched: boolean;
 }
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -328,6 +329,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
     provider: ProviderDriverKind,
     maintenanceCapabilities: ProviderMaintenanceCapabilities,
     instanceId: ProviderInstanceId,
+    phase: "pre-update" | "post-update",
   ): Effect.Effect<VerifiedProviderRefresh> =>
     refresh.pipe(
       Effect.flatMap((providers) => {
@@ -338,6 +340,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
           return Effect.succeed<VerifiedProviderRefresh>({
             providers,
             verifiedProviders: [],
+            advisoryEnriched: true,
           });
         }
         return Effect.forEach(
@@ -357,15 +360,18 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
           Effect.map((verifiedProviders): VerifiedProviderRefresh => ({
             providers,
             verifiedProviders,
+            advisoryEnriched: true,
           })),
           Effect.catchCause((cause) =>
-            Effect.logWarning("Provider post-update version verification failed", {
+            Effect.logWarning("Provider version verification failed", {
               provider,
+              phase,
               cause: Cause.pretty(cause),
             }).pipe(
               Effect.as<VerifiedProviderRefresh>({
                 providers,
                 verifiedProviders: refreshedProviders,
+                advisoryEnriched: false,
               }),
             ),
           ),
@@ -383,6 +389,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       provider,
       maintenanceCapabilities,
       instanceId,
+      "post-update",
     );
 
   const updateProvider: ProviderMaintenanceRunnerShape["updateProvider"] = Effect.fn(
@@ -512,8 +519,10 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 provider,
                 fresh,
                 instanceId,
+                "pre-update",
               );
               const alreadyCurrent =
+                precheck.advisoryEnriched &&
                 precheck.verifiedProviders.length > 0 &&
                 precheck.verifiedProviders.every(isAlreadyOnLatest);
               if (alreadyCurrent) {

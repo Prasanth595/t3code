@@ -296,10 +296,76 @@ describe("providerMaintenanceRunner", () => {
 
   it.effect("skips the installer when a fresh probe already matches latest", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    const refreshedInstanceIds: Array<ProviderInstanceId> = [];
     return Effect.gen(function* () {
-      const { registry, updateStatesRef } = yield* makeRegistry({
+      const { registry, updateStatesRef, providersRef } = yield* makeRegistry({
         ...baseProvider,
-        version: "2.1.310",
+        version: "2.1.309",
+        versionAdvisory: {
+          status: "behind_latest",
+          currentVersion: "2.1.309",
+          latestVersion: "2.1.310",
+          updateCommand: "claude update",
+          canUpdate: true,
+          checkedAt: "2026-04-10T00:00:00.000Z",
+          message: "Update available.",
+        },
+      });
+      const updater = yield* makeTestRunner({
+        ...registry,
+        refreshInstance: (instanceId) => {
+          refreshedInstanceIds.push(instanceId);
+          return Ref.updateAndGet(providersRef, (providers) =>
+            providers.map((provider) =>
+              provider.instanceId === instanceId ? { ...provider, version: "2.1.310" } : provider,
+            ),
+          );
+        },
+        getProviderMaintenanceCapabilitiesForInstance: () =>
+          Effect.succeed(
+            makeProviderMaintenanceCapabilities({
+              provider: CODEX_DRIVER,
+              packageName: "@anthropic-ai/claude-code",
+              updateExecutable: "claude",
+              updateArgs: ["update"],
+              updateLockKey: "claudeAgent-native",
+            }),
+          ),
+      });
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+      assert.deepStrictEqual(refreshedInstanceIds, [CODEX_INSTANCE_ID]);
+      assert.deepStrictEqual(calls, []);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+      assert.strictEqual(result.providers[0]?.updateState?.message, "Already up to date.");
+      assert.deepStrictEqual(
+        (yield* Ref.get(updateStatesRef)).map((state) => [state.status, state.message]),
+        [
+          ["queued", "Waiting for another provider update to finish."],
+          ["running", "Checking for the latest version"],
+          ["succeeded", "Already up to date."],
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("2.1.310"),
+          layerMockSpawner((command, args) => {
+            calls.push({ command, args });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("still runs the installer when the installed version is unknown", () => {
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry({
+        ...baseProvider,
+        version: null,
       });
       const updater = yield* makeTestRunner({
         ...registry,
@@ -316,17 +382,8 @@ describe("providerMaintenanceRunner", () => {
       });
 
       const result = yield* updater.updateProvider(CODEX_DRIVER);
-      assert.deepStrictEqual(calls, []);
+      assert.deepStrictEqual(calls, [{ command: "claude", args: ["update"] }]);
       assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
-      assert.strictEqual(result.providers[0]?.updateState?.message, "Already up to date.");
-      assert.deepStrictEqual(
-        (yield* Ref.get(updateStatesRef)).map((state) => [state.status, state.message]),
-        [
-          ["queued", "Waiting for another provider update to finish."],
-          ["running", "Checking for the latest version"],
-          ["succeeded", "Already up to date."],
-        ],
-      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
