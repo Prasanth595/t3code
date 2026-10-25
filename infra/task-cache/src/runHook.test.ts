@@ -121,6 +121,8 @@ it("uses one machine hook across fresh worktrees without modifying Vite+", async
               ...process.env,
               HOME: root,
               GITHUB_ACTIONS: ci ? "true" : undefined,
+              ACTIONS_ID_TOKEN_REQUEST_URL: undefined,
+              ACTIONS_ID_TOKEN_REQUEST_TOKEN: undefined,
               NODE_OPTIONS: `--import=${new URL("./preload.mjs", import.meta.url).href}`,
               VP_REMOTE_CACHE: undefined,
               VP_REMOTE_CACHE_URL: undefined,
