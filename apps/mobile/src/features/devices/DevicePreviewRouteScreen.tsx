@@ -360,9 +360,9 @@ export function DevicePreviewScreen({
           accessibilityLabel="Show device controls"
           accessibilityHint="Shaking the phone also shows them"
           hitSlop={12}
-          className="absolute h-6 w-16 items-center justify-center self-center"
+          className="absolute h-11 w-16 items-center justify-center self-center"
           style={{
-            top: Math.max(insets.top, 4),
+            top: Math.max(insets.top, 12),
             transform: [{ translateX: (handleBounds.left - handleBounds.right) / 2 }],
           }}
           onPress={() => setControlsVisible(true)}
