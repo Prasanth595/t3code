@@ -371,6 +371,18 @@ describe("ssh tunnel scripts", () => {
 // bind unless both sockets set SO_REUSEPORT, so on Linux the preload adds it to
 // the picker's probe and the holder sets it too.
 
+const LOCK_WAIT_SITE = '  if [ "$LOCK_WAIT_COUNT" -ge 200 ]; then';
+// Gives up after the first failed claim and recovery attempt instead of waiting.
+const FAIL_FAST: readonly [string, string] = [
+  LOCK_WAIT_SITE,
+  '  if [ "$LOCK_WAIT_COUNT" -ge 0 ]; then',
+];
+const RECOVERY_SITE = '    if ln "$LAUNCH_LOCK_RECORD" "$RECLAIM_TARGET.reclaim" 2>/dev/null; then';
+const HOLD_LOCK: readonly [string, string] = [
+  "\nLAUNCH_LOCK_HELD=1\n",
+  '\nLAUNCH_LOCK_HELD=1\nprintf "holding\\n"; read -r release\n',
+];
+
 describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("launch script", () => {
   // Stands in for `t3 serve`: answers HTTP and writes its home's runtime file.
   const FAKE_SERVER = `process.title = "t3 (srv) test";
@@ -426,16 +438,17 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
         }
       }),
     );
-    const launch = (
+    const run = (
       stateKey: string,
       gate?: {
         readonly onLine: (line: string) => Effect.Effect<void>;
         readonly release: Effect.Effect<void>;
       },
+      script = launchScript,
     ) =>
       Effect.gen(function* () {
         const child = yield* spawner.spawn(
-          ChildProcess.make("sh", [launchScript, stateKey], {
+          ChildProcess.make("sh", [script, stateKey], {
             ...(gate
               ? {
                   stdin: Stream.fromEffect(
@@ -461,7 +474,13 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
           ],
           { concurrency: "unbounded" },
         );
+        return { stdout, stderr, exitCode };
+      });
+    const launch = (...args: Parameters<typeof run>) =>
+      Effect.gen(function* () {
+        const { stdout, stderr, exitCode } = yield* run(...args);
         assert.equal(exitCode, 0, stderr);
+        const stateKey = args[0];
         const pid = yield* readManagedPid(stateKey).pipe(Effect.orElseSucceed(() => null));
         if (pid !== null) launchedPids.add(pid);
         return JSON.parse(stdout.trim().split("\n").at(-1) ?? "") as {
@@ -475,7 +494,35 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
         yield* fs.writeFileString(`${home}/bin/ps`, `#!/bin/sh\nprintf '%s\\n' '${value}'\n`);
         yield* fs.chmod(`${home}/bin/ps`, 0o700);
       });
-    return { fs, stateDir, readManagedPid, launch, launchScript, overrideProcessStart };
+    // Patches synchronization sites into a copy, so a missing site fails loudly.
+    const writeVariant = (name: string, patches: ReadonlyArray<readonly [string, string]>) =>
+      Effect.gen(function* () {
+        let script = yield* fs.readFileString(launchScript);
+        for (const [site, replacement] of patches) {
+          assert.include(script, site, `launch script is missing the site ${site}`);
+          script = script.replace(site, replacement);
+        }
+        const path = `${root}/${name}.sh`;
+        yield* fs.writeFileString(path, script);
+        return path;
+      });
+    const lockPath = `${home}/.t3/ssh-launch/.ownership.lock`;
+    const exitedPid = Effect.gen(function* () {
+      const child = yield* spawner.spawn(ChildProcess.make("sh", ["-c", "exit 0"]));
+      yield* child.exitCode;
+      return child.pid;
+    });
+    return {
+      fs,
+      stateDir,
+      readManagedPid,
+      run,
+      launch,
+      writeVariant,
+      lockPath,
+      exitedPid,
+      overrideProcessStart,
+    };
   });
 
   it.live("keeps managing its server after the connection's state key changes", () =>
@@ -502,52 +549,45 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
 
   it.live("serializes two aliases claiming the same managed server", () =>
     Effect.gen(function* () {
-      const { fs, stateDir, readManagedPid, launch, launchScript } = yield* prepareLaunch;
+      const { fs, stateDir, readManagedPid, launch, writeVariant } = yield* prepareLaunch;
       const launched = yield* launch("old-alias");
       const pid = yield* readManagedPid("old-alias");
       const firstAtTransfer = yield* Deferred.make<void>();
       const secondProgress = yield* Deferred.make<"waiting" | "transferring">();
       const releaseFirst = yield* Deferred.make<void>();
       const releaseSecond = yield* Deferred.make<void>();
-      const script = yield* fs.readFileString(launchScript);
-      const transferSite = 'if cmp -s "$PREVIOUS_STATE_DIR/active-runner.sh" "$RUNNER_FILE"; then';
-      const lockWaitSite = '  if [ "$LOCK_WAIT_COUNT" -ge 200 ]; then';
-      assert.include(
-        script,
-        transferSite,
-        "launch script is missing the transfer synchronization site",
-      );
-      assert.include(
-        script,
-        lockWaitSite,
-        "launch script is missing the lock-wait synchronization site",
-      );
       // Report lock contention while the first transfer is held, so the race
       // does not depend on subprocess scheduling.
-      yield* fs.writeFileString(
-        launchScript,
-        script
-          .replace(
-            transferSite,
-            'printf "transferring\\n"; read -r release; if cmp -s "$PREVIOUS_STATE_DIR/active-runner.sh" "$RUNNER_FILE"; then',
-          )
-          .replace(lockWaitSite, '  printf "waiting\\n"; if [ "$LOCK_WAIT_COUNT" -ge 200 ]; then'),
-      );
-      const first = yield* launch("first-alias", {
-        onLine: (line) =>
-          line === "transferring"
-            ? Deferred.succeed(firstAtTransfer, undefined).pipe(Effect.asVoid)
-            : Effect.void,
-        release: Deferred.await(releaseFirst),
-      }).pipe(Effect.forkScoped);
+      const script = yield* writeVariant("contended", [
+        [
+          'if cmp -s "$PREVIOUS_STATE_DIR/active-runner.sh" "$RUNNER_FILE"; then',
+          'printf "transferring\\n"; read -r release; if cmp -s "$PREVIOUS_STATE_DIR/active-runner.sh" "$RUNNER_FILE"; then',
+        ],
+        [LOCK_WAIT_SITE, '  printf "waiting\\n"; if [ "$LOCK_WAIT_COUNT" -ge 200 ]; then'],
+      ]);
+      const first = yield* launch(
+        "first-alias",
+        {
+          onLine: (line) =>
+            line === "transferring"
+              ? Deferred.succeed(firstAtTransfer, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          release: Deferred.await(releaseFirst),
+        },
+        script,
+      ).pipe(Effect.forkScoped);
       yield* Deferred.await(firstAtTransfer);
-      const second = yield* launch("second-alias", {
-        onLine: (line) =>
-          line === "waiting" || line === "transferring"
-            ? Deferred.succeed(secondProgress, line).pipe(Effect.asVoid)
-            : Effect.void,
-        release: Deferred.await(releaseSecond),
-      }).pipe(Effect.forkScoped);
+      const second = yield* launch(
+        "second-alias",
+        {
+          onLine: (line) =>
+            line === "waiting" || line === "transferring"
+              ? Deferred.succeed(secondProgress, line).pipe(Effect.asVoid)
+              : Effect.void,
+          release: Deferred.await(releaseSecond),
+        },
+        script,
+      ).pipe(Effect.forkScoped);
       assert.equal(yield* Deferred.await(secondProgress), "waiting");
       yield* Deferred.succeed(releaseFirst, undefined);
       assert.deepEqual(yield* Fiber.join(first), launched);
@@ -573,6 +613,125 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
       });
       assert.isFalse(yield* fs.exists(`${stateDir("new-alias")}/pid`));
       assert.isTrue(isAlive(pid));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live.each<{
+    readonly owner: string;
+    readonly lock: (exitedPid: number) => string;
+    readonly killedRecovery?: boolean;
+  }>([
+    { owner: "a killed owner", lock: (exitedPid) => `${exitedPid}:linux:boot:1\n` },
+    { owner: "a killed owner from an older release", lock: (exitedPid) => `${exitedPid}\n` },
+    { owner: "an owner whose PID was reused", lock: () => `${process.pid}:a previous process\n` },
+    {
+      owner: "an owner from before a reboot",
+      lock: () => `${process.pid}:linux:00000000-0000-0000-0000-000000000000:1\n`,
+    },
+    {
+      owner: "a killed owner and a killed recovery",
+      lock: (exitedPid) => `${exitedPid}\n`,
+      killedRecovery: true,
+    },
+  ])("recovers the launch lock from $owner", ({ lock, killedRecovery }) =>
+    Effect.gen(function* () {
+      const { fs, launch, writeVariant, lockPath, exitedPid } = yield* prepareLaunch;
+      const lockDir = lockPath.slice(0, lockPath.lastIndexOf("/"));
+      const deadPid = yield* exitedPid;
+      yield* fs.makeDirectory(lockDir, { recursive: true });
+      yield* fs.writeFileString(lockPath, lock(deadPid));
+      if (killedRecovery) yield* fs.writeFileString(`${lockPath}.reclaim`, `${deadPid}:\n`);
+      const script = yield* writeVariant("fail-fast", [FAIL_FAST]);
+
+      assert.equal((yield* launch("alias", undefined, script)).serverKind, "managed");
+      const leftovers = (yield* fs.readDirectory(lockDir)).filter((name) =>
+        name.startsWith(".ownership.lock"),
+      );
+      assert.deepEqual(leftovers, []);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("leaves a live owner's launch lock in place", () =>
+    Effect.gen(function* () {
+      const { fs, run, launch, writeVariant, lockPath } = yield* prepareLaunch;
+      const holding = yield* Deferred.make<void>();
+      const releaseHolder = yield* Deferred.make<void>();
+      const holder = yield* writeVariant("holder", [HOLD_LOCK]);
+      const contender = yield* writeVariant("contender", [FAIL_FAST]);
+      const first = yield* launch(
+        "first-alias",
+        {
+          onLine: (line) =>
+            line === "holding"
+              ? Deferred.succeed(holding, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          release: Deferred.await(releaseHolder),
+        },
+        holder,
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(holding);
+      const owner = yield* fs.readFileString(lockPath);
+
+      const second = yield* run("second-alias", undefined, contender);
+      assert.equal(second.exitCode, 1);
+      assert.include(second.stderr, "Another SSH operation holds");
+      assert.equal(yield* fs.readFileString(lockPath), owner);
+      yield* Deferred.succeed(releaseHolder, undefined);
+      assert.equal((yield* Fiber.join(first)).serverKind, "managed");
+      assert.isFalse(yield* fs.exists(lockPath));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("does not let a late recovery remove the next owner's launch lock", () =>
+    Effect.gen(function* () {
+      const { fs, run, launch, writeVariant, lockPath, exitedPid } = yield* prepareLaunch;
+      yield* fs.makeDirectory(lockPath.slice(0, lockPath.lastIndexOf("/")), { recursive: true });
+      yield* fs.writeFileString(lockPath, `${yield* exitedPid}\n`);
+      const lateAtRecovery = yield* Deferred.make<void>();
+      const releaseLate = yield* Deferred.make<void>();
+      const holding = yield* Deferred.make<void>();
+      const releaseHolder = yield* Deferred.make<void>();
+      const late = yield* writeVariant("late-recovery", [
+        FAIL_FAST,
+        [RECOVERY_SITE, `    printf "recovering\\n"; read -r release\n${RECOVERY_SITE}`],
+      ]);
+      const holder = yield* writeVariant("holder", [HOLD_LOCK]);
+      // The late contender has judged the killed owner stale and stops there.
+      const lateRun = yield* run(
+        "late-alias",
+        {
+          onLine: (line) =>
+            line === "recovering"
+              ? Deferred.succeed(lateAtRecovery, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          release: Deferred.await(releaseLate),
+        },
+        late,
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(lateAtRecovery);
+      // Another contender recovers the same stale lock and claims it.
+      const next = yield* launch(
+        "next-alias",
+        {
+          onLine: (line) =>
+            line === "holding"
+              ? Deferred.succeed(holding, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          release: Deferred.await(releaseHolder),
+        },
+        holder,
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(holding);
+      const owner = yield* fs.readFileString(lockPath);
+
+      yield* Deferred.succeed(releaseLate, undefined);
+      const lateResult = yield* Fiber.join(lateRun);
+      assert.equal(lateResult.exitCode, 1, lateResult.stderr);
+      assert.include(lateResult.stderr, "Another SSH operation holds");
+      assert.equal(yield* fs.readFileString(lockPath), owner);
+      yield* Deferred.succeed(releaseHolder, undefined);
+      assert.equal((yield* Fiber.join(next)).serverKind, "managed");
+      assert.isFalse(yield* fs.exists(lockPath));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

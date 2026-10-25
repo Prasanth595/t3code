@@ -538,23 +538,6 @@ exec "$T3_RUNTIME_DIR/t3" "$@"
 // outside any connection key so a rename cannot race a previous key's stop.
 const REMOTE_STATE_LOCK_SCRIPT = `mkdir -p "$HOME/.t3/ssh-launch"
 LAUNCH_LOCK="$HOME/.t3/ssh-launch/.ownership.lock"
-LOCK_WAIT_COUNT=0
-while ! (set -C; printf '%s\\n' "$$" > "$LAUNCH_LOCK") 2>/dev/null; do
-  if [ "$LOCK_WAIT_COUNT" -ge 200 ]; then
-    printf 'Another SSH operation holds %s. Retry after it finishes. If it was killed, remove the lock only after confirming no SSH operation is running.\\n' "$LAUNCH_LOCK" >&2
-    exit 1
-  fi
-  sleep 0.1
-  LOCK_WAIT_COUNT=$((LOCK_WAIT_COUNT + 1))
-done
-release_launch_lock() {
-  rm -f "$LAUNCH_LOCK"
-}
-trap release_launch_lock EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 141' PIPE
-trap 'exit 143' TERM
 process_start() {
   # Boot identity and start ticks survive clock corrections without matching across reboots.
   if [ -r /proc/sys/kernel/random/boot_id ]; then
@@ -580,6 +563,74 @@ matches_process_start() {
   [ "$(LC_ALL=C TZ=UTC ps -p "$1" -o lstart= 2>/dev/null)" = "$RECORDED_START" ] || return 1
   printf '%s\\n' "$CURRENT_START" >"$2"
 }
+# A lock holds "pid:process-start" and appears with one hard link, so readers
+# never see a partial owner. Unparseable or legacy PID-only owners stay unless dead.
+launch_lock_is_stale() {
+  case "$1" in *:*) ;; *) set -- "$1:" ;; esac
+  LOCK_OWNER_PID="\${1%%:*}"
+  LOCK_OWNER_START="\${1#*:}"
+  case "$LOCK_OWNER_PID" in ''|*[!0-9]*) return 1 ;; esac
+  LOCK_CURRENT_START="$(process_start "$LOCK_OWNER_PID" 2>/dev/null || true)"
+  if [ -z "$LOCK_CURRENT_START" ]; then
+    ! kill -0 "$LOCK_OWNER_PID" 2>/dev/null
+  else
+    [ -n "$LOCK_OWNER_START" ] && [ "$LOCK_CURRENT_START" != "$LOCK_OWNER_START" ]
+  fi
+}
+# Only the process holding "<lock>.reclaim" may remove a stale <lock>. A dead
+# owner cannot release, so the record cannot change between that holder's
+# check and its removal. A stranded ".reclaim" is recovered the same way.
+reclaim_launch_lock() {
+  RECLAIM_TARGET="$LAUNCH_LOCK"
+  while RECLAIM_OWNER="$(cat "$RECLAIM_TARGET" 2>/dev/null)" && launch_lock_is_stale "$RECLAIM_OWNER"; do
+    if ln "$LAUNCH_LOCK_RECORD" "$RECLAIM_TARGET.reclaim" 2>/dev/null; then
+      LAUNCH_LOCK_MARKER="$RECLAIM_TARGET.reclaim"
+      if RECLAIM_OWNER="$(cat "$RECLAIM_TARGET" 2>/dev/null)" && launch_lock_is_stale "$RECLAIM_OWNER"; then
+        rm -f "$RECLAIM_TARGET"
+      fi
+      rm -f "$LAUNCH_LOCK_MARKER"
+      LAUNCH_LOCK_MARKER=""
+      return 0
+    fi
+    RECLAIM_TARGET="$RECLAIM_TARGET.reclaim"
+  done
+  return 1
+}
+LAUNCH_LOCK_RECORD="$LAUNCH_LOCK.$$"
+LAUNCH_LOCK_HELD=0
+LAUNCH_LOCK_MARKER=""
+release_launch_lock() {
+  if [ -n "$LAUNCH_LOCK_MARKER" ]; then
+    rm -f "$LAUNCH_LOCK_MARKER"
+  fi
+  if [ "$LAUNCH_LOCK_HELD" = 1 ]; then
+    rm -f "$LAUNCH_LOCK"
+    LAUNCH_LOCK_HELD=0
+  fi
+  rm -f "$LAUNCH_LOCK_RECORD"
+}
+trap release_launch_lock EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 141' PIPE
+trap 'exit 143' TERM
+# A killed process with this PID may have left its record linked as the lock.
+rm -f "$LAUNCH_LOCK_RECORD"
+printf '%s:%s\\n' "$$" "$(process_start "$$" 2>/dev/null || true)" >"$LAUNCH_LOCK_RECORD"
+LOCK_WAIT_COUNT=0
+while ! ln "$LAUNCH_LOCK_RECORD" "$LAUNCH_LOCK" 2>/dev/null; do
+  if reclaim_launch_lock; then
+    continue
+  fi
+  if [ "$LOCK_WAIT_COUNT" -ge 200 ]; then
+    printf 'Another SSH operation holds %s. Retry after it finishes.\\n' "$LAUNCH_LOCK" >&2
+    exit 1
+  fi
+  sleep 0.1
+  LOCK_WAIT_COUNT=$((LOCK_WAIT_COUNT + 1))
+done
+LAUNCH_LOCK_HELD=1
+rm -f "$LAUNCH_LOCK_RECORD"
 `;
 
 const REMOTE_LAUNCH_SCRIPT = `set -eu
