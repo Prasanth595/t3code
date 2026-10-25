@@ -702,9 +702,13 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
         ["comment.cmd", `rem Previous runtime: "${runtimeExecutable}"\r\n"%AGY_TARGET%"`],
         ["label-comment.cmd", `:: "${runtimeExecutable}"\r\n"%AGY_TARGET%"`],
         ["echo.cmd", `echo "${runtimeExecutable}"`],
+        [
+          "conditional.cmd",
+          `if defined AGY_TARGET "%AGY_TARGET%" %* & exit /b\r\n"${runtimeExecutable}"`,
+        ],
       ] as const) {
-        const mentionOnly = yield* writeLauncher(name, launch);
-        expect(yield* installation.resolve(mentionOnly).pipe(Effect.flip)).toMatchObject({
+        const uncertain = yield* writeLauncher(name, launch);
+        expect(yield* installation.resolve(uncertain).pipe(Effect.flip)).toMatchObject({
           operation: "resolve",
         });
       }
