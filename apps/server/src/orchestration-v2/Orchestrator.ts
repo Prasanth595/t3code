@@ -11201,7 +11201,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
       if (terminalStatus !== "completed" && terminalStatus !== "failed") return;
       // Callers hold the parent lock; detach takes the child lock, as follow-up intake does.
-      // A follow-up that already started keeps the session; a later one resumes the native thread.
+      // A started or startable follow-up keeps the session. Held queued work, like a later
+      // follow-up, resumes the native thread.
       yield* threadDispatch
         .withLock(
           childThreadId,
@@ -11210,7 +11211,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               "runs",
               "providerSessions",
             ]);
-            if (child.runs.some((run) => delegatedTaskTerminalStatus(run.status) === null)) return;
+            if (
+              child.runs.some(
+                (run) => isBlockingRun(run) || (run.status === "queued" && run.queueHeld !== true),
+              )
+            )
+              return;
             yield* Effect.forEach(
               child.providerSessions.filter(
                 (session) => session.status !== "stopped" && session.status !== "error",

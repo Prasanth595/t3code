@@ -1462,13 +1462,15 @@ const makeSessionAdapter = (cwd: string) => {
 };
 
 it.effect.each([
-  { outcome: "completed", delegated: true, released: true },
-  { outcome: "failed", delegated: true, released: true },
-  { outcome: "interrupted", delegated: true, released: false },
-  { outcome: "completed", delegated: false, released: false },
+  { outcome: "completed", delegated: true, queued: "none", released: true },
+  { outcome: "failed", delegated: true, queued: "none", released: true },
+  { outcome: "interrupted", delegated: true, queued: "none", released: false },
+  { outcome: "completed", delegated: false, queued: "none", released: false },
+  { outcome: "failed", delegated: true, queued: "held", released: true },
+  { outcome: "completed", delegated: true, queued: "started", released: false },
 ] as const)(
-  "releases the session only when a delegated task ends completed or failed ($outcome, delegated: $delegated)",
-  ({ outcome, delegated, released }) =>
+  "releases the session only when a delegated task ends completed or failed ($outcome, delegated: $delegated, queued: $queued)",
+  ({ outcome, delegated, queued, released }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("delegated-session-release");
@@ -1550,71 +1552,129 @@ it.effect.each([
             threadId = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!
               .childThreadId!;
           }
-          const { turn, providerSessionId, events } = turns.find(
+          const finishTurn = (status: "completed" | "failed" | "interrupted") =>
+            Effect.gen(function* () {
+              const { turn, events } = turns.findLast((entry) => entry.turn.threadId === threadId)!;
+              const providerTurn = (yield* orchestrator.getThreadProjection(
+                threadId,
+              )).providerTurns.find((row) => row.runAttemptId === turn.attemptId)!;
+              // A completed run waits for its checkpoint, which the drained worker captures.
+              const settling = yield* next(
+                (event) =>
+                  event.type === "run.updated" &&
+                  event.payload.id === turn.runId &&
+                  event.payload.status === (status === "completed" ? "waiting" : status),
+              );
+              // A delegated task's terminal row is written while finalize holds the parent's lock.
+              const ended = yield* next((event) =>
+                delegated
+                  ? event.type === "subagent.updated" && event.payload.status === status
+                  : event.type === "run.updated" &&
+                    event.payload.id === turn.runId &&
+                    event.payload.status === status,
+              );
+              const now = yield* DateTime.now;
+              const terminal = {
+                type: "turn.terminal",
+                driver: sessionAdapter.driver,
+                providerThreadId: providerTurn.providerThreadId,
+                providerTurnId: providerTurn.id,
+                runOrdinal: turn.runOrdinal,
+                threadDisposition: "reusable",
+              } as const;
+              yield* Queue.offerAll(events, [
+                {
+                  type: "provider_turn.updated",
+                  driver: sessionAdapter.driver,
+                  providerTurn: { ...providerTurn, status, completedAt: now },
+                },
+                status === "failed"
+                  ? {
+                      ...terminal,
+                      status,
+                      failureItemOrdinal: 1,
+                      failure: {
+                        class: "provider_error",
+                        message: "Provider failed",
+                        code: null,
+                        retryable: null,
+                      },
+                    }
+                  : { ...terminal, status, failure: null },
+              ]);
+              yield* Fiber.join(settling);
+              yield* worker.drain();
+              yield* Fiber.join(ended);
+            });
+          if (queued === "started") {
+            // The first task releases its session; the follow-up task resumes the native thread.
+            yield* finishTurn("completed");
+            const followUpRunning = yield* turnRunning();
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("start-session-release-follow-up"),
+              threadId,
+              messageId: MessageId.make("message:session-release-follow-up"),
+              text: "Check the fix",
+              attachments: [],
+              dispatchMode: { type: "start_immediately" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            yield* worker.drain();
+            yield* Fiber.join(followUpRunning);
+          }
+          if (queued !== "none") {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("queue-session-release-child"),
+              threadId,
+              messageId: MessageId.make("message:session-release-queued"),
+              text: "Then summarize",
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            yield* worker.drain();
+          }
+          const { providerSessionId } = turns.findLast(
             (entry) => entry.turn.threadId === threadId,
           )!;
-          const providerTurn = (yield* orchestrator.getThreadProjection(threadId))
-            .providerTurns[0]!;
           const detached = yield* next(
             (event) => event.type === "provider-session.detached" && event.threadId === threadId,
           );
-          // A completed run waits for its checkpoint, which the drained worker captures.
-          const settling = yield* next(
-            (event) =>
-              event.type === "run.updated" &&
-              event.payload.id === turn.runId &&
-              event.payload.status === (outcome === "completed" ? "waiting" : outcome),
-          );
-          // A delegated task's terminal row is written while finalize holds the parent's lock.
-          const ended = yield* next((event) =>
-            delegated
-              ? event.type === "subagent.updated" && event.payload.status === outcome
-              : event.type === "run.updated" &&
-                event.payload.id === turn.runId &&
-                event.payload.status === outcome,
-          );
-          const now = yield* DateTime.now;
-          const terminal = {
-            type: "turn.terminal",
-            driver: sessionAdapter.driver,
-            providerThreadId: providerTurn.providerThreadId,
-            providerTurnId: providerTurn.id,
-            runOrdinal: turn.runOrdinal,
-            threadDisposition: "reusable",
-          } as const;
-          yield* Queue.offerAll(events, [
-            {
-              type: "provider_turn.updated",
-              driver: sessionAdapter.driver,
-              providerTurn: { ...providerTurn, status: outcome, completedAt: now },
-            },
-            outcome === "failed"
-              ? {
-                  ...terminal,
-                  status: outcome,
-                  failureItemOrdinal: 1,
-                  failure: {
-                    class: "provider_error",
-                    message: "Provider failed",
-                    code: null,
-                    retryable: null,
-                  },
-                }
-              : { ...terminal, status: outcome, failure: null },
-          ]);
-          yield* Fiber.join(settling);
-          yield* worker.drain();
-          yield* Fiber.join(ended);
+          yield* finishTurn(outcome);
           // Commands on the parent wait for its lock, so this runs after finalize returns.
           yield* orchestrator.dispatch({
             type: "thread.visit",
             commandId: CommandId.make("visit-session-release-parent"),
             threadId: parentThreadId,
-            visitedAt: DateTime.formatIso(now),
+            visitedAt: DateTime.formatIso(yield* DateTime.now),
           });
           yield* worker.drain();
 
+          const child = yield* orchestrator.getThreadProjection(threadId);
+          if (queued !== "none") {
+            assert.deepEqual(
+              child.runs.map((run) => [run.status, run.queueHeld ?? false]),
+              queued === "held"
+                ? [
+                    ["failed", false],
+                    ["queued", true],
+                  ]
+                : [
+                    ["completed", false],
+                    ["completed", false],
+                    ["running", false],
+                  ],
+            );
+          }
           assert.equal(yield* sessions.isLive(providerSessionId), !released);
+          assert.equal(
+            child.providerSessions.some((session) => session.id === providerSessionId),
+            !released,
+          );
           if (released) {
             const event = Option.getOrThrow(yield* Fiber.join(detached));
             assert.equal(
