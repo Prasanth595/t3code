@@ -1,3 +1,4 @@
+import { stripInlineContextReferences } from "~/lib/composerContextReferences";
 import {
   capitalizeTerm,
   sourceControlClients,
@@ -817,6 +818,7 @@ export interface FixFindingsHandoff {
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
 }
 
+/** Appends only lines the draft lacks, so repeats and shared preambles land once. */
 export function appendHandoff(
   existing: {
     readonly prompt: string;
@@ -827,17 +829,27 @@ export function appendHandoff(
     readonly reviewComments?: ReadonlyArray<ReviewCommentContext>;
   },
 ): { prompt: string; reviewComments: ReviewCommentContext[] } {
+  const present = new Set(
+    stripInlineContextReferences(existing.prompt)
+      .split("\n")
+      .map((line) => line.trim()),
+  );
+  const added = incoming.prompt
+    .split("\n")
+    .filter((line) => line.trim().length === 0 || !present.has(line.trim()))
+    .join("\n")
+    .trim();
   const kept = existing.prompt.trimEnd();
+  const incomingById = new Map(
+    (incoming.reviewComments ?? []).map((comment) => [comment.id, comment]),
+  );
   const existingIds = new Set(existing.reviewComments.map((comment) => comment.id));
   return {
     prompt:
-      kept.length === 0
-        ? incoming.prompt
-        : incoming.prompt.length === 0
-          ? existing.prompt
-          : `${kept}\n\n${incoming.prompt}`,
+      added.length === 0 ? existing.prompt : kept.length === 0 ? added : `${kept}\n\n${added}`,
+    // Same-id chips take the newer copy, so a re-fixed thread carries its latest replies.
     reviewComments: [
-      ...existing.reviewComments,
+      ...existing.reviewComments.map((comment) => incomingById.get(comment.id) ?? comment),
       ...(incoming.reviewComments ?? []).filter((comment) => !existingIds.has(comment.id)),
     ],
   };

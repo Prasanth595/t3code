@@ -942,6 +942,39 @@ describe("a second handoff into the same composer", () => {
     ]);
   });
 
+  it("swaps in the newer copy of a chip it already holds", () => {
+    const stale = { ...chip("pull-request-context:42"), text: "Explain only." };
+    const fresh = { ...chip("pull-request-context:42"), text: "" };
+    const next = appendHandoff(
+      { prompt: "Explain this pull request.", reviewComments: [stale, chip("file-comment:3")] },
+      { prompt: "why this?", reviewComments: [fresh] },
+    );
+    expect(next.reviewComments).toEqual([fresh, chip("file-comment:3")]);
+  });
+
+  it("changes nothing when the same handoff lands twice", () => {
+    const handoff = {
+      prompt: "Fix the review finding attached to this message.\nThe pull request is #42.",
+      reviewComments: [chip("pull-request-finding:t1")],
+    };
+    const once = appendHandoff({ prompt: "", reviewComments: [] }, handoff);
+    expect(appendHandoff(once, handoff)).toEqual(once);
+  });
+
+  it("does not repeat the pull request preamble for a second finding", () => {
+    const preamble = "The pull request is #42.\nIts branch is `feature`.";
+    const next = appendHandoff(
+      {
+        prompt: `Fix the review remark quoted below.\n${preamble}\n> reviewer: rename it`,
+        reviewComments: [],
+      },
+      { prompt: `Fix the review remark quoted below.\n${preamble}\n> reviewer: add a test` },
+    );
+    expect(next.prompt).toBe(
+      `Fix the review remark quoted below.\n${preamble}\n> reviewer: rename it\n\n> reviewer: add a test`,
+    );
+  });
+
   it("keeps what the reader typed, trailing line breaks aside", () => {
     expect(
       appendHandoff(

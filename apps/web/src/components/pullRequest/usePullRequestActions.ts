@@ -11,6 +11,7 @@ import type {
   PullRequestDetail,
   PullRequestMergeMethod,
   PullRequestRef,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import {
@@ -230,6 +231,20 @@ export interface PullRequestThreadTask {
   reviewComments?: ReadonlyArray<ReviewCommentContext>;
 }
 
+export function writeHandoffToComposer(
+  target: ScopedThreadRef | DraftId,
+  task: PullRequestThreadTask,
+) {
+  const store = useComposerDraftStore.getState();
+  const draft = store.getComposerDraft(target);
+  const next = appendHandoff(
+    { prompt: draft?.prompt ?? "", reviewComments: draft?.reviewComments ?? [] },
+    task,
+  );
+  store.setPrompt(target, next.prompt);
+  store.setReviewComments(target, next.reviewComments);
+}
+
 export type PullRequestHandoffDetail = Pick<
   PullRequestDetail,
   "projectId" | "workspaceRoot" | "url"
@@ -268,15 +283,8 @@ export function usePullRequestHandoffs({
         () => null,
       ));
     if (session === null) return null;
-    const store = useComposerDraftStore.getState();
     if (task === null) return session;
-    const draft = store.getComposerDraft(session.draftId);
-    const next = appendHandoff(
-      { prompt: draft?.prompt ?? "", reviewComments: draft?.reviewComments ?? [] },
-      task,
-    );
-    store.setPrompt(session.draftId, next.prompt);
-    store.setReviewComments(session.draftId, next.reviewComments);
+    writeHandoffToComposer(session.draftId, task);
     return session;
   };
 
