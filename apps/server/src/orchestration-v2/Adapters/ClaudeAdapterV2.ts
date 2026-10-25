@@ -1282,10 +1282,27 @@ export function claudeToolSearchOverride(value: string | undefined): "true" | un
   if (value === undefined) return undefined;
   if (value === "auto") return "true";
   if (!value.startsWith("auto:")) return undefined;
-  const percent = Number.parseFloat(value.slice("auto:".length));
-  // Claude Code also treats an unparsable auto:N as auto.
+  const percent = parseClaudeInteger(value.slice("auto:".length));
+  // Claude Code treats an unparsable auto:N as auto, and clamps N to 0..100.
   if (Number.isNaN(percent)) return "true";
-  return percent > 0 && percent < 100 ? "true" : undefined;
+  const clamped = Math.min(100, Math.max(0, percent));
+  return clamped > 0 && clamped < 100 ? "true" : undefined;
+}
+
+// Claude Code 2.1.310's integer parsing for auto:N. Scientific notation counts only when it is an
+// integer, grouped digits (1_000, 1,000, or 1 000) are joined, and anything else uses parseInt.
+const CLAUDE_SCIENTIFIC_INTEGER = /^[+-]?(\d+(\.\d*)?|\.\d+)[eE][+-]?\d+$/;
+const CLAUDE_GROUPED_INTEGER = /^[+-]?\d{1,3}([_,   ])\d{3}(?:\1\d{3})*$/;
+function parseClaudeInteger(text: string): number {
+  const value = text.trim();
+  if (value.length <= 32 && CLAUDE_SCIENTIFIC_INTEGER.test(value)) {
+    const number = Number(value);
+    return Number.isInteger(number) ? number : Number.NaN;
+  }
+  if (value.length <= 32 && CLAUDE_GROUPED_INTEGER.test(value)) {
+    return Number.parseInt(value.replace(/[_,   ]/g, ""), 10);
+  }
+  return Number.parseInt(value, 10);
 }
 
 // Claude Code defers MCP tools behind ToolSearch, so the agent only finds
@@ -3989,16 +4006,53 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       }),
       Effect.orElseSucceed(() => undefined),
     );
+  // A worktree's .git file points at <main>/.git/worktrees/<name>, whose commondir leads back to
+  // <main>/.git. Anything else that is not a git directory resolves to the checkout itself.
+  const mainCheckoutRoot = (checkout: string) =>
+    fileSystem.readFileString(path.join(checkout, ".git")).pipe(
+      Effect.flatMap((pointer) => {
+        const gitDir = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
+        if (gitDir === undefined) return Effect.succeed(checkout);
+        const worktreeGitDir = path.resolve(checkout, gitDir);
+        return fileSystem
+          .readFileString(path.join(worktreeGitDir, "commondir"))
+          .pipe(
+            Effect.map((commonDir) => path.dirname(path.resolve(worktreeGitDir, commonDir.trim()))),
+          );
+      }),
+      Effect.orElseSucceed(() => checkout),
+    );
+  // Where Claude Code keeps .claude/settings.local.json: the repository root, or the main
+  // checkout's root in a worktree. It stays in the working directory outside a repository, on
+  // Windows, or when the root is the home directory.
+  const localSettingsDirectory = Effect.fn("ClaudeAdapterV2.localSettingsDirectory")(function* (
+    cwd: string,
+  ) {
+    if ((yield* HostProcess.Platform) === "win32") return cwd;
+    for (let directory = cwd; ; directory = path.dirname(directory)) {
+      const isCheckout = yield* fileSystem
+        .exists(path.join(directory, ".git"))
+        .pipe(Effect.orElseSucceed(() => false));
+      if (isCheckout) {
+        const root = yield* mainCheckoutRoot(directory);
+        return root === (yield* HostProcess.HomeDirectory) ? cwd : root;
+      }
+      if (path.dirname(directory) === directory) return cwd;
+    }
+  });
   // The ENABLE_TOOL_SEARCH value Claude Code will see: settings env, local over project over
-  // user, beats the process env. Plain file reads keep this off the per-turn resolveSettings
-  // path. An auto mode gets pinned on; see claudeToolSearchOverride.
+  // user, beats the process env. A local file that an older Claude Code left in the working
+  // directory still applies under the root one. Plain file reads keep this off the per-turn
+  // resolveSettings path. An auto mode gets pinned on; see claudeToolSearchOverride.
   const resolveToolSearchOverride = Effect.fn("ClaudeAdapterV2.resolveToolSearchOverride")(
     function* (cwd: string | null) {
+      const localDirectory = cwd === null ? null : yield* localSettingsDirectory(cwd);
       const settingsFiles = [
-        ...(cwd === null
+        ...(cwd === null || localDirectory === null
           ? []
           : [
-              path.join(cwd, ".claude", "settings.local.json"),
+              path.join(localDirectory, ".claude", "settings.local.json"),
+              ...(localDirectory === cwd ? [] : [path.join(cwd, ".claude", "settings.local.json")]),
               path.join(cwd, ".claude", "settings.json"),
             ]),
         path.join(homePath, "settings.json"),
