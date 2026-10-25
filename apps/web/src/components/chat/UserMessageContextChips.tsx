@@ -380,15 +380,6 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
         return (
           <FileChip
             name={record.name}
-            documentPreview={
-              !disabled
-                ? {
-                    file: attachment,
-                    environmentId: context.environmentId,
-                    attachmentId: attachment.id,
-                  }
-                : undefined
-            }
             svgPreview={
               isSvgAttachment(attachment)
                 ? { environmentId: context.environmentId, attachmentId: attachment.id }

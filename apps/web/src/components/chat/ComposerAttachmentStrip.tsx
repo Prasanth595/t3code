@@ -1,5 +1,3 @@
-import { FileChip } from "../contextChipParts";
-import { documentThumbnailKind } from "../files/documentThumbnailProtocol";
 import type {
   ChatAttachment,
   ChatFileAttachment,
@@ -444,58 +442,24 @@ export function ComposerAttachmentFileList({
             key={file.id}
             className="flex min-w-0 items-center gap-2 py-1 text-sm text-foreground"
           >
-            {documentThumbnailKind(file) ? (
-              <FileChip
-                name={file.name}
-                documentPreview={{
-                  file,
-                  environmentId: file.uploadEnvironmentId ?? environmentId,
-                  attachmentId: file.uploadedAttachmentId,
-                }}
-                size={formatAttachmentSize(file.sizeBytes)}
-                isVideo={false}
-                theme={resolvedTheme}
-                accessibleLabel={`File attachment, ${file.name}, ${formatAttachmentSize(file.sizeBytes)}`}
-                tooltip={
-                  needsReattach
-                    ? `${file.name} was not saved with this draft. Attach it again to send it.`
-                    : `${file.name}\n${formatAttachmentSize(file.sizeBytes)}`
-                }
-                unresolved={needsReattach}
-                error={upload?.status === "failed"}
-                suffix={
-                  needsReattach
-                    ? canReattachFile
-                      ? "Attach again"
-                      : "Remove to send"
-                    : upload?.status === "uploading"
-                      ? formatAttachmentUploadProgress(upload.progress)
-                      : null
-                }
-                onOpen={needsReattach ? undefined : () => onPreviewFile(file.id)}
-              />
-            ) : (
-              <>
-                <PierreEntryIcon pathValue={file.name} kind="file" theme={resolvedTheme} />
-                <button
-                  type="button"
-                  disabled={needsReattach}
-                  className="min-w-0 flex-1 truncate text-left hover:underline focus-visible:outline-2"
-                  onClick={() => onPreviewFile(file.id)}
-                >
-                  {file.name}
-                </button>
-                <span className="shrink-0 text-xs text-secondary-label">
-                  {needsReattach
-                    ? canReattachFile
-                      ? "Attach again"
-                      : "Remove to send"
-                    : upload?.status === "uploading"
-                      ? formatAttachmentUploadProgress(upload.progress)
-                      : formatAttachmentSize(file.sizeBytes)}
-                </span>
-              </>
-            )}
+            <PierreEntryIcon pathValue={file.name} kind="file" theme={resolvedTheme} />
+            <button
+              type="button"
+              disabled={needsReattach}
+              className="min-w-0 flex-1 truncate text-left hover:underline focus-visible:outline-2"
+              onClick={() => onPreviewFile(file.id)}
+            >
+              {file.name}
+            </button>
+            <span className="shrink-0 text-xs text-secondary-label">
+              {needsReattach
+                ? canReattachFile
+                  ? "Attach again"
+                  : "Remove to send"
+                : upload?.status === "uploading"
+                  ? formatAttachmentUploadProgress(upload.progress)
+                  : formatAttachmentSize(file.sizeBytes)}
+            </span>
             {!needsReattach && upload?.status === "failed" ? (
               <Tooltip>
                 <TooltipTrigger

@@ -1,6 +1,3 @@
-import { documentThumbnailKind } from "../files/documentThumbnailProtocol";
-import { FileChip } from "../contextChipParts";
-import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { InlineAudioPreview } from "../files/InlineAudioPreview";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { findRevealRef } from "./markdownFindContext";
@@ -326,49 +323,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     }),
   );
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
-  const snapShots = regularImages.filter((image) => image.source?.kind === "snap-shot");
-  const mediaImages = regularImages.filter((image) => image.source?.kind !== "snap-shot");
-  const renderImage = (image: (typeof regularImages)[number]) => (
-    <div
-      key={image.id}
-      className={cn(
-        "bg-background/70",
-        image.source?.kind === "snap-shot" && image.previewUrl
-          ? cn(SNAP_SHOT_ATTACHMENT_FRAME_CLASS, "col-span-2")
-          : "aspect-[4/3] overflow-hidden rounded-lg border border-border/80",
-      )}
-    >
-      {image.previewUrl ? (
-        <button
-          type="button"
-          className="block h-full w-full cursor-zoom-in"
-          aria-label={`Preview ${image.name}`}
-          onClick={() => {
-            const preview = buildExpandedImagePreview(regularImages, image.id);
-            if (!preview) return;
-            ctx.onImageExpand(preview);
-          }}
-        >
-          <AttachmentImage
-            name={image.name}
-            mimeType={image.mimeType}
-            src={image.previewUrl}
-            alt={image.name}
-            decoding="async"
-            className="block size-full object-cover"
-          />
-        </button>
-      ) : (
-        <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-2xs text-muted-foreground/70">
-          {image.name}
-        </div>
-      )}
-      {image.previewUrl && image.source?.kind === "snap-shot" ? (
-        <SnapShotAttachmentDetails source={image.source} />
-      ) : null}
-    </div>
-  );
-
   const unchippedFiles = otherUserFiles.filter((file) => !chippedAttachmentIds.has(file.id));
   const annotationRecordIds = resolvedContext.records
     .filter((record) => record.kind === "preview-annotation")
@@ -525,9 +479,48 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             <MessageAuthorHeading>
               {userMessage.guestName === undefined ? "You" : `${userMessage.guestName} (guest)`}
             </MessageAuthorHeading>
-            {(mediaImages.length > 0 || userVideos.length > 0) && (
+            {(regularImages.length > 0 || userVideos.length > 0) && (
               <div className="mb-2 grid max-w-[210px] grid-cols-2 gap-2">
-                {mediaImages.map(renderImage)}
+                {regularImages.map((image) => (
+                  <div
+                    key={image.id}
+                    className={cn(
+                      "bg-background/70",
+                      image.source?.kind === "snap-shot" && image.previewUrl
+                        ? cn(SNAP_SHOT_ATTACHMENT_FRAME_CLASS, "col-span-2")
+                        : "aspect-[4/3] overflow-hidden rounded-lg border border-border/80",
+                    )}
+                  >
+                    {image.previewUrl ? (
+                      <button
+                        type="button"
+                        className="block h-full w-full cursor-zoom-in"
+                        aria-label={`Preview ${image.name}`}
+                        onClick={() => {
+                          const preview = buildExpandedImagePreview(regularImages, image.id);
+                          if (!preview) return;
+                          ctx.onImageExpand(preview);
+                        }}
+                      >
+                        <AttachmentImage
+                          name={image.name}
+                          mimeType={image.mimeType}
+                          src={image.previewUrl}
+                          alt={image.name}
+                          decoding="async"
+                          className="block size-full object-cover"
+                        />
+                      </button>
+                    ) : (
+                      <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-2xs text-muted-foreground/70">
+                        {image.name}
+                      </div>
+                    )}
+                    {image.previewUrl && image.source?.kind === "snap-shot" ? (
+                      <SnapShotAttachmentDetails source={image.source} />
+                    ) : null}
+                  </div>
+                ))}
                 {userVideos.map((file) => (
                   <UserVideoAttachment key={file.id} file={file} />
                 ))}
@@ -552,9 +545,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 ))}
               </div>
             ) : null}
-            {snapShots.length > 0 || unchippedFiles.length > 0 || unknownAttachments.length > 0 ? (
-              <div className="mb-2 flex max-w-full flex-wrap items-start gap-2">
-                {snapShots.map(renderImage)}
+            {unchippedFiles.length > 0 || unknownAttachments.length > 0 ? (
+              <div className="mb-2 flex flex-col gap-1">
                 {unchippedFiles.map((file) => {
                   const fileIdentity = (
                     <>
@@ -569,32 +561,15 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                   if (file.downloadable !== false) {
                     return (
                       <div key={file.id} className="flex min-w-0 items-center gap-1">
-                        {documentThumbnailKind(file) ? (
-                          <FileChip
-                            name={file.name}
-                            documentPreview={{
-                              file,
-                              environmentId: ctx.activeThreadEnvironmentId,
-                              attachmentId: file.id,
-                            }}
-                            size={formatAttachmentSize(file.sizeBytes)}
-                            isVideo={false}
-                            theme={ctx.resolvedTheme}
-                            accessibleLabel={`Preview ${file.name}`}
-                            tooltip={`${file.name}\n${formatAttachmentSize(file.sizeBytes)}`}
-                            onOpen={() => ctx.onFileOpen(file)}
-                          />
-                        ) : (
-                          <button
-                            type="button"
-                            aria-label={`Preview ${file.name}`}
-                            onClick={() => ctx.onFileOpen(file)}
-                            className="focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none"
-                          >
-                            {fileIdentity}
-                            <EyeIcon className="size-4 shrink-0" />
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          aria-label={`Preview ${file.name}`}
+                          onClick={() => ctx.onFileOpen(file)}
+                          className="focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none"
+                        >
+                          {fileIdentity}
+                          <EyeIcon className="size-4 shrink-0" />
+                        </button>
                         <Tooltip>
                           <TooltipTrigger
                             render={

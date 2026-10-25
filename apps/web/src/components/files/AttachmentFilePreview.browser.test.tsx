@@ -27,7 +27,6 @@ import { boundedZip } from "./boundedZip";
 import BinaryViewer from "./BinaryViewer";
 import { decodeImagePreview } from "./decodeImagePreview";
 import type { BinaryWorkerResult } from "./binaryPreviewProtocol";
-import { FileChip } from "../contextChipParts";
 
 // Real worker imports and WASM initialization can exceed waitFor's default second
 // when the full browser project runs concurrently on CI.
@@ -2236,184 +2235,7 @@ it("toggles a Mermaid attachment between diagram and source through the lazy pre
   expect(screen.container.querySelector('[role="alert"]')).toBeNull();
 });
 
-it.each(["docx", "xlsx"] as const)(
-  "paints a %s thumbnail through the office engine",
-  async (kind) => {
-    const archive = new JSZip();
-    if (kind === "docx") {
-      archive.file(
-        "word/document.xml",
-        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:rPr><w:b/><w:sz w:val="96"/></w:rPr><w:t>Northstar planning</w:t></w:r></w:p></w:body></w:document>',
-      );
-      archive.file(
-        "_rels/.rels",
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="doc" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>',
-      );
-      archive.file("[Content_Types].xml", "<Types/>");
-    } else {
-      archive.file(
-        "xl/workbook.xml",
-        '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><bookViews><workbookView activeTab="1"/></bookViews><sheets><sheet name="Plan" sheetId="1" r:id="one"/><sheet name="Budget" sheetId="2" r:id="two"/></sheets></workbook>',
-      );
-      archive.file(
-        "xl/_rels/workbook.xml.rels",
-        '<Relationships><Relationship Id="one" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="two" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/></Relationships>',
-      );
-      for (const index of [1, 2])
-        archive.file(
-          `xl/worksheets/sheet${index}.xml`,
-          '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Northstar</t></is></c></row></sheetData></worksheet>',
-        );
-    }
-    const { loadDocumentThumbnail } = await import("./documentThumbnail");
-    const thumbnail = await loadDocumentThumbnail(`${kind}-thumbnail-test`, {
-      kind,
-      file: await archive.generateAsync({ type: "blob" }),
-      source: async () => null,
-      ratio: 2,
-    });
-    expect(thumbnail?.label).toBe(kind === "docx" ? "1 page" : "2 tabs");
-    const bitmap = await createImageBitmap(thumbnail!.blob);
-    try {
-      expect([bitmap.width, bitmap.height]).toEqual([36, 46]);
-      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-      const context = canvas.getContext("2d")!;
-      context.drawImage(bitmap, 0, 0);
-      expect(
-        context
-          .getImageData(0, 0, bitmap.width, bitmap.height)
-          .data.some((value, index) => index % 4 !== 3 && value < 200),
-      ).toBe(true);
-    } finally {
-      bitmap.close();
-    }
-  },
-);
-
-it("keeps file chip geometry while a thumbnail loads and fails", async () => {
-  const file = new File(["Team,Status\nPlatform,Ready\n"], "planning.csv", { type: "text/csv" });
-  const props = {
-    name: file.name,
-    size: "1 KB",
-    isVideo: false,
-    theme: "light" as const,
-    accessibleLabel: "Planning file",
-    tooltip: "Planning file",
-  };
-  await using screen = await render(
-    <div style={{ fontSize: 14, width: 200 }}>
-      <FileChip {...props} />{" "}
-      <FileChip
-        {...props}
-        documentPreview={{
-          environmentId: EnvironmentId.make("chip-layout"),
-          file: {
-            id: "chip-layout",
-            name: file.name,
-            mimeType: file.type,
-            sizeBytes: file.size,
-            file,
-          },
-        }}
-      />
-    </div>,
-  );
-  const [plain, thumbnail] = screen.container.querySelectorAll('[aria-label="Planning file"]');
-  const geometry = (node: Element) => {
-    const rect = node.getBoundingClientRect();
-    const style = getComputedStyle(node);
-    return [rect.width, rect.height, style.padding, style.lineHeight, style.gap];
-  };
-  const expected = geometry(plain!);
-  expect(geometry(thumbnail!)).toEqual(expected);
-  await vi.waitFor(() => expect(thumbnail!.querySelector("img")).not.toBeNull(), 10_000);
-  const image = thumbnail!.querySelector("img")!;
-  await vi.waitFor(() => expect(image.naturalWidth).toBeGreaterThan(0));
-  expect(geometry(thumbnail!)).toEqual(expected);
-  const chipRect = thumbnail!.getBoundingClientRect();
-  const imageRect = image.getBoundingClientRect();
-  expect(imageRect.top).toBeGreaterThan(chipRect.top);
-  expect(imageRect.bottom).toBeLessThan(chipRect.bottom);
-  expect(imageRect.left).toBeGreaterThan(chipRect.left);
-  expect(imageRect.right).toBeLessThan(chipRect.right);
-  expect((imageRect.top + imageRect.bottom) / 2).toBeCloseTo(
-    (chipRect.top + chipRect.bottom) / 2,
-    1,
-  );
-  await act(() => image.dispatchEvent(new Event("error")));
-  expect(thumbnail!.querySelector("img")).toBeNull();
-  expect(thumbnail!.querySelector("svg")).not.toBeNull();
-  expect(geometry(thumbnail!)).toEqual(expected);
-});
-
-it("paints and caches a bounded CSV thumbnail without opening the viewer", async () => {
-  const { loadDocumentThumbnail } = await import("./documentThumbnail");
-  const file = new Blob(["Team,Status\nPlatform,Ready\nExperience,Review\n"], { type: "text/csv" });
-  const source = vi.fn<() => Promise<string | null>>();
-  const input = { kind: "csv" as const, file, source, ratio: 2 };
-  const first = await loadDocumentThumbnail("csv-thumbnail-test", input);
-  expect(first?.label).toBe("2 rows");
-  expect(source).not.toHaveBeenCalled();
-  const bitmap = await createImageBitmap(first!.blob);
-  expect([bitmap.width, bitmap.height]).toEqual([36, 46]);
-  bitmap.close();
-  expect(await loadDocumentThumbnail("csv-thumbnail-test", input)).toBe(first);
-  expect(
-    await loadDocumentThumbnail("bad-pdf-thumbnail-test", { ...input, kind: "pdf" }),
-  ).toBeNull();
-});
-
-it("cancels orphaned thumbnail work while retaining shared subscribers", async () => {
-  const { loadDocumentThumbnail } = await import("./documentThumbnail");
-  let releaseSource!: (url: string | null) => void;
-  const held = new Promise<string | null>((resolve) => {
-    releaseSource = resolve;
-  });
-  const source = vi.fn(() => held);
-  const input = { kind: "csv" as const, source, ratio: 1 };
-  const controllers = Array.from({ length: 4 }, () => new AbortController());
-  const terminate = vi.spyOn(Worker.prototype, "terminate");
-  try {
-    const first = loadDocumentThumbnail("cancel-shared", input, controllers[0]!.signal);
-    const shared = loadDocumentThumbnail("cancel-shared", input, controllers[1]!.signal);
-    const second = loadDocumentThumbnail("cancel-second", input, controllers[2]!.signal);
-    const queuedSource = vi.fn(async () => "data:text/csv,a,b");
-    const queued = loadDocumentThumbnail(
-      "cancel-queued",
-      { ...input, source: queuedSource },
-      controllers[3]!.signal,
-    );
-    controllers[3]!.abort();
-    expect(await queued).toBeNull();
-    expect(queuedSource).not.toHaveBeenCalled();
-    controllers[0]!.abort();
-    expect(await first).toBeNull();
-    expect(terminate).not.toHaveBeenCalled();
-    const replacement = loadDocumentThumbnail("cancel-replacement", {
-      ...input,
-      file: new Blob(["Team,Status\nNorth,Ready"]),
-    });
-    controllers[1]!.abort();
-    expect(await shared).toBeNull();
-    expect((await replacement)?.label).toBe("1 row");
-    expect(terminate).toHaveBeenCalled();
-    controllers[2]!.abort();
-    expect(await second).toBeNull();
-    expect(source).toHaveBeenCalledTimes(2);
-    expect(
-      await loadDocumentThumbnail("cancel-shared", {
-        ...input,
-        file: new Blob(["Team,Status\nNorth,Ready"]),
-      }),
-    ).not.toBeNull();
-  } finally {
-    for (const controller of controllers) controller.abort();
-    releaseSource(null);
-    terminate.mockRestore();
-  }
-});
-
-it("renders PDF thumbnails and navigates, searches, zooms, and selects mixed-height PDF pages", async () => {
+it("navigates, searches, zooms, and selects mixed-height PDF pages", async () => {
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Count 3 /Kids [3 0 R 5 0 R 7 0 R] >>",
@@ -2443,17 +2265,6 @@ it("renders PDF thumbnails and navigates, searches, zooms, and selects mixed-hei
     .map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`)
     .join("")}trailer\n<< /Size 11 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
   const file = new Blob([source], { type: "application/pdf" });
-  const { loadDocumentThumbnail } = await import("./documentThumbnail");
-  const thumbnail = await loadDocumentThumbnail("pdf-thumbnail-test", {
-    kind: "pdf",
-    file,
-    source: async () => null,
-    ratio: 2,
-  });
-  expect(thumbnail?.label).toBe("3 pages");
-  const bitmap = await createImageBitmap(thumbnail!.blob);
-  expect([bitmap.width, bitmap.height]).toEqual([36, 46]);
-  bitmap.close();
   const { default: PdfViewer } = await import("./PdfViewer");
   const url = URL.createObjectURL(file);
   try {
@@ -2785,48 +2596,6 @@ it.each(["epub", "odt", "ipynb", "html", "encoded-html"] as const)(
       } finally {
         worker.terminate();
       }
-    }
-  },
-);
-
-it.each(["&amp;", "&#38;", "&#x26;"])(
-  "resolves %s entities in EPUB thumbnail paths through the worker",
-  async (entity) => {
-    const canvas = new OffscreenCanvas(40, 60);
-    const context = canvas.getContext("2d")!;
-    context.fillStyle = "#f00000";
-    context.fillRect(0, 0, 40, 60);
-    const archive = new JSZip();
-    archive.file(
-      "META-INF/container.xml",
-      `<container><rootfiles><rootfile full-path="OPS${entity}notes/package.opf"/></rootfiles></container>`,
-    );
-    archive.file(
-      "OPS&notes/package.opf",
-      `<package><manifest><item id="cover" properties="cover-image" href="images/cover${entity}title.png" media-type="image/png"/></manifest></package>`,
-    );
-    archive.file(
-      "OPS&notes/images/cover&title.png",
-      await (await canvas.convertToBlob({ type: "image/png" })).arrayBuffer(),
-    );
-    const { loadDocumentThumbnail } = await import("./documentThumbnail");
-    const thumbnail = await loadDocumentThumbnail(`epub-entity-${entity}`, {
-      kind: "epub",
-      file: await archive.generateAsync({ type: "blob" }),
-      source: async () => null,
-      ratio: 2,
-    });
-    expect(thumbnail).not.toBeNull();
-    const bitmap = await createImageBitmap(thumbnail!.blob);
-    try {
-      const output = new OffscreenCanvas(bitmap.width, bitmap.height);
-      const painted = output.getContext("2d")!;
-      painted.drawImage(bitmap, 0, 0);
-      const pixel = painted.getImageData(10, 10, 1, 1).data;
-      expect(pixel[0]).toBeGreaterThan(200);
-      expect(pixel[1]).toBeLessThan(30);
-    } finally {
-      bitmap.close();
     }
   },
 );

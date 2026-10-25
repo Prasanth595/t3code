@@ -41,6 +41,48 @@ const T3_FILE_ICON_SPRITE = `
   <symbol id="t3-file-icon-xml" viewBox="0 0 24 24">
     <path fill="none" style="stroke: light-dark(#d47628, #ffa359)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m18 16 4-4-4-4M6 8l-4 4 4 4M14.5 4l-5 16" />
   </symbol>
+  <!-- Lucide File Type, File Text, File Spreadsheet, Presentation and Book Open icons, ISC license. -->
+  <symbol id="t3-file-icon-pdf" viewBox="0 0 24 24">
+    <g fill="none" style="stroke: light-dark(#d52c36, #ff6762)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" />
+      <path d="M14 2v5a1 1 0 0 0 1 1h5" />
+      <path d="M11 18h2" />
+      <path d="M12 12v6" />
+      <path d="M9 13v-.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 .5.5v.5" />
+    </g>
+  </symbol>
+  <symbol id="t3-file-icon-word" viewBox="0 0 24 24">
+    <g fill="none" style="stroke: light-dark(#1a85d4, #69b1ff)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" />
+      <path d="M14 2v5a1 1 0 0 0 1 1h5" />
+      <path d="M10 9H8" />
+      <path d="M16 13H8" />
+      <path d="M16 17H8" />
+    </g>
+  </symbol>
+  <symbol id="t3-file-icon-spreadsheet" viewBox="0 0 24 24">
+    <g fill="none" style="stroke: light-dark(#199f43, #5ecc71)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" />
+      <path d="M14 2v5a1 1 0 0 0 1 1h5" />
+      <path d="M8 13h2" />
+      <path d="M14 13h2" />
+      <path d="M8 17h2" />
+      <path d="M14 17h2" />
+    </g>
+  </symbol>
+  <symbol id="t3-file-icon-slides" viewBox="0 0 24 24">
+    <g fill="none" style="stroke: light-dark(#d47628, #ffa359)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M2 3h20" />
+      <path d="M21 3v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3" />
+      <path d="m7 21 5-5 5 5" />
+    </g>
+  </symbol>
+  <symbol id="t3-file-icon-epub" viewBox="0 0 24 24">
+    <g fill="none" style="stroke: light-dark(#693acf, #9d6afb)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 7v14" />
+      <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" />
+    </g>
+  </symbol>
   <!-- Language logos from Simple Icons, CC0. -->
   <symbol id="t3-file-icon-csharp" viewBox="0 0 24 24">
     <path style="fill: light-dark(#693acf, #9d6afb)" d="M1.194 7.543v8.913c0 1.103.588 2.122 1.544 2.674l7.718 4.456a3.086 3.086 0 0 0 3.088 0l7.718-4.456a3.087 3.087 0 0 0 1.544-2.674V7.543a3.084 3.084 0 0 0-1.544-2.673L13.544.414a3.086 3.086 0 0 0-3.088 0L2.738 4.87a3.085 3.085 0 0 0-1.544 2.673Zm5.403 2.914v3.087a.77.77 0 0 0 .772.772.773.773 0 0 0 .772-.772.773.773 0 0 1 1.317-.546.775.775 0 0 1 .226.546 2.314 2.314 0 1 1-4.631 0v-3.087c0-.615.244-1.203.679-1.637a2.312 2.312 0 0 1 3.274 0c.434.434.678 1.023.678 1.637a.769.769 0 0 1-.226.545.767.767 0 0 1-1.091 0 .77.77 0 0 1-.226-.545.77.77 0 0 0-.772-.772.771.771 0 0 0-.772.772Zm12.35 3.087a.77.77 0 0 1-.772.772h-.772v.772a.773.773 0 0 1-1.544 0v-.772h-1.544v.772a.773.773 0 0 1-1.317.546.775.775 0 0 1-.226-.546v-.772H12a.771.771 0 1 1 0-1.544h.772v-1.543H12a.77.77 0 1 1 0-1.544h.772v-.772a.773.773 0 0 1 1.317-.546.775.775 0 0 1 .226.546v.772h1.544v-.772a.773.773 0 0 1 1.544 0v.772h.772a.772.772 0 0 1 0 1.544h-.772v1.543h.772a.776.776 0 0 1 .772.772Zm-3.088-2.315h-1.544v1.543h1.544v-1.543Z" />
@@ -95,6 +137,20 @@ export const T3_PIERRE_ICONS = {
     ...Object.fromEntries(
       VIDEO_FILE_EXTENSIONS.map((extension) => [extension, "t3-file-icon-video"]),
     ),
+    pdf: "t3-file-icon-pdf",
+    doc: "t3-file-icon-word",
+    docx: "t3-file-icon-word",
+    odt: "t3-file-icon-word",
+    rtf: "t3-file-icon-word",
+    xls: "t3-file-icon-spreadsheet",
+    xlsx: "t3-file-icon-spreadsheet",
+    ods: "t3-file-icon-spreadsheet",
+    csv: "t3-file-icon-spreadsheet",
+    tsv: "t3-file-icon-spreadsheet",
+    ppt: "t3-file-icon-slides",
+    pptx: "t3-file-icon-slides",
+    odp: "t3-file-icon-slides",
+    epub: "t3-file-icon-epub",
     cs: "t3-file-icon-csharp",
     csx: "t3-file-icon-csharp",
     dart: "t3-file-icon-dart",

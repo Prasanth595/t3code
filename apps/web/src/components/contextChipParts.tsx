@@ -12,8 +12,6 @@ import { useAssetUrlState } from "~/assets/assetUrls";
 
 import { PULL_REQUEST_STATE_PRESENTATION } from "~/components/pullRequest/pullRequestIcons";
 import type { PullRequestContextDisplayState } from "~/lib/composerContextRecords";
-import { DocumentAttachmentThumbnail } from "./chat/DocumentAttachmentThumbnail";
-import { documentThumbnailKind } from "./files/documentThumbnailProtocol";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import { middleTruncateAttachmentName } from "./composerInlineChip";
 import { PullRequestContextDetails } from "./PullRequestContextDetails";
@@ -234,13 +232,6 @@ export function FileChip(props: {
   error?: boolean;
   unresolved?: boolean;
   onOpen?: (() => void) | undefined;
-  documentPreview?:
-    | {
-        file: { id: string; name: string; mimeType: string; sizeBytes: number; file?: Blob | null };
-        environmentId: EnvironmentId;
-        attachmentId?: string | undefined;
-      }
-    | undefined;
   svgPreview?:
     | {
         file?: Blob | null | undefined;
@@ -250,30 +241,6 @@ export function FileChip(props: {
     | undefined;
 }) {
   if (props.svgPreview && !props.unresolved) return <SvgFileChip {...props} />;
-  if (
-    props.documentPreview &&
-    !props.unresolved &&
-    documentThumbnailKind(props.documentPreview.file)
-  ) {
-    return (
-      <DocumentAttachmentThumbnail
-        {...props.documentPreview}
-        fallback={<PierreEntryIcon pathValue={props.name} kind="file" theme={props.theme} />}
-      >
-        {({ icon, label }) => (
-          <FileChipSurface
-            {...props}
-            icon={icon}
-            tooltip={label ? `${props.tooltip}\n${label}` : props.tooltip}
-          />
-        )}
-      </DocumentAttachmentThumbnail>
-    );
-  }
-  return <FileChipSurface {...props} />;
-}
-
-function FileChipSurface(props: ComponentProps<typeof FileChip> & { icon?: ReactNode }) {
   const content = <FileChipContent {...props} />;
   const state = props.unresolved
     ? ("unresolved" as const)
@@ -378,16 +345,14 @@ function FileChipContent(props: {
   isVideo: boolean;
   theme: "light" | "dark";
   suffix?: string | null;
-  icon?: ReactNode;
 }) {
   return (
     <>
-      {props.icon ??
-        (props.isVideo ? (
-          <FilmIcon />
-        ) : (
-          <PierreEntryIcon pathValue={props.name} kind="file" theme={props.theme} />
-        ))}
+      {props.isVideo ? (
+        <FilmIcon />
+      ) : (
+        <PierreEntryIcon pathValue={props.name} kind="file" theme={props.theme} />
+      )}
       <ContextChipLabel className="flex items-baseline gap-[0.33em]">
         <span className="max-w-72 truncate">{middleTruncateAttachmentName(props.name)}</span>
         <span className="shrink-0 text-3xs text-current">{props.size}</span>
