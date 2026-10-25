@@ -8,8 +8,8 @@ import * as Schema from "effect/Schema";
 
 import { StoredOrchestrationThreadSnapshot } from "./orchestrationCache.ts";
 
-// Keep V4 for web/desktop and existing mobile caches; older clients discard V5.
-export const COMPACT_THREAD_CACHE_SCHEMA_VERSION = 5 as const;
+// Keep the full format for web/desktop; older clients discard compact records.
+export const COMPACT_THREAD_CACHE_SCHEMA_VERSION = 6 as const;
 
 const StoredCompactThreadSnapshot = StoredOrchestrationThreadSnapshot.mapFields((fields) => ({
   ...fields,
