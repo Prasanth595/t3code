@@ -3198,13 +3198,12 @@ export const make = Effect.gen(function* () {
   const diffCache = yield* Cache.makeWith(
     (key: string) => {
       const [reference, cursor, commit] = JSON.parse(key) as [string, string | null, string | null];
-      return observeRead(
-        diffUncached({
-          ...refOfCacheKey(reference),
-          ...(cursor === null ? {} : { cursor }),
-          ...(commit === null ? {} : { commit }),
-        } as PullRequestDiffInput),
-      ).pipe(
+      return diffUncached({
+        ...refOfCacheKey(reference),
+        ...(cursor === null ? {} : { cursor }),
+        ...(commit === null ? {} : { commit }),
+      } as PullRequestDiffInput).pipe(
+        observeRead,
         Effect.map(({ value, observedAt }) => {
           // Keep the loader's epoch and read time if a refresh occurs during the provider read.
           diffFiles.record(JSON.stringify([reference, cursor, commit]), value, observedAt);
