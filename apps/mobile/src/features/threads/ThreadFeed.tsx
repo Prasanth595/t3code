@@ -2132,6 +2132,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // momentum; scroll events only break follow inside that session, so MVCP
   // compensations and programmatic scrolls never strand a follower.
   const userScrollSessionRef = useRef(false);
+  // Null until the first report, so a remounted feed resyncs a screen that outlived the old one.
+  const atEndRef = useRef<boolean | null>(null);
+  const reportListAtEnd = useEffectEvent(() => {
+    // While following, the end only lags a growing row by a frame and the arrow is hidden anyway,
+    // so reporting it would re-render the screen twice per streamed growth for nothing.
+    const isAtEnd = endFollowEnabledRef.current || listRef.current?.getState().isAtEnd;
+    if (isAtEnd === undefined || atEndRef.current === isAtEnd) return;
+    atEndRef.current = isAtEnd;
+    onAtEndChange?.(isAtEnd);
+  });
   const setEndFollow = (enabled: boolean) => {
     if (endFollowEnabledRef.current === enabled) {
       return;
@@ -2139,6 +2149,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     endFollowEnabledRef.current = enabled;
     setEndFollowEnabled(enabled);
     onEndFollowEnabledChange?.(enabled);
+    reportListAtEnd();
   };
   const transitionEndFollow = (event: ThreadFeedLiveFollowEvent) => {
     setEndFollow(resolveThreadFeedLiveFollow(endFollowEnabledRef.current, event));
@@ -2685,13 +2696,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       listRef.current?.reportContentInset({ bottom });
     }
   }, [listMountKey, props.contentInsetEndAdjustment, listRef]);
-  const atEndRef = useRef(true);
-  const reportListAtEnd = useEffectEvent(() => {
-    const isAtEnd = listRef.current?.getState().isAtEnd;
-    if (isAtEnd === undefined || atEndRef.current === isAtEnd) return;
-    atEndRef.current = isAtEnd;
-    onAtEndChange?.(isAtEnd);
-  });
   // The edge signal refreshes on scroll, data and layout passes, not when a row grows, so a
   // reply streaming in while the reader holds the list also re-reads the end.
   useLayoutEffect(() => {
