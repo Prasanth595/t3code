@@ -523,34 +523,34 @@ describe("Pi skill references", () => {
     }
   });
 
-  it.each(["deploy", "25", "123", "deploy.v2"])(
+  it.effect.each(["deploy", "25", "123", "deploy.v2"])(
     "does not load skill %s from the sender title",
-    async (name) => {
-      const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "pi-title-skill-"));
-      try {
-        const path = NodePath.join(directory, "SKILL.md");
-        await NodeFSP.writeFile(path, "TITLE_SKILL_INSTRUCTIONS");
-        const hook = await loadInputHook([
-          { name: `skill:${name}`, source: "skill", sourceInfo: { path } },
-        ]);
-        const body = "The review is complete.";
-        assert.isUndefined(await hook({ text: body }, { ui: { notify: assert.fail } }));
-        const text = await Effect.runPromise(
-          providerTextForTurn({
+    (name) =>
+      Effect.gen(function* () {
+        const directory = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "pi-title-skill-")),
+        );
+        yield* Effect.gen(function* () {
+          const path = NodePath.join(directory, "SKILL.md");
+          yield* Effect.promise(() => NodeFSP.writeFile(path, "TITLE_SKILL_INSTRUCTIONS"));
+          const hook = yield* Effect.promise(() =>
+            loadInputHook([{ name: `skill:${name}`, source: "skill", sourceInfo: { path } }]),
+          );
+          const body = "The review is complete.";
+          const quiet = { ui: { notify: assert.fail } };
+          assert.isUndefined(yield* Effect.promise(() => hook({ text: body }, quiet)));
+          const text = yield* providerTextForTurn({
             text: body,
             createdBy: "agent",
             senderThreadId: ThreadId.make("thread:title-skill"),
             readSenderTitle: () => Effect.succeed(`Review $${name} job`),
             readReceiverSubagents: () => Effect.succeed([]),
-          }),
-        );
-        assert.isUndefined(await hook({ text }, { ui: { notify: assert.fail } }));
-        const requested = await hook({ text: `Use $${name} now` }, { ui: { notify: assert.fail } });
-        assert.include(requested?.text ?? "", `Use $${name} now`);
-        assert.include(requested?.text ?? "", "TITLE_SKILL_INSTRUCTIONS");
-      } finally {
-        await NodeFSP.rm(directory, { recursive: true });
-      }
-    },
+          });
+          assert.isUndefined(yield* Effect.promise(() => hook({ text }, quiet)));
+          const requested = yield* Effect.promise(() => hook({ text: `Use $${name} now` }, quiet));
+          assert.include(requested?.text ?? "", `Use $${name} now`);
+          assert.include(requested?.text ?? "", "TITLE_SKILL_INSTRUCTIONS");
+        }).pipe(Effect.ensuring(Effect.promise(() => NodeFSP.rm(directory, { recursive: true }))));
+      }),
   );
 });
