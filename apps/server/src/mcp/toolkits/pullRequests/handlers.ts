@@ -260,7 +260,7 @@ const make = Effect.gen(function* () {
         : Effect.fail(new Failure({ cause }));
 
   const setWatching = Effect.fn("PullRequestsToolkit.setWatching")(function* (
-    input: PullRequestTargetInput,
+    input: PullRequestTargetInput & { readonly includeOwnRemarks?: boolean | undefined },
     watching: boolean,
   ) {
     const thread = yield* requireThread(PullRequestWatchFailedError, input.threadId);
@@ -286,6 +286,9 @@ const make = Effect.gen(function* () {
         repository: target.repository,
         number: target.number,
         watching,
+        ...(watching && input.includeOwnRemarks !== undefined
+          ? { includeOwnRemarks: input.includeOwnRemarks }
+          : {}),
         ...(watching ? { link: { url: target.url, source: "agent" as const } } : {}),
       })
       .pipe(Effect.catchCause(dispatchFailure(PullRequestWatchFailedError)));
@@ -296,6 +299,7 @@ const make = Effect.gen(function* () {
       number: target.number,
       url: target.url,
       watching: watchedLink(after)?.watch !== undefined,
+      includeOwnRemarks: watchedLink(after)?.watch?.includeOwnRemarks === true,
       wasWatching: before?.watch !== undefined,
     };
   });
