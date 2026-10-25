@@ -274,7 +274,6 @@ const repositoryPath = (repository: string) =>
 
 type Pulls = ReadonlyArray<ReturnType<typeof toForgejoChangeRequest>>;
 
-// Worktrees share a scan only when the resolved server, login and repository agree.
 class RepositoryPullsLookup {
   readonly key: string;
   readonly lookup: Effect.Effect<Pulls, ForgejoCli.ForgejoCliError>;
@@ -402,7 +401,6 @@ export const make = Effect.gen(function* () {
             Schema.Array(ForgejoPullRequestSchema),
           );
           if (input.allowCached && items.some((item) => item.head.ref !== branch)) {
-            // A base/head lookup cannot rule out newer PRs or PRs against other bases.
             return (yield* Cache.get(repositoryPulls, lookup)).filter(matches).slice(0, limit);
           }
           for (const item of items) {

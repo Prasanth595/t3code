@@ -309,11 +309,14 @@ it.effect("joins an in-flight complete scan for another branch", () =>
       state: "all" as const,
       allowCached: true,
     };
-    const first = yield* provider.listChangeRequests(input).pipe(Effect.forkChild);
+    const first = yield* provider
+      .listChangeRequests(input)
+      .pipe(Effect.forkChild({ startImmediately: true }));
     yield* Deferred.await(started);
     const second = yield* provider
       .listChangeRequests({ ...input, headSelector: "feature", cwd: "/another-worktree" })
-      .pipe(Effect.forkChild);
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    assert.strictEqual(fixture.paths.length, 2);
     yield* Deferred.succeed(release, undefined);
     assert.deepStrictEqual(yield* Fiber.join(first), []);
     assert.deepStrictEqual(

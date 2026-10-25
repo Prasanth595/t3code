@@ -2331,6 +2331,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         baseRef: "release/arbitrary",
       });
       expect(paths).toHaveLength(4);
+      pulls[70] = { ...pulls[70]!, state: "closed", merged: true };
+      pulls[71] = { ...pulls[71]!, state: "closed", merged: true };
+      pulls.push({ ...pulls[70]!, number: 76, state: "open", merged: false });
+      expect(
+        yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature" }, { refresh: true }),
+      ).toMatchObject({ number: 76, state: "open" });
     }),
   );
 
