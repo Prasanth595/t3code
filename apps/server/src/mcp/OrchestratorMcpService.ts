@@ -2864,6 +2864,8 @@ const make = Effect.gen(function* () {
         runId: result.run?.id ?? null,
         status: result.run === null ? "idle" : runOutcome(result.run),
         timedOut: result.timedOut,
+        hasPendingQuestion: result.hasPendingQuestion,
+        pendingApproval: result.pendingApproval,
       } satisfies OrchestratorMcpThreadWaitResult;
     }),
     interruptThread: Effect.fn("OrchestratorMcpService.interruptThread")(function* (scope, input) {

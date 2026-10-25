@@ -22,6 +22,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -186,6 +187,182 @@ it.effect("uses thread-not-found only after a projection loads outside the proje
   }).pipe(Effect.provide(layerTest));
 });
 
+it.effect.each([
+  {
+    kind: "user_input",
+    capability: "live",
+    requestOrdinal: 1,
+    selectedStatus: "running",
+    blocks: true,
+  },
+  {
+    kind: "command",
+    capability: "live",
+    requestOrdinal: 1,
+    selectedStatus: "running",
+    blocks: true,
+  },
+  {
+    kind: "user_input",
+    capability: "live",
+    requestOrdinal: 0,
+    selectedStatus: "queued",
+    blocks: true,
+  },
+  {
+    kind: "user_input",
+    capability: "message",
+    requestOrdinal: 1,
+    selectedStatus: "running",
+    blocks: false,
+  },
+  {
+    kind: "user_input",
+    capability: "live",
+    requestOrdinal: 2,
+    selectedStatus: "running",
+    blocks: false,
+  },
+  {
+    kind: "user_input",
+    capability: "live",
+    requestOrdinal: 1,
+    selectedStatus: "completed",
+    blocks: false,
+  },
+] as const)("waitForThread scopes pending input to unfinished work: %j", (scenario) =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:wait-input");
+    const threadId = ThreadId.make("thread:wait-input");
+    const runId = RunId.make("run:wait-input");
+    const requestRunId = scenario.requestOrdinal === 1 ? runId : RunId.make("run:other");
+    const projection = {
+      thread: { id: threadId, projectId, deletedAt: null },
+      runs: [
+        { id: runId, ordinal: 1, status: scenario.selectedStatus },
+        ...(requestRunId === runId
+          ? []
+          : [{ id: requestRunId, ordinal: scenario.requestOrdinal, status: "running" }]),
+      ],
+      nodes: [{ id: "node:request", runId: requestRunId }],
+      runtimeRequests: [
+        {
+          id: "request:input",
+          nodeId: "node:request",
+          kind: scenario.kind,
+          status: "pending",
+          responseCapability: { type: scenario.capability },
+          createdAt: yield* DateTime.now,
+        },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadEventSequence: () => Effect.succeed(0),
+          getThreadRecords: () => Effect.succeed(projection),
+          restartContinuationPending: () => Effect.succeed(false),
+          streamStoredEventsFrom: () => Stream.never,
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(layerTest),
+    );
+    const fiber = yield* service
+      .waitForThread({ projectId, threadId, runId, timeoutMs: 60_000 })
+      .pipe(Effect.forkChild);
+    yield* TestClock.adjust("1 minute");
+    const result = yield* Fiber.join(fiber);
+    expect(result).toMatchObject({
+      run: { id: runId, status: scenario.selectedStatus },
+      timedOut: !scenario.blocks && scenario.selectedStatus !== "completed",
+      hasPendingQuestion: scenario.blocks && scenario.kind === "user_input",
+      pendingApproval:
+        scenario.blocks && scenario.kind === "command"
+          ? { requestId: "request:input", kind: "command", runId: requestRunId }
+          : null,
+    });
+  }),
+);
+
+it.effect("waitForThread wakes on a new approval while terminal-only callers keep waiting", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:wait-event");
+    const threadId = ThreadId.make("thread:wait-event");
+    const runId = RunId.make("run:wait-event");
+    const subscribed = yield* Deferred.make<void>();
+    const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+    const now = yield* DateTime.now;
+    let requests: OrchestrationV2ThreadProjection["runtimeRequests"] = [];
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadEventSequence: () => Effect.succeed(7),
+          getThreadRecords: () =>
+            Effect.sync(
+              () =>
+                ({
+                  thread: { id: threadId, projectId, deletedAt: null },
+                  runs: [{ id: runId, ordinal: 1, status: "running" }],
+                  nodes: [{ id: "node:request", runId }],
+                  runtimeRequests: requests,
+                }) as unknown as OrchestrationV2ThreadProjection,
+            ),
+          streamStoredEventsFrom: (input) =>
+            input?.eventType === "runtime-request.updated"
+              ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+                  Stream.drain,
+                  Stream.concat(Stream.fromQueue(events)),
+                )
+              : Stream.never,
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(layerTest),
+    );
+    const fiber = yield* service
+      .waitForThread({ projectId, threadId, runId, timeoutMs: 600_000 })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(subscribed);
+    requests = [
+      {
+        id: "request:approval",
+        nodeId: "node:request",
+        kind: "command",
+        status: "pending",
+        responseCapability: { type: "live" },
+        createdAt: now,
+      },
+    ] as unknown as OrchestrationV2ThreadProjection["runtimeRequests"];
+    yield* Queue.offer(events, {
+      sequence: 8,
+      event: { type: "runtime-request.updated", threadId, payload: requests[0] },
+    } as unknown as OrchestrationV2StoredEvent);
+    expect(yield* Fiber.join(fiber)).toMatchObject({
+      timedOut: false,
+      hasPendingQuestion: false,
+      pendingApproval: { requestId: "request:approval", kind: "command", runId },
+    });
+    const terminalWait = yield* service
+      .waitForThread({ projectId, threadId, runId, timeoutMs: 60_000, terminalOnly: true })
+      .pipe(Effect.forkChild);
+    yield* TestClock.adjust("1 minute");
+    expect(yield* Fiber.join(terminalWait)).toMatchObject({
+      timedOut: true,
+      hasPendingQuestion: false,
+      pendingApproval: null,
+    });
+  }),
+);
+
 it.effect("waitForThread follows a restart continuation instead of the cut run", () =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:wait-restart");
@@ -222,6 +399,8 @@ it.effect("waitForThread follows a restart continuation instead of the cut run",
                 ({
                   thread: { id: threadId, projectId, deletedAt: null },
                   runs,
+                  nodes: [],
+                  runtimeRequests: [],
                 }) as unknown as OrchestrationV2ThreadProjection,
             ),
         }),

@@ -269,7 +269,7 @@ const ThreadSendTool = Tool.make("t3_thread_send", {
 
 const ThreadWaitTool = Tool.make("t3_thread_wait", {
   description:
-    "Wait for a T3 thread run to reach a terminal durable state. Without runId, the latest run at call time is selected; an idle thread returns immediately. Timeout does not interrupt work, so call again or use t3_thread_read/list after timedOut=true. Waiting reports status only and does not acknowledge a delegated result.",
+    "Wait for a T3 thread run to reach a terminal durable state or need a blocking answer or approval. Without runId, the latest run at call time is selected; an idle thread returns immediately. hasPendingQuestion or pendingApproval reports a pending live request on the selected run or an earlier unfinished run blocking it, without changing the run's status. Async message-based questions do not end the wait. Read the fresh request with t3_pending_request_list/read; this grants no approval authority. Timeout does not interrupt work, so call again or use t3_thread_read/list after timedOut=true. Waiting does not acknowledge a delegated result.",
   parameters: OrchestratorMcpThreadWaitInput,
   success: OrchestratorMcpThreadWaitResult,
   failure: OrchestratorMcpFailure,
