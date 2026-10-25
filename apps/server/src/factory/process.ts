@@ -129,11 +129,28 @@ class Tail {
   }
 }
 
+/**
+ * The LaunchAgent exports its PATH (`~/.config/t3fac/env` included) as `T3FAC_LAUNCH_PATH`;
+ * `fixPath` then puts the login shell's PATH ahead of it, where `/usr/bin` can shadow the
+ * interpreter the env file names. Children get the launch entries first. Unset: PATH as is.
+ */
+const buildChildPath = (launchPath: string | undefined, serverPath: string): string => {
+  if (launchPath === undefined) return serverPath;
+  const entries: Array<string> = [];
+  for (const entry of [...launchPath.split(":"), ...serverPath.split(":")]) {
+    if (entry !== "" && !entries.includes(entry)) entries.push(entry);
+  }
+  return entries.join(":");
+};
+
 const buildEnv = (extra: Readonly<Record<string, string>> | undefined): Record<string, string> => {
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(globalThis.process.env)) {
     if (value === undefined) continue;
     if (INHERITED_ENV.has(name) || name.startsWith("LC_")) env[name] = value;
+  }
+  if (env.PATH !== undefined) {
+    env.PATH = buildChildPath(globalThis.process.env.T3FAC_LAUNCH_PATH, env.PATH);
   }
   return { ...env, ...extra };
 };
