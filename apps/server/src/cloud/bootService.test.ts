@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { expect, it, live } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
@@ -87,12 +87,15 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   const timeouts = new Map<string, unknown>();
   const control: {
     failCommand: string | undefined;
+    /** A command that fails with `code` for its next `remaining` invocations. */
+    transient: { command: string; code: number; remaining: number } | undefined;
     stateAfterStop?: string;
     linger: string;
     enabled: boolean;
     active: boolean;
   } = {
     failCommand: undefined,
+    transient: undefined,
     linger: "yes",
     enabled: true,
     active: true,
@@ -105,7 +108,12 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       commands.push(command);
       invocations.push(input);
       timeouts.set(command, input.timeout);
-      const failed = command === control.failCommand;
+      const transientHit =
+        control.transient !== undefined &&
+        control.transient.command === command &&
+        control.transient.remaining > 0;
+      if (transientHit) control.transient!.remaining -= 1;
+      const failed = command === control.failCommand || transientHit;
       if (!failed && command === "loginctl enable-linger --no-ask-password 501")
         control.linger = "yes";
       if (!failed && command === "systemctl --user enable t3code.service") control.enabled = true;
@@ -115,7 +123,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       if (
         control.stateAfterStop !== undefined &&
         (command === "systemctl --user stop t3code.service" ||
-          command.startsWith("launchctl bootout --wait "))
+          command.startsWith("launchctl bootout "))
       ) {
         yield* fs.writeFileString(statePath, control.stateAfterStop).pipe(Effect.orDie);
       }
@@ -132,11 +140,13 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
                 : "",
         stderr: "",
         code: ChildProcessSpawner.ExitCode(
-          failed ||
-            (input.args[1] === "is-active" && !control.active) ||
-            (input.args[1] === "is-enabled" && !control.enabled)
-            ? 1
-            : 0,
+          transientHit
+            ? control.transient!.code
+            : failed ||
+                (input.args[1] === "is-active" && !control.active) ||
+                (input.args[1] === "is-enabled" && !control.enabled)
+              ? 1
+              : 0,
         ),
         timedOut: false,
         stdoutTruncated: false,
@@ -773,6 +783,64 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         Duration.seconds(120),
       );
     }),
+  );
+
+  // regression: macOS 15 parses `bootout --wait` as a target specifier and
+  // exits 64. The step is optional, so the old job stayed loaded and the
+  // following bootstrap failed EIO, leaving the previous release serving the
+  // T3 home after `t3 service install` had already written the new version.
+  it.effect("still stops the launch agent when the OS rejects bootout --wait", () =>
+    Effect.gen(function* () {
+      const { service, control, commands } = yield* makeHarness("darwin");
+      yield* service.install();
+
+      const rejectedFlag = "launchctl bootout --wait gui/501/com.t3tools.t3code.service";
+      control.transient = { command: rejectedFlag, code: 64, remaining: 1 };
+      commands.length = 0;
+      yield* service.install();
+
+      expect(commands).toContain("launchctl bootout gui/501/com.t3tools.t3code.service");
+      expect(commands.some((command) => command.startsWith("launchctl bootstrap "))).toBe(true);
+      expect((yield* service.status).current).toBe(true);
+    }),
+  );
+
+  // withStopped makes every stop step required when the agent is loaded, so
+  // the rejected `--wait` must not abort the sequence before the plain
+  // bootout runs; `t3 doctor` repairs go through this path.
+  it.effect.each(["darwin"] as const)("repairs through the bootout fallback on %s", (platform) =>
+    Effect.gen(function* () {
+      const { service, control, commands } = yield* makeHarness(platform);
+      yield* service.install();
+
+      const rejectedFlag = "launchctl bootout --wait gui/501/com.t3tools.t3code.service";
+      control.transient = { command: rejectedFlag, code: 64, remaining: 1 };
+      commands.length = 0;
+      yield* service.withStopped(Effect.sync(() => commands.push("repair")));
+
+      expect(commands).toContain("launchctl bootout gui/501/com.t3tools.t3code.service");
+      expect(commands).toContain("repair");
+    }),
+  );
+
+  // live, not it.effect: the retry spacing is a real `Schedule.spaced` sleep
+  // that the test clock does not drive here (forking the install and advancing
+  // TestClock leaves the fiber parked), and the assertions are exact command
+  // counts, so nothing depends on wall-clock timing.
+  live("retries a launch agent start that races the previous job's drain", () =>
+    Effect.gen(function* () {
+      const { service, control, commands } = yield* makeHarness("darwin");
+      const plan = yield* service.install();
+      const bootstrap = `launchctl bootstrap gui/501 ${plan.unitPath}`;
+
+      // EIO while launchd tears the previous job down; the next attempt wins.
+      control.transient = { command: bootstrap, code: 5, remaining: 3 };
+      commands.length = 0;
+      yield* service.install();
+
+      expect(commands.filter((command) => command === bootstrap)).toHaveLength(4);
+      expect((yield* service.status).current).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   // regression: #8173 keep provider CLIs available in the macOS service

@@ -9,6 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import { HttpClient } from "effect/http";
 import * as Schema from "effect/Schema";
 
@@ -184,11 +185,37 @@ export interface BootServiceStep {
   readonly args: ReadonlyArray<string>;
   /** Non-zero exit is logged and ignored. */
   readonly optional?: boolean;
+  /**
+   * Exit codes that still count as success. launchd reports a plain "nothing
+   * to stop" (3) and, on releases without the flag, an unrecognized `--wait`
+   * target specifier (64); neither means the job is still loaded.
+   */
+  readonly tolerateExitCodes?: ReadonlyArray<number>;
+  /**
+   * Arguments tried once if this step's own arguments fail. The step fails only
+   * when both attempts fail, so it can stay required while offering a fallback.
+   */
+  readonly fallbackArgs?: ReadonlyArray<string>;
+  /**
+   * Exit codes worth retrying within the step's timeout. launchd reports EIO
+   * while it is still tearing down the previous job, so a start that races a
+   * drain succeeds on a later attempt without any other change.
+   */
+  readonly retryOnExitCodes?: ReadonlyArray<number>;
   readonly timeout?: Duration.Input;
 }
 
 /** Must exceed systemd TimeoutStopSec and launchd ExitTimeOut (both 90s) to avoid shutdown races. */
 const STOP_STEP_TIMEOUT = Duration.seconds(120);
+
+/**
+ * launchd drops a job from the domain asynchronously: a `bootstrap` that lands
+ * while the previous job drains fails EIO. Retrying a few times rides out that
+ * window, which is otherwise the only thing standing between a version update
+ * and a service that keeps running the release it was meant to replace.
+ */
+const LAUNCHD_RETRY_INTERVAL = Duration.millis(250);
+const LAUNCHD_RETRY_ATTEMPTS = 20;
 
 export interface BootServiceManager {
   readonly kind: "systemd" | "launchd";
@@ -294,6 +321,9 @@ function launchdManager(input: {
   const domainTarget = `gui/${input.uid}`;
   const serviceTarget = `${domainTarget}/${BOOT_SERVICE_LAUNCHD_LABEL}`;
   // Unloaded jobs may reject bootout/enable. Bootstrap starts RunAtLoad/KeepAlive jobs; kickstart would restart them.
+  // macOS 15 rejects `bootout --wait` as an unknown target specifier (64), so the plain form is the fallback.
+  const LAUNCHD_EIO = 5;
+  const LAUNCHD_NOTHING_TO_STOP = 3;
   return {
     kind: "launchd",
     unitPath,
@@ -308,7 +338,10 @@ function launchdManager(input: {
         step: "stopping the installed launch agent",
         command: "launchctl",
         args: ["bootout", "--wait", serviceTarget],
+        // Fallback inside the step: it fails only if both forms fail.
+        fallbackArgs: ["bootout", serviceTarget],
         optional: true,
+        tolerateExitCodes: [LAUNCHD_NOTHING_TO_STOP],
         timeout: STOP_STEP_TIMEOUT,
       },
     ],
@@ -324,6 +357,7 @@ function launchdManager(input: {
         step: "starting the service",
         command: "launchctl",
         args: ["bootstrap", domainTarget, unitPath],
+        retryOnExitCodes: [LAUNCHD_EIO],
       },
     ],
     restart: [
@@ -331,6 +365,7 @@ function launchdManager(input: {
         step: "restarting the service after a failed update",
         command: "launchctl",
         args: ["bootstrap", domainTarget, unitPath],
+        retryOnExitCodes: [LAUNCHD_EIO],
       },
     ],
     // Persisted launchctl disable overrides would block reinstall.
@@ -339,7 +374,9 @@ function launchdManager(input: {
         step: "stopping the service",
         command: "launchctl",
         args: ["bootout", "--wait", serviceTarget],
+        fallbackArgs: ["bootout", serviceTarget],
         optional: true,
+        tolerateExitCodes: [LAUNCHD_NOTHING_TO_STOP],
         timeout: STOP_STEP_TIMEOUT,
       },
     ],
@@ -613,22 +650,50 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     step: string,
     command: string,
     args: ReadonlyArray<string>,
-    options?: { readonly timeout?: Duration.Input },
+    options?: {
+      readonly timeout?: Duration.Input;
+      readonly retryOnExitCodes?: ReadonlyArray<number>;
+      readonly tolerateExitCodes?: ReadonlyArray<number>;
+      readonly fallbackArgs?: ReadonlyArray<string>;
+    },
   ) {
-    return yield* runner.run({ command, args, timeout: options?.timeout }).pipe(
-      Effect.mapError((cause) => new BootServiceCommandError({ step, cause })),
-      Effect.filterOrFail(
-        (result) => result.code === 0,
-        (result) =>
-          new BootServiceCommandError({
-            step,
-            exitCode: Number(result.code),
-            stdoutLength: result.stdout.length,
-            stderrLength: result.stderr.length,
-          }),
-      ),
-      Effect.tapError(logFailure),
-    );
+    const tolerated = options?.tolerateExitCodes ?? [];
+    // `suspend` matters: retry re-runs this effect, and each attempt must call
+    // the runner again instead of replaying one already-built command result.
+    const invoke = (argsToRun: ReadonlyArray<string>) =>
+      Effect.suspend(() =>
+        runner.run({ command, args: argsToRun, timeout: options?.timeout }),
+      ).pipe(
+        Effect.mapError((cause) => new BootServiceCommandError({ step, cause })),
+        Effect.filterOrFail(
+          (result) => result.code === 0 || tolerated.includes(Number(result.code)),
+          (result) =>
+            new BootServiceCommandError({
+              step,
+              exitCode: Number(result.code),
+              stdoutLength: result.stdout.length,
+              stderrLength: result.stderr.length,
+            }),
+        ),
+      );
+    const attempt = invoke(args);
+    const retryable = options?.retryOnExitCodes;
+    const primary =
+      retryable === undefined
+        ? attempt
+        : attempt.pipe(
+            Effect.retry({
+              // A fixed spacing keeps a drain that never ends from stalling the
+              // step past its timeout instead of reporting the failure.
+              schedule: Schedule.spaced(LAUNCHD_RETRY_INTERVAL),
+              times: LAUNCHD_RETRY_ATTEMPTS,
+              while: (error) => error.exitCode !== undefined && retryable.includes(error.exitCode),
+            }),
+          );
+    const fallback = options?.fallbackArgs;
+    return yield* (
+      fallback === undefined ? primary : primary.pipe(Effect.catch(() => invoke(fallback)))
+    ).pipe(Effect.tapError(logFailure));
   });
 
   const runSteps = (steps: ReadonlyArray<BootServiceStep>) =>
@@ -639,7 +704,21 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           entry.step,
           entry.command,
           entry.args,
-          entry.timeout === undefined ? undefined : { timeout: entry.timeout },
+          entry.timeout === undefined &&
+            entry.retryOnExitCodes === undefined &&
+            entry.tolerateExitCodes === undefined &&
+            entry.fallbackArgs === undefined
+            ? undefined
+            : {
+                ...(entry.timeout === undefined ? {} : { timeout: entry.timeout }),
+                ...(entry.retryOnExitCodes === undefined
+                  ? {}
+                  : { retryOnExitCodes: entry.retryOnExitCodes }),
+                ...(entry.tolerateExitCodes === undefined
+                  ? {}
+                  : { tolerateExitCodes: entry.tolerateExitCodes }),
+                ...(entry.fallbackArgs === undefined ? {} : { fallbackArgs: entry.fallbackArgs }),
+              },
         );
         return entry.optional === true ? run.pipe(Effect.ignore) : run.pipe(Effect.asVoid);
       },
