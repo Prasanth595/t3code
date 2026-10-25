@@ -50,6 +50,7 @@ export function createCdpRelayConnection(
 ): CdpRelayConnection {
   const send = (message: Record<string, unknown>) => write(JSON.stringify(message));
   let attached = false;
+  let runtimeReset: Promise<unknown> | undefined;
   /** Relay-created page sessions share one real debugger; child frame sessions retain their own ids. */
   const sessions = new Map<string, "browser" | "page">([[PAGE_SESSION_ID, "page"]]);
   let sessionSequence = 0;
@@ -133,6 +134,11 @@ export function createCdpRelayConnection(
 
   const pageCommand = (command: CdpCommand): Promise<unknown> => {
     const child = sessions.get(command.sessionId!) === "page" ? undefined : command.sessionId;
+    if (command.method === "Runtime.enable" && child === undefined) {
+      // Electron retains enabled domains across relays; re-enable once so a new client receives existing contexts.
+      runtimeReset ??= target.send("Runtime.disable", {}, undefined);
+      return runtimeReset.then(() => target.send(command.method, command.params ?? {}, child));
+    }
     // Child frames/workers pause on auto-attach until resumed; only the main page can skip this command.
     if (command.method === "Runtime.runIfWaitingForDebugger" && child === undefined) {
       return Promise.resolve({});

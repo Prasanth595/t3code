@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { createCdpRelayConnection, type CdpRelayTarget } from "./CdpRelay.ts";
+import {
+  createCdpRelayConnection,
+  type CdpRelayConnection,
+  type CdpRelayTarget,
+} from "./CdpRelay.ts";
 
 const makeTarget = (
   send: CdpRelayTarget["send"],
@@ -19,6 +23,38 @@ const makeTarget = (
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 describe("CDP relay", () => {
+  it("announces the main execution context when reconnecting to an existing guest", async () => {
+    let runtimeEnabled = false;
+    let active: CdpRelayConnection;
+    const context = { id: 1, name: "", auxData: { isDefault: true, frameId: "GUEST-TARGET" } };
+    const target = makeTarget(async (method) => {
+      if (method === "Runtime.disable") runtimeEnabled = false;
+      if (method === "Runtime.enable" && !runtimeEnabled) {
+        runtimeEnabled = true;
+        active.event("Runtime.executionContextCreated", { context }, undefined);
+      }
+      return {};
+    });
+    const connect = async () => {
+      const written: Array<Record<string, unknown>> = [];
+      active = createCdpRelayConnection(target, (raw) => written.push(JSON.parse(raw)));
+      active.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
+      await settle();
+      active.receive(
+        JSON.stringify({ id: 2, method: "Runtime.enable", sessionId: "t3-preview-page" }),
+      );
+      await settle();
+      return written;
+    };
+    const announced = {
+      method: "Runtime.executionContextCreated",
+      params: { context },
+      sessionId: "t3-preview-page",
+    };
+    expect(await connect()).toContainEqual(announced);
+    expect(await connect()).toContainEqual(announced);
+  });
+
   it("announces only the tab's page, under its real target id", async () => {
     const written: Array<Record<string, unknown>> = [];
     const relay = createCdpRelayConnection(makeTarget(vi.fn()), (raw) =>
