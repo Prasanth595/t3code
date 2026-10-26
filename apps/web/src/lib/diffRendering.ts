@@ -357,6 +357,11 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
   color: var(--code-foreground) !important;
 }
 
+/* The library draws addition bars solid and deletion bars dithered at half coverage. */
+[data-indicators="bars"] [data-line-type="change-addition"][data-column-number]::before {
+  opacity: var(--diff-addition-bar-opacity, 1);
+}
+
 /* The library's change-icon colors are tuned for dark canvases; light mode takes the app's darker tokens. */
 [data-change-icon="new"] {
   color: var(

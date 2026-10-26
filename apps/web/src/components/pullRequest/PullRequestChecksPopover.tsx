@@ -9,6 +9,7 @@ import type {
 import { useState } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
+import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
@@ -149,6 +150,12 @@ export function PullRequestChecksPopover({
   render?: React.ReactElement;
 }) {
   const presentation = pullRequestChecksStatePresentation(checksState);
+  const redesign = useClientSettings((s) => s.redesignEnabled);
+  // The bare glyph sits beside the green open-state icon and diff stat; passing is the quiet case.
+  const toneClassName =
+    redesign && variant === "icon" && checksState === "passing"
+      ? "text-muted-foreground"
+      : presentation.toneClassName;
   const incompleteCount =
     checks?.filter((check) => check.status === "pending" || check.status === "action-required")
       .length ?? 0;
@@ -178,7 +185,7 @@ export function PullRequestChecksPopover({
         }
         onClick={(event) => event.stopPropagation()}
       >
-        <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
+        <presentation.Icon aria-hidden className={cn("size-3.5", toneClassName)} />
         {variant === "count" ? (
           <>
             {checks !== undefined && incompleteCount > 0 ? (

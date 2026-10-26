@@ -198,7 +198,7 @@ function SidebarProviderStack(props: {
       acpRegistryIconUrl={currentEntry.acpRegistryIconUrl}
       showBadge={showInstanceBadge}
       size="compact"
-      iconClassName="opacity-60"
+      iconClassName="opacity-60 redesign:grayscale"
     />
   );
   if (stack.length === 1) {
@@ -924,7 +924,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             : "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover",
     shouldRecede &&
       status === "working" &&
-      "opacity-70 transition-opacity hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none",
+      "opacity-70 transition-opacity hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none redesign:opacity-100",
     isFileDragOver && "ring-1 ring-inset ring-primary/70",
     isFileDragOver && !props.isActive && !isSelected && "bg-sidebar-row-hover",
     props.sortable?.isDragging &&
@@ -986,7 +986,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           ? cn(
               "truncate",
               shouldRecede
-                ? "text-secondary-label redesign:text-foreground/75 redesign:group-hover/sidebar-row:text-foreground redesign:group-focus-visible/sidebar-row:text-foreground"
+                ? "text-secondary-label redesign:text-foreground/65 redesign:group-hover/sidebar-row:text-foreground redesign:group-focus-visible/sidebar-row:text-foreground"
                 : isUnread || isWoke || status === "input" || status === "request"
                   ? "text-foreground"
                   : status === "failed"
