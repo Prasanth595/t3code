@@ -217,20 +217,22 @@ function probeCli(input: {
           }) satisfies DiscoveryProbeResult,
       ),
       Effect.catch((cause) =>
-        unavailableInstallHint(input.spec.executable, input.spec.installHint, cause).pipe(
-          Effect.map(
-            (installHint) =>
-              ({
-                kind: input.spec.kind,
-                label: input.spec.label,
-                executable: input.spec.executable,
-                status: "missing" as const,
-                version: Option.none<string>(),
-                installHint,
-                detail: detailFromCause(cause),
-              }) satisfies DiscoveryProbeResult,
-          ),
-        ),
+        Effect.gen(function* () {
+          const installHint = yield* unavailableInstallHint(
+            input.spec.executable,
+            input.spec.installHint,
+            cause,
+          );
+          return {
+            kind: input.spec.kind,
+            label: input.spec.label,
+            executable: input.spec.executable,
+            status: "missing" as const,
+            version: Option.none<string>(),
+            installHint,
+            detail: detailFromCause(cause),
+          } satisfies DiscoveryProbeResult;
+        }),
       ),
     );
 }
@@ -319,10 +321,6 @@ export function isMissingExecutable(error: unknown): boolean {
 // Intel-only `gh` on Apple Silicon without Rosetta.
 const BAD_CPU_TYPE_ERRNO = -86;
 
-/**
- * The hint for a CLI that failed to start. One built for another CPU looks installed to the user,
- * so the hint names the file the server tried to run.
- */
 export const unavailableInstallHint = Effect.fn("discovery.unavailableInstallHint")(function* (
   executable: string,
   installHint: string,

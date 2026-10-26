@@ -133,8 +133,9 @@ it.effect("reports every hosting integration in registry order with its sign-in"
   }).pipe(Effect.provide(SourceControlDiscovery.layer.pipe(Layer.provide(layerDiscovery())))),
 );
 
-for (const platform of ["darwin", "linux"] as const) {
-  it.effect(`names incompatible executables only on macOS (${platform})`, () => {
+it.effect.each(["darwin", "linux"] as const)(
+  "names incompatible executables only on macOS (%s)",
+  (platform) => {
     const runProcess: typeof run = (input) =>
       Effect.fail(
         new VcsProcessSpawnError({
@@ -168,5 +169,5 @@ for (const platform of ["darwin", "linux"] as const) {
       Effect.provideService(HostProcess.Platform, platform),
       Effect.provideService(HostProcess.Architecture, "arm64"),
     );
-  });
-}
+  },
+);

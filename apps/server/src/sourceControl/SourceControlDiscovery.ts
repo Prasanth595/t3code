@@ -119,21 +119,19 @@ export const make = Effect.gen(function* () {
             }) satisfies DiscoveryProbeResult<Kind>,
         ),
         Effect.catch((cause) =>
-          unavailableInstallHint(executable, input.installHint, cause).pipe(
-            Effect.map(
-              (installHint) =>
-                ({
-                  kind: input.kind,
-                  label: input.label,
-                  executable,
-                  implemented: input.implemented,
-                  status: "missing" as const,
-                  version: Option.none<string>(),
-                  installHint,
-                  detail: detailFromCause(cause),
-                }) satisfies DiscoveryProbeResult<Kind>,
-            ),
-          ),
+          Effect.gen(function* () {
+            const installHint = yield* unavailableInstallHint(executable, input.installHint, cause);
+            return {
+              kind: input.kind,
+              label: input.label,
+              executable,
+              implemented: input.implemented,
+              status: "missing" as const,
+              version: Option.none<string>(),
+              installHint,
+              detail: detailFromCause(cause),
+            } satisfies DiscoveryProbeResult<Kind>;
+          }),
         ),
       );
   };
