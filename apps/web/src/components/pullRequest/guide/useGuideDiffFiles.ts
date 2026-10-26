@@ -50,7 +50,6 @@ export function useGuideDiffFiles({
       : null,
   );
 
-  // Cached pages stay subscribed until revalidation finishes. Fold each settled page once.
   const data = query.data;
   if (data !== null && !query.isPending && !current.done && current.folded !== data) {
     const parsed = getRenderablePatch(
