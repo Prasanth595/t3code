@@ -1196,7 +1196,7 @@ it.effect("stops a turn that is still starting when a goal is sent into it", () 
           ),
           Stream.take(1),
           Stream.runDrain,
-          Effect.forkScoped,
+          Effect.forkScoped({ startImmediately: true }),
         );
         yield* send("first", "first", "auto");
         yield* send("goal", "/goal all tests pass", "auto");
@@ -1239,7 +1239,7 @@ it.effect("stops the running turn when a goal clear ends the goal driving it", (
           ),
           Stream.take(1),
           Stream.runDrain,
-          Effect.forkScoped,
+          Effect.forkScoped({ startImmediately: true }),
         );
         yield* Queue.offer(events, {
           type: "provider_thread.updated",
