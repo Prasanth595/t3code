@@ -8,7 +8,7 @@ import { cn } from "../../lib/utils";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { InlineButton } from "../ui/button";
 
-export function SidebarThreadUndoNotice({ onBackdrop }: { onBackdrop: boolean }) {
+export function SidebarThreadUndoNotice({ className }: { className?: string }) {
   const notice = useThreadUndoNotice((state) => state.notice);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
 
@@ -30,10 +30,7 @@ export function SidebarThreadUndoNotice({ onBackdrop }: { onBackdrop: boolean })
   return (
     <div
       role="group"
-      className={cn(
-        "ml-[var(--workspace-titlebar-content-left)] min-w-0 truncate text-2xs leading-7",
-        onBackdrop ? "text-white/70" : "text-sidebar-muted-foreground",
-      )}
+      className={cn("truncate px-2 text-2xs leading-6 text-sidebar-muted-foreground", className)}
     >
       {summary},{" "}
       <InlineButton onClick={undoLatestThreadAction} tone="inherit">
