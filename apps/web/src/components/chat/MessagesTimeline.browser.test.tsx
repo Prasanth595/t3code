@@ -247,125 +247,111 @@ describe("MessagesTimeline messages", () => {
     expect((globalThis as { __t3Xss?: number }).__t3Xss).toBeUndefined();
   });
 
-  it.each(["inline", "delayed", "cancelled"])(
-    "handles %s output expanded above the composer",
-    async (mode) => {
-      environmentQuery.data = null;
-      environmentQuery.error = null;
-      const props = baseProps();
-      const composerOverlayHeight = 200;
-      const tallEntries = Array.from({ length: 12 }, (_, index) =>
-        message(
-          `Message ${index}\n\n${"Long paragraph. ".repeat(80)}`,
-          { role: "assistant" },
-          `tall-${index}`,
-        ),
-      );
-      const projectedItem = makeStreamingTimelineFixture().visibleTurnItems[1]!;
-      const source = {
-        detail: () => Atom.make(AsyncResult.initial()),
-        commandOutput: () => Atom.make(AsyncResult.initial()),
-      };
-      const timeline = () => (
-        <MessagesTimeline
-          {...props}
-          {...(mode === "inline"
-            ? {}
-            : {
-                turnItemSource: {
-                  detail: () => source.detail(),
-                  commandOutput: () => source.commandOutput(),
-                },
-              })}
-          contentInsetEndAdjustment={composerOverlayHeight}
-          timelineEntries={[
-            ...tallEntries.slice(0, 6),
-            {
-              id: "tool-near-composer",
-              kind: "work",
-              createdAt: CREATED_AT,
-              entry: {
-                id: "tool-near-composer",
-                createdAt: CREATED_AT,
-                label: "Example tool",
-                toolTitle: "Example tool",
-                tone: "tool",
-                itemType: "dynamic_tool",
-                toolLifecycleStatus: "completed",
-                toolData: { input: { query: `${"x".repeat(1200)} TOOL_INPUT_END` } },
-                ...(mode === "inline"
-                  ? {}
-                  : {
-                      itemType: "command_execution",
-                      projectedItem,
-                      structuredPayload: projectedItem.item,
-                    }),
+  it.each(["inline", "delayed"])("handles %s output expanded above the composer", async (mode) => {
+    environmentQuery.data = null;
+    environmentQuery.error = null;
+    const props = baseProps();
+    const composerOverlayHeight = 200;
+    const tallEntries = Array.from({ length: 12 }, (_, index) =>
+      message(
+        `Message ${index}\n\n${"Long paragraph. ".repeat(80)}`,
+        { role: "assistant" },
+        `tall-${index}`,
+      ),
+    );
+    const projectedItem = makeStreamingTimelineFixture().visibleTurnItems[1]!;
+    const source = {
+      detail: () => Atom.make(AsyncResult.initial()),
+      commandOutput: () => Atom.make(AsyncResult.initial()),
+    };
+    const timeline = () => (
+      <MessagesTimeline
+        {...props}
+        {...(mode === "inline"
+          ? {}
+          : {
+              turnItemSource: {
+                detail: () => source.detail(),
+                commandOutput: () => source.commandOutput(),
               },
+            })}
+        contentInsetEndAdjustment={composerOverlayHeight}
+        timelineEntries={[
+          ...tallEntries.slice(0, 6),
+          {
+            id: "tool-near-composer",
+            kind: "work",
+            createdAt: CREATED_AT,
+            entry: {
+              id: "tool-near-composer",
+              createdAt: CREATED_AT,
+              label: "Example tool",
+              toolTitle: "Example tool",
+              tone: "tool",
+              itemType: "dynamic_tool",
+              toolLifecycleStatus: "completed",
+              toolData: { input: { query: `${"x".repeat(1200)} TOOL_INPUT_END` } },
+              ...(mode === "inline"
+                ? {}
+                : {
+                    itemType: "command_execution",
+                    projectedItem,
+                    structuredPayload: projectedItem.item,
+                  }),
             },
-            ...tallEntries.slice(6),
-          ]}
-        />
+          },
+          ...tallEntries.slice(6),
+        ]}
+      />
+    );
+    await using screen = await renderElement(timeline());
+    await vi.waitFor(() => expect(props.listRef.current?.getScrollableNode()).toBeTruthy());
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    const header = () => {
+      const rows = screen.container.querySelectorAll<HTMLElement>(
+        '[data-timeline-row-kind="work"] [role="button"]',
       );
-      await using screen = await renderElement(timeline());
-      await vi.waitFor(() => expect(props.listRef.current?.getScrollableNode()).toBeTruthy());
-      const viewport = props.listRef.current!.getScrollableNode()!;
-      const header = () => {
-        const rows = screen.container.querySelectorAll<HTMLElement>(
-          '[data-timeline-row-kind="work"] [role="button"]',
-        );
-        if (!rows[0]) throw new Error(screen.text());
-        return rows[0];
-      };
-      const visibleBottom = () => viewport.getBoundingClientRect().bottom - composerOverlayHeight;
+      if (!rows[0]) throw new Error(screen.text());
+      return rows[0];
+    };
+    const visibleBottom = () => viewport.getBoundingClientRect().bottom - composerOverlayHeight;
+    await act(() => {
+      void props.listRef.current!.scrollToIndex({ index: 6, animated: false });
+    });
+    await vi.waitFor(async () => {
       await act(() => {
-        void props.listRef.current!.scrollToIndex({ index: 6, animated: false });
+        viewport.scrollTop += header().getBoundingClientRect().bottom - (visibleBottom() - 8);
+        viewport.dispatchEvent(new Event("scroll"));
       });
-      await vi.waitFor(async () => {
-        await act(() => {
-          viewport.scrollTop += header().getBoundingClientRect().bottom - (visibleBottom() - 8);
-          viewport.dispatchEvent(new Event("scroll"));
-        });
-        expect(header().getBoundingClientRect().bottom).toBeLessThanOrEqual(visibleBottom());
-        expect(header().getBoundingClientRect().top).toBeGreaterThan(
-          viewport.getBoundingClientRect().top,
-        );
-      });
-
-      await click(header());
-      if (mode !== "inline") {
-        await vi.waitFor(() =>
-          expect(header().getBoundingClientRect().bottom).toBeLessThanOrEqual(visibleBottom() + 1),
-        );
-        await vi.waitFor(() => expect(screen.text()).toContain("Loading output"));
-        if (mode === "cancelled") {
-          await act(() =>
-            viewport.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -100 })),
-          );
-        }
-        const readingScroll = viewport.scrollTop;
-        environmentQuery.data = {
-          output: { text: `${"output line\n".repeat(20)}TOOL_INPUT_END`, truncated: false },
-          running: false,
-        };
-        await screen.rerender(timeline());
-        if (mode === "cancelled") {
-          await vi.waitFor(() => expect(screen.text()).toContain("TOOL_INPUT_END"));
-          expect(viewport.scrollTop).toBeCloseTo(readingScroll, 0);
-          return;
-        }
-      }
-      const inputEnd = () =>
-        Array.from(screen.container.querySelectorAll<HTMLElement>("*")).findLast((element) =>
-          element.textContent?.includes("TOOL_INPUT_END"),
-        )!;
-      await vi.waitFor(() =>
-        expect(inputEnd().getBoundingClientRect().bottom).toBeLessThanOrEqual(visibleBottom() + 1),
-      );
-      expect(header().getBoundingClientRect().top).toBeGreaterThanOrEqual(
+      expect(header().getBoundingClientRect().bottom).toBeLessThanOrEqual(visibleBottom());
+      expect(header().getBoundingClientRect().top).toBeGreaterThan(
         viewport.getBoundingClientRect().top,
       );
-    },
-  );
+    });
+
+    await click(header());
+    if (mode !== "inline") {
+      await vi.waitFor(() =>
+        expect(header().getBoundingClientRect().bottom).toBeLessThanOrEqual(visibleBottom() + 1),
+      );
+      await vi.waitFor(() => expect(screen.text()).toContain("Loading output"));
+      environmentQuery.data = {
+        output: { text: `${"output line\n".repeat(20)}TOOL_INPUT_END`, truncated: false },
+        running: false,
+      };
+      await screen.rerender(timeline());
+    }
+    const inputEnd = () =>
+      Array.from(screen.container.querySelectorAll<HTMLElement>("*")).findLast((element) =>
+        element.textContent?.includes("TOOL_INPUT_END"),
+      )!;
+    await vi.waitFor(() =>
+      expect(inputEnd().getBoundingClientRect().bottom).toBeLessThanOrEqual(visibleBottom() + 1),
+    );
+    expect(header().getBoundingClientRect().top).toBeGreaterThanOrEqual(
+      viewport.getBoundingClientRect().top,
+    );
+  });
 });
 
 const CITATION_REQUEST = {

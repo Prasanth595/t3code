@@ -443,9 +443,26 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const disclosurePinsEndRef = useRef(false);
   const disclosureCollapsedRef = useRef(false);
-  const disclosureRevealRef = useRef<{ key: string; identity: string; ready: boolean } | null>(
-    null,
-  );
+  const disclosureRevealRef = useRef<{
+    key: string;
+    identity: string;
+    entryId: string | undefined;
+    ready: boolean;
+  } | null>(null);
+  const positionRestoreRef = useRef<(() => void) | null>(null);
+  const cancelTimelinePositioning = useStableCallback(() => {
+    disclosureRevealRef.current = null;
+    positionRestoreRef.current?.();
+  });
+  // oxlint-disable-next-line t3code/react-effect-budget -- forwards the parent's navigation cancellation to disclosure reveals and position restoration
+  useLayoutEffect(() => {
+    if (!cancelPositionRestoreRef) return;
+    cancelPositionRestoreRef.current = cancelTimelinePositioning;
+    return () => {
+      if (cancelPositionRestoreRef.current === cancelTimelinePositioning)
+        cancelPositionRestoreRef.current = null;
+    };
+  }, [cancelPositionRestoreRef, cancelTimelinePositioning]);
   const onTimelineNavigation = useStableCallback(() => {
     disclosureRevealRef.current = null;
     onManualNavigation();
@@ -514,6 +531,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const suspendEndScrollMaintenanceForDisclosure = (
     anchorKey: string,
     collapsed = false,
+    entryId?: string,
     revealsRow = true,
   ) => {
     disclosureAnchorKeyRef.current = anchorKey;
@@ -521,7 +539,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     disclosurePinsEndRef.current = resolveTimelineIsAtEnd(listRef.current?.getState()) === true;
     disclosureRevealRef.current =
       !collapsed && revealsRow && !disclosurePinsEndRef.current
-        ? { key: anchorKey, identity: listIdentityKey, ready: false }
+        ? { key: anchorKey, identity: listIdentityKey, entryId, ready: false }
         : null;
     setDisclosureToggleSettling(true);
     scheduleDisclosureSettle();
@@ -534,7 +552,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
 
   const onToggleTurnFold = (runId: RunId) => {
-    suspendEndScrollMaintenanceForDisclosure(`turn-fold:${runId}`, false, false);
+    suspendEndScrollMaintenanceForDisclosure(`turn-fold:${runId}`, false, undefined, false);
     setExpandedRunIds((existing) => {
       const next = new Set(existing);
       if (next.has(runId)) {
@@ -558,7 +576,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
   const onToggleAttemptFold = (attemptId: RunAttemptId) => {
-    suspendEndScrollMaintenanceForDisclosure(`attempt-fold:${attemptId}`, false, false);
+    suspendEndScrollMaintenanceForDisclosure(`attempt-fold:${attemptId}`, false, undefined, false);
     setExpandedAttemptIds((existing) => {
       const next = new Set(existing);
       if (next.has(attemptId)) {
@@ -717,7 +735,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     rememberedPosition,
     rows,
     citationRequest,
-    cancelPositionRestoreRef,
+    cancelPositionRestoreRef: positionRestoreRef,
     onManualNavigation: onTimelineNavigation,
     onPositioned: setPositionedThreadKey,
   });
@@ -1019,9 +1037,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onToggleAttemptFold,
     onToggleWorkGroup,
     onToggleWorkEntry: suspendEndScrollMaintenanceForDisclosure,
-    onWorkEntryContentReady: (anchorKey) => {
+    onWorkEntryContentReady: (anchorKey, entryId) => {
       const pending = disclosureRevealRef.current;
-      if (pending?.key !== anchorKey || pending.identity !== listIdentityKey) return;
+      if (
+        pending?.key !== anchorKey ||
+        pending.entryId !== entryId ||
+        pending.identity !== listIdentityKey
+      )
+        return;
       pending.ready = true;
       scheduleDisclosureSettle();
     },
