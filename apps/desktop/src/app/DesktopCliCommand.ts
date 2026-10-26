@@ -1,6 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off -- FileSystem.access has no execute check, and the shell's PATH lookup needs access(X_OK).
-import * as NodeFS from "node:fs";
-import * as NodeFSP from "node:fs/promises";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- FileSystem.access has no execute check.
+import { access, constants } from "node:fs/promises";
 
 import type { DesktopCliCommandState } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -122,12 +121,10 @@ export const make = Effect.gen(function* () {
       Effect.mapError(() => fail("Could not update your PATH.")),
     );
 
-  // The shell runs only a regular file this user may execute. stat and access
-  // both follow symlinks, so a link counts by what it points to.
   const isExecutableFile = Effect.fn("DesktopCliCommand.isExecutableFile")(
     function* (target: string) {
       if ((yield* fs.stat(target)).type !== "File") return false;
-      yield* Effect.tryPromise(() => NodeFSP.access(target, NodeFS.constants.X_OK));
+      yield* Effect.tryPromise(() => access(target, constants.X_OK));
       return true;
     },
     Effect.orElseSucceed(() => false),

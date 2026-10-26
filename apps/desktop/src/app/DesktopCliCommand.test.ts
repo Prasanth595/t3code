@@ -177,8 +177,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  // Root's access(X_OK) passes when any execute bit is set, so 0o601 counts as executable.
-  it.effect.skipIf(process.getuid?.() === 0)(
+  it.effect.skipIf(process.platform === "win32")(
     "skips a t3 directory or a file this user cannot execute",
     () =>
       Effect.gen(function* () {
@@ -191,14 +190,17 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         yield* fs.makeDirectory(path.join(folder, "t3"), { recursive: true });
         yield* fs.makeDirectory(plain);
         yield* fs.writeFileString(path.join(plain, "t3"), "notes\n");
-        // Only others may execute it, so its owner's shell skips it.
-        yield* fs.chmod(path.join(plain, "t3"), 0o601);
+        // Root can execute mode 0o601; other users must honor the owner permissions.
+        yield* fs.chmod(path.join(plain, "t3"), process.getuid?.() === 0 ? 0o600 : 0o601);
         yield* fs.makeDirectory(shadow);
         yield* fs.writeFileString(path.join(shadow, "t3"), "#!/bin/sh\n", { mode: 0o755 });
         process.env.PATH = [folder, plain, shadow, path.join(home, ".local", "bin")].join(":");
 
         const command = yield* commandIn({ home });
         expect((yield* command.state).shadowedBy).toBe(path.join(shadow, "t3"));
+
+        const error = yield* Effect.flip(command.install);
+        expect(error.message).toContain(path.join(shadow, "t3"));
 
         yield* fs.remove(shadow, { recursive: true });
         expect(yield* command.install).toMatchObject({
