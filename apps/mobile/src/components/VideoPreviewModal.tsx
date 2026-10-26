@@ -38,15 +38,8 @@ function useMediaPlayback(source: MediaVideoPreviewSource): PlaybackState {
   const resource = "resource" in source ? source.resource : null;
   const connection = usePreparedConnection(environmentId);
   const asset = useAssetUrlState(environmentId, resource);
-  const refreshAssetUrl = useRefreshAssetUrl(environmentId, resource, source.fallbackUri);
-  const uri = mediaVideoPreviewUri(
-    source,
-    asset._tag === "Success"
-      ? asset.url
-      : asset._tag === "Failure"
-        ? (source.fallbackUri ?? null)
-        : null,
-  );
+  const refreshAssetUrl = useRefreshAssetUrl(environmentId, resource);
+  const uri = mediaVideoPreviewUri(source, asset._tag === "Success" ? asset.url : null);
   return {
     uri,
     ...(resource !== null
@@ -65,13 +58,13 @@ function useLocalPlayback(source: LocalVideoPreviewSource): PlaybackState {
   const { attachment } = source;
   const [uri, setUri] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Only a different file needs a new lease; a metadata update on the same
-  // draft must not dispose the file Android is still playing.
+  // Keep the file lease across metadata updates while Android is playing it.
   const loadAttachment = useEffectEvent((signal: AbortSignal) =>
     loadLocalAttachmentPreview(attachment, signal),
   );
   const { id: attachmentId, fileUri } = attachment;
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- A new attachment clears the previous attachment's result before loading.
     setUri(null);
     setError(null);
     const controller = new AbortController();
@@ -95,6 +88,7 @@ function useLocalPlayback(source: LocalVideoPreviewSource): PlaybackState {
         () => undefined,
       );
     };
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A different attachment restarts the load even when it resolves to the same cached file URI.
   }, [attachmentId, fileUri]);
   const mimeType = videoMimeType(attachment) ?? attachment.mimeType;
   return {
@@ -216,9 +210,10 @@ export function VideoPreviewModal(props: {
 }) {
   const isFocused = useIsFocused();
   const hasSource = props.source !== null;
+  const { onRequestClose } = props;
   useEffect(() => {
-    if (!isFocused && hasSource) props.onRequestClose();
-  }, [isFocused, hasSource, props.onRequestClose]);
+    if (!isFocused && hasSource) onRequestClose();
+  }, [isFocused, hasSource, onRequestClose]);
   const { source } = props;
   if (source === null || !isFocused) return null;
   return source.type === "local" ? (
