@@ -1303,6 +1303,7 @@ it.live("an agent opens a reported profile after a restart, before any client re
       });
     }).pipe(Effect.provide(Layer.fresh(ServerBrowser.layer)));
 
+    expect(contextRequests).toEqual([{ profileId: "profile-work", isolated: false }]);
     expect(restarted.tabs).toMatchObject([{ profileId: "profile-work" }]);
     expect(restarted).toMatchObject({
       defaultProfileId: "profile-work",

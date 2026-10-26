@@ -1356,31 +1356,27 @@ const make = Effect.gen(function* () {
 
   const reportProfiles: ServerBrowser["Service"]["reportProfiles"] = Effect.fn(
     "ServerBrowser.reportProfiles",
-  )((input) =>
-    saveProfilesLock.withPermits(1)(
-      Effect.suspend(() => {
-        if (input.recordingFrameRate !== undefined) recordingFrameRate = input.recordingFrameRate;
-        const reported = resolveReportedProfiles(input);
-        reportedProfiles = reported;
-        const contents = encodeSavedProfiles({
-          profiles: reported.profiles.filter((profile) => !isBuiltInBrowserProfileId(profile.id)),
-          defaultProfileId: reported.defaultProfileId,
-        });
-        if (contents === savedProfiles) return Effect.void;
-        return writeFileStringAtomically({ filePath: savedProfilesPath, contents }).pipe(
-          Effect.provideContext(fileServices),
-          Effect.matchEffect({
-            onSuccess: () =>
-              Effect.sync(() => {
-                savedProfiles = contents;
-              }),
-            onFailure: (cause) =>
-              Effect.logWarning("failed to save reported browser profiles", { cause }),
-          }),
-        );
+  )(function* (input) {
+    if (input.recordingFrameRate !== undefined) recordingFrameRate = input.recordingFrameRate;
+    reportedProfiles = resolveReportedProfiles(input);
+    const contents = encodeSavedProfiles({
+      profiles: reportedProfiles.profiles.filter(
+        (profile) => !isBuiltInBrowserProfileId(profile.id),
+      ),
+      defaultProfileId: reportedProfiles.defaultProfileId,
+    });
+    if (contents === savedProfiles) return;
+    yield* writeFileStringAtomically({ filePath: savedProfilesPath, contents }).pipe(
+      Effect.provideContext(fileServices),
+      Effect.tap(() => {
+        savedProfiles = contents;
+        return Effect.void;
       }),
-    ),
-  );
+      Effect.catch((cause) =>
+        Effect.logWarning("failed to save reported browser profiles", { cause }),
+      ),
+    );
+  }, saveProfilesLock.withPermits(1));
 
   const profileStatus = () => {
     const profiles = reportedProfiles?.profiles ?? BUILT_IN_BROWSER_PROFILES;
