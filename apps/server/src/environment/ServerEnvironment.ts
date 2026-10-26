@@ -21,6 +21,7 @@ import { resolveServerSelfUpdateCapability } from "../cloud/selfUpdate.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { communicationLanesPaused } from "../orchestration-v2/CommunicationRollout.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
 
@@ -248,7 +249,7 @@ export const make = Effect.gen(function* () {
       threadAutoSettleOptOut: true,
       threadTitleRegeneration: true,
       commandOutputStreaming: true,
-      communicationLanes: true,
+      communicationLanes: !communicationLanesPaused(),
       threadVisitedTracking: true,
       threadPullRequests: true,
       threadPullRequestWatch: true,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
+import { nextDeliverableQueuedRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 
 describe("queued run delivery order", () => {
   it("keeps automatic completion delivery ahead of visible queued messages", () => {
@@ -164,5 +164,38 @@ describe("queued run delivery order", () => {
       "run:human",
       "run:forged",
     ]);
+  });
+
+  it("pauses internal queued delivery without losing its run id and still serves human input", () => {
+    const projection = {
+      thread: { communicationLanesEnabled: true },
+      messages: [
+        {
+          id: "message:internal",
+          communication: {
+            classification: "verified",
+            route: { port: "internal.in" },
+            producer: { kind: "agent" },
+          },
+        },
+        {
+          id: "message:human",
+          communication: {
+            classification: "verified",
+            route: { port: "user.in" },
+            producer: { kind: "human" },
+          },
+        },
+      ],
+      runs: [
+        { id: "run:internal", status: "queued", ordinal: 1, userMessageId: "message:internal" },
+        { id: "run:human", status: "queued", ordinal: 2, userMessageId: "message:human" },
+      ],
+    } as const;
+
+    expect(nextDeliverableQueuedRun(projection as never, true)?.id).toBe("run:human");
+    const afterHuman = { ...projection, runs: [projection.runs[0]] };
+    expect(nextDeliverableQueuedRun(afterHuman as never, true)).toBeUndefined();
+    expect(nextDeliverableQueuedRun(afterHuman as never, false)?.id).toBe("run:internal");
   });
 });

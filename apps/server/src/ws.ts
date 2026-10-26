@@ -59,6 +59,7 @@ import {
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2ThreadLaunchError,
+  OrchestrationV2StopWorkflowError,
   type OrchestrationProjectShell,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadStreamItem,
@@ -118,6 +119,12 @@ import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
+import {
+  clientSupportsCommunicationLanes,
+  communicationClientThreadNeedsUpgrade,
+  communicationMutationThreadIds,
+  COMMUNICATION_LANES_UPGRADE_MESSAGE,
+} from "./orchestration-v2/CommunicationClientCompatibility.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
@@ -1235,12 +1242,49 @@ export const layerWsRpc = (
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
+  supportsCommunicationLanesClient = false,
 ) =>
   Layer.effectContext(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const oldClientThreadNeedsUpgrade = Effect.fn(
+        "ws.orchestrationV2.oldClientThreadNeedsUpgrade",
+      )((threadIds: readonly ThreadId[]) =>
+        communicationClientThreadNeedsUpgrade(
+          supportsCommunicationLanesClient,
+          threadIds,
+          (threadId) =>
+            threadManagement
+              .getThreadRecords(threadId, [])
+              .pipe(Effect.map((projection) => projection.thread)),
+        ),
+      );
+      const assertClientCanDispatch = (command: OrchestrationV2Command) =>
+        oldClientThreadNeedsUpgrade(communicationMutationThreadIds(command)).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationV2DispatchCommandError({
+                commandId: command.commandId,
+                commandType: command.type,
+                message: "Failed to verify thread compatibility",
+                cause,
+              }),
+          ),
+          Effect.flatMap((upgradeRequired) =>
+            upgradeRequired
+              ? Effect.fail(
+                  new OrchestrationV2DispatchCommandError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    message: COMMUNICATION_LANES_UPGRADE_MESSAGE,
+                    detail: COMMUNICATION_LANES_UPGRADE_MESSAGE,
+                  }),
+                )
+              : Effect.void,
+          ),
+        );
       const intakeContext = yield* Effect.context<
         | ThreadManagementService.ThreadManagementService
         | ThreadLaunchService.ThreadLaunchService
@@ -1920,6 +1964,7 @@ export const layerWsRpc = (
               ? { "orchestration_v2.source_thread_id": command.sourceThreadId }
               : {}),
           }).pipe(
+            Effect.andThen(assertClientCanDispatch(command)),
             Effect.andThen(
               startup
                 .enqueueCommand(
@@ -1952,18 +1997,60 @@ export const layerWsRpc = (
                 ),
             ),
           ),
-        [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (input) => threadManagement.stopWorkflow(input),
+        [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (input) =>
+          oldClientThreadNeedsUpgrade([input.threadId]).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationV2StopWorkflowError({
+                  threadId: input.threadId,
+                  subagentId: input.subagentId,
+                  reason: "unavailable",
+                  cause,
+                }),
+            ),
+            Effect.flatMap((upgradeRequired) =>
+              upgradeRequired
+                ? Effect.fail(
+                    new OrchestrationV2StopWorkflowError({
+                      threadId: input.threadId,
+                      subagentId: input.subagentId,
+                      reason: "unavailable",
+                      cause: new Error(COMMUNICATION_LANES_UPGRADE_MESSAGE),
+                    }),
+                  )
+                : threadManagement.stopWorkflow(input),
+            ),
+          ),
         [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>
           readWorkflowScript({ scriptPath: input.scriptPath }),
         [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (input) =>
-          threadManagement.getTurnItem(input).pipe(
+          oldClientThreadNeedsUpgrade([input.threadId]).pipe(
             Effect.mapError(
               (cause) =>
                 new OrchestrationV2GetThreadProjectionError({
                   threadId: input.threadId,
-                  message: "Failed to load turn item",
+                  message: "Failed to verify thread compatibility",
                   cause,
                 }),
+            ),
+            Effect.flatMap((upgradeRequired) =>
+              upgradeRequired
+                ? Effect.fail(
+                    new OrchestrationV2GetThreadProjectionError({
+                      threadId: input.threadId,
+                      message: COMMUNICATION_LANES_UPGRADE_MESSAGE,
+                    }),
+                  )
+                : threadManagement.getTurnItem(input).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new OrchestrationV2GetThreadProjectionError({
+                          threadId: input.threadId,
+                          message: "Failed to load turn item",
+                          cause,
+                        }),
+                    ),
+                  ),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.getTurnDiff]: (input) =>
@@ -2069,6 +2156,32 @@ export const layerWsRpc = (
             "orchestration_v2.command_id": input.commandId,
             "orchestration_v2.project_id": input.projectId,
           }).pipe(
+            Effect.andThen(
+              input.reuseExistingThread === true && input.threadId !== undefined
+                ? oldClientThreadNeedsUpgrade([input.threadId]).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new OrchestrationV2ThreadLaunchError({
+                          commandId: input.commandId,
+                          projectId: input.projectId,
+                          message: "Failed to verify thread compatibility",
+                          cause,
+                        }),
+                    ),
+                    Effect.flatMap((upgradeRequired) =>
+                      upgradeRequired
+                        ? Effect.fail(
+                            new OrchestrationV2ThreadLaunchError({
+                              commandId: input.commandId,
+                              projectId: input.projectId,
+                              message: COMMUNICATION_LANES_UPGRADE_MESSAGE,
+                            }),
+                          )
+                        : Effect.void,
+                    ),
+                  )
+                : Effect.void,
+            ),
             Effect.andThen(
               startup
                 .enqueueCommand(
@@ -3378,6 +3491,7 @@ export const layer = Layer.unwrap(
               clientAnalyticsProps,
               previewAutomationBroker,
               serverBrowser,
+              Option.isSome(requestUrl) && clientSupportsCommunicationLanes(requestUrl.value),
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               // Handler-context reporters see only request defects, not server-wide defects.

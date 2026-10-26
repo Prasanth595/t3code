@@ -92,6 +92,39 @@ const QueueListTool = Tool.make("t3_queue_list", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
+const CommunicationDiagnosticsTool = Tool.make("t3_communication_diagnostics", {
+  ...commandTool,
+  description:
+    "Export communication lane status for this thread: queue IDs, route counts, and delivery receipts. No message text or attachments are returned.",
+  parameters: Schema.Struct({
+    cursor: Schema.optional(NonNegativeInt),
+    limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
+  }),
+  success: Schema.Struct({
+    threadId: ThreadId,
+    enabled: Schema.Boolean,
+    internalDeliveryPaused: Schema.Boolean,
+    queuedUserRuns: NonNegativeInt,
+    queuedInternalRuns: NonNegativeInt,
+    acceptedInputs: NonNegativeInt,
+    offeredInputs: NonNegativeInt,
+    providerAcceptedInputs: NonNegativeInt,
+    consumptionUnknownInputs: NonNegativeInt,
+    publishedUserOutputs: NonNegativeInt,
+    internalOutputs: NonNegativeInt,
+    pending: Schema.Array(
+      Schema.Struct({
+        runId: RunId,
+        messageId: Schema.String,
+        port: Schema.String,
+        deliveryState: Schema.String,
+      }),
+    ),
+    nextCursor: Schema.NullOr(NonNegativeInt),
+  }),
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
 const QueueReadTool = Tool.make("t3_queue_read", {
   ...commandTool,
   description: "Read up to 16,000 chars of one queued message. Omit `threadId` for this thread.",
@@ -291,6 +324,7 @@ export const ThreadToolkit = Toolkit.make(
   PendingRequestRespondTool,
   ThreadOrganizeTool,
   QueueListTool,
+  CommunicationDiagnosticsTool,
   QueueReadTool,
   QueueEditTool,
   QueueCancelTool,

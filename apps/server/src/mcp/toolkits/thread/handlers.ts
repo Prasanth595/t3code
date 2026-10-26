@@ -22,6 +22,10 @@ import {
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
+import {
+  communicationDiagnostics,
+  communicationLanesPaused,
+} from "../../../orchestration-v2/CommunicationRollout.ts";
 import { ThreadToolkit } from "./tools.ts";
 
 function queueEntry(
@@ -247,6 +251,17 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         }),
         nextCursor: end < runs.length ? end : null,
       };
+    }),
+  ),
+  t3_communication_diagnostics: McpToolAccess.readsAsCaller((input) =>
+    Effect.gen(function* () {
+      const { projection } = yield* readThread(undefined, ["runs", "messages"]);
+      return communicationDiagnostics(
+        projection,
+        communicationLanesPaused(),
+        input.cursor ?? 0,
+        input.limit ?? 100,
+      );
     }),
   ),
   t3_queue_read: McpToolAccess.reads((input) =>

@@ -40,3 +40,21 @@ export function queuedRunsInDeliveryOrder(
       );
     });
 }
+
+/** The pause leaves internal runs queued and selects any verified human run behind them. */
+export function nextDeliverableQueuedRun(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages"> &
+    Partial<Pick<OrchestrationV2ThreadProjection, "thread">>,
+  internalDeliveryPaused: boolean,
+): OrchestrationV2Run | undefined {
+  const ordered = queuedRunsInDeliveryOrder(projection);
+  if (!internalDeliveryPaused || projection.thread?.communicationLanesEnabled !== true) {
+    return ordered[0];
+  }
+  const humanMessageIds = new Set(
+    projection.messages
+      .filter((message) => communicationDeliveryPriority(message) === 0)
+      .map((message) => message.id),
+  );
+  return ordered.find((run) => humanMessageIds.has(run.userMessageId));
+}

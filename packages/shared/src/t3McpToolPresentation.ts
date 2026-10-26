@@ -275,6 +275,10 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "schedule-run",
   ),
   t3_queue_list: tool(["List", "Listing", "Listed", "queued messages"], "queue-list"),
+  t3_communication_diagnostics: tool(
+    ["Check", "Checking", "Checked", "communication diagnostics"],
+    "thread-configuration",
+  ),
   t3_queue_read: tool(["Read", "Reading", "Read", "a queued message"], "queue-read"),
   t3_queue_edit: tool(["Edit", "Editing", "Edited", "a queued message"], "queue-edit"),
   t3_queue_cancel: tool(

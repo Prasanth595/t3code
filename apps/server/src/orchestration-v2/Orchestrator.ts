@@ -144,8 +144,13 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
-import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
+import {
+  isAutomaticCompletionRun,
+  nextDeliverableQueuedRun,
+  queuedRunsInDeliveryOrder,
+} from "./QueuedRunOrder.ts";
 import { communicationDeliveryPriority, hasQueuedHumanInput } from "./CommunicationScheduler.ts";
+import { communicationLanesPaused, isPausedInternalQueuedRun } from "./CommunicationRollout.ts";
 import {
   communicationForDispatch,
   communicationForInternalOutput,
@@ -729,7 +734,7 @@ function nextQueuedRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages"> &
     Partial<Pick<OrchestrationV2ThreadProjection, "thread">>,
 ): OrchestrationV2Run | undefined {
-  return queuedRunsInDeliveryOrder(projection)[0];
+  return nextDeliverableQueuedRun(projection, communicationLanesPaused());
 }
 
 function followsCurrentConversation(
@@ -1489,6 +1494,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               (run) => run.id === options.queuedRunId && run.status === "queued",
             );
       if (storedQueuedRun === undefined) {
+        return;
+      }
+      if (isPausedInternalQueuedRun(projection, storedQueuedRun, communicationLanesPaused())) {
         return;
       }
       const queuedMessage = projection.messages.find(
@@ -2522,6 +2530,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
 
     if (command.communicationLanesEnabled === true) {
+      if (communicationLanesPaused()) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Communication lanes are paused on this server. Start a thread without lanes.",
+        });
+      }
       yield* assertCommunicationProviderSupported(command, command.modelSelection.instanceId);
     }
 
@@ -5209,11 +5224,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection = yield* getProjectionWithPendingEvents(command.threadId, events);
     }
     const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
+    const internalIngressPaused =
+      projection.thread.communicationLanesEnabled === true &&
+      communicationLanesPaused() &&
+      communicationForDispatch(command).route.port === "internal.in";
     let dispatchMode = resolveMessageDispatchIntent(
       projection,
       command.dispatchMode,
       command.deliveryIntent,
     );
+    if (
+      internalIngressPaused &&
+      (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active")
+    ) {
+      dispatchMode = { type: "queue_after_active" };
+    }
     if (dispatchMode.type === "steer_active") {
       const targetRunId = dispatchMode.targetRunId;
       const target = projection.runs.find((run) => run.id === targetRunId);
@@ -5305,6 +5330,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.communicationLanesEnabled === true && hasQueuedHumanInput(projection);
     if (
       delegatedCompletion !== undefined &&
+      !internalIngressPaused &&
       !humanWaitingAtBoundary &&
       delegatedCompletion.taskIds.every(
         (id) => projection.subagents.find((task) => task.id === id)?.completionWake === "always",
@@ -5451,7 +5477,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       dispatchMode.type === "defer_start" ||
       dispatchMode.type === "start_immediately" ||
       dispatchMode.type === "queue_after_active";
-    const shouldQueue = queueBehindRun !== undefined && startsOrQueuesRun;
+    const shouldQueue =
+      (queueBehindRun !== undefined || internalIngressPaused) && startsOrQueuesRun;
     // Client messages resume held queues; server continuations and scheduled tasks do not.
     // Provider failure or usage limits re-hold the queue. Failed worktree setup keeps it held
     // until a worktree exists, so queued messages cannot start in the project checkout.
@@ -5494,20 +5521,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       const queueProviderThread =
         activeProviderThread ??
-        projection.providerThreads.find(
-          (candidate) => candidate.id === queueBehindRun.providerThreadId,
-        );
-      if (queueProviderThread === undefined) {
+        (queueBehindRun === undefined
+          ? undefined
+          : projection.providerThreads.find(
+              (candidate) => candidate.id === queueBehindRun.providerThreadId,
+            ));
+      if (queueProviderThread === undefined && !internalIngressPaused) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Active run ${queueBehindRun.id} has no provider thread for queued dispatch.`,
+          cause: `Active run ${queueBehindRun?.id} has no provider thread for queued dispatch.`,
         });
       }
       const now = yield* DateTime.now;
       const ordinal = nextRunOrdinal(projection);
       const runId = idAllocator.derive.run({ threadId: command.threadId, ordinal });
       const targetProviderThread =
+        queueProviderThread !== undefined &&
         modelSelection.instanceId === queueProviderThread.providerInstanceId
           ? queueProviderThread
           : rootProviderThreadsForProvider(projection, modelSelection.instanceId)[0];
@@ -5555,7 +5585,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const attemptId = idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 });
       const rootNodeId = idAllocator.derive.rootNode({ runId });
       const checkpointScope =
-        queueBehindRun.status === "preparing" || worktreeMissingRun !== undefined
+        queueBehindRun?.status === "preparing" || worktreeMissingRun !== undefined
           ? null
           : yield* runtimePolicy.resolve({ thread: projection.thread, modelSelection }).pipe(
               Effect.flatMap((resolvedRuntimePolicy) =>
@@ -12111,6 +12141,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }
         }
         const nextRun = selectedRun ?? nextQueuedRun(projection);
+        if (
+          selectedRun !== undefined &&
+          isPausedInternalQueuedRun(projection, selectedRun, communicationLanesPaused())
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Internal lane delivery is paused on this server.",
+          });
+        }
         if (
           usageLimitHoldsQueue(
             projection,

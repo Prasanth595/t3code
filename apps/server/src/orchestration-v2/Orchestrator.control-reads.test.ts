@@ -36,6 +36,8 @@ import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import { COMMUNICATION_LANES_PAUSE_ENV } from "./CommunicationRollout.ts";
+import { nextDeliverableQueuedRun } from "./QueuedRunOrder.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
@@ -1587,6 +1589,90 @@ it.effect("requires publication capability when starting or switching a lanes th
         .pipe(Effect.result))._tag,
       "Failure",
     );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("rejects new lanes threads while the operating pause is set", () =>
+  Effect.gen(function* () {
+    const previous = process.env[COMMUNICATION_LANES_PAUSE_ENV];
+    process.env[COMMUNICATION_LANES_PAUSE_ENV] = "1";
+    try {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("thread:paused-communication");
+      const created = yield* orchestrator
+        .dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create-paused-communication"),
+          threadId,
+          projectId: ProjectId.make("project:paused-communication"),
+          title: "Paused lanes",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+          communicationLanesEnabled: true,
+        })
+        .pipe(Effect.result);
+      assert.equal(created._tag, "Failure");
+    } finally {
+      if (previous === undefined) delete process.env[COMMUNICATION_LANES_PAUSE_ENV];
+      else process.env[COMMUNICATION_LANES_PAUSE_ENV] = previous;
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("stores fresh internal input as a queued run while delivery is paused", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:paused-internal-input");
+    const messageId = MessageId.make("message:paused-internal-input");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-paused-internal-input"),
+      threadId,
+      projectId: ProjectId.make("project:paused-internal-input"),
+      title: "Paused internal input",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+      communicationLanesEnabled: true,
+    });
+    const previous = process.env[COMMUNICATION_LANES_PAUSE_ENV];
+    process.env[COMMUNICATION_LANES_PAUSE_ENV] = "1";
+    try {
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("dispatch-paused-internal-input"),
+        threadId,
+        messageId,
+        text: "Internal result",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "mcp",
+        senderThreadId: ThreadId.make("thread:child"),
+      });
+      const projection = yield* projections.getThreadProjection(threadId);
+      const queued = projection.runs.find((run) => run.userMessageId === messageId);
+      assert.equal(queued?.status, "queued");
+      assert.equal(
+        projection.messages.find((message) => message.id === messageId)?.communication?.route.port,
+        "internal.in",
+      );
+      assert.equal(nextDeliverableQueuedRun(projection, true), undefined);
+      assert.equal(nextDeliverableQueuedRun(projection, false)?.id, queued?.id);
+    } finally {
+      if (previous === undefined) delete process.env[COMMUNICATION_LANES_PAUSE_ENV];
+      else process.env[COMMUNICATION_LANES_PAUSE_ENV] = previous;
+    }
   }).pipe(Effect.provide(layerTest)),
 );
 
