@@ -7,6 +7,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
@@ -25,7 +26,7 @@ import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
 import { makeWsRpcProtocolClient, PING_TIMEOUT, type WsRpcProtocolClient } from "./protocol.ts";
-import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
+import { NETWORK_BLOCKING_HINT, UNRESPONSIVE_HOST_HINT } from "../errors/network.ts";
 import type {
   ConnectionAttemptError,
   ConnectionTransientError,
@@ -122,6 +123,7 @@ function serverConfigReplayEvents(
 }
 
 const isSocketErrorReason = Schema.is(Socket.SocketErrorReason);
+const PING_TIMEOUT_SECONDS = Duration.toSeconds(PING_TIMEOUT);
 
 function mapSessionRpcError(
   error: InitialConfigError | ProbeError | ServerConfigSubscriptionError,
@@ -158,7 +160,7 @@ function socketFailureLocation(via: "relay" | "direct") {
   return { hop: via === "relay" ? "tunnel" : "server", via } as const;
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.fn("RpcSessionFactory.make")(function* (
   options: RpcSessionOptions = {},
 ) {
@@ -168,6 +170,11 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
     ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
   };
+  // Config state merges the snapshots it fetches back in, so no subscriber needs them broadcast.
+  const onDemandSnapshots = (input: ServerConfigSubscriptionInput) => ({
+    ...input,
+    workspaceSnapshotsOnDemand: true,
+  });
 
   const connect = Effect.fnUntraced(function* (connection: PreparedConnection) {
     const via = connection.target._tag === "RelayConnectionTarget" ? "relay" : "direct";
@@ -189,13 +196,14 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
             disconnected,
             new ConnectionTransientErrorClass({
               reason: "transport",
-              detail: `${
-                !wasConnected
-                  ? `${connection.label} could not establish a WebSocket connection.`
-                  : timedOut
-                    ? `${connection.label} stopped responding.`
-                    : `${connection.label} disconnected.`
-              }${networkHint}`,
+              // The network hint only fits a socket that never opened. Once it
+              // opened, the path worked, and a host that goes quiet is more
+              // often overloaded or asleep than blocked.
+              detail: !wasConnected
+                ? `${connection.label} could not establish a WebSocket connection.${networkHint}`
+                : timedOut
+                  ? `${connection.label} stopped responding for ${PING_TIMEOUT_SECONDS}s. ${UNRESPONSIVE_HOST_HINT}`
+                  : `${connection.label} disconnected.`,
               ...socketFailureLocation(via),
             }),
           ),
@@ -245,7 +253,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       detail: `${connection.label} config subscription ended.`,
     });
     const serverConfigSource = protocolClient[WS_METHODS.subscribeServerConfig](
-      serverConfigInput,
+      onDemandSnapshots(serverConfigInput),
     ).pipe(
       Stream.runForEach((event) =>
         Effect.gen(function* () {
@@ -384,7 +392,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
           Effect.as(
             Equal.equals(input, serverConfigInput)
               ? serverConfigEvents
-              : protocolClient[WS_METHODS.subscribeServerConfig](input),
+              : protocolClient[WS_METHODS.subscribeServerConfig](onDemandSnapshots(input)),
           ),
         ),
       );
