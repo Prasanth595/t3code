@@ -283,8 +283,6 @@ export function ComposerActionButton(props: {
           name={props.icon}
           size={props.size === "large" ? Math.round(20 * scale) : smallIconSize}
           weight="semibold"
-          // Disabled follows Material 3 (onSurface at 12% / 38%): the primary foreground is
-          // chosen against solid primary, so it vanishes on a faint primary tint.
           tintColorClassName={
             props.variant === "danger"
               ? "accent-danger-foreground"
