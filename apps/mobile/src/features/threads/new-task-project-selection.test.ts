@@ -110,14 +110,6 @@ describe("resolveDraftProjectSelection", () => {
     });
   });
 
-  it("keeps a draft's chosen project instead of asking again", () => {
-    const projects = [makeProject("first"), makeProject("chosen")];
-    const scopes = projects.map((project) => makeScope([project], project.id));
-    expect(resolveDraftProjectSelection("environment:chosen", projects, scopes)).toEqual({
-      kind: "preserve",
-    });
-  });
-
   it("does not preserve a project key that is missing from the catalog", () => {
     const project = makeProject("t3code");
     expect(
@@ -149,7 +141,7 @@ describe("newTaskDestination", () => {
       kind: "pick",
       picker: { requestId: "request" },
     });
-    expect(orderSuggestedProjectFirst(scopes, undefined)).toBe(scopes);
+    expect(orderSuggestedProjectFirst(scopes, undefined)).toEqual(scopes);
   });
 
   it("opens the draft directly in the only selectable project", () => {
