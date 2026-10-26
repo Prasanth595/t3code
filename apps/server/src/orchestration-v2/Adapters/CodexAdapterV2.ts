@@ -2455,7 +2455,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             while (ancestor !== undefined) {
               if (terminalizedNativeTurns.has(ancestor.nativeTurnId)) {
                 const nativeThreadId = yield* getNativeThreadId(subagent.providerThread);
-                const interrupted = yield* client
+                // Fork requests off the notification reader so it can read their responses.
+                yield* client
                   .request("turn/interrupt", {
                     threadId: nativeThreadId,
                     turnId: turn.nativeTurnId,
@@ -2470,16 +2471,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       }).pipe(Effect.as(false)),
                     ),
                     Effect.timeoutOption("10 seconds"),
+                    Effect.flatMap((interrupted) =>
+                      Option.isNone(interrupted)
+                        ? Effect.logWarning(
+                            "orchestration-v2.codex-late-subagent-interrupt-timeout",
+                            {
+                              nativeThreadId,
+                              nativeTurnId: turn.nativeTurnId,
+                            },
+                          )
+                        : Effect.void,
+                    ),
+                    Effect.forkIn(scope),
                   );
-                if (Option.isNone(interrupted)) {
-                  yield* Effect.logWarning(
-                    "orchestration-v2.codex-late-subagent-interrupt-timeout",
-                    {
-                      nativeThreadId,
-                      nativeTurnId: turn.nativeTurnId,
-                    },
-                  );
-                }
                 return;
               }
               ancestor = ancestor.subagent?.parentContext;
