@@ -1,6 +1,7 @@
 import type {
   EnvironmentId,
   PreviewOpenInput,
+  PreviewRuntime,
   PreviewSessionSnapshot,
   PreviewViewportSetting,
   ScopedThreadRef,
@@ -25,24 +26,22 @@ interface OpenPreviewSessionInput<E> {
   }) => Promise<AtomCommandResult<PreviewSessionSnapshot, E>>;
   threadRef: ScopedThreadRef;
   url?: string;
-  /** Overrides the configured default; automation passes an explicit size. */
   viewport?: PreviewViewportSetting;
-  /** Overrides the configured default profile. */
   profileId?: string;
+  runtime?: PreviewRuntime;
 }
 
 export async function openPreviewSession<E>(
   input: OpenPreviewSessionInput<E>,
 ): Promise<AtomCommandResult<PreviewSessionSnapshot, E | BrowserSettingsReadError>> {
-  // Resolved once: a tab opened before client settings hydrate would otherwise
-  // be born at the schema defaults and never corrected.
+  // Wait for settings hydration so new tabs cannot retain uncorrected schema defaults.
   const defaults = await resolveBrowserDefaults().catch(
     (cause: unknown) => new BrowserSettingsReadError({ cause }),
   );
   if (defaults instanceof BrowserSettingsReadError) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
-  const runtime = previewRuntimeFor(input.threadRef.environmentId);
+  const runtime = input.runtime ?? previewRuntimeFor(input.threadRef.environmentId);
   const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,
     input: {
@@ -50,7 +49,7 @@ export async function openPreviewSession<E>(
       ...(input.url === undefined ? {} : { url: input.url }),
       viewport: input.viewport ?? browserDefaultOpenViewport(defaults),
       profileId: input.profileId ?? browserDefaultOpenProfileId(defaults),
-      ...(runtime === undefined ? {} : { runtime }),
+      ...(runtime === undefined || runtime === "desktop" ? {} : { runtime }),
     },
   });
   if (result._tag === "Failure") {
