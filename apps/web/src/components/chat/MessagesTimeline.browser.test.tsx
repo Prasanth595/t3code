@@ -1,3 +1,8 @@
+import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
+import {
+  createComposerScrollGestureState,
+  listenForComposerScrollGestures,
+} from "./composerScrollGesture";
 import { AudioPreview } from "../files/AudioPreview";
 import { onTestFinished } from "vite-plus/test";
 import { stubGlobal } from "../../../test/render";
@@ -15,7 +20,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
 
-import { act, render } from "../../../test/render";
+import { act, render, fakeTimers } from "../../../test/render";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import { deriveTimelineEntriesFromVisibleTurnItems } from "../../session-logic";
@@ -852,12 +857,6 @@ it("renders automatic compaction as one live divider that finishes with its reas
   expect(container.textContent).not.toContain("Compacting before");
 });
 
-import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
-import {
-  createComposerScrollGestureState,
-  listenForComposerScrollGestures,
-} from "./composerScrollGesture";
-
 function setupComposerScrollGesture() {
   let timeline: HTMLDivElement;
   let content: HTMLDivElement;
@@ -878,7 +877,7 @@ function setupComposerScrollGesture() {
     timeline.dispatchEvent(new Event("scroll"));
   }
 
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  const timers = fakeTimers();
   timeline = document.createElement("div");
   content = document.createElement("div");
   timeline.append(content);
@@ -908,7 +907,7 @@ function setupComposerScrollGesture() {
   onTestFinished(() => {
     dispose();
     timeline.remove();
-    vi.useRealTimers();
+    timers[Symbol.dispose]();
   });
   return {
     dispose,
@@ -1057,6 +1056,23 @@ describe("composer timeline scroll input", () => {
       gesture.setAtLogicalEnd(false);
       gesture.scrollTo(750);
       expect(gesture.isCollapsed()).toBe(false);
+    },
+  );
+
+  it.each([false, true])(
+    "tracks delayed middle-click movement after an expired scroll: %s",
+    (interveningScroll) => {
+      const gesture = setupComposerScrollGesture();
+      gesture.pointerDown(gesture.content, 1);
+      gesture.pointerUp(1);
+      vi.advanceTimersByTime(500);
+      if (interveningScroll) gesture.scrollTo(550);
+      expect(gesture.isCollapsed()).toBe(false);
+      gesture.content.dispatchEvent(
+        new PointerEvent("pointermove", { bubbles: true, clientY: 20 }),
+      );
+      gesture.scrollTo(450);
+      expect(gesture.isCollapsed()).toBe(true);
     },
   );
 

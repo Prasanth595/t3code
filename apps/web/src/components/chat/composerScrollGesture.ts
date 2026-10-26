@@ -43,7 +43,7 @@ export function createComposerScrollGestureState(): ComposerScrollGestureState {
   };
 }
 
-export function resetComposerScrollGesture(state: ComposerScrollGestureState): void {
+function resetComposerScrollGesture(state: ComposerScrollGestureState): void {
   state.accumulatedDeltaPx = 0;
   state.collapseSuppressed = false;
   state.lastEventAt = Number.NEGATIVE_INFINITY;
@@ -163,6 +163,7 @@ export function listenForComposerScrollGestures({
   let activeInput: "scrollbar" | "touch" | "middle-click" | null = null;
   let hasScrolled = false;
   let middleButtonReleasedAt: number | null = null;
+  let middleClickAnchor = { x: 0, y: 0 };
   let touchScrollUntil = 0;
   let lastScrollTop = getTimelineScrollableNode()?.scrollTop ?? null;
   const beginPointerScroll = (input: NonNullable<typeof activeInput>, scrollNode: HTMLElement) => {
@@ -224,8 +225,19 @@ export function listenForComposerScrollGestures({
       targetsTimeline(event.target, scrollNode)
     ) {
       beginPointerScroll("middle-click", scrollNode);
+      middleClickAnchor = { x: event.clientX, y: event.clientY };
     } else if (event.button === 0 && event.target === scrollNode && event.pointerType !== "touch") {
       beginPointerScroll("scrollbar", scrollNode);
+    }
+  };
+  const handleMiddleClickPointerMove = (event: PointerEvent) => {
+    if (
+      activeInput === "middle-click" &&
+      !hasScrolled &&
+      middleButtonReleasedAt !== null &&
+      Math.hypot(event.clientX - middleClickAnchor.x, event.clientY - middleClickAnchor.y) > 4
+    ) {
+      middleButtonReleasedAt = window.performance.now();
     }
   };
   const handleTimelineTouchMove = (event: TouchEvent) => {
@@ -241,14 +253,13 @@ export function listenForComposerScrollGestures({
     const deltaY = lastScrollTop === null ? 0 : scrollTop - lastScrollTop;
     lastScrollTop = scrollTop;
     const now = window.performance.now();
-    // A browser without autoscroll must not leave a stationary middle click armed.
+    // A stationary middle click cannot attribute later follow scrolls to the user.
     if (
       activeInput === "middle-click" &&
       !hasScrolled &&
       middleButtonReleasedAt !== null &&
       now - middleButtonReleasedAt > COMPOSER_SCROLL_GESTURE_RESET_MS
     ) {
-      cancelPointerScroll();
       return;
     }
     if (deltaY === 0 || (activeInput === null && now >= touchScrollUntil)) return;
@@ -276,6 +287,10 @@ export function listenForComposerScrollGestures({
     capture: true,
     passive: true,
   });
+  document.addEventListener("pointermove", handleMiddleClickPointerMove, {
+    capture: true,
+    passive: true,
+  });
   document.addEventListener("touchmove", handleTimelineTouchMove, {
     capture: true,
     passive: true,
@@ -289,6 +304,7 @@ export function listenForComposerScrollGestures({
     document.removeEventListener("wheel", handleTimelineWheel, true);
     document.removeEventListener("scroll", handleTimelineScroll, true);
     document.removeEventListener("pointerdown", handleTimelinePointerDown, true);
+    document.removeEventListener("pointermove", handleMiddleClickPointerMove, true);
     document.removeEventListener("touchmove", handleTimelineTouchMove, true);
     document.removeEventListener("keydown", endMiddleClickAutoscroll, true);
     for (const type of POINTER_SCROLL_RELEASE_EVENTS) {
