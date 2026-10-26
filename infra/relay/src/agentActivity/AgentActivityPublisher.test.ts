@@ -71,7 +71,7 @@ function makeAgentActivityRows(
   overrides: Partial<AgentActivityRows.AgentActivityRows["Service"]> = {},
 ): AgentActivityRows.AgentActivityRows["Service"] {
   return {
-    upsert: () => Effect.void,
+    upsert: () => Effect.succeed(null),
     remove: () => Effect.void,
     pruneTerminal: () => Effect.void,
     listForUser: () => Effect.succeed([state]),
@@ -140,6 +140,69 @@ function makeApnsDeliveries(
 }
 
 describe("AgentActivityPublisher", () => {
+  it.effect("does not notify again when a publish repeats the stored phase", () => {
+    const renamed = { ...state, phase: "completed" as const, threadTitle: "Renamed" };
+    const sends: string[] = [];
+    const publishOver = (previous: RelayAgentActivityState) =>
+      Effect.gen(function* () {
+        const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+        yield* publisher.publish({
+          environmentId: state.environmentId,
+          environmentPublicKey: "key",
+          threadId: state.threadId,
+          state: renamed,
+        });
+      }).pipe(
+        Effect.provide(
+          layerPublisher.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(
+                  AgentActivityRows.AgentActivityRows,
+                  makeAgentActivityRows({ upsert: () => Effect.succeed(previous) }),
+                ),
+                Layer.succeed(
+                  EnvironmentLinks.EnvironmentLinks,
+                  makeEnvironmentLinks({
+                    listDeliveryUsersForEnvironment: () =>
+                      Effect.succeed([
+                        { userId: "live", notificationsEnabled: true, liveActivitiesEnabled: true },
+                        {
+                          userId: "push",
+                          notificationsEnabled: true,
+                          liveActivitiesEnabled: false,
+                        },
+                      ]),
+                  }),
+                ),
+                Layer.succeed(
+                  LiveActivities.LiveActivities,
+                  makeLiveActivities({ listTargets: () => Effect.succeed([target("ios")]) }),
+                ),
+                Layer.succeed(
+                  ApnsDeliveries.ApnsDeliveries,
+                  makeApnsDeliveries({
+                    sendForTarget: (input) =>
+                      Effect.sync(() => void sends.push(`target:${input.repeatsAlert}`)).pipe(
+                        Effect.as(null),
+                      ),
+                    sendPushNotificationForTarget: () =>
+                      Effect.sync(() => void sends.push("notification")).pipe(Effect.as(null)),
+                  }),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    return Effect.gen(function* () {
+      yield* publishOver({ ...renamed, threadTitle: "Thread", updatedAt: "1969-12-31T00:00:00Z" });
+      expect(sends.splice(0).sort()).toEqual(["target:true", "target:true"]);
+      yield* publishOver({ ...renamed, phase: "running" });
+      expect(sends.splice(0).sort()).toEqual(["notification", "target:false", "target:false"]);
+    });
+  });
+
   it.effect("routes Android publication and registration replay to FCM alongside iOS", () => {
     const android = { ...target("android"), platform: "android" as const, ios_major_version: null };
     const ios = target("ios");

@@ -168,7 +168,7 @@ function layerFor(input: {
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(AgentActivityRows.AgentActivityRows, {
-          upsert: () => Effect.void,
+          upsert: () => Effect.succeed(null),
           remove: () => Effect.void,
           pruneTerminal: () => Effect.void,
           listForUser: () =>
@@ -546,6 +546,24 @@ describe("ApnsDeliveries", () => {
       }).pipe(Effect.provide(layerFor({ attempts, queuedJobs })));
     },
   );
+
+  it.effect("skips the fallback push notification when a publish repeats the phase", () => {
+    const queuedJobs: Array<SignedApnsDeliveryJob> = [];
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const result = yield* deliveries.sendForTarget({
+        target: { ...target, push_token: "apns-device-token", activity_push_token: null },
+        aggregate: {
+          ...aggregate,
+          activities: [{ ...aggregate.activities[0]!, phase: "waiting_for_input" }],
+        },
+        nowMs: 5_000,
+        repeatsAlert: true,
+      });
+      expect(result).toBeNull();
+      expect(queuedJobs).toEqual([]);
+    }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
+  });
 
   it.effect("queues bounded alert notification payloads", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];

@@ -65,6 +65,7 @@ export const make = Effect.gen(function* () {
   const publishForDeliveryUser = Effect.fnUntraced(function* (input: {
     readonly deliveryUser: EnvironmentLinks.AgentAwarenessDeliveryUserRecord;
     readonly state: RelayAgentActivityState | null;
+    readonly repeatsAlert: boolean;
     readonly nowMs: number;
   }) {
     const activeStates = input.deliveryUser.liveActivitiesEnabled
@@ -80,6 +81,7 @@ export const make = Effect.gen(function* () {
     const notificationOnlyAggregate =
       input.deliveryUser.notificationsEnabled &&
       !input.deliveryUser.liveActivitiesEnabled &&
+      !input.repeatsAlert &&
       input.state !== null
         ? makeAggregateState({
             activeStates: isTerminalPhase(input.state) ? [] : [input.state],
@@ -100,6 +102,7 @@ export const make = Effect.gen(function* () {
               target,
               aggregate: liveActivityAggregate,
               nowMs: input.nowMs,
+              repeatsAlert: input.repeatsAlert,
             }),
             notificationOnlyAggregate === null
               ? Effect.succeed(null)
@@ -210,12 +213,15 @@ export const make = Effect.gen(function* () {
         "relay.thread_id": input.threadId,
         "relay.agent_activity.phase": input.state?.phase ?? "deleted",
       });
+      let repeatsAlert = false;
       if (input.state) {
         // Retain terminal rows until cron pruning so completed threads remain visible alongside active ones.
-        yield* rows.upsert({
+        const previous = yield* rows.upsert({
           environmentPublicKey: input.environmentPublicKey,
           state: input.state,
         });
+        // Same-phase publishes such as renames or restart snapshots are not new alerts.
+        repeatsAlert = previous?.phase === input.state.phase;
       } else {
         yield* rows.remove({
           environmentId: input.environmentId,
@@ -235,6 +241,7 @@ export const make = Effect.gen(function* () {
           publishForDeliveryUser({
             deliveryUser,
             state: input.state,
+            repeatsAlert,
             nowMs: now.epochMilliseconds,
           }),
         { concurrency: 4 },

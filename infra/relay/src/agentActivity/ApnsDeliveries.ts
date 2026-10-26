@@ -291,6 +291,7 @@ function chooseDelivery(input: {
   readonly aggregate: RelayAgentActivityAggregateState | null;
   readonly nowMs: number;
   readonly replay?: boolean;
+  readonly repeatsAlert?: boolean;
 }): ChosenDelivery | null {
   const liveActivityDelivery = chooseLiveActivityDelivery(input);
   if (liveActivityDelivery === "suppressed") {
@@ -299,7 +300,7 @@ function chooseDelivery(input: {
   if (liveActivityDelivery) {
     return liveActivityDelivery;
   }
-  const notification = input.replay ? null : notificationForAggregate(input);
+  const notification = input.replay || input.repeatsAlert ? null : notificationForAggregate(input);
   return notification && input.target.push_token
     ? {
         kind: "push_notification",
@@ -501,6 +502,8 @@ export class ApnsDeliveries extends Context.Service<
       readonly aggregate: RelayAgentActivityAggregateState | null;
       readonly nowMs: number;
       readonly replay?: boolean;
+      /** Skips notification pushes but keeps Live Activity alerts, which compare phases. */
+      readonly repeatsAlert?: boolean;
     }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
     readonly sendPushNotificationForTarget: (input: {
       readonly target: LiveActivities.TargetRow;
@@ -1127,6 +1130,7 @@ export const make = Effect.gen(function* () {
         aggregate: input.aggregate,
         nowMs: input.nowMs,
         replay: input.replay ?? false,
+        repeatsAlert: input.repeatsAlert ?? false,
       });
       if (!delivery) {
         return null;
@@ -1142,13 +1146,14 @@ export const make = Effect.gen(function* () {
         });
         return result;
       }
-      const notification = input.replay
-        ? null
-        : notificationForAggregate({
-            target: input.target,
-            aggregate: input.aggregate,
-            nowMs: input.nowMs,
-          });
+      const notification =
+        input.replay || input.repeatsAlert
+          ? null
+          : notificationForAggregate({
+              target: input.target,
+              aggregate: input.aggregate,
+              nowMs: input.nowMs,
+            });
       // Use the end alert only when no companion notification will ring, preserving feedback for Live-Activity-only users.
       const alert = input.replay
         ? null
