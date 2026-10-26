@@ -117,10 +117,11 @@ export function insertRoute(
   route: ConnectionRoute,
   { aheadOfSameKind = false }: { readonly aheadOfSameKind?: boolean } = {},
 ): ReadonlyArray<ConnectionRoute> {
-  const rank = ROUTE_KIND_RANK[connectionRouteKind(route)];
+  const kind = connectionRouteKind(route);
+  const rank = ROUTE_KIND_RANK[kind];
   const index = routes.findIndex((existing) => {
-    const existingRank = ROUTE_KIND_RANK[connectionRouteKind(existing)];
-    return aheadOfSameKind ? existingRank >= rank : existingRank > rank;
+    const existingKind = connectionRouteKind(existing);
+    return ROUTE_KIND_RANK[existingKind] > rank || (aheadOfSameKind && existingKind === kind);
   });
   return index === -1
     ? [...routes, route]
