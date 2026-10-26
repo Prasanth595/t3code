@@ -195,7 +195,25 @@ it.each(["Save", "Disable"])("keeps other provider edits through a %s refetch", 
     resolveReload = resolve;
   });
   commands.listProviders.mockReturnValueOnce(reload);
+  let resolveMutation!: () => void;
+  const mutation = new Promise<void>((resolve) => {
+    resolveMutation = resolve;
+  });
+  const command = action === "Save" ? commands.setProvider : commands.disableProvider;
+  command.mockReturnValueOnce(
+    mutation.then(() => ({
+      _tag: "Success",
+      value: action === "Save" ? { configured: true } : { disabled: true },
+    })),
+  );
   await screen.click(action);
+  expect(screen.button("Refresh").disabled).toBe(true);
+  await act(async () => resolveMutation());
+  for (const button of screen.container.querySelectorAll<HTMLButtonElement>("button")) {
+    if (button.textContent === "Save" || button.textContent === "Disable") {
+      expect(button.disabled).toBe(true);
+    }
+  }
   await userEvent.fill(input("other base URL"), "https://newer.example.test/v1");
   await act(async () => resolveReload(response));
 

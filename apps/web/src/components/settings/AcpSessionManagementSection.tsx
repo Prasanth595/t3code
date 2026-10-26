@@ -244,7 +244,8 @@ export function AcpSessionManagementSection(props: {
     if (
       !readEnvironmentScope(props.environmentId, AuthProvidersManageScope) ||
       projectId === null ||
-      savingProviderId !== null
+      savingProviderId !== null ||
+      loadingProviders
     )
       return;
     const draft = providerDrafts[provider.providerId];
@@ -281,7 +282,8 @@ export function AcpSessionManagementSection(props: {
   };
 
   const disableConfiguredProvider = async (provider: AcpRegistryConfigurableProvider) => {
-    if (projectId === null || savingProviderId !== null || provider.required) return;
+    if (projectId === null || savingProviderId !== null || loadingProviders || provider.required)
+      return;
     const confirmed = await ensureLocalApi().dialogs.confirm(
       `Disable ACP provider "${provider.providerId}"?`,
       { variant: "destructive" },
@@ -468,7 +470,9 @@ export function AcpSessionManagementSection(props: {
               type="button"
               size="xs"
               variant="outline"
-              disabled={!canRead || loadingProviders || projectId === null}
+              disabled={
+                !canRead || loadingProviders || savingProviderId !== null || projectId === null
+              }
               onClick={() => void loadProviders()}
             >
               {loadingProviders ? "Loading" : providers.length === 0 ? "List providers" : "Refresh"}
@@ -534,6 +538,7 @@ export function AcpSessionManagementSection(props: {
                           disabled={
                             props.readOnly ||
                             savingProviderId !== null ||
+                            loadingProviders ||
                             draft.apiType.length === 0 ||
                             draft.baseUrl.length === 0
                           }
@@ -546,7 +551,9 @@ export function AcpSessionManagementSection(props: {
                             type="button"
                             size="xs"
                             variant="ghost-muted"
-                            disabled={props.readOnly || savingProviderId !== null}
+                            disabled={
+                              props.readOnly || savingProviderId !== null || loadingProviders
+                            }
                             onClick={() => void disableConfiguredProvider(provider)}
                           >
                             Disable
