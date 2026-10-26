@@ -1,3 +1,4 @@
+import { derivePhysicalProjectKey } from "@t3tools/client-runtime/state/project-grouping";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { repositoryGroupingKeyOf, type EnvironmentId } from "@t3tools/contracts";
@@ -119,6 +120,26 @@ export function pickerProjectScopes(
         isScratchProject(project, serverConfigs.get(project.environmentId)?.scratchWorkspaceRoot),
       ),
   );
+}
+
+/**
+ * The key of the listed project registered at `projectKey`'s path. Grouping lists one registration
+ * per path, so a thread can belong to an older registration the picker doesn't show.
+ */
+export function listedProjectKey(
+  scopes: ReadonlyArray<HomeProjectScope>,
+  projects: ReadonlyArray<EnvironmentProject>,
+  projectKey: string | undefined,
+): string | undefined {
+  const project = projects.find(
+    (candidate) => scopedProjectKey(candidate.environmentId, candidate.id) === projectKey,
+  );
+  if (!project) return projectKey;
+  const physicalKey = derivePhysicalProjectKey(project);
+  const listed = scopes
+    .flatMap((scope) => scope.projects)
+    .find((candidate) => derivePhysicalProjectKey(candidate) === physicalKey);
+  return listed ? scopedProjectKey(listed.environmentId, listed.id) : projectKey;
 }
 
 /**

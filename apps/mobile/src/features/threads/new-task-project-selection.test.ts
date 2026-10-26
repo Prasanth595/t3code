@@ -2,9 +2,10 @@ import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { HomeProjectScope } from "../home/homeThreadList";
+import { buildHomeProjectScopes, type HomeProjectScope } from "../home/homeThreadList";
 import {
   getProjectScopeSelectionTarget,
+  listedProjectKey,
   newTaskDestination,
   orderSuggestedProjectFirst,
   pickerProjectScopes,
@@ -199,5 +200,34 @@ describe("newTaskDestination", () => {
     expect(getProjectScopeSelectionTarget(scope, EnvironmentId.make("mac"), "server:t3code")).toBe(
       server,
     );
+  });
+
+  it("resolves a thread's older registration to the one listed at the same path", () => {
+    const repository = { repositoryKey: "github.com/t3tools/t3code" };
+    const mac = makeProject("mac-t3code", "mac", { ...repository, workspaceRoot: "/mac/t3code" });
+    const older = {
+      ...makeProject("server-old", "server", { ...repository, workspaceRoot: "/srv/t3code" }),
+      updatedAt: "2026-06-01T00:00:00.000Z",
+    };
+    const newer = makeProject("server-new", "server", {
+      ...repository,
+      workspaceRoot: "/srv/t3code",
+    });
+    const projects = [mac, older, newer];
+    const scopes = buildHomeProjectScopes({
+      projects,
+      environmentId: null,
+      projectGroupingMode: "repository",
+    });
+    expect(scopes.map((scope) => scope.representative)).toEqual([mac]);
+
+    const currentProjectKey = listedProjectKey(scopes, projects, "server:server-old");
+    expect(currentProjectKey).toBe("server:server-new");
+    expect(newTaskDestination(scopes, currentProjectKey, "request")).toEqual({
+      kind: "draft",
+      draft: { requestId: "request", environmentId: "server", projectId: "server-new" },
+    });
+    expect(listedProjectKey(scopes, projects, "mac:mac-t3code")).toBe("mac:mac-t3code");
+    expect(listedProjectKey(scopes, projects, undefined)).toBeUndefined();
   });
 });

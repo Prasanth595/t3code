@@ -72,7 +72,11 @@ import { startOpeningDetail } from "../workspace/useSelectWorkspaceDetail";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { HomeListOptionsProvider } from "../home/home-list-options";
 import { buildHomeProjectScopes } from "../home/homeThreadList";
-import { newTaskDestination, pickerProjectScopes } from "../threads/new-task-project-selection";
+import {
+  listedProjectKey,
+  newTaskDestination,
+  pickerProjectScopes,
+} from "../threads/new-task-project-selection";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
 import { useOpenThreadPullRequests } from "../threads/use-open-thread-pull-requests";
@@ -521,32 +525,35 @@ function AdaptiveWorkspaceLayoutContent(
     const { workspace, overlays } = workspaceRoutesOf(
       state?.routes.slice(0, state.index + 1) ?? [],
     );
-    const currentRoute = workspace.at(-1);
-    const params =
-      currentRoute?.name === "Thread"
-        ? (currentRoute.params as ReactNavigation.RootParamList["Thread"])
-        : undefined;
+    // Every thread page (chat, terminal, files, review, ...) names its thread in its params.
+    const params = workspace.at(-1)?.params as ReactNavigation.RootParamList["Thread"];
     const first = (value: string | string[] | undefined) =>
       Array.isArray(value) ? value[0] : value;
-    const thread = appAtomRegistry
-      .get(environmentThreadShells.navigationThreadShellsAtom)
-      .find(
-        (candidate) =>
-          candidate.environmentId === first(params?.environmentId) &&
-          candidate.id === first(params?.threadId),
-      );
-    // An open draft's route may not name the project it shows, so read the draft's selection.
-    const currentProjectKey = thread
-      ? scopedProjectKey(thread.environmentId, thread.projectId)
-      : params?.draft
-        ? (appAtomRegistry.get(activeNewTaskProjectKeyAtom) ?? undefined)
+    const environmentId = first(params?.environmentId);
+    const threadId = first(params?.threadId);
+    // The index includes subagent threads, which the navigation list leaves out.
+    const threadProjectId =
+      environmentId && threadId
+        ? appAtomRegistry
+            .get(
+              environmentThreadShells.environmentThreadIndexAtom(EnvironmentId.make(environmentId)),
+            )
+            .get(ThreadId.make(threadId))?.projectId
         : undefined;
+    // An open draft's route may not name the project it shows, so read the draft's selection.
+    const currentProjectKey =
+      environmentId && threadProjectId
+        ? scopedProjectKey(EnvironmentId.make(environmentId), threadProjectId)
+        : params?.draft
+          ? (appAtomRegistry.get(activeNewTaskProjectKeyAtom) ?? undefined)
+          : undefined;
+    const projectScopes = pickerProjectScopes(
+      buildHomeProjectScopes({ projects, environmentId: null, projectGroupingMode }),
+      appAtomRegistry.get(environmentServerConfigsAtom),
+    );
     const destination = newTaskDestination(
-      pickerProjectScopes(
-        buildHomeProjectScopes({ projects, environmentId: null, projectGroupingMode }),
-        appAtomRegistry.get(environmentServerConfigsAtom),
-      ),
-      currentProjectKey,
+      projectScopes,
+      listedProjectKey(projectScopes, projects, currentProjectKey),
       uuidv4(),
     );
     if (destination.kind === "draft") {
