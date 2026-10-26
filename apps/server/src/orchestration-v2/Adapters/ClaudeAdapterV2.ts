@@ -3801,8 +3801,7 @@ interface ActiveClaudeTurnContext {
   // Set while this turn's latest compaction status reports a failure, with
   // Claude's error text when it sent one.
   compactionFailure: { readonly message: string | undefined } | null;
-  // Usage of earlier steered segments and buffered wakes, oldest first. The final result's
-  // usage covers only its own segment, so the turn bills these as well.
+  // The final result excludes earlier steered segments and buffered wakes; bill them too.
   readonly earlierSegmentUsage: Array<SDKResultMessage["usage"]>;
   readonly subagentsByTaskId: Map<string, ActiveClaudeSubagent>;
   readonly subagentsByToolUseId: Map<string, ActiveClaudeSubagent>;
@@ -10147,11 +10146,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   yield* finalizeActiveTurn({ context, status: "completed", completedAt });
                   return;
                 }
-                // Replay any result message last: a result finalizes the turn, and
-                // replaying it before the rest would drop them back into the wake
-                // buffer and request another continuation. Results before the
-                // last root init must not settle a successor still running:
-                // keep their error notices and usage instead.
+                // Replay results last to avoid rebuffering later frames; a newer root init owns settlement.
                 const lastTurnStartIndex = drained.findLastIndex(isClaudeTurnStartMessage);
                 const lastResultIndex = drained.findLastIndex((entry) => entry.type === "result");
                 // Preserve the base fallback when the latest wake has only empty

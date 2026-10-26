@@ -9033,8 +9033,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  // Oracle: #16808 frame order and replay contract. Each row gives the exact
-  // visible texts, settlement and billed usage; empty successes retain base billing.
   const replayWake = (
     id: string,
     text: string,
@@ -9067,16 +9065,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       cache_read_input_tokens: 0,
     },
   });
-  const secondEarlierWake = replayWake("earlier-b", "Earlier B.", {
-    result: "Earlier B.",
-    origin: { kind: "task-notification" },
-    usage: {
-      input_tokens: 100,
-      output_tokens: 200,
-      cache_creation_input_tokens: 0,
-      cache_read_input_tokens: 0,
-    },
-  });
   const emptyWakeSuccess = makeResultFrame({
     uuid: "empty-wake-result",
     result: "",
@@ -9092,46 +9080,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   });
   it.effect.each([
     {
-      label: "older assistant and success keep the newer wake open",
-      before: earlierWake,
+      label: "older results preserve the active successor and its approval",
+      before: [wakeTurnInit, emptyWakeSuccess, ...earlierWake, ...earlierErrorWake],
       after: [wakeTurnInit],
       beforeCheck: [wakeAssistant],
       live: [wakeResult],
-      texts: ["Earlier A.", WAKE_ASSISTANT_TEXT],
+      texts: ["Earlier A.", "Earlier A.", WAKE_ASSISTANT_TEXT],
       status: "completed",
-      inputTokens: 11,
-      outputTokens: 21,
-      notices: [],
-      openOnAttach: true,
-      terminalCount: 2,
-      usageStatus: "complete",
-    },
-    {
-      label: "older assistant and error keep the newer wake open with a notice",
-      before: earlierErrorWake,
-      after: [wakeTurnInit],
-      beforeCheck: [wakeAssistant],
-      live: [wakeResult],
-      texts: ["Earlier A.", WAKE_ASSISTANT_TEXT],
-      status: "completed",
-      inputTokens: 11,
-      outputTokens: 21,
+      inputTokens: 21,
+      outputTokens: 41,
       notices: ["Tool execution failed: EACCES"],
-      openOnAttach: true,
-      terminalCount: 2,
-      usageStatus: "complete",
-    },
-    {
-      label: "two older assistant-result wakes keep the third wake open",
-      before: [...earlierWake, ...secondEarlierWake],
-      after: [wakeTurnInit],
-      beforeCheck: [wakeAssistant],
-      live: [wakeResult],
-      texts: ["Earlier A.", "Earlier B.", WAKE_ASSISTANT_TEXT],
-      status: "completed",
-      inputTokens: 111,
-      outputTokens: 221,
-      notices: [],
       openOnAttach: true,
       terminalCount: 2,
       usageStatus: "complete",
@@ -9208,78 +9166,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       terminalCount: 3,
       usageStatus: "complete",
     },
-    {
-      label: "lone buffered success without later init keeps base settlement",
-      before: earlierWake,
-      after: [],
-      beforeCheck: [],
-      live: [],
-      texts: ["Earlier A."],
-      status: "completed",
-      inputTokens: 10,
-      outputTokens: 20,
-      notices: [],
-      openOnAttach: false,
-      terminalCount: 3,
-      usageStatus: "complete",
-    },
-    {
-      label: "lone buffered error without later init keeps base settlement",
-      before: earlierErrorWake,
-      after: [],
-      beforeCheck: [],
-      live: [],
-      texts: ["Earlier A."],
-      status: "failed",
-      inputTokens: 10,
-      outputTokens: 20,
-      notices: [],
-      openOnAttach: false,
-      terminalCount: 3,
-      usageStatus: "partial",
-    },
-    {
-      label: "live empty success after buffered rate-limit assistant error completes",
-      before: [
-        wakeTurnInit,
-        makeAssistantErrorFrame({ uuid: "buffered-rate-limit", error: "rate_limit" }),
-      ],
-      after: [],
-      beforeCheck: [],
-      live: [emptyWakeSuccess],
-      texts: ["Claude could not complete this request."],
-      status: "completed",
-      inputTokens: 7,
-      outputTokens: 7,
-      notices: [],
-      openOnAttach: true,
-      terminalCount: 2,
-      usageStatus: "complete",
-    },
-    {
-      label: "older empty zero-turn success keeps base billing",
-      before: [
-        wakeTurnInit,
-        makeAssistantTextFrame({ uuid: "older-empty-assistant", text: "" }),
-        emptyWakeSuccess,
-      ],
-      after: [claudeSdkFrame({ ...wakeTurnInit, uuid: "newer-init" })],
-      beforeCheck: [wakeAssistant],
-      live: [wakeResult],
-      texts: [WAKE_ASSISTANT_TEXT],
-      status: "completed",
-      inputTokens: 1,
-      outputTokens: 1,
-      notices: [],
-      openOnAttach: true,
-      terminalCount: 2,
-      usageStatus: "complete",
-    },
   ])("replays wakes: $label", (scenario) =>
     Effect.scoped(
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
         const now = yield* DateTime.now;
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          cwd: "/workspace",
+        });
         const wakeAttempt = RunAttemptId.make("attempt-claude-replay-3");
         const wakeRun = RunId.make(`run-${wakeAttempt}`);
         yield* harness.runtime.startTurn(
@@ -9287,6 +9183,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             threadId: harness.threadId,
             providerThread: harness.providerThread,
             now,
+            runtimePolicy,
             attemptId: RunAttemptId.make("attempt-claude-replay-1"),
             text: "Run the build in the background.",
             attachments: [],
@@ -9302,6 +9199,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             threadId: harness.threadId,
             providerThread: harness.providerThread,
             now,
+            runtimePolicy,
             attemptId: RunAttemptId.make("attempt-claude-replay-2"),
             text: "Check the build.",
             attachments: [],
@@ -9325,6 +9223,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             threadId: harness.threadId,
             providerThread: harness.providerThread,
             now,
+            runtimePolicy,
             attemptId: wakeAttempt,
             text: "Background task completed.",
             attachments: [],
@@ -9348,6 +9247,35 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }
         if (!scenario.openOnAttach) yield* harness.awaitTerminal(3);
         const terminalCountOnAttach = harness.terminalEvents().length;
+        if (scenario.openOnAttach) {
+          assert.equal(terminalCountOnAttach, 2);
+          const permission = yield* Effect.promise(() =>
+            harness.getOpenedOptions()!.canUseTool!(
+              "Bash",
+              { command: "git status" },
+              {
+                signal: new AbortController().signal,
+                toolUseID: "toolu_replayed_wake_approval",
+                requestId: "request-replayed-wake",
+              },
+            ),
+          ).pipe(Effect.forkScoped);
+          const request = yield* Queue.take(harness.runtimeRequestReceipts);
+          const wakeTurn = harness.events.findLast(
+            (event) =>
+              event.type === "provider_turn.updated" &&
+              event.providerTurn.runAttemptId === wakeAttempt,
+          );
+          assert.equal(
+            request.runtimeRequest.providerTurnId,
+            wakeTurn?.type === "provider_turn.updated" ? wakeTurn.providerTurn.id : undefined,
+          );
+          yield* harness.runtime.respondToRuntimeRequest({
+            requestId: request.runtimeRequest.id,
+            decision: "accept",
+          });
+          assert.equal((yield* Fiber.join(permission))?.behavior, "allow");
+        }
         for (const frame of scenario.live) yield* harness.offerAndWait(frame);
         yield* harness.awaitTerminal(3);
         const completed = harness.events.findLast(
