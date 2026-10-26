@@ -61,6 +61,7 @@ import {
   ThreadPullRequestSnapshot,
   ThreadPullRequestStack,
   ThreadPullRequestWatch,
+  ThreadPullRequestWatchEvents,
 } from "./threadPullRequest.ts";
 import {
   ProviderApprovalDecision,
@@ -2932,6 +2933,8 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     ...ThreadPullRequestKey.fields,
     watching: Schema.Boolean,
+    /** Replaces the watch's filter; absent means all events. */
+    events: Schema.optional(ThreadPullRequestWatchEvents),
     link: Schema.optional(
       Schema.Struct({
         url: TrimmedNonEmptyString,
@@ -3249,6 +3252,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     ...ThreadPullRequestKey.fields,
     startedAt: IsoDateTime,
+    /** The selection used to evaluate this read; omitted means all events. */
+    expectedEvents: Schema.optional(ThreadPullRequestWatchEvents),
     watch: Schema.NullOr(ThreadPullRequestWatch),
     /** With `watch: null`, the state the ended watch keeps instead of its last saved one. */
     endedWatch: Schema.optional(ThreadPullRequestWatch),
