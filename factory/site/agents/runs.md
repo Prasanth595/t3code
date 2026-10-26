@@ -128,16 +128,17 @@ Unauthenticated: 401.
 
 ## Attention items
 
-| Kind                                              | Raised when                                                                                                         | Clears when                                                                  |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `stuck`                                           | A run ends `stuck`.                                                                                                 | The issue is claimed again.                                                  |
-| `needs-info`                                      | A run ends `needs-info`.                                                                                            | The issue is claimed again.                                                  |
-| `attention`                                       | Issue closed under a building run; a run holds a slot with nothing to move it; a thread may need archiving by hand. | The run finishes, or the issue is claimed again.                             |
-| `attention` (id `worktree:<path>`)                | A pass archived the live threads left on a stopped session's worktree that is gone or has no `.git`.                | The issue is claimed again.                                                  |
-| `attention` (id `low-disk`)                       | Free space is below `min_free_gib`; no run.                                                                         | A pass finds it at or above, or reads none.                                  |
-| `attention` (id `config-not-loaded:<owner/name>`) | A repo's project config has not loaded, or its config or login could not be re-read (stale), for 3 passes in a row. | A pass reads the config fresh and does not fall back on the last good login. |
-| `config`                                          | The machine config fails to load.                                                                                   | It loads.                                                                    |
-| `pass-errors`                                     | 3 passes in a row fail.                                                                                             | A pass succeeds.                                                             |
+| Kind                                              | Raised when                                                                                                         | Clears when                                                                        |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `stuck`                                           | A run ends `stuck`.                                                                                                 | The issue is claimed again.                                                        |
+| `needs-info`                                      | A run ends `needs-info`.                                                                                            | The issue is claimed again.                                                        |
+| `attention`                                       | Issue closed under a building run; a run holds a slot with nothing to move it; a thread may need archiving by hand. | The run finishes, or the issue is claimed again.                                   |
+| `attention` (id `worktree:<path>`)                | A pass archived the live threads left on a stopped session's worktree that is gone or has no `.git`.                | The issue is claimed again.                                                        |
+| `attention` (id `low-disk`)                       | Free space is below `min_free_gib`; no run.                                                                         | A pass finds it at or above, or reads none.                                        |
+| `attention` (id `deploy-waiting`)                 | autodeploy has had a build waiting longer than `deploy_wait_minutes`; no run.                                       | The `deploy-pending` marker is gone or stale, or the wait is under a raised limit. |
+| `attention` (id `config-not-loaded:<owner/name>`) | A repo's project config has not loaded, or its config or login could not be re-read (stale), for 3 passes in a row. | A pass reads the config fresh and does not fall back on the last good login.       |
+| `config`                                          | The machine config fails to load.                                                                                   | It loads.                                                                          |
+| `pass-errors`                                     | 3 passes in a row fail.                                                                                             | A pass succeeds.                                                                   |
 
 Dismissed items stay hidden until they clear and are raised again.
 

@@ -775,6 +775,7 @@ describe("liveWorld", () => {
     notify: true,
     minFreeGib: 0,
     maxLoadPerCore: 0,
+    deployWaitMinutes: 120,
   };
 
   const worldOf = (process: FactoryProcess["Service"]) =>
@@ -1766,6 +1767,7 @@ describe("the gate in the background", () => {
     notify: true,
     minFreeGib: 0,
     maxLoadPerCore: 0,
+    deployWaitMinutes: 120,
   } satisfies MachineConfig;
   const backgroundRepo: Repo = {
     watched: { repo: REPO, path: "/p" },
@@ -2108,6 +2110,7 @@ describe("the gate in the background", () => {
     notify: true,
     minFreeGib: 0,
     maxLoadPerCore: 0,
+    deployWaitMinutes: 120,
   };
   const gateRepo: Repo = {
     watched: { repo: REPO, path: "/p" },
@@ -2452,6 +2455,7 @@ describe("the gate in the background", () => {
         notify: true,
         minFreeGib: 0,
         maxLoadPerCore: 0,
+        deployWaitMinutes: 120,
       };
       const world = liveWorld(
         machine,
@@ -2509,6 +2513,7 @@ describe("the gate in the background", () => {
             notify: true,
             minFreeGib: 0,
             maxLoadPerCore: 0,
+            deployWaitMinutes: 120,
           },
           dataDir,
           { run: () => Effect.die("no gh") },
@@ -2760,6 +2765,26 @@ describe("reloading the machine config", () => {
               : { path: elsewhere, freeBytes: 3 },
           );
         }
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("the world reads the deploy-pending marker from the factory dir", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const worlds: Array<PassWorld> = [];
+        const { factoryDir } = yield* started(VALID, holdingProcess().process, quietEvents, {
+          onWorld: (world) => worlds.push(world),
+        });
+        const commit = "7a70dadf1e2f3a4b5c6d7e8f901234567890abcd";
+        const file = NodePath.join(factoryDir, "deploy-pending");
+        assert.strictEqual(worlds[0]!.pendingDeploy(), null);
+        NodeFS.writeFileSync(file, `1761400000 ${commit}\n`);
+        assert.deepStrictEqual(worlds[0]!.pendingDeploy(), {
+          sinceMs: 1761400000000,
+          commit,
+          writtenMs: Math.floor(NodeFS.statSync(file).mtimeMs),
+        });
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
