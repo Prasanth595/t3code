@@ -64,7 +64,7 @@ import {
 import { useEnvironmentProviders } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import {
-  applyProviderInstanceSettings,
+  brandProviderInstanceEntries,
   deriveProviderInstanceEntries,
 } from "../../providerInstances";
 import { threadEnvironment } from "../../state/threads";
@@ -267,7 +267,7 @@ export function ThreadRelationshipsPanel(props: {
   const providers = providersByEnvironment.get(props.environmentId);
   const derivedProviderEntries = deriveProviderInstanceEntries(providers ?? []);
   const providerEntries = settings
-    ? applyProviderInstanceSettings(derivedProviderEntries, settings, null)
+    ? brandProviderInstanceEntries(derivedProviderEntries, settings)
     : derivedProviderEntries;
   const projects = allProjects.filter((project) => project.environmentId === props.environmentId);
   const parentNativeStatus = parentProjection
