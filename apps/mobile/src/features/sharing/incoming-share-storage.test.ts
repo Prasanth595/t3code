@@ -206,7 +206,6 @@ describe("incoming share storage", () => {
 
   it.each([".bak", ".json"])("recovers after a failed replacement of %s", async (suffix) => {
     await writeIncomingShareDraft(VALID_DRAFT);
-    await writeIncomingShareDraft(VALID_DRAFT);
     fileSystemMocks.failRelocationTo(suffix);
 
     await expect(
@@ -226,7 +225,6 @@ describe("incoming share storage", () => {
   });
 
   it("loads one complete share after interruption at each replacement operation", async () => {
-    await writeIncomingShareDraft(VALID_DRAFT);
     await writeIncomingShareDraft(VALID_DRAFT);
     const updated = { ...VALID_DRAFT, text: "Updated" };
     const snapshots = fileSystemMocks.trackOperations();
