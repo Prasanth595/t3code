@@ -8,6 +8,7 @@ import { VcsProcessExitError } from "@t3tools/contracts";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitLabCli from "./GitLabCli.ts";
+import { userFacingSourceControlDetail } from "@t3tools/source-control-core/server/SourceControlProvider";
 
 const mockedRun = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>();
 const layer = it.layer(
@@ -266,7 +267,8 @@ layer("GitLabCli.layer", (it) => {
         .pipe(Effect.flip);
 
       assert.strictEqual(error._tag, "GitLabRepositoryHostMismatchError");
-      expect(error.detail).not.toContain("glab config set host");
+      expect(userFacingSourceControlDetail(error)).toContain(new URL(repository).host);
+      expect(userFacingSourceControlDetail(error)).not.toContain("glab config set host");
       expect(mockedRun.mock.calls.filter(([input]) => input.args[0] === "api")).toEqual([
         [
           expect.objectContaining({
@@ -306,6 +308,7 @@ layer("GitLabCli.layer", (it) => {
           .pipe(Effect.flip);
 
         assert.strictEqual(error._tag, "GitLabRepositoryPathMismatchError");
+        expect(userFacingSourceControlDetail(error)).toContain("/other/team/app");
         expect(mockedRun.mock.calls.filter(([input]) => input.args[0] === "api")).toEqual([
           [
             expect.objectContaining({

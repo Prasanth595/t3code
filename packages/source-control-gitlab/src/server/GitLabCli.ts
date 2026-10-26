@@ -240,6 +240,10 @@ export class GitLabRepositoryHostMismatchError extends Schema.TaggedError<GitLab
     return `This URL names ${this.requestedHost}, but GitLab CLI resolved the project on ${this.resolvedHost}. Configure glab for the requested server and retry, or enter the project path to use ${this.resolvedHost}.`;
   }
 
+  get userFacingDetail(): string {
+    return this.detail;
+  }
+
   override get message(): string {
     return `GitLab CLI failed in ${this.operation}: ${this.detail}`;
   }
@@ -257,6 +261,10 @@ export class GitLabRepositoryPathMismatchError extends Schema.TaggedError<GitLab
 ) {
   get detail(): string {
     return `This URL names /${this.requestedPath}, but GitLab CLI resolved /${this.resolvedPath} on the same server. Check the configured install root, or enter the project path to use the selected installation.`;
+  }
+
+  get userFacingDetail(): string {
+    return this.detail;
   }
 
   override get message(): string {
