@@ -471,6 +471,7 @@ export function ComposerSurface(props: {
 
 function useKeyboardShowing() {
   const [showing, setShowing] = useState(KeyboardController.isVisible);
+  // oxlint-disable-next-line t3code/react-effect-budget -- subscribes to native keyboard show/hide events
   useEffect(() => {
     const show = KeyboardEvents.addListener("keyboardWillShow", () => setShowing(true));
     const hide = KeyboardEvents.addListener("keyboardWillHide", () => setShowing(false));
