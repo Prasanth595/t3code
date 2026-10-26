@@ -8,7 +8,7 @@
 	<!-- ~/.config/t3fac/env, when it exists, is sourced first: the machine's own PATH and environment
 	     for the tools its repos provision and gate with. The template names no tool. The PATH that
 	     results is exported as T3FAC_LAUNCH_PATH, so the factory can put it ahead of the login-shell
-	     PATH the server merges in at startup when it runs provision and gate commands. -->
+	     PATH the server merges in at startup for every command it runs, provision and gate included. -->
 	<key>ProgramArguments</key>
 	<array>
 		<string>/bin/sh</string>
