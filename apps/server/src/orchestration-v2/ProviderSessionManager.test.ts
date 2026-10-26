@@ -14,7 +14,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
-  type ProviderSessionId,
+  ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -2898,6 +2898,90 @@ it.effect("ProviderSessionManagerV2 settles a request the event pump persists du
       Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, flakyReleaseWrites: flaky })),
     );
   }),
+);
+
+it.effect.each(["current", "newer-run", "newer-session"] as const)(
+  "ProviderSessionManagerV2 persists instruction invalidation only for its owner (%s)",
+  (owner) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("instruction-invalidation");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const providerThread = {
+          ...makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+          lastRunOrdinal: 1,
+          nativeMetadata: {
+            title: "current title",
+            acpInstructions: {
+              nativeSessionId: "native-thread",
+              digest: "delivered-instructions",
+            },
+          },
+        };
+        const stored = {
+          ...providerThread,
+          ...(owner === "newer-run" ? { lastRunOrdinal: 2 } : {}),
+          ...(owner === "newer-session"
+            ? { providerSessionId: ProviderSessionId.make("newer-session") }
+            : {}),
+        };
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
+            {
+              id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+              type: "provider-thread.updated",
+              threadId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: stored,
+            },
+          ],
+        });
+        const before = (yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]))
+          .providerThreads[0]!;
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const subscription = yield* runtime.subscribeEvents!;
+        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+        assert.isDefined(queue);
+        yield* Queue.offer(queue!, {
+          type: "provider_thread.updated",
+          driver: CODEX_DRIVER,
+          providerThread: {
+            ...providerThread,
+            nativeMetadata: { title: "stale title", acpInstructions: null },
+          },
+        });
+        yield* subscription.events.pipe(Stream.runHead);
+        const projection = yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]);
+        const updated = projection.providerThreads.find(
+          (candidate) => candidate.id === providerThread.id,
+        );
+        assert.deepEqual(
+          updated,
+          owner === "current"
+            ? {
+                ...before,
+                nativeMetadata: { ...before.nativeMetadata, acpInstructions: null },
+              }
+            : before,
+        );
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 persists session-scoped runtime requests without a run", () =>

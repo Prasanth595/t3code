@@ -1876,6 +1876,48 @@ export const layerWithOptions = (
           ),
       );
 
+      const persistInstructionInvalidation = Effect.fn(
+        "ProviderSessionManager.persistInstructionInvalidation",
+      )(function* (entry: LiveSessionEntry, offered: OrchestrationV2ProviderThread) {
+        const threadId = offered.appThreadId;
+        if (threadId === null || offered.nativeMetadata?.acpInstructions !== null) return;
+        // Idle updates outlive run subscribers; invalidate only the receipt, not newer thread state.
+        yield* Effect.gen(function* () {
+          const current = (yield* Ref.get(sessions)).get(
+            sessionKey(entry.runtime.providerSessionId),
+          );
+          if (current?.runtime !== entry.runtime || !current.attachedThreadIds.has(threadId))
+            return true;
+          const projection = yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]);
+          const stored = projection.providerThreads.find(
+            (candidate) => candidate.id === offered.id,
+          );
+          if (
+            stored === undefined ||
+            stored.providerSessionId !== entry.runtime.providerSessionId ||
+            stored.lastRunOrdinal !== offered.lastRunOrdinal ||
+            stored.nativeThreadRef?.nativeId !== offered.nativeThreadRef?.nativeId ||
+            stored.nativeMetadata?.acpInstructions == null
+          )
+            return true;
+          const events = yield* providerEventIngestor.normalize({
+            providerSessionId: entry.runtime.providerSessionId,
+            providerInstanceId: entry.runtime.instanceId,
+            threadId,
+            event: {
+              type: "provider_thread.updated",
+              driver: entry.runtime.driver,
+              providerThread: {
+                ...stored,
+                nativeMetadata: { ...stored.nativeMetadata, acpInstructions: null },
+              },
+            },
+          });
+          return (yield* eventSink.writeIfProviderThreadUnchanged({ expected: stored, events }))
+            .committed;
+        }).pipe(Effect.repeat({ until: (committed) => committed }));
+      });
+
       const startEventPump = (entry: LiveSessionEntry) => {
         let stoppedByProvider = false;
         return entry.runtime.events.pipe(
@@ -1917,6 +1959,18 @@ export const layerWithOptions = (
               ),
               Effect.andThen(
                 Effect.gen(function* () {
+                  if (event.type === "provider_thread.updated") {
+                    yield* persistInstructionInvalidation(entry, event.providerThread).pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new ProviderAdapter.ProviderAdapterEventStreamError({
+                            driver: entry.runtime.driver,
+                            providerSessionId: entry.runtime.providerSessionId,
+                            cause,
+                          }),
+                      ),
+                    );
+                  }
                   if (
                     event.type === "provider_thread.updated" &&
                     event.providerThread.status === "error"

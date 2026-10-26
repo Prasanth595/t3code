@@ -392,7 +392,7 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
   return Effect.fnUntraced(function* (
     messageText: string,
     expectedStatus = "completed",
-    reopen: boolean | "rollback" | "compact" = false,
+    reopen: boolean | "rollback" | "compact" | "resume-compact-reopen" = false,
     interactionMode: "default" | "plan" = "default",
   ) {
     const turnRuntimePolicy = { ...runtimePolicy, interactionMode };
@@ -421,7 +421,7 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
       });
       providerThread = result.providerThread;
     }
-    if (reopen === true) {
+    const resume = Effect.fnUntraced(function* () {
       const nativeSessionId = providerThread.nativeThreadRef?.nativeId;
       if (nativeSessionId == null) return yield* Effect.die("Expected a persisted native session");
       yield* Scope.close(session.scope, Exit.void);
@@ -431,6 +431,27 @@ const makeInstructionCompactionHarness = Effect.fnUntraced(function* (
         modelSelection,
         runtimePolicy: turnRuntimePolicy,
       });
+    });
+    if (reopen === true || reopen === "resume-compact-reopen") yield* resume();
+    if (reopen === "resume-compact-reopen") {
+      if (sessionUpdate === undefined) return yield* Effect.die("Missing session handler");
+      const sessionId = providerThread.nativeThreadRef?.nativeId;
+      if (sessionId == null) return yield* Effect.die("Missing native session");
+      yield* sessionUpdate({
+        sessionId,
+        update: {
+          sessionUpdate: "compaction_update",
+          compactionId: "resumed-idle-compact",
+          status: "completed",
+        },
+      });
+      const updated = yield* session.runtime.events.pipe(
+        Stream.filter((event) => event.type === "provider_thread.updated"),
+        Stream.runHead,
+      );
+      providerThread = Option.getOrThrow(updated).providerThread;
+      assert.isNull(providerThread.nativeMetadata?.acpInstructions);
+      yield* resume();
     }
     const { runtime } = session;
     yield* runtime.startTurn(
@@ -1131,6 +1152,17 @@ describe("AcpAdapterV2", () => {
       assert.equal(
         (yield* runTurn("Continue work.", "completed", true))[0]?.text,
         "Continue work.",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("persists idle compaction after resume before another turn", () =>
+    Effect.gen(function* () {
+      const runTurn = yield* makeInstructionCompactionHarness({});
+      yield* runTurn("Start work.");
+      assertReinjectedInstructions(
+        yield* runTurn("Continue after idle compaction.", "completed", "resume-compact-reopen"),
+        "Continue after idle compaction.",
       );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
