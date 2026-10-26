@@ -122,7 +122,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
 }: ComposerPrimaryActionsProps) {
   const [stopPhase, setStopPhase] = useState<"pending" | "timedOut" | "landed" | null>(null);
   const [stopRunId, setStopRunId] = useState(runId);
-  if (stopRunId !== runId) {
+  if (runId !== null && stopRunId !== runId) {
     setStopRunId(runId);
     setStopPhase(null);
   } else if (canOperateThread) {
