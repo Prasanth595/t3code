@@ -4,8 +4,9 @@
  * planning; that note wins over the ultracode note, whose advice is to run a script at once.
  *
  * Only a person's message on a thread that is not a delegated task can ask for a workflow.
- * Agent text, server wakes, canned replies, schedules, steers and restart continuations never
- * do, or every child and every wake could start another fan-out. The note is the same for every
+ * Agent text, server wakes, canned replies, schedules and restart continuations never do, or
+ * every child and every wake could start another fan-out. A person's steer into running work
+ * does, like any message. The note is the same for every
  * driver and names graph_review; it never adds a provider's own trigger word.
  *
  * This module only adds planning guidance to the turn and answers whether a message asks for a
@@ -93,7 +94,7 @@ export interface WorkflowRequestInput {
   readonly senderThreadId?: string | undefined;
   /** The thread is a delegated task or workflow member (persisted lineage: a subagent child). */
   readonly delegatedThread: boolean;
-  /** A steering restart or restart continuation: it resumes work, so it is not a new request. */
+  /** A restart continuation: it resumes work, so it is not a new request. */
   readonly resumesEarlierTurn: boolean;
 }
 
