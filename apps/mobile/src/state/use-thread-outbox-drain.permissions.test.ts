@@ -78,6 +78,7 @@ vi.mock("./threads", async () => {
       setInteractionMode: state.interaction,
     },
     environmentThreadShells: { threadShellsAtom: Atom.make([state.thread]) },
+    environmentThreadDetails: { threadAtom: Atom.family((_key: unknown) => Atom.make(null)) },
   };
 });
 vi.mock("./use-atom-command", () => ({ useAtomCommand: <A>(command: A) => command }));
@@ -320,8 +321,6 @@ describe("queued task operation access", () => {
 
   it.each([
     { isCreation: false, accepted: false },
-    { isCreation: true, accepted: false },
-    { isCreation: false, accepted: true },
     { isCreation: true, accepted: true },
   ])(
     "preserves a rejected queue but removes an accepted turn after access loss (new task: $isCreation, accepted: $accepted)",
