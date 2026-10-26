@@ -672,6 +672,50 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("validates a saved variant after resuming without a runtime policy", () =>
+    Effect.gen(function* () {
+      const directory = "/work/restored";
+      const model = { providerID: "opencode-go", id: "glm-5.3-flash", variant: "high" };
+      const runtime = yield* openCode2ReplayRuntime(
+        withInstructions([
+          ...opening,
+          out("session.get", { sessionID: SESSION }),
+          replyData("session.get", sessionInfo({ location: { directory } })),
+          ...noOpenRequests,
+          out("model.list", { "location[directory]": directory }),
+          reply("model.list", {
+            ...modelCatalog,
+            location: { directory },
+            data: [
+              {
+                ...modelCatalog.data[0]!,
+                ...model,
+                variants: ["low", "high"].map((id) => ({ id, settings: {} })),
+              },
+            ],
+          }),
+          out("session.switchModel", { sessionID: SESSION, model }),
+          reply("session.switchModel", null),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ]),
+      );
+      const thread = yield* runtime.resumeThread({
+        providerThread: providerThread(yield* DateTime.now),
+      });
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(
+        turnInput(thread, {
+          instanceId,
+          model: "opencode-go/glm-5.3-flash",
+          options: [{ id: "variant", value: "medium" }],
+        }),
+      );
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("switches the session's model and variant before a turn that changed them", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([

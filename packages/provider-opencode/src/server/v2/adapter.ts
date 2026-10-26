@@ -679,8 +679,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     let connection = initial.connection;
     let client = connection.client;
     const sessionScope = yield* Effect.scope;
-    // A project's OpenCode config can change limits and variants, and this runtime
-    // serves the instance's threads in every directory.
+    // Project config changes limits and variants; this runtime serves every directory.
     const modelsByDirectory = new Map<string, Map<string, CatalogModel>>();
     const directoryOf = (cwd: string | null | undefined) => cwd ?? host.paths.cwd;
     const windowOf = (cwd: string | null | undefined, model: string) =>
@@ -690,7 +689,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (parsed === null) return undefined;
       const variants = modelsByDirectory.get(directoryOf(cwd))?.get(selection.model)?.variants;
       const selected = getModelSelectionStringOptionValue(selection, "variant");
-      // Saved fallback options also reach this boundary from workers and clients with no catalog.
       const variant =
         variants === undefined || (selected !== undefined && variants.includes(selected))
           ? selected
@@ -2716,8 +2714,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           Effect.ignore({ log: true }),
         );
       });
-    // A thread starting while its directory's first read is still running waits for that read
-    // instead of resolving its variant against no catalog.
+    // Concurrent threads must wait for the catalog before validating saved variants.
     const firstReads = new Map<string, Deferred.Deferred<void>>();
     const readModelsOnce = (cwd: string | null | undefined) =>
       Effect.suspend(() => {
@@ -3562,6 +3559,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   }),
                 });
               }
+              yield* readModelsOnce(state.directory);
               const model = modelRef(turnInput.modelSelection, state.directory);
               if (model === undefined) {
                 yield* begin;
