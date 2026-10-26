@@ -388,6 +388,27 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     ),
   );
 
+  it.effect("lists models added by config updates to ungrouped sessions", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.initialize;
+        yield* harness.provider.onSessionStarted(started);
+
+        const configOptions = [
+          {
+            ...modelConfig,
+            options: [...modelOptions, { value: "gemini-4-argon-high", name: "Gemini 4 Argon" }],
+          },
+        ];
+        yield* harness.provider.onConfigOptionsUpdated(configOptions);
+        expect((yield* harness.provider.snapshot.getSnapshot).models).toEqual(
+          buildAntigravityModelsFromSession({ configOptions }),
+        );
+      }),
+    ),
+  );
+
   it.effect("does not guess a version before a custom launcher's first handshake", () =>
     Effect.scoped(
       Effect.gen(function* () {

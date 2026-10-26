@@ -116,8 +116,8 @@ function isMissingInstallation(error: EffectAcpErrors.AcpError | ProviderSetupEr
 interface AntigravityProviderState {
   readonly draft: ServerProviderDraft;
   readonly authRevision: number;
-  /** Config updates omit `models`, so keep the last session's concrete list. */
-  readonly sessionModels: EffectAcpSchema.SessionModelState | null;
+  /** Config updates omit `models`, so keep a grouped session's concrete list. */
+  readonly groupedModels: EffectAcpSchema.SessionModelState | null;
 }
 
 interface AntigravityProviderOptions {
@@ -162,7 +162,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   const metadata = yield* SubscriptionRef.make<AntigravityProviderState>({
     draft: initialDraft,
     authRevision: 0,
-    sessionModels: null,
+    groupedModels: null,
   });
   // Preserve disk-discovered skills when callbacks replace workspace commands; the registry will not rescan them.
   const discoveredSkills = new Map<string, ServerProvider["skills"]>();
@@ -290,7 +290,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       const workspace = cwd ? workspaces.find((entry) => entry.cwd === cwd) : undefined;
       return {
         authRevision: state.authRevision + 1,
-        sessionModels: started.sessionSetupResult.models ?? null,
+        groupedModels: antigravityGroupedModels(started.sessionSetupResult) ?? null,
         draft: {
           ...draft,
           installed: true,
@@ -331,10 +331,9 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   ) {
     yield* SubscriptionRef.update(metadata, (state) => {
       if (state.draft.auth.status !== "authenticated") return state;
-      const models = buildAntigravityModelsFromSession({
-        configOptions,
-        models: antigravityGroupedModels({ configOptions, models: state.sessionModels }) ?? null,
-      });
+      const models = buildAntigravityModelsFromSession(
+        state.groupedModels ? { models: state.groupedModels } : { configOptions },
+      );
       return { ...state, draft: { ...state.draft, models } };
     });
   });
@@ -383,7 +382,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       (state) =>
         ({
           authRevision: state.authRevision + 1,
-          sessionModels: null,
+          groupedModels: null,
           draft: {
             ...state.draft,
             auth: { status: "unauthenticated" },
