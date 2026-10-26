@@ -162,6 +162,12 @@ layer("GitLabCli.layer", (it) => {
 
   it.effect.each([
     {
+      repository: "https://example.com:8443/gitlab/gitlab/team/app.git",
+      projectPath: "gitlab/team/app",
+      configuredHost: "example.com:8443/gitlab",
+      webRoot: "https://example.com:8443/gitlab",
+    },
+    {
       repository: "http://example.com/gitlab/gitlab/team/app.git",
       projectPath: "gitlab/team/app",
       configuredHost: "example.com/gitlab",
@@ -260,6 +266,7 @@ layer("GitLabCli.layer", (it) => {
         .pipe(Effect.flip);
 
       assert.strictEqual(error._tag, "GitLabRepositoryHostMismatchError");
+      expect(error.detail).not.toContain("glab config set host");
       expect(mockedRun.mock.calls.filter(([input]) => input.args[0] === "api")).toEqual([
         [
           expect.objectContaining({

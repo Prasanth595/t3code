@@ -237,7 +237,7 @@ export class GitLabRepositoryHostMismatchError extends Schema.TaggedError<GitLab
   },
 ) {
   get detail(): string {
-    return `This URL names ${this.requestedHost}, but GitLab CLI resolved the project on ${this.resolvedHost}. Run \`glab config set host ${this.requestedHost}\` and retry, or enter the project path to use ${this.resolvedHost}.`;
+    return `This URL names ${this.requestedHost}, but GitLab CLI resolved the project on ${this.resolvedHost}. Configure glab for the requested server and retry, or enter the project path to use ${this.resolvedHost}.`;
   }
 
   override get message(): string {
