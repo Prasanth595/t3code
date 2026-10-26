@@ -217,7 +217,7 @@ function WorkspaceImagePreview(props: {
   );
 }
 
-function WorkspaceBrowserPreview(props: {
+export function WorkspaceBrowserPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
   readonly draft: boolean;

@@ -2366,8 +2366,9 @@ function planningPdf(
   return new Blob([source], { type: "application/pdf" });
 }
 
-it("keeps the PDF page after reloads and clamps it when the document gets shorter", async () => {
-  const { BrowserDocumentFrame } = await import("./BrowserDocumentFrame");
+it("keeps the workspace PDF page after reloads and clamps it when the document gets shorter", async () => {
+  assetUrlState.mockReset();
+  const { WorkspaceBrowserPreview } = await import("./FilePreviewPanel");
   using _native = vi.spyOn(navigator, "pdfViewerEnabled", "get").mockReturnValue(false);
   using urls = (() => {
     const original = URL.createObjectURL(planningPdf());
@@ -2384,17 +2385,26 @@ it("keeps the PDF page after reloads and clamps it when the document gets shorte
       [Symbol.dispose]: () => [original, updated, shorter, single].forEach(URL.revokeObjectURL),
     };
   })();
-  const preview = (src: string, revision: string, documentId = "planning") => (
-    <div style={{ display: "flex", height: 600, width: 320 }}>
-      <BrowserDocumentFrame
-        src={src}
-        title="Planning PDF"
-        pdf
-        documentKey={revision}
-        documentId={documentId}
-      />
-    </div>
-  );
+  const preview = (src: string, mutation: string, path = "/repo/planning.pdf") => {
+    assetUrlState.mockReturnValue({
+      _tag: "Success",
+      url: `${src}#preview`,
+      expiresAt: Date.now() + 3_600_000,
+    });
+    return (
+      <div style={{ display: "flex", height: 600, width: 320 }}>
+        <WorkspaceBrowserPreview
+          environmentId={EnvironmentId.make("test")}
+          threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
+          draft={false}
+          absolutePath={path}
+          workspaceRoot="/repo"
+          title="Planning PDF"
+          workspaceMutationId={mutation}
+        />
+      </div>
+    );
+  };
   await using screen = await render(preview(urls.original, "one"));
   await vi.waitFor(() => expect(screen.container.textContent).toContain("1 / 3 pages"), {
     timeout: 15_000,
@@ -2423,7 +2433,7 @@ it("keeps the PDF page after reloads and clamps it when the document gets shorte
   await vi.waitFor(() => expect(screen.container.textContent).toContain("1 / 3 pages"));
   await screen.getByRole("button", { name: "Next page", exact: true }).click();
   await vi.waitFor(() => expect(screen.container.textContent).toContain("2 / 3 pages"));
-  await screen.rerender(preview(urls.original, "one", "another-document"));
+  await screen.rerender(preview(urls.original, "one", "/repo/another.pdf"));
   await vi.waitFor(() => expect(screen.container.textContent).toContain("1 / 3 pages"));
 });
 
