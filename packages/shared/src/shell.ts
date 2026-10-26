@@ -593,6 +593,7 @@ const isExecutableFile = Effect.fnUntraced(function* (
   return canExecuteFile(filePath);
 });
 
+// Called within the traced command resolvers.
 const findOnPath = Effect.fnUntraced(function* (
   pathValue: string,
   commandCandidates: ReadonlyArray<string>,
@@ -693,10 +694,7 @@ export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function
   });
 });
 
-/**
- * Every PATH match for a bare command, in PATH order, for callers choosing
- * between same-named installs. Not cached, unlike `resolveCommandPath`.
- */
+// All matches for a bare command, in PATH order, without the single-match cache.
 export const resolveCommandPaths = Effect.fn("shell.resolveCommandPaths")(function* (
   command: string,
   options: CommandAvailabilityOptions = {},

@@ -637,6 +637,10 @@ it.effect.each(["Zed Nightly", "Zed Preview"])(
       assert.equal(stable.command, path.join(stableBin, "zed.EXE"));
       assert.deepEqual(stable.args, ["C:\\workspace"]);
 
+      env.PATH = `${stableBin};${prereleaseBin}`;
+      assert.equal((yield* launchZed).command, "zed");
+
+      env.PATH = `${prereleaseBin};${stableBin}`;
       // With only the prerelease install left, it still opens by name.
       yield* fs.remove(path.join(stableBin, "zed.EXE"));
       assert.equal((yield* launchZed).command, "zed");
