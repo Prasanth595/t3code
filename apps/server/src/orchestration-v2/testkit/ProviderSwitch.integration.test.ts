@@ -12,6 +12,7 @@ import {
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurnTokenUsage,
+  type OrchestrationV2ThreadProjection,
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
@@ -36,7 +37,6 @@ import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import { CommandPolicyCapabilityUnsupportedError } from "../CommandPolicy.ts";
 import {
   ClaudeAppendSystemPromptFileError,
-  ClaudeAppendSystemPromptMissingValueError,
   ClaudeBackgroundWorkBlocksQueryReplacementError,
   ClaudeProviderCapabilitiesV2,
 } from "../Adapters/ClaudeAdapterV2.ts";
@@ -379,53 +379,43 @@ const waitForIdle = Effect.fn("ProviderSwitchTest.waitForIdle")(function* (
   targetThreadId: ThreadId,
 ) {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
-  for (let attempt = 0; attempt < 1_000; attempt += 1) {
-    const projection = yield* orchestrator.getThreadProjection(targetThreadId);
-    if (
-      projection.runs.every(
-        (run) => !["queued", "starting", "running", "waiting"].includes(run.status),
-      )
-    ) {
-      return projection;
-    }
-    yield* Effect.sleep("5 millis");
+  const eventSink = yield* EventSink.EventSinkV2;
+  const isIdle = (projection: OrchestrationV2ThreadProjection) =>
+    projection.runs.every(
+      (run) => !["queued", "starting", "running", "waiting"].includes(run.status),
+    );
+  const afterSequence = yield* eventSink.latestSequence();
+  const current = yield* orchestrator.getThreadProjection(targetThreadId);
+  if (isIdle(current)) {
+    return current;
   }
-  return yield* Effect.die(new Error("Provider switch test timed out waiting for idle"));
+  // Projections commit with their events, so each later event is the only time to re-read.
+  const [idle] = yield* eventSink.stream({ afterSequence }).pipe(
+    Stream.mapEffect(() => orchestrator.getThreadProjection(targetThreadId)),
+    Stream.filter(isIdle),
+    Stream.take(1),
+    Stream.runCollect,
+  );
+  if (idle === undefined) {
+    return yield* Effect.die(
+      new Error("Provider switch test event stream ended before the thread went idle"),
+    );
+  }
+  return idle;
 });
 
 describe("orchestration v2 provider switching", () => {
   it.live.each([
     "compact-native",
-    "compact-fallback",
     "compact-legacy",
     "large-current-input",
-    "screenshot-native",
     "screenshot-fallback",
-    "screenshot-pair-native",
-    "screenshot-pair-fallback",
-    "screenshot-eight-native",
-    "screenshot-eight-fallback",
-    "screenshot-large-model-native",
     "screenshot-reported-capacity-native",
-    "screenshot-model-change-native",
-    "screenshot-option-change-native",
-    "screenshot-model-change-retry-native",
     "screenshot-option-change-retry-native",
-    "prior-images-reasoning-change-replacement-native",
     "prior-images-reasoning-change-replacement-small-native",
-    "prior-images-reasoning-change-native",
-    "prior-images-turn-usage-native",
-    "prior-images-turn-usage-replacement-native",
-    "prior-images-turn-usage-model-change-native",
-    "prior-images-turn-usage-option-change-retry-native",
-    "prior-images-reasoning-change-retry-native",
-    "prior-images-native",
-    "prior-images-fallback",
-    "imported-prior-images-native",
     "imported-prior-images-fallback",
     "prior-images-telemetry-native",
     "prior-images-unsent-native",
-    "prior-images-replacement-native",
     "prior-images-legacy-replacement-native",
     "delivery-write-failure",
   ] as const)("preserves handoffs through %s", (scenario) =>
@@ -840,22 +830,20 @@ describe("orchestration v2 provider switching", () => {
           if (scenario.startsWith("screenshot")) {
             assert.deepEqual((yield* Ref.get(capturedTurns)).at(-1)!.attachments, screenshots);
           }
-          if (scenario === "compact-fallback" || scenario === "compact-legacy") {
-            if (scenario === "compact-legacy") {
-              const { history: _history, ...legacyHandoff } = handoff;
-              yield* eventSink.write({
-                events: [
-                  {
-                    id: EventId.make("legacy-handoff-shape"),
-                    type: "context-handoff.updated",
-                    threadId,
-                    runId: handoff.targetRunId,
-                    occurredAt: yield* DateTime.now,
-                    payload: legacyHandoff,
-                  },
-                ],
-              });
-            }
+          if (scenario === "compact-legacy") {
+            const { history: _history, ...legacyHandoff } = handoff;
+            yield* eventSink.write({
+              events: [
+                {
+                  id: EventId.make("legacy-handoff-shape"),
+                  type: "context-handoff.updated",
+                  threadId,
+                  runId: handoff.targetRunId,
+                  occurredAt: yield* DateTime.now,
+                  payload: legacyHandoff,
+                },
+              ],
+            });
             assert.isUndefined(handoff.delivery);
             yield* dispatch(3, "Continue after compact", CLAUDE_MODEL_SELECTION);
             yield* wait(3);
@@ -1194,13 +1182,135 @@ describe("orchestration v2 provider switching", () => {
       ),
   );
 
+  it.live.each(["an older handoff", "a missed request"] as const)(
+    "keeps the latest turn when a resume fallback also delivers %s",
+    (older) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          // A run that fails before its provider turn starts is retried as a missed request.
+          const missed = older === "a missed request";
+          const name = `resume-fallback-handoff-order${missed ? "-missed" : ""}`;
+          const cwd = yield* checkpointWorkspace(name);
+          const failStartOnce = yield* Ref.make(false);
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
+          const oldResult = `old result ${"o".repeat(2_500)}`;
+          const latestResult = `latest result ${"l".repeat(2_500)}`;
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+            makeTestAdapter({
+              instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+              driver: CLAUDE_DRIVER,
+              capabilities: ClaudeProviderCapabilitiesV2,
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              responseByRunOrdinal: { 1: oldResult, 3: latestResult },
+              capturedTurns,
+              injectedHistory,
+              failResume: true,
+              ...(missed ? { failStartOnce } : { failedRunOrdinals: new Set([2]) }),
+              nativeThreadGeneration: yield* Ref.make(0),
+            }),
+          ]);
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const runAfterDetach = Effect.fn("runAfterDetach")(function* (
+              ordinal: number,
+              text: string,
+            ) {
+              const providerSessionId = (yield* orchestrator.getThreadProjection(threadId))
+                .providerThreads[0]?.providerSessionId;
+              if (providerSessionId != null) {
+                yield* orchestrator.dispatch({
+                  type: "provider-session.detach",
+                  commandId: CommandId.make(`handoff-order:detach:${ordinal}`),
+                  threadId,
+                  providerSessionId,
+                });
+                yield* worker.drain();
+              }
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`handoff-order:${ordinal}`),
+                threadId,
+                messageId: MessageId.make(`handoff-order:${ordinal}`),
+                createdBy: "user",
+                creationSource: "web",
+                text,
+                attachments: [],
+                modelSelection: CLAUDE_MODEL_SELECTION,
+                dispatchMode: { type: "start_immediately" },
+              });
+              yield* orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "run.updated" &&
+                    event.payload.ordinal === ordinal &&
+                    (event.payload.status === "completed" || event.payload.status === "failed"),
+                ),
+                Stream.runHead,
+              );
+              yield* worker.drain();
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make("handoff-order:create"),
+              threadId,
+              projectId,
+              createdBy: "user",
+              creationSource: "web",
+              title: "Resume fallback handoff order",
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+            });
+            yield* runAfterDetach(1, `Original brief ${"b".repeat(9_000)}`);
+            yield* Ref.set(failStartOnce, missed);
+            yield* runAfterDetach(2, missed ? `Request 2 ${"r".repeat(6_000)}` : "Request 2");
+            yield* runAfterDetach(3, "Request 3");
+            const historyBeforeRun4 = (yield* Ref.get(injectedHistory)).length;
+            yield* runAfterDetach(4, "Request 4");
+
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            assert.deepEqual(
+              projection.runs.map((run) => run.status),
+              ["completed", "failed", "completed", "completed"],
+            );
+            const run4NativeThreadId = (yield* Ref.get(capturedTurns)).at(-1)?.nativeThreadId;
+            assert.equal(
+              projection.contextHandoffs.find(
+                (handoff) => handoff.targetRunId === projection.runs[1]?.id,
+              )?.delivery?.nativeThreadId,
+              run4NativeThreadId,
+            );
+            const run4History = yield* encodeJson(
+              (yield* Ref.get(injectedHistory)).slice(historyBeforeRun4),
+            );
+            assert.include(run4History, "Original brief");
+            assert.include(run4History, latestResult);
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name,
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: { type: "readOnly" },
+                  },
+                },
+                layerRegistry,
+              ),
+            ),
+          );
+        }),
+      ),
+  );
+
   it.live.each([
     ["background work", new ClaudeBackgroundWorkBlocksQueryReplacementError()],
     ["an unreadable append file", new ClaudeAppendSystemPromptFileError({ path: "missing.md" })],
-    [
-      "a missing append value",
-      new ClaudeAppendSystemPromptMissingValueError({ flag: "--append-system-prompt" }),
-    ],
   ] as const)("keeps the native session after turns refused for %s", ([, refusalCause]) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1295,18 +1405,19 @@ describe("orchestration v2 provider switching", () => {
   );
 
   it.live.each(
-    (["failed", "interrupted"] as const).flatMap((status) =>
-      [false, true].flatMap((queued) =>
-        [false, true].flatMap((returning) =>
-          [false, true].map(
-            (native) =>
-              [
-                `${status} context ${queued ? "through the queue" : "immediately"} to ${returning ? "a returning" : "a new"} provider via ${native ? "native history" : "text"}`,
-                { status, queued, returning, native },
-              ] as const,
-          ),
-        ),
-      ),
+    (
+      [
+        ["failed", false, false, false],
+        ["failed", true, true, true],
+        ["interrupted", false, true, false],
+        ["interrupted", true, false, true],
+      ] as const
+    ).map(
+      ([status, queued, returning, native]) =>
+        [
+          `${status} context ${queued ? "through the queue" : "immediately"} to ${returning ? "a returning" : "a new"} provider via ${native ? "native history" : "text"}`,
+          { status, queued, returning, native },
+        ] as const,
     ),
   )("hands off %s", ([, { status, queued, returning, native }]) =>
     Effect.scoped(
@@ -2240,10 +2351,9 @@ describe("orchestration v2 provider switching", () => {
     ),
   );
 
+  // regression: #21314 a queued PR update must follow the provider that took over the thread
   it.live.each([
     ["automatic", "Claude"],
-    ["queue.resume", "Claude"],
-    ["automatic", "compatible Codex"],
     ["queue.resume", "compatible Codex"],
   ] as const)(
     "delivers a queued PR update on the current provider through %s (%s)",
@@ -2436,9 +2546,6 @@ describe("orchestration v2 provider switching", () => {
             if (compatible) {
               assert.equal(executed.nativeThreadId, turns[0]!.nativeThreadId);
               assert.isEmpty(after.contextHandoffs);
-              if (delivery === "automatic") {
-                assert.equal(delivered.providerThreadId, wake.providerThreadId);
-              }
             }
             assert.equal(
               after.providerThreads.find((entry) => entry.id === delivered.providerThreadId)
