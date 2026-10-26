@@ -1,5 +1,6 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  getAddProjectInitialQuery,
   getCloneDestinationPath,
   getCloneDirectoryPath,
 } from "@t3tools/client-runtime/operations/projects";
@@ -217,6 +218,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
     setState({ status: "opening" });
     const projectId = newProjectId();
     const remoteUrl = `https://github.com/${repository.owner}/${repository.name}.git`;
+    const settings = environment.serverConfig.settings;
     const result = await startProjectClone({
       environmentId,
       input: {
@@ -225,11 +227,10 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
         createdAt: new Date().toISOString(),
         remoteUrl,
         destinationPath: getCloneDestinationPath(
-          newProjectsRoot,
-          getCloneDirectoryPath(
-            remoteUrl,
-            environment.serverConfig.settings.ghqCloneLayout === true,
-          ),
+          settings.ghqCloneLayout
+            ? getAddProjectInitialQuery(settings.addProjectBaseDirectory)
+            : newProjectsRoot,
+          getCloneDirectoryPath(remoteUrl, settings.ghqCloneLayout === true),
         ),
       },
     });
