@@ -23,8 +23,10 @@ export interface Cooldown {
 
 /** The first window. Each window the model is hit again after the last one ended is twice as long. */
 const COOLDOWN_FIRST_MS = 5 * 60_000;
-/** The longest window, whether the factory picks it or the provider's retry-after asks for more. */
+/** The longest window the factory picks itself. */
 export const COOLDOWN_CAP_MS = 60 * 60_000;
+/** The longest retry-after taken from a provider: past it the number is not a wait anyone meant. */
+export const RETRY_AFTER_CAP_MS = 24 * 60 * 60_000;
 /** How long after its window a model that was not hit again starts over at the first window. */
 export const COOLDOWN_QUIET_MS = 30 * 60_000;
 
@@ -49,7 +51,7 @@ const UNIT_MS: ReadonlyArray<readonly [RegExp, number]> = [
 
 /**
  * The rate limit the last line of `text` (a session's last message) reports, or null for none.
- * Its retry-after is read from that line too, and capped at `COOLDOWN_CAP_MS`.
+ * Its retry-after is read from that line too, and bounded by `RETRY_AFTER_CAP_MS`.
  */
 export const rateLimitOf = (text: string | null): RateLimit | null => {
   const line = text
@@ -63,7 +65,7 @@ export const rateLimitOf = (text: string | null): RateLimit | null => {
   if (after === null) return { retryAfterMs: null };
   const unit = after[2] ?? "s";
   const ms = UNIT_MS.find(([pattern]) => pattern.test(unit))?.[1] ?? 1000;
-  return { retryAfterMs: Math.min(Number(after[1]) * ms, COOLDOWN_CAP_MS) };
+  return { retryAfterMs: Math.min(Number(after[1]) * ms, RETRY_AFTER_CAP_MS) };
 };
 
 /** How a model is named in the cooldowns, the pass's lines and its attention item. */
