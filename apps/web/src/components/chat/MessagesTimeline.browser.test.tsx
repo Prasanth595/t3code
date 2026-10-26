@@ -1,14 +1,16 @@
+import { flushSync } from "react-dom";
 import { AudioPreview } from "../files/AudioPreview";
 import { onTestFinished } from "vite-plus/test";
 import { stubGlobal } from "../../../test/render";
 import { EnvironmentId, MessageId, RunId, ScheduledTaskId, ThreadId } from "@t3tools/contracts";
-import type { LegendListRef } from "@legendapp/list/react";
-import { createRef, Profiler, type ComponentProps, type ReactElement } from "react";
+import { LegendList, type LegendListRef } from "@legendapp/list/react";
+import { createRef, Profiler, useState, type ComponentProps, type ReactElement } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
 
 import { act, render } from "../../../test/render";
+import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import { deriveTimelineEntriesFromVisibleTurnItems } from "../../session-logic";
@@ -619,4 +621,69 @@ it("renders automatic compaction as one live divider that finishes with its reas
     .toBeVisible();
   expect(container.querySelectorAll('[role="separator"]')).toHaveLength(1);
   expect(container.textContent).not.toContain("Compacting before");
+});
+
+function ChangedFilesTimeline() {
+  const [expanded, setExpanded] = useState(true);
+  return (
+    <LegendList
+      data={["files", "after"]}
+      extraData={expanded}
+      keyExtractor={(item) => item}
+      estimatedItemSize={100}
+      recycleItems={false}
+      className="h-[600px]"
+      renderItem={({ item }) =>
+        item === "files" ? (
+          <ChangedFilesCard
+            runId={RunId.make("run-1")}
+            files={["src/a.ts", "src/b.ts", "src/c.ts"].map((path) => ({
+              path,
+              kind: "modified",
+              additions: 1,
+              deletions: 0,
+            }))}
+            allDirectoriesExpanded={expanded}
+            resolvedTheme="light"
+            onToggleAllDirectories={() => setExpanded((value) => !value)}
+            onOpenTurnDiff={() => {}}
+          />
+        ) : (
+          <div data-testid="after">After</div>
+        )
+      }
+    />
+  );
+}
+
+describe("ChangedFilesCard", () => {
+  it.each(["folder", "all folders"])(
+    "measures %s collapse and expansion in the same commit",
+    async (toggle) => {
+      await using screen = await render(<ChangedFilesTimeline />);
+      const after = () =>
+        screen.container.querySelector('[data-testid="after"]')!.getBoundingClientRect().top;
+      const cardBottom = () =>
+        screen.container.querySelector("[data-changed-files-state]")!.getBoundingClientRect()
+          .bottom;
+      await vi.waitFor(() => expect(after()).toBe(cardBottom()));
+      const topBefore = after();
+      const button = () =>
+        screen.container.querySelector<HTMLButtonElement>(
+          toggle === "folder"
+            ? '[data-changed-file-row="src"] button'
+            : 'button[aria-label$="all folders"]',
+        )!;
+      await act(() => {
+        flushSync(() => button().click());
+        expect(screen.container.textContent).not.toContain("a.ts");
+        expect(after()).toBe(topBefore - 3 * 28);
+      });
+      await act(() => {
+        flushSync(() => button().click());
+        expect(screen.container.textContent).toContain("a.ts");
+        expect(after()).toBe(topBefore);
+      });
+    },
+  );
 });

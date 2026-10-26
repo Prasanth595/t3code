@@ -171,8 +171,7 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
         },
       };
     });
-    // LegendList waits a frame before applying a row that shrank, so a collapse would paint
-    // the shorter card with the rows below it still in place. Measure the row in this commit.
+    // Measure before paint instead of waiting for LegendList's deferred shrink measurement.
     syncTimelineLayout();
   };
 
