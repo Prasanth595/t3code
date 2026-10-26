@@ -3727,22 +3727,25 @@ const CLAUDE_FAST_MODE_DISABLED_REASONS = {
   extra_usage_disabled: " It needs usage credits on this Claude account.",
   network_error: " Claude Code could not check whether it is available.",
   unknown: "",
-  not_first_party: " It is only available through the Anthropic API.",
+  not_first_party: " It needs the Anthropic API or an eligible Claude subscription.",
   disabled_by_env: " CLAUDE_CODE_DISABLE_FAST_MODE is set.",
   model_not_allowed: " It is not available for this model.",
   sdk_opt_in_required: "",
   pending: "",
 } satisfies Record<FastModeDisabledReason, string>;
 
-// Claude Code serves a Fast request at standard speed when the account cannot
-// use Fast, and says so only through these init and result fields. `pending`
-// means it has not decided yet, so it changes nothing.
+// Missing and pending state reports leave the previous notice unchanged.
 function claudeFastModeNotice(message: SDKMessage): string | null | undefined {
   if (!(message.type === "result" || (message.type === "system" && message.subtype === "init"))) {
     return undefined;
   }
   const state = message.fast_mode_state;
   const reason = message.fast_mode_disabled_reason;
+  if (message.type === "result" && message.usage.speed === "standard") {
+    if (state === "on" || state === undefined || reason === "pending") {
+      return "Claude answered this Fast request at standard speed.";
+    }
+  }
   if (state === undefined || reason === "pending") return undefined;
   if (state === "on") return null;
   if (state === "cooldown") {
@@ -5057,8 +5060,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         });
 
-        // One notice per reason while Fast stays requested: Claude reports the
-        // state on every result, and the composer keeps showing the request.
+        // SDK frames are frequent; avoid a span for each unchanged notice.
         const announceClaudeFastMode = Effect.fnUntraced(function* (input: {
           readonly liveQuery: ClaudeLiveQueryContext;
           readonly context: ActiveClaudeTurnContext;
@@ -5066,12 +5068,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         }) {
           const nativeThreadId = input.liveQuery.nativeThreadId;
           const notice = claudeFastModeNotice(input.message);
-          if (notice === undefined) return;
           if (notice === null || input.liveQuery.selection.settings.fastMode !== true) {
             fastModeNoticesByNativeThread.delete(nativeThreadId);
             return;
           }
-          if (fastModeNoticesByNativeThread.get(nativeThreadId) === notice) return;
+          if (notice === undefined || fastModeNoticesByNativeThread.get(nativeThreadId) === notice)
+            return;
           fastModeNoticesByNativeThread.set(nativeThreadId, notice);
           const { context } = input;
           const now = yield* DateTime.now;

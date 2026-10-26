@@ -4337,10 +4337,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           for (const frame of frames) yield* harness.offerAndWait(frame);
           yield* Queue.take(harness.terminalReceipts);
         });
-        const result = (ordinal: number, state: string, reason?: string) =>
+        const result = (
+          ordinal: number,
+          state: string,
+          reason?: string,
+          speed?: "standard" | "fast",
+        ) =>
           claudeSdkFrame({
             ...makeResultFrame({ uuid: `fast-mode-result-${ordinal}`, result: "Done." }),
             ...fastModeFields(state, reason),
+            ...(speed === undefined ? {} : { usage: { input_tokens: 1, output_tokens: 1, speed } }),
           });
         const notices = () =>
           harness.events.flatMap((event) =>
@@ -4369,8 +4375,23 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* turn(3, true, [result(3, "cooldown")]);
         yield* turn(4, true, [result(4, "on")]);
         yield* turn(5, true, [result(5, "cooldown")]);
-        yield* turn(6, false, [result(6, "off", "sdk_opt_in_required")]);
-        assert.deepEqual(notices(), [creditsNotice, cooldownNotice, cooldownNotice]);
+        yield* turn(6, false, [makeResultFrame({ uuid: "fast-mode-result-6", result: "Done." })]);
+        yield* turn(7, true, [result(7, "cooldown")]);
+        assert.deepEqual(notices(), [
+          creditsNotice,
+          cooldownNotice,
+          cooldownNotice,
+          cooldownNotice,
+        ]);
+
+        const standardNotice = "Claude answered this Fast request at standard speed.";
+        yield* turn(8, true, [result(8, "on", undefined, "standard")]);
+        yield* turn(9, true, [result(9, "on", undefined, "standard")]);
+        assert.deepEqual(notices().slice(-1), [standardNotice]);
+        assert.equal(notices().length, 5);
+        yield* turn(10, true, [result(10, "on", undefined, "fast")]);
+        yield* turn(11, true, [result(11, "on", undefined, "standard")]);
+        assert.equal(notices().length, 6);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
