@@ -74,7 +74,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   return (
     <>
       <GitOverviewSheetContent {...props} />
-      <DialogSheetHost />
+      {props.presentation !== "inspector" ? <DialogSheetHost /> : null}
     </>
   );
 }
