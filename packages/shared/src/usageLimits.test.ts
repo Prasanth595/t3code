@@ -1277,6 +1277,47 @@ describe("/usage-limits", () => {
     });
   });
 
+  it("clears a spent hub credit when another environment has a newer zero balance", () => {
+    const localEnvironment = EnvironmentId.make("local");
+    const remoteEnvironment = EnvironmentId.make("remote");
+    const account = {
+      ...sources[0]!.accounts[0]!,
+      email: "pooled@example.com",
+      usageLimits: {
+        ...limits,
+        resetCredits: { availableCount: 1, nextCreditId: "spent-credit" },
+      },
+    };
+    const local = { ...sources[0]!, accounts: [account] };
+    const remote = {
+      ...local,
+      accounts: [
+        {
+          ...account,
+          usageLimits: {
+            ...limits,
+            checkedAt: "2026-09-03T11:30:00.000Z",
+            resetCredits: { availableCount: 0 },
+          },
+        },
+      ],
+    };
+    const report = collectProviderUsageLimits(
+      selected.instanceId,
+      [selected],
+      composerUsageLimitSources(
+        localEnvironment,
+        [local],
+        new Map([[remoteEnvironment, [remote]]]),
+      ),
+      now,
+    );
+    const pooled = report?.accounts.find((entry) => entry.email === account.email);
+    expect(pooled?.limits.resetCredits).toEqual({ availableCount: 0 });
+    expect(pooled?.resetCreditInput).toBeUndefined();
+    expect(pooled?.resetCreditEnvironmentId).toBeUndefined();
+  });
+
   it("advertises global and workspace commands only for providers present in Limits", () => {
     const withWorkspace = provider({
       workspaceSnapshots: [

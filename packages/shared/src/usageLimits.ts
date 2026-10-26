@@ -652,12 +652,6 @@ export type ComposerUsageLimitSource = UsageLimitSourceSnapshot & {
   readonly environmentId?: EnvironmentId;
 };
 
-/**
- * Hubs for a composer on `environmentId`: its own, then every other connected
- * environment's. A hub reports subscription accounts rather than anything about
- * the environment that polls it, so the composer shows the same hub accounts
- * the Usage page does without each environment holding the hub's management key.
- */
 export function composerUsageLimitSources(
   environmentId: EnvironmentId,
   local: UsageLimitSourceSnapshots,
@@ -789,7 +783,7 @@ export function collectProviderUsageLimits(
           ? entry
           : picked.shown;
       const credit =
-        account.usageLimits.resetCredits?.nextCreditId &&
+        account.usageLimits.resetCredits &&
         !limitsNotice(account.usageLimits) &&
         (!picked?.credit ||
           Date.parse(account.usageLimits.checkedAt) >
