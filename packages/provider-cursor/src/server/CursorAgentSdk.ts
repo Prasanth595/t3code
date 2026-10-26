@@ -388,17 +388,17 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
       const log = (event: CursorAgentSdkProtocolLogEvent) =>
         protocolLogger === undefined ? Effect.void : protocolLogger(event);
 
-      const cwd =
-        typeof input.options.local?.cwd === "string"
-          ? input.options.local.cwd
-          : input.options.local?.cwd?.[0];
+      const cwd = input.options.local?.cwd;
       const options =
-        platform === "win32" && cwd !== undefined && input.options.local?.store === undefined
+        platform === "win32" && input.options.local?.store === undefined
           ? {
               ...input.options,
               local: {
                 ...input.options.local,
-                store: yield* ScopedCache.get(windowsAgentStores, cwd),
+                store: yield* ScopedCache.get(
+                  windowsAgentStores,
+                  cwd ?? (yield* HostProcess.WorkingDirectory),
+                ),
               },
             }
           : input.options;
