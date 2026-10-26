@@ -35,7 +35,7 @@ import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { usePullRequestAction } from "./usePullRequestAction";
 import { annotatePullRequestDiff, reviewPosition } from "./pullRequestDiffComments";
-import { usePullRequestFileFilter, usePullRequestHideTestFiles } from "./usePullRequestFileFilter";
+import { usePullRequestFileFilter } from "./usePullRequestFileFilter";
 import {
   handlePullRequestDiffDebugEvent,
   pullRequestDiffInitialPosition,
@@ -896,15 +896,11 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   const terminology = sourceControlClients.get(
     (detail.data ?? route.params.initialSummary)?.provider,
   ).changeRequest;
-  const [jumpPath, setJumpPath] = useState(route.params.path);
-  const includePath = route.params.focus ? route.params.path : undefined;
-  const hideTestFiles = usePullRequestHideTestFiles();
-  // Pages on past pages the filter empties, so the screen has a file to open at.
-  const result = usePullRequestDiff(route.params, terminology, jumpPath ? [jumpPath] : [], {
-    hideTestFiles,
-    includePath,
-  });
-  const filter = usePullRequestFileFilter(result.parsed, includePath);
+  const result = usePullRequestDiff(route.params, terminology);
+  const filter = usePullRequestFileFilter(
+    result.parsed,
+    route.params.focus ? route.params.path : undefined,
+  );
   const { refresh: refreshDetail } = detail;
   useFocusEffect(refreshDetail);
   const { loadMore } = result;
@@ -975,6 +971,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       code: row.content ?? "",
     });
   };
+  const [jumpPath, setJumpPath] = useState(route.params.path);
   const requestedFile =
     result.parsed.kind === "files"
       ? result.parsed.files.find((file) => file.path === jumpPath)
@@ -1032,6 +1029,9 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     canHighlight: true,
   });
   const [NativeDiffView] = useState(() => resolveNativeReviewDiffView());
+  useEffect(() => {
+    if (!targetFile) loadMore();
+  }, [targetFile, loadMore]);
   const onDebug: NonNullable<NativeReviewDiffViewProps["onDebug"]> = (event) =>
     handlePullRequestDiffDebugEvent(event, {
       rowCount: data.rows.length,
