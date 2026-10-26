@@ -27,7 +27,6 @@ describe("add project shared logic", () => {
     expect(sourceControlRepositoryErrorMessage(null)).toBe("An error occurred.");
   });
 
-
   it("routes owner/repository shorthand to GitHub over HTTPS", () => {
     expect(normalizePastedCloneUrl("imputnet/helium")).toBe(
       "https://github.com/imputnet/helium.git",

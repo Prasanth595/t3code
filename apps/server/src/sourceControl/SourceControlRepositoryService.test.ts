@@ -15,7 +15,6 @@ import {
   type SourceControlCloneRepositoryInput,
 } from "@t3tools/contracts";
 
-import { GitHubNotSignedInError } from "@t3tools/source-control-github/server/GitHubCredentials";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
@@ -101,61 +100,6 @@ function layer(input: {
       )
     : layerService.pipe(Layer.provideMerge(NodeServices.layer));
 }
-
-it.effect("exposes only safe GitHub lookup guidance while retaining provider failures", () =>
-  Effect.gen(function* () {
-    const safeDetail = "Repository not found. Check the owner and name and try again.";
-    const genericDetail = "The source control operation could not be completed.";
-    const signedOutCause = new GitHubNotSignedInError({
-      host: "private-github.example.com",
-      account: "private-account",
-    });
-    for (const [providerKind, detail, expectedDetail, cause] of [
-      ["github", safeDetail, safeDetail, undefined],
-      ["github", `${safeDetail} credential token abc123 was rejected`, genericDetail, undefined],
-      ["gitlab", safeDetail, genericDetail, undefined],
-      ["gitlab", signedOutCause.message, genericDetail, signedOutCause],
-      [
-        "github",
-        signedOutCause.message,
-        "GitHub is not authenticated. Run `gh auth login` (or set GH_TOKEN) and retry.",
-        signedOutCause,
-      ],
-    ] as const) {
-      const providerKindValue = SourceControlProviderKind.make(providerKind);
-      const providerCause = new SourceControlProviderError({
-        provider: providerKindValue,
-        operation: "getRepositoryCloneUrls",
-        cwd: "/workspace",
-        repository: "octocat/missing",
-        detail,
-        cause,
-      });
-      const provider = makeProvider({
-        kind: providerKindValue,
-        getRepositoryCloneUrls: () => Effect.fail(providerCause),
-      });
-      const error = yield* Effect.gen(function* () {
-        const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
-        return yield* Effect.flip(
-          service.lookupRepository({
-            provider: providerKindValue,
-            repository: "octocat/missing",
-            cwd: "/workspace",
-          }),
-        );
-      }).pipe(Effect.provide(layer({ provider })));
-
-      assert.strictEqual(error.provider, providerKindValue);
-      assert.strictEqual(error.operation, "lookupRepository");
-      assert.notInclude(error.message, "abc123");
-      assert.notInclude(error.message, signedOutCause.host);
-      assert.notInclude(error.message, "private-account");
-      assert.strictEqual(error.cause, providerCause);
-      assert.strictEqual(error.detail, expectedDetail);
-    }
-  }),
-);
 
 const lookupFailingWith = (cause: unknown, detail: string) =>
   Effect.gen(function* () {

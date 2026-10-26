@@ -26,7 +26,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 
-import { GH_PROCESS_CONCURRENCY } from "./GitHubCredentials.ts";
+import { GH_PROCESS_CONCURRENCY, GitHubNotSignedInError } from "./GitHubCredentials.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubChangeRequestTemplate from "./gitHubChangeRequestTemplate.ts";
@@ -300,10 +300,26 @@ export const makeDiscovery = Effect.gen(function* () {
   } satisfies SourceControlManagedCliDiscoverySpec;
 });
 
+const REPOSITORY_AUTH_GUIDANCE =
+  "GitHub is not authenticated. Run `gh auth login` (or set GH_TOKEN) and retry.";
+const USER_SAFE_REPOSITORY_DETAILS = new Set([
+  "Repositories are named owner/name.",
+  "Repository not found. Check the owner and name and try again.",
+  "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
+  REPOSITORY_AUTH_GUIDANCE,
+  "GitHub API rate limit exceeded. Requests resume when the limit resets.",
+]);
+const isGitHubNotSignedInError = Schema.is(GitHubNotSignedInError);
+
 class GitHubFailure extends Data.TaggedError("GitHubFailure")<{
   readonly detail: string;
   readonly cause: unknown;
-}> {}
+}> {
+  get userFacingDetail(): string | undefined {
+    if (isGitHubNotSignedInError(this.cause)) return REPOSITORY_AUTH_GUIDANCE;
+    return USER_SAFE_REPOSITORY_DETAILS.has(this.detail) ? this.detail : undefined;
+  }
+}
 
 const failure = (detail: string, cause?: unknown) => new GitHubFailure({ detail, cause });
 
@@ -795,7 +811,7 @@ export const make = Effect.gen(function* () {
               ),
             }),
         detail: error.detail,
-        cause: error.cause,
+        cause: operation === "getRepositoryCloneUrls" ? error : error.cause,
       });
 
   const readLinkSubject = Effect.fn("GitHubSourceControlProvider.readLinkSubject")(function* (
