@@ -79,8 +79,9 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
         const value: unknown = parseJsonc(contents, errors, { allowTrailingComma: true });
         return errors.length === 0 ? value : null;
       }),
-      Effect.catch((error) =>
-        error.reason._tag === "NotFound" ? Effect.succeed(undefined) : Effect.fail(error),
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () => Effect.void,
       ),
     );
 
@@ -102,8 +103,9 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
       ),
     )
     .pipe(
-      Effect.catch((error) =>
-        error.reason._tag === "NotFound" ? Effect.succeed("[]") : Effect.fail(error),
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () => Effect.succeed("[]"),
       ),
     );
   const disabled = new Set(yield* decodeDisabledServers(disabledText));

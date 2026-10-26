@@ -885,6 +885,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
   options: CursorAdapterV2Options,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const path = yield* Path.Path;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
@@ -2169,6 +2170,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                   ).pipe(
                     Effect.provideService(FileSystem.FileSystem, fileSystem),
                     Effect.provideService(Path.Path, path),
+                    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                   ),
                 }),
           });
