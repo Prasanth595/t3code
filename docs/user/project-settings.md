@@ -66,7 +66,9 @@ Open **Settings → Scheduled tasks** to create recurring tasks or manage existi
 ones across your connected environments. Use the settings filter to narrow the
 list by environment or project. Each task runs on the environment you choose,
 using its project, model, and workspace settings. Fixed-time schedules use that
-environment's time zone, which may differ from your phone's.
+environment's time zone, which may differ from your phone's. Choose **Monthly**
+to run on a specific day of the month at a set time. Months without that day are
+skipped, so a task set to the 31st does not run in February or April.
 
 Deleting a thread also deletes tasks that post into that thread. Tasks that start
 a new thread on each run survive deletion of their previous threads.

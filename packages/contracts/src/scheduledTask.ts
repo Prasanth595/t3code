@@ -45,6 +45,14 @@ const ScheduledTaskFixedTimeSchedule = Schema.Struct({
   ),
 });
 
+const ScheduledTaskMonthlySchedule = Schema.Struct({
+  type: Schema.Literal("monthly"),
+  timeOfDay: TimeOfDay,
+  dayOfMonth: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 31 })).annotate({
+    description: "Day of the month. Months without this day are skipped.",
+  }),
+});
+
 const ScheduledTaskWebhookSignatureFields = {
   header: TrimmedNonEmptyString.annotate({
     description: "Header with the signature, such as x-hub-signature-256.",
@@ -166,6 +174,7 @@ const ScheduledTaskUpsertWebhookSchedule = Schema.Struct({
 export const ScheduledTaskSchedule = Schema.Union([
   ScheduledTaskIntervalSchedule,
   ScheduledTaskFixedTimeSchedule,
+  ScheduledTaskMonthlySchedule,
   ScheduledTaskWebhookSchedule,
 ]);
 export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
@@ -180,6 +189,7 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
     }),
   }),
   ScheduledTaskFixedTimeSchedule,
+  ScheduledTaskMonthlySchedule,
   ScheduledTaskUpsertWebhookSchedule,
 ]);
 export type ScheduledTaskUpsertSchedule = typeof ScheduledTaskUpsertSchedule.Type;

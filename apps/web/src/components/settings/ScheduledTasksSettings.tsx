@@ -138,6 +138,7 @@ const EMPTY_DRAFT: DraftState = {
   scheduleMode: "fixed",
   intervalMinutes: "15",
   timeOfDay: "09:00",
+  dayOfMonth: "1",
   weekdays: new Set([1, 2, 3, 4, 5]),
   projectId: "",
   threadId: "",
@@ -288,6 +289,8 @@ function splitModelKey(value: string): ModelSelection | null {
 
 export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
   if (schedule.type === "webhook") return "On webhook";
+  if (schedule.type === "monthly")
+    return `Day ${schedule.dayOfMonth} of each month at ${schedule.timeOfDay}`;
   if (schedule.type === "interval") {
     const minutes = schedule.everyMs / 60_000;
     return Number.isInteger(minutes)
@@ -1213,6 +1216,8 @@ function ScheduledTaskEditorForm({
     }
     const schedule = scheduleFromDraft(draft);
     if (schedule === null) {
+      if (draft.scheduleMode === "monthly")
+        reportFailure("Invalid monthly schedule", "Choose a day from 1 to 31 and a valid time.");
       for (const error of webhookDraftErrors(draft)) reportFailure(error.title, error.description);
       return;
     }
@@ -1510,7 +1515,12 @@ function ScheduledTaskEditorForm({
                 value={[draft.scheduleMode]}
                 onValueChange={(values) => {
                   const mode = values[0] as ScheduleMode | undefined;
-                  if (mode === "fixed" || mode === "interval" || mode === "webhook")
+                  if (
+                    mode === "fixed" ||
+                    mode === "monthly" ||
+                    mode === "interval" ||
+                    mode === "webhook"
+                  )
                     setDraft((current) => ({
                       ...current,
                       scheduleMode: mode,
@@ -1521,7 +1531,8 @@ function ScheduledTaskEditorForm({
                     }));
                 }}
               >
-                <Toggle value="fixed">At a time</Toggle>
+                <Toggle value="fixed">Weekly</Toggle>
+                <Toggle value="monthly">Monthly</Toggle>
                 <Toggle value="interval">Every interval</Toggle>
                 <Toggle value="webhook">On webhook</Toggle>
               </ToggleGroup>
@@ -1697,42 +1708,75 @@ function ScheduledTaskEditorForm({
                   </div>
                 ) : null}
               </div>
-            ) : draft.scheduleMode === "fixed" ? (
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="scheduled-task-time">Run at</Label>
-                  <Input
-                    type="time"
-                    id="scheduled-task-time"
-                    nativeInput
-                    className="w-32"
-                    value={draft.timeOfDay}
-                    onChange={(event) =>
-                      setDraft((current) => ({ ...current, timeOfDay: event.target.value }))
-                    }
-                  />
-                  <span className="text-xs text-muted-foreground">on</span>
+            ) : draft.scheduleMode === "fixed" || draft.scheduleMode === "monthly" ? (
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="scheduled-task-time">Run at</Label>
+                    <Input
+                      type="time"
+                      id="scheduled-task-time"
+                      nativeInput
+                      className="w-32"
+                      value={draft.timeOfDay}
+                      onChange={(event) =>
+                        setDraft((current) => ({ ...current, timeOfDay: event.target.value }))
+                      }
+                    />
+                    {draft.scheduleMode === "fixed" ? (
+                      <span className="text-xs text-muted-foreground">on</span>
+                    ) : null}
+                  </div>
+                  {draft.scheduleMode === "monthly" ? (
+                    <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
+                      <Label htmlFor="scheduled-task-month-day">Day of month</Label>
+                      <Select
+                        value={draft.dayOfMonth}
+                        onValueChange={(dayOfMonth) => {
+                          if (dayOfMonth !== null)
+                            setDraft((current) => ({ ...current, dayOfMonth }));
+                        }}
+                      >
+                        <SelectTrigger id="scheduled-task-month-day" size="sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectPopup>
+                          {Array.from({ length: 31 }, (_, index) => (
+                            <SelectItem key={index + 1} value={String(index + 1)}>
+                              {index + 1}
+                            </SelectItem>
+                          ))}
+                        </SelectPopup>
+                      </Select>
+                    </div>
+                  ) : (
+                    <ToggleGroup
+                      multiple
+                      variant="outline"
+                      size="sm"
+                      aria-label="Days to run"
+                      value={[...draft.weekdays].map(String)}
+                      onValueChange={(values) => {
+                        if (values.length === 0) return;
+                        setDraft((current) => ({
+                          ...current,
+                          weekdays: new Set(values.map(Number)),
+                        }));
+                      }}
+                    >
+                      {WEEKDAY_ORDER.map((day) => (
+                        <Toggle key={day} value={String(day)} aria-label={WEEKDAY_LABELS[day]}>
+                          {WEEKDAY_SHORT[day]}
+                        </Toggle>
+                      ))}
+                    </ToggleGroup>
+                  )}
                 </div>
-                <ToggleGroup
-                  multiple
-                  variant="outline"
-                  size="sm"
-                  aria-label="Days to run"
-                  value={[...draft.weekdays].map(String)}
-                  onValueChange={(values) => {
-                    if (values.length === 0) return;
-                    setDraft((current) => ({
-                      ...current,
-                      weekdays: new Set(values.map(Number)),
-                    }));
-                  }}
-                >
-                  {WEEKDAY_ORDER.map((day) => (
-                    <Toggle key={day} value={String(day)} aria-label={WEEKDAY_LABELS[day]}>
-                      {WEEKDAY_SHORT[day]}
-                    </Toggle>
-                  ))}
-                </ToggleGroup>
+                {draft.scheduleMode === "monthly" ? (
+                  <p className="text-xs text-muted-foreground">
+                    Uses the environment's time zone. Months without this day are skipped.
+                  </p>
+                ) : null}
               </div>
             ) : (
               <div className="flex items-center gap-2">

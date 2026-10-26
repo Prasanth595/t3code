@@ -51,8 +51,9 @@ export function scheduledTaskDefaultModel(
 }
 
 export type ScheduleDraft = {
-  readonly mode: "fixed_time" | "interval" | "webhook";
+  readonly mode: "fixed_time" | "monthly" | "interval" | "webhook";
   readonly timeOfDay: string;
+  readonly dayOfMonth: string;
   readonly weekdays: ReadonlyArray<number>;
   readonly intervalMinutes: string;
   readonly signature: ScheduledTaskWebhookSignature | null;
@@ -68,6 +69,7 @@ export type ScheduleDraft = {
 export const DEFAULT_SCHEDULE: ScheduleDraft = {
   mode: "fixed_time",
   timeOfDay: "09:00",
+  dayOfMonth: "1",
   weekdays: [1, 2, 3, 4, 5],
   intervalMinutes: "15",
   signature: null,
@@ -81,6 +83,13 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
 
 export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): ScheduleDraft {
   switch (task.schedule.type) {
+    case "monthly":
+      return {
+        ...DEFAULT_SCHEDULE,
+        mode: "monthly",
+        timeOfDay: task.schedule.timeOfDay,
+        dayOfMonth: String(task.schedule.dayOfMonth),
+      };
     case "fixed_time":
       return {
         ...DEFAULT_SCHEDULE,
@@ -167,6 +176,12 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
     const everyMs = Math.round(minutes * 60_000);
     return minutes >= 1 && Number.isSafeInteger(everyMs) ? { type: "interval", everyMs } : null;
   }
+  if (draft.mode === "monthly") {
+    const dayOfMonth = Number(draft.dayOfMonth);
+    if (!Number.isInteger(dayOfMonth) || dayOfMonth < 1 || dayOfMonth > 31) return null;
+    if (!/^([01]?\d|2[0-3]):[0-5]\d$/.test(draft.timeOfDay)) return null;
+    return { type: "monthly", timeOfDay: draft.timeOfDay, dayOfMonth };
+  }
   const weekdays = [...new Set(draft.weekdays)].sort((a, b) => a - b);
   if (
     !/^([01]?\d|2[0-3]):[0-5]\d$/.test(draft.timeOfDay) ||
@@ -211,6 +226,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
       .map((option) => [option.id, option.value]),
     draft.schedule.mode,
     draft.schedule.timeOfDay,
+    draft.schedule.dayOfMonth,
     [...draft.schedule.weekdays].sort((a, b) => a - b),
     draft.schedule.intervalMinutes,
     draft.schedule.maxDeliveryAgeMinutes,

@@ -11,6 +11,19 @@ const decodeSchedule = Schema.decodeUnknownSync(ScheduledTaskSchedule);
 const decodeUpsertSchedule = Schema.decodeUnknownSync(ScheduledTaskUpsertSchedule);
 
 describe("ScheduledTaskSchedule", () => {
+  it("accepts monthly dates and rejects invalid days and times", () => {
+    for (const decode of [decodeSchedule, decodeUpsertSchedule]) {
+      for (const dayOfMonth of [1, 15, 31]) {
+        const schedule = { type: "monthly", timeOfDay: "09:00", dayOfMonth };
+        expect(decode(schedule)).toEqual(schedule);
+      }
+      for (const dayOfMonth of [0, 32, 1.5, "15", undefined]) {
+        expect(() => decode({ type: "monthly", timeOfDay: "09:00", dayOfMonth })).toThrow();
+      }
+      expect(() => decode({ type: "monthly", timeOfDay: "24:00", dayOfMonth: 1 })).toThrow();
+    }
+  });
+
   it("keeps legacy sub-minute persisted schedules readable", () => {
     expect(
       decodeSchedule({

@@ -21,6 +21,22 @@ export function nextScheduledRunAt(
 
   const time = parseTimeOfDay(schedule.timeOfDay);
   if (time === null) return null;
+  if (schedule.type === "monthly") {
+    const monthStart = DateTime.setParts(from, { day: 1 });
+    for (let offset = 0; offset <= 2; offset += 1) {
+      const candidate = DateTime.setParts(DateTime.add(monthStart, { months: offset }), {
+        day: schedule.dayOfMonth,
+        hour: time.hour,
+        minute: time.minute,
+        second: 0,
+        millisecond: 0,
+      });
+      if (DateTime.toParts(candidate).day !== schedule.dayOfMonth) continue;
+      if (DateTime.toEpochMillis(candidate) <= DateTime.toEpochMillis(from)) continue;
+      return candidate;
+    }
+    return null;
+  }
   const weekdays =
     schedule.weekdays && schedule.weekdays.length > 0 ? new Set(schedule.weekdays) : null;
   for (let offset = 0; offset <= 7; offset += 1) {
@@ -48,7 +64,7 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
     return b.type === "interval" && a.everyMs === b.everyMs;
   }
   if (a.type === "webhook") return b.type === "webhook";
-  if (b.type !== "fixed_time") return false;
+  if (b.type !== a.type) return false;
   // Compare parsed times so padded-hour edits do not reschedule pending runs.
   const aTime = parseTimeOfDay(a.timeOfDay);
   const bTime = parseTimeOfDay(b.timeOfDay);
@@ -57,7 +73,9 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
     bTime !== null &&
     aTime.hour === bTime.hour &&
     aTime.minute === bTime.minute &&
-    weekdayKey(a.weekdays) === weekdayKey(b.weekdays)
+    (a.type === "monthly"
+      ? b.type === "monthly" && a.dayOfMonth === b.dayOfMonth
+      : b.type === "fixed_time" && weekdayKey(a.weekdays) === weekdayKey(b.weekdays))
   );
 }
 
@@ -68,6 +86,6 @@ export function isMissedFixedTimeRun(
   dueAt: DateTime.DateTime,
   now: DateTime.DateTime,
 ): boolean {
-  if (schedule.type !== "fixed_time") return false;
+  if (schedule.type !== "fixed_time" && schedule.type !== "monthly") return false;
   return DateTime.toEpochMillis(now) - DateTime.toEpochMillis(dueAt) > MISSED_FIXED_TIME_GRACE_MS;
 }

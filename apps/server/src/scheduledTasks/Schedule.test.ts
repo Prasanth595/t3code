@@ -1,9 +1,37 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
-import { isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
+import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 
 describe("scheduled task schedule calculation", () => {
+  it.each([
+    ["2026-01-14T18:00:00Z", 15, "2026-01-15T14:00:00.000Z"],
+    ["2026-01-15T14:00:00Z", 15, "2026-02-15T14:00:00.000Z"],
+    ["2026-01-31T15:00:00Z", 31, "2026-03-31T13:00:00.000Z"],
+    ["2026-04-01T00:00:00Z", 31, "2026-05-31T13:00:00.000Z"],
+    ["2027-02-01T00:00:00Z", 29, "2027-03-29T13:00:00.000Z"],
+    ["2028-02-01T00:00:00Z", 29, "2028-02-29T14:00:00.000Z"],
+    ["2026-12-31T15:00:00Z", 1, "2027-01-01T14:00:00.000Z"],
+  ])("finds the monthly run after %s for day %s", (from, dayOfMonth, expected) => {
+    const next = nextScheduledRunAt(
+      { type: "monthly", dayOfMonth, timeOfDay: "09:00" },
+      DateTime.makeZonedUnsafe(from, { timeZone: "America/New_York" }),
+    );
+    expect(next && DateTime.formatIso(next)).toBe(expected);
+  });
+
+  it("compares monthly days and applies the fixed-time missed-run grace", () => {
+    const schedule = { type: "monthly", dayOfMonth: 15, timeOfDay: "09:00" } as const;
+    expect(isSameSchedule(schedule, { ...schedule, timeOfDay: "9:00" })).toBe(true);
+    expect(isSameSchedule(schedule, { ...schedule, dayOfMonth: 16 })).toBe(false);
+    expect(isSameSchedule(schedule, { ...schedule, timeOfDay: "10:00" })).toBe(false);
+    expect(isSameSchedule(schedule, { type: "fixed_time", timeOfDay: "09:00" })).toBe(false);
+    expect(isSameSchedule({ type: "fixed_time", timeOfDay: "09:00" }, schedule)).toBe(false);
+    const due = DateTime.makeUnsafe("2026-01-15T09:00:00Z");
+    expect(isMissedFixedTimeRun(schedule, due, DateTime.add(due, { minutes: 10 }))).toBe(false);
+    expect(isMissedFixedTimeRun(schedule, due, DateTime.add(due, { minutes: 11 }))).toBe(true);
+  });
+
   it("skips to the next matching fixed-time weekday", () => {
     const next = nextScheduledRunAt(
       { type: "fixed_time", timeOfDay: "09:00", weekdays: [1, 2, 3, 4, 5] },

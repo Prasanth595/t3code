@@ -11,9 +11,30 @@ import {
   DEFAULT_SCHEDULE,
   scheduleDraftForTask,
   scheduleFromDraft,
+  createDraft,
+  hasScheduledTaskDraftChanges,
 } from "./scheduledTaskDraft";
 
 describe("scheduleDraftForTask", () => {
+  it("round-trips monthly schedules and tracks edits to their day", () => {
+    const schedule = { type: "monthly", dayOfMonth: 31, timeOfDay: "17:45" } as const;
+    const draft = scheduleDraftForTask({ schedule });
+    expect(draft.mode).toBe("monthly");
+    expect(scheduleFromDraft(draft)).toEqual(schedule);
+    for (const dayOfMonth of ["", "0", "32", "1.5", "abc"]) {
+      expect(scheduleFromDraft({ ...draft, dayOfMonth })).toBeNull();
+    }
+    expect(scheduleFromDraft({ ...draft, timeOfDay: "24:00" })).toBeNull();
+    const initial = { ...createDraft(null, null), schedule: draft };
+    expect(hasScheduledTaskDraftChanges(initial, initial)).toBe(false);
+    expect(
+      hasScheduledTaskDraftChanges(initial, {
+        ...initial,
+        schedule: { ...draft, dayOfMonth: "15" },
+      }),
+    ).toBe(true);
+  });
+
   it("opens legacy sub-minute schedules at the writable minimum", () => {
     const draft = scheduleDraftForTask({ schedule: { type: "interval", everyMs: 30_000 } });
     expect(draft.intervalMinutes).toBe("1");

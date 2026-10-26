@@ -109,6 +109,8 @@ const DAYS = [
 function describeSchedule(task: ScheduledTask): string {
   if (task.schedule.type === "webhook") return "On webhook";
   if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
+  if (task.schedule.type === "monthly")
+    return `Day ${task.schedule.dayOfMonth} of each month at ${formatTime(task.schedule.timeOfDay)}`;
   const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
   return `${days} at ${formatTime(task.schedule.timeOfDay)}`;
 }
@@ -936,7 +938,8 @@ function TaskForm({
           <View className="px-4 py-3">
             <SegmentedControl
               options={[
-                { value: "fixed_time", label: "At a time" },
+                { value: "fixed_time", label: "Weekly" },
+                { value: "monthly", label: "Monthly" },
                 { value: "interval", label: "Interval" },
                 { value: "webhook", label: "On webhook" },
               ]}
@@ -954,7 +957,7 @@ function TaskForm({
               }}
             />
           </View>
-          {draft.schedule.mode === "fixed_time" ? (
+          {draft.schedule.mode === "fixed_time" || draft.schedule.mode === "monthly" ? (
             <>
               <Pressable
                 accessibilityRole="button"
@@ -985,46 +988,67 @@ function TaskForm({
                   }}
                 />
               ) : null}
-              <SelectRow
-                label="Repeat"
-                value={repeatLabel(draft.schedule.weekdays)}
-                borderTop
-                actions={[
-                  {
-                    id: "every_day",
-                    title: "Every day",
-                    state: draft.schedule.weekdays.length === 7 ? "on" : undefined,
-                  },
-                  {
-                    id: "weekdays",
-                    title: "Weekdays",
-                    state: repeatLabel(draft.schedule.weekdays) === "Weekdays" ? "on" : undefined,
-                  },
-                  ...DAYS.map((day) => ({
-                    id: String(day.index),
-                    title: day.label,
-                    attributes: { keepsMenuPresented: true },
-                    state: draft.schedule.weekdays.includes(day.index)
-                      ? ("on" as const)
-                      : undefined,
-                  })),
-                ]}
-                onSelect={(id) => {
-                  const weekdays =
-                    id === "every_day"
-                      ? DAYS.map((day) => day.index)
-                      : id === "weekdays"
-                        ? [1, 2, 3, 4, 5]
-                        : (() => {
-                            const day = DAYS.find((item) => String(item.index) === id);
-                            if (!day) return draft.schedule.weekdays;
-                            return draft.schedule.weekdays.includes(day.index)
-                              ? draft.schedule.weekdays.filter((index) => index !== day.index)
-                              : [...draft.schedule.weekdays, day.index];
-                          })();
-                  setDraft({ ...draft, schedule: { ...draft.schedule, weekdays } });
-                }}
-              />
+              {draft.schedule.mode === "monthly" ? (
+                <SelectRow
+                  label="Day of month"
+                  value={draft.schedule.dayOfMonth}
+                  borderTop
+                  actions={Array.from({ length: 31 }, (_, index) => ({
+                    id: String(index + 1),
+                    title: String(index + 1),
+                    state: draft.schedule.dayOfMonth === String(index + 1) ? "on" : undefined,
+                  }))}
+                  onSelect={(dayOfMonth) =>
+                    setDraft({ ...draft, schedule: { ...draft.schedule, dayOfMonth } })
+                  }
+                />
+              ) : (
+                <SelectRow
+                  label="Repeat"
+                  value={repeatLabel(draft.schedule.weekdays)}
+                  borderTop
+                  actions={[
+                    {
+                      id: "every_day",
+                      title: "Every day",
+                      state: draft.schedule.weekdays.length === 7 ? "on" : undefined,
+                    },
+                    {
+                      id: "weekdays",
+                      title: "Weekdays",
+                      state: repeatLabel(draft.schedule.weekdays) === "Weekdays" ? "on" : undefined,
+                    },
+                    ...DAYS.map((day) => ({
+                      id: String(day.index),
+                      title: day.label,
+                      attributes: { keepsMenuPresented: true },
+                      state: draft.schedule.weekdays.includes(day.index)
+                        ? ("on" as const)
+                        : undefined,
+                    })),
+                  ]}
+                  onSelect={(id) => {
+                    const weekdays =
+                      id === "every_day"
+                        ? DAYS.map((day) => day.index)
+                        : id === "weekdays"
+                          ? [1, 2, 3, 4, 5]
+                          : (() => {
+                              const day = DAYS.find((item) => String(item.index) === id);
+                              if (!day) return draft.schedule.weekdays;
+                              return draft.schedule.weekdays.includes(day.index)
+                                ? draft.schedule.weekdays.filter((index) => index !== day.index)
+                                : [...draft.schedule.weekdays, day.index];
+                            })();
+                    setDraft({ ...draft, schedule: { ...draft.schedule, weekdays } });
+                  }}
+                />
+              )}
+              {draft.schedule.mode === "monthly" ? (
+                <Text className="px-4 pb-3 text-sm text-foreground-muted">
+                  Months without this day are skipped.
+                </Text>
+              ) : null}
             </>
           ) : draft.schedule.mode === "webhook" ? (
             <>
@@ -1127,7 +1151,7 @@ function TaskForm({
             />
           </View>
         </SettingsSection>
-        {draft.schedule.mode === "fixed_time" ? (
+        {draft.schedule.mode === "fixed_time" || draft.schedule.mode === "monthly" ? (
           <Text className="px-2 text-sm text-foreground-muted">
             Time uses the environment's time zone, which may differ from your phone's.
           </Text>

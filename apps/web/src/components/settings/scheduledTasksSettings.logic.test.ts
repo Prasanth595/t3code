@@ -151,6 +151,24 @@ describe("editing scheduled task branch settings", () => {
   });
 });
 
+describe("monthly scheduled tasks", () => {
+  it("round-trips the monthly day and time without weekday restrictions", () => {
+    const schedule = { type: "monthly", dayOfMonth: 31, timeOfDay: "17:45" } as const;
+    const draft = taskToDraft({ ...legacyTask, schedule });
+    expect(draft.scheduleMode).toBe("monthly");
+    expect(draft.dayOfMonth).toBe("31");
+    expect(scheduleFromDraft(draft)).toEqual(schedule);
+    expect(scheduleFromDraft({ ...draft, scheduleMode: "fixed" })).toEqual({
+      type: "fixed_time",
+      timeOfDay: "17:45",
+    });
+    for (const dayOfMonth of ["", "0", "32", "1.5", "abc"]) {
+      expect(scheduleFromDraft({ ...draft, dayOfMonth })).toBeNull();
+    }
+    expect(scheduleFromDraft({ ...draft, timeOfDay: "24:00" })).toBeNull();
+  });
+});
+
 describe("webhook scheduled tasks", () => {
   const signature = { header: "x-signature", encoding: "base64", prefix: "" } as const;
   const webhookTask: ScheduledTask = {

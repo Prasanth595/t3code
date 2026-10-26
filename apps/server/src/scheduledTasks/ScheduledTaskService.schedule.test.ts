@@ -17,6 +17,62 @@ import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
 const decodeUpsertInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
 
+it.effect("persists monthly schedules and recalculates when their day changes", () =>
+  Effect.gen(function* () {
+    const localDate = (month: number, day: number, hour: number) =>
+      DateTime.makeZonedUnsafe(
+        { year: 2026, month, day, hour, minute: 0, second: 0, millisecond: 0 },
+        { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true },
+      );
+    yield* TestClock.setTime(DateTime.toEpochMillis(localDate(1, 31, 10)));
+    const layerDependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      Scheduler.layer,
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        isScratchProject: () => Effect.succeed(false),
+      }),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const input = yield* decodeUpsertInput({
+        title: "Monthly review",
+        prompt: "Review the open pull requests.",
+        enabled: true,
+        schedule: { type: "monthly", dayOfMonth: 31, timeOfDay: "09:00" },
+        projectId: "project-monthly-schedule",
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      const created = (yield* service.upsert(input)).task;
+      const expected = DateTime.formatIso(localDate(3, 31, 9));
+      expect(created.schedule).toEqual(input.schedule);
+      expect(created.nextRunAt).toBe(expected);
+      expect((yield* service.list()).tasks[0]?.schedule).toEqual(input.schedule);
+      expect(
+        (yield* service.setEnabled({ id: created.id, enabled: false })).task.nextRunAt,
+      ).toBeNull();
+      expect((yield* service.setEnabled({ id: created.id, enabled: true })).task.nextRunAt).toBe(
+        expected,
+      );
+
+      const edited = yield* service.upsert({ ...input, id: created.id, title: "Edited" });
+      expect(edited.task.nextRunAt).toBe(expected);
+      const rescheduled = yield* service.upsert({
+        ...input,
+        id: created.id,
+        schedule: { type: "monthly", dayOfMonth: 15, timeOfDay: "09:00" },
+      });
+      expect(rescheduled.task.nextRunAt).toBe(DateTime.formatIso(localDate(2, 15, 9)));
+    }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
 it.effect("rejects a stale form save after deletion while preserving explicit-id creates", () =>
   Effect.gen(function* () {
     const layerDependencies = Layer.mergeAll(

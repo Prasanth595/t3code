@@ -52,7 +52,7 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
   };
 }
 
-export type ScheduleMode = "fixed" | "interval" | "webhook";
+export type ScheduleMode = "fixed" | "monthly" | "interval" | "webhook";
 export type WorkspaceMode = "root" | "worktree" | "existing_worktree";
 
 export interface DraftState {
@@ -63,6 +63,7 @@ export interface DraftState {
   readonly scheduleMode: ScheduleMode;
   readonly intervalMinutes: string;
   readonly timeOfDay: string;
+  readonly dayOfMonth: string;
   readonly weekdays: ReadonlySet<number>;
   readonly projectId: string;
   readonly threadId: string;
@@ -186,6 +187,12 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
     const everyMs = Math.round(Number(draft.intervalMinutes) * 60_000);
     return { type: "interval", everyMs };
   }
+  if (draft.scheduleMode === "monthly") {
+    const dayOfMonth = Number(draft.dayOfMonth);
+    if (!Number.isInteger(dayOfMonth) || dayOfMonth < 1 || dayOfMonth > 31) return null;
+    if (!/^([01]?\d|2[0-3]):[0-5]\d$/.test(draft.timeOfDay)) return null;
+    return { type: "monthly", timeOfDay: draft.timeOfDay, dayOfMonth };
+  }
   const selectedEveryDay = draft.weekdays.size === 0 || draft.weekdays.size === 7;
   return {
     type: "fixed_time",
@@ -206,11 +213,12 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     title: task.title,
     prompt: task.prompt,
     enabled: task.enabled,
-    scheduleMode:
-      schedule.type === "interval" ? "interval" : schedule.type === "webhook" ? "webhook" : "fixed",
+    scheduleMode: schedule.type === "fixed_time" ? "fixed" : schedule.type,
     intervalMinutes:
       schedule.type === "interval" ? String(Math.max(1, schedule.everyMs / 60_000)) : "15",
-    timeOfDay: schedule.type === "fixed_time" ? schedule.timeOfDay : "09:00",
+    timeOfDay:
+      schedule.type === "fixed_time" || schedule.type === "monthly" ? schedule.timeOfDay : "09:00",
+    dayOfMonth: schedule.type === "monthly" ? String(schedule.dayOfMonth) : "1",
     weekdays,
     projectId: task.projectId,
     threadId: task.threadId ?? "",
