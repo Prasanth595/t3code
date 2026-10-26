@@ -1003,7 +1003,10 @@ function ThreadTerminal(props: {
               {Platform.OS === "android" ? (
                 <Animated.View
                   className="min-h-14 flex-row items-center gap-2 bg-card-alt px-2"
-                  onLayout={(event) => setAndroidBottomBarHeight(event.nativeEvent.layout.height)}
+                  onLayout={(event) => {
+                    const height = event.nativeEvent.layout.height;
+                    if (height > 0) setAndroidBottomBarHeight(height);
+                  }}
                   pointerEvents={keyboardState.isVisible ? "none" : "auto"}
                   importantForAccessibility={
                     keyboardState.isVisible ? "no-hide-descendants" : "auto"
