@@ -206,7 +206,7 @@ function markdownPanel(onToggleOption = vi.fn(), onAdvance = vi.fn()) {
           questions: [
             {
               ...prompt.questions[0]!,
-              question: "Read **the guide** and Promise<void>.",
+              question: "Schema\n\nRead **the guide** and Promise<void>.",
               options: [
                 {
                   label: "**Return** Promise<void>",

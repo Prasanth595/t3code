@@ -215,7 +215,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   cwd={cwd}
                   threadRef={threadRef}
                   parseRawHtml={false}
-                  className="line-clamp-1 max-h-lh text-xs/4 text-secondary-label"
+                  className="line-clamp-1 max-h-lh text-xs/4 text-secondary-label [&>p]:inline [&>p]:after:content-[' ']"
                 />
               </span>
             </>
