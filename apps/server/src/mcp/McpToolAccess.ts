@@ -32,10 +32,7 @@ import {
   unavailable,
 } from "./threadAccess.ts";
 
-/**
- * Their private constructors only stop the type checker; this also stops
- * `Reflect.construct` and friends at runtime.
- */
+/** Private constructors only enforce types; the token also blocks runtime construction. */
 const builtHere: unique symbol = Symbol("t3/mcp/McpToolAccess/builtHere");
 
 const refuseOutsideConstruction = (token: symbol) => {
@@ -71,11 +68,7 @@ let handlersLayer: <Tools extends Record<string, Tool.Any>, EX, RX>(
   layer: Layer.Layer<Tool.HandlersFor<Tools>, EX, RX>,
 ) => HandlersLayer<Tools, EX, RX>;
 
-/**
- * Effect's own registration functions accept any handler, so the
- * `t3code/no-raw-mcp-registration` lint rule keeps Effect's `McpServer` inside
- * McpHttpServer.
- */
+/** t3code/no-raw-mcp-registration confines Effect's unchecked registration API to McpHttpServer. */
 export class Declaration<out Handler> {
   readonly #handle: Handler;
   readonly #remote: RemoteCheck<never> | undefined;
@@ -136,7 +129,7 @@ export const actsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A,
   declare(
     (params: P) =>
       requireThreadCaller.pipe(
-        Effect.flatMap(() => writingCaller),
+        Effect.andThen(writingCaller),
         Effect.flatMap(() => handle(params)),
       ),
     undefined,
@@ -148,10 +141,7 @@ export const writes = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>
     () => orchestratingCaller,
   );
 
-/**
- * Unlike `writes` it does not need thread control; the handler checks its
- * capability, as the capability toolkits do.
- */
+/** Requires handler capability checks, not thread control. */
 export const writesWithCapability = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
   declare(
     (params: P) => writingCaller.pipe(Effect.flatMap(() => handle(params))),
@@ -175,9 +165,7 @@ export const writesThreads = <P, A, E, R>(
             yield* assertTargetWithinLimits(caller.limits, target);
           }
         }
-        // The target's user can raise its modes after the check above; the
-        // orchestrator checks again under the thread's lock and records its
-        // refusal here, since handlers wrap dispatch errors their own way.
+        // Modes can rise after this check; the orchestrator rechecks under lock and records refusal before handlers wrap errors.
         const refused = yield* Ref.make<DispatchModeRefusal | undefined>(undefined);
         return yield* handle(params).pipe(
           Effect.provideService(DispatchModeLimit, { ...caller.limits, refused }),
@@ -234,10 +222,7 @@ export const startsThreads = <P, A, E, R>(
 const fullAccessRequired =
   "Changing projects or environment settings needs a live full-access/default calling thread or a full-access client.";
 
-/**
- * `check` re-checks the caller wherever the handler waits before writing, such
- * as for a lock, since the caller's modes can change meanwhile.
- */
+/** Recheck after waits before writing; caller modes may have changed. */
 export const writesEnvironment = <P, A, E, R>(
   handle: (
     params: P,

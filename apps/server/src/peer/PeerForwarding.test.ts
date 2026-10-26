@@ -1,3 +1,4 @@
+import * as DocumentText from "../provider/DocumentText.ts";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -14,7 +15,6 @@ import {
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import { McpSchema, McpServer } from "effect/ai";
@@ -139,7 +139,7 @@ const boxThreads = (seen: Ref.Ref<Seen>) => {
 /** B launches whatever it is asked to, and records it. */
 const boxLaunches = (seen: Ref.Ref<Seen>) =>
   Layer.mock(ThreadLaunch.ThreadLaunchService)({
-    getAcceptedLaunch: () => Effect.succeed(Option.none()),
+    getAcceptedLaunch: () => Effect.succeedNone,
     launch: (input) =>
       Ref.update(seen, (current) => ({ ...current, launches: [...current.launches, input] })).pipe(
         Effect.as({
@@ -162,7 +162,7 @@ const boxLaunches = (seen: Ref.Ref<Seen>) =>
 const boxProjects = (seen: Ref.Ref<Seen>) =>
   Layer.merge(
     Layer.mock(ProjectService.ProjectService)({
-      getById: () => Effect.succeed(Option.none()),
+      getById: () => Effect.succeedNone,
       create: (input) =>
         Ref.update(seen, (current) => ({
           ...current,
@@ -201,6 +201,7 @@ const serveBox = (seen: Ref.Ref<Seen>) =>
       McpHttpServer.layerProjectRegistration,
       McpHttpServer.layerThreadToolkit,
     ).pipe(
+      Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
       Layer.provide(NodeCrypto.layer),
       Layer.provide(boxThreads(seen)),
       Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
@@ -249,6 +250,7 @@ const makeLaptop = Effect.gen(function* () {
     McpHttpServer.layerProjectRegistration,
     McpHttpServer.layerThreadToolkit,
   ).pipe(
+    Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
     Layer.provideMerge(McpServer.McpServer.layer),
     Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
     Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
