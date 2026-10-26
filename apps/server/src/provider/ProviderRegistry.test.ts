@@ -521,6 +521,36 @@ it.layer(
       }),
     );
 
+    it.effect("bounds a hanging Codex --version fallback and releases its process scope", () =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const released = yield* Deferred.make<void>();
+        const spawner = ChildProcessSpawner.make(() =>
+          Effect.gen(function* () {
+            yield* Effect.addFinalizer(() => Deferred.succeed(released, undefined));
+            return ChildProcessSpawner.makeHandle({
+              ...mockHandle({ stdout: "", stderr: "", code: 0 }),
+              exitCode: Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+            });
+          }),
+        );
+        const fiber = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+          Effect.fail(new CodexErrors.CodexAppServerProcessExitedError({ code: 1 })),
+        ).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.forkChild,
+        );
+        yield* Deferred.await(started);
+        yield* TestClock.adjust("4 seconds");
+        const status = yield* Fiber.join(fiber);
+        assert.strictEqual(status.version, null);
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.installed, true);
+        assert.match(status.message ?? "", /^Codex app-server provider probe failed: /);
+        assert.isTrue(yield* Deferred.isDone(released));
+      }),
+    );
+
     it.effect("does not run --version when the Codex executable cannot start", () =>
       Effect.gen(function* () {
         if ((yield* HostProcess.Platform) === "win32") return;

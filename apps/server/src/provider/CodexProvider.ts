@@ -605,11 +605,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   } satisfies CodexAppServerProviderSnapshot;
 });
 
-/**
- * A CLI too old for `app-server` fails the handshake before `initialize` reports
- * its version. Ask `--version` instead so the compatibility advisory can still
- * name the obsolete CLI. Any failure here yields `null`.
- */
+// Old CLIs can exit before initialize reports the version needed for compatibility advice.
 const probeCodexCliVersion = Effect.fn("probeCodexCliVersion")(
   function* (input: {
     readonly binaryPath: string;
