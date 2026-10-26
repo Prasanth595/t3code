@@ -5,7 +5,6 @@ import {
   type ChangeRequestTerminology,
 } from "@t3tools/client-runtime/source-control-clients";
 import * as Schema from "effect/Schema";
-
 import {
   GitCommandError,
   PullRequestDetail,
@@ -14,7 +13,6 @@ import {
   type PullRequestActor,
   type PullRequestBaseComparison,
   type PullRequestCheck,
-  type PullRequestChecks,
   type PullRequestChecksState as ContractPullRequestChecksState,
   type PullRequestComment,
   type PullRequestCommit,
