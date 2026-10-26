@@ -22,6 +22,7 @@ vi.mock("../settings/appearance/AppearancePreferencesProvider", () => ({
   useAppearancePreferences: vi.fn(),
 }));
 vi.mock("./markdownCodeHighlightState", () => ({ useMarkdownCodeHighlight: vi.fn() }));
+vi.mock("./useOpenLinkedThread", () => ({ useOpenLinkedThread: vi.fn() }));
 vi.mock("./SubagentRow", () => ({ SubagentRow: "div" }));
 vi.mock("./work-log-layout", () => ({ WorkLogBlock: "div" }));
 vi.mock("../../state/threads", () => ({ environmentThreadDetails: { threadAtom: vi.fn() } }));

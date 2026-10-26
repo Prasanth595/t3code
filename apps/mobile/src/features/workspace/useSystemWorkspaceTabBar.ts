@@ -8,12 +8,10 @@ import { workspaceUsesColumns } from "./workspace-tabs-state";
 function useWorkspacePage() {
   const workspace = useWorkspaceTabs();
   return (
-    workspace !== null &&
-    (workspace.settingsOpen || !workspaceUsesColumns(workspace.state.selectedTab))
+    workspace !== null && !workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen)
   );
 }
 
-/** Where an iOS split window shows the workspace tabs instead of UIKit's tab bar. */
 export function useSidebarWorkspaceTabs(): "picker" | "toolbar" | null {
   const { layout } = useAdaptiveWorkspaceLayout();
   const deviceType = useDeviceType();
@@ -41,7 +39,14 @@ export function useCompactWorkspaceTabs() {
 
 export function useSystemWorkspaceTabBar() {
   const deviceType = useDeviceType();
+  const { layout } = useAdaptiveWorkspaceLayout();
   const sidebarTabs = useSidebarWorkspaceTabs();
   const compactTabs = useCompactWorkspaceTabs();
-  return Platform.OS === "ios" && deviceType !== "pad" && sidebarTabs === null && !compactTabs;
+  return (
+    Platform.OS === "ios" &&
+    deviceType !== "pad" &&
+    !layout.primarySidebarOverlaysContent &&
+    sidebarTabs === null &&
+    !compactTabs
+  );
 }
