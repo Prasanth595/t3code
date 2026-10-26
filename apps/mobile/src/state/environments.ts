@@ -5,7 +5,7 @@ import {
   type EnvironmentPresentation as BaseEnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useMemo } from "react";
+import { Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { environmentPresentations } from "./presentation";
@@ -31,18 +31,17 @@ export function projectEnvironmentPresentation(
   };
 }
 
+const environmentsAtom = Atom.make((get) =>
+  [...get(environmentPresentations.presentationsAtom).entries()].map(
+    ([environmentId, presentation]) => projectEnvironmentPresentation(environmentId, presentation),
+  ),
+).pipe(Atom.withLabel("mobile-environments"));
+
 export function useEnvironments() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const networkStatus = useAtomValue(environmentCatalog.networkStatusValueAtom);
   const presentationById = useAtomValue(environmentPresentations.presentationsAtom);
-
-  const environments = useMemo(
-    () =>
-      [...presentationById.entries()].map(([environmentId, presentation]) =>
-        projectEnvironmentPresentation(environmentId, presentation),
-      ),
-    [presentationById],
-  );
+  const environments = useAtomValue(environmentsAtom);
 
   return {
     isReady: catalog.isReady,
