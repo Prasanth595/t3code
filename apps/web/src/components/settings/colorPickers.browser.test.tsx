@@ -59,8 +59,10 @@ async function renderThemeField(value: string) {
   const field = (current: string) => (
     <ThemeColorField role="accent" value={current} onChange={onChange} />
   );
-  const screen = await renderPicker(field(value));
+  await using stack = new AsyncDisposableStack();
+  const screen = stack.use(await renderPicker(field(value)));
   await open("Choose Accent color color");
+  stack.move();
   return Object.assign(screen, {
     onChange,
     echo: (current: string) => screen.rerender(field(current)),
@@ -89,8 +91,10 @@ async function renderAccentPicker(value: string) {
   const picker = (current: string) => (
     <ProviderAccentColorPicker displayName="Codex" value={current} onCommit={onCommit} />
   );
-  const screen = await renderPicker(picker(value));
+  await using stack = new AsyncDisposableStack();
+  const screen = stack.use(await renderPicker(picker(value)));
   await open("Change accent color for Codex");
+  stack.move();
   return Object.assign(screen, {
     onCommit,
     echo: (current: string) => screen.rerender(picker(current)),
