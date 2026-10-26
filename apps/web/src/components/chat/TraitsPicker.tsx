@@ -24,7 +24,7 @@ import {
   normalizeModelSlug,
 } from "@t3tools/shared/model";
 import { memo } from "react";
-import { BrainIcon, GaugeIcon } from "lucide-react";
+import { BrainIcon, Icon } from "lucide-react";
 import {
   Menu,
   MenuGroup,
@@ -112,6 +112,62 @@ function DefaultBadge() {
     <Badge variant="outline" size="sm" className="min-w-0">
       Default
     </Badge>
+  );
+}
+
+const EFFORT_GAUGE_RANKS = new Map([
+  ["none", 0],
+  ["off", 0],
+  ["minimal", 1],
+  ["low", 2],
+  ["medium", 3],
+  ["high", 4],
+  ["xhigh", 5],
+  ["ultracode", 5],
+  ["max", 6],
+  ["ultra", 7],
+]);
+
+export function getEffortGaugeAngle(
+  descriptor: ProviderOptionDescriptor | null,
+  value: string | boolean | null,
+) {
+  // Boolean On keeps the six-level Extra High position.
+  if (typeof value === "boolean") return value ? 24 : -120;
+  if (descriptor?.type !== "select" || value === null) return 45;
+
+  const levels = [
+    ...new Set(
+      descriptor.options
+        .filter((option) => !descriptor.promptInjectedValues?.includes(option.id))
+        .map((option) => EFFORT_GAUGE_RANKS.get(option.id))
+        .filter((rank) => rank !== undefined),
+    ),
+  ].toSorted((left, right) => left - right);
+  const index = levels.indexOf(EFFORT_GAUGE_RANKS.get(value) ?? -1);
+  return index >= 0 && levels.length > 1 ? -120 + (index / (levels.length - 1)) * 240 : 45;
+}
+
+function EffortGaugeIcon({
+  descriptor,
+  value,
+  size,
+}: {
+  descriptor: ProviderOptionDescriptor | null;
+  value: string | boolean | null;
+  size: ComposerControlSize;
+}) {
+  const angle = getEffortGaugeAngle(descriptor, value);
+
+  return (
+    <Icon
+      iconNode={[["path", { d: "M3.34 19a10 10 0 1 1 17.32 0", key: "dial" }]]}
+      aria-hidden="true"
+      data-composer-control-icon
+      className={cn("hidden shrink-0 redesign:block", size === "xs" ? "size-3" : "size-4")}
+    >
+      <path d="m12 14 4-4" transform={`rotate(${angle - 45} 12 14)`} />
+    </Icon>
   );
 }
 
@@ -531,7 +587,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   }) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const [isMenuOpen, setIsMenuOpen] = useComposerMenuState(hidden || disabled);
-  const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
+  const { descriptors, selectDescriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
     getTraitsSectionVisibility({
       provider,
       models,
@@ -555,14 +611,28 @@ export const TraitsPicker = memo(function TraitsPicker({
     return null;
   }
 
+  const modelSelection =
+    instanceId && model ? { instanceId, model, options: modelOptions ?? [] } : null;
   const { label: triggerLabel } = buildTraitsTriggerDisplay({
     provider,
     descriptors,
     primarySelectDescriptorId: primarySelectDescriptor?.id ?? null,
     ultrathinkPromptControlled,
-    modelSelection: instanceId && model ? { instanceId, model, options: modelOptions ?? [] } : null,
+    modelSelection,
     reportedModelSelection,
   });
+  const reasoningDescriptor =
+    selectDescriptors.find((descriptor) => REASONING_SELECT_DESCRIPTOR_IDS.has(descriptor.id)) ??
+    descriptors.find(
+      (descriptor) =>
+        descriptor.type === "boolean" && REASONING_SELECT_DESCRIPTOR_IDS.has(descriptor.id),
+    ) ??
+    null;
+  // Ultrathink only changes the prompt; the gauge measures native effort.
+  const effort =
+    reasoningDescriptor?.type === "boolean"
+      ? (reasoningDescriptor.currentValue ?? null)
+      : getDescriptorStringValue(reasoningDescriptor, modelSelection, reportedModelSelection);
   const isCodexStyle = provider === "codex";
 
   return (
@@ -601,7 +671,7 @@ export const TraitsPicker = memo(function TraitsPicker({
               )}
             >
               <ComposerControlIcon icon={BrainIcon} size={size} className="redesign:hidden" />
-              <ComposerControlIcon icon={GaugeIcon} size={size} className="hidden redesign:block" />
+              <EffortGaugeIcon descriptor={reasoningDescriptor} value={effort} size={size} />
               <span data-composer-control-label className="min-w-0 truncate">
                 {triggerLabel}
               </span>
@@ -610,7 +680,7 @@ export const TraitsPicker = memo(function TraitsPicker({
           ) : (
             <>
               <ComposerControlIcon icon={BrainIcon} size={size} className="redesign:hidden" />
-              <ComposerControlIcon icon={GaugeIcon} size={size} className="hidden redesign:block" />
+              <EffortGaugeIcon descriptor={reasoningDescriptor} value={effort} size={size} />
               <span data-composer-control-label>{triggerLabel}</span>
               <ComposerControlChevron size={size} />
             </>

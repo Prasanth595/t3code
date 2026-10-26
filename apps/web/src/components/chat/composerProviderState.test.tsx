@@ -11,7 +11,7 @@ import {
   getComposerReasoningStep,
   withImplicitFastModeDefault,
 } from "./composerProviderState";
-import { readPromptUltrathink } from "./TraitsPicker";
+import { getEffortGaugeAngle, readPromptUltrathink } from "./TraitsPicker";
 
 const PROVIDER: ProviderDriverKind = ProviderDriverKind.make("codex");
 const MODEL = "test-model";
@@ -59,6 +59,71 @@ function selections(
 ): ReadonlyArray<ProviderOptionSelection> {
   return entries.map(([id, value]) => ({ id, value }));
 }
+
+describe("effort gauge", () => {
+  it("orders effort by meaning when a provider lists levels backwards", () => {
+    const descriptor = selectDescriptor(
+      "reasoningEffort",
+      ["xhigh", "high", "medium", "low"].map((id) => ({ id, label: id })),
+    );
+
+    const angles = ["low", "medium", "high", "xhigh"].map((value) =>
+      getEffortGaugeAngle(descriptor, value),
+    );
+
+    for (let index = 1; index < angles.length; index++) {
+      expect(angles[index]).toBeGreaterThan(angles[index - 1]!);
+    }
+  });
+
+  it("spreads a sparse model's supported levels across the full arc", () => {
+    const descriptor = selectDescriptor(
+      "variant",
+      ["max", "high"].map((id) => ({ id, label: id })),
+    );
+
+    expect(getEffortGaugeAngle(descriptor, "high")).toBe(-120);
+    expect(getEffortGaugeAngle(descriptor, "max")).toBe(120);
+  });
+
+  it("gives Ultracode the same position as Xhigh without adding another level", () => {
+    const descriptor = selectDescriptor(
+      "effort",
+      ["low", "medium", "high", "xhigh", "ultracode", "max"].map((id) => ({ id, label: id })),
+    );
+    const nativeOnly = {
+      ...descriptor,
+      options: descriptor.options.filter((option) => option.id !== "ultracode"),
+    };
+
+    expect(getEffortGaugeAngle(descriptor, "ultracode")).toBe(
+      getEffortGaugeAngle(descriptor, "xhigh"),
+    );
+    expect(getEffortGaugeAngle(descriptor, "high")).toBe(getEffortGaugeAngle(nativeOnly, "high"));
+  });
+
+  it("does not let a prompt-only Ultrathink choice extend the effort scale", () => {
+    const descriptor = selectDescriptor(
+      "effort",
+      ["low", "high", "ultrathink"].map((id) => ({ id, label: id })),
+      ["ultrathink"],
+    );
+
+    expect(getEffortGaugeAngle(descriptor, "high")).toBe(120);
+    expect(getEffortGaugeAngle(descriptor, "ultrathink")).toBe(45);
+  });
+
+  it("keeps unknown variants static and out of the effort scale", () => {
+    const descriptor = selectDescriptor(
+      "variant",
+      ["default", "low", "high", "custom"].map((id) => ({ id, label: id })),
+    );
+
+    expect(getEffortGaugeAngle(descriptor, "custom")).toBe(45);
+    expect(getEffortGaugeAngle(descriptor, "default")).toBe(45);
+    expect(getEffortGaugeAngle(descriptor, "high")).toBe(120);
+  });
+});
 
 describe("getComposerProviderState", () => {
   it("uses descriptor defaults for display without dispatching them as overrides", () => {
