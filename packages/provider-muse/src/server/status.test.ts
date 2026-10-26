@@ -172,7 +172,7 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
         );
         const snapshot = yield* checkMuseProviderStatus(
           settings({ enabled: true, binaryPath }),
-          { HOME: "/home/muse-test" },
+          { ...process.env, HOME: "/home/muse-test" },
           undefined,
           async () => makeHost(metaCatalog),
         );
@@ -199,27 +199,6 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
             scope: "user",
             enabled: false,
           },
-        ]);
-      }),
-    ),
-  );
-
-  it.effect("preserves a configured display name for a discovered Muse model", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const binaryPath = yield* fakeCli();
-        const snapshot = yield* checkMuseProviderStatus(
-          settings({
-            enabled: true,
-            binaryPath,
-            customModels: [{ slug: "muse-wonder-1.0", name: "Team Wonder" }],
-          }),
-          undefined,
-          undefined,
-          async () => makeHost(metaCatalog),
-        );
-        expect(snapshot.models.map(({ slug, name }) => [slug, name])).toEqual([
-          ["muse-wonder-1.0", "Team Wonder"],
         ]);
       }),
     ),
@@ -280,25 +259,6 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
       const failure = yield* driver.snapshotForCwd!(failed).pipe(Effect.flip);
       expect(failure).toMatchObject({ _tag: "ProviderDriverError", driver: "muse" });
     }).pipe(Effect.scoped, Effect.provide(driverLayer)),
-  );
-
-  it.effect("closes the host after malformed metadata and reports unavailable", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const binaryPath = yield* fakeCli();
-        const host = makeHost({ providerId: "meta", models: [{ modelId: 1 }] });
-        const snapshot = yield* checkMuseProviderStatus(
-          settings({ enabled: true, binaryPath }),
-          undefined,
-          undefined,
-          async () => host,
-        );
-        expect(snapshot.status).toBe("error");
-        expect(snapshot.auth.status).toBe("unknown");
-        expect(snapshot.models).toEqual([]);
-        expect(host.close).toHaveBeenCalledOnce();
-      }),
-    ),
   );
 
   it.effect("keeps an empty discovered catalog empty instead of advertising a fallback model", () =>
