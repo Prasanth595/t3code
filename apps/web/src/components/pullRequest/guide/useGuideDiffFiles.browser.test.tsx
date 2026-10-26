@@ -57,12 +57,10 @@ it.each([
     "old-next",
     Atom.make<AsyncResult.AsyncResult<PullRequestDiffResult>>(AsyncResult.initial(true)),
   );
-  const screen = stack.use(
-    await render(
-      <RegistryContext.Provider value={registry}>
-        <Probe wantedPaths={["wanted.ts"]} />
-      </RegistryContext.Provider>,
-    ),
+  await using screen = await render(
+    <RegistryContext.Provider value={registry}>
+      <Probe wantedPaths={["wanted.ts"]} />
+    </RegistryContext.Provider>,
   );
   const result = () => JSON.parse(screen.container.querySelector("output")!.textContent!);
   expect(result()).toEqual({ loading: true, files: [] });
