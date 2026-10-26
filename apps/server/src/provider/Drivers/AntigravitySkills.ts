@@ -117,7 +117,7 @@ const readSkill = Effect.fn("readAntigravitySkill")(function* (
   const info = yield* readIfPresent(fileSystem.stat(skillPath), skillPath);
   if (info?.type !== "File") return undefined;
   // Reading a cloud-only placeholder can block a libuv thread for good.
-  if (isCloudPlaceholder(info, platform)) return undefined;
+  if (yield* isCloudPlaceholder(info, platform, skillPath)) return undefined;
 
   const byteLimit = Math.min(MAX_SKILL_BYTES, budget.remainingBytes);
   if (info.size > BigInt(byteLimit)) {

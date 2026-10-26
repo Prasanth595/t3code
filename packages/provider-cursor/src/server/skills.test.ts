@@ -1,3 +1,4 @@
+import { DarwinFileFlags } from "@t3tools/shared/cloudPlaceholder";
 import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "vite-plus/test";
@@ -263,6 +264,7 @@ describe("Cursor skills", () => {
         const skills = yield* discoverCursorSkills(undefined, { HOME: userHome }).pipe(
           Effect.provideService(FileSystem.FileSystem, placeholderFileSystem),
           Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(DarwinFileFlags, () => Effect.succeed(0x40000000)),
         );
         expect(skills).toEqual([{ name: "cloud", path: skillPath, scope: "user", enabled: true }]);
       }),

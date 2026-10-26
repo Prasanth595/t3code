@@ -256,16 +256,13 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
     environment,
     repositoryRoot,
   )) {
-    // Same hazard as a cloud-only SKILL.md: a project's
-    // `.claude/settings.local.json` in an online-only OneDrive folder blocks
-    // the read, and four of those wedge every file operation in the server.
     const settingsInfo = yield* fileSystem
       .stat(settingsPath)
       .pipe(Effect.orElseSucceed(() => undefined));
     if (settingsInfo === undefined) {
       continue;
     }
-    if (isCloudPlaceholder(settingsInfo, platform)) {
+    if (yield* isCloudPlaceholder(settingsInfo, platform, settingsPath)) {
       yield* Effect.logDebug("claude settings file is online-only; ignoring skillOverrides", {
         path: settingsPath,
       });
@@ -504,7 +501,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       const skillInfo = yield* fileSystem
         .stat(skillPath)
         .pipe(Effect.orElseSucceed(() => undefined));
-      if (skillInfo === undefined || isCloudPlaceholder(skillInfo, platform)) {
+      if (skillInfo === undefined || (yield* isCloudPlaceholder(skillInfo, platform, skillPath))) {
         continue;
       }
 
