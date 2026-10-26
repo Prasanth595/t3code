@@ -10,12 +10,14 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import { codexPlanLabel } from "../provider/CodexProvider.ts";
 import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
+import { claudeResetCreditsToContract } from "../provider/claudeResetCredits.ts";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 
 const AuthFile = Schema.Struct({
@@ -53,6 +55,8 @@ const ClaudeWindow = Schema.Struct({
   resets_at: Schema.NullOr(Schema.String),
 });
 const ClaudeUsage = Schema.Struct({
+  cedar_ember: Schema.optional(Schema.NullOr(Schema.Unknown)),
+  juniper_tide: Schema.optional(Schema.NullOr(Schema.Unknown)),
   five_hour: Schema.optional(Schema.NullOr(ClaudeWindow)),
   seven_day: Schema.optional(Schema.NullOr(ClaudeWindow)),
   limits: Schema.optional(
@@ -72,6 +76,10 @@ const ClaudeUsage = Schema.Struct({
     ),
   ),
 });
+const isIneligibleForClaudeResets = Schema.is(Schema.Struct({ eligible: Schema.Literal(false) }));
+const decodeClaudeAtLimitReset = Schema.decodeUnknownOption(
+  Schema.Struct({ available: Schema.Boolean }),
+);
 const CreditList = Schema.Struct({
   credits: Schema.Array(
     Schema.Struct({
@@ -266,8 +274,18 @@ export const makeCliproxyApi = Effect.gen(function* () {
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
-        const body = yield* apiCall(config, account, "https://api.anthropic.com/api/oauth/usage");
+        const body = yield* apiCall(
+          config,
+          account,
+          "https://api.anthropic.com/api/oauth/usage?at_wall=1&skip_spend=1",
+        );
         const usage = yield* decodeClaudeUsage(body);
+        const credits =
+          claudeResetCreditsToContract(
+            usage.cedar_ember,
+            DateTime.toEpochMillis(yield* DateTime.now),
+          ) ?? (isIneligibleForClaudeResets(usage.cedar_ember) ? { availableCount: 0 } : undefined);
+        const atLimit = decodeClaudeAtLimitReset(usage.juniper_tide);
         const model_scoped = (usage.limits ?? []).flatMap((limit) =>
           limit.kind === "weekly_scoped" && limit.scope?.model && typeof limit.percent === "number"
             ? [
@@ -282,17 +300,28 @@ export const makeCliproxyApi = Effect.gen(function* () {
         return {
           ...base,
           plan: "Claude Subscription",
-          usageLimits: claudeUsageResponseToLimits({
-            checkedAt,
-            response: {
-              rate_limits_available: true,
-              rate_limits: {
-                five_hour: usage.five_hour ?? null,
-                seven_day: usage.seven_day ?? null,
-                model_scoped,
+          usageLimits: {
+            ...claudeUsageResponseToLimits({
+              checkedAt,
+              response: {
+                rate_limits_available: true,
+                rate_limits: {
+                  five_hour: usage.five_hour ?? null,
+                  seven_day: usage.seven_day ?? null,
+                  model_scoped,
+                },
               },
-            },
-          }).limits,
+            }).limits,
+            ...(credits
+              ? {
+                  resetCredits: {
+                    availableCount: credits.availableCount,
+                    ...(credits.nextExpiresAt ? { nextExpiresAt: credits.nextExpiresAt } : {}),
+                  },
+                }
+              : {}),
+            atLimitReset: { available: Option.isSome(atLimit) ? atLimit.value.available : null },
+          },
         };
       }
       const body = yield* apiCall(config, account, `${CODEX_BASE}/usage`);

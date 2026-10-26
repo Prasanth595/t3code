@@ -345,6 +345,106 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
+  it.effect("reads Claude hub reset availability without offering hub redemption", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1788710400000);
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: () => ({
+          status: 200,
+          body: {
+            five_hour: { utilization: 10, resets_at: null },
+            cedar_ember: {
+              eligible: true,
+              next_grant_id: "grant_a",
+              grants: [
+                {
+                  id: "grant_a",
+                  resets_left: 1,
+                  usable_now: true,
+                  ends_at: "2099-01-01T00:00:00Z",
+                },
+                {
+                  id: "expired",
+                  resets_left: 1,
+                  usable_now: true,
+                  ends_at: "2000-01-01T00:00:00Z",
+                },
+                { id: "paused", resets_left: 1, usable_now: true, paused: true },
+                { id: "spent", resets_left: 0, usable_now: false },
+              ],
+            },
+            juniper_tide: { available: true },
+          },
+        }),
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(result[0]?.usageLimits).toMatchObject({
+        resetCredits: { availableCount: 1, nextExpiresAt: "2099-01-01T00:00:00.000Z" },
+        atLimitReset: { available: true },
+        windows: [{ id: "five_hour", usedPercent: 10 }],
+      });
+      expect(result[0]?.usageLimits.resetCredits).not.toHaveProperty("nextCreditId");
+      expect(test.requests.filter((request) => request.body?.url)).toMatchObject([
+        {
+          body: {
+            method: "GET",
+            url: "https://api.anthropic.com/api/oauth/usage?at_wall=1&skip_spend=1",
+          },
+        },
+      ]);
+      expect((yield* api.consume(config, "first.json", "grant_a").pipe(Effect.result))._tag).toBe(
+        "Failure",
+      );
+      expect(test.requests.some((request) => request.body?.method === "POST")).toBe(false);
+    }),
+  );
+
+  it.effect.each([
+    ["empty", { eligible: true, grants: [] }],
+    ["ineligible", { eligible: false }],
+  ] as const)("reports confirmed zero Claude hub resets when %s", ([, block]) =>
+    Effect.gen(function* () {
+      const api = yield* fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: () => ({
+          status: 200,
+          body: { cedar_ember: block, juniper_tide: { available: false } },
+        }),
+      }).api;
+      expect((yield* api.readAccounts(config))[0]?.usageLimits).toMatchObject({
+        resetCredits: { availableCount: 0 },
+        atLimitReset: { available: false },
+      });
+    }),
+  );
+
+  it.effect.each([
+    ["missing", {}],
+    ["null", { cedar_ember: null, juniper_tide: null }],
+    ["malformed", { cedar_ember: "invalid", juniper_tide: { available: "false" } }],
+  ] as const)(
+    "keeps Claude reset status unknown when %s without dropping usage windows",
+    ([, blocks]) =>
+      Effect.gen(function* () {
+        const api = yield* fixture({
+          accounts: [{ ...accounts[0]!, provider: "claude" }],
+          upstream: () => ({
+            status: 200,
+            body: { five_hour: { utilization: 10, resets_at: null }, ...blocks },
+          }),
+        }).api;
+        const [account] = yield* api.readAccounts(config);
+        expect(account?.usageLimits).toMatchObject({
+          atLimitReset: { available: null },
+          windows: [{ id: "five_hour", usedPercent: 10 }],
+        });
+        expect(account?.usageLimits.resetCredits).toBeUndefined();
+        expect(account?.usageLimits.unavailable).toBeUndefined();
+      }),
+  );
+
   it.effect("pins redemption to the displayed credit and clears only that account's cooldown", () =>
     Effect.gen(function* () {
       const test = fixture();

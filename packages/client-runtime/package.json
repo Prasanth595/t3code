@@ -159,6 +159,10 @@
       "types": "./src/delayedStatus.ts",
       "default": "./src/delayedStatus.ts"
     },
+    "./reset-availability": {
+      "types": "./src/resetAvailability.ts",
+      "default": "./src/resetAvailability.ts"
+    },
     "./state/connections": {
       "types": "./src/state/connections.ts",
       "default": "./src/state/connections.ts"

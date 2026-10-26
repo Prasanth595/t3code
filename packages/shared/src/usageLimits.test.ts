@@ -133,6 +133,61 @@ describe("pools", () => {
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
   });
 
+  it("keeps the newest hub reset status when native usage windows are fresher", () => {
+    const native = provider({
+      driver: claude,
+      auth: { status: "authenticated", email: "same@example.com" },
+      usageLimits: { checkedAt: "2026-09-03T11:30:00.000Z", windows: [window] },
+    });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [native],
+            usageLimitSources: [
+              {
+                ...source,
+                accounts: [
+                  {
+                    id: "claude.json",
+                    driver: claude,
+                    email: "same@example.com",
+                    usageLimits: {
+                      checkedAt,
+                      windows: [window],
+                      resetCredits: { availableCount: 1 },
+                      atLimitReset: { available: true },
+                    },
+                  },
+                  {
+                    id: "claude-newer.json",
+                    driver: claude,
+                    email: "same@example.com",
+                    usageLimits: {
+                      checkedAt: "2026-09-03T11:15:00.000Z",
+                      windows: [window],
+                      resetCredits: { availableCount: 0 },
+                      atLimitReset: { available: false },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    const [account] = collectLimitAccounts(input);
+    expect(account?.limits).toMatchObject({
+      checkedAt: native.usageLimits?.checkedAt,
+      resetCredits: { availableCount: 0 },
+      atLimitReset: { available: false },
+    });
+    expect(account?.redeem).toBeNull();
+  });
+
   it("merges OpenCode Go limits from machines with the same API key", () => {
     const go = provider({
       driver: ProviderDriverKind.make("opencode"),
@@ -957,6 +1012,47 @@ describe("/usage-limits", () => {
       { sourceId: "hub", accountId: "duplicate", creditId: "c" },
     ]);
   });
+
+  it.each([false, true])(
+    "keeps merged Claude hub status read-only unless native credits were reported (%s)",
+    (nativeCredits) => {
+      const claude = ProviderDriverKind.make("claudeAgent");
+      const local = provider({
+        driver: claude,
+        auth: { status: "authenticated", email: "same@example.com" },
+        usageLimits: {
+          ...limits,
+          checkedAt: "2026-09-03T11:30:00.000Z",
+          ...(nativeCredits ? { resetCredits: { availableCount: 3 } } : {}),
+        },
+      });
+      const hubs = [
+        {
+          ...sources[0]!,
+          accounts: [
+            {
+              id: "duplicate",
+              driver: claude,
+              email: "same@example.com",
+              usageLimits: {
+                ...limits,
+                resetCredits: { availableCount: 1 },
+                atLimitReset: { available: true },
+              },
+            },
+          ],
+        },
+      ];
+      const [account] = collectProviderUsageLimits(local.instanceId, [local], hubs, now)!.accounts;
+      expect(account?.limits).toMatchObject({
+        resetCredits: { availableCount: nativeCredits ? 3 : 1 },
+        atLimitReset: { available: true },
+      });
+      expect(account?.resetCreditInput).toEqual(
+        nativeCredits ? { instanceId: local.instanceId } : undefined,
+      );
+    },
+  );
 
   it("redeems a native duplicate through the hub even when the native snapshot is fresher", () => {
     const fresher = provider({

@@ -171,6 +171,7 @@ export interface LimitAccount {
 export function collectLimitAccounts(presentations: LimitPresentations): readonly LimitAccount[] {
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
+  const atLimitSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
   const merge = (key: string, next: LimitAccount) => {
     // Prefer hub redemption to clear its routing cooldown too; displayed balance still follows the freshest read.
@@ -190,6 +191,14 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     ) {
       creditSources.set(key, next);
     }
+    const previousAtLimit = atLimitSources.get(key);
+    if (
+      next.limits.atLimitReset &&
+      (!previousAtLimit ||
+        Date.parse(next.limits.checkedAt) > Date.parse(previousAtLimit.limits.checkedAt))
+    ) {
+      atLimitSources.set(key, next);
+    }
     const previous = accounts.get(key);
     if (!previous) {
       accounts.set(key, next);
@@ -205,6 +214,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     ];
     const winner = fresher ? next : previous;
     const creditSource = creditSources.get(key);
+    const atLimitReset = atLimitSources.get(key)?.limits.atLimitReset;
     accounts.set(key, {
       ...previous,
       displayName: previous.displayName ?? next.displayName,
@@ -217,6 +227,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem)),
       limits: {
         ...winner.limits,
+        ...(atLimitReset ? { atLimitReset } : {}),
         ...(creditSource?.limits.resetCredits
           ? { resetCredits: creditSource.limits.resetCredits }
           : { resetCredits: undefined }),
@@ -701,19 +712,19 @@ export function collectProviderUsageLimits(
     credits,
   } of native) {
     const key = resolveKey(nativeReport(provider));
-    const hubCredits = sources
+    const hubAccounts = sources
       .flatMap((source) => source.accounts.map((account) => ({ source, account })))
       .filter(
         ({ account }) =>
-          key !== null &&
-          resolveKey(account) === key &&
-          account.usageLimits.resetCredits &&
-          !limitsNotice(account.usageLimits),
+          key !== null && resolveKey(account) === key && !limitsNotice(account.usageLimits),
       )
       .sort(
         (a, b) =>
           Date.parse(b.account.usageLimits.checkedAt) - Date.parse(a.account.usageLimits.checkedAt),
-      )[0];
+      );
+    const hubCredits = hubAccounts.find(({ account }) => account.usageLimits.resetCredits);
+    const atLimitReset = hubAccounts.find(({ account }) => account.usageLimits.atLimitReset)
+      ?.account.usageLimits.atLimitReset;
     const hubCreditId = hubCredits?.account.usageLimits.resetCredits?.nextCreditId;
     const showHubCredits =
       hubCredits &&
@@ -729,18 +740,27 @@ export function collectProviderUsageLimits(
       label: `${provider.displayName?.trim() || String(provider.driver)} [${provider.instanceId}]`,
       ...(provider.auth.label ? { plan: provider.auth.label } : {}),
       instanceId: provider.instanceId,
-      resetCreditInput:
-        hubCreditId && hubCredits
-          ? {
+      ...(hubCreditId && hubCredits
+        ? {
+            resetCreditInput: {
               sourceId: hubCredits.source.id,
               accountId: hubCredits.account.id,
               creditId: hubCreditId,
-            }
-          : { instanceId: credits?.provider.instanceId ?? provider.instanceId },
+            },
+          }
+        : showHubCredits
+          ? {}
+          : {
+              resetCreditInput: { instanceId: credits?.provider.instanceId ?? provider.instanceId },
+            }),
       ...(provider.displayName ? { displayName: provider.displayName } : {}),
       ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
       ...(provider.auth.email ? { email: provider.auth.email } : {}),
-      limits: shownCredits ? { ...limits, resetCredits: shownCredits } : limits,
+      limits: {
+        ...limits,
+        ...(shownCredits ? { resetCredits: shownCredits } : {}),
+        ...(atLimitReset ? { atLimitReset } : {}),
+      },
     });
   }
   for (const source of sources) {
