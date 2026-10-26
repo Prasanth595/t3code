@@ -361,7 +361,7 @@ export async function runAcpMcpCliFastPath(
     process.exitCode = 2;
     return;
   }
-  const result = await Effect.runPromise(
+  let result = await Effect.runPromise(
     callAcpMcpTool({
       endpoint,
       authorization,
@@ -369,8 +369,7 @@ export async function runAcpMcpCliFastPath(
       arguments: parsed as Record<string, unknown>,
     }),
   );
-  // Terminal callers see the whole envelope; native MCP clients choose a field.
-  // Keep distinct content, but avoid printing the JSON fallback a second time.
+  // Terminal callers see both fields, unlike native MCP clients that choose one.
   if (
     typeof result === "object" &&
     result !== null &&
@@ -380,23 +379,20 @@ export async function runAcpMcpCliFastPath(
     Array.isArray(result.content)
   ) {
     const encoded = JSON.stringify(result.structuredContent);
-    process.stdout.write(
-      `${JSON.stringify({
-        ...result,
-        content: result.content.filter(
-          (part: unknown) =>
-            !(
-              typeof part === "object" &&
-              part !== null &&
-              "type" in part &&
-              part.type === "text" &&
-              "text" in part &&
-              part.text === encoded
-            ),
-        ),
-      })}\n`,
-    );
-  } else {
-    process.stdout.write(`${JSON.stringify(result)}\n`);
+    result = {
+      ...result,
+      content: result.content.filter(
+        (part: unknown) =>
+          !(
+            typeof part === "object" &&
+            part !== null &&
+            "type" in part &&
+            part.type === "text" &&
+            "text" in part &&
+            part.text === encoded
+          ),
+      ),
+    };
   }
+  process.stdout.write(`${JSON.stringify(result)}\n`);
 }
