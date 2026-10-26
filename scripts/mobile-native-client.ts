@@ -1041,6 +1041,11 @@ const main = Command.make(
       Flag.withDescription("With --session, open the dev client against this Metro URL."),
       Flag.optional,
     ),
+    prepare: Flag.Boolean("prepare").pipe(
+      Flag.withDescription(
+        "Fetch or build the client for this checkout without a device (Android: for --abi). Run it before leasing a device: a build can outlast the lease.",
+      ),
+    ),
   },
   Effect.fn("nativeClient.main")(function* ({
     mode,
@@ -1049,8 +1054,32 @@ const main = Command.make(
     session,
     abi: sessionAbi,
     metro,
+    prepare,
   }) {
     const started = yield* Clock.currentTimeMillis;
+    if (prepare) {
+      if (mode !== "ensure" || Option.isSome(requested) || Option.isSome(session))
+        return yield* new NativeClientError({
+          message: "--prepare needs no device; use it with ensure and no device id or --session.",
+        });
+      const environment = yield* HostProcess.Environment;
+      const home = environment.HOME ?? environment.USERPROFILE;
+      if (!home)
+        return yield* new NativeClientError({ message: "HOME or USERPROFILE must be set." });
+      const current = yield* fingerprint(platform);
+      const artifact = yield* resolveArtifact(
+        home,
+        platform,
+        platform === "android" ? sessionAbi : null,
+        current,
+      );
+      yield* Console.error(
+        `Client ready for ${platform} (${artifact.source}); lease a device and install.`,
+      );
+      return yield* Console.log(
+        yield* encodeOutput({ status: "ready", source: artifact.source, fingerprint: current }),
+      );
+    }
     if (Option.isSome(session)) {
       if (mode !== "ensure" || Option.isSome(requested))
         return yield* new NativeClientError({
