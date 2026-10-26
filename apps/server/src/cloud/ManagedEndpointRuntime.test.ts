@@ -292,18 +292,20 @@ describe("CloudManagedEndpointRuntime", () => {
     Effect.gen(function* () {
       const fixture = yield* makeTransportSpawner();
       const runtime = yield* buildCloudManagedEndpointRuntime(fixture.spawner);
-      expect(yield* runtime.restartConnector(800)).toBe(false);
+      expect(yield* runtime.restartConnector(800, Effect.succeed(true))).toBe(false);
       yield* runtime.applyConfig(tunnelConfig);
       yield* fixture.observe(runtime, 0);
       expect(yield* runtime.inspectConnector).toMatchObject({ pid: 800 });
-      expect(yield* runtime.restartConnector(799)).toBe(false);
+      expect(yield* runtime.restartConnector(799, Effect.succeed(true))).toBe(false);
+      // A newer check saw the tunnel recover while this one waited for the lock.
+      expect(yield* runtime.restartConnector(800, Effect.succeed(false))).toBe(false);
       expect(fixture.killed).toEqual([]);
-      expect(yield* runtime.restartConnector(800)).toBe(true);
+      expect(yield* runtime.restartConnector(800, Effect.succeed(true))).toBe(true);
       expect(yield* Queue.take(fixture.started)).toBe(0);
       expect(yield* Queue.take(fixture.started)).toBe(1);
       yield* fixture.observe(runtime, 1);
       expect(fixture.killed).toContain(800);
-      expect(yield* runtime.restartConnector(800)).toBe(false);
+      expect(yield* runtime.restartConnector(800, Effect.succeed(true))).toBe(false);
       expect(yield* runtime.inspectConnector).toMatchObject({ pid: 801 });
     }),
   );

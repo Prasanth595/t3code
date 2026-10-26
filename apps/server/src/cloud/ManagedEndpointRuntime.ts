@@ -64,8 +64,14 @@ export class CloudManagedEndpointRuntime extends Context.Service<
     readonly readinessChanged: Stream.Stream<void>;
     readonly recoveryRequests: Stream.Stream<RelayManagedEndpointRuntimeConfig>;
     readonly requestRecovery: (config: RelayManagedEndpointRuntimeConfig) => Effect.Effect<void>;
-    /** Returns whether the active connector matched this pid and received a restart request. */
-    readonly restartConnector: (pid: number) => Effect.Effect<boolean>;
+    /**
+     * Restarts the connector if it still runs as `pid` and `stillDead` holds once it has
+     * the lock. Returns whether it sent the restart.
+     */
+    readonly restartConnector: (
+      pid: number,
+      stillDead: Effect.Effect<boolean>,
+    ) => Effect.Effect<boolean>;
     readonly tunnelConnected: Stream.Stream<void>;
     readonly withLinkStateLock: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   }
@@ -725,9 +731,10 @@ export const make = Effect.gen(function* () {
 
   const restartConnector = Effect.fn("CloudManagedEndpointRuntime.restartConnector")(function* (
     pid: number,
+    stillDead: Effect.Effect<boolean>,
   ) {
     const active = yield* Ref.get(activeRef);
-    if (!active || Number(active.child.pid) !== pid) return false;
+    if (!active || Number(active.child.pid) !== pid || !(yield* stillDead)) return false;
     yield* Effect.logWarning(
       "Cloudflare has no live connection from the relay client; restarting it",
       { pid, tunnelId: active.config.tunnelId, tunnelName: active.config.tunnelName },

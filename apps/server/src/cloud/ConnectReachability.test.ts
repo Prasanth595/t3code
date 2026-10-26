@@ -7,6 +7,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -36,6 +37,8 @@ describe("classifyReachability", () => {
   it.each([
     [{ kind: "status", status: 502 }, "origin_unreachable"],
     [{ kind: "status", status: 530 }, "no_connector"],
+    [{ kind: "status", status: 530, cloudflareError: "1033" }, "no_connector"],
+    [{ kind: "status", status: 530, cloudflareError: "1016" }, "unexpected_response"],
     [{ kind: "network_error" }, "timeout"],
   ] as const)("maps endpoint result %o to %s", (endpoint, cause) => {
     expect(classifyReachability(facts({ endpoint, edgeReachable: true }), checkedAt)).toMatchObject(
@@ -99,70 +102,69 @@ describe("ConnectReachability stale connector recovery", () => {
         queueMicrotask(() => socket.emit("connect"));
         return socket;
       });
-      const restarted: Array<number> = [];
+      const restarts = yield* Queue.unbounded<number>();
       let status = 530;
-      const reachability = yield* Effect.service(ConnectReachability.ConnectReachability).pipe(
-        Effect.provide(
-          ConnectReachability.layer.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({
-                  inspectConnector: Effect.succeed(connected),
-                  readinessChanged: Stream.never,
-                  restartConnector: (pid) => Effect.sync(() => restarted.push(pid) > 0),
-                }),
-                Layer.mock(ServerSecretStore.ServerSecretStore)({
-                  get: () => Effect.succeedSome(new Uint8Array()),
-                }),
-                // Cloudflare answers 530 while cloudflared still reports four ready connections.
-                Layer.succeed(
-                  HttpClient.HttpClient,
-                  HttpClient.make((request) =>
-                    Effect.succeed(
-                      HttpClientResponse.fromWeb(request, new Response(null, { status })),
-                    ),
-                  ),
+      let body = "error code: 1033";
+      const layer = ConnectReachability.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({
+              inspectConnector: Effect.succeed(connected),
+              readinessChanged: Stream.never,
+              restartConnector: (pid, stillDead) =>
+                stillDead.pipe(
+                  Effect.tap((dead) => (dead ? Queue.offer(restarts, pid) : Effect.void)),
                 ),
-                Layer.succeed(
-                  ChildProcessSpawner.ChildProcessSpawner,
-                  ChildProcessSpawner.make(() => Effect.die("no tailscale")),
-                ),
+            }),
+            Layer.mock(ServerSecretStore.ServerSecretStore)({
+              get: () => Effect.succeedSome(new Uint8Array()),
+            }),
+            // Cloudflare answers 530 while cloudflared still reports four ready connections.
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make((request) =>
+                Effect.succeed(HttpClientResponse.fromWeb(request, new Response(body, { status }))),
               ),
+            ),
+            Layer.succeed(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make(() => Effect.die("no tailscale")),
             ),
           ),
         ),
       );
+      // The scheduled checks run in the layer's scope, so the assertions run inside it.
+      yield* Effect.gen(function* () {
+        const reachability = yield* ConnectReachability.ConnectReachability;
 
-      expect(yield* reachability.check).toMatchObject({ cause: "no_connector" });
-      yield* TestClock.adjust(Duration.minutes(1));
-      yield* reachability.check;
-      expect(restarted).toEqual([]);
+        // The first sighting schedules its own confirming check two minutes later.
+        expect(yield* reachability.check).toMatchObject({ cause: "no_connector" });
+        yield* TestClock.adjust(Duration.minutes(1));
+        expect(yield* Queue.size(restarts)).toBe(0);
+        yield* TestClock.adjust(Duration.minutes(1));
+        expect(yield* Queue.take(restarts)).toBe(connected.pid);
 
-      yield* TestClock.adjust(Duration.minutes(1));
-      yield* reachability.check;
-      expect(restarted).toEqual([connected.pid]);
+        // A restart that did not help doubles the wait.
+        yield* reachability.check;
+        yield* TestClock.adjust(Duration.minutes(2));
+        expect(yield* Queue.size(restarts)).toBe(0);
+        yield* TestClock.adjust(Duration.minutes(2));
+        expect(yield* Queue.take(restarts)).toBe(connected.pid);
 
-      yield* reachability.check;
-      yield* TestClock.adjust(Duration.minutes(2));
-      yield* reachability.check;
-      expect(restarted).toEqual([connected.pid]);
-      yield* TestClock.adjust(Duration.minutes(2));
-      yield* reachability.check;
-      expect(restarted).toEqual([connected.pid, connected.pid]);
+        // Reaching the endpoint resets the wait, and a 530 for a broken DNS record is left alone.
+        status = 200;
+        expect(yield* reachability.check).toMatchObject({ status: "reachable" });
+        status = 530;
+        body = "error code: 1016";
+        expect(yield* reachability.check).toMatchObject({ cause: "unexpected_response" });
+        yield* TestClock.adjust(Duration.minutes(2));
+        expect(yield* Queue.size(restarts)).toBe(0);
 
-      status = 200;
-      expect(yield* reachability.check).toMatchObject({ status: "reachable" });
-      status = 502;
-      yield* reachability.check;
-      yield* TestClock.adjust(Duration.minutes(2));
-      yield* reachability.check;
-      expect(restarted).toHaveLength(2);
-
-      status = 530;
-      yield* reachability.check;
-      yield* TestClock.adjust(Duration.minutes(2));
-      yield* reachability.check;
-      expect(restarted).toEqual([connected.pid, connected.pid, connected.pid]);
+        body = "error code: 1033";
+        yield* reachability.check;
+        yield* TestClock.adjust(Duration.minutes(2));
+        expect(yield* Queue.take(restarts)).toBe(connected.pid);
+      }).pipe(Effect.provide(layer));
     }),
   );
 });
