@@ -203,7 +203,6 @@ describe("PiProvider", () => {
       );
       yield* Deferred.await(modelRequested);
       yield* TestClock.adjust("5 seconds");
-      yield* TestClock.adjust("25 seconds");
       const snapshot = yield* Fiber.join(fiber);
       assert.equal(snapshot.status, "ready");
       assert.equal(snapshot.auth.status, "authenticated");

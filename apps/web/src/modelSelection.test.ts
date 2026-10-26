@@ -15,7 +15,6 @@ import {
   getAppModelOptionsForInstance,
   getCustomModelOptionsByInstance,
   getTextGenerationModelOptionsByInstance,
-  getTextGenerationProviders,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
   resolveEffectiveDefaultModelSelection,
@@ -723,7 +722,7 @@ describe("instance-scoped model selection", () => {
       },
       textGenerationModelSelection: createModelSelection(pi.instanceId, "demo/demo-model"),
     };
-    const supported = getTextGenerationProviders(providers);
+    const supported = providers.filter((provider) => provider.supportsTextGeneration !== false);
     expect(
       getTextGenerationModelOptionsByInstance(settings, supported, pi.instanceId, "demo/demo-model")
         .get(pi.instanceId)

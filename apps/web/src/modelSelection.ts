@@ -311,13 +311,6 @@ export function getCustomModelOptionsByInstance(
   return out;
 }
 
-/** An absent `supportsTextGeneration` means supported. */
-export function getTextGenerationProviders(
-  providers: ReadonlyArray<ServerProvider>,
-): ReadonlyArray<ServerProvider> {
-  return providers.filter((provider) => provider.supportsTextGeneration !== false);
-}
-
 function getTextGenerationModelOptionsForInstance(
   settings: UnifiedSettings,
   entry: ProviderInstanceEntry,
@@ -341,7 +334,9 @@ export function getTextGenerationModelOptionsByInstance(
   selectedModel?: string | null,
 ): ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>> {
   return new Map(
-    deriveProviderInstanceEntries(getTextGenerationProviders(providers)).map((entry) => [
+    deriveProviderInstanceEntries(
+      providers.filter((provider) => provider.supportsTextGeneration !== false),
+    ).map((entry) => [
       entry.instanceId,
       getTextGenerationModelOptionsForInstance(
         settings,
@@ -364,7 +359,9 @@ export function resolveAppModelSelectionState(
     instanceId: DEFAULT_TEXT_GENERATION_INSTANCE_ID,
     model: DEFAULT_TEXT_GENERATION_MODEL,
   };
-  const supportedProviders = getTextGenerationProviders(providers);
+  const supportedProviders = providers.filter(
+    (provider) => provider.supportsTextGeneration !== false,
+  );
   const entries = deriveProviderInstanceEntries(supportedProviders);
   const selectedEntry = entries.find(
     (entry) => entry.instanceId === selection.instanceId && entry.enabled && entry.isAvailable,
