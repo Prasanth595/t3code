@@ -13,6 +13,7 @@ const reactTests = [
   "src/features/pull-requests/usePullRequestDiff.test.tsx",
   "src/components/ui/Dialog.android.test.tsx",
   "src/features/pull-requests/guide/useReviewGuide.test.tsx",
+  "src/features/pull-requests/guide/PullRequestGuideVisibility.test.tsx",
   "src/features/settings/SettingsServerControlsRouteScreen.test.tsx",
   "src/features/settings/components/BranchNamingSettings.test.tsx",
   "src/features/threads/ThreadMarkdownImage.test.tsx",
