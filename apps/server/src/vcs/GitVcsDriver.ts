@@ -899,9 +899,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               env: commitEnv,
               maxOutputBytes: 4_096,
               outputMode: "truncate",
-              // The listing has a `<tag> <path>\0` record per index entry (2 MB for 28k files).
-              // Only tags, and skip-worktree paths in a sparse checkout, are read, so jump
-              // from one NUL to the next instead of visiting every byte.
+              // Only tags and sparse skip-worktree paths matter; scan NUL-delimited records.
               onStdoutChunk: (chunk) => {
                 let start = 0;
                 while (start < chunk.length) {
@@ -927,11 +925,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                       skippedRecord = [];
                     }
                   }
-                  if (end === -1) {
-                    recordStart = false;
-                    break;
-                  }
-                  recordStart = true;
+                  recordStart = end !== -1;
+                  if (!recordStart) break;
                   start = end + 1;
                 }
               },
