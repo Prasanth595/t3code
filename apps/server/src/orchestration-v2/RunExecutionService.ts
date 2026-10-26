@@ -1459,6 +1459,11 @@ export const layer: Layer.Layer<
                 yield* finalizeRootRun(event);
               }
               yield* trackChildLifecycle(event, deliveredEvent !== null);
+            }),
+          ),
+          // Also after events this run does not accept, such as a child handed to another run.
+          Stream.tap(() =>
+            Effect.gen(function* () {
               if (yield* agentTurnsSettled) yield* endPreviewActivity;
             }),
           ),

@@ -115,11 +115,7 @@ describe("CDP relay", () => {
     );
     await settle();
     expect(written).toEqual([{ id: 1, result: {}, sessionId: "t3-preview-page" }]);
-    expect(send).not.toHaveBeenCalledWith(
-      "Emulation.setFocusEmulationEnabled",
-      { enabled: true },
-      undefined,
-    );
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("routes tab events to the page session once the page is announced", async () => {
