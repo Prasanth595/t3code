@@ -127,7 +127,7 @@ const layerSession = Layer.mergeAll(
 );
 
 describe("AntigravityAdapterV2 client file system", () => {
-  it.effect("confines agent file requests to the workspace under full access", () =>
+  it.effect("confines agent file requests to workspace text files under full access", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -214,6 +214,18 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       );
       assert.equal(pasted.content, "pasted");
+      for (const [name, bytes] of [
+        ["image.png", new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
+        ["data.bin", new Uint8Array([0x61, 0, 0x62])],
+      ] as const) {
+        const binaryPath = path.join(workspace, name);
+        yield* fileSystem.writeFile(binaryPath, bytes);
+        const binaryRead = yield* readTextFile(
+          { sessionId: "mock-session-1", path: binaryPath },
+          context("fs/read_text_file"),
+        ).pipe(Effect.flip);
+        assert.propertyVal(binaryRead, "code", -32602, `${name} is refused as binary`);
+      }
 
       const outsideRead = yield* readTextFile(
         { sessionId: "mock-session-1", path: outsideFile },
