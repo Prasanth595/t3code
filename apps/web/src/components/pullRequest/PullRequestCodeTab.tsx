@@ -78,6 +78,13 @@ import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { useDiffWorkerPool } from "../DiffWorkerPoolProvider";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { DiffFileTree } from "../diffs/DiffFileTree";
+import {
+  createDiffFocusNavigation,
+  DiffFocusFileList,
+  DiffFocusKeyboard,
+  useDiffFocusLayoutMeasure,
+  type DiffFocusSelection,
+} from "../diffs/DiffFocusLayout";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
 import { diffFileTreeEntries } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
@@ -314,6 +321,8 @@ function PullRequestCodeTab({
   const [viewer, setViewer] = useState<CodeViewHandle<ReviewAnnotationGroup, undefined> | null>(
     null,
   );
+  const [wideLayout, setWideLayout] = useState(false);
+  const [focusSelection, setFocusSelection] = useState<DiffFocusSelection | null>(null);
 
   const referenceKey = pullRequestReviewKey(reference);
   const commit = selectedCommitOid;
@@ -637,7 +646,8 @@ function PullRequestCodeTab({
 
   const items: CodeViewDiffItem<ReviewAnnotationGroup>[] = annotatedFiles.map(
     ({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
-      const collapsed = isFileDiffCollapsed(fileKey, effectiveFoldOverride, toggledFiles);
+      const collapsed =
+        !wideLayout && isFileDiffCollapsed(fileKey, effectiveFoldOverride, toggledFiles);
       const viewedMark = filesViewedEnabled
         ? `e${isFileViewed(path) ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
         : "";
@@ -651,6 +661,15 @@ function PullRequestCodeTab({
       };
     },
   );
+  const focusNavigation = createDiffFocusNavigation({
+    files: annotatedFiles,
+    position: focusSelection,
+    setPosition: setFocusSelection,
+    reveal: requestTreeReveal,
+  });
+  const viewerItems = wideLayout
+    ? items.filter((item) => item.id === focusNavigation.selected?.fileKey)
+    : items;
   const fileKeys = items.map((item) => item.id);
   const collapsedFileKeys = new Set(
     items.filter((item) => item.collapsed === true).map((item) => item.id),
@@ -690,11 +709,25 @@ function PullRequestCodeTab({
   };
 
   const revealFile = (path: string) => {
+    if (wideLayout) {
+      focusNavigation.selectPath(path);
+      return;
+    }
     const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
     if (item === undefined) return;
+    setFocusSelection({ fileKey: item.id, changeIndex: -1 });
     if (item.collapsed === true) toggleFile(item.id);
     requestTreeReveal(item.id);
   };
+  const keepFocusedFileOnNarrow = () => {
+    const { selected } = focusNavigation;
+    if (selected === null) return;
+    if (isFileDiffCollapsed(selected.fileKey, effectiveFoldOverride, toggledFiles)) {
+      toggleFile(selected.fileKey);
+    }
+    focusNavigation.revealCurrent();
+  };
+  const measureLayout = useDiffFocusLayoutMeasure(setWideLayout, keepFocusedFileOnNarrow);
 
   const toggleAllFiles = () => {
     setFoldOverride(areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? "expanded" : "folded");
@@ -779,6 +812,7 @@ function PullRequestCodeTab({
     );
 
   const renderHeaderPrefix = (item: CodeViewItem<ReviewAnnotationGroup>) => {
+    if (wideLayout) return null;
     const collapsed = item.collapsed === true;
     return (
       <Button
@@ -1223,7 +1257,7 @@ function PullRequestCodeTab({
             </TooltipPopup>
           </Tooltip>
         </div>
-        {fileKeys.length > 0 ? (
+        {fileKeys.length > 0 && !wideLayout ? (
           <Tooltip>
             <TooltipTrigger
               render={
@@ -1246,7 +1280,7 @@ function PullRequestCodeTab({
             </TooltipPopup>
           </Tooltip>
         ) : null}
-        {fileKeys.length > 0 ? (
+        {fileKeys.length > 0 && !wideLayout ? (
           <Tooltip>
             <TooltipTrigger
               render={
@@ -1345,8 +1379,28 @@ function PullRequestCodeTab({
     else orphanFiles.set(thread.path, [thread]);
   }
 
+  const loadMoreFiles =
+    nextCursor === null ? null : (
+      <div className="shrink-0 border-t border-border/60 p-2">
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          className="w-full"
+          disabled={diffQuery.isPending}
+          onClick={diffQuery.error !== null ? () => diffQuery.refresh() : loadNextSlice}
+        >
+          {diffQuery.error !== null
+            ? "Retry"
+            : diffQuery.isPending
+              ? "Loading more files..."
+              : "Load more files"}
+        </Button>
+      </div>
+    );
+
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div ref={measureLayout} className="flex h-full min-h-0 flex-col">
       {toolbar}
       {orphanFiles.size > 0 ? (
         <div className="shrink-0 border-b border-border/60">
@@ -1401,7 +1455,10 @@ function PullRequestCodeTab({
           </Collapsible>
         </div>
       ) : null}
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <DiffFocusKeyboard
+        navigation={wideLayout ? focusNavigation : null}
+        className="flex min-h-0 flex-1 overflow-hidden"
+      >
         <div
           className="relative min-h-0 min-w-0 flex-1"
           // Headers live in shadow DOM; composedPath crosses that boundary.
@@ -1414,6 +1471,7 @@ function PullRequestCodeTab({
               }
               if (node.hasAttribute("data-viewed-toggle")) return;
               if (node.hasAttribute("data-diffs-header")) {
+                if (wideLayout) return;
                 const filePath = node.querySelector("[data-title]")?.textContent?.trim();
                 if (filePath === undefined || filePath === "") return;
                 const item = items.find(
@@ -1431,11 +1489,11 @@ function PullRequestCodeTab({
               className="@container h-full overflow-auto [scrollbar-gutter:stable]"
               containerRef={scrollerRef}
               viewerRef={setViewer}
-              items={items}
+              items={viewerItems}
               selectedLines={selectedLines}
               onSelectedLinesChange={setSelectedLines}
               options={diffViewOptions}
-              renderCodeViewFooter={renderCodeViewFooter}
+              {...(wideLayout ? {} : { renderCodeViewFooter })}
               renderHeaderPrefix={renderHeaderPrefix}
               renderHeaderMetadata={renderHeaderMetadata}
               renderAnnotation={renderAnnotation}
@@ -1449,36 +1507,25 @@ function PullRequestCodeTab({
             />
           </FileViewedToggleContext>
         </div>
-        {fileTreeOpen ? (
+        {wideLayout ? (
+          <aside className="flex w-[min(20rem,32%)] min-w-56 shrink-0 border-l border-border/60">
+            <DiffFocusFileList
+              ariaLabel={`${capitalizeTerm(term)} #${detail.number} files`}
+              navigation={focusNavigation}
+              footer={loadMoreFiles}
+            />
+          </aside>
+        ) : fileTreeOpen ? (
           <aside className="flex w-[min(20rem,40%)] min-w-48 shrink-0 border-l border-border/60">
             <DiffFileTree
               ariaLabel={`${capitalizeTerm(term)} #${detail.number} files`}
               entries={fileTreeEntries}
               onSelectFile={revealFile}
-              footer={
-                nextCursor === null ? null : (
-                  <div className="shrink-0 border-t border-border/60 p-2">
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="outline"
-                      className="w-full"
-                      disabled={diffQuery.isPending}
-                      onClick={diffQuery.error !== null ? () => diffQuery.refresh() : loadNextSlice}
-                    >
-                      {diffQuery.error !== null
-                        ? "Retry"
-                        : diffQuery.isPending
-                          ? "Loading more files..."
-                          : "Load more files"}
-                    </Button>
-                  </div>
-                )
-              }
+              footer={loadMoreFiles}
             />
           </aside>
         ) : null}
-      </div>
+      </DiffFocusKeyboard>
       {unstructured}
     </div>
   );

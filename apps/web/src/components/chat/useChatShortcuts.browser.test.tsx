@@ -44,7 +44,11 @@ function Launcher(props: { keys: string; received: string[] }) {
 
 // The chat's shortcut listener registers when the chat mounts, so a launcher that opens
 // later registers after it. Tests mount the chat first and add the launcher by rerendering.
-function Chat(props: { composerKeys: string[]; launcher?: { keys: string; received: string[] } }) {
+function Chat(props: {
+  composerKeys: string[];
+  launcher?: { keys: string; received: string[] };
+  ownedKeys?: string;
+}) {
   useChatShortcuts({
     enabled: true,
     keybindings: [],
@@ -65,6 +69,11 @@ function Chat(props: { composerKeys: string[]; launcher?: { keys: string; receiv
     commands: {},
     fallback: () => undefined,
   });
+  if (props.ownedKeys !== undefined) {
+    return (
+      <div ref={focusOnMount} tabIndex={-1} aria-label="Diff" data-owned-keys={props.ownedKeys} />
+    );
+  }
   return props.launcher ? <Launcher {...props.launcher} /> : null;
 }
 
@@ -93,4 +102,13 @@ it("still types other letters into the composer while the launcher is open", asy
 
   expect(composerKeys).toEqual(["a"]);
   expect(received).toEqual([]);
+});
+
+it("leaves a focused region's own keys to it and types the rest into the composer", async () => {
+  const composerKeys: string[] = [];
+  await using _screen = await render(<Chat composerKeys={composerKeys} ownedKeys="jk" />, options);
+
+  await userEvent.keyboard("jxK");
+
+  expect(composerKeys).toEqual(["x", "K"]);
 });
