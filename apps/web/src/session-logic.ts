@@ -40,6 +40,7 @@ import type {
 import type { ThreadRunSummary, ThreadRuntimeSummary } from "@t3tools/client-runtime/state/shell";
 import { threadRuntimeHasInterruptibleRun } from "@t3tools/client-runtime/state/thread-execution";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
+import { isCoordinationTurnItem } from "@t3tools/client-runtime/state/thread-communication";
 
 import {
   isImageAttachment,
@@ -615,6 +616,7 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
 /** Preserve visibleTurnItems' committed order; interleave client messages by timestamp. */
 export interface TimelineEntriesInput {
   readonly visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
+  readonly communicationLanesEnabled?: boolean;
   readonly optimisticMessages: ReadonlyArray<ChatMessage>;
   readonly anchoredMessages?: ReadonlyArray<ChatMessage>;
   readonly attachmentUrlById?: ReadonlyMap<string, string>;
@@ -665,6 +667,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
   );
   for (const row of input.visibleTurnItems) {
     const { item } = row;
+    if (isCoordinationTurnItem(item, input.communicationLanesEnabled === true)) continue;
     if (turnItemIsWorkspacePreparation(item)) continue;
     if (item.type === "todo_list" || item.type === "checkpoint") continue;
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
@@ -810,6 +813,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
 
   const retainedMessageIds = new Set([...committedMessageIds, ...foldedAnswerMessageIds]);
   for (const message of input.anchoredMessages ?? []) {
+    if (input.communicationLanesEnabled === true && message.role !== "user") continue;
     if (retainedMessageIds.has(message.id)) continue;
     retainedMessageIds.add(message.id);
     const entry: TimelineEntry = {
@@ -973,7 +977,8 @@ function reuseTimelineEntries(
     !shallow(input.attachmentUrlById, before.attachmentUrlById) ||
     !shallow(input.attempts, before.attempts) ||
     !shallow(input.nodes, before.nodes) ||
-    !shallow(input.plans, before.plans)
+    !shallow(input.plans, before.plans) ||
+    input.communicationLanesEnabled !== before.communicationLanesEnabled
   ) {
     return null;
   }

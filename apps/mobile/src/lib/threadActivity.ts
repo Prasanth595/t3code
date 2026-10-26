@@ -5,6 +5,7 @@ import type {
 } from "@t3tools/client-runtime/state/thread-requests";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { isCoordinationTurnItem } from "@t3tools/client-runtime/state/thread-communication";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
@@ -2028,6 +2029,7 @@ export function buildPendingUserInputAnswers(
 
 interface ThreadFeedBuild {
   readonly rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
+  readonly communicationLanesEnabled: boolean;
   readonly attempts: ReadonlyArray<OrchestrationV2RunAttempt> | undefined;
   readonly nodes: ReadonlyArray<OrchestrationV2ExecutionNode> | undefined;
   readonly checkpointSummaries: ReadonlyArray<ThreadCheckpointSummary> | undefined;
@@ -2109,9 +2111,11 @@ export function buildThreadFeed(
     readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
     readonly checkpointSummaries?: ReadonlyArray<ThreadCheckpointSummary>;
     readonly cache?: ThreadFeedCache;
+    readonly communicationLanesEnabled?: boolean;
   },
 ): ThreadFeedEntry[] {
   const anchoredMessages = options?.anchoredMessages ?? [];
+  const communicationLanesEnabled = options?.communicationLanesEnabled === true;
   const attemptByRootNodeId = new Map(
     (options?.attempts ?? []).map((attempt) => [attempt.rootNodeId, attempt] as const),
   );
@@ -2151,6 +2155,7 @@ export function buildThreadFeed(
   let restartIndex = -1;
   if (
     previous !== null &&
+    previous.communicationLanesEnabled === communicationLanesEnabled &&
     anchoredMessages.length === 0 &&
     previous.attempts === options?.attempts &&
     previous.nodes === options?.nodes &&
@@ -2173,6 +2178,7 @@ export function buildThreadFeed(
   for (let index = restart?.row ?? 0; index < visibleTurnItems.length; index += 1) {
     const row = visibleTurnItems[index]!;
     const item = row.item;
+    if (isCoordinationTurnItem(item, communicationLanesEnabled)) continue;
     if (turnItemIsWorkspacePreparation(item)) continue;
     if (item.type === "todo_list" || item.type === "checkpoint") continue;
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
@@ -2301,6 +2307,7 @@ export function buildThreadFeed(
     return entry;
   };
   for (const message of anchoredMessages) {
+    if (communicationLanesEnabled && message.role !== "user") continue;
     if (retainedMessageIds.has(message.id)) continue;
     retainedMessageIds.add(message.id);
     const entry = appendLocalMessage(message);
@@ -2339,6 +2346,7 @@ export function buildThreadFeed(
         ? null
         : {
             rows: visibleTurnItems,
+            communicationLanesEnabled,
             attempts: options?.attempts,
             nodes: options?.nodes,
             checkpointSummaries: options?.checkpointSummaries,

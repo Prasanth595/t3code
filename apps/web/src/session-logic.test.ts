@@ -45,6 +45,114 @@ import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "./tes
 import type { ChatMessage } from "./types";
 
 describe("V2 session presentation", () => {
+  it("shows only explicitly addressed messages in enabled human chat", () => {
+    const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+    const threadId = ThreadId.make("thread-lanes");
+    const item = (id: string, communication?: { route: { port: string } }) =>
+      ({
+        id: TurnItemId.make(id),
+        threadId,
+        runId: RunId.make("run-lanes"),
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 0,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "assistant_message",
+        messageId: MessageId.make(id),
+        text: id,
+        attachments: [],
+        streaming: false,
+        ...(communication ? { communication } : {}),
+      }) as unknown as OrchestrationV2TurnItem;
+    const rows = [
+      item("legacy"),
+      item("internal", { route: { port: "internal.out" } }),
+      item("public", { route: { port: "user.out" } }),
+    ].map((entry, position) => ({
+      item: entry,
+      position,
+      visibility: "local" as const,
+      sourceThreadId: threadId,
+      sourceItemId: entry.id,
+    }));
+
+    expect(
+      deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: rows,
+        optimisticMessages: [],
+        communicationLanesEnabled: true,
+        anchoredMessages: [
+          {
+            id: MessageId.make("local-assistant"),
+            role: "assistant",
+            text: "Unaddressed local output",
+            runId: null,
+            streaming: false,
+            createdAt: "2026-06-20T00:00:00.000Z",
+            updatedAt: "2026-06-20T00:00:00.000Z",
+          },
+        ],
+      }).map((entry) => entry.id),
+    ).toEqual([MessageId.make("public")]);
+    expect(
+      deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: rows,
+        optimisticMessages: [],
+      }).filter((entry) => entry.kind === "message"),
+    ).toHaveLength(3);
+  });
+
+  it("routes unaddressed work rows to coordination but keeps blocking controls visible", () => {
+    const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+    const threadId = ThreadId.make("thread-lanes-work");
+    const base = (id: string) => ({
+      id: TurnItemId.make(id),
+      threadId,
+      runId: RunId.make("run-lanes-work"),
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed",
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+    });
+    const items = [
+      { ...base("tool"), type: "command_execution", input: "ls" },
+      { ...base("think"), type: "reasoning", text: "thinking", streaming: false },
+      { ...base("notice"), type: "system_notice", message: "notice" },
+      { ...base("fail"), type: "error", failure: { code: "x", message: "boom" } },
+    ] as unknown as OrchestrationV2TurnItem[];
+    const visibleTurnItems = items.map((item, position) => ({
+      item,
+      position,
+      visibility: "local" as const,
+      sourceThreadId: threadId,
+      sourceItemId: item.id,
+    }));
+
+    const ids = (communicationLanesEnabled: boolean) =>
+      deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems,
+        optimisticMessages: [],
+        communicationLanesEnabled,
+      }).flatMap((entry) => (entry.kind === "work" ? [entry.entry.id] : []));
+
+    expect(ids(true)).toEqual(["fail"]);
+    expect(ids(false)).toEqual(expect.arrayContaining(["tool", "think", "notice", "fail"]));
+  });
+
   it("uses run status as the settlement boundary", () => {
     const runId = RunId.make("run-1");
     expect(

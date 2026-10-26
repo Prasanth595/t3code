@@ -351,6 +351,14 @@ export function spawnClaudeProcessGroup(
 }
 
 export const ClaudeProviderCapabilitiesV2 = {
+  // Claude has no typed internal input or output audience; T3 MCP publication and prompt labels stand in.
+  communication: {
+    nativeInternalInput: false,
+    activeInternalInput: false,
+    nativeOutputAudience: false,
+    toolMailbox: true,
+    compatibilityTextFallback: true,
+  },
   sessions: {
     supportsMultipleProviderThreadsPerSession: false,
     supportsModelSwitchInSession: true,
@@ -1587,6 +1595,7 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__list_scheduled_tasks",
   "mcp__t3-code__t3_thread_list",
   "mcp__t3-code__t3_thread_wait",
+  "mcp__t3-code__t3_message_user",
   "mcp__t3-code__t3_pending_request_list",
   "mcp__t3-code__t3_pending_request_read",
   "mcp__t3-code__t3_thread_configuration",

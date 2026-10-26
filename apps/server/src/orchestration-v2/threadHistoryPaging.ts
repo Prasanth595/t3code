@@ -57,6 +57,7 @@ type HistoryRow = Pick<
     readonly messageId?: string;
     readonly inputIntent?: string;
     readonly createdBy?: string;
+    readonly communication?: { readonly route: { readonly port: string } } | undefined;
     readonly runId?: string | null;
   };
 };
@@ -182,7 +183,10 @@ export function threadHistoryTurnStarts(
 
 export function isThreadHistoryUserTurn(item: HistoryRow["item"]): boolean {
   return (
-    isThreadHistoryTurnStart(item) && item.type === "user_message" && item.createdBy === "user"
+    isThreadHistoryTurnStart(item) &&
+    item.type === "user_message" &&
+    item.createdBy === "user" &&
+    (item.communication === undefined || item.communication.route.port === "user.in")
   );
 }
 

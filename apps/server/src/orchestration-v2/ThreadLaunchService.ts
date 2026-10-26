@@ -76,6 +76,7 @@ export interface ThreadLaunchInitialMessage {
 
 export interface ThreadLaunchInput {
   readonly commandId: CommandId;
+  readonly communicationLanesEnabled?: boolean;
   readonly threadId?: ThreadId;
   readonly reuseExistingThread?: boolean;
   readonly projectId: ProjectId;
@@ -900,6 +901,9 @@ const make = Effect.gen(function* () {
             : threads.dispatch({
                 type: "thread.create",
                 commandId: input.commandId,
+                ...(input.communicationLanesEnabled === undefined
+                  ? {}
+                  : { communicationLanesEnabled: input.communicationLanesEnabled }),
                 threadId: candidateThreadId,
                 projectId: input.projectId,
                 title: input.title,

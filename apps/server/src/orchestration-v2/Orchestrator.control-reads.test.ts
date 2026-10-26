@@ -50,6 +50,13 @@ const adapter = {
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
   openSession: () => Effect.die("No provider process needed for metadata controls"),
 } as ProviderAdapter.ProviderAdapterV2["Service"];
+const unsupportedInstanceId = ProviderInstanceId.make("unsupported-communication-provider");
+const unsupportedAdapter = {
+  ...adapter,
+  instanceId: unsupportedInstanceId,
+  getCapabilities: () =>
+    Effect.succeed({ ...CodexProviderCapabilitiesV2, communication: undefined }),
+} as ProviderAdapter.ProviderAdapterV2["Service"];
 const layerDatabase = SqlitePersistence.layerMemory;
 const layerTest = Layer.mergeAll(
   layerDatabase,
@@ -57,7 +64,7 @@ const layerTest = Layer.mergeAll(
   EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
   ProviderReplayHarness.layerWithRegistry(
     { name: "control-reads" },
-    ProviderAdapterRegistry.layerFromAdapters([adapter]),
+    ProviderAdapterRegistry.layerFromAdapters([adapter, unsupportedAdapter]),
     { databaseLayer: layerDatabase, runEffectWorker: false },
   ),
 );
@@ -1406,5 +1413,241 @@ it.effect("dispatch records the command outcome and its duration", () =>
 
     assert.strictEqual((yield* successes).count - successesBefore, 1);
     assert.strictEqual((yield* durations).count - durationsBefore, 1);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("publishes only explicit correlated user output from a live lanes run", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:published-user-output");
+    const inputId = MessageId.make("message:published-user-input");
+    const outputId = MessageId.make("message:published-user-output");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-published-user-output"),
+      threadId,
+      projectId: ProjectId.make("project:published-user-output"),
+      title: "Publication",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+      communicationLanesEnabled: true,
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("dispatch-published-user-input"),
+      threadId,
+      messageId: inputId,
+      text: "Give me an update",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const before = yield* projections.getThreadProjection(threadId);
+    assert.equal(
+      before.messages.find((message) => message.id === inputId)?.communication?.route.port,
+      "user.in",
+    );
+    const run = before.runs[0]!;
+    const now = yield* DateTime.now;
+    yield* projections.apply({
+      id: EventId.make("event:published-user-run-running"),
+      type: "run.updated",
+      threadId,
+      runId: run.id,
+      occurredAt: now,
+      payload: { ...run, status: "running", startedAt: now },
+    });
+    const publication = {
+      type: "communication.publish-output" as const,
+      commandId: CommandId.make("publish-user-update"),
+      threadId,
+      messageId: outputId,
+      text: "I have the first result.",
+      replyTo: inputId,
+      runId: run.id,
+    };
+    yield* orchestrator.dispatch(publication);
+    yield* orchestrator.dispatch(publication);
+    const after = yield* projections.getThreadProjection(threadId);
+    const output = after.messages.filter((message) => message.id === outputId);
+    assert.equal(output.length, 1);
+    assert.equal(output[0]?.communication?.route.port, "user.out");
+    assert.equal(output[0]?.communication?.replyTo, inputId);
+    assert.equal(output[0]?.text, "I have the first result.");
+    assert.equal(
+      after.turnItems.filter(
+        (item) => item.type === "assistant_message" && item.messageId === outputId,
+      ).length,
+      1,
+    );
+    const internalId = MessageId.make("message:internal-reply-target");
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("dispatch-internal-reply-target"),
+      threadId,
+      messageId: internalId,
+      text: "Child result",
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const rejected = yield* orchestrator
+      .dispatch({
+        ...publication,
+        commandId: CommandId.make("publish-with-internal-reply"),
+        messageId: MessageId.make("message:invalid-user-output"),
+        replyTo: internalId,
+      })
+      .pipe(Effect.result);
+    assert.equal(rejected._tag, "Failure");
+
+    const legacyThreadId = ThreadId.make("thread:legacy-publication-rejected");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-legacy-publication-rejected"),
+      threadId: legacyThreadId,
+      projectId: ProjectId.make("project:legacy-publication-rejected"),
+      title: "Legacy thread",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("dispatch-legacy-publication-rejected"),
+      threadId: legacyThreadId,
+      messageId: MessageId.make("message:legacy-publication-input"),
+      text: "Answer normally",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const legacyRun = (yield* projections.getThreadProjection(legacyThreadId)).runs[0]!;
+    const legacyPublish = yield* orchestrator
+      .dispatch({
+        ...publication,
+        commandId: CommandId.make("publish-to-legacy-thread"),
+        messageId: MessageId.make("message:legacy-publication-output"),
+        threadId: legacyThreadId,
+        runId: legacyRun.id,
+        replyTo: MessageId.make("message:legacy-publication-input"),
+      })
+      .pipe(Effect.result);
+    assert.equal(legacyPublish._tag, "Failure");
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("requires publication capability when starting or switching a lanes thread", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = ThreadId.make("thread:capability-gated-communication");
+    const unsupportedSelection = { ...modelSelection, instanceId: unsupportedInstanceId };
+    const create = {
+      type: "thread.create" as const,
+      commandId: CommandId.make("create-unsupported-communication"),
+      threadId,
+      projectId: ProjectId.make("project:capability-gated-communication"),
+      title: "Capability gate",
+      modelSelection: unsupportedSelection,
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+      branch: null,
+      worktreePath: null,
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+      communicationLanesEnabled: true,
+    };
+    assert.equal((yield* orchestrator.dispatch(create).pipe(Effect.result))._tag, "Failure");
+    yield* orchestrator.dispatch({
+      ...create,
+      commandId: CommandId.make("create-supported-communication"),
+      modelSelection,
+    });
+    assert.equal(
+      (yield* orchestrator
+        .dispatch({
+          type: "thread.model-selection.set",
+          commandId: CommandId.make("switch-unsupported-communication"),
+          threadId,
+          modelSelection: unsupportedSelection,
+        })
+        .pipe(Effect.result))._tag,
+      "Failure",
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("records one correlated internal output on the sender thread", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:internal-output-sender");
+    const recipientThreadId = ThreadId.make("thread:internal-output-recipient");
+    const recipientMessageId = MessageId.make("message:internal-output-recipient");
+    const messageId = MessageId.make("message:internal-output-sender");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-internal-output-sender"),
+      threadId,
+      projectId: ProjectId.make("project:internal-output-sender"),
+      title: "Sender",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+      communicationLanesEnabled: true,
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("start-internal-output-sender"),
+      threadId,
+      messageId: MessageId.make("message:start-internal-output-sender"),
+      text: "Coordinate with the child",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const run = (yield* projections.getThreadProjection(threadId)).runs[0]!;
+    const record = {
+      type: "communication.record-internal-output" as const,
+      commandId: CommandId.make("record-internal-output-sender"),
+      threadId,
+      messageId,
+      runId: run.id,
+      text: "Please check the data source.",
+      recipientThreadId,
+      recipientMessageId,
+    };
+    yield* orchestrator.dispatch(record);
+    yield* orchestrator.dispatch(record);
+    const projection = yield* projections.getThreadProjection(threadId);
+    const messages = projection.messages.filter((message) => message.id === messageId);
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0]?.communication?.route.port, "internal.out");
+    assert.equal(messages[0]?.communication?.recipientId, recipientThreadId);
+    assert.equal(messages[0]?.communication?.correlationId, recipientMessageId);
+    assert.equal(
+      projection.turnItems.filter(
+        (item) => item.type === "assistant_message" && item.messageId === messageId,
+      ).length,
+      1,
+    );
   }).pipe(Effect.provide(layerTest)),
 );

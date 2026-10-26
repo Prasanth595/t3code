@@ -1,4 +1,5 @@
 import {
+  CommunicationEnvelope,
   MessageId,
   ContextHandoffId,
   ProviderThreadId,
@@ -10,6 +11,7 @@ import {
   ThreadId,
   TurnItemId,
   type OrchestrationV2DomainEvent,
+  OrchestrationV2DomainEventJson,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadStreamItem,
   OrchestrationV2TurnItem,
@@ -32,6 +34,9 @@ import { MAX_TOOL_OUTPUT_IMAGES, toolOutputImages } from "@t3tools/shared/toolOu
 const decodeTurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
 const encodeTurnItemJson = Schema.encodeSync(OrchestrationV2TurnItemJson);
 const decodeTurnItemJson = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
+const decodeCommunication = Schema.decodeSync(CommunicationEnvelope);
+const decodeDomainEventJson = Schema.decodeSync(OrchestrationV2DomainEventJson);
+const encodeDomainEventJson = Schema.encodeSync(OrchestrationV2DomainEventJson);
 
 const base = {
   id: TurnItemId.make("tool-1"),
@@ -54,6 +59,69 @@ const base = {
 };
 
 describe("orchestration V2 wire projection", () => {
+  it("preserves the verified route and delivery state in live message replay", () => {
+    const id = MessageId.make("message:wire:internal");
+    const threadId = ThreadId.make("thread:wire:internal");
+    const at = DateTime.makeUnsafe("2026-10-26T00:00:00.000Z");
+    const communication = decodeCommunication({
+      schemaVersion: 2,
+      classification: "verified",
+      id,
+      threadId,
+      route: { port: "internal.in", audience: "coordinator" },
+      producer: { kind: "agent", id: "child-1" },
+      recipientId: threadId,
+      kind: "delegation.result",
+      correlationId: "request-1",
+      content: { text: "PRIVATE_ENVELOPE_TEXT", artifactRefs: [] },
+      delivery: { state: "accepted" },
+    });
+    const event = {
+      id: EventId.make("event:wire:internal"),
+      type: "message.updated" as const,
+      threadId,
+      occurredAt: at,
+      payload: {
+        id,
+        threadId,
+        runId: null,
+        nodeId: null,
+        role: "user" as const,
+        text: "Child result",
+        attachments: [],
+        streaming: false,
+        createdBy: "agent" as const,
+        creationSource: "server" as const,
+        createdAt: at,
+        updatedAt: at,
+        communication,
+      },
+    };
+    const projectedEvent = projectDomainEventForWire(event);
+    expect(projectedEvent).toMatchObject({ payload: { text: "" } });
+    expect(JSON.stringify(projectedEvent)).not.toContain("PRIVATE_ENVELOPE_TEXT");
+    const replayed = decodeDomainEventJson(encodeDomainEventJson(event));
+    expect(projectDomainEventForWire(replayed)).toMatchObject({
+      payload: {
+        communication: { route: communication.route, delivery: communication.delivery },
+        text: "",
+      },
+    });
+    const item = {
+      ...base,
+      type: "assistant_message" as const,
+      messageId: id,
+      text: "PRIVATE_COORDINATION_RESULT",
+      streaming: true,
+      communication,
+    };
+    const projected = projectTurnItemForWire(item);
+    expect(projected.type).toBe("notification");
+    expect(JSON.stringify(projected)).not.toContain("PRIVATE_COORDINATION_RESULT");
+    expect(JSON.stringify(projected)).not.toContain("PRIVATE_ENVELOPE_TEXT");
+    expect(projectTurnItemForDetail(item)).toMatchObject({ text: "PRIVATE_COORDINATION_RESULT" });
+  });
+
   it("keeps copied handoff transcripts out of activity items and live events", () => {
     const item = {
       ...base,

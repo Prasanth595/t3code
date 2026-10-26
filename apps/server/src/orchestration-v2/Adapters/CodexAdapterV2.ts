@@ -232,6 +232,14 @@ const CODEX_CLIENT_CAPABILITIES = {
 } as const;
 
 export const CodexProviderCapabilitiesV2 = {
+  // Codex has no typed internal input or output audience; T3 MCP publication and prompt labels stand in.
+  communication: {
+    nativeInternalInput: false,
+    activeInternalInput: false,
+    nativeOutputAudience: false,
+    toolMailbox: true,
+    compatibilityTextFallback: true,
+  },
   sessions: {
     supportsMultipleProviderThreadsPerSession: true,
     supportsModelSwitchInSession: true,

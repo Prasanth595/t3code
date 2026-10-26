@@ -29,13 +29,17 @@ import {
   OrchestratorMcpThreadSendResult,
   OrchestratorMcpThreadWaitInput,
   OrchestratorMcpThreadWaitResult,
+  MessageId,
+  ThreadId,
   ThreadMetadataMcpUpdateInput,
   ThreadMetadataMcpUpdateResult,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import { Tool, Toolkit } from "effect/ai";
+import * as McpSchema from "effect/ai/McpSchema";
 import * as Schema from "effect/Schema";
 
+import { USER_MESSAGE_TOOL } from "../../../orchestration-v2/CommunicationRouting.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
@@ -267,6 +271,33 @@ const ThreadSendTool = Tool.make("t3_thread_send", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+const MessageUserTool = Tool.make(USER_MESSAGE_TOOL, {
+  description:
+    "Message the user in this thread's conversation. Where T3 separates lanes, the user sees only these messages, so send questions, decisions, key progress, and your final answer here.",
+  parameters: Schema.Struct({
+    text: TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)),
+    replyTo: Schema.optional(
+      MessageId.annotate({ description: "The user message this answers, if not the latest." }),
+    ),
+    clientRequestId: Schema.optional(
+      TrimmedNonEmptyString.check(Schema.isMaxLength(256)).annotate({
+        description: "Reuse it to retry the same call. A new call gets a new key.",
+      }),
+    ),
+  }),
+  success: Schema.Struct({ threadId: ThreadId, messageId: MessageId }),
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Message the user")
+  // Like html_render it only adds to this conversation, so read-only sandboxes can still reply.
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromSubagents);
+
 const ThreadWaitTool = Tool.make("t3_thread_wait", {
   description:
     "Wait for a thread's run to finish. No `runId`: latest. Idle: at once. On timeout, with `next` end your turn; without, call again.",
@@ -310,6 +341,7 @@ export const OrchestratorToolkit = Toolkit.make(
   ThreadReadTool,
   ThreadUpdateTool,
   ThreadSendTool,
+  MessageUserTool,
   ThreadWaitTool,
   ThreadInterruptTool,
 );

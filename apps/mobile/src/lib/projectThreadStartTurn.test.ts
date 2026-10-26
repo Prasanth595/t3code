@@ -52,10 +52,12 @@ describe("project thread title", () => {
       worktreePath: null,
       startFromOrigin: false,
       worktreeBranchName: "unused",
+      communicationLanesEnabled: true,
     } satisfies ProjectThreadStartTurnSpec;
     const input = buildProjectThreadStartTurnInput(spec);
 
     expect(input.titleSeed).toBe(title);
+    expect(input.communicationLanesEnabled).toBe(true);
     expect(input.bootstrap.createThread.title).toBe(input.titleSeed);
     expect(input.message.attachments).toEqual(uploadedAttachments);
     expect(input.message.text).toBe(wire.text);

@@ -31,4 +31,10 @@ describe("resolveT3McpToolPresentation", () => {
     ).toBe("Delegate a child task");
     expect(resolveT3McpToolPresentation("t3-code-thread_opencode2-adapter_not_a_tool")).toBeNull();
   });
+
+  it("names explicit user publication", () => {
+    expect(resolveT3McpToolPresentation("mcp__t3_code__t3_message_user")?.displayName).toBe(
+      "Message the user",
+    );
+  });
 });

@@ -86,6 +86,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { USER_MESSAGE_TOOL } from "../orchestration-v2/CommunicationRouting.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
@@ -138,6 +139,17 @@ type TerminalTaskStatus = Extract<
   OrchestratorMcpDelegateTaskResult["status"],
   "completed" | "failed" | "cancelled" | "interrupted"
 >;
+
+export interface OrchestratorMcpUserMessageInput {
+  readonly text: string;
+  readonly replyTo?: MessageId | undefined;
+  readonly clientRequestId?: string | undefined;
+}
+
+export interface OrchestratorMcpUserMessageResult {
+  readonly threadId: ThreadId;
+  readonly messageId: MessageId;
+}
 
 export interface OrchestratorMcpServiceShape {
   readonly capabilities: (
@@ -193,6 +205,11 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadSendInput,
   ) => Effect.Effect<OrchestratorMcpThreadSendResult, OrchestratorMcpFailure>;
+  /** Publishes to the human conversation of the caller's own thread only. */
+  readonly publishUserOutput: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpUserMessageInput,
+  ) => Effect.Effect<OrchestratorMcpUserMessageResult, OrchestratorMcpFailure>;
   readonly waitForThread: (
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadWaitInput,
@@ -1791,6 +1808,51 @@ const make = Effect.gen(function* () {
     return task;
   });
 
+  const recordSenderOutput = (input: {
+    readonly scope: McpInvocationScope;
+    readonly requestKey: string;
+    readonly parent: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">;
+    readonly runId: RunId;
+    readonly text: string;
+    readonly recipientThreadId: ThreadId;
+    readonly recipientMessageId: MessageId;
+    readonly recipientTaskId?: NodeId;
+  }) =>
+    input.parent.thread.communicationLanesEnabled !== true
+      ? Effect.void
+      : threadManagement
+          .recordInternalOutput({
+            commandId: stableCommandId({
+              scope: input.scope,
+              requestKey: input.requestKey,
+              operation: "internal-output",
+            }),
+            threadId: input.parent.thread.id,
+            messageId: stableOperationMessageId({
+              scope: input.scope,
+              requestKey: input.requestKey,
+              operation: "internal-output",
+            }),
+            runId: input.runId,
+            text: input.text,
+            recipientThreadId: input.recipientThreadId,
+            recipientMessageId: input.recipientMessageId,
+            ...(input.recipientTaskId === undefined
+              ? {}
+              : { recipientTaskId: input.recipientTaskId }),
+          })
+          .pipe(
+            Effect.asVoid,
+            Effect.catchCause((cause) =>
+              Effect.logWarning("orchestrator-mcp.internal-output.record-failed", {
+                senderThreadId: input.parent.thread.id,
+                recipientThreadId: input.recipientThreadId,
+                recipientMessageId: input.recipientMessageId,
+                cause,
+              }),
+            ),
+          );
+
   return OrchestratorMcpService.of({
     scheduleTask: Effect.fn("OrchestratorMcpService.scheduleTask")(function* (scope, input) {
       const { parent, limits } = yield* loadCaller(scope);
@@ -2246,6 +2308,22 @@ const make = Effect.gen(function* () {
       }
       const taskId = taskEvent.event.payload.id;
       const childThreadId = taskEvent.event.payload.childThreadId;
+      const childMessageEvent = result.storedEvents.find(
+        (stored) =>
+          stored.event.type === "message.updated" && stored.event.threadId === childThreadId,
+      );
+      if (childThreadId !== null && childMessageEvent?.event.type === "message.updated") {
+        yield* recordSenderOutput({
+          scope,
+          requestKey: key,
+          parent,
+          runId: parentRun.id,
+          text: taskPrompt(input),
+          recipientThreadId: childThreadId,
+          recipientMessageId: childMessageEvent.event.payload.id,
+          recipientTaskId: taskId,
+        });
+      }
       const childRunEvent = result.storedEvents.find(
         (stored) => stored.event.type === "run.created" && stored.event.threadId === childThreadId,
       );
@@ -2852,6 +2930,27 @@ const make = Effect.gen(function* () {
                 ),
           ),
         );
+      const senderRun = parent?.runs
+        .filter(
+          (run) =>
+            ThreadManagementService.isActiveRun(run) &&
+            run.providerInstanceId === scope.thread?.providerInstanceId,
+        )
+        .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+      if (parent !== undefined && senderRun !== undefined) {
+        yield* recordSenderOutput({
+          scope,
+          requestKey: key,
+          parent,
+          runId: senderRun.id,
+          text: input.message,
+          recipientThreadId: input.threadId,
+          recipientMessageId: messageId,
+          ...(result.run.delegatedTaskId === undefined
+            ? {}
+            : { recipientTaskId: result.run.delegatedTaskId }),
+        });
+      }
       return {
         threadId: input.threadId,
         link: formatThreadLink(input.threadId, target.thread.title),
@@ -2862,6 +2961,56 @@ const make = Effect.gen(function* () {
         delivery: result.delivery,
       } satisfies OrchestratorMcpThreadSendResult;
     }),
+    publishUserOutput: Effect.fn("OrchestratorMcpService.publishUserOutput")(
+      function* (scope, input) {
+        yield* requireCapability(scope);
+        const caller = yield* requireThreadScope(scope, USER_MESSAGE_TOOL);
+        if (caller.thread.subagent === true) {
+          return yield* failure(
+            "capability_denied",
+            "A delegated task reports to its parent. Only the coordinating thread messages the user.",
+          );
+        }
+        const threadId = caller.thread.threadId;
+        const shell = yield* threadManagement
+          .getThreadShell(threadId)
+          .pipe(Effect.mapError(threadManagementFailure));
+        if (shell === null || shell.deletedAt !== null) {
+          return yield* failure("thread_not_found", "The calling thread was not found.");
+        }
+        if (!isLiveCallerShell(shell, caller.thread.providerInstanceId)) {
+          return yield* failure(
+            "parent_not_active",
+            "The calling provider no longer owns an active thread run.",
+          );
+        }
+        const key = yield* requestKey(input.clientRequestId);
+        const messageId = stableOperationMessageId({
+          scope,
+          requestKey: key,
+          operation: "user-message",
+        });
+        yield* threadManagement
+          .publishUserOutput({
+            commandId: stableCommandId({ scope, requestKey: key, operation: "user-message" }),
+            threadId,
+            messageId,
+            text: input.text,
+            ...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              isThreadManagementError(error)
+                ? threadManagementFailure(error)
+                : failure(
+                    "orchestration_error",
+                    `Unable to message the user: ${userFacingDispatchErrorMessage(error) ?? errorMessage(error)}`,
+                  ),
+            ),
+          );
+        return { threadId, messageId } satisfies OrchestratorMcpUserMessageResult;
+      },
+    ),
     waitForThread: Effect.fn("OrchestratorMcpService.waitForThread")(function* (scope, input) {
       const { parent, target } = yield* loadScopedThread(scope, input.threadId);
       const result = yield* threadManagement

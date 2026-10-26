@@ -156,6 +156,9 @@ export function NewTaskDraftScreen(props: {
   const [creationMetadata] = useState(makeTurnCommandMetadata);
   const projects = useProjects();
   const flow = useNewTaskFlow();
+  const [communicationLanesOptIn, setCommunicationLanesOptIn] = useState(
+    flow.editingPendingTask?.creation?.communicationLanesEnabled === true,
+  );
   const navigation = useNavigation();
   const goBack = useWorkspaceBackNavigation("threads");
   const {
@@ -183,6 +186,13 @@ export function NewTaskDraftScreen(props: {
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
     selectedProject?.environmentId ?? null,
   );
+  const supportsCommunicationLanes =
+    selectedEnvironmentServerConfig?.environment.capabilities.communicationLanes === true &&
+    selectedEnvironmentServerConfig.providers.some(
+      (provider) =>
+        provider.instanceId === flow.selectedModel?.instanceId &&
+        provider.communicationLanes === true,
+    );
   const environmentConnected = connectionState === "connected";
   const canOperate = useEnvironmentScope(
     selectedProject?.environmentId ?? null,
@@ -913,12 +923,36 @@ export function NewTaskDraftScreen(props: {
     const message = flow.buildPendingTaskMessage(metadata, {
       currentCheckoutBranch: queuesInsteadOfStarting ? null : flow.currentCheckoutBranchName,
     });
-    if (!message) {
+    const creation = message?.creation;
+    if (!message || !creation) {
+      return null;
+    }
+    const selectedProviderSupportsCommunicationLanes =
+      selectedEnvironmentServerConfig?.environment.capabilities.communicationLanes === true &&
+      selectedEnvironmentServerConfig.providers.some(
+        (provider) =>
+          provider.instanceId === modelSelection.instanceId && provider.communicationLanes === true,
+      );
+    if (communicationLanesOptIn && !selectedProviderSupportsCommunicationLanes) {
+      Dialog.alert(
+        "Coordination lanes unavailable",
+        "The selected provider does not support coordination lanes. Choose a supported provider before sending this task.",
+      );
       return null;
     }
     // Persist locally before clearing or leaving the draft; server setup runs on the thread.
     flow.setSubmitting(true);
-    const queued = await settlePromise(() => enqueueThreadOutboxMessage(message));
+    const queued = await settlePromise(() =>
+      enqueueThreadOutboxMessage({
+        ...message,
+        creation: {
+          ...creation,
+          ...(selectedProviderSupportsCommunicationLanes && communicationLanesOptIn
+            ? { communicationLanesEnabled: true }
+            : {}),
+        },
+      }),
+    );
     flow.setSubmitting(false);
     if (AsyncResult.isFailure(queued)) {
       const error = squashAtomCommandFailure(queued);
@@ -1186,6 +1220,17 @@ export function NewTaskDraftScreen(props: {
                 </View>
               ) : null}
               {flow.canChooseWorkspace ? workspaceControls : null}
+              {supportsCommunicationLanes ? (
+                <ComposerInlineControl
+                  accessibilityLabel="Separate coordination activity"
+                  accessibilityHint="Compatibility mode for this new thread"
+                  label={`Coordination lanes: ${communicationLanesOptIn ? "On" : "Off"}`}
+                  selected={communicationLanesOptIn}
+                  disabled={isComposerInteractionLocked}
+                  showChevron={false}
+                  onPress={() => setCommunicationLanesOptIn((enabled) => !enabled)}
+                />
+              ) : null}
             </View>
           ),
           editorRef: promptInputRef,

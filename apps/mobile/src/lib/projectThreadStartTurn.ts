@@ -17,6 +17,7 @@ import {
 import type { UploadedMobileAttachment } from "./attachmentUpload";
 
 export interface ProjectThreadStartTurnSpec {
+  readonly communicationLanesEnabled?: boolean;
   readonly projectId: ProjectId;
   readonly projectCwd: string;
   readonly threadId: string;
@@ -44,6 +45,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
   });
   const isWorktree = spec.workspaceMode === "worktree";
   return {
+    ...(spec.communicationLanesEnabled === true ? { communicationLanesEnabled: true } : {}),
     commandId: CommandId.make(spec.commandId),
     creationSource: "mobile" as const,
     threadId: ThreadId.make(spec.threadId),

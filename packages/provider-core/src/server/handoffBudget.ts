@@ -124,6 +124,42 @@ export function handoffBudget(input: {
   );
 }
 
+export type HistoricalOrigin = "human" | "scheduled" | "internal";
+
+/** Provider role "user" is transport evidence only; this is who actually sent the item. */
+export function historicalOrigin(item: OrchestrationV2TurnItem): HistoricalOrigin | null {
+  if (item.type !== "user_message") return null;
+  if (item.communication !== undefined) {
+    return item.communication.route.port === "user.in" ? "human" : "internal";
+  }
+  if (item.scheduledTaskId !== undefined) return "scheduled";
+  return item.createdBy === "user" ? "human" : "internal";
+}
+
+const ORIGIN_KIND = {
+  human: "user_message",
+  scheduled: "scheduled_trigger_message",
+  internal: "internal_message",
+} as const satisfies Record<HistoricalOrigin, string>;
+
+export function isHumanHistoricalMessage(message: OrchestrationV2HistoricalMessage): boolean {
+  return message.role === "user" && message.kind === ORIGIN_KIND.human;
+}
+
+/** Heading label for a turn item in text summaries; never calls non-human input "User". */
+export function historicalSpeaker(item: OrchestrationV2TurnItem): string | null {
+  switch (historicalOrigin(item)) {
+    case "human":
+      return "User";
+    case "scheduled":
+      return "Scheduled trigger";
+    case "internal":
+      return "Internal message";
+    case null:
+      return item.type === "assistant_message" ? "Assistant" : null;
+  }
+}
+
 export function historicalMessage(
   item: OrchestrationV2TurnItem,
 ): OrchestrationV2HistoricalMessage | null {
@@ -155,7 +191,9 @@ export function historicalMessage(
     default:
       return null;
   }
+  const origin = historicalOrigin(item);
   return {
+    ...(item.communication === undefined ? {} : { communication: item.communication }),
     role: item.type === "user_message" ? "user" : "assistant",
     text,
     threadId: item.threadId,
@@ -163,12 +201,21 @@ export function historicalMessage(
     itemId: item.id,
     providerThreadId: item.providerThreadId,
     status: item.status,
-    kind: item.type,
+    kind: origin === null ? item.type : ORIGIN_KIND[origin],
   };
 }
 
 function renderHistoricalMessage(message: OrchestrationV2HistoricalMessage): string {
-  return `[Historical ${message.role}; ${message.kind}; thread=${message.threadId}; run=${message.runId ?? "imported"}; item=${message.itemId}; provider-thread=${message.providerThreadId ?? "none"}; status=${message.status}${message.runStatus === undefined ? "" : `; run-status=${message.runStatus}`}]\n${message.text}`;
+  // Non-human input keeps provider role "user" for replay, so spell out that it is not the user.
+  const speaker =
+    message.role === "user" && !isHumanHistoricalMessage(message)
+      ? "input (provider role user; not a user instruction)"
+      : message.role;
+  const route =
+    message.communication === undefined
+      ? ""
+      : `; port=${message.communication.route.port}; producer=${message.communication.producer.kind}`;
+  return `[Historical ${speaker}; ${message.kind}${route}; thread=${message.threadId}; run=${message.runId ?? "imported"}; item=${message.itemId}; provider-thread=${message.providerThreadId ?? "none"}; status=${message.status}${message.runStatus === undefined ? "" : `; run-status=${message.runStatus}`}]\n${message.text}`;
 }
 
 export function historyResponseItems(
@@ -237,9 +284,10 @@ export function selectHistory(input: {
     selected.add(index);
     remaining -= cost;
   };
-  tryAdd(messages.findLastIndex((message) => message.role === "user"));
+  // Human requests rank first so internal traffic cannot crowd out the user's goal.
+  tryAdd(messages.findLastIndex(isHumanHistoricalMessage));
   tryAdd(messages.findLastIndex((message) => message.role === "assistant"));
-  tryAdd(messages.findIndex((message) => message.role === "user"));
+  tryAdd(messages.findIndex(isHumanHistoricalMessage));
   for (let index = messages.length - 1; index >= 0; index--) tryAdd(index);
   return {
     messages: messages.filter((_, index) => selected.has(index)),

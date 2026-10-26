@@ -1,4 +1,5 @@
 import { OrchestrationMessageContext } from "./composerContext.ts";
+import { CommunicationEnvelope } from "./communication.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -336,6 +337,15 @@ export const OrchestrationV2IdentityCapabilities = Schema.Struct({
 export type OrchestrationV2IdentityCapabilities = typeof OrchestrationV2IdentityCapabilities.Type;
 
 export const OrchestrationV2ProviderCapabilities = Schema.Struct({
+  communication: Schema.optional(
+    Schema.Struct({
+      nativeInternalInput: Schema.Boolean,
+      activeInternalInput: Schema.Boolean,
+      nativeOutputAudience: Schema.Boolean,
+      toolMailbox: Schema.Boolean,
+      compatibilityTextFallback: Schema.Boolean,
+    }),
+  ),
   sessions: OrchestrationV2SessionCapabilities,
   threads: OrchestrationV2ThreadCapabilities,
   turns: OrchestrationV2TurnCapabilities,
@@ -399,6 +409,7 @@ const LenientThreadOpens = Schema.NullOr(OrchestrationV2ThreadOpens).pipe(
 );
 
 export const OrchestrationV2AppThread = Schema.Struct({
+  communicationLanesEnabled: Schema.optional(Schema.Boolean),
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
@@ -984,6 +995,7 @@ export const OrchestrationV2ProviderThread = Schema.Struct({
 export type OrchestrationV2ProviderThread = typeof OrchestrationV2ProviderThread.Type;
 
 export const OrchestrationV2HistoricalMessage = Schema.Struct({
+  communication: Schema.optional(CommunicationEnvelope),
   role: Schema.Literals(["user", "assistant"]),
   text: Schema.String,
   runStatus: Schema.optional(Schema.String),
@@ -1161,6 +1173,7 @@ export const OrchestrationV2IdleCompaction = Schema.Literals(["beforeCacheExpire
 export type OrchestrationV2IdleCompaction = typeof OrchestrationV2IdleCompaction.Type;
 
 export const OrchestrationV2ConversationMessage = Schema.Struct({
+  communication: Schema.optional(CommunicationEnvelope),
   notification: Schema.optional(OrchestrationV2Notification),
   ...OrchestrationV2CreationFields,
   scheduledTaskId: Schema.optional(ScheduledTaskId),
@@ -1356,6 +1369,7 @@ export type OrchestrationV2UserMessageInputIntent =
   typeof OrchestrationV2UserMessageInputIntent.Type;
 
 const OrchestrationV2TurnItemBaseFields = {
+  communication: Schema.optional(CommunicationEnvelope),
   toolNonExecutionKind: Schema.optional(Schema.String),
   toolSurface: Schema.optional(ToolActivitySurface),
   toolIcon: Schema.optional(ToolActivityIcon),
@@ -2733,6 +2747,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.create"),
+    communicationLanesEnabled: Schema.optional(Schema.Boolean),
     ...OrchestrationV2CreationFields,
     commandId: CommandId,
     threadId: ThreadId,
@@ -3187,6 +3202,26 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("communication.publish-output"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    messageId: MessageId,
+    text: Schema.String,
+    replyTo: Schema.optional(MessageId),
+    runId: Schema.optional(RunId),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("communication.record-internal-output"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    messageId: MessageId,
+    runId: RunId,
+    text: Schema.String,
+    recipientThreadId: ThreadId,
+    recipientMessageId: MessageId,
+    recipientTaskId: Schema.optional(NodeId),
+  }),
   // Guest share commands the server issues after checking T3 Connect and the guest token.
   Schema.Struct({
     type: Schema.Literal("thread.guest-share.open"),
@@ -3360,6 +3395,7 @@ export type OrchestrationV2ArchivedShellStreamItem =
   typeof OrchestrationV2ArchivedShellStreamItem.Type;
 
 export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
+  communicationLanesEnabled: Schema.optional(Schema.Boolean),
   commandId: CommandId,
   creationSource: Schema.optional(OrchestrationV2CreationSource),
   threadId: Schema.optional(ThreadId),

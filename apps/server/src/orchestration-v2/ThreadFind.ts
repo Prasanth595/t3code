@@ -32,6 +32,7 @@ interface FindPayload extends FindRow {
   readonly payload: string;
   readonly entryId: string;
   readonly type: OrchestrationV2TurnItem["type"];
+  readonly communicationPort: string | null;
 }
 interface FindDocument extends FindRow {
   readonly entryId: string;
@@ -94,6 +95,7 @@ function searchableRows(items: readonly OrchestrationV2ProjectedTurnItem[]) {
   return items.filter(
     ({ item }) =>
       ["user_message", "assistant_message", "proposed_plan"].includes(item.type) &&
+      !item.communication?.route.port.startsWith("internal.") &&
       !(item.type === "user_message" && foldedAnswers.has(item.messageId)),
   );
 }
@@ -237,10 +239,12 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
       payload_json: string;
       entry_id: string;
       item_type: OrchestrationV2TurnItem["type"];
+      communication_port: string | null;
     }>`
       SELECT item.thread_id, item.turn_item_id, item.payload_json,
         COALESCE(json_extract(item.payload_json, '$.messageId'), item.turn_item_id) AS entry_id,
-        json_extract(item.payload_json, '$.type') AS item_type
+        json_extract(item.payload_json, '$.type') AS item_type,
+        json_extract(item.payload_json, '$.communication.route.port') AS communication_port
       FROM orchestration_v2_projection_turn_items AS item
       JOIN json_each(${sources}) AS wanted
         ON item.thread_id = json_extract(wanted.value, '$.threadId')
@@ -261,6 +265,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
             payload: payload.payload_json,
             entryId: payload.entry_id,
             type: payload.item_type,
+            communicationPort: payload.communication_port,
           });
     });
   });
@@ -380,6 +385,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
         const rows = payloads.filter(
           (row) =>
             row.type !== "user_input_request" &&
+            !row.communicationPort?.startsWith("internal.") &&
             !(row.type === "user_message" && foldedAnswers.has(row.entryId)),
         );
         const documents = new Map<number, FindDocument>();

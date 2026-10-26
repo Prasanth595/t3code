@@ -295,16 +295,21 @@ export function createEnvironmentThreadDetailAtoms<E>(
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-queue:${key}`));
   });
   const queuedCountAtomFamily = Atom.family((key: string) => {
-    let previous: Pick<OrchestrationV2ThreadProjection, "runs" | "messages"> | null = null;
+    let previous: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages"> | null =
+      null;
     let count = 0;
     return Atom.make((get) => {
       const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
       if (projection === null) {
         previous = null;
         count = 0;
-      } else if (projection.runs !== previous?.runs || projection.messages !== previous?.messages) {
-        const { runs, messages } = projection;
-        previous = { runs, messages };
+      } else if (
+        projection.thread !== previous?.thread ||
+        projection.runs !== previous?.runs ||
+        projection.messages !== previous?.messages
+      ) {
+        const { thread, runs, messages } = projection;
+        previous = { thread, runs, messages };
         count = getUserQueuedThreadRuns(previous).length;
       }
       return count;

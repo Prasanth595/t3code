@@ -109,18 +109,28 @@ export function threadSupportsProviderHandoff(projection: Projection | null | un
 }
 
 export function getUserQueuedThreadRuns(
-  projection: Pick<Projection, "runs" | "messages">,
+  projection: Pick<Projection, "runs" | "messages"> & Partial<Pick<Projection, "thread">>,
 ): ReadonlyArray<Run> {
-  const automaticCompletionMessageIds = new Set(
+  const userMessageIds = new Set(
     projection.messages
-      .filter(
-        (message) =>
-          message.delegatedCompletion !== undefined || message.notification !== undefined,
-      )
+      .filter((message) => {
+        if (projection.thread?.communicationLanesEnabled === true) {
+          return message.communication?.route.port === "user.in";
+        }
+        return (
+          message.delegatedCompletion === undefined &&
+          message.notification === undefined &&
+          message.scheduledTaskId === undefined &&
+          (message.createdBy === undefined || message.createdBy === "user") &&
+          (message.creationSource === undefined ||
+            message.creationSource === "web" ||
+            message.creationSource === "mobile")
+        );
+      })
       .map((message) => message.id),
   );
   return projection.runs.filter(
-    (run) => run.status === "queued" && !automaticCompletionMessageIds.has(run.userMessageId),
+    (run) => run.status === "queued" && userMessageIds.has(run.userMessageId),
   );
 }
 
@@ -154,7 +164,7 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
   return {
     activeRun,
     queuedRuns,
-    isHeld: projection.runs.some((run) => run.status === "queued" && run.queueHeld === true),
+    isHeld: queuedRuns.some(({ run }) => run.queueHeld === true),
     canReorder: capabilities?.supportsQueuedMessages === true,
     canSendNow:
       activeRun === null &&

@@ -318,13 +318,26 @@ const snapshotInstanceKey = (provider: ServerProvider): ProviderInstanceId => {
 };
 
 // Rebuilt instances have new PubSubs; capture their fresh closures instead of a closed source.
-const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource => ({
-  instanceId: instance.instanceId,
-  driverKind: instance.driverKind,
-  getSnapshot: instance.snapshot.getSnapshot,
-  refresh: instance.snapshot.refresh,
-  streamChanges: instance.snapshot.streamChanges,
-});
+export const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource => {
+  const withCommunicationLanes = (snapshot: ServerProvider) => {
+    const capabilities = instance.orchestrationAdapter.getCapabilities?.();
+    if (!capabilities) return Effect.succeed(snapshot);
+    return capabilities.pipe(
+      Effect.map((capabilities) => ({
+        ...snapshot,
+        ...(capabilities.communication?.toolMailbox === true ? { communicationLanes: true } : {}),
+      })),
+      Effect.orElseSucceed(() => snapshot),
+    );
+  };
+  return {
+    instanceId: instance.instanceId,
+    driverKind: instance.driverKind,
+    getSnapshot: instance.snapshot.getSnapshot.pipe(Effect.flatMap(withCommunicationLanes)),
+    refresh: instance.snapshot.refresh.pipe(Effect.flatMap(withCommunicationLanes)),
+    streamChanges: instance.snapshot.streamChanges.pipe(Stream.mapEffect(withCommunicationLanes)),
+  };
+};
 
 export const layer = Layer.effect(
   ProviderRegistry,

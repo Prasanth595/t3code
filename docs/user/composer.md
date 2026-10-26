@@ -77,6 +77,21 @@ running the send button shows which action it will take. Long-press it to use th
 other action for a single message, or hold `Cmd` while sending from a hardware
 keyboard. The button only offers Steer when the running agent supports it.
 
+## Separate coordination activity
+
+When starting a new thread on a server that supports communication lanes, turn on
+**Separate coordination activity** in the composer. On mobile, use the
+**Coordination lanes** switch on the new task screen. The conversation then shows
+your messages and updates the agent explicitly publishes for you. Open
+**Coordination** to inspect agent messages, delegated results, tool work, and
+other internal activity. You can expand an entry to read its full detail.
+
+The status on your message distinguishes receipt from delivery to the provider.
+If the provider has not accepted a queued message yet, the agent may not have seen
+it. Approvals, questions, and errors remain visible while you work. This is a
+compatibility mode: T3 Code separates the saved routes and what clients display,
+while the provider may still receive internal work in its own prompt format.
+
 ## Queue messages offline on mobile
 
 Mobile keeps local copies of draft attachments, so you can preview them and queue

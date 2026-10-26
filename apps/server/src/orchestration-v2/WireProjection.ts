@@ -1,9 +1,11 @@
 import type {
   CheckpointId,
+  CommunicationEnvelope,
   MessageId,
   NodeId,
   OrchestrationV2Checkpoint,
   OrchestrationV2DomainEvent,
+  OrchestrationV2ConversationMessage,
   OrchestrationV2ContextHandoff,
   OrchestrationV2Subagent,
   OrchestrationV2ThreadProjection,
@@ -24,6 +26,12 @@ import {
 const MAX_DETAIL_STRING_BYTES = 32_768;
 const MAX_DYNAMIC_VALUE_BYTES = 16_384;
 const MAX_ON_DEMAND_BYTES = 256 * 1024;
+
+function coordinationEnvelopeForWire(communication: CommunicationEnvelope): CommunicationEnvelope {
+  return communication.content === undefined
+    ? communication
+    : { ...communication, content: { artifactRefs: communication.content.artifactRefs } };
+}
 
 function truncateDetail(
   value: string | undefined,
@@ -97,6 +105,34 @@ function summarizeDynamicValue(value: unknown): unknown {
 }
 
 export function projectTurnItemForWire(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
+  const communication = item.communication;
+  if (
+    communication !== undefined &&
+    (communication.route.port === "internal.in" || communication.route.port === "internal.out") &&
+    (item.type === "user_message" || item.type === "assistant_message")
+  ) {
+    return {
+      communication: coordinationEnvelopeForWire(communication),
+      id: item.id,
+      threadId: item.threadId,
+      runId: item.runId,
+      nodeId: item.nodeId,
+      providerThreadId: item.providerThreadId,
+      providerTurnId: item.providerTurnId,
+      nativeItemRef: item.nativeItemRef,
+      parentItemId: item.parentItemId,
+      ordinal: item.ordinal,
+      status: item.status,
+      title: item.title,
+      startedAt: item.startedAt,
+      completedAt: item.completedAt,
+      updatedAt: item.updatedAt,
+      type: "notification",
+      source: { kind: "system" },
+      outcome: "updated",
+      summary: "Coordination activity",
+    };
+  }
   switch (item.type) {
     case "handoff": {
       const { summary: _summary, ...projected } = item;
@@ -141,6 +177,24 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
     default:
       return item;
   }
+}
+
+function projectMessageForWire(
+  message: OrchestrationV2ConversationMessage,
+): OrchestrationV2ConversationMessage {
+  const communication = message.communication;
+  if (
+    communication === undefined ||
+    (communication.route.port !== "internal.in" && communication.route.port !== "internal.out")
+  )
+    return message;
+  const { context: _context, ...projected } = message;
+  return {
+    ...projected,
+    communication: coordinationEnvelopeForWire(communication),
+    text: "",
+    attachments: [],
+  };
 }
 
 function hasDynamicValue(value: unknown): boolean {
@@ -229,6 +283,7 @@ export function projectThreadProjectionForWire(
   };
   return {
     ...projection,
+    messages: projection.messages.map(projectMessageForWire),
     contextHandoffs: projection.contextHandoffs.map(projectContextHandoffForWire),
     turnItems: projection.turnItems.map(project),
     visibleTurnItems: projection.visibleTurnItems.map((row) => ({
@@ -243,9 +298,11 @@ export function projectDomainEventForWire(
 ): OrchestrationV2DomainEvent {
   return event.type === "turn-item.updated"
     ? { ...event, payload: projectTurnItemForWire(event.payload) }
-    : event.type === "context-handoff.updated"
-      ? { ...event, payload: projectContextHandoffForWire(event.payload) }
-      : event;
+    : event.type === "message.updated"
+      ? { ...event, payload: projectMessageForWire(event.payload) }
+      : event.type === "context-handoff.updated"
+        ? { ...event, payload: projectContextHandoffForWire(event.payload) }
+        : event;
 }
 
 const LIVE_DEDUPE_MEMORY = 32;

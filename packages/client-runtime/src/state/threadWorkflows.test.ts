@@ -249,6 +249,60 @@ describe("thread workflows", () => {
     ]);
   });
 
+  it("only exposes interactive user items to queue controls", () => {
+    const messages = [
+      { id: "human", text: "Human request", createdBy: "user", creationSource: "mobile" },
+      { id: "agent", text: "Agent handoff", createdBy: "agent", creationSource: "mcp" },
+      {
+        id: "schedule",
+        text: "Scheduled work",
+        createdBy: "user",
+        creationSource: "server",
+        scheduledTaskId: "task",
+      },
+      { id: "legacy", text: "Older user request" },
+    ];
+    const state = deriveThreadQueueWorkflowState({
+      thread: { id: "thread", activeProviderThreadId: null },
+      runs: messages.map((message, ordinal) => ({
+        id: message.id,
+        userMessageId: message.id,
+        status: "queued",
+        ordinal,
+        queueHeld: message.id === "agent",
+      })),
+      messages,
+      providerThreads: [],
+      providerTurns: [],
+      providerSessions: [],
+    } as never);
+
+    expect(state.queuedRuns.map(({ run }) => run.id)).toEqual(["human", "legacy"]);
+    expect(state.isHeld).toBe(false);
+  });
+
+  it("uses the verified port for enabled-thread queue controls", () => {
+    const messages = [
+      { id: "human", text: "Request", communication: { route: { port: "user.in" } } },
+      { id: "internal", text: "Internal work", communication: { route: { port: "internal.in" } } },
+    ];
+    const state = deriveThreadQueueWorkflowState({
+      thread: { id: "thread", activeProviderThreadId: null, communicationLanesEnabled: true },
+      runs: messages.map((message, ordinal) => ({
+        id: message.id,
+        userMessageId: message.id,
+        status: "queued",
+        ordinal,
+      })),
+      messages,
+      providerThreads: [],
+      providerTurns: [],
+      providerSessions: [],
+    } as never);
+
+    expect(state.queuedRuns.map(({ run }) => run.id)).toEqual(["human"]);
+  });
+
   it("removes only the promoted head from the visible queue", () => {
     const state = deriveThreadQueueWorkflowState({
       thread: { id: "thread", activeProviderThreadId: "provider-thread" },

@@ -85,7 +85,10 @@ import {
   resolveWorkflowOpening,
   workflowOpeningParentThreadId,
 } from "@t3tools/client-runtime/state/subagentRuntime";
-import { threadSupportsProviderHandoff } from "@t3tools/client-runtime/state/thread-workflows";
+import {
+  deriveThreadQueueWorkflowState,
+  threadSupportsProviderHandoff,
+} from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import { HandoffRow } from "./chat/V2LifecycleRow";
 import {
@@ -610,6 +613,10 @@ export default function ChatView(props: ChatViewProps) {
   const [restingComposerControlsHost, setRestingComposerControlsHost] =
     useState<HTMLDivElement | null>(null);
   const [restingComposerControlsVisible, setRestingComposerControlsVisible] = useState(false);
+  const [communicationLaneSelection, setCommunicationLaneSelection] = useState<{
+    draftId: string | null;
+    enabled: boolean;
+  }>({ draftId: null, enabled: false });
   const citeAssistantText = (
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
@@ -765,10 +772,13 @@ export default function ChatView(props: ChatViewProps) {
   const activeLatestRun = isServerThread ? serverLatestRun : (activeThread?.latestRun ?? null);
   const activeActivityRun = isServerThread ? serverActivityRun : (activeThread?.latestRun ?? null);
   const activeRuntime = isServerThread ? serverRuntime : (activeThread?.runtime ?? null);
-  const hasHeldQueuedRuns =
-    isServerThread &&
-    serverProjection?.runs.some((run) => run.status === "queued" && run.queueHeld === true) ===
-      true;
+  const heldUserRunId =
+    serverProjection === null
+      ? null
+      : (deriveThreadQueueWorkflowState(serverProjection).queuedRuns.find(
+          ({ run }) => run.queueHeld,
+        )?.run.id ?? null);
+  const hasHeldQueuedRuns = heldUserRunId !== null;
   const resumableRunId = (() => {
     if (!isServerThread || serverProjection === null) return null;
     const run = latestExecutedRun(serverProjection.runs);
@@ -1224,6 +1234,14 @@ export default function ChatView(props: ChatViewProps) {
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
   const activeProviderStatus = selectedProviderEntry?.snapshot ?? null;
+  const canOptInCommunicationLanes =
+    isLocalDraftThread &&
+    serverConfig?.environment.capabilities.communicationLanes === true &&
+    activeProviderStatus?.communicationLanes === true;
+  const communicationLanesOptIn =
+    canOptInCommunicationLanes &&
+    communicationLaneSelection.draftId === draftId &&
+    communicationLaneSelection.enabled;
   const { enabled: interactionModeEnabled, interactionMode } = resolveComposerInteractionMode({
     planModeEnabled: settings.planModeEnabled,
     provider: activeProviderStatus,
@@ -2762,6 +2780,8 @@ export default function ChatView(props: ChatViewProps) {
     activeThread,
     resumableRunId,
     hasHeldQueuedRuns,
+    heldUserRunId,
+    communicationLanesEnabled: serverProjection?.thread.communicationLanesEnabled === true,
     isSendBusy,
     isConnecting,
     isRevertingCheckpoint,
@@ -2807,6 +2827,7 @@ export default function ChatView(props: ChatViewProps) {
     activeMessageCount,
     isServerThread,
     isLocalDraftThread,
+    communicationLanesOptIn,
     isGitRepo,
     phase,
     runtimeMode,
@@ -3211,6 +3232,9 @@ export default function ChatView(props: ChatViewProps) {
             <div className="relative flex min-h-0 flex-1 flex-col bg-background">
               <ThreadTimeline
                 threadDetailRef={routeThreadDetailRef}
+                communicationLanesEnabled={
+                  serverProjection?.thread.communicationLanesEnabled === true
+                }
                 entriesInput={timelineEntriesInput}
                 draftEntries={isServerThread ? null : draftTimelineEntries}
                 activeThreadKey={activeThreadKey}
@@ -3455,6 +3479,21 @@ export default function ChatView(props: ChatViewProps) {
                                   : null
                               }
                             />
+                          ) : null}
+                          {canOptInCommunicationLanes ? (
+                            <label className="flex items-center gap-2 px-3 pb-2 text-xs text-muted-foreground">
+                              <input
+                                type="checkbox"
+                                checked={communicationLanesOptIn}
+                                onChange={(event) =>
+                                  setCommunicationLaneSelection({
+                                    draftId,
+                                    enabled: event.currentTarget.checked,
+                                  })
+                                }
+                              />
+                              Separate coordination activity (compatibility mode)
+                            </label>
                           ) : null}
                           {!composerMounted ? null : (
                             <ChatComposer

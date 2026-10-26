@@ -27,6 +27,8 @@ interface ComposerResumeInput {
   readonly activeThread: EnvironmentThreadShell | undefined;
   readonly resumableRunId: RunId | null;
   readonly hasHeldQueuedRuns: boolean;
+  readonly heldUserRunId: RunId | null;
+  readonly communicationLanesEnabled: boolean;
   readonly isSendBusy: boolean;
   readonly isConnecting: boolean;
   readonly isRevertingCheckpoint: boolean;
@@ -60,6 +62,8 @@ export function useComposerResume(input: ComposerResumeInput) {
     activeThread,
     resumableRunId,
     hasHeldQueuedRuns,
+    heldUserRunId,
+    communicationLanesEnabled,
     isSendBusy,
     isConnecting,
     isRevertingCheckpoint,
@@ -107,7 +111,13 @@ export function useComposerResume(input: ComposerResumeInput) {
     // Commands settle into a result, so this always runs.
     const resume = async () => {
       if (resumableRunId === null) {
-        return resumeThreadQueue({ environmentId, input: { threadId } });
+        return resumeThreadQueue({
+          environmentId,
+          input: {
+            threadId,
+            ...(communicationLanesEnabled && heldUserRunId ? { runId: heldUserRunId } : {}),
+          },
+        });
       }
       const createdAt = new Date().toISOString();
       const settingsResult = await persistThreadSettingsForNextTurn({
@@ -140,6 +150,7 @@ export function useComposerResume(input: ComposerResumeInput) {
       });
       if (turnResult._tag === "Failure" || !hasHeldQueuedRuns) return turnResult;
       clearUsageLimitsFor(routeThreadKey);
+      if (communicationLanesEnabled) return turnResult;
       return resumeThreadQueue({ environmentId, input: { threadId } });
     };
     const result = await resume();

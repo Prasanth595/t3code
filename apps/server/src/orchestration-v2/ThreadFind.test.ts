@@ -1,5 +1,6 @@
 import { assert, it, describe } from "@effect/vitest";
 import {
+  type CommunicationEnvelope,
   EventId,
   MessageId,
   PlanId,
@@ -200,6 +201,47 @@ const setup = Effect.gen(function* () {
 });
 
 describe("V2 thread find", () => {
+  it.effect("keeps internal lane text out of in-thread find", () =>
+    Effect.gen(function* () {
+      const projection = yield* setup;
+      const internal = item("internal-match", 1, "zebra child result");
+      const published = item("published-match", 2, "zebra user update");
+      const internalMessageId = MessageId.make("internal-match");
+      const publishedMessageId = MessageId.make("published-match");
+      const envelope = (
+        messageId: MessageId,
+        route: CommunicationEnvelope["route"],
+      ): CommunicationEnvelope => ({
+        schemaVersion: 2,
+        classification: "verified",
+        id: messageId,
+        threadId,
+        route,
+        producer: { kind: "agent", id: runId },
+        recipientId: route.port === "user.out" ? "human" : threadId,
+        kind: "assistant_output",
+        correlationId: "prompt",
+        delivery: { state: "accepted" },
+      });
+      yield* putItems([
+        {
+          ...internal,
+          communication: envelope(internalMessageId, {
+            port: "internal.out",
+            audience: "coordinator",
+          }),
+        },
+        {
+          ...published,
+          communication: envelope(publishedMessageId, { port: "user.out", audience: "human" }),
+        },
+      ]);
+      const result = yield* projection.searchThread({ threadId, query: "zebra" });
+      assert.equal(result.totalMatches, 1);
+      assert.equal(result.match?.entryId, publishedMessageId);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("finishes one snapshot while later searches include newly inserted matches", () =>
     Effect.gen(function* () {
       const projection = yield* setup;

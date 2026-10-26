@@ -174,6 +174,7 @@ interface ComposerSendInput {
   readonly activeMessageCount: number;
   readonly isServerThread: boolean;
   readonly isLocalDraftThread: boolean;
+  readonly communicationLanesOptIn: boolean;
   readonly isGitRepo: boolean;
   readonly phase: SessionPhase;
   readonly runtimeMode: RuntimeMode;
@@ -264,6 +265,7 @@ export function useComposerSend(input: ComposerSendInput) {
     activeMessageCount,
     isServerThread,
     isLocalDraftThread,
+    communicationLanesOptIn,
     isGitRepo,
     phase,
     runtimeMode,
@@ -1278,6 +1280,9 @@ export function useComposerSend(input: ComposerSendInput) {
           runtimeMode,
           interactionMode: sendInteractionMode,
           dispatchMode: turnDispatchMode,
+          ...(isLocalDraftThread && communicationLanesOptIn
+            ? { communicationLanesEnabled: true }
+            : {}),
           ...(bootstrap ? { bootstrap } : {}),
           createdAt: messageCreatedAt,
         },

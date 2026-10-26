@@ -163,6 +163,7 @@ interface StartThreadBootstrap {
 }
 
 export interface StartThreadTurnInput extends ThreadCommandInput {
+  readonly communicationLanesEnabled?: boolean;
   readonly manualContinuationOfRunId?: RunId;
   readonly message: {
     readonly messageId: MessageId;
@@ -713,6 +714,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
             };
     return yield* request(ORCHESTRATION_V2_WS_METHODS.launchThread, {
       commandId,
+      ...(input.communicationLanesEnabled === true ? { communicationLanesEnabled: true } : {}),
       creationSource: input.creationSource ?? "web",
       threadId: input.threadId,
       ...(bootstrap === undefined ? { reuseExistingThread: true } : {}),

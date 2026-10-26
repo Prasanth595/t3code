@@ -36,6 +36,13 @@ import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
 import { indexedMessageCondition } from "./messageSearchIndex.ts";
 import { loadOlderSettledThreadsPage } from "./ShellStream.ts";
 
+// Envelope-classified internal traffic stays out of default results; legacy rows have no
+// envelope and keep their old behavior. Applied here, not in the shared index predicate,
+// because migration 69's triggers already embed that predicate.
+const humanConversationMessage = (sql: SqlClient.SqlClient) =>
+  sql.literal(`COALESCE(json_extract(messages.payload_json, '$.communication.route.port'), 'user.in')
+    IN ('user.in', 'user.out')`);
+
 // When the user last wrote in the thread aliased `threads`, as the clients
 // rank recency; agent notices in the user role do not count.
 const latestUserMessageAt = (sql: SqlClient.SqlClient) => sql`(
@@ -44,6 +51,7 @@ const latestUserMessageAt = (sql: SqlClient.SqlClient) => sql`(
   WHERE messages.thread_id = threads.thread_id
     AND messages.role = 'user'
     AND COALESCE(json_extract(messages.payload_json, '$.createdBy'), 'user') = 'user'
+    AND ${humanConversationMessage(sql)}
   ORDER BY messages.updated_at DESC, messages.message_id DESC
   LIMIT 1
 )`;
@@ -219,6 +227,7 @@ export const messageHitsQuery = (
       -- Answers to an agent's question show inside its question card, where
       -- neither find nor a jump can reach them.
       AND messages.message_id NOT LIKE 'async-answer:%'
+      AND ${humanConversationMessage(sql)}
       AND NOT EXISTS (
         SELECT 1 FROM json_each(${substrings}) AS token
         WHERE instr(lower(json_extract(messages.payload_json, '$.text')), token.value) = 0

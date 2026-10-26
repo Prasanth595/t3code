@@ -198,7 +198,13 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
               if (busyRef.current) return;
               busyRef.current = true;
               setResuming(true);
-              await resume({ ...target, input: { threadId: target.threadId } });
+              const heldRun = queuedRuns.find(({ run }) => run.queueHeld === true);
+              if (heldRun) {
+                await resume({
+                  ...target,
+                  input: { threadId: target.threadId, runId: heldRun.run.id },
+                });
+              }
               busyRef.current = false;
               setResuming(false);
             }}

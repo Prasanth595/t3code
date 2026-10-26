@@ -218,6 +218,7 @@ export const ServerProvider = Schema.Struct({
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
   supportsConversationRollback: Schema.optional(Schema.Boolean),
   supportsTextGeneration: Schema.optional(Schema.Boolean),
+  communicationLanes: Schema.optional(Schema.Boolean),
   setup: Schema.optional(
     Schema.Struct({
       canAuthenticate: Schema.Boolean,

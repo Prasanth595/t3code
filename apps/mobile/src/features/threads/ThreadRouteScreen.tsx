@@ -636,7 +636,12 @@ function ThreadRouteContent(
     if (!selectedThread) return;
     await resumeThreadQueue({
       environmentId: selectedThread.environmentId,
-      input: { threadId: selectedThread.id },
+      input: {
+        threadId: selectedThread.id,
+        ...(composer.communicationLanesEnabled && composer.heldUserRunId
+          ? { runId: composer.heldUserRunId }
+          : {}),
+      },
     });
   };
 
@@ -978,6 +983,9 @@ function ThreadRouteContent(
           feedbackSubmissions={composer.feedbackSubmissions}
           onDismissFeedback={composer.dismissFeedback}
           selectedThreadFeed={composer.selectedThreadFeed}
+          selectedCoordinationItems={composer.selectedCoordinationItems}
+          communicationLanesEnabled={composer.communicationLanesEnabled}
+          finishedWithoutUserUpdate={composer.selectedThreadFinishedWithoutUserUpdate}
           pendingHandoff={composer.pendingHandoff}
           activityRun={composer.selectedThreadActivityRun}
           activeWorkStartedAt={

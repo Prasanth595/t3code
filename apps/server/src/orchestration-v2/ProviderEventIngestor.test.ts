@@ -4,6 +4,7 @@ import {
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
+  type CommunicationEnvelope,
   MessageId,
   GitCommandError,
   type ModelSelection,
@@ -14,14 +15,17 @@ import {
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
+  type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2TurnItem,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
   RunId,
   RuntimeRequestId,
+  type ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -40,6 +44,8 @@ import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { providerOutputCommunication, withDeliveryState } from "./CommunicationRouting.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -2263,4 +2269,425 @@ it.effect.each([
     );
     assert.isEmpty(persisted);
   }).pipe(Effect.provide(layerFailingWrites(errors))),
+);
+
+const lanesRunId = RunId.make("run:lanes");
+const lanesMessageId = MessageId.make("message:lanes-assistant");
+const lanesTurnItemId = TurnItemId.make("turn-item:lanes-assistant");
+const { communication: _publication, ...cannotPublish } = CodexProviderCapabilitiesV2;
+
+const makeLanesThread = (input: {
+  readonly communicationLanesEnabled: boolean;
+  readonly capabilities: OrchestrationV2ProviderCapabilities;
+}) =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const created = yield* threadCreatedEvent(now);
+    if (created.type !== "thread.created") {
+      throw new Error("Expected a thread.created fixture event");
+    }
+    const threadId = created.threadId;
+    const providerSessionId = yield* idAllocator.allocate.providerSession({
+      providerInstanceId: modelSelection.instanceId,
+      threadId,
+    });
+    yield* eventSink.write({
+      events: [
+        {
+          ...created,
+          payload: {
+            ...created.payload,
+            communicationLanesEnabled: input.communicationLanesEnabled,
+          },
+        },
+        {
+          id: yield* idAllocator.allocate.event({ threadId }),
+          type: "provider-session.attached",
+          threadId,
+          driver: CODEX_DRIVER,
+          providerInstanceId: modelSelection.instanceId,
+          occurredAt: now,
+          payload: {
+            id: providerSessionId,
+            driver: CODEX_DRIVER,
+            providerInstanceId: modelSelection.instanceId,
+            status: "running",
+            cwd: "/tmp/lanes",
+            model: modelSelection.model,
+            capabilities: input.capabilities,
+            createdAt: now,
+            updatedAt: now,
+            lastError: null,
+          },
+        },
+      ],
+    });
+    return { now, threadId, providerSessionId };
+  });
+
+/** One chunk of an assistant reply, sent as Codex does: the message, then its turn item. */
+const ingestAssistantChunk = (input: {
+  readonly ingestor: ProviderEventIngestor.ProviderEventIngestorV2["Service"];
+  readonly providerSessionId: ProviderSessionId;
+  readonly threadId: ThreadId;
+  readonly now: DateTime.Utc;
+  readonly text: string;
+  readonly streaming: boolean;
+  readonly rootNodeId?: NodeId;
+}) =>
+  Effect.gen(function* () {
+    const route = {
+      providerSessionId: input.providerSessionId,
+      providerInstanceId: modelSelection.instanceId,
+      threadId: input.threadId,
+      runId: lanesRunId,
+      ...(input.rootNodeId === undefined ? {} : { nodeId: input.rootNodeId }),
+    };
+    yield* input.ingestor.ingestNormalized({
+      ...route,
+      event: {
+        type: "message.updated",
+        driver: CODEX_DRIVER,
+        message: {
+          createdBy: "agent",
+          creationSource: "provider",
+          id: lanesMessageId,
+          threadId: input.threadId,
+          runId: lanesRunId,
+          nodeId: null,
+          role: "assistant",
+          text: input.text,
+          attachments: [],
+          streaming: input.streaming,
+          createdAt: input.now,
+          updatedAt: input.now,
+        },
+      },
+    });
+    yield* input.ingestor.ingestNormalized({
+      ...route,
+      event: {
+        type: "turn_item.updated",
+        driver: CODEX_DRIVER,
+        turnItem: {
+          id: lanesTurnItemId,
+          threadId: input.threadId,
+          runId: lanesRunId,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: input.streaming ? "running" : "completed",
+          title: null,
+          startedAt: input.now,
+          completedAt: input.streaming ? null : input.now,
+          updatedAt: input.now,
+          type: "assistant_message",
+          messageId: lanesMessageId,
+          text: input.text,
+          streaming: input.streaming,
+        },
+      },
+    });
+  });
+
+const storedAssistant = (threadId: ThreadId) =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const projection = yield* projections.getThreadProjection(threadId);
+    return {
+      message: projection.messages.find((message) => message.id === lanesMessageId),
+      turnItem: projection.turnItems.find((item) => item.id === lanesTurnItemId),
+    };
+  });
+
+it.effect("keeps one internal envelope on every streamed chunk across a fresh ingestor", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+    const { now, threadId, providerSessionId } = yield* makeLanesThread({
+      communicationLanesEnabled: true,
+      capabilities: CodexProviderCapabilitiesV2,
+    });
+    const chunk = (text: string, streaming: boolean, through = ingestor) =>
+      ingestAssistantChunk({
+        ingestor: through,
+        providerSessionId,
+        threadId,
+        now,
+        text,
+        streaming,
+      });
+
+    yield* chunk("Checking", true);
+    yield* chunk("Checking the failing", true);
+    // A restarted server or reconnected provider stream starts without this ingestor's cache.
+    const reconnected = yield* ProviderEventIngestor.ProviderEventIngestorV2.pipe(
+      Effect.provide(ProviderEventIngestor.layer),
+    );
+    yield* chunk("Checking the failing test", true, reconnected);
+    yield* chunk("Checking the failing test now.", false, reconnected);
+
+    const expected = providerOutputCommunication({
+      threadId,
+      runId: lanesRunId,
+      messageId: lanesMessageId,
+    });
+    const { message, turnItem } = yield* storedAssistant(threadId);
+    if (message === undefined) return assert.fail("The assistant message was not stored.");
+    assert.equal(message.text, "Checking the failing test now.");
+    assert.deepEqual(message.communication, expected);
+    assert.deepEqual(turnItem?.communication, expected);
+    const ledger = yield* sql<{ readonly port: string }>`
+      SELECT port FROM orchestration_v2_projection_communications
+      WHERE message_id = ${lanesMessageId}
+    `;
+    assert.deepEqual(
+      ledger.map((row) => row.port),
+      ["internal.out"],
+    );
+
+    const rewrite = (payload: typeof message) =>
+      Effect.gen(function* () {
+        return yield* eventSink.write({
+          events: [
+            {
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "message.updated",
+              threadId,
+              runId: lanesRunId,
+              occurredAt: now,
+              payload,
+            },
+          ],
+        });
+      }).pipe(Effect.exit);
+    // Run finalization rewrites the stored row; its decoded envelope must match byte for byte.
+    assert.isTrue(Exit.isSuccess(yield* rewrite({ ...message, streaming: false, updatedAt: now })));
+    // The projection rejects a chunk that drops the envelope, so every write above kept it.
+    const { communication: _dropped, ...unaddressed } = message;
+    assert.isTrue(Exit.isFailure(yield* rewrite(unaddressed)));
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([
+  { case: "lanes are off", lanes: false, capabilities: CodexProviderCapabilitiesV2 },
+  { case: "the provider cannot publish", lanes: true, capabilities: cannotPublish },
+])("leaves assistant text unaddressed when $case", ({ lanes, capabilities }) =>
+  Effect.gen(function* () {
+    const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+    const { now, threadId, providerSessionId } = yield* makeLanesThread({
+      communicationLanesEnabled: lanes,
+      capabilities,
+    });
+    yield* ingestAssistantChunk({
+      ingestor,
+      providerSessionId,
+      threadId,
+      now,
+      text: "Done.",
+      streaming: false,
+    });
+    const { message, turnItem } = yield* storedAssistant(threadId);
+    assert.equal(message?.text, "Done.");
+    assert.isUndefined(message?.communication);
+    assert.isUndefined(turnItem?.communication);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("advances run input delivery only on the provider's own evidence", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+    const { now, threadId, providerSessionId } = yield* makeLanesThread({
+      communicationLanesEnabled: true,
+      capabilities: CodexProviderCapabilitiesV2,
+    });
+    const rootNodeId = NodeId.make("node:lanes-root");
+    const userInput = (id: MessageId, text: string): CommunicationEnvelope => ({
+      schemaVersion: 2,
+      classification: "verified",
+      id,
+      threadId,
+      route: { port: "user.in", audience: "coordinator" },
+      producer: { kind: "human", id: "interactive-user" },
+      recipientId: threadId,
+      kind: "user_request",
+      correlationId: `command:${id}`,
+      content: { text, artifactRefs: [] },
+      delivery: { state: "accepted" },
+    });
+    const opening = userInput(MessageId.make("message:lanes-opening"), "Compare the options.");
+    const steer = userInput(MessageId.make("message:lanes-steer"), "Quick update first.");
+    const inputEvents = (
+      communication: CommunicationEnvelope,
+      inputIntent: "turn_start" | "steer",
+    ) =>
+      Effect.gen(function* () {
+        const text = communication.content?.text ?? "";
+        const fields = { threadId, runId: lanesRunId, nodeId: rootNodeId, occurredAt: now };
+        const message: OrchestrationV2DomainEvent = {
+          ...fields,
+          id: yield* idAllocator.allocate.event({ threadId }),
+          type: "message.updated",
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            communication,
+            id: communication.id,
+            threadId,
+            runId: lanesRunId,
+            nodeId: rootNodeId,
+            role: "user",
+            text,
+            attachments: [],
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        };
+        const item: OrchestrationV2DomainEvent = {
+          ...fields,
+          id: yield* idAllocator.allocate.event({ threadId }),
+          type: "turn-item.updated",
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            communication,
+            id: TurnItemId.make(`turn-item:${communication.id}`),
+            threadId,
+            runId: lanesRunId,
+            nodeId: rootNodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 0,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "user_message",
+            messageId: communication.id,
+            inputIntent,
+            text,
+            attachments: [],
+          },
+        };
+        return [message, item];
+      });
+    yield* eventSink.write({
+      events: [
+        {
+          id: yield* idAllocator.allocate.event({ threadId }),
+          type: "run.updated",
+          threadId,
+          runId: lanesRunId,
+          nodeId: rootNodeId,
+          occurredAt: now,
+          payload: {
+            id: lanesRunId,
+            threadId,
+            ordinal: 1,
+            providerInstanceId: modelSelection.instanceId,
+            modelSelection,
+            providerThreadId: null,
+            userMessageId: opening.id,
+            rootNodeId,
+            activeAttemptId: null,
+            status: "running",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        },
+        ...(yield* inputEvents(opening, "turn_start")),
+        ...(yield* inputEvents(steer, "steer")),
+      ],
+    });
+    const providerTurn = (status: "running" | "completed") =>
+      ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+        runId: lanesRunId,
+        nodeId: rootNodeId,
+        event: {
+          type: "provider_turn.updated",
+          driver: CODEX_DRIVER,
+          threadId,
+          providerTurn: {
+            id: ProviderTurnId.make("provider-turn:lanes"),
+            providerThreadId: ProviderThreadId.make("provider-thread:lanes"),
+            nodeId: rootNodeId,
+            runAttemptId: null,
+            // A synthesized turn id only shows T3 handed the prompt over.
+            nativeTurnRef: { driver: CODEX_DRIVER, nativeId: "turn:lanes", strength: "weak" },
+            ordinal: 1,
+            status,
+            startedAt: now,
+            completedAt: status === "completed" ? now : null,
+          },
+        },
+      });
+    const expectDeliveries = (states: {
+      readonly opening: CommunicationEnvelope["delivery"]["state"];
+      readonly steer: CommunicationEnvelope["delivery"]["state"];
+    }) =>
+      Effect.gen(function* () {
+        const projection = yield* projections.getThreadProjection(threadId);
+        for (const [communication, state] of [
+          [opening, states.opening],
+          [steer, states.steer],
+        ] as const) {
+          const expected = withDeliveryState(communication, state);
+          assert.deepEqual(
+            projection.messages.find((message) => message.id === communication.id)?.communication,
+            expected,
+          );
+          assert.deepEqual(
+            projection.turnItems.find(
+              (item) => item.type === "user_message" && item.messageId === communication.id,
+            )?.communication,
+            expected,
+          );
+        }
+        const ledger = yield* sql<{ readonly message_id: string; readonly delivery_state: string }>`
+          SELECT message_id, delivery_state FROM orchestration_v2_projection_communications
+          WHERE thread_id = ${threadId} AND port = 'user.in'
+        `;
+        assert.deepEqual(
+          Object.fromEntries(ledger.map((row) => [row.message_id, row.delivery_state])),
+          { [opening.id]: states.opening, [steer.id]: states.steer },
+        );
+      });
+
+    yield* providerTurn("running");
+    yield* expectDeliveries({ opening: "offered", steer: "accepted" });
+    yield* ingestAssistantChunk({
+      ingestor,
+      providerSessionId,
+      threadId,
+      now,
+      text: "Looking.",
+      streaming: true,
+      rootNodeId,
+    });
+    yield* expectDeliveries({ opening: "provider_accepted", steer: "accepted" });
+    yield* providerTurn("completed");
+    // No provider reports which steered input it read before the turn ended.
+    yield* expectDeliveries({ opening: "provider_accepted", steer: "consumption_unknown" });
+  }).pipe(Effect.provide(layerTest)),
 );

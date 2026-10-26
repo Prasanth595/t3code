@@ -1,13 +1,16 @@
 import {
   NodeId,
   CommandId,
+  type MessageId,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
+  type OrchestrationV2ConversationMessage,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2Run,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
   type ModelSelection,
   type OrchestrationV2Actor,
   type OrchestrationV2CreationSource,
@@ -34,6 +37,13 @@ import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import {
+  advancedInputDelivery,
+  inputDeliveryEvidence,
+  providerOutputCommunication,
+  publishesUserOutput,
+  withDeliveryState,
+} from "./CommunicationRouting.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -337,6 +347,10 @@ export const layer: Layer.Layer<
     const analytics = yield* ProviderTurnAnalytics;
     const agentScope = yield* AgentScope;
     const completedTurnAnalytics = new Set<string>();
+    // Lanes, lineage, and session capabilities never change, so chunks skip rereading them.
+    const publishingThreads = new Map<string, boolean>();
+    // Highest delivery evidence already recorded per run, so streamed chunks skip the database.
+    const recordedInputDeliveries = new Map<string, number>();
 
     const makeDomainEvent =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
@@ -372,6 +386,147 @@ export const layer: Layer.Layer<
           }),
         );
       });
+
+    /* Runs for individual streamed chunks; the enclosing operation owns the span. */
+    const publishesFromSession = Effect.fnUntraced(function* (
+      input: ProviderEventIngestInput,
+      threadId: ThreadId,
+    ) {
+      const key = `${threadId}\0${input.providerSessionId}`;
+      const cached = publishingThreads.get(key);
+      if (cached !== undefined) return cached;
+      const thread = yield* projections
+        .getThread(threadId)
+        .pipe(Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }));
+      // A thread or session binding written later must still be seen, so only settled answers are cached.
+      if (thread === null) return false;
+      let publishes = false;
+      if (thread.communicationLanesEnabled === true) {
+        const context = yield* projections.getThreadProviderContext(threadId);
+        const session = context.providerSessions.find(
+          (candidate) => candidate.id === input.providerSessionId,
+        );
+        if (session === undefined) return false;
+        publishes = publishesUserOutput(context.thread, session.capabilities);
+      }
+      publishingThreads.set(key, publishes);
+      if (publishingThreads.size > 4096) {
+        const oldest = publishingThreads.keys().next().value;
+        if (oldest !== undefined) publishingThreads.delete(oldest);
+      }
+      return publishes;
+    });
+
+    /* Runs for individual streamed chunks; the enclosing operation owns the span. */
+    const withOutputCommunication = Effect.fnUntraced(function* <
+      Item extends
+        | OrchestrationV2ConversationMessage
+        | Extract<OrchestrationV2TurnItem, { readonly type: "assistant_message" }>,
+    >(input: ProviderEventIngestInput, item: Item, messageId: MessageId) {
+      const runId = item.runId;
+      if (item.communication !== undefined || runId === null) return item;
+      if (!(yield* publishesFromSession(input, item.threadId))) return item;
+      return {
+        ...item,
+        communication: providerOutputCommunication({ threadId: item.threadId, runId, messageId }),
+      };
+    });
+
+    /**
+     * Moves a run's input envelopes forward on the provider's own evidence; only delivery changes.
+     * Runs for every stored chunk; the enclosing operation owns the span.
+     */
+    const recordInputDelivery = Effect.fnUntraced(
+      function* (input: ProviderEventIngestInput) {
+        const { runId, nodeId: rootNodeId, threadId } = input;
+        if (runId === undefined || rootNodeId === undefined) return;
+        const evidence = inputDeliveryEvidence(input.event, { threadId, runId, rootNodeId });
+        if (evidence === undefined) return;
+        const key = `${threadId}\0${runId}`;
+        const rank = "turnEnded" in evidence ? 3 : evidence.opening === "provider_accepted" ? 2 : 1;
+        if ((recordedInputDeliveries.get(key) ?? 0) >= rank) return;
+        // The orchestrator rewrites these rows under the same lock; an unlocked write could undo its change.
+        yield* threadCommands.withLock(
+          threadId,
+          Effect.gen(function* () {
+            const records = yield* projections.getThreadRecords(
+              threadId,
+              ["runs", "messages", "turnItems"],
+              {
+                runIds: [runId],
+                messageRunIds: [runId],
+                messageRoles: ["user"],
+                turnItemRunIds: [runId],
+                turnItemTypes: ["user_message"],
+              },
+            );
+            const run = records.runs.find((candidate) => candidate.id === runId);
+            if (run === undefined) return;
+            const occurredAt = yield* DateTime.now;
+            const events: Array<OrchestrationV2DomainEvent> = [];
+            for (const message of records.messages) {
+              const communication = message.communication;
+              // A provider-buffered wake is the provider's own record, not input T3 delivered.
+              if (communication === undefined || message.creationSource === "provider") continue;
+              const state = advancedInputDelivery({
+                state: communication.delivery.state,
+                opensRun: message.id === run.userMessageId,
+                evidence,
+              });
+              if (state === undefined) continue;
+              const eventFields = {
+                threadId,
+                runId,
+                providerInstanceId: input.providerInstanceId,
+                occurredAt,
+              };
+              events.push({
+                ...eventFields,
+                id: yield* idAllocator.allocate.event({
+                  threadId,
+                  providerSessionId: input.providerSessionId,
+                }),
+                type: "message.updated",
+                ...(message.nodeId === null ? {} : { nodeId: message.nodeId }),
+                payload: { ...message, communication: withDeliveryState(communication, state) },
+              });
+              const item = records.turnItems.find(
+                (candidate) =>
+                  candidate.type === "user_message" && candidate.messageId === message.id,
+              );
+              if (item?.communication === undefined) continue;
+              events.push({
+                ...eventFields,
+                id: yield* idAllocator.allocate.event({
+                  threadId,
+                  providerSessionId: input.providerSessionId,
+                }),
+                type: "turn-item.updated",
+                ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+                payload: { ...item, communication: withDeliveryState(item.communication, state) },
+              });
+            }
+            if (events.length > 0) yield* eventSink.write({ events }).pipe(retryLockTimeout);
+          }),
+        );
+        recordedInputDeliveries.set(key, rank);
+        if (recordedInputDeliveries.size > 4096) {
+          const oldest = recordedInputDeliveries.keys().next().value;
+          if (oldest !== undefined) recordedInputDeliveries.delete(oldest);
+        }
+      },
+      (effect, input) =>
+        effect.pipe(
+          // Delivery bookkeeping must never stop live ingestion.
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Failed to record provider input delivery", {
+              threadId: input.threadId,
+              runId: input.runId,
+              cause,
+            }),
+          ),
+        ),
+    );
 
     const dismissNativeUserInputs = Effect.fn("ProviderEventIngestor.dismissNativeUserInputs")(
       function* (
@@ -639,28 +794,39 @@ export const layer: Layer.Layer<
                   nodeId: input.event.subagent.id,
                 }),
               ];
-            case "message.updated":
+            case "message.updated": {
+              const message = input.event.message;
               return [
                 yield* makeDomainEvent(input, {
                   type: "message.updated",
-                  threadId: input.event.message.threadId,
-                  payload: input.event.message,
-                  runId: input.event.message.runId,
-                  nodeId: input.event.message.nodeId,
+                  threadId: message.threadId,
+                  payload:
+                    message.role === "assistant"
+                      ? yield* withOutputCommunication(input, message, message.id)
+                      : message,
+                  runId: message.runId,
+                  nodeId: message.nodeId,
                 }),
               ];
-            case "turn_item.updated":
+            }
+            case "turn_item.updated": {
+              const turnItem = input.event.turnItem;
               return [
                 yield* makeDomainEvent(input, {
                   type: "turn-item.updated",
-                  threadId: input.event.turnItem.threadId,
+                  threadId: turnItem.threadId,
                   payload: boundFileChangeForStorage(
-                    stripUnservedToolOutputImageBytes(input.event.turnItem),
+                    stripUnservedToolOutputImageBytes(
+                      turnItem.type === "assistant_message"
+                        ? yield* withOutputCommunication(input, turnItem, turnItem.messageId)
+                        : turnItem,
+                    ),
                   ),
-                  runId: input.event.turnItem.runId,
-                  nodeId: input.event.turnItem.nodeId,
+                  runId: turnItem.runId,
+                  nodeId: turnItem.nodeId,
                 }),
               ];
+            }
             case "runtime_request.updated":
               return [
                 yield* makeDomainEvent(input, {
@@ -878,6 +1044,9 @@ export const layer: Layer.Layer<
                     }),
                   );
                 }),
+              ),
+              Effect.tap((storedEvents) =>
+                storedEvents.length === 0 ? Effect.void : recordInputDelivery(input),
               ),
               (effect) =>
                 input.event.type === "app_thread.created"

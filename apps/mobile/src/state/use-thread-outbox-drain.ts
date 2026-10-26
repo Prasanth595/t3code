@@ -927,6 +927,15 @@ export function useThreadOutboxDrain(): void {
         );
         return restoreQueuedMessage(queuedMessage, `${title}. ${detail}`);
       }
+      if (
+        creation.communicationLanesEnabled === true &&
+        serverConfig.environment.capabilities.communicationLanes !== true
+      ) {
+        return restoreQueuedMessage(
+          queuedMessage,
+          "This server does not support coordination lanes. Update it or turn off coordination lanes before sending.",
+        );
+      }
       let prepared: PreparedTurnAttachments;
       let persistedMessage: QueuedThreadMessage;
       let deliveryRevision: number;
@@ -966,6 +975,20 @@ export function useThreadOutboxDrain(): void {
         serverEnvironment.configValueAtom(queuedMessage.environmentId),
       );
       if (!currentConfig) return false;
+      if (
+        creation.communicationLanesEnabled === true &&
+        (currentConfig.environment.capabilities.communicationLanes !== true ||
+          !currentConfig.providers.some(
+            (provider) =>
+              provider.instanceId === settings.modelSelection.instanceId &&
+              provider.communicationLanes === true,
+          ))
+      ) {
+        return restoreQueuedMessage(
+          persistedMessage,
+          "The server or selected provider does not support coordination lanes. Choose a supported provider or turn off coordination lanes before sending.",
+        );
+      }
       if (isModelSelectionUnavailable(currentConfig, settings.modelSelection, creation.projectId)) {
         const { title, detail } = describeUnavailableModelSelection(
           currentConfig,
@@ -1015,6 +1038,15 @@ export function useThreadOutboxDrain(): void {
       const deliveryResult = await startTurn({
         environmentId: queuedMessage.environmentId,
         input: buildProjectThreadStartTurnInput({
+          ...(creation.communicationLanesEnabled === true &&
+          currentConfig.environment.capabilities.communicationLanes === true &&
+          currentConfig.providers.some(
+            (provider) =>
+              provider.instanceId === sendSettings.modelSelection.instanceId &&
+              provider.communicationLanes === true,
+          )
+            ? { communicationLanesEnabled: true }
+            : {}),
           projectId: creation.projectId,
           projectCwd,
           threadId: queuedMessage.threadId,

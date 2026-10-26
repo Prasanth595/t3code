@@ -283,6 +283,49 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
 }
 
 describe("buildThreadFeed", () => {
+  it("keeps unaddressed and internal messages out of enabled human chat", () => {
+    const user = projected(
+      {
+        ...userMessage(),
+        communication: { route: { port: "user.in" } },
+      } as unknown as OrchestrationV2TurnItem,
+      0,
+    );
+    const internal = projected(
+      {
+        ...assistantMessage(),
+        communication: { route: { port: "internal.out" } },
+      } as unknown as OrchestrationV2TurnItem,
+      1,
+    );
+    const unclassified = projected(
+      {
+        ...assistantMessage(),
+        id: TurnItemId.make("unclassified"),
+        messageId: MessageId.make("unclassified"),
+      },
+      2,
+    );
+    const rows = [user, internal, unclassified];
+
+    expect(
+      buildThreadFeed(rows, {
+        communicationLanesEnabled: true,
+        anchoredMessages: [
+          {
+            id: MessageId.make("local-assistant"),
+            role: "assistant",
+            text: "Unaddressed local output",
+            streaming: false,
+            createdAt: "2026-06-20T00:00:00.000Z",
+            updatedAt: "2026-06-20T00:00:00.000Z",
+          },
+        ],
+      }).map((entry) => entry.id),
+    ).toEqual([MessageId.make("message-user")]);
+    expect(buildThreadFeed(rows).filter((entry) => entry.type === "message")).toHaveLength(3);
+  });
+
   it("keeps async answers in question history instead of user bubbles", () => {
     const requestId = RuntimeRequestId.make("question");
     const question: OrchestrationV2TurnItem = {

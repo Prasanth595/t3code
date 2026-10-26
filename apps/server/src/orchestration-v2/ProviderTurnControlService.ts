@@ -17,6 +17,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { providerInputText } from "./CommunicationRouting.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
@@ -352,10 +353,18 @@ export const layer: Layer.Layer<
               providerThread: loaded.providerThread,
               providerTurnId: loaded.providerTurn.id,
               message: {
+                ...(message.communication === undefined
+                  ? {}
+                  : { communication: message.communication }),
                 messageId: message.id,
-                text: projectComposerContextForProvider({
-                  text: message.text,
-                  records: message.context?.records ?? [],
+                // The turn's opening prompt already carried the lanes notice.
+                text: providerInputText({
+                  text: projectComposerContextForProvider({
+                    text: message.text,
+                    records: message.context?.records ?? [],
+                  }),
+                  communication: message.communication,
+                  publishesUserOutput: false,
                 }),
                 attachments: message.attachments,
                 createdBy: message.createdBy,

@@ -27,6 +27,13 @@ const baseProviderSnapshot = {
 };
 
 describe("ServerProvider", () => {
+  it("preserves communication-lane support through the provider wire codec", () => {
+    const encode = Schema.encodeSync(ServerProvider);
+    const decoded = decodeServerProvider({ ...baseProviderSnapshot, communicationLanes: true });
+    expect(decodeServerProvider(encode(decoded)).communicationLanes).toBe(true);
+    expect(decodeServerProvider(baseProviderSnapshot).communicationLanes).toBeUndefined();
+  });
+
   it("preserves installed-version presence through the provider wire codec", () => {
     const encode = Schema.encodeSync(ServerProvider);
     for (const installation of [{}, { installedVersion: null }, { installedVersion: "1.2.3" }]) {

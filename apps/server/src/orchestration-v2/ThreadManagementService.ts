@@ -15,6 +15,7 @@ import {
   OrchestrationV2StopWorkflowError,
   type OrchestrationV2StopWorkflowInput,
   type ModelSelection,
+  type NodeId,
   type OrchestrationV2Actor,
   type OrchestrationV2Command,
   type OrchestrationV2GetTurnItemResult,
@@ -399,6 +400,23 @@ export interface ThreadManagementServiceShape {
   readonly sendToThread: (
     input: ThreadManagementSendInput,
   ) => Effect.Effect<ThreadManagementSendResult, ThreadManagementFailure>;
+  readonly publishUserOutput: (input: {
+    readonly commandId: CommandId;
+    readonly threadId: ThreadId;
+    readonly messageId: MessageId;
+    readonly text: string;
+    readonly replyTo?: MessageId;
+  }) => Effect.Effect<Orchestrator.OrchestratorV2DispatchResult, ThreadManagementFailure>;
+  readonly recordInternalOutput: (input: {
+    readonly commandId: CommandId;
+    readonly threadId: ThreadId;
+    readonly messageId: MessageId;
+    readonly runId: RunId;
+    readonly text: string;
+    readonly recipientThreadId: ThreadId;
+    readonly recipientMessageId: MessageId;
+    readonly recipientTaskId?: NodeId;
+  }) => Effect.Effect<Orchestrator.OrchestratorV2DispatchResult, ThreadManagementFailure>;
   readonly assertProviderInstanceEnabled: (input: {
     readonly projectId: ProjectId;
     readonly commandId: CommandId;
@@ -851,6 +869,25 @@ const make = Effect.gen(function* () {
     return { dispatch: dispatched, projection, message, run, turnItem, delivery };
   });
 
+  const publishUserOutput: ThreadManagementServiceShape["publishUserOutput"] = Effect.fn(
+    "ThreadManagementService.publishUserOutput",
+  )(function* (input) {
+    return yield* dispatch({
+      type: "communication.publish-output",
+      commandId: input.commandId,
+      threadId: input.threadId,
+      messageId: input.messageId,
+      text: input.text,
+      ...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),
+    });
+  });
+
+  const recordInternalOutput: ThreadManagementServiceShape["recordInternalOutput"] = Effect.fn(
+    "ThreadManagementService.recordInternalOutput",
+  )(function* (input) {
+    return yield* dispatch({ type: "communication.record-internal-output", ...input });
+  });
+
   const waitForThread: ThreadManagementServiceShape["waitForThread"] = Effect.fn(
     "ThreadManagementService.waitForThread",
   )(function* (input) {
@@ -1210,6 +1247,8 @@ const make = Effect.gen(function* () {
       );
     }),
     dispatch,
+    publishUserOutput,
+    recordInternalOutput,
     getThreadHistoryPage: Effect.fn("ThreadManagementService.getThreadHistoryPage")(
       function (threadId, cursor, throughEntryId, conversationOnly) {
         return ensureProjectionTranscript(threadId).pipe(

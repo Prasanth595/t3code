@@ -56,6 +56,7 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
 
 export const ProviderAdapterV2TurnMessage = Schema.Struct({
+  communication: OrchestrationV2ConversationMessage.fields.communication,
   messageId: MessageId,
   text: Schema.String,
   attachments: Schema.Array(ChatAttachment),

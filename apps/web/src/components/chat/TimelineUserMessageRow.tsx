@@ -3,6 +3,7 @@ import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { findRevealRef } from "./markdownFindContext";
 import { type MessageId, type ServerProviderSkill, ThreadId } from "@t3tools/contracts";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import { pendingDeliveryLabel } from "@t3tools/client-runtime/state/thread-communication";
 import { Link } from "@tanstack/react-router";
 import { useQuietThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
@@ -257,18 +258,21 @@ function FoldedMessageHeader(props: {
 
 function UserMessageProjectedStatus({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const status = row.projectedItem?.item.status;
-  if (
-    status === undefined ||
-    status === "completed" ||
-    status === "pending" ||
-    status === "waiting"
-  )
-    return null;
+  const delivery = row.projectedItem?.item.communication?.delivery;
+  const deliveryLabel = pendingDeliveryLabel(delivery);
+  const showItemStatus =
+    status !== undefined && status !== "completed" && status !== "pending" && status !== "waiting";
+  if (deliveryLabel === null && !showItemStatus) return null;
   return (
     <div className="me-1 flex items-center gap-1.5">
-      <span className="rounded-full border border-destructive/25 bg-destructive/8 px-1.5 py-0.5 text-3xs font-medium text-destructive">
-        {status}
-      </span>
+      {deliveryLabel ? (
+        <span className="text-3xs text-muted-foreground">{deliveryLabel}</span>
+      ) : null}
+      {showItemStatus ? (
+        <span className="rounded-full border border-destructive/25 bg-destructive/8 px-1.5 py-0.5 text-3xs font-medium text-destructive">
+          {status}
+        </span>
+      ) : null}
     </div>
   );
 }

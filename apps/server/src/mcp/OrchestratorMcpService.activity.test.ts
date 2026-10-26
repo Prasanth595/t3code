@@ -299,6 +299,9 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
 });
 
 it("readThread and sendToThread reach threads in other projects", async () => {
+  const recordedInternalOutput: Array<
+    Parameters<ThreadManagementService.ThreadManagementServiceShape["recordInternalOutput"]>[0]
+  > = [];
   let parentShell: OrchestrationV2ThreadShell | null = null;
   let parentRuns: ReadonlyArray<unknown> = [
     makeRun({ id: RunId.make("run-parent-live"), ordinal: 1, status: "running" }),
@@ -306,12 +309,15 @@ it("readThread and sendToThread reach threads in other projects", async () => {
   const foreignProjectId = ProjectId.make("project-mcp-orchestrator-foreign");
   const foreignThreadId = ThreadId.make("thread-mcp-orchestrator-foreign");
   const parentProjection = {
-    thread: baseThread({
-      threadId: parentThreadId,
-      title: "Parent",
-      instanceId: parentInstanceId,
-      model: "gpt-5.4",
-    }),
+    thread: {
+      ...baseThread({
+        threadId: parentThreadId,
+        title: "Parent",
+        instanceId: parentInstanceId,
+        model: "gpt-5.4",
+      }),
+      communicationLanesEnabled: true,
+    },
     get runs() {
       return parentRuns;
     },
@@ -396,6 +402,11 @@ it("readThread and sendToThread reach threads in other projects", async () => {
               run: { id: "run-foreign", status: "queued" },
               delivery: "started",
             } as unknown as ThreadManagementService.ThreadManagementSendResult),
+          recordInternalOutput: (input) =>
+            Effect.sync(() => {
+              recordedInternalOutput.push(input);
+              return { sequence: 1, storedEvents: [] };
+            }),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
         ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
@@ -436,6 +447,10 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       message: "hi",
     });
     expect(sent.threadId).toBe(foreignThreadId);
+    expect(recordedInternalOutput).toHaveLength(1);
+    expect(recordedInternalOutput[0]?.recipientThreadId).toBe(foreignThreadId);
+    expect(recordedInternalOutput[0]?.recipientMessageId).toBe(sent.messageId);
+    expect(recordedInternalOutput[0]?.runId).toBe(RunId.make("run-parent-live"));
 
     parentRuns = [];
     yield* service.readThread(makeScope(), { threadId: foreignThreadId });

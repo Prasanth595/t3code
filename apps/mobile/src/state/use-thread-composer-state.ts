@@ -13,7 +13,7 @@ import {
   deriveThreadRuntime,
   threadRuntimeHasInterruptibleRun,
 } from "@t3tools/client-runtime/state/thread-execution";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   CommandId,
@@ -53,6 +53,10 @@ import {
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildThreadFeed, createThreadFeedCache } from "../lib/threadActivity";
+import {
+  coordinationTurnItems,
+  runFinishedWithoutUserUpdate,
+} from "@t3tools/client-runtime/state/thread-communication";
 import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
 import { appendPendingThreadMessages } from "../features/threads/pending-thread-feed";
 import { threadAllowsProviderSwitch } from "./thread-provider-switching";
@@ -180,6 +184,12 @@ export function useThreadComposerState() {
   } = useThreadSelection();
   const selectedThreadProjection = useSelectedThreadProjection();
   const selectedThreadVisibleTurnItems = useSelectedThreadVisibleTurnItems();
+  const communicationLanesEnabled =
+    selectedThreadProjection?.projection.thread.communicationLanesEnabled === true;
+  const selectedCoordinationItems = useMemo(
+    () => coordinationTurnItems(selectedThreadVisibleTurnItems, communicationLanesEnabled),
+    [selectedThreadVisibleTurnItems, communicationLanesEnabled],
+  );
   const acknowledgedMessages = useAtomValue(acknowledgedThreadMessagesAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
   const dispatchingQueuedMessageId = useAtomValue(dispatchingQueuedMessageIdAtom);
@@ -258,6 +268,7 @@ export function useThreadComposerState() {
       nodes: selectedThreadNodes,
       checkpointSummaries,
       cache: feedCache,
+      communicationLanesEnabled,
     });
     const pendingAcknowledgments = acknowledgedMessages.filter(
       (message) =>
@@ -371,10 +382,20 @@ export function useThreadComposerState() {
   // A stop or a restart holds the queue, completion wakes included, until it
   // is resumed; the queue sheet lists only the user's own messages.
   const queueHeld = queueWorkflow?.isHeld === true;
+  // Enabled threads resume the held user run itself so internal work is never released by a user tap.
+  const heldUserRunId =
+    queueWorkflow?.queuedRuns.find(({ run }) => run.queueHeld === true)?.run.id ?? null;
 
   const runlessWorkStartedAt = selectedThreadProjection
     ? deriveRunlessWorkStartedAt(selectedThreadProjection.projection)
     : null;
+  const selectedThreadFinishedWithoutUserUpdate =
+    communicationLanesEnabled &&
+    runFinishedWithoutUserUpdate(
+      selectedThreadVisibleTurnItems,
+      selectedThreadActivityRun?.runId,
+      selectedThreadActivityRun?.status,
+    );
   const activeWorkStartedAt = (() => {
     if (!selectedThreadShell) {
       return null;
@@ -877,6 +898,9 @@ export function useThreadComposerState() {
     feedbackSubmissions,
     dismissFeedback,
     selectedThreadFeed,
+    selectedCoordinationItems,
+    communicationLanesEnabled,
+    selectedThreadFinishedWithoutUserUpdate,
     selectedThreadActivityRun,
     selectedThreadQueueCount,
     selectedThreadQueuedMessages,
@@ -889,6 +913,7 @@ export function useThreadComposerState() {
     followUpBehavior,
     canSteerActiveTurn,
     queueHeld,
+    heldUserRunId,
     queuedRunEdit,
     isSavingQueuedEdit,
     cancelQueuedRunEdit,

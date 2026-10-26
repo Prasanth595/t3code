@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  type CommunicationEnvelope,
   EventId,
   MessageId,
   ProjectId,
@@ -118,6 +119,7 @@ const message = (
     readonly minute?: number;
     readonly streaming?: boolean;
     readonly createdBy?: "user" | "agent";
+    readonly communication?: CommunicationEnvelope;
   } = {},
 ): OrchestrationV2DomainEvent => ({
   id: EventId.make(`message:${id}`),
@@ -126,6 +128,7 @@ const message = (
   providerInstanceId,
   occurredAt: at(options.minute ?? 1),
   payload: {
+    ...(options.communication === undefined ? {} : { communication: options.communication }),
     createdBy: options.createdBy ?? (role === "user" ? "user" : "agent"),
     creationSource: role === "user" ? "web" : "provider",
     id: MessageId.make(id),
@@ -215,6 +218,60 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       );
       assert.lengthOf((yield* search.search({ query: "needle", limit: 1 })).matches, 1);
       assert.deepEqual((yield* search.search({ query: "ne%le" })).matches, []);
+    }),
+  );
+
+  it.effect("keeps envelope-classified internal messages out of default results", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:search-internal");
+      const threadId = ThreadId.make("thread:internal-lane");
+      yield* createProject(project);
+      const envelope = (
+        id: string,
+        route: CommunicationEnvelope["route"],
+      ): CommunicationEnvelope => ({
+        schemaVersion: 2,
+        classification: "verified",
+        id: MessageId.make(id),
+        threadId,
+        route,
+        producer: { kind: "agent", id: "agent-1" },
+        recipientId: threadId,
+        kind: "test",
+        correlationId: "correlation-1",
+        delivery: { state: "accepted" },
+      });
+      yield* Effect.forEach(
+        [
+          thread(threadId, project),
+          message(threadId, "lane-internal-in", "user", "zebra internal wake", {
+            createdBy: "user",
+            communication: envelope("lane-internal-in", {
+              port: "internal.in",
+              audience: "coordinator",
+            }),
+          }),
+          message(threadId, "lane-internal-out", "assistant", "zebra coordination note", {
+            communication: envelope("lane-internal-out", {
+              port: "internal.out",
+              audience: "agent",
+            }),
+          }),
+          message(threadId, "lane-user-out", "assistant", "zebra answer for the human", {
+            communication: envelope("lane-user-out", { port: "user.out", audience: "human" }),
+          }),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+
+      const result = yield* search.search({ query: "zebra" });
+      assert.deepEqual(
+        result.matches.map((match) => match.messageId),
+        [MessageId.make("lane-user-out")],
+      );
     }),
   );
 

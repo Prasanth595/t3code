@@ -56,6 +56,8 @@ export function makeSubagentChildThread(input: {
 }): OrchestrationV2AppThread {
   return {
     ...input.parentThread,
+    // The child reports to its coordinator; its own transcript keeps ordinary provider output.
+    communicationLanesEnabled: false,
     createdBy: input.createdBy,
     creationSource: input.creationSource,
     id: input.childThreadId,

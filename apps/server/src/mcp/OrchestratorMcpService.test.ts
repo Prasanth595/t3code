@@ -1499,6 +1499,14 @@ describe("OrchestratorMcpService provider resolution", () => {
     Effect.gen(function* () {
       const altInstanceId = ProviderInstanceId.make("codex-alt");
       const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const recorded = yield* Ref.make<
+        ReadonlyArray<
+          Parameters<
+            ThreadManagementService.ThreadManagementServiceShape["recordInternalOutput"]
+          >[0]
+        >
+      >([]);
+      const childMessageId = MessageId.make("message:delegated-child-opening");
       const task = {
         id: taskId,
         threadId: parentThreadId,
@@ -1527,8 +1535,18 @@ describe("OrchestratorMcpService provider resolution", () => {
           getThreadRecords: (threadId) =>
             Effect.succeed(
               threadId === parentThreadId
-                ? parentProjection(delegated ? [task] : [])
+                ? {
+                    ...parentProjection(delegated ? [task] : []),
+                    thread: {
+                      ...parentProjection(delegated ? [task] : []).thread,
+                      communicationLanesEnabled: true,
+                    },
+                  }
                 : childProjection,
+            ),
+          recordInternalOutput: (input) =>
+            Ref.update(recorded, (all) => [...all, input]).pipe(
+              Effect.as({ sequence: 1, storedEvents: [] }),
             ),
           isProviderInstanceEnabledForProject: ({ instanceId }) =>
             Effect.succeed(instanceId !== codexInstanceId),
@@ -1555,6 +1573,15 @@ describe("OrchestratorMcpService provider resolution", () => {
                     sequence: 1,
                     commandId: null,
                     event: { type: "subagent.updated", payload: task },
+                  },
+                  {
+                    sequence: 2,
+                    commandId: null,
+                    event: {
+                      type: "message.updated",
+                      threadId: childThreadId,
+                      payload: { id: childMessageId },
+                    },
                   },
                 ],
               } as never),
@@ -1594,6 +1621,12 @@ describe("OrchestratorMcpService provider resolution", () => {
           modelSelection: { instanceId: string; model: string };
         };
         assert.equal(request.modelSelection.instanceId, altInstanceId);
+        const senderRecords = yield* Ref.get(recorded);
+        assert.equal(senderRecords.length, 1);
+        assert.equal(senderRecords[0]?.runId, parentRunId);
+        assert.equal(senderRecords[0]?.recipientThreadId, childThreadId);
+        assert.equal(senderRecords[0]?.recipientMessageId, childMessageId);
+        assert.equal(senderRecords[0]?.recipientTaskId, taskId);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );
@@ -2668,6 +2701,162 @@ describe("OrchestratorMcpService thread lookup", () => {
       const { read, send } = yield* failuresFor([deletedLaunched]);
       assert.equal(read.message, `Thread ${bareId} is no longer available.`);
       assert.equal(send.message, `Thread ${bareId} was not found.`);
+    }),
+  );
+});
+
+describe("OrchestratorMcpService user messages", () => {
+  const threadId = ThreadId.make("thread:user-message");
+  const caller: McpInvocationScope = {
+    environmentId: EnvironmentId.make("environment:user-message"),
+    requestNamespace: "provider-session:user-message",
+    thread: {
+      threadId,
+      providerSessionId: "provider-session:user-message",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    },
+    client: undefined,
+    capabilities: new Set(["orchestration"]),
+    issuedAt: 1,
+  };
+  type Published = Parameters<
+    ThreadManagementService.ThreadManagementServiceShape["publishUserOutput"]
+  >[0];
+  const service = (input: {
+    readonly published: Ref.Ref<ReadonlyArray<Published>>;
+    readonly shell?: OrchestrationV2ThreadShell;
+    readonly refusal?: string;
+  }) =>
+    layerOrchestratorService.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadShell: () => Effect.succeed(input.shell ?? liveThreadShell(threadId)),
+            publishUserOutput: (command) =>
+              input.refusal === undefined
+                ? Ref.update(input.published, (all) => [...all, command]).pipe(
+                    Effect.as({ sequence: 1, storedEvents: [] }),
+                  )
+                : Effect.fail(
+                    new Orchestrator.OrchestratorDispatchError({
+                      commandId: command.commandId,
+                      commandType: "communication.publish-output",
+                      cause: input.refusal,
+                    }),
+                  ),
+          }),
+          ServerSettings.layerTest(),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+            list: () => Effect.succeed([]),
+          }),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        ),
+      ),
+    );
+
+  it.effect("publishes on the caller's thread with ids its request key makes stable", () =>
+    Effect.gen(function* () {
+      const published = yield* Ref.make<ReadonlyArray<Published>>([]);
+      yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const first = yield* mcp.publishUserOutput(caller, {
+          text: "Two options look promising.",
+          clientRequestId: "update-1",
+        });
+        const retried = yield* mcp.publishUserOutput(caller, {
+          text: "Two options look promising.",
+          clientRequestId: "update-1",
+        });
+        const next = yield* mcp.publishUserOutput(caller, {
+          text: "Option B wins.",
+          replyTo: MessageId.make("message:question"),
+          clientRequestId: "update-2",
+        });
+
+        assert.deepEqual(retried, first);
+        assert.equal(first.threadId, threadId);
+        assert.notEqual(next.messageId, first.messageId);
+        const commands = yield* Ref.get(published);
+        assert.deepEqual(
+          commands.map((command) => command.threadId),
+          [threadId, threadId, threadId],
+        );
+        assert.equal(commands[0]?.messageId, first.messageId);
+        assert.equal(commands[1]?.commandId, commands[0]?.commandId);
+        assert.notEqual(commands[2]?.commandId, commands[0]?.commandId);
+        assert.equal(commands[2]?.replyTo, MessageId.make("message:question"));
+        assert.isUndefined(commands[0]?.replyTo);
+      }).pipe(Effect.provide(service({ published })));
+    }),
+  );
+
+  it.effect.each([
+    {
+      case: "a client outside any thread",
+      scope: { ...caller, thread: undefined },
+      code: "thread_credential_required",
+    },
+    {
+      case: "a delegated child",
+      scope: { ...caller, thread: { ...caller.thread!, subagent: true } },
+      code: "capability_denied",
+    },
+    {
+      case: "a credential without orchestration",
+      scope: { ...caller, capabilities: new Set<never>() },
+      code: "capability_denied",
+    },
+    {
+      case: "a thread with no live run",
+      scope: caller,
+      shell: liveThreadShell(threadId, { activeRunId: null }),
+      code: "parent_not_active",
+    },
+    {
+      case: "another provider's stale credential",
+      scope: {
+        ...caller,
+        thread: { ...caller.thread!, providerInstanceId: ProviderInstanceId.make("claudeAgent") },
+      },
+      code: "parent_not_active",
+    },
+  ] as const)("refuses $case", ({ scope, code, ...input }) =>
+    Effect.gen(function* () {
+      const published = yield* Ref.make<ReadonlyArray<Published>>([]);
+      const error = yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* mcp.publishUserOutput(scope, { text: "hello" }).pipe(Effect.flip);
+      }).pipe(
+        Effect.provide(service({ published, ...("shell" in input ? { shell: input.shell } : {}) })),
+      );
+      assert.equal(error.code, code);
+      assert.isEmpty(yield* Ref.get(published));
+    }),
+  );
+
+  it.effect("passes on why the orchestrator refused the output", () =>
+    Effect.gen(function* () {
+      const published = yield* Ref.make<ReadonlyArray<Published>>([]);
+      const error = yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* mcp.publishUserOutput(caller, { text: "hello" }).pipe(Effect.flip);
+      }).pipe(
+        Effect.provide(
+          service({
+            published,
+            refusal: "The output reply target must be a human input on this thread.",
+          }),
+        ),
+      );
+      assert.equal(error.code, "orchestration_error");
+      assert.include(
+        error.message,
+        "The output reply target must be a human input on this thread.",
+      );
     }),
   );
 });

@@ -319,6 +319,10 @@
       "types": "./src/state/threadWorkflows.ts",
       "default": "./src/state/threadWorkflows.ts"
     },
+    "./state/thread-communication": {
+      "types": "./src/state/threadCommunication.ts",
+      "default": "./src/state/threadCommunication.ts"
+    },
     "./state/composer-dispatch": {
       "types": "./src/state/composerDispatch.ts",
       "default": "./src/state/composerDispatch.ts"

@@ -110,6 +110,9 @@ export function summarizeT3ToolCalls(
   );
   let label: string;
   switch (action) {
+    case "message-user":
+      label = phrase("Messaged", "message", "the user");
+      break;
     case "thread-send": {
       const messages = countEntities(selected.map((call) => id(call.output?.messageId)));
       const targetsKnown = threadIds.every((value) => value !== undefined);

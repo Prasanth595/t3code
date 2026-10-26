@@ -48,4 +48,121 @@ describe("queued run delivery order", () => {
       "run:visible-second",
     ]);
   });
+
+  it("characterizes delivery order with 1,000 completions behind one human message", () => {
+    const completionIds = Array.from({ length: 1_000 }, (_, index) => `completion:${index}`);
+    const projection = {
+      messages: [
+        { id: "message:human" },
+        ...completionIds.map((id) => ({
+          id: `message:${id}`,
+          delegatedCompletion: {
+            generation: 1,
+            parentRunId: "run:parent",
+            taskIds: [`task:${id}`],
+          },
+        })),
+      ],
+      runs: [
+        {
+          id: "run:human",
+          ordinal: 1,
+          queuePosition: 1,
+          status: "queued",
+          userMessageId: "message:human",
+        },
+        ...completionIds.map((id, index) => ({
+          id: `run:${id}`,
+          ordinal: index + 2,
+          queuePosition: index + 2,
+          status: "queued",
+          userMessageId: `message:${id}`,
+        })),
+      ],
+    } as never;
+
+    const orderedRunIds = queuedRunsInDeliveryOrder(projection).map((run) => run.id);
+    expect(orderedRunIds).toHaveLength(1_001);
+    expect(orderedRunIds.slice(0, 1_000)).toEqual(completionIds.map((id) => `run:${id}`));
+    expect(orderedRunIds[1_000]).toBe("run:human");
+  });
+
+  it("delivers verified human input before 1,000 internal completions in an enabled thread", () => {
+    const completions = Array.from({ length: 1_000 }, (_, index) => index);
+    const projection = {
+      thread: { communicationLanesEnabled: true },
+      messages: [
+        {
+          id: "message:human",
+          communication: {
+            classification: "verified",
+            route: { port: "user.in" },
+            producer: { kind: "human" },
+          },
+        },
+        ...completions.map((index) => ({
+          id: `message:internal:${index}`,
+          delegatedCompletion: { taskIds: [`task:${index}`] },
+          communication: {
+            classification: "verified",
+            route: { port: "internal.in" },
+            producer: { kind: "server" },
+          },
+        })),
+      ],
+      runs: [
+        ...completions.map((index) => ({
+          id: `run:internal:${index}`,
+          ordinal: index + 1,
+          queuePosition: index + 1,
+          status: "queued",
+          userMessageId: `message:internal:${index}`,
+        })),
+        {
+          id: "run:human",
+          ordinal: 1_001,
+          queuePosition: 1_001,
+          status: "queued",
+          userMessageId: "message:human",
+        },
+      ],
+    } as never;
+
+    const orderedRunIds = queuedRunsInDeliveryOrder(projection).map((run) => run.id);
+    expect(orderedRunIds[0]).toBe("run:human");
+    expect(orderedRunIds.slice(1)).toEqual(completions.map((index) => `run:internal:${index}`));
+  });
+
+  it("does not grant human priority to an agent claiming the user route", () => {
+    const projection = {
+      thread: { communicationLanesEnabled: true },
+      messages: [
+        {
+          id: "message:forged",
+          communication: {
+            classification: "verified",
+            route: { port: "user.in" },
+            producer: { kind: "agent" },
+          },
+        },
+        {
+          id: "message:human",
+          communication: {
+            classification: "verified",
+            route: { port: "user.in" },
+            producer: { kind: "human" },
+          },
+        },
+      ],
+      runs: [
+        { id: "run:forged", status: "queued", ordinal: 1, userMessageId: "message:forged" },
+        { id: "run:human", status: "queued", ordinal: 2, userMessageId: "message:human" },
+      ],
+    } as never;
+
+    expect(queuedRunsInDeliveryOrder(projection).map((run) => run.id)).toEqual([
+      "run:human",
+      "run:forged",
+    ]);
+  });
 });

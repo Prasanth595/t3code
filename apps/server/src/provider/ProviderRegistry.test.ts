@@ -427,6 +427,42 @@ it.layer(
   });
 
   describe("ProviderRegistry.layer", () => {
+    it.effect("publishes communication-lane support from the orchestration adapter", () =>
+      Effect.gen(function* () {
+        const snapshot = decodeServerProvider({
+          instanceId: "codex",
+          driver: "codex",
+          enabled: true,
+          installed: true,
+          version: "1.0.0",
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt: "2026-10-26T00:00:00.000Z",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        });
+        const sourceFor = (toolMailbox: boolean) =>
+          ProviderRegistry.buildSnapshotSource({
+            instanceId: snapshot.instanceId,
+            driverKind: snapshot.driver,
+            snapshot: {
+              getSnapshot: Effect.succeed(snapshot),
+              refresh: Effect.succeed(snapshot),
+              streamChanges: Stream.make(snapshot),
+            },
+            orchestrationAdapter: {
+              getCapabilities: () => Effect.succeed({ communication: { toolMailbox } }),
+            },
+          } as unknown as ProviderInstance);
+
+        assert.strictEqual((yield* sourceFor(true).getSnapshot).communicationLanes, true);
+        assert.strictEqual((yield* sourceFor(false).refresh).communicationLanes, undefined);
+        const streamed = yield* Stream.runCollect(sourceFor(true).streamChanges);
+        assert.strictEqual(Array.from(streamed)[0]?.communicationLanes, true);
+      }),
+    );
+
     it("stores workspace skills, commands and options without changing machine metadata", () => {
       const provider = {
         instanceId: ProviderInstanceId.make("codex"),

@@ -45,6 +45,7 @@ import type {
   RunAttemptId,
 } from "@t3tools/contracts";
 import {
+  CommunicationEnvelope,
   IDLE_COMPACTION_TEXT,
   idleCompactionOf,
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
@@ -1209,6 +1210,9 @@ const encodeRuntimeRequestPayload = Schema.encodeEffect(
 );
 const encodeMessagePayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2ConversationMessageJsonSchema),
+);
+const encodeCommunicationEnvelope = Schema.encodeEffect(
+  Schema.fromJsonString(CommunicationEnvelope),
 );
 const encodePlanPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2PlanArtifactSchema),
@@ -2545,6 +2549,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               break;
             }
             case "message.updated": {
+              const communication = event.payload.communication;
+              if (
+                communication !== undefined &&
+                (communication.id !== event.payload.id ||
+                  communication.threadId !== event.payload.threadId)
+              ) {
+                return yield* Effect.die(
+                  new Error("Communication envelope must identify its owning message and thread"),
+                );
+              }
               const payloadJson = yield* encodeMessagePayload(event.payload);
               const payload = parseEncodedPayload(payloadJson);
               yield* sql`
@@ -2581,6 +2595,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 updated_at = excluded.updated_at,
                 payload_json = excluded.payload_json
             `;
+              if (communication !== undefined) {
+                const communicationJson = yield* encodeCommunicationEnvelope(communication);
+                yield* sql`
+                  INSERT INTO orchestration_v2_projection_communications (
+                    message_id, thread_id, port, delivery_state, envelope_json
+                  ) VALUES (
+                    ${communication.id},
+                    ${communication.threadId},
+                    ${communication.route.port},
+                    ${communication.delivery.state},
+                    ${communicationJson}
+                  )
+                  ON CONFLICT(message_id) DO UPDATE SET
+                    delivery_state = excluded.delivery_state,
+                    envelope_json = excluded.envelope_json
+                `;
+              }
               break;
             }
             case "plan.updated": {

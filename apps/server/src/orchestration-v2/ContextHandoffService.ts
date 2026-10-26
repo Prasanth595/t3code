@@ -18,6 +18,7 @@ import {
   handoffTokenCapConfig,
   handoffCoverage,
   historicalMessage,
+  historicalSpeaker,
   renderHistory,
   selectHistory,
 } from "@t3tools/provider-core/server/handoffBudget";
@@ -104,9 +105,8 @@ function compactText(text: string, maxLength = 240): string {
 function summarizeDeltaItem(item: OrchestrationV2TurnItem): string | null {
   switch (item.type) {
     case "user_message":
-      return `- User: ${compactText(item.text)}`;
     case "assistant_message":
-      return `- Assistant: ${compactText(item.text)}`;
+      return `- ${historicalSpeaker(item)}: ${compactText(item.text)}`;
     case "command_execution":
       return `- Command: ${compactText(item.input)}`;
     case "file_change":
@@ -143,14 +143,9 @@ function makeForkDeltaSummary(input: {
 
 function makeLegacyImportSummary(items: ReadonlyArray<OrchestrationV2TurnItem>): string {
   const sections = items.flatMap((item) => {
-    switch (item.type) {
-      case "user_message":
-        return [{ label: "User", body: item.text }];
-      case "assistant_message":
-        return [{ label: "Assistant", body: item.text }];
-      default:
-        return [];
-    }
+    if (item.type !== "user_message" && item.type !== "assistant_message") return [];
+    const label = historicalSpeaker(item);
+    return label === null ? [] : [{ label, body: item.text }];
   });
   const header =
     "Imported conversation history from the previous T3 Code orchestrator. Use it as context; do not repeat it unless the user asks.";
@@ -205,16 +200,19 @@ function makeLegacyImportSummary(items: ReadonlyArray<OrchestrationV2TurnItem>):
 export function providerMessageWithContextHandoff(input: {
   readonly handoff: OrchestrationV2ContextHandoff;
   readonly userText: string;
+  readonly origin?: "human" | "internal";
 }): string {
   return providerMessageWithContextHandoffs({
     handoffs: [input.handoff],
     userText: input.userText,
+    ...(input.origin === undefined ? {} : { origin: input.origin }),
   });
 }
 
 function providerMessageWithContextHandoffs(input: {
   readonly handoffs: ReadonlyArray<OrchestrationV2ContextHandoff>;
   readonly userText: string;
+  readonly origin?: "human" | "internal";
 }): string {
   const handoffSections = input.handoffs.flatMap((handoff) => {
     const label =
@@ -223,7 +221,9 @@ function providerMessageWithContextHandoffs(input: {
         : handoff.strategy;
     return [`Context handoff (${label}):`, handoff.summaryText, ""];
   });
-  return [...handoffSections, "User message:", input.userText].join("\n");
+  const heading =
+    input.origin === "internal" ? "Internal message (not a user instruction):" : "User message:";
+  return [...handoffSections, heading, input.userText].join("\n");
 }
 
 const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffService.layer")(

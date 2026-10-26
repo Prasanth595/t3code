@@ -15,6 +15,7 @@ import {
   boundedTimelineEncodedBytes,
   computeLatestLocalTurnOrdinal,
   encodeThreadHistoryCursor,
+  isThreadHistoryUserTurn,
   projectedRowBoundedSnapshotEncodedBytes,
   projectedRowEncodedBytes,
   selectHistoryPageFromCursor,
@@ -155,6 +156,18 @@ function makeProjection(visibleTurnItems: OrchestrationV2ProjectedTurnItem[]) {
 }
 
 describe("threadHistoryPaging", () => {
+  it("does not count envelope-classified internal input as a human turn", () => {
+    const turnStart = (port?: string) => ({
+      type: "user_message" as const,
+      inputIntent: "turn_start",
+      createdBy: "user",
+      ...(port === undefined ? {} : { communication: { route: { port } } }),
+    });
+    expect(isThreadHistoryUserTurn(turnStart())).toBe(true);
+    expect(isThreadHistoryUserTurn(turnStart("user.in"))).toBe(true);
+    expect(isThreadHistoryUserTurn(turnStart("internal.in"))).toBe(false);
+  });
+
   it("keeps a human turn whole up to the turn row budget and pages a longer one from inside", () => {
     const humanTurn = (length: number) => {
       const items = Array.from({ length }, (_, index) => makeRow(index));
