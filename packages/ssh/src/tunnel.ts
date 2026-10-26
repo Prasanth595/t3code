@@ -1726,6 +1726,15 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           preparedTargets.get(requestKey)?.owned ??
           preparedTargets.get(key)?.owned ??
           new Map<string, DesktopSshEnvironmentTarget>();
+        const resolvedOwnership = preparedTargets.get(key)?.owned;
+        if (resolvedOwnership !== undefined && resolvedOwnership !== owned) {
+          for (const [ownedKey, ownedTarget] of resolvedOwnership) owned.set(ownedKey, ownedTarget);
+          for (const [bindingKey, binding] of preparedTargets) {
+            if (binding.owned === resolvedOwnership) {
+              preparedTargets.set(bindingKey, { ...binding, owned });
+            }
+          }
+        }
         owned.set(key, resolvedTarget);
         const prepared = { lastTarget: resolvedTarget, owned };
         preparedTargets.set(requestKey, prepared);

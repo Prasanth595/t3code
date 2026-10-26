@@ -439,6 +439,7 @@ describe("ssh tunnel scripts", () => {
     "original request",
     "persisted bootstrap",
     "latest bootstrap",
+    "converging profiles",
     "failed first stop",
     "canonical before legacy",
   ] as const)(
@@ -446,6 +447,7 @@ describe("ssh tunnel scripts", () => {
     (nextRequest) =>
       Effect.gen(function* () {
         let recovered = nextRequest === "canonical before legacy";
+        let hostname: string | undefined;
         const killed: string[] = [];
         const stops: Array<ReadonlyArray<string>> = [];
         const spawner = ChildProcessSpawner.make((command) =>
@@ -453,7 +455,7 @@ describe("ssh tunnel scripts", () => {
             const args = commandArgs(command);
             if (args.includes("-G"))
               return makeSuccessfulProcess(
-                `hostname ${recovered ? "second.example.com" : "first.example.com"}\nuser alice\nport 2222\n`,
+                `hostname ${hostname ?? (recovered ? "second.example.com" : "first.example.com")}\nuser alice\nport 2222\n`,
               );
             if (args.includes("-N"))
               return makeRunningProcess(() => {
@@ -494,6 +496,20 @@ describe("ssh tunnel scripts", () => {
             nextRequest === "canonical before legacy" ? request : cleanupTarget,
           );
           recovered = true;
+          const expectedHosts = ["first.example.com", "second.example.com"];
+          if (nextRequest === "converging profiles") {
+            hostname = "third.example.com";
+            const stale = yield* manager.ensureEnvironment({
+              ...request,
+              hostname: "stale.example.com",
+              username: "alice",
+              port: 2222,
+            });
+            hostname = "second.example.com";
+            yield* manager.ensureEnvironment(stale.target);
+            hostname = undefined;
+            expectedHosts.push("third.example.com");
+          }
           const other = yield* manager.ensureEnvironment({
             ...request,
             alias: "other",
@@ -517,15 +533,20 @@ describe("ssh tunnel scripts", () => {
           assert.equal(anotherUser.target.port, 3333);
           const result = yield* Effect.result(
             manager.disconnectEnvironment(
-              nextRequest === "latest bootstrap" ? second.target : cleanupTarget,
+              nextRequest === "latest bootstrap" || nextRequest === "converging profiles"
+                ? second.target
+                : cleanupTarget,
             ),
           );
           assert.equal(result._tag, nextRequest === "failed first stop" ? "Failure" : "Success");
-          assert.deepEqual(killed, ["alice@devbox", "alice@devbox"]);
-          assert.equal(stops.length, 2);
+          assert.deepEqual(
+            killed,
+            expectedHosts.map(() => "alice@devbox"),
+          );
+          assert.equal(stops.length, expectedHosts.length);
           assert.deepEqual(
             stops.flatMap((args) => args.filter((arg) => arg.startsWith("HostName="))).toSorted(),
-            ["HostName=first.example.com", "HostName=second.example.com"],
+            expectedHosts.map((host) => `HostName=${host}`).toSorted(),
           );
           assert.include(stops[0]!, "alice@devbox");
           assert.include(stops[1]!, "alice@devbox");
