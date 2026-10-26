@@ -797,32 +797,25 @@ const make = Effect.gen(function* () {
         yield* secretStore.remove(move.from).pipe(Effect.ignore);
       }
     }
+    if (Option.isNone(parseFailure)) {
+      yield* Ref.set(lastGoodSettingsRef, Option.some(migrated));
+    } else {
+      const lastGood = yield* Ref.get(lastGoodSettingsRef);
+      if (Option.isSome(lastGood)) {
+        return {
+          settings: { ...lastGood.value, continueThreadsAfterServerUpdate: false },
+          parseFailure,
+          fromPublishedSave,
+        };
+      }
+    }
     return { settings: migrated, parseFailure, fromPublishedSave };
   });
 
-  // A file caught mid-write or left invalid keeps the settings that last loaded instead of
-  // resetting them to defaults, also for readers that join a reload. Its parse failure still
-  // blocks saves, and it still never resumes threads, as at startup: the unreadable file may
-  // hold an opt-out.
-  const loadKeepingLastGoodSettings = Effect.gen(function* () {
-    const loaded = yield* loadSettingsFromDisk;
-    if (Option.isNone(loaded.parseFailure)) {
-      yield* Ref.set(lastGoodSettingsRef, Option.some(loaded.settings));
-      return loaded;
-    }
-    const lastGood = yield* Ref.get(lastGoodSettingsRef);
-    return Option.isSome(lastGood)
-      ? { ...loaded, settings: { ...lastGood.value, continueThreadsAfterServerUpdate: false } }
-      : loaded;
+  const settingsCache = yield* Cache.makeWith((_key: typeof cacheKey) => loadSettingsFromDisk, {
+    capacity: 1,
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
   });
-
-  const settingsCache = yield* Cache.makeWith(
-    (_key: typeof cacheKey) => loadKeepingLastGoodSettings,
-    {
-      capacity: 1,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
-    },
-  );
 
   const getSettingsFromCache = Cache.get(settingsCache, cacheKey).pipe(
     Effect.map((loaded) => loaded.settings),
