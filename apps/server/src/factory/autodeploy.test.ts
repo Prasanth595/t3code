@@ -722,11 +722,11 @@ describe("autodeploy.sh waiting behind runs", () => {
   });
 
   // A marker older than the server's staleness cutoff means the server was not draining, so that
-  // time was not spent waiting.
+  // time was not spent waiting. 31 and 29 minutes pin the script's limit to the server's 30.
   it("starts the wait again when the marker went stale", async () => {
     commitToOrigin("second");
     writePending(3 * 3600);
-    hourAgo();
+    minutesAgo(31);
     statusBodies = [BUSY];
     const result = await runAutodeploy();
     expect(result.deploys).toEqual([]);
@@ -739,7 +739,7 @@ describe("autodeploy.sh waiting behind runs", () => {
   it("keeps the first-wait time across a short blip", async () => {
     commitToOrigin("second");
     writePending(3 * 3600);
-    minutesAgo(10);
+    minutesAgo(29);
     statusBodies = [BUSY];
     const result = await runAutodeploy();
     expect(result.output).toContain("deploying");
