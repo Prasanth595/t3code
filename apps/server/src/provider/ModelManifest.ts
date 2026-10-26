@@ -16,7 +16,6 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import bundledManifestJson from "./model-manifest.json" with { type: "json" };
 import { ProviderCompatibilityPolicy } from "./providerCompatibility.ts";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
@@ -88,9 +87,6 @@ const ModelManifestSchema = ModelManifestEnvelopeSchema.pipe(
   Schema.check(
     Schema.makeFilter(hasValidProviderCatalogReferences, {
       expected: "unique model slugs and existing model and profile references",
-    }),
-    Schema.makeFilter(hasValidClaudeManifestAdapters, {
-      expected: "valid Claude adapter metadata",
     }),
   ),
 );
@@ -168,15 +164,6 @@ export class ModelManifest extends Context.Service<
     readonly refreshInBackground: Effect.Effect<void>;
   }
 >()("t3/provider/ModelManifest") {}
-
-const BundledOnlyModelManifest: ModelManifest["Service"] = {
-  current: Effect.succeed(BUNDLED_MODEL_MANIFEST),
-  refresh: Effect.succeed(BUNDLED_MODEL_MANIFEST),
-  forceRefresh: Effect.succeed(BUNDLED_MODEL_MANIFEST),
-  refreshInBackground: Effect.void,
-};
-
-const layerBundledOnly = Layer.succeed(ModelManifest, BundledOnlyModelManifest);
 
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -257,10 +244,6 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(ModelManifest, make);
-
-export const layerTest = Layer.suspend(() =>
-  layerModelCatalog.pipe(Layer.provideMerge(layerBundledOnly)),
-);
 
 export const layerModelCatalog = Layer.effect(
   ModelCatalog.ModelCatalog,

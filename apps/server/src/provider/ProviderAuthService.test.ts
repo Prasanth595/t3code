@@ -22,7 +22,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
-import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
+import { FullProviderCapabilitiesV2 } from "../orchestration-v2/testkit/testProviderCapabilities.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderAuthService from "./ProviderAuthService.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
@@ -104,7 +104,7 @@ function makeSession(
     status,
     cwd: "/workspace",
     model: null,
-    capabilities: AcpProviderCapabilitiesV2,
+    capabilities: FullProviderCapabilitiesV2,
     createdAt: nowUtc,
     updatedAt: nowUtc,
     lastError: null,

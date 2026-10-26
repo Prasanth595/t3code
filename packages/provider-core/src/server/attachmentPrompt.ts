@@ -1,7 +1,6 @@
 import {
   type ChatAttachment,
   type ChatImageAttachment,
-  isProviderSendTurnSupportedImageMimeType,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type SnapShotAccessibility,
   type SnapShotAccessibilityNode,
@@ -148,12 +147,6 @@ function compactAccessibilityForPrompt(
     ...(accessibility.truncated ? { truncated: true } : {}),
     root,
   };
-}
-
-export function isProviderNativeImageAttachment(attachment: ChatAttachment): boolean {
-  return (
-    attachment.type === "image" && isProviderSendTurnSupportedImageMimeType(attachment.mimeType)
-  );
 }
 
 export function providerMessageTextWithAttachmentPaths(input: {

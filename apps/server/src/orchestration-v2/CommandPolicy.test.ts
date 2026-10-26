@@ -1,29 +1,22 @@
 import { assert, it } from "@effect/vitest";
 import {
-  CommandId,
   MessageId,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ThreadProjection,
-  ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
   RunAttemptId,
   RunId,
-  ThreadId,
 } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
 
-import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { CursorProviderCapabilitiesV2 } from "@t3tools/provider-cursor/testing";
+import { FullProviderCapabilitiesV2 } from "./testkit/testProviderCapabilities.ts";
 import * as CommandPolicy from "./CommandPolicy.ts";
 
-const commandId = CommandId.make("command-policy-test");
-const threadId = ThreadId.make("command-policy-thread");
 const activeRunId = RunId.make("command-policy-active-run");
 const activeAttemptId = RunAttemptId.make("command-policy-active-attempt");
 const userMessageId = MessageId.make("command-policy-user-message");
 
-const baseCapabilities: OrchestrationV2ProviderCapabilities = CodexProviderCapabilitiesV2;
+const baseCapabilities: OrchestrationV2ProviderCapabilities = FullProviderCapabilitiesV2;
 
 function capabilities(
   override: (current: OrchestrationV2ProviderCapabilities) => OrchestrationV2ProviderCapabilities,
@@ -194,28 +187,5 @@ it.each(["/compact", " /LOGOUT "])("queues a steer sent while %s runs", (text) =
       "restart",
     ),
     { type: "restart_active", targetRunId: activeRunId },
-  );
-});
-
-const layer = it.layer(CommandPolicy.layer);
-
-layer("CommandPolicyV2", (it) => {
-  it.effect("falls back to portable context when Cursor cannot fork natively", () =>
-    Effect.gen(function* () {
-      const policy = yield* CommandPolicy.CommandPolicyV2;
-
-      const result = yield* policy.decideForkExecution({
-        commandId,
-        threadId,
-        providerInstanceId: ProviderInstanceId.make("cursor"),
-        capabilities: CursorProviderCapabilitiesV2,
-        sameProvider: true,
-        hasStrongNativeSource: true,
-        sourceRunStatus: "completed",
-        fromSpecificTurn: true,
-      });
-
-      assert.equal(result, "portable_context");
-    }),
   );
 });

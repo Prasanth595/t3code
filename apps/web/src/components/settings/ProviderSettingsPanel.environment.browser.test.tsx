@@ -43,8 +43,6 @@ vi.mock(import("../../state/server"), async (original) => {
   const commandLabels = {
     refreshProviders: "refresh",
     updateProvider: "update",
-    uninstallAcpRegistryManagedBinary: "uninstall",
-    acceptAcpRegistryUrlAuth: "accept-url-auth",
   } as const;
   const labelled = Object.fromEntries(
     Object.entries(commandLabels).map(([key, label]) => [
@@ -157,13 +155,13 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";
 
 const environmentId = EnvironmentId.make("remote-device");
-const codexId = ProviderInstanceId.make("codex");
-const customId = ProviderInstanceId.make("codex_work");
+const piId = ProviderInstanceId.make("pi");
+const customId = ProviderInstanceId.make("pi_work");
 
 function provider(): ServerProvider {
   return {
-    instanceId: codexId,
-    driver: ProviderDriverKind.make("codex"),
+    instanceId: piId,
+    driver: ProviderDriverKind.make("pi"),
     enabled: true,
     installed: true,
     version: "1.0.0",
@@ -177,7 +175,7 @@ function provider(): ServerProvider {
       status: "behind_latest",
       currentVersion: "1.0.0",
       latestVersion: "1.1.0",
-      updateCommand: "pnpm add -g @openai/codex@latest",
+      updateCommand: "pnpm add -g @earendil-works/pi-coding-agent@latest",
       canUpdate: true,
       checkedAt: "2026-07-24T12:00:00.000Z",
       message: "Update available.",
@@ -247,7 +245,7 @@ describe("EnvironmentProviderSettings routing", () => {
       ...DEFAULT_UNIFIED_SETTINGS,
       providerInstances: {
         [customId]: {
-          driver: ProviderDriverKind.make("codex"),
+          driver: ProviderDriverKind.make("pi"),
           enabled: true,
           displayName: "Work",
         },
@@ -260,46 +258,9 @@ describe("EnvironmentProviderSettings routing", () => {
       {
         operation: "upsert",
         instanceId: customId,
-        instance: { driver: ProviderDriverKind.make("codex"), enabled: false, displayName: "Work" },
+        instance: { driver: ProviderDriverKind.make("pi"), enabled: false, displayName: "Work" },
       },
       {},
     );
-  });
-
-  it("routes explicit ACP browser authentication consent to the selected environment", async () => {
-    await setup();
-    const instanceId = ProviderInstanceId.make("acpRegistry_antigravity");
-    const action = {
-      elicitationId: "google-login-1",
-      url: "https://accounts.google.com/login",
-      message: "Continue with Google",
-    };
-    state.settings = {
-      ...DEFAULT_UNIFIED_SETTINGS,
-      providerInstances: {
-        [instanceId]: {
-          driver: ProviderDriverKind.make("acpRegistry"),
-          enabled: true,
-          config: { agentId: "antigravity" },
-        },
-      },
-    };
-    await setProviders([
-      {
-        ...provider(),
-        instanceId,
-        driver: ProviderDriverKind.make("acpRegistry"),
-        auth: { status: "unauthenticated", action },
-      },
-    ]);
-    await using _screen = await render(panel({ targetInstanceId: instanceId }));
-    const link = page.getByRole("link", { name: "Continue authentication" });
-    link.element().addEventListener("click", (event) => event.preventDefault());
-    await userEvent.click(link);
-
-    expect(state.acceptUrlAuth).toHaveBeenCalledWith({
-      environmentId,
-      input: { instanceId, elicitationId: action.elicitationId },
-    });
   });
 });

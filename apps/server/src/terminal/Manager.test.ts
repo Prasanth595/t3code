@@ -21,7 +21,6 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
-import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
@@ -42,8 +41,6 @@ vi.mock("effect/SynchronizedRef", async (importOriginal) => {
 });
 
 // The server omits DOM types, which include TypeScript's WebAssembly declarations.
-
-const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 class FakePtyProcess implements PtyAdapter.PtyProcess {
   readonly writes: string[] = [];
@@ -246,8 +243,6 @@ interface CreateManagerOptions {
   resolveProviderInstanceEnvironment?: Parameters<
     typeof TerminalManager.makeWithOptions
   >[0]["resolveProviderInstanceEnvironment"];
-  managedBinaryCacheDir?: string;
-  managedBinaryToolsDir?: string;
 }
 
 interface ManagerFixture {
@@ -299,12 +294,6 @@ const createManager = (
         ...(options.resolveProviderInstanceEnvironment !== undefined
           ? { resolveProviderInstanceEnvironment: options.resolveProviderInstanceEnvironment }
           : {}),
-        ...(options.managedBinaryCacheDir === undefined
-          ? {}
-          : {
-              managedBinaryCacheDir: options.managedBinaryCacheDir,
-              managedBinaryToolsDir: options.managedBinaryToolsDir,
-            }),
       });
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
       const unsubscribe = yield* manager.subscribe((event) =>
@@ -981,70 +970,6 @@ it.layer(
     }),
   );
 
-  it.effect("preserves Windows Path casing when appending managed ACP binaries", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-terminal-acp-path-",
-      });
-      const installBin = path.join(
-        cacheDir,
-        "tools",
-        "example-agent",
-        "1.2.3",
-        "windows-x86_64",
-        "bin",
-      );
-      yield* fileSystem.makeDirectory(installBin, { recursive: true });
-      yield* fileSystem.makeDirectory(path.join(cacheDir, "acp-registry"), { recursive: true });
-      yield* fileSystem.writeFileString(
-        path.join(cacheDir, "acp-registry", "registry.json"),
-        encodeUnknownJson({
-          version: "1.0.0",
-          agents: [
-            {
-              id: "example-agent",
-              name: "Example Agent",
-              version: "1.2.3",
-              description: "ACP Registry test agent",
-              distribution: {
-                binary: {
-                  "windows-x86_64": {
-                    archive: "https://registry.test/example-agent.zip",
-                    cmd: "bin/example-agent.exe",
-                  },
-                },
-              },
-            },
-          ],
-        }),
-      );
-      const { manager, ptyAdapter } = yield* createManager(5, {
-        managedBinaryCacheDir: cacheDir,
-        managedBinaryToolsDir: path.join(cacheDir, "tools"),
-        env: {
-          ComSpec: "C:\\Windows\\System32\\cmd.exe",
-          Path: "C:\\Windows\\System32",
-          SystemRoot: "C:\\Windows",
-        },
-      }).pipe(
-        Effect.provide(
-          Layer.merge(
-            layerWithHostPlatform("win32"),
-            Layer.succeed(HostProcess.Architecture, "x64"),
-          ),
-        ),
-      );
-
-      yield* manager.open(openInput());
-
-      const spawnEnv = ptyAdapter.spawnInputs[0]?.env;
-      expect(spawnEnv?.PATH).toBeUndefined();
-      expect(spawnEnv?.Path).toBe(`C:\\Windows\\System32;${installBin}`);
-    }),
-  );
-
   it.effect("falls back to built-in PowerShell by absolute path on Windows", () =>
     Effect.gen(function* () {
       const ptyAdapter = new FakePtyAdapter();
@@ -1260,55 +1185,6 @@ it.layer(
     }),
   );
 
-  it.effect.each([
-    {
-      name: "Codex home",
-      driver: "codex",
-      variable: "CODEX_HOME",
-      config: { homePath: "/configured/codex" },
-      expectedHome: "/configured/codex",
-    },
-    {
-      name: "Codex shadow home",
-      driver: "codex",
-      variable: "CODEX_HOME",
-      config: { homePath: "/configured/codex", shadowHomePath: "/configured/codex-shadow" },
-      expectedHome: "/configured/codex-shadow",
-    },
-    {
-      name: "Claude home",
-      driver: "claudeAgent",
-      variable: "CLAUDE_CONFIG_DIR",
-      config: { homePath: "/configured/claude" },
-      expectedHome: "/configured/claude",
-    },
-  ])("prefers $name over the instance environment", ({ driver, variable, config, expectedHome }) =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const serverSettings = yield* ServerSettings.ServerSettingsService;
-      const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
-        serverSettings,
-        path,
-        rawProviderInstanceId: "configured_home",
-        env: undefined,
-      });
-
-      expect(environment[variable]).toBe(path.resolve(expectedHome));
-    }).pipe(
-      Effect.provide(
-        ServerSettings.layerTest({
-          providerInstances: {
-            [ProviderInstanceId.make("configured_home")]: {
-              driver: ProviderDriverKind.make(driver),
-              environment: [{ name: variable, value: "~/.environment-account", sensitive: false }],
-              config,
-            },
-          },
-        }),
-      ),
-    ),
-  );
-
   it.effect("restarts a running terminal when the resolved provider environment changes", () =>
     Effect.gen(function* () {
       const providerInstanceId = ProviderInstanceId.make("codex_work");
@@ -1332,7 +1208,7 @@ it.layer(
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const path = yield* Path.Path;
-      const providerInstanceId = ProviderInstanceId.make("codex_restart");
+      const providerInstanceId = ProviderInstanceId.make("pi_restart");
       const { manager, ptyAdapter, logsDir } = yield* createManager(2, {
         historyByteLimit: 8,
         resolveProviderInstanceEnvironment: (rawProviderInstanceId, env) =>
@@ -1343,13 +1219,11 @@ it.layer(
             env,
           }),
       });
-      const homePath = path.join(logsDir, "codex");
       const updateSecret = (value: string) =>
         serverSettings.updateSettings({
           providerInstances: {
             [providerInstanceId]: {
-              driver: ProviderDriverKind.make("codex"),
-              config: { homePath },
+              driver: ProviderDriverKind.make("pi"),
               environment: [{ name: "PROVIDER_SECRET", value, sensitive: true }],
             },
           },
@@ -1381,7 +1255,6 @@ it.layer(
       expect(ptyAdapter.spawnInputs).toHaveLength(2);
       expect(ptyAdapter.spawnInputs[1]?.env).toMatchObject({
         PROVIDER_SECRET: "second-secret",
-        CODEX_HOME: homePath,
         CLIENT_FLAG: "1",
       });
       expect(restarted.history).toBe("");

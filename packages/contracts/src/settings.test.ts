@@ -3,10 +3,10 @@ import * as Schema from "effect/Schema";
 
 import { type CommandId, ProjectId } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { CustomModelSetting } from "./model.ts";
 import {
   ClientSettingsSchema,
   ClientSettingsPatch,
-  ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
   globalIdleCompaction,
   idleCompactionPatch,
@@ -25,7 +25,7 @@ const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
-const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+const decodeCustomModels = Schema.decodeUnknownSync(Schema.Array(CustomModelSetting));
 
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
@@ -128,30 +128,26 @@ describe("custom model settings", () => {
   };
 
   it("accepts legacy bare slugs alongside full entries", () => {
-    const decoded = decodeClaudeSettings({
-      customModels: ["bare-slug", { slug: "named", name: "Named", capabilities }],
-    });
-    expect(decoded.customModels).toEqual([
+    const decoded = decodeCustomModels([
       "bare-slug",
       { slug: "named", name: "Named", capabilities },
     ]);
+    expect(decoded).toEqual(["bare-slug", { slug: "named", name: "Named", capabilities }]);
   });
 });
 
 describe("resolveIdleCompaction", () => {
-  it("lets a Claude instance override the global default", () => {
+  it("lets an instance override the global default", () => {
     const settings = decodeServerSettings({
       idleCompaction: "off",
       providerInstances: {
-        claude_work: { driver: "claudeAgent", config: { idleCompaction: "onReturn" } },
-        claude_personal: { driver: "claudeAgent" },
+        pi_work: { driver: "pi", config: { idleCompaction: "onReturn" } },
+        pi_personal: { driver: "pi" },
       },
     });
-    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("claude_work"))).toBe(
-      "onReturn",
-    );
-    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("claude_personal"))).toBe("off");
-    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("claudeAgent"))).toBe("off");
+    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("pi_work"))).toBe("onReturn");
+    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("pi_personal"))).toBe("off");
+    expect(resolveIdleCompaction(settings, ProviderInstanceId.make("pi"))).toBe("off");
   });
 
   it("reads the mode from the legacy switch, in either form servers saved it", () => {
@@ -212,23 +208,15 @@ describe("ClientSettings quit confirmation", () => {
 
 describe("provider enabled defaults", () => {
   it("resolves instance enabled state with explicit false winning", () => {
-    const grok = ProviderDriverKind.make("grok");
-    const codex = ProviderDriverKind.make("codex");
-    expect(resolveProviderInstanceEnabled({ driver: grok, config: {} })).toBe(false);
-    expect(resolveProviderInstanceEnabled({ driver: codex, config: {} })).toBe(true);
+    const pi = ProviderDriverKind.make("pi");
+    expect(resolveProviderInstanceEnabled({ driver: pi, config: {} })).toBe(true);
+    expect(resolveProviderInstanceEnabled({ driver: pi, enabled: false, config: {} })).toBe(false);
+    expect(resolveProviderInstanceEnabled({ driver: pi, config: { enabled: false } })).toBe(false);
     expect(
-      resolveProviderInstanceEnabled({ driver: ProviderDriverKind.make("ollama"), config: {} }),
-    ).toBe(true);
-    expect(resolveProviderInstanceEnabled({ driver: grok, enabled: true, config: {} })).toBe(true);
-    expect(resolveProviderInstanceEnabled({ driver: codex, enabled: false, config: {} })).toBe(
-      false,
-    );
-    expect(resolveProviderInstanceEnabled({ driver: grok, config: { enabled: true } })).toBe(true);
-    expect(
-      resolveProviderInstanceEnabled({ driver: grok, enabled: true, config: { enabled: false } }),
+      resolveProviderInstanceEnabled({ driver: pi, enabled: true, config: { enabled: false } }),
     ).toBe(false);
     expect(
-      resolveProviderInstanceEnabled({ driver: codex, enabled: false, config: { enabled: true } }),
+      resolveProviderInstanceEnabled({ driver: pi, enabled: false, config: { enabled: true } }),
     ).toBe(false);
   });
 });
@@ -325,13 +313,13 @@ it("validates remote device hosts and rejects ambiguous host ids", () => {
 
 describe("resolveProjectProviderInstanceEnabled", () => {
   const projectId = "project-a" as ProjectId;
-  const instanceId = ProviderInstanceId.make("codex_work");
+  const instanceId = ProviderInstanceId.make("pi_work");
 
   it("lets a project disable an instance the machine enabled", () => {
     const settings: ServerSettings = {
       ...DEFAULT_SERVER_SETTINGS,
       providerInstances: {
-        [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+        [instanceId]: { driver: ProviderDriverKind.make("pi"), enabled: true },
       },
       projectSettingsOverrides: {
         [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },

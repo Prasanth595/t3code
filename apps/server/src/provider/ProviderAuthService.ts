@@ -1,7 +1,5 @@
 import {
   ProviderSetupError,
-  type ChatGptReconnectProfile,
-  type ChatGptTransferredProfile,
   type ProviderAuthRespondInput,
   type ProviderAuthStartInput,
   type ProviderAuthState,
@@ -12,7 +10,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Function from "effect/Function";
 import * as Layer from "effect/Layer";
-import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
@@ -30,12 +27,6 @@ interface ProviderAuthTarget {
 export class ProviderAuthService extends Context.Service<
   ProviderAuthService,
   {
-    readonly reconnectProfile: (
-      input: ProviderAuthTarget & { methodId: string },
-    ) => Effect.Effect<ChatGptReconnectProfile | null, ProviderSetupError>;
-    readonly importProfile: (
-      input: ProviderAuthTarget & { profile: ChatGptTransferredProfile },
-    ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
     readonly start: (
       input: ProviderAuthStartInput,
       ownerSessionId: string,
@@ -196,33 +187,6 @@ export const makeProviderAuthService = Effect.gen(function* () {
   });
 
   return ProviderAuthService.of({
-    reconnectProfile: Effect.fnUntraced(function* (input) {
-      const auth = yield* getController(input.instanceId, "export");
-      if (!auth.reconnectProfile)
-        return yield* new ProviderSetupError({
-          instanceId: input.instanceId,
-          operation: "export",
-          detail: "This provider does not support ChatGPT profile transfer.",
-        });
-      return yield* auth.reconnectProfile(input.methodId);
-    }),
-    importProfile: (input) =>
-      credentialChanges.withPermit(
-        Effect.gen(function* () {
-          const auth = yield* getController(input.instanceId, "import");
-          yield* checkSharedBinding(input.instanceId, "start", auth);
-          if (!auth.importProfile)
-            return yield* new ProviderSetupError({
-              instanceId: input.instanceId,
-              operation: "import",
-              detail: "This provider does not support ChatGPT profile transfer.",
-            });
-          return yield* auth.importProfile(
-            input.profile,
-            stopSessions(input.instanceId, auth.credentialBinding),
-          );
-        }),
-      ),
     start: Effect.fn("ProviderAuthService.start")(function* (input, ownerSessionId) {
       return yield* credentialChanges.withPermit(
         Effect.gen(function* () {

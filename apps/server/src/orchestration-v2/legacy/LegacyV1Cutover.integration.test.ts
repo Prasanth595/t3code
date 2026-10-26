@@ -36,7 +36,7 @@ import Migration0046 from "../../persistence/Migrations/046_RepairAutomaticSettl
 import Migration0047 from "../../persistence/Migrations/047_ProjectionProjectIcon.ts";
 import Migration0048 from "../../persistence/Migrations/048_ProjectionThreadBranchPullRequest.ts";
 import Migration0049 from "../../persistence/Migrations/049_ProjectionThreadsActiveOrderKey.ts";
-import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
+import { FullProviderCapabilitiesV2 } from "../testkit/testProviderCapabilities.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
@@ -416,7 +416,7 @@ const makeCodexAdapter = (capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>) =
   ({
     instanceId,
     driver,
-    getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+    getCapabilities: () => Effect.succeed(FullProviderCapabilitiesV2),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
@@ -429,7 +429,7 @@ const makeCodexAdapter = (capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>) =
           status: "ready",
           cwd: sessionInput.runtimePolicy.cwd ?? process.cwd(),
           model: codexModelSelection.model,
-          capabilities: CodexProviderCapabilitiesV2,
+          capabilities: FullProviderCapabilitiesV2,
           createdAt: now,
           updatedAt: now,
           lastError: null,

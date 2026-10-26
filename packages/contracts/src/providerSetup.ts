@@ -1,34 +1,17 @@
 import * as Schema from "effect/Schema";
 
 import {
-  EnvironmentId,
   ForwardCompatibleArray,
   ForwardCompatibleOptional,
   IsoDateTime,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const ProviderSetupInput = Schema.Struct({
   instanceId: ProviderInstanceId,
 });
 export type ProviderSetupInput = typeof ProviderSetupInput.Type;
-
-export const CodexAuthCallbackInput = Schema.Struct({
-  authorizationUrl: Schema.String.check(Schema.isMaxLength(16_384)),
-  returnUrl: Schema.String.check(Schema.isMaxLength(4_096)),
-  environmentId: EnvironmentId,
-  instanceId: ProviderInstanceId,
-  flowId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
-});
-export type CodexAuthCallbackInput = typeof CodexAuthCallbackInput.Type;
-export const CodexAuthCallbackState = Schema.Union([
-  Schema.Struct({ phase: Schema.Literal("ready") }),
-  Schema.Struct({
-    phase: Schema.Literal("finished"),
-    callbackUrl: Schema.String.check(Schema.isMaxLength(16_384)),
-  }),
-]);
 
 const SetupOperationId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 
@@ -152,37 +135,6 @@ export const ProviderAuthCancelInput = Schema.Struct({
 });
 export type ProviderAuthCancelInput = typeof ProviderAuthCancelInput.Type;
 
-const ByteCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
-
-export const ProviderInstallState = Schema.Struct({
-  driver: ProviderDriverKind,
-  operationId: Schema.NullOr(SetupOperationId),
-  phase: Schema.Literals([
-    "idle",
-    "downloading",
-    "extracting",
-    "verifying",
-    "succeeded",
-    "failed",
-    "cancelled",
-  ]),
-  downloadedBytes: ByteCount,
-  totalBytes: Schema.NullOr(ByteCount),
-  version: Schema.NullOr(TrimmedNonEmptyString),
-  installedVersion: Schema.NullOr(TrimmedNonEmptyString),
-  executablePath: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
-  source: Schema.optionalKey(Schema.NullOr(Schema.Literals(["managed", "local"]))),
-  canRemove: Schema.Boolean,
-  message: Schema.NullOr(Schema.String),
-});
-export type ProviderInstallState = typeof ProviderInstallState.Type;
-
-export const ProviderInstallCancelInput = Schema.Struct({
-  instanceId: ProviderInstanceId,
-  operationId: SetupOperationId,
-});
-export type ProviderInstallCancelInput = typeof ProviderInstallCancelInput.Type;
-
 /** Safe setup failure text. Never include OAuth codes, URLs, or native token data. */
 export class ProviderSetupError extends Schema.TaggedError<ProviderSetupError>()(
   "ProviderSetupError",
@@ -197,55 +149,3 @@ export class ProviderSetupError extends Schema.TaggedError<ProviderSetupError>()
     return this.detail;
   }
 }
-
-export const ChatGptReconnectProfile = Schema.Struct({
-  clientId: Schema.String.check(Schema.isPattern(/^oaiapp_[\w-]+$/u)),
-  subject: Schema.optionalKey(Schema.String),
-  email: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  redirectUri: Schema.optionalKey(
-    Schema.String.check(
-      Schema.isPattern(/^http:\/\/(?:127\.0\.0\.1|localhost):[1-9]\d{0,4}\/auth\/callback$/u),
-    ),
-  ),
-  connectionLabel: Schema.optionalKey(Schema.String),
-  sharingEnabled: Schema.optionalKey(Schema.Boolean),
-  idTokenHint: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(16_384))),
-});
-export type ChatGptReconnectProfile = typeof ChatGptReconnectProfile.Type;
-export const ChatGptTransferredProfile = Schema.Struct({
-  registration: ChatGptReconnectProfile,
-  credentials: Schema.Struct({
-    clientId: Schema.String,
-    accessToken: Schema.NonEmptyString.check(Schema.isMaxLength(16_384)),
-    refreshToken: Schema.NullOr(Schema.String.check(Schema.isMaxLength(16_384))),
-    idToken: Schema.NonEmptyString.check(Schema.isMaxLength(16_384)),
-    issuer: Schema.String,
-    expiresAt: Schema.Finite,
-    earliestRefreshAt: Schema.NullOr(Schema.Finite),
-    scopes: Schema.Array(Schema.String),
-    subject: Schema.String,
-    email: Schema.NullOr(Schema.String),
-  }),
-});
-export type ChatGptTransferredProfile = typeof ChatGptTransferredProfile.Type;
-export const ChatGptReconnectProfileInput = Schema.Struct({
-  instanceId: ProviderInstanceId,
-  methodId: Schema.String,
-});
-export const ChatGptImportProfileInput = Schema.Struct({
-  instanceId: ProviderInstanceId,
-  profile: ChatGptTransferredProfile,
-});
-export const ChatGptHandoffInput = Schema.Struct({
-  instanceId: ProviderInstanceId,
-  environmentId: EnvironmentId,
-  attemptId: Schema.String.check(Schema.isMaxLength(128)),
-  returnUrl: Schema.String.check(Schema.isMaxLength(4_096)),
-  profile: Schema.NullOr(ChatGptReconnectProfile),
-});
-export type ChatGptHandoffInput = typeof ChatGptHandoffInput.Type;
-export const ChatGptHandoffState = Schema.Union([
-  Schema.Struct({ phase: Schema.Literal("auth"), state: ProviderAuthState }),
-  Schema.Struct({ phase: Schema.Literal("finished"), profile: ChatGptTransferredProfile }),
-]);
-export type ChatGptHandoffState = typeof ChatGptHandoffState.Type;

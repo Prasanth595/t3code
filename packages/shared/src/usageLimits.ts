@@ -30,7 +30,7 @@ export function usesChatGptSharing(provider: ServerProvider | null | undefined):
   return provider?.auth.status === "authenticated" && provider.auth.subscriptionSharing === true;
 }
 
-export const CURSOR_USAGE_WINDOWS = [
+const CURSOR_USAGE_WINDOWS = [
   {
     id: "totalPercentUsed",
     label: "Overall",

@@ -185,10 +185,10 @@ describe("applyProviderInstanceSettings", () => {
 
   it("uses the driver default for an unconfigured built-in default instance", () => {
     const entries = deriveProviderInstanceEntries([
-      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex", enabled: false }),
-      provider({ provider: ProviderDriverKind.make("grok"), instanceId: "grok", enabled: true }),
+      provider({ provider: ProviderDriverKind.make("pi"), instanceId: "pi", enabled: false }),
+      provider({ provider: ProviderDriverKind.make("pi"), instanceId: "pi_work", enabled: true }),
     ]);
-    const [codex, grok] = applyProviderInstanceSettings(
+    const [pi, piWork] = applyProviderInstanceSettings(
       entries,
       {
         providerInstances: {},
@@ -197,43 +197,12 @@ describe("applyProviderInstanceSettings", () => {
       null,
     );
 
-    expect(codex?.enabled).toBe(true);
-    expect(grok?.enabled).toBe(false);
+    expect(pi?.enabled).toBe(true);
+    expect(piWork?.enabled).toBe(false);
   });
 });
 
 describe("deriveProviderEntriesByEnvironment", () => {
-  it("resolves registry branding from each environment's settings", () => {
-    const instanceId = "custom-acp";
-    const snapshot = provider({ provider: ProviderDriverKind.make("acpRegistry"), instanceId });
-    const byEnvironment = deriveProviderEntriesByEnvironment(
-      ["devin", "other-agent"].map(
-        (agentId) =>
-          [
-            agentId,
-            [snapshot],
-            {
-              providerInstances: {
-                [instanceId]: {
-                  driver: ProviderDriverKind.make("acpRegistry"),
-                  enabled: true,
-                  config: { agentId, registryIconUrl: `https://example.com/${agentId}.svg` },
-                },
-              },
-              projectSettingsOverrides: {},
-            },
-          ] as const,
-      ),
-    );
-    expect(byEnvironment.get("devin")?.get(instanceId)?.acpRegistryAgentId).toBe("devin");
-    expect(byEnvironment.get("devin")?.get(instanceId)?.acpRegistryIconUrl).toBe(
-      "https://example.com/devin.svg",
-    );
-    expect(byEnvironment.get("other-agent")?.get(instanceId)?.acpRegistryAgentId).toBe(
-      "other-agent",
-    );
-  });
-
   // regression: #7292 sidebar provider icons resolved from the wrong environment
   it("keeps same-id default instances distinct per environment", () => {
     const byEnvironment = deriveProviderEntriesByEnvironment([
@@ -550,58 +519,5 @@ describe("resolveDefaultProviderModelSelection", () => {
         null,
       ),
     ).toBeNull();
-  });
-});
-
-describe("provider icon metadata", () => {
-  it("clears stale registry branding when an instance switches to a local command", () => {
-    const instanceId = ProviderInstanceId.make("custom-acp");
-    const driver = ProviderDriverKind.make("acpRegistry");
-    const iconUrl = "https://cdn.agentclientprotocol.com/registry/icons/swe-agent.svg";
-    const snapshots = deriveProviderInstanceEntries([
-      { ...provider({ provider: driver, instanceId }), iconUrl },
-    ]);
-    const registryConfig = { agentId: "swe-agent", registryIconUrl: iconUrl };
-    const brandedEntries = applyProviderInstanceSettings(
-      snapshots,
-      {
-        providerInstances: { [instanceId]: { driver, enabled: true, config: registryConfig } },
-        projectSettingsOverrides: {},
-      },
-      null,
-    );
-    expect(brandedEntries[0]?.acpRegistryAgentId).toBe("swe-agent");
-    expect(brandedEntries[0]?.acpRegistryIconUrl).toBe(iconUrl);
-
-    const [localEntry] = applyProviderInstanceSettings(
-      brandedEntries,
-      {
-        providerInstances: {
-          [instanceId]: {
-            driver,
-            enabled: false,
-            config: { ...registryConfig, source: "local", commandPath: "dsh" },
-          },
-        },
-        projectSettingsOverrides: {},
-      },
-      null,
-    );
-    expect(localEntry?.acpRegistryAgentId).toBeUndefined();
-    expect(localEntry?.acpRegistryIconUrl).toBeUndefined();
-    expect(localEntry?.enabled).toBe(false);
-    expect(localEntry?.snapshot).toBe(snapshots[0]?.snapshot);
-
-    const [restoredEntry] = applyProviderInstanceSettings(
-      localEntry ? [localEntry] : [],
-      {
-        providerInstances: { [instanceId]: { driver, enabled: true, config: registryConfig } },
-        projectSettingsOverrides: {},
-      },
-      null,
-    );
-    expect(restoredEntry?.acpRegistryAgentId).toBe("swe-agent");
-    expect(restoredEntry?.acpRegistryIconUrl).toBe(iconUrl);
-    expect(restoredEntry?.enabled).toBe(true);
   });
 });

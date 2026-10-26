@@ -26,7 +26,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { FullProviderCapabilitiesV2 } from "./testkit/testProviderCapabilities.ts";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
@@ -41,7 +41,7 @@ const modelSelection = { instanceId, model: "gpt-5.1-codex" };
 const adapter = {
   instanceId,
   driver: ProviderDriverKind.make("codex"),
-  getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+  getCapabilities: () => Effect.succeed(FullProviderCapabilitiesV2),
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
   openSession: () => Effect.die("No provider process needed for metadata controls"),
 } as ProviderAdapter.ProviderAdapterV2["Service"];
@@ -93,7 +93,7 @@ it.effect(
           status: "ready",
           cwd: "/repo",
           model: modelSelection.model,
-          capabilities: CodexProviderCapabilitiesV2,
+          capabilities: FullProviderCapabilitiesV2,
           createdAt: now,
           updatedAt: now,
           lastError: null,
@@ -332,7 +332,7 @@ it.effect(
           status: "ready",
           cwd: "/repo",
           model: "gpt-6",
-          capabilities: CodexProviderCapabilitiesV2,
+          capabilities: FullProviderCapabilitiesV2,
           createdAt: now,
           updatedAt: now,
           lastError: null,

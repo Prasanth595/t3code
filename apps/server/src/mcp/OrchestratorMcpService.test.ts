@@ -27,7 +27,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
-import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import { FullProviderCapabilitiesV2 } from "../orchestration-v2/testkit/testProviderCapabilities.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -1732,7 +1732,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             [codexInstanceId, altInstanceId].map((instanceId) => ({
               instanceId,
               driver,
-              getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+              getCapabilities: () => Effect.succeed(FullProviderCapabilitiesV2),
               planSelectionTransition: () =>
                 Effect.succeed({ type: "apply_on_next_turn" as const }),
               openSession: () =>

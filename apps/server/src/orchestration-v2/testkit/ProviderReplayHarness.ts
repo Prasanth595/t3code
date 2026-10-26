@@ -67,7 +67,7 @@ import {
   type ProviderReplayGate,
 } from "@t3tools/provider-testing/replayGate";
 
-export function makeReplayServerConfig(
+function makeReplayServerConfig(
   scenario: string,
 ): Effect.Effect<
   ServerConfig.ServerConfig["Service"],
@@ -225,7 +225,7 @@ export function runOrchestratorV2ProviderReplayScenario<
   }).pipe(Effect.provide(layer));
 }
 
-export function layerProviderReplay<Transcript extends ProviderReplayTranscript, Error>(
+function layerProviderReplay<Transcript extends ProviderReplayTranscript, Error>(
   scenario: OrchestratorV2ProviderReplayScenario<Transcript>,
   harness: OrchestratorV2ProviderReplayHarness<Transcript, Error>,
   options: {

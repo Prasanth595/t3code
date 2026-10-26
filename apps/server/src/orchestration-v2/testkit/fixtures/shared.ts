@@ -37,75 +37,10 @@ export const PROVIDER_THREAD_RESUME_FIRST_PROMPT =
   "Respond with exactly: provider thread resume fixture first turn complete";
 export const PROVIDER_THREAD_RESUME_SECOND_PROMPT =
   "Using the conversation history available in this resumed thread, first repeat the exact final answer you gave in the previous turn. Then on a new line write exactly: provider thread resume fixture second turn complete";
-export const TOOL_CALL_READ_ONLY_WORKSPACE_ROOT = "/tmp/claude-replay-tool_call_read_only";
-export const TOOL_CALL_READ_ONLY_PROMPT = `Read ${TOOL_CALL_READ_ONLY_WORKSPACE_ROOT}/package.json and ${TOOL_CALL_READ_ONLY_WORKSPACE_ROOT}/tsconfig.json, then answer exactly: read only tool fixture complete`;
-export const CLAUDE_LOCAL_BASH_TASK_PROMPT =
-  "Run a local Bash typecheck command, then answer exactly: claude local bash task fixture complete";
-export const CLAUDE_RESULT_IS_ERROR_PROMPT = "Say hello before the credentials expire.";
-export const CLAUDE_RESULT_IS_ERROR_FOLLOW_UP = "Try again now that auth is back.";
-export const TOOL_CALL_WRITE_PROMPT =
-  "Create or overwrite .codex-probe-write-action.txt with exactly this text: codex app-server approval fixture. Use a local shell command or file edit only, then briefly report what happened. Do not read package metadata, use GitHub, use web, or use MCP.";
 export const MESSAGE_STEERING_INITIAL_PROMPT =
   "Respond with exactly: steering fixture initial response";
-export const SUBAGENT_PROMPT =
-  "Spawn 2 subagents, one to read package.json and one to read tsconfig.json";
-export const SUBAGENT_V2_NESTED_PROMPT =
-  "Spawn one subagent and tell it to spawn its own subagent, which must in turn spawn one more subagent whose only task is to reply with exactly: Hello. Each agent waits for its child and replies with exactly what the child said. Wait for your subagent, then reply with exactly what it said.";
-export const SUBAGENT_V2_PROMPT =
-  "Spawn one subagent whose only task is to reply with exactly: Hello. Wait for it to finish, then reply with exactly what it said.";
-export const SUBAGENT_V2_APPROVAL_PROMPT =
-  "Do not run any commands yourself. Spawn one subagent whose only task is to run this exact shell command: printf 'subagent approval fixture' > subagent-approval.txt and then reply with exactly: Written. Wait for it to finish, then reply with exactly what it said.";
-export const SUBAGENT_V2_NESTED_APPROVAL_PROMPT =
-  "Do not run any commands yourself. Spawn one subagent and tell it not to run any commands itself but to spawn its own subagent, whose only task is to run this exact shell command: printf 'nested approval fixture' > nested-approval.txt and then reply with exactly: Written. Each agent waits for its child and replies with exactly what the child said. Wait for your subagent, then reply with exactly what it said.";
-export const OPENCODE_SUBAGENT_PROMPT =
-  "Use the task tool exactly once. Delegate to the general subagent with this prompt: Respond exactly CHILD_OK. After the task completes, respond exactly PARENT_OK.";
-export const SUBAGENT_CONTINUE_PROMPT =
-  "Spawn one subagent and have it reply exactly: initial subagent response";
-export const SUBAGENT_CONTINUE_PARENT_PROMPT =
-  "Have the same subagent you spawned earlier reply exactly: continued subagent response";
-export const SUBAGENT_CONTINUE_CHILD_PROMPT = "Reply exactly: continued subagent response";
-export const OPENCODE2_SIMPLE_PROMPT =
-  "Think carefully step by step about whether 391 is prime, showing your reasoning, then answer in one short sentence.";
-export const OPENCODE2_TOOL_CALL_PROMPT =
-  "Use the read tool to read hello.txt, then run the shell command `echo TOOL_OK` with the bash tool, then reply DONE.";
-export const OPENCODE2_INTERRUPT_PROMPT =
-  "Run the shell command `sleep 60 && echo LATE` with the bash tool, then reply DONE.";
-export const OPENCODE2_PERMISSION_PROMPT =
-  "Run the shell command `echo FIRST` with the bash tool. After it completes, run `echo SECOND` with the bash tool. Then reply with what happened.";
-export const OPENCODE2_STEER_PROMPT =
-  "Run the shell command `sleep 12 && echo A` with the bash tool, then reply DONE_A.";
-export const OPENCODE2_STEER_TEXT = "Also mention the word STEERED in your final reply.";
-export const OPENCODE2_QUEUED_PROMPT = "Reply exactly QUEUED_B.";
-export const OPENCODE2_CANCELLED_PROMPT = "Reply exactly QUEUED_C.";
-export const OPENCODE2_REVERT_FIRST_PROMPT =
-  "Create a file named reverted.txt containing the word ALPHA using the write tool, then reply DONE.";
-export const OPENCODE2_REVERT_SECOND_PROMPT =
-  "Overwrite reverted.txt so it contains the word BETA using the write tool, then reply DONE.";
-export const OPENCODE2_QUESTION_PROMPT =
-  "Before doing anything, use the question tool to ask me which color I prefer, offering the options red and blue. After I answer, reply with only the chosen color.";
-export const OPENCODE2_SUBAGENT_PROMPT =
-  "Use the subagent tool to delegate to the explore subagent with the prompt: 'List the files in the current directory and report their names.' Wait for it, then summarize its answer in one line.";
-export const OPENCODE2_NESTED_BACKGROUND_PROMPT =
-  "Use the subagent tool (foreground, do not set background) to delegate to the general subagent with this exact prompt: 'Use the subagent tool with background set to true to delegate to the general subagent with the prompt: Run the shell command `sleep 25` with the shell tool, then reply exactly GRANDCHILD_OK. As soon as it is launched, reply exactly MIDDLE_OK and end your turn without waiting for it.' Wait for that subagent to return, then reply exactly ROOT_OK.";
-export const OPENCODE2_BACKGROUND_PROMPT =
-  "Use the subagent tool with background enabled to delegate to the general subagent with the prompt: 'Run the shell command `sleep 20` with the bash tool and then reply exactly CHILD_OK.' As soon as it is launched, reply exactly PARENT_OK and end your turn without waiting for it.";
-export const OPENCODE2_COMPACTION_FIRST_PROMPT = "Remember the codeword PAPAYA. Reply OK.";
-export const OPENCODE2_COMPACTION_RECALL_PROMPT = "What was the codeword? One word.";
-export const OPENCODE2_RESTART_PROMPT =
-  "Run the shell command `sleep 25 && echo RESUMED` with the bash tool, then reply with its output.";
-export const OPENCODE2_RESTART_RECALL_PROMPT =
-  "What did I last ask you to run? Answer in one short sentence.";
-export const OPENCODE2_COMMAND_PROMPT = "/hello WORLD";
-export const OPENCODE2_SKILL_PROMPT = "Use $greet to say hi in three words.";
-export const TURN_INTERRUPT_PROMPT =
-  "Do not answer immediately. First run the local shell command `sleep 30`, then respond with exactly: interrupt fixture should not finish naturally.";
 export const TURN_INTERRUPT_MID_TOOL_PROMPT =
   "Run this exact local command: `node -e \"console.log('interrupt fixture tool started'); setTimeout(() => {}, 30000)\"`. Do not answer until it completes, then respond exactly: interrupt fixture should not finish naturally.";
-const COMMAND_OUTPUT_STREAMING_COMMAND =
-  "for i in 1 2 3 4; do printf '\\033[32mstream line %s\\033[0m\\n' $i; sleep 1; done; printf 'progress 50%%\\rprogress 100%%\\n'";
-export const COMMAND_OUTPUT_STREAMING_PROMPT = `Run this exact shell command in the foreground and wait for it to finish: \`${COMMAND_OUTPUT_STREAMING_COMMAND}\`. Then respond exactly: command output fixture complete`;
-export const TURN_INTERRUPT_RECOVERY_PROMPT =
-  "Respond with exactly: interrupt recovery fixture complete";
 export const MESSAGE_STEERING_STEER_PROMPT =
   "Actually, respond with exactly: steering fixture observed";
 export const THREAD_ROLLBACK_FIRST_PROMPT =
@@ -113,89 +48,6 @@ export const THREAD_ROLLBACK_FIRST_PROMPT =
 export const THREAD_ROLLBACK_SECOND_PROMPT =
   "Respond with exactly: rollback fixture second turn complete";
 export const THREAD_ROLLBACK_AFTER_PROMPT = "Repeat the conversation verbatim.";
-export const THREAD_FORK_NATIVE_SOURCE_PROMPT =
-  "Respond with the following text: source fork seed ok";
-export const THREAD_FORK_NATIVE_TARGET_PROMPT = "Respond with the following text: fork native ok";
-const THREAD_FORK_NATIVE_CONTINUE_SOURCE_MARKER = "source-marker-7Q9V";
-const THREAD_FORK_NATIVE_CONTINUE_FORK_MARKER = "fork-marker-2K4M";
-export const THREAD_FORK_NATIVE_CONTINUE_SOURCE_PROMPT = `Remember the opaque marker ${THREAD_FORK_NATIVE_CONTINUE_SOURCE_MARKER} for later in this conversation. Respond with exactly: source marker stored`;
-export const THREAD_FORK_NATIVE_CONTINUE_FIRST_PROMPT = `Remember the second opaque marker ${THREAD_FORK_NATIVE_CONTINUE_FORK_MARKER} for later in this conversation. Respond with exactly: fork marker stored`;
-export const THREAD_FORK_NATIVE_CONTINUE_SECOND_PROMPT =
-  "Return the two opaque markers previously provided in chronological order, separated by a single | character. Respond with only the markers and separator.";
-const THREAD_FORK_NATIVE_SIBLINGS_SOURCE_MARKER = "sibling-source-8R3D";
-const THREAD_FORK_NATIVE_SIBLINGS_FIRST_MARKER = "sibling-first-5L2P";
-const THREAD_FORK_NATIVE_SIBLINGS_SECOND_MARKER = "sibling-second-9N6C";
-export const THREAD_FORK_NATIVE_SIBLINGS_SOURCE_PROMPT = `Remember the opaque marker ${THREAD_FORK_NATIVE_SIBLINGS_SOURCE_MARKER} for later in this conversation. Respond with exactly: sibling source stored`;
-export const THREAD_FORK_NATIVE_SIBLINGS_FIRST_PROMPT = `Remember the fork-local marker ${THREAD_FORK_NATIVE_SIBLINGS_FIRST_MARKER}. Return the source marker followed by this marker, separated by |. Respond with only the markers and separator.`;
-export const THREAD_FORK_NATIVE_SIBLINGS_SECOND_PROMPT = `Remember the fork-local marker ${THREAD_FORK_NATIVE_SIBLINGS_SECOND_MARKER}. Return the source marker followed by this marker, separated by |. Respond with only the markers and separator.`;
-const THREAD_MERGE_BACK_SOURCE_MARKER = "merge-source-4H8Q";
-const THREAD_MERGE_BACK_FORK_MARKER = "merge-fork-7T2W";
-export const THREAD_MERGE_BACK_SOURCE_PROMPT = `Remember the opaque marker ${THREAD_MERGE_BACK_SOURCE_MARKER} for later in this conversation. Respond with exactly: merge source stored`;
-export const THREAD_MERGE_BACK_FORK_PROMPT = `Remember the fork-local marker ${THREAD_MERGE_BACK_FORK_MARKER}. Respond with exactly: merge fork stored`;
-export const THREAD_MERGE_BACK_HANDOFF_PROMPT = [
-  "Context handoff (merge_back / fork_delta_summary):",
-  "Merge-back context from forked conversation.",
-  "",
-  "Fork delta:",
-  `- User introduced opaque marker ${THREAD_MERGE_BACK_FORK_MARKER}.`,
-  "- Assistant confirmed: merge fork stored",
-  "",
-  "User message:",
-  "Retain the transferred fork marker for later. Respond with exactly: merge delta stored",
-].join("\n");
-export const THREAD_MERGE_BACK_RECALL_PROMPT =
-  "Return the source marker followed by the transferred fork marker, separated by a single | character. Respond with only the markers and separator.";
-const THREAD_MERGE_BACK_SIBLINGS_SOURCE_MARKER = "merge-sibling-source-3C7K";
-const THREAD_MERGE_BACK_SIBLINGS_FIRST_MARKER = "merge-sibling-first-6V2J";
-const THREAD_MERGE_BACK_SIBLINGS_SECOND_MARKER = "merge-sibling-second-9X5B";
-export const THREAD_MERGE_BACK_SIBLINGS_SOURCE_PROMPT = `Remember the opaque marker ${THREAD_MERGE_BACK_SIBLINGS_SOURCE_MARKER} for later in this conversation. Respond with exactly: merge sibling source stored`;
-export const THREAD_MERGE_BACK_SIBLINGS_FIRST_FORK_PROMPT = `Remember the fork-local marker ${THREAD_MERGE_BACK_SIBLINGS_FIRST_MARKER}. Respond with exactly: first merge sibling stored`;
-export const THREAD_MERGE_BACK_SIBLINGS_SECOND_FORK_PROMPT = `Remember the fork-local marker ${THREAD_MERGE_BACK_SIBLINGS_SECOND_MARKER}. Respond with exactly: second merge sibling stored`;
-export const THREAD_MERGE_BACK_SIBLINGS_FIRST_HANDOFF_PROMPT = [
-  "Context handoff (merge_back / fork_delta_summary):",
-  "Merge-back context from first forked conversation.",
-  "",
-  "Fork delta:",
-  `- User introduced opaque marker ${THREAD_MERGE_BACK_SIBLINGS_FIRST_MARKER}.`,
-  "- Assistant confirmed: first merge sibling stored",
-  "",
-  "User message:",
-  "Retain the first transferred marker for later. Respond with exactly: first merge delta stored",
-].join("\n");
-export const THREAD_MERGE_BACK_SIBLINGS_SECOND_HANDOFF_PROMPT = [
-  "Context handoff (merge_back / fork_delta_summary):",
-  "Merge-back context from second forked conversation.",
-  "",
-  "Fork delta:",
-  `- User introduced opaque marker ${THREAD_MERGE_BACK_SIBLINGS_SECOND_MARKER}.`,
-  "- Assistant confirmed: second merge sibling stored",
-  "",
-  "User message:",
-  "Retain the second transferred marker for later. Respond with exactly: second merge delta stored",
-].join("\n");
-export const THREAD_MERGE_BACK_SIBLINGS_RECALL = [
-  THREAD_MERGE_BACK_SIBLINGS_SOURCE_MARKER,
-  THREAD_MERGE_BACK_SIBLINGS_FIRST_MARKER,
-  THREAD_MERGE_BACK_SIBLINGS_SECOND_MARKER,
-].join("|");
-export const THREAD_MERGE_BACK_SIBLINGS_RECALL_PROMPT =
-  "Return the source marker followed by both transferred fork markers in merge order, separated by single | characters. Respond with only the markers and separators.";
-export const THREAD_FORK_NATIVE_PRIOR_TURN_ALPHA_PROMPT =
-  "For this fork-boundary fixture, respond with exactly: fork boundary alpha";
-export const THREAD_FORK_NATIVE_PRIOR_TURN_BETA_PROMPT =
-  "For this fork-boundary fixture, respond with exactly: fork boundary beta";
-export const THREAD_FORK_NATIVE_PRIOR_TURN_REPEAT_PROMPT =
-  "Repeat the user-visible conversation so far verbatim. Include only user and assistant messages. Do not include hidden system/developer content.";
-export const TODO_LIST_PROMPT =
-  "Use the update_plan tool to track exactly three steps: inspect package.json, inspect tsconfig.json, report completion. Then read package.json and tsconfig.json, and answer exactly: todo list fixture complete";
-export const PLAN_QUESTIONS_PROMPT =
-  "Use request_user_input to ask one multiple-choice clarifying question about whether this fixture should prefer strict schemas or UI flexibility. After receiving the answer, respond exactly: plan questions fixture complete";
-export const PROPOSED_PLAN_PROMPT =
-  "Create a short implementation plan for adding deterministic replay fixtures. Do not ask questions. Present the final plan in a proposed plan block.";
-export const WEB_SEARCH_PROMPT =
-  "Search the web for FIFA World Cup ticket pricing, then answer exactly: web search fixture complete";
-export const SKILL_INVOCATION_PROMPT = "$review README.md";
-export const SKILL_INVOCATION_CURSOR_MESSAGE = "/review README.md";
 
 export type OrchestratorFixtureInputStep =
   | {
@@ -328,101 +180,10 @@ export interface FixtureIds {
   readonly projectId: ProjectId;
 }
 
-export const CODEX_MODEL_SELECTION = {
-  instanceId: ProviderInstanceId.make("codex"),
-  model: "gpt-6-luna",
-} satisfies ModelSelection;
-
-export const CLAUDE_MODEL_SELECTION = {
-  instanceId: ProviderInstanceId.make("claudeAgent"),
-  model: "claude-sonnet-4-6",
-} satisfies ModelSelection;
-
-export const CURSOR_MODEL_SELECTION = {
-  instanceId: ProviderInstanceId.make("cursor"),
-  model: "composer-2.5",
-} satisfies ModelSelection;
-
-export const MUSE_MODEL_SELECTION = {
-  instanceId: ProviderInstanceId.make("muse"),
-  model: "muse-spark-1.3-contributor",
-} satisfies ModelSelection;
-
-export const GROK_MODEL_SELECTION = {
-  instanceId: ProviderInstanceId.make("grok"),
-  model: "grok-build",
-} satisfies ModelSelection;
-
-export const OPENCODE_MODEL_SELECTION = {
-  instanceId: ProviderInstanceId.make("opencode"),
-  model: "openai/gpt-5.4-mini",
-  options: [{ id: "agent", value: "build" }],
-} satisfies ModelSelection;
-
-export const OPENCODE2_MODEL_SELECTION = {
-  instanceId: ProviderInstanceId.make("opencode"),
-  model: "opencode/space-bunny-free",
-  options: [{ id: "variant", value: "high" }],
-} satisfies ModelSelection;
-
 export const PI_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("pi"),
   model: "openrouter/deepseek/deepseek-v4-flash",
 } satisfies ModelSelection;
-
-export const ACP_REGISTRY_MODEL_SELECTION = {
-  instanceId: ProviderInstanceId.make("acpRegistry"),
-  model: "default",
-} satisfies ModelSelection;
-
-export const READ_ONLY_ON_REQUEST_POLICY = {
-  approvalPolicy: "on-request",
-  sandboxPolicy: {
-    type: "readOnly",
-    access: { type: "fullAccess" },
-    networkAccess: false,
-  },
-} as const satisfies RuntimePolicyV2Override;
-
-export const READ_ONLY_NEVER_POLICY = {
-  approvalPolicy: "never",
-  sandboxPolicy: {
-    type: "readOnly",
-    access: { type: "fullAccess" },
-    networkAccess: false,
-  },
-} as const satisfies RuntimePolicyV2Override;
-
-export const WORKSPACE_NEVER_POLICY = {
-  approvalPolicy: "never",
-  sandboxPolicy: {
-    type: "workspaceWrite",
-    writableRoots: [],
-    readOnlyAccess: { type: "fullAccess" },
-    networkAccess: false,
-  },
-} as const satisfies RuntimePolicyV2Override;
-
-export const RESTRICTED_GRANULAR_POLICY = {
-  approvalPolicy: {
-    granular: {
-      mcp_elicitations: true,
-      request_permissions: true,
-      rules: true,
-      sandbox_approval: true,
-      skill_approval: true,
-    },
-  },
-  sandboxPolicy: {
-    type: "readOnly",
-    access: {
-      type: "restricted",
-      includePlatformDefaults: false,
-      readableRoots: [],
-    },
-    networkAccess: false,
-  },
-} as const satisfies RuntimePolicyV2Override;
 
 function createThreadCommand(input: {
   readonly commandId: CommandId;
@@ -1114,29 +875,6 @@ export function assertSemanticProjectionIntegrity(projection: OrchestrationV2Thr
   assertRuntimeRequestsReferenceProjection(projection);
 }
 
-export function assertRunProviderTurnCardinality(input: {
-  readonly projection: OrchestrationV2ThreadProjection;
-  readonly rootRunCount: number;
-  readonly providerTurnCountAtLeast?: number;
-}) {
-  assert.lengthOf(input.projection.runs, input.rootRunCount);
-  assert.isAtLeast(
-    input.projection.providerTurns.length,
-    input.providerTurnCountAtLeast ?? input.rootRunCount,
-  );
-}
-
-export function assertNoExtraAppRunsForProviderChildren(input: {
-  readonly projection: OrchestrationV2ThreadProjection;
-  readonly expectedAppRuns: number;
-}) {
-  assert.lengthOf(
-    input.projection.runs,
-    input.expectedAppRuns,
-    "provider child activity must not create additional app runs",
-  );
-}
-
 export function assertProviderNativeSubagentRootTurns(result: OrchestratorV2ScenarioResult) {
   const activity = (statuses: ReadonlyArray<OrchestrationV2ExecutionNode["status"]>) =>
     statuses
@@ -1307,37 +1045,6 @@ export function assertRuntimeRequestCounts(
   }
 }
 
-function countReplayLabelsWithPrefix(transcript: ProviderReplayTranscript, prefix: string): number {
-  return transcript.entries.filter(
-    (entry) => entry.type !== "runtime_exit" && (entry.label?.startsWith(prefix) ?? false),
-  ).length;
-}
-
-export function assertReplayLabelPrefixCount(
-  transcript: ProviderReplayTranscript,
-  prefix: string,
-  expected: number,
-) {
-  assert.equal(countReplayLabelsWithPrefix(transcript, prefix), expected);
-}
-
-export function assertRuntimeRequestKinds(
-  projection: OrchestrationV2ThreadProjection,
-  expectedKinds: ReadonlyArray<string>,
-) {
-  assert.deepEqual(
-    projection.runtimeRequests.map((request) => request.kind),
-    expectedKinds,
-  );
-}
-
-export function assertAllRuntimeRequestsResolved(projection: OrchestrationV2ThreadProjection) {
-  assert.deepEqual(
-    projection.runtimeRequests.map((request) => request.status),
-    projection.runtimeRequests.map(() => "resolved"),
-  );
-}
-
 export function assertConversationMessageRoles(
   projection: OrchestrationV2ThreadProjection,
   expectedRoles: ReadonlyArray<string>,
@@ -1345,28 +1052,6 @@ export function assertConversationMessageRoles(
   assert.deepEqual(
     projection.messages.map((message) => message.role),
     expectedRoles,
-  );
-}
-
-export function assertNoAcpClientFileOrTerminalRequests(transcript: ProviderReplayTranscript) {
-  const frames = transcript.entries.flatMap((entry) =>
-    entry.type === "runtime_exit"
-      ? []
-      : [entry.frame as { method?: unknown; params?: { clientCapabilities?: unknown } }],
-  );
-  assert.deepInclude(
-    frames.find((frame) => frame.method === "initialize")?.params?.clientCapabilities ?? {},
-    { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
-    "T3 must not advertise client fs or terminals",
-  );
-  assert.deepEqual(
-    frames.flatMap((frame) =>
-      typeof frame.method === "string" && /^(fs|terminal)\//u.test(frame.method)
-        ? [frame.method]
-        : [],
-    ),
-    [],
-    "the agent must not route file or terminal work through T3",
   );
 }
 
@@ -1380,20 +1065,6 @@ export function assertUserMessagesInclude(
         (item) => item.type === "user_message" && item.text.includes(expectedText),
       ),
       `expected user input to include ${JSON.stringify(expectedText)}`,
-    );
-  }
-}
-
-function assertUserMessagesExclude(
-  projection: OrchestrationV2ThreadProjection,
-  rejectedTexts: ReadonlyArray<string>,
-) {
-  for (const rejectedText of rejectedTexts) {
-    assert.isFalse(
-      projection.turnItems.some(
-        (item) => item.type === "user_message" && item.text.includes(rejectedText),
-      ),
-      `expected user input to exclude ${JSON.stringify(rejectedText)}`,
     );
   }
 }
@@ -1435,13 +1106,5 @@ export function assertUserMessageInputIntents(
       .filter((item) => item.type === "user_message")
       .map((item) => item.inputIntent),
     expectedIntents,
-  );
-}
-
-export function backgroundNotifications(projection: OrchestrationV2ThreadProjection) {
-  return projection.turnItems.flatMap((item) =>
-    item.type === "notification"
-      ? [{ summary: item.summary, outcome: item.outcome, source: item.source }]
-      : [],
   );
 }

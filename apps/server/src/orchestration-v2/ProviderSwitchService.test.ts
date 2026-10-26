@@ -11,7 +11,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { FullProviderCapabilitiesV2 } from "./testkit/testProviderCapabilities.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { acpSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import * as ProviderSwitch from "./ProviderSwitchService.ts";
@@ -22,9 +22,9 @@ const currentInstanceId = ProviderInstanceId.make("codex_primary");
 const currentSessionId = ProviderSessionId.make("session_primary");
 const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
 const capabilitiesWithoutModelSwitch = {
-  ...CodexProviderCapabilitiesV2,
+  ...FullProviderCapabilitiesV2,
   sessions: {
-    ...CodexProviderCapabilitiesV2.sessions,
+    ...FullProviderCapabilitiesV2.sessions,
     supportsModelSwitchInSession: false,
   },
 };
@@ -238,7 +238,7 @@ it.effect.each(["stopped", "error"] as const)(
     Effect.gen(function* () {
       const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
       const result = yield* service.plan({
-        projection: deadNativeThreadProjection(deadStatus, CodexProviderCapabilitiesV2),
+        projection: deadNativeThreadProjection(deadStatus, FullProviderCapabilitiesV2),
         targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
       });
       assert.equal(result.transition.type, "switch_model_in_session");

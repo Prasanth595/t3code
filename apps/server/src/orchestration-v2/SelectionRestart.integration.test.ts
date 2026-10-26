@@ -24,7 +24,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
-import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { FullProviderCapabilitiesV2 } from "./testkit/testProviderCapabilities.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -47,11 +47,11 @@ const seedSelection = {
   instanceId: providerInstanceId,
   model: "seed-model",
 } satisfies ModelSelection;
-const pooledCapabilities: OrchestrationV2ProviderCapabilities = CodexProviderCapabilitiesV2;
+const pooledCapabilities: OrchestrationV2ProviderCapabilities = FullProviderCapabilitiesV2;
 const exclusiveCapabilities: OrchestrationV2ProviderCapabilities = {
-  ...CodexProviderCapabilitiesV2,
+  ...FullProviderCapabilitiesV2,
   sessions: {
-    ...CodexProviderCapabilitiesV2.sessions,
+    ...FullProviderCapabilitiesV2.sessions,
     supportsMultipleProviderThreadsPerSession: false,
     supportsModelSwitchInSession: false,
   },

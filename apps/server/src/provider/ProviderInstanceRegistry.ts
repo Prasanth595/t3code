@@ -249,7 +249,7 @@ const makeReconcile = <R>(input: {
     });
 };
 
-export const makeProviderInstanceRegistry = Effect.fn(
+const makeProviderInstanceRegistry = Effect.fn(
   "ProviderInstanceRegistry.makeProviderInstanceRegistry",
 )(function* <R>(input: {
   readonly drivers: ReadonlyArray<AnyProviderDriver<R>>;

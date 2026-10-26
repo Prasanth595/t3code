@@ -6,8 +6,6 @@ import type {
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 
-import type { ServerProviderDraft } from "./snapshotProbe.ts";
-
 export interface ProviderCatalogModel {
   readonly slug: string;
   readonly name: string;
@@ -36,22 +34,6 @@ export class ModelCatalog extends Context.Service<
     readonly refreshInBackground: Effect.Effect<void>;
   }
 >()("@t3tools/provider-core/server/ModelCatalog") {}
-
-export const catalogServerModel = (
-  catalog: ProviderCatalog,
-  entry: ProviderCatalogModel,
-): ServerProviderModel => ({
-  slug: entry.slug,
-  name: entry.name,
-  ...(entry.shortName ? { shortName: entry.shortName } : {}),
-  ...(entry.subProvider ? { subProvider: entry.subProvider } : {}),
-  ...(entry.aliases ? { aliases: entry.aliases } : {}),
-  ...(entry.badge ? { badge: entry.badge } : {}),
-  isCustom: false,
-  ...(catalog.defaultChatModel === entry.slug ? { isDefault: true } : {}),
-  ...(entry.status === "legacy" ? { isLegacy: true } : {}),
-  capabilities: entry.capabilities,
-});
 
 export interface CatalogMatching {
   readonly family?: (slug: string) => string;
@@ -107,20 +89,4 @@ export function applyCatalogDefault(
     }
     return model;
   });
-}
-
-export function applyModelCatalog(
-  draft: ServerProviderDraft,
-  catalog: ProviderCatalog | undefined,
-  matching?: CatalogMatching,
-): ServerProviderDraft {
-  const { updateRequiredModels: _previous, ...rest } = draft;
-  return {
-    ...rest,
-    models: applyCatalogDefault(
-      classifyCatalogModels(draft.models, catalog, matching),
-      catalog,
-      matching,
-    ),
-  };
 }

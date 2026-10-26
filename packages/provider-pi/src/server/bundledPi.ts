@@ -33,6 +33,40 @@ const resolveBundledPiCli = (): string | undefined => {
 
 let bundledPiCli: string | undefined | null = null;
 
+const readBundledPiCli = (): string | undefined => {
+  if (bundledPiCli === null) bundledPiCli = resolveBundledPiCli();
+  return bundledPiCli;
+};
+
+/**
+ * Writes `pi` launchers for the bundled CLI into `directory` so T3 terminals can run it.
+ * Returns the directory, or undefined when no bundled CLI ships with this build.
+ */
+export function writeBundledPiLaunchers(
+  directory: string,
+  platform: NodeJS.Platform,
+): string | undefined {
+  const cli = readBundledPiCli();
+  if (cli === undefined) return undefined;
+  NodeFS.mkdirSync(directory, { recursive: true });
+  const node = process.execPath;
+  if (platform === "win32") {
+    NodeFS.writeFileSync(
+      NodePath.join(directory, "pi.cmd"),
+      `@echo off\r\nset "ELECTRON_RUN_AS_NODE=1"\r\n"${node}" "${cli}" %*\r\n`,
+    );
+  } else {
+    const quote = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
+    const launcher = NodePath.join(directory, "pi");
+    NodeFS.writeFileSync(
+      launcher,
+      `#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec ${quote(node)} ${quote(cli)} "$@"\n`,
+    );
+    NodeFS.chmodSync(launcher, 0o755);
+  }
+  return directory;
+}
+
 /** Runs the Pi CLI shipped with T3 Code unless the user configured a custom binary path. */
 export function resolvePiCommand(
   binaryPath: string | undefined,
@@ -45,12 +79,12 @@ export function resolvePiCommand(
 } {
   const configured = binaryPath?.trim() || DEFAULT_PI_COMMAND;
   if (configured !== DEFAULT_PI_COMMAND) return { command: configured, args, env };
-  if (bundledPiCli === null) bundledPiCli = resolveBundledPiCli();
-  if (bundledPiCli === undefined) return { command: configured, args, env };
+  const cli = readBundledPiCli();
+  if (cli === undefined) return { command: configured, args, env };
   // Desktop hosts the server inside Electron; this keeps the child on Electron's Node runtime.
   return {
     command: process.execPath,
-    args: [bundledPiCli, ...args],
+    args: [cli, ...args],
     env: { ...env, ELECTRON_RUN_AS_NODE: "1" },
   };
 }

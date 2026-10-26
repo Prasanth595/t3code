@@ -71,69 +71,6 @@ function recordHasKeys(
   return value !== undefined && Object.keys(value).length > 0;
 }
 
-function normalizeCommandValue(value: unknown): string | undefined {
-  const direct = asTrimmedString(value);
-  if (direct) {
-    return direct;
-  }
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-  const parts: string[] = [];
-  for (const entry of value) {
-    const part = asTrimmedString(entry);
-    if (part !== undefined) {
-      parts.push(part);
-    }
-  }
-  return parts.length > 0 ? parts.join(" ") : undefined;
-}
-
-function stripTrailingExitCode(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-  const match = /^(?<output>[\s\S]*?)(?:\s*<exited with exit code \d+>)\s*$/iu.exec(trimmed);
-  const output = match?.groups?.output?.trim() ?? trimmed;
-  return output.length > 0 ? output : undefined;
-}
-
-function extractCommandFromTitle(title: string | undefined): string | undefined {
-  if (!title) {
-    return undefined;
-  }
-  const backtickMatch = /`([^`]+)`/u.exec(title);
-  return backtickMatch?.[1]?.trim() || undefined;
-}
-
-function extractToolCommand(data: Record<string, unknown> | undefined, title: string | undefined) {
-  const item = asRecord(data?.item);
-  const itemInput = asRecord(item?.input);
-  const itemResult = asRecord(item?.result);
-  const rawInput = asRecord(data?.rawInput);
-  const candidates = [
-    normalizeCommandValue(item?.command),
-    normalizeCommandValue(itemInput?.command),
-    normalizeCommandValue(itemResult?.command),
-    normalizeCommandValue(data?.command),
-    normalizeCommandValue(rawInput?.command),
-  ];
-  const direct = candidates.find((candidate) => candidate !== undefined);
-  if (direct) {
-    return direct;
-  }
-  const executable = asTrimmedString(rawInput?.executable);
-  const args = normalizeCommandValue(rawInput?.args);
-  if (executable && args) {
-    return `${executable} ${args}`;
-  }
-  if (executable) {
-    return executable;
-  }
-  return extractCommandFromTitle(title);
-}
-
 const PATH_KEYS = [
   "path",
   "filePath",
@@ -190,10 +127,6 @@ export function collectToolFilePaths(data: unknown): string[] {
   return paths;
 }
 
-function extractPrimaryPath(data: Record<string, unknown> | undefined): string | undefined {
-  return collectToolFilePaths(data)[0];
-}
-
 /** Preserve the first nonempty rawInput; later ACP updates often resend an empty object. */
 export function mergeToolActivityData(
   previous: unknown,
@@ -219,23 +152,6 @@ export function mergeToolActivityData(
     delete merged.rawInput;
   }
   return merged;
-}
-
-function normalizeEquivalentValue(value: string | undefined): string | undefined {
-  const trimmed = asTrimmedString(value);
-  if (!trimmed) {
-    return undefined;
-  }
-  return trimmed
-    .replace(/\s+/gu, " ")
-    .replace(/\s+(?:complete|completed|started)\s*$/iu, "")
-    .trim();
-}
-
-function isEquivalent(left: string | undefined, right: string | undefined): boolean {
-  const normalizedLeft = normalizeEquivalentValue(left)?.toLowerCase();
-  const normalizedRight = normalizeEquivalentValue(right)?.toLowerCase();
-  return normalizedLeft !== undefined && normalizedLeft === normalizedRight;
 }
 
 export type ToolActivityAction = "command" | "read" | "file_change" | "search" | "other";
@@ -403,66 +319,4 @@ export interface ToolActivityPresentationInput {
 export interface ToolActivityPresentation {
   readonly summary: string;
   readonly detail?: string | undefined;
-}
-
-export function deriveToolActivityPresentation(
-  input: ToolActivityPresentationInput,
-): ToolActivityPresentation {
-  const title = asTrimmedString(input.title);
-  const detail = stripTrailingExitCode(asTrimmedString(input.detail));
-  const fallbackSummary = asTrimmedString(input.fallbackSummary) ?? "Tool";
-  const data = asRecord(input.data);
-  const command = extractToolCommand(data, title);
-  const primaryPath = extractPrimaryPath(data);
-  const action = classifyToolActivity({
-    itemType: input.itemType,
-    title,
-    data,
-  });
-
-  if (action === "command") {
-    return {
-      summary: "Ran command",
-      ...(command ? { detail: command } : {}),
-    };
-  }
-
-  if (action === "read") {
-    if (primaryPath) {
-      return {
-        summary: formatReadToolLabel(primaryPath),
-      };
-    }
-    return {
-      summary: "Read file",
-    };
-  }
-
-  if (action === "file_change") {
-    return {
-      summary: "Changed files",
-      ...(primaryPath ? { detail: primaryPath } : {}),
-    };
-  }
-
-  if (action === "search") {
-    const searchLabel = formatSearchToolLabel(data);
-    if (searchLabel) {
-      return { summary: searchLabel };
-    }
-    return {
-      summary: "Searched files",
-    };
-  }
-
-  if (detail && !isEquivalent(detail, title) && !isEquivalent(detail, fallbackSummary)) {
-    return {
-      summary: title ?? fallbackSummary,
-      detail,
-    };
-  }
-
-  return {
-    summary: title ?? fallbackSummary,
-  };
 }

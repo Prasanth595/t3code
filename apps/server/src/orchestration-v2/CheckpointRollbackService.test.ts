@@ -34,7 +34,6 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
-import { resolveCodexRollbackTurnCount } from "./Adapters/CodexAdapterV2.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
@@ -346,6 +345,24 @@ it.effect.each([
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+// Counts the settled native turns a provider would drop to reach the rollback target.
+const countRollbackTurns = (input: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) => {
+  const settled = input.providerThreadTurns.filter(
+    (turn) =>
+      turn.nativeTurnRef !== null &&
+      (turn.status === "completed" ||
+        turn.status === "interrupted" ||
+        turn.status === "failed" ||
+        turn.status === "cancelled"),
+  );
+  if (input.target.type === "thread_start") return settled.length;
+  const target = input.target.providerTurn;
+  const boundary = input.providerThreadTurns.find((turn) => turn.id === target.id);
+  return boundary === undefined
+    ? 0
+    : settled.filter((turn) => turn.ordinal > boundary.ordinal).length;
+};
+
 const seedRollbackHistory = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const now = yield* DateTime.now;
@@ -597,7 +614,7 @@ const seedRollbackHistory = Effect.gen(function* () {
             Effect.succeed({
               rollbackThread: (input: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) =>
                 Effect.gen(function* () {
-                  rollbackCounts.push(yield* resolveCodexRollbackTurnCount(input));
+                  rollbackCounts.push(countRollbackTurns(input));
                   return { providerThread: input.providerThread };
                 }),
             } as never),

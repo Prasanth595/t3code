@@ -1,6 +1,4 @@
 import type {
-  ChatGptReconnectProfile,
-  ChatGptTransferredProfile,
   ProviderAuthRespondInput,
   ProviderAuthState,
   ProviderSetupError,
@@ -11,13 +9,6 @@ import type * as Stream from "effect/Stream";
 
 export interface ProviderAuthController {
   readonly credentialBinding?: { readonly owner: "provider" | "t3"; readonly key: string };
-  readonly reconnectProfile?: (
-    methodId: string,
-  ) => Effect.Effect<ChatGptReconnectProfile | null, ProviderSetupError>;
-  readonly importProfile?: (
-    profile: ChatGptTransferredProfile,
-    stopSessions: Effect.Effect<void, ProviderSetupError>,
-  ) => Effect.Effect<ProviderAuthState, ProviderSetupError>;
   readonly adoptCredentials?: (
     update: Effect.Effect<void, ProviderSetupError>,
     stopSessions: Effect.Effect<void, ProviderSetupError>,

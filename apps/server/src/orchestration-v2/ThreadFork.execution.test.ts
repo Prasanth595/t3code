@@ -18,8 +18,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
-import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
+import { FullProviderCapabilitiesV2 } from "./testkit/testProviderCapabilities.ts";
+import { SingleThreadProviderCapabilitiesV2 } from "./testkit/testProviderCapabilities.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -41,7 +41,7 @@ const forkCases = (
     driver,
     getCapabilities: () =>
       Effect.succeed(
-        driver === "codex" ? CodexProviderCapabilitiesV2 : ClaudeProviderCapabilitiesV2,
+        driver === "codex" ? FullProviderCapabilitiesV2 : SingleThreadProviderCapabilitiesV2,
       ),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: () => Effect.die("Execution is paused after dispatch for handoff inspection"),
@@ -409,7 +409,7 @@ it.effect.each([
         driver,
         getCapabilities: () =>
           Effect.succeed(
-            driver === "codex" ? CodexProviderCapabilitiesV2 : ClaudeProviderCapabilitiesV2,
+            driver === "codex" ? FullProviderCapabilitiesV2 : SingleThreadProviderCapabilitiesV2,
           ),
         planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
         openSession: (input) =>

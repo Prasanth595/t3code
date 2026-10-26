@@ -135,7 +135,7 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
   );
 }
 
-export function applyProviderInstanceMutation(
+function applyProviderInstanceMutation(
   settings: ServerSettings,
   mutation: ProviderInstanceMutation,
 ): ServerSettings {

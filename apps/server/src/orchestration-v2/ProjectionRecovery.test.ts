@@ -24,7 +24,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { FullProviderCapabilitiesV2 } from "./testkit/testProviderCapabilities.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as EventSink from "./EventSink.ts";
@@ -230,7 +230,7 @@ it.effect("stops a session its thread detached, which kept its live status", () 
         status: "ready",
         cwd: "/workspace",
         model: modelSelection.model,
-        capabilities: CodexProviderCapabilitiesV2,
+        capabilities: FullProviderCapabilitiesV2,
         createdAt: now,
         updatedAt: now,
         lastError: null,
@@ -547,7 +547,7 @@ it.effect("includes shared sessions and provider-owned background rosters in rec
           status: "ready",
           cwd: "/workspace",
           model: modelSelection.model,
-          capabilities: CodexProviderCapabilitiesV2,
+          capabilities: FullProviderCapabilitiesV2,
           createdAt: now,
           updatedAt: now,
           lastError: null,
@@ -600,7 +600,7 @@ it.effect("includes shared sessions and provider-owned background rosters in rec
         status: "stopped",
         cwd: "/workspace",
         model: modelSelection.model,
-        capabilities: CodexProviderCapabilitiesV2,
+        capabilities: FullProviderCapabilitiesV2,
         createdAt: now,
         updatedAt: now,
         lastError: null,
@@ -746,7 +746,7 @@ it.effect("wakes the run whose subagent lost its shell, past a wake cut before i
         status: "ready",
         cwd: "/workspace",
         model: modelSelection.model,
-        capabilities: CodexProviderCapabilitiesV2,
+        capabilities: FullProviderCapabilitiesV2,
         createdAt: now,
         updatedAt: now,
         lastError: null,
@@ -830,7 +830,7 @@ it.effect("wakes a settled run whose native subagent ran on its own provider thr
           status: "ready",
           cwd: "/workspace",
           model: modelSelection.model,
-          capabilities: CodexProviderCapabilitiesV2,
+          capabilities: FullProviderCapabilitiesV2,
           createdAt: now,
           updatedAt: now,
           lastError: null,

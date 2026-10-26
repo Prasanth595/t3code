@@ -27,7 +27,7 @@ export const initialWorkflowAgentTranscriptCursor: WorkflowAgentTranscriptCursor
   identity: null,
 };
 
-export const WorkflowAgentTranscriptReadObserver = Context.Reference<
+const WorkflowAgentTranscriptReadObserver = Context.Reference<
   (read: {
     readonly agentId: string;
     readonly startOffset: number;
