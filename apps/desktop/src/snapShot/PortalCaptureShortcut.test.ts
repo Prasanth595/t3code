@@ -22,9 +22,11 @@ class FakeBus extends NodeEvents.EventEmitter {
   sends: Message[] = [];
   disconnect = vi.fn();
   registryError: Error | undefined;
-  registeredOwners = new Set<string>();
   registryResponse: Promise<void> | undefined;
+  registeredOwners = new Set<string>();
   activationError: Error | undefined;
+  ownerReply: Promise<void> | undefined;
+  bindReply: Promise<void> | undefined;
   version = 2;
   autoBind = true;
   actualLabel = "Ctrl+Shift+2";
@@ -102,24 +104,27 @@ class FakeBus extends NodeEvents.EventEmitter {
       });
     if (message.member === "Register") {
       if (this.registryError) throw this.registryError;
-      if (this.registeredOwners.has(this.owner))
+      const owner =
+        message.destination === "org.freedesktop.portal.Desktop" ? this.owner : message.destination;
+      if (this.registeredOwners.has(owner))
         throw new DBusError("org.freedesktop.portal.Error.Failed", "Already registered");
-      this.registeredOwners.add(this.owner);
+      this.registeredOwners.add(owner);
       this.emit("register");
       await this.registryResponse;
       return reply();
     }
-    if (message.member === "StartServiceByName") {
-      if (this.activationError) throw this.activationError;
-      if (this.owner)
-        throw new DBusError("org.freedesktop.DBus.Error.ServiceUnknown", "No activation file");
-      this.changeOwner(":1.3");
-      return reply([2]);
-    }
     if (message.member === "GetNameOwner") {
       if (!this.owner)
         throw new DBusError("org.freedesktop.DBus.Error.NameHasNoOwner", "No portal owner");
-      return reply([this.owner]);
+      const owner = this.owner;
+      this.emit("owner");
+      await this.ownerReply;
+      return reply([owner]);
+    }
+    if (message.member === "StartServiceByName") {
+      if (this.activationError) throw this.activationError;
+      this.changeOwner(":1.3");
+      return reply([1]);
     }
     if (message.member === "Get") return reply([new Variant("u", this.version)]);
     if (message.member === "AddMatch" || message.member === "ConfigureShortcuts") return reply();
@@ -133,11 +138,13 @@ class FakeBus extends NodeEvents.EventEmitter {
           this.foreignHandle ? `${root}/session/9_9/other` : this.session,
         ),
       });
+      this.emit("create");
     } else if (message.member === "BindShortcuts") {
       this.boundId = (message.body[1] as Shortcut[])[0]![0];
       this.requestPath = path;
       this.emit("bind");
       if (this.autoBind) this.respondBind();
+      await this.bindReply;
     } else throw new Error(`Unexpected call: ${message.member}`);
     return reply([path]);
   }
@@ -167,7 +174,13 @@ afterEach(() => {
 it("accepts Hyprland's action-only binding without claiming the keys are reserved", async () => {
   const bus = new FakeBus();
   bus.actualLabel = "";
+  bus.owner = "";
+  bus.autoBind = false;
+  const binding = NodeEvents.EventEmitter.once(bus, "bind");
   const { client, capture } = start(bus, chord, true);
+  await binding;
+  expect(client.state.shortcutMessage).toBe("Connecting to Hyprland shortcuts…");
+  bus.respondBind();
   await client.ready;
   expect(client.state).toMatchObject({
     shortcutRegistered: false,
@@ -361,70 +374,43 @@ it("closes an outstanding consent request and ignores its late response", async 
   expect(bus.disconnect).toHaveBeenCalledOnce();
 });
 
-it("starts a missing portal before registering its connection", async () => {
+it("uses the replacement owner when an earlier owner lookup is still pending", async () => {
   const bus = new FakeBus();
-  bus.owner = "";
+  const lookup = Promise.withResolvers<void>();
+  bus.ownerReply = lookup.promise;
+  const resolving = NodeEvents.EventEmitter.once(bus, "owner");
   const { client, capture } = start(bus);
+  await resolving;
+  bus.ownerReply = undefined;
+  const registering = NodeEvents.EventEmitter.once(bus, "register");
+  bus.changeOwner(":1.3");
+  lookup.resolve();
+  await registering;
+  expect(bus.calls.find((call) => call.member === "Register")?.destination).toBe(":1.3");
   await client.ready;
-  expect(client.state.shortcutRegistered).toBe(true);
   bus.activate();
+  expect(client.state.shortcutRegistered).toBe(true);
   expect(capture).toHaveBeenCalledOnce();
 });
 
 it.each([false, true])(
-  "restores capture after portal restarts, including direct owner replacement (Hyprland: %s)",
+  "restores a lost portal shortcut and keeps listening after activation fails (Hyprland: %s)",
   async (hyprland) => {
     const { bus, client, capture } = start(new FakeBus(), chord, hyprland);
     await client.ready;
     const originalSession = bus.session;
-    const shortcutId = bus.boundId;
-
-    bus.changeOwner("");
-    expect(client.hasSession).toBe(false);
-    expect(client.state).toMatchObject({ shortcutRegistered: false, shortcutPending: true });
-    expect(client.state.shortcutActionRegistered).not.toBe(true);
-    expect(bus.disconnect).not.toHaveBeenCalled();
-    bus.activate(shortcutId, originalSession, ":1.2");
-    expect(capture).not.toHaveBeenCalled();
-
-    for (const owner of [":1.3", ":1.2", ":1.4"]) {
-      bus.changeOwner(owner);
-      await client.ready;
-      expect(client.hasSession).toBe(true);
-      expect(client.state.shortcutPending).toBe(false);
-      expect(bus.boundId).toBe(shortcutId);
-      expect(bus.session).not.toBe(originalSession);
-      bus.activate(shortcutId, originalSession, ":1.2");
-      bus.activate();
-    }
-    expect(capture).toHaveBeenCalledTimes(3);
-    expect(bus.calls.filter((call) => call.member === "BindShortcuts")).toHaveLength(4);
-  },
-);
-
-it.each([false, true])(
-  "activates a stopped portal and restores capture (Hyprland: %s)",
-  async (hyprland) => {
-    const { bus, client, capture } = start(new FakeBus(), chord, hyprland);
-    await client.ready;
     const bound = NodeEvents.EventEmitter.once(bus, "bind");
     bus.changeOwner("");
-    await client.ready;
-    expect(bus.calls.some((call) => call.member === "StartServiceByName")).toBe(true);
+    expect(client.state).toMatchObject({ shortcutRegistered: false, shortcutPending: true });
+    expect(client.state.shortcutActionRegistered).not.toBe(true);
+    expect(client.hasSession).toBe(false);
+    bus.activate(bus.boundId, originalSession, ":1.2");
+    expect(capture).not.toHaveBeenCalled();
     await bound;
     await client.ready;
-    expect(client.hasSession).toBe(true);
-    expect(client.state.shortcutPending).toBe(false);
     bus.activate();
     expect(capture).toHaveBeenCalledOnce();
-  },
-);
 
-it.each([false, true])(
-  "recovers when the portal starts after activation fails (Hyprland: %s)",
-  async (hyprland) => {
-    const { bus, client, capture } = start(new FakeBus(), chord, hyprland);
-    await client.ready;
     bus.activationError = new DBusError("org.freedesktop.DBus.Error.ServiceUnknown", "No portal");
     bus.changeOwner("");
     await client.ready;
@@ -433,130 +419,151 @@ it.each([false, true])(
       shortcutPending: false,
       shortcutCanRetry: !hyprland,
     });
-    expect(bus.disconnect).not.toHaveBeenCalled();
     expect(client.state.shortcutMessage).toContain("No portal");
+    expect(bus.disconnect).not.toHaveBeenCalled();
     bus.changeOwner(":1.4");
     await client.ready;
-    expect(client.hasSession).toBe(true);
-    expect(client.state.shortcutPending).toBe(false);
     bus.activate();
-    expect(capture).toHaveBeenCalledOnce();
+    expect(capture).toHaveBeenCalledTimes(2);
+    expect(client.state.shortcutPending).toBe(false);
   },
 );
 
+it("releases a created session when its response races an owner replacement", async () => {
+  const { bus, client, capture } = start();
+  await client.ready;
+  const creating = NodeEvents.EventEmitter.once(bus, "create");
+  bus.changeOwner(":1.3");
+  await creating;
+  const oldSession = bus.session;
+  bus.changeOwner(":1.4");
+  await client.ready;
+  expect(bus.sends).toContainEqual(
+    expect.objectContaining({ destination: ":1.3", path: oldSession, member: "Close" }),
+  );
+  bus.activate();
+  expect(capture).toHaveBeenCalledOnce();
+});
+
+it("recovers approved consent when its response races an owner replacement", async () => {
+  const bus = new FakeBus();
+  bus.autoBind = false;
+  const binding = NodeEvents.EventEmitter.once(bus, "bind");
+  const { client, capture } = start(bus);
+  await binding;
+  bus.respondBind();
+  bus.autoBind = true;
+  bus.changeOwner(":1.3");
+  await client.ready;
+  bus.activate();
+  expect(client.state.shortcutRegistered).toBe(true);
+  expect(capture).toHaveBeenCalledOnce();
+});
+
+it("discards interrupted replies, closes old portal objects, and stays disabled after close", async () => {
+  const { bus, client, capture } = start();
+  await client.ready;
+  bus.autoBind = false;
+  const reply = Promise.withResolvers<void>();
+  bus.bindReply = reply.promise;
+  const binding = NodeEvents.EventEmitter.once(bus, "bind");
+  bus.changeOwner(":1.3");
+  await binding;
+  const oldSession = bus.session;
+  const oldRequest = bus.requestPath;
+  const interrupted = client.ready;
+
+  bus.bindReply = undefined;
+  const replacement = NodeEvents.EventEmitter.once(bus, "bind");
+  bus.changeOwner(":1.4");
+  await replacement;
+  await interrupted;
+  expect(bus.sends).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ destination: ":1.3", path: oldRequest, member: "Close" }),
+      expect.objectContaining({ destination: ":1.3", path: oldSession, member: "Close" }),
+    ]),
+  );
+  reply.resolve();
+  bus.signal("org.freedesktop.portal.Request", "Response", oldRequest, [2, {}], ":1.3");
+  bus.activate(bus.boundId, oldSession, ":1.3");
+  expect(capture).not.toHaveBeenCalled();
+  expect(client.state.shortcutPending).toBe(true);
+  bus.respondBind();
+  await client.ready;
+  expect(bus.sends.some((message) => message.path === bus.requestPath)).toBe(false);
+  bus.activate();
+  expect(capture).toHaveBeenCalledOnce();
+
+  const disabling = NodeEvents.EventEmitter.once(bus, "bind");
+  bus.changeOwner(":1.5");
+  await disabling;
+  const disabledRequest = bus.requestPath;
+  const disabledSession = bus.session;
+  client.close();
+  bus.respondBind();
+  bus.changeOwner(":1.6");
+  await client.ready;
+  bus.activate();
+  expect(capture).toHaveBeenCalledOnce();
+  expect(client.hasSession).toBe(false);
+  expect(bus.disconnect).toHaveBeenCalledOnce();
+  expect(bus.calls.filter((call) => call.member === "BindShortcuts")).toHaveLength(4);
+  expect(bus.sends).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ destination: ":1.5", path: disabledRequest, member: "Close" }),
+      expect.objectContaining({ destination: ":1.5", path: disabledSession, member: "Close" }),
+    ]),
+  );
+});
+
 it.each([true, false])(
-  "reuses interrupted identity registration when a portal returns (allowed: %s)",
+  "honors an interrupted portal identity result when its owner returns (allowed: %s)",
   async (allowed) => {
     const { bus, client, capture } = start();
     await client.ready;
-    const registration = Promise.withResolvers<void>();
-    bus.registryResponse = registration.promise;
+    const identity = Promise.withResolvers<void>();
+    bus.registryResponse = identity.promise;
     const registering = NodeEvents.EventEmitter.once(bus, "register");
     bus.changeOwner(":1.3");
     await registering;
-    const interrupted = client.ready;
-
+    bus.registryResponse = undefined;
     bus.changeOwner(":1.2");
     await client.ready;
-    await interrupted;
-    expect(client.state.shortcutRegistered).toBe(true);
     bus.activate();
     expect(capture).toHaveBeenCalledOnce();
 
-    if (allowed) registration.resolve();
+    if (allowed) identity.resolve();
     else
-      registration.reject(
+      identity.reject(
         new DBusError("org.freedesktop.portal.Error.NotAllowed", "App is not allowed"),
       );
     bus.changeOwner(":1.3");
     await client.ready;
-    expect(client.state.shortcutRegistered).toBe(allowed);
-    expect(bus.calls.filter((call) => call.member === "Register")).toHaveLength(2);
     bus.activate();
+    expect(client.state.shortcutRegistered).toBe(allowed);
     expect(capture).toHaveBeenCalledTimes(allowed ? 2 : 1);
+    if (!allowed) expect(client.state.shortcutMessage).toContain("App is not allowed");
+    expect(bus.calls.filter((call) => call.member === "Register")).toHaveLength(2);
   },
 );
 
-it("releases an interrupted rebind before registering with the next portal owner", async () => {
-  const { bus, client, capture } = start(new FakeBus(), chord, true);
+it("does not reopen consent after a refused recovery and immediate owner replacement", async () => {
+  const { bus, client, capture } = start();
   await client.ready;
   bus.autoBind = false;
-  const firstBinding = NodeEvents.EventEmitter.once(bus, "bind");
+  const binding = NodeEvents.EventEmitter.once(bus, "bind");
   bus.changeOwner(":1.3");
-  await firstBinding;
-  const interrupted = client.ready;
-  const oldSession = bus.session;
-  const oldRequest = bus.requestPath;
-
-  const nextBinding = NodeEvents.EventEmitter.once(bus, "bind");
+  await binding;
+  bus.respondBind(1);
   bus.changeOwner(":1.4");
-  await nextBinding;
-  await interrupted;
-  expect(bus.sends).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ destination: ":1.3", member: "Close", path: oldSession }),
-      expect.objectContaining({ destination: ":1.3", member: "Close", path: oldRequest }),
-    ]),
-  );
-  bus.signal(
-    "org.freedesktop.portal.Request",
-    "Response",
-    oldRequest,
-    [0, { shortcuts: new Variant("a(sa{sv})", []) }],
-    ":1.3",
-  );
-  bus.respondBind();
   await client.ready;
-  expect(client.state.shortcutActionRegistered).toBe(true);
-  bus.activate(bus.boundId, oldSession, ":1.3");
   bus.activate();
-  expect(capture).toHaveBeenCalledOnce();
-  expect(bus.calls.filter((call) => call.member === "BindShortcuts")).toHaveLength(3);
+  expect(client.state.shortcutRegistered).toBe(false);
+  expect(client.state.shortcutPending).toBe(false);
+  expect(capture).not.toHaveBeenCalled();
+  expect(bus.calls.filter((call) => call.member === "BindShortcuts")).toHaveLength(2);
 });
-
-it.each([false, true])(
-  "closing during recovery stops registration and capture (rebind pending: %s)",
-  async (rebinding) => {
-    const { bus, client, capture } = start(new FakeBus(), chord, true);
-    await client.ready;
-    bus.changeOwner("");
-    if (rebinding) {
-      bus.autoBind = false;
-      const binding = NodeEvents.EventEmitter.once(bus, "bind");
-      bus.changeOwner(":1.3");
-      await binding;
-    }
-    client.close();
-    bus.changeOwner(":1.4");
-    bus.respondBind();
-    await client.ready;
-    bus.activate();
-    expect(capture).not.toHaveBeenCalled();
-    expect(client.hasSession).toBe(false);
-    expect(bus.disconnect).toHaveBeenCalledOnce();
-    expect(bus.calls.filter((call) => call.member === "BindShortcuts")).toHaveLength(
-      rebinding ? 2 : 1,
-    );
-  },
-);
-
-it.each([1, 2])(
-  "does not retry a refused rebind when the portal restarts immediately (%s)",
-  async (status) => {
-    const { bus, client, capture } = start();
-    await client.ready;
-    bus.autoBind = false;
-    const binding = NodeEvents.EventEmitter.once(bus, "bind");
-    bus.changeOwner(":1.3");
-    await binding;
-    bus.respondBind(status);
-    bus.changeOwner(":1.4");
-    await client.ready;
-    bus.activate();
-    expect(capture).not.toHaveBeenCalled();
-    expect(bus.calls.filter((call) => call.member === "BindShortcuts")).toHaveLength(2);
-  },
-);
 
 it("accepts old portals without Registry but does not ignore permission denial", async () => {
   const bus = new FakeBus();
