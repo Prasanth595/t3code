@@ -289,6 +289,7 @@ export function useThreadComposerState() {
     );
   })();
   useEffect(() => {
+    if (acknowledgedMessages.length === 0) return;
     const current = appAtomRegistry.get(acknowledgedThreadMessagesAtom);
     const unsettled = unsettledAcknowledgedThreadMessages(
       current,

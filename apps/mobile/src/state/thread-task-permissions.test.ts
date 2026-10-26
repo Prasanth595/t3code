@@ -1,6 +1,9 @@
 import {
   AuthOrchestrationOperateScope,
   DEFAULT_SERVER_SETTINGS,
+  CommandId,
+  EnvironmentId,
+  ThreadId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
@@ -32,6 +35,7 @@ const state = vi.hoisted(() => ({
   },
   serverConfig: null as ServerConfig | null,
   projection: null as OrchestrationV2ThreadProjection | null,
+  history: { hasMoreHistory: true, snapshotSequence: 39 },
   pendingRequests: { approvals: [], userInputs: [] } as PendingThreadRequests,
   enqueue: vi.fn(async () => undefined),
   clearDraft: vi.fn(),
@@ -94,6 +98,7 @@ vi.mock("./use-thread-selection", () => ({
   useThreadSelection: () => ({
     selectedThread: state.thread,
     selectedThreadCreation: null,
+    selectedThreadDetailRef: { environmentId: "secondary", threadId: "thread" },
     selectedEnvironmentRuntime: {
       connectionState: state.connectionState,
       serverConfig: state.serverConfig,
@@ -113,7 +118,7 @@ vi.mock("./threads", async () => {
     environmentThreadDetails: {
       queueWorkflowAtom: () => Atom.make(null),
       checkpointSummariesAtom: () => Atom.make([]),
-      historyAtom: () => Atom.make({ hasMoreHistory: false }),
+      historyAtom: () => Atom.make(state.history),
     },
     threadEnvironment: {
       respondToApproval: state.approve,
@@ -174,6 +179,9 @@ vi.mock("../lib/commandMetadata", () => ({
 vi.mock("../lib/copyTextWithHaptic", () => ({ copyTextWithHaptic: vi.fn() }));
 vi.mock("./use-remote-environment-registry", () => ({ setPendingConnectionError: vi.fn() }));
 
+import { appAtomRegistry } from "./atom-registry";
+import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
+
 import { useThreadComposerState } from "./use-thread-composer-state";
 import { useSelectedThreadRequests } from "./use-selected-thread-requests";
 
@@ -182,6 +190,8 @@ beforeEach(() => {
   state.connectionState = "connected";
   state.draft = { text: "Keep my draft", attachments: [], modelSelection: undefined };
   state.projection = null;
+  state.history = { hasMoreHistory: true, snapshotSequence: 39 };
+  appAtomRegistry.set(acknowledgedThreadMessagesAtom, []);
   state.serverConfig = {
     providers: [{ instanceId: "codex", driver: "codex", enabled: true }],
     environment: { capabilities: {} },
@@ -427,4 +437,28 @@ describe("mobile handoff preview and submission", () => {
     );
     expect(state.clearDraft).toHaveBeenCalledTimes(1);
   });
+});
+
+it("reopening bounded history removes an accepted row only after its receipt", () => {
+  const message = {
+    environmentId: EnvironmentId.make("secondary"),
+    threadId: ThreadId.make("thread"),
+    messageId: MessageId.make("accepted-outside-window"),
+    commandId: CommandId.make("accepted-command"),
+    text: "old accepted message",
+    attachments: [],
+    createdAt: "2099-01-01T00:00:00.000Z",
+    acknowledgedSequence: 40,
+  };
+  appAtomRegistry.set(acknowledgedThreadMessagesAtom, [message]);
+  state.projection = { ...v2Projection, messages: [] };
+  expect(useThreadComposerState().selectedThreadFeed.map((entry) => entry.id)).toEqual([
+    message.messageId,
+  ]);
+  state.history = { hasMoreHistory: true, snapshotSequence: 40 };
+  expect(useThreadComposerState().selectedThreadFeed).toEqual([]);
+  state.history = { hasMoreHistory: false, snapshotSequence: 40 };
+  expect(useThreadComposerState().selectedThreadFeed.map((entry) => entry.id)).toEqual([
+    message.messageId,
+  ]);
 });
