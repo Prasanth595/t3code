@@ -2523,6 +2523,90 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.live("does not treat a fresh session that reuses the stored id as resumed", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("acp-test-reused-session-id");
+      // The mock answers every session/new with mock-session-1, so the fresh
+      // session after a move has the id the thread stored before it.
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            environment: () => ({ T3_ACP_OMIT_SESSION_CAPABILITIES: "1" }),
+          }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-reused-session-id");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const previousThread = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const previous = yield* adapter.openSession({
+            threadId,
+            providerSessionId: ProviderSessionId.make("provider-session-acp-reused-before"),
+            modelSelection,
+            runtimePolicy,
+          });
+          return yield* previous.ensureThread({ threadId, modelSelection, runtimePolicy });
+        }),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-reused-after"),
+        modelSelection,
+        runtimePolicy,
+        initialNativeThreadId: "mock-session-1",
+      });
+      const replacementThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      assert.equal(previousThread.nativeThreadRef?.nativeId, "mock-session-1");
+      assert.equal(replacementThread.nativeThreadRef?.nativeId, "mock-session-1");
+
+      // The same id is a new, empty session, so the resume fails and the turn
+      // start service hands the thread's history to it.
+      const resumeError = yield* runtime
+        .resumeThread({ providerThread: previousThread, modelSelection, runtimePolicy })
+        .pipe(Effect.flip);
+      assert.equal(resumeError._tag, "ProviderAdapterResumeThreadError");
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread: yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy }),
+          instanceId,
+          runtimePolicy,
+          now,
+          ordinal: 1,
+        }),
+      );
+      const terminal = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      ).find((event) => event.type === "turn.terminal");
+      assert.equal(terminal?.type, "turn.terminal");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live("replaces an unexpectedly terminated ACP runtime before the next turn", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

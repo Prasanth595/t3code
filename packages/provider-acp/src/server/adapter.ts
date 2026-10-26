@@ -7798,7 +7798,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const restartAfterInterrupt = yield* restartRuntimeAfterTeardownIfRequired(
                     threadInput.providerThread.appThreadId,
                   ).pipe(Effect.tapError(() => restorePreviousItemIdentity));
-                  if ((yield* Ref.get(activeSessionId)) !== sessionId || restartAfterInterrupt) {
+                  // A fresh session that came back with the stored id after the
+                  // stored session failed to reopen is still a new, empty session.
+                  const reopenFailed =
+                    (yield* Ref.get(initialSessionActivationFailure))?.sessionId === sessionId;
+                  if (
+                    (yield* Ref.get(activeSessionId)) !== sessionId ||
+                    restartAfterInterrupt ||
+                    reopenFailed
+                  ) {
                     yield* Ref.set(snapshot, {
                       order: [],
                       messages: new Map(),
