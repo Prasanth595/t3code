@@ -3,6 +3,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { type ReactNode } from "react";
 import { cn } from "~/lib/utils";
+import { useClientSettings } from "../../hooks/useSettings";
 import {
   animateSidebarLayoutChanges,
   sidebarMarkerId,
@@ -102,6 +103,8 @@ export function SidebarDragBoundary(props: {
 export function SidebarSectionHeader(props: {
   marker: "working-header" | "snoozed-header" | "settled-header";
   label: string;
+  /** A muted trailing count; classic shows it only while the shelf is collapsed. */
+  count: number;
   className?: string;
   dragging?: boolean;
   isDropTarget?: boolean;
@@ -113,7 +116,6 @@ export function SidebarSectionHeader(props: {
       : props.marker === "snoozed-header"
         ? "snoozed"
         : "settled";
-  const snoozed = shelf === "snoozed";
   return (
     <SortableSidebarMarker
       marker={props.marker}
@@ -123,10 +125,13 @@ export function SidebarSectionHeader(props: {
       <CollapsibleSectionHeader
         onClick={props.toggle.onToggle}
         expanded={props.toggle.expanded}
-        tone={
-          props.isDropTarget ? "accent" : props.dragging ? "emphasized" : snoozed ? "info" : "muted"
-        }
+        tone={props.isDropTarget ? "accent" : props.dragging ? "emphasized" : "muted"}
         data-testid={`sidebar-${shelf}-shelf-toggle`}
+        accessory={
+          props.count !== null ? (
+            <span className="font-normal tabular-nums">{props.count}</span>
+          ) : null
+        }
       >
         {props.label}
       </CollapsibleSectionHeader>
