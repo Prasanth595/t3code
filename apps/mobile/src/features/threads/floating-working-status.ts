@@ -1,4 +1,7 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
+
+import type { ThreadContentPresentation } from "./threadContentPresentation";
 
 export interface FloatingStatusAction {
   readonly label: string;
@@ -37,7 +40,7 @@ export type FloatingWorkingStatus =
       readonly kind: "connection";
       readonly tone: "reconnecting" | "unavailable";
       readonly label: string;
-      readonly onPress: () => void;
+      readonly onPress?: () => void;
     };
 
 export function connectionFloatingStatus(input: {
@@ -80,5 +83,41 @@ export function connectionFloatingStatus(input: {
       return unavailable(`${environmentLabel} is not connected`);
     case "connected":
       return null;
+  }
+}
+
+export type ThreadSyncPhase = "loading" | "syncing" | "failed";
+
+export function resolveThreadSyncPhase(input: {
+  readonly status: EnvironmentThreadStatus | undefined;
+  readonly hasError: boolean;
+  readonly contentKind: ThreadContentPresentation["kind"];
+}): ThreadSyncPhase | null {
+  switch (input.status) {
+    case "empty":
+    case "cached":
+    case "synchronizing":
+      if (input.contentKind === "ready") return input.hasError ? "failed" : "syncing";
+      return input.contentKind === "loading" ? "loading" : null;
+    default:
+      return null;
+  }
+}
+
+export function threadSyncFloatingStatus(phase: ThreadSyncPhase): FloatingWorkingStatus {
+  switch (phase) {
+    case "loading":
+      return { kind: "syncing", label: "Loading messages..." };
+    case "syncing":
+      return { kind: "syncing", label: "Syncing messages..." };
+    case "failed":
+      return {
+        kind: "connection",
+        tone: "unavailable",
+        // Not tappable: reconnecting a connected environment only health-checks
+        // the socket and does not resubscribe. A new session or returning to
+        // the foreground retries the sync.
+        label: "Could not sync messages",
+      };
   }
 }
