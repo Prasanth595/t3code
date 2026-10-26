@@ -20,7 +20,7 @@ export function parseFetchRemotes(
     .map((match) => ({ name: match[1]!, url: match[2]! }));
 }
 
-/** gh priority: marked default, upstream/github/origin, sole remote. Null if ambiguous or SSH-aliased. */
+/** gh priority: marked default, upstream/github/origin, sole remote. Null if ambiguous. */
 export function selectGitHubBaseRepository(input: {
   readonly remotes: string;
   readonly resolved: string;
@@ -148,24 +148,15 @@ export function parsePullRequestReference(
   return { kind: "branch", headSelector: trimmed };
 }
 
-/**
- * `github.com-<name>` is the usual per-account SSH alias (`Host github.com-work` with `HostName
- * github.com`). Only that exact shape counts: one more dot makes a real DNS name, such as
- * `github.com-evil.example`, which is read as itself and never handed github.com credentials.
- */
+// An additional dot is a real DNS host, never a github.com SSH alias.
 const GITHUB_DOT_COM_SSH_ALIAS = /^github\.com-[a-z0-9_-]+$/u;
 
-/** The API host an SSH alias stands for: null for a dotless non-GitHub alias, undefined for none. */
 function apiHostForSshAlias(host: string): string | null | undefined {
   if (!host.includes(".")) return host.includes("github") ? "github.com" : null;
   return GITHUB_DOT_COM_SSH_ALIAS.test(host) ? "github.com" : undefined;
 }
 
-/**
- * An SSH alias (`git@github-work:owner/repo`, `git@github.com-work:owner/repo`) names no API
- * host of its own; it is read through `github.com`, which is what such an alias almost always
- * stands for (issue #6198).
- */
+/** Recognized GitHub SSH aliases use github.com for API requests. */
 export function gitHubApiHostForRemote(remoteUrl: string): string | null {
   const remote = parseGitRemoteHost(remoteUrl);
   if (remote === null) return null;

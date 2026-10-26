@@ -182,24 +182,12 @@ describe("github.com-<name> SSH aliases", () => {
       host: "github.com",
       locator: { host: "github.com", owner: "scalable-so", name: "scalablev2" },
     };
-    assert.deepStrictEqual(
-      resolveGitHubRepository({
-        remotes,
-        resolved: "",
-        hostHint: "github.com-scale",
-        defaultHost: "github.com-scale",
-      }),
-      expected,
-    );
-    assert.deepStrictEqual(
-      resolveGitHubRepository({
-        remotes,
-        resolved: "",
-        hostHint: undefined,
-        defaultHost: "github.com",
-      }),
-      expected,
-    );
+    for (const hostHint of ["github.com-scale", undefined]) {
+      assert.deepStrictEqual(
+        resolveGitHubRepository({ remotes, resolved: "", hostHint, defaultHost: "github.com" }),
+        expected,
+      );
+    }
   });
 
   it.each([false, true])("preserves an HTTPS alias-shaped host hint (upstream: %s)", (upstream) => {
