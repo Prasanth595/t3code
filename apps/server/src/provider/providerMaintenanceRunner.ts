@@ -270,14 +270,6 @@ function isOutdatedProvider(provider: ServerProvider | undefined): boolean {
   return provider?.versionAdvisory?.status === "behind_latest";
 }
 
-function isAlreadyOnLatest(provider: ServerProvider | undefined): boolean {
-  return (
-    provider !== undefined &&
-    isStillInstalled(provider) &&
-    provider.versionAdvisory?.status === "current"
-  );
-}
-
 function isStillInstalled(provider: ServerProvider): boolean {
   return provider.installed;
 }
@@ -377,19 +369,6 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
           ),
         );
       }),
-    );
-
-  const verifyRefreshedProvider = (
-    provider: ProviderDriverKind,
-    maintenanceCapabilities: ProviderMaintenanceCapabilities,
-    instanceId: ProviderInstanceId,
-  ): Effect.Effect<VerifiedProviderRefresh> =>
-    verifyFromRefresh(
-      providerRegistry.refreshAfterUpdate(provider, instanceId),
-      provider,
-      maintenanceCapabilities,
-      instanceId,
-      "post-update",
     );
 
   const updateProvider: ProviderMaintenanceRunnerShape["updateProvider"] = Effect.fn(
@@ -510,11 +489,10 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               );
             }
 
-            // Re-probe before spawning. A stale behind_latest advisory must
-            // not run the installer when the binary is already current.
-            // Unknown version stays on the installer path.
             if (targetVersion === undefined) {
-              const providersBeforeProbe = yield* providerRegistry.getProviders;
+              const prior = (yield* providerRegistry.getProviders).find(
+                (candidate) => candidate.instanceId === instanceId,
+              );
               const precheck = yield* verifyFromRefresh(
                 providerRegistry.refreshInstance(instanceId),
                 provider,
@@ -522,16 +500,16 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 instanceId,
                 "pre-update",
               );
-              const liveProbedProviders = precheck.verifiedProviders.filter((verified) => {
-                const prior = providersBeforeProbe.find(
-                  (candidate) => candidate.instanceId === verified.instanceId,
-                );
-                return prior !== undefined && prior.checkedAt !== verified.checkedAt;
-              });
               const alreadyCurrent =
                 precheck.advisoryEnriched &&
-                liveProbedProviders.length > 0 &&
-                liveProbedProviders.every(isAlreadyOnLatest);
+                prior !== undefined &&
+                precheck.verifiedProviders.length > 0 &&
+                precheck.verifiedProviders.every(
+                  (verified) =>
+                    verified.checkedAt !== prior.checkedAt &&
+                    verified.installed &&
+                    verified.versionAdvisory?.status === "current",
+                );
               if (alreadyCurrent) {
                 return yield* finish(
                   makeUpdateState({
@@ -575,10 +553,12 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             yield* invalidateLatestProviderVersion(verified).pipe(
               Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
             );
-            const { verifiedProviders } = yield* verifyRefreshedProvider(
+            const { verifiedProviders } = yield* verifyFromRefresh(
+              providerRegistry.refreshAfterUpdate(provider, instanceId),
               provider,
               verified,
               instanceId,
+              "post-update",
             );
             // Cursor about probes can fail transiently; missing versions alone do not imply failure.
             const couldNotVerify =

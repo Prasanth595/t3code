@@ -154,9 +154,6 @@ function layerMockSpawner(
 function makeRegistry(
   initialProviders: ServerProvider | ReadonlyArray<ServerProvider> = baseProvider,
   options?: {
-    // Fixtures do not rewrite the binary. refreshInstance is the pre-spawn
-    // probe and must keep the fixture version so skip-if-current can still
-    // see "behind". refreshAfterUpdate is post-update verification.
     readonly installedVersionAfterUpdate?: string;
   },
 ) {
@@ -482,12 +479,19 @@ describe("providerMaintenanceRunner", () => {
   it.effect("still runs the installer when the installed version is unknown", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     return Effect.gen(function* () {
-      const { registry } = yield* makeRegistry({
+      const { registry, providersRef } = yield* makeRegistry({
         ...baseProvider,
         version: null,
       });
       const updater = yield* makeTestRunner({
         ...registry,
+        refreshInstance: () =>
+          Ref.updateAndGet(providersRef, (providers) =>
+            providers.map((provider) => ({
+              ...provider,
+              checkedAt: "2026-04-10T00:00:01.000Z",
+            })),
+          ),
         getProviderMaintenanceCapabilitiesForInstance: () =>
           Effect.succeed(
             makeProviderMaintenanceCapabilities({
@@ -965,6 +969,12 @@ it.effect.each([
   {
     mode: "targeted",
     version: "1.14.19",
+    installation: { installedVersion: "1.14.20" },
+    status: "succeeded",
+  },
+  {
+    mode: "targeted-current",
+    version: "1.14.20",
     installation: { installedVersion: "1.14.20" },
     status: "succeeded",
   },
