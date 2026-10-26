@@ -143,9 +143,13 @@ export function runFinishedWithoutUserUpdate(
 ): boolean {
   if (runId == null || status !== "completed") return false;
   let hasUnpublishedOutput = false;
-  for (const { item } of rows) {
-    if (item.runId !== runId) continue;
+  let latestHumanInput = -1;
+  let latestPublishedOutput = -1;
+  for (const [index, { item }] of rows.entries()) {
     const port = item.communication?.route.port;
+    if (port === "user.in") latestHumanInput = index;
+    if (port === "user.out") latestPublishedOutput = index;
+    if (item.runId !== runId) continue;
     if (port === "user.out") return false;
     if (item.type === "notification" && port === "internal.out") {
       hasUnpublishedOutput = true;
@@ -154,7 +158,7 @@ export function runFinishedWithoutUserUpdate(
     if (item.type !== "assistant_message") continue;
     if (port === "internal.out" || item.text.trim() !== "") hasUnpublishedOutput = true;
   }
-  return hasUnpublishedOutput;
+  return hasUnpublishedOutput && latestPublishedOutput <= latestHumanInput;
 }
 
 export const FINISHED_WITHOUT_USER_UPDATE_NOTICE =

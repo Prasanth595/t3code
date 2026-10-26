@@ -109,6 +109,28 @@ it("reports a completed run that published nothing to the user", () => {
   expect(finished([row({ type: "command_execution", input: "ls" })])).toBe(false);
   expect(finished([row({ type: "assistant_message", text: "  " })])).toBe(false);
   expect(
+    finished([
+      row({ type: "user_message", runId: "run:request", communication: route("user.in") }),
+      row({ type: "assistant_message", runId: "run:request", communication: route("user.out") }),
+      row({
+        type: "notification",
+        summary: "Coordination activity",
+        communication: route("internal.out"),
+      }),
+    ]),
+  ).toBe(false);
+  expect(
+    finished([
+      row({ type: "assistant_message", runId: "run:request", communication: route("user.out") }),
+      row({ type: "user_message", runId: "run:next", communication: route("user.in") }),
+      row({
+        type: "notification",
+        summary: "Coordination activity",
+        communication: route("internal.out"),
+      }),
+    ]),
+  ).toBe(true);
+  expect(
     runFinishedWithoutUserUpdate(
       [row({ type: "assistant_message", text: "a" })],
       "run" as never,
