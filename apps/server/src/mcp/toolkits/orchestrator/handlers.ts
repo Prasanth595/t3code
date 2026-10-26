@@ -2,7 +2,6 @@ import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
 
-import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import { readCaller } from "../../threadAccess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -10,11 +9,11 @@ import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
 
 const handlers = {
-  orchestrator_capabilities: McpToolAccess.reads(() =>
+  orchestrator_capabilities: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.capabilities(scope);
+      return yield* service.capabilities(scope, input);
     }),
   ),
   delegate_task: McpToolAccess.actsAsCaller((input) =>
@@ -57,6 +56,27 @@ const handlers = {
           ),
         );
       }),
+  ),
+  t3_background_wait: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const { scope, threads } = yield* readCaller();
+      const caller = yield* McpInvocationContext.requireThreadScope(scope, "t3_background_wait");
+      return yield* threads
+        .awaitBackgroundTasks({
+          threadId: caller.thread.threadId,
+          taskIds: input.taskIds,
+          awaited: input.waiting ?? true,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorMcpFailure({
+                code: cause.reason === "unsupported" ? "invalid_request" : "orchestration_error",
+                message: cause.message,
+              }),
+          ),
+        );
+    }),
   ),
   schedule_task: McpToolAccess.startsThreads(
     () => ({}),
@@ -139,13 +159,6 @@ const handlers = {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.waitForThread(scope, input);
-    }),
-  ),
-  t3_environment_links: McpToolAccess.reads(() =>
-    Effect.gen(function* () {
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      const forwarding = yield* PeerForwarding.PeerForwarding;
-      return yield* forwarding.links(scope);
     }),
   ),
   t3_thread_interrupt: McpToolAccess.writesThreads(
