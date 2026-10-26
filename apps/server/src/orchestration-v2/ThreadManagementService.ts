@@ -1246,14 +1246,15 @@ const make = Effect.gen(function* () {
             (lifecycle !== null &&
               lifecycle.resultSequence > sourceSequence &&
               lifecycle.commandId !== input.commandId &&
-              !(yield* CommandReceiptStore.lifecycleOwnedByAncestor(
-                lifecycle,
-                thread,
-                ancestorThreadId,
-                receipts,
-                (id) =>
-                  orchestrator.getThreadRecords(id, []).pipe(Effect.map(({ thread }) => thread)),
-              )))))
+              (thread.id === ancestorThreadId ||
+                !(yield* CommandReceiptStore.lifecycleOwnedByAncestor(
+                  lifecycle,
+                  thread,
+                  ancestorThreadId,
+                  receipts,
+                  (id) =>
+                    orchestrator.getThreadRecords(id, []).pipe(Effect.map(({ thread }) => thread)),
+                ))))))
       )
         return;
       const children = yield* orchestrator.getSubagentChildThreads(input.threadId, {

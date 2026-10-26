@@ -7173,6 +7173,23 @@ describe("subagent lifecycle", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("skips an obsolete ancestor archive before any descendant cleanup", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      yield* f.command("archive");
+      yield* f.command("unarchive");
+      yield* f.worker.drain();
+      const receipts = yield* Receipts.CommandReceiptStoreV2;
+      assert.isTrue(
+        Option.isNone(
+          yield* receipts.getByCommandId(CommandId.make("archive:parent:subagent:app")),
+        ),
+        "obsolete archive never dispatches a child command",
+      );
+      assert.isFalse(yield* f.archived(app));
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect(
     "continues a newer parent archive through a late ancestor-owned grandchild archive",
     () =>
