@@ -12,6 +12,7 @@ import * as EnvironmentRegistry from "../connection/registry.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
+import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import { followStreamInEnvironment } from "./environmentStreams.ts";
@@ -36,6 +37,7 @@ function initialConfigOption<E>(
 }
 
 const DEFAULT_SESSION_STATE_TIMEOUT_MS = 6_000;
+const MAX_SESSION_STATE_TIMEOUT_MS = 60_000;
 
 export const fetchEnvironmentSessionState = Effect.fn(
   "clientRuntime.state.fetchEnvironmentSessionState",
@@ -47,16 +49,27 @@ export const fetchEnvironmentSessionState = Effect.fn(
   >;
   readonly timeoutMs?: number;
 }) {
-  return yield* executeAuthenticatedEnvironmentHttpRequest({
-    ...input,
-    group: "auth",
-    method: "GET",
-    url: (urls) => urls.session(),
-    timeoutMs: input.timeoutMs ?? DEFAULT_SESSION_STATE_TIMEOUT_MS,
-    request: ({ client, headers }) => client.session({ headers }),
-    // This endpoint returns 200 with authenticated:false for expired credentials.
-    isUnauthorizedResponse: (response) => !response.authenticated,
-  });
+  const initialTimeoutMs = input.timeoutMs ?? DEFAULT_SESSION_STATE_TIMEOUT_MS;
+  let attempt = 0;
+  return yield* Effect.suspend(() =>
+    executeAuthenticatedEnvironmentHttpRequest({
+      ...input,
+      group: "auth",
+      method: "GET",
+      url: (urls) => urls.session(),
+      timeoutMs: Math.min(initialTimeoutMs * 2 ** attempt++, MAX_SESSION_STATE_TIMEOUT_MS),
+      request: ({ client, headers }) => client.session({ headers }),
+      // This endpoint returns 200 with authenticated:false for expired credentials.
+      isUnauthorizedResponse: (response) => !response.authenticated,
+    }),
+  ).pipe(
+    // A timeout says nothing about grants; failing would show a busy host as read-only.
+    Effect.retry({
+      times: Math.max(0, Math.ceil(Math.log2(MAX_SESSION_STATE_TIMEOUT_MS / initialTimeoutMs))),
+      while: (error: RemoteEnvironmentRequestError) =>
+        error._tag === "RemoteEnvironmentAuthTimeoutError",
+    }),
+  );
 });
 
 function makeEnvironmentSessionAtoms<R, E>(
