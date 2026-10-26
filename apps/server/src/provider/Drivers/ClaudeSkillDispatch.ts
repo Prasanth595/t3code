@@ -1,11 +1,18 @@
-// Claude Code expands only the last text block, with `/name` at its start.
-// Everything after the command name, including other commands, is argument text.
+import type { ServerProviderSkill } from "@t3tools/contracts";
 
-// Match the chip syntax in packages/shared/src/composerInlineTokens.ts.
+/**
+ * Claude expands one skill per message only when `/name` starts the text block.
+ * Everything after the name, including newlines or a second `/x`, becomes `ARGUMENTS`.
+ * https://github.com/anthropics/claude-code/issues/87113
+ */
+
+/** Match packages/shared/src/composerInlineTokens.ts so displayed chips and dispatched skills accept the same tokens. */
 const SKILL_MENTION_PATTERN =
   /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
 
 const LEADING_SLASH_COMMAND_PATTERN = /^\/([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/u;
+
+export type ClaudeSkillTarget = Pick<ServerProviderSkill, "path" | "userInvocationOnly">;
 
 export interface ClaudeSkillDispatch {
   /** The whole rewritten prompt when dispatching a skill from within the request. */
@@ -17,41 +24,46 @@ export interface ClaudeSkillDispatch {
 
 export function planClaudeSkillDispatch(
   prompt: string,
-  skillNames: ReadonlySet<string>,
+  skills: ReadonlyMap<string, ClaudeSkillTarget>,
 ): ClaudeSkillDispatch | undefined {
   const mentions = [...prompt.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) => {
     const name = match[2] ?? "";
-    if (!skillNames.has(name)) return [];
+    const skill = skills.get(name);
+    if (!skill) return [];
     const start = (match.index ?? 0) + (match[1]?.length ?? 0);
-    return [{ name, start, end: (match.index ?? 0) + match[0].length }];
+    return [{ name, skill, start, end: (match.index ?? 0) + match[0].length }];
   });
   const last = mentions.at(-1);
   if (!last) {
     return undefined;
   }
 
-  const promptWithInlineSlashes = mentions
-    .reduceRight(
-      (text, mention) =>
-        `${text.slice(0, mention.start)}/${mention.name}${text.slice(mention.end)}`,
-      prompt,
-    )
-    .trimEnd();
-
-  // Preserve /goal and known slash skills without mistaking root paths for commands.
-  const leadingCommandName = LEADING_SLASH_COMMAND_PATTERN.exec(prompt)?.[1];
-  if (leadingCommandName === "goal" || (leadingCommandName && skillNames.has(leadingCommandName))) {
-    return {
-      leadingText: undefined,
-      commandText: promptWithInlineSlashes,
-      skillName: last.name,
-    };
+  // Root paths must not take precedence over skill dispatch.
+  const leadingCommand = LEADING_SLASH_COMMAND_PATTERN.exec(prompt)?.[1];
+  const preserveCommand =
+    leadingCommand !== undefined && (leadingCommand === "goal" || skills.has(leadingCommand));
+  // User-only skills that will not expand natively need their raw file path.
+  const annotated = new Set([preserveCommand ? leadingCommand : last.name]);
+  let promptWithInlineSlashes = "";
+  let cursor = 0;
+  for (const mention of mentions) {
+    promptWithInlineSlashes += `${prompt.slice(cursor, mention.start)}/${mention.name}`;
+    if (mention.skill.userInvocationOnly === true && !annotated.has(mention.name)) {
+      promptWithInlineSlashes += ` [The user invoked this skill. Follow the instructions at: ${mention.skill.path}]`;
+      annotated.add(mention.name);
+    }
+    cursor = mention.end;
   }
+  promptWithInlineSlashes = `${promptWithInlineSlashes}${prompt.slice(cursor)}`.trimEnd();
 
   return {
     leadingText:
-      prompt.slice(0, last.start).trim().length > 0 ? promptWithInlineSlashes : undefined,
-    commandText: `/${last.name}${prompt.slice(last.end)}`.trimEnd(),
+      !preserveCommand && prompt.slice(0, last.start).trim().length > 0
+        ? promptWithInlineSlashes
+        : undefined,
+    commandText: preserveCommand
+      ? promptWithInlineSlashes
+      : `/${last.name}${prompt.slice(last.end)}`.trimEnd(),
     skillName: last.name,
   };
 }
