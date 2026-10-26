@@ -46,6 +46,7 @@ import {
   advance,
   forward,
   interrupted,
+  resumeAfterCooldown,
   timeLimit,
   watch,
   type AdvanceOutcome,
@@ -2326,6 +2327,121 @@ describe("interrupted: a stop by hand", () => {
         ),
         JSON.stringify(lines),
       );
+    }),
+  );
+});
+
+/** What Claude Code ended a session with while every credential was cooling down. */
+const COOLING_DOWN =
+  "API Error: Request rejected (429) · All credentials for model claude-fable-5-1 are cooling down (last error: rate_limit_error: This request would exceed your account's rate limit. Please try again later.)";
+
+/** The message a resume after a rate limit sends, written out independently of the code under test. */
+const COOLED_MESSAGE =
+  "The provider's rate limit cut your last turn off, so the factory is not treating it as your decision. It waited for the limit to cool down before sending this. Continue from where you were. End your reply with a result line as before: FACTORY-DONE: <PR URL>, FACTORY-STOP: needs-info (after your numbered questions) or FACTORY-STOP: stuck.";
+
+const cooledCall = (ordinal: number) =>
+  `send thread-1 softfac:rawphp__softfac__10__1:rate-limited:${ordinal} ${COOLED_MESSAGE}`;
+
+const cooledLine = (resumes: number, runOrdinal: number): RunEvent => ({
+  event: "session_interrupted",
+  data: {
+    resumes,
+    relaunch: false,
+    run_ordinal: runOrdinal,
+    branch: "t3code/abc",
+    t3_error: null,
+    ended_in_pass: 0,
+    rate_limited: true,
+  },
+});
+
+describe("a provider rate limit", () => {
+  it.effect("is told apart from a session that ended badly, and nothing is written", () =>
+    Effect.gen(function* () {
+      for (const status of ["failed", "cancelled"] as const) {
+        const rig = rigFor();
+        rig.world.status = () =>
+          statusOf(status, COOLING_DOWN, { runOrdinal: 1, runCompletedAt: T0 - MINUTE });
+        const before = bytesOf(rig);
+        assert.deepStrictEqual(
+          yield* advanceIn(rig),
+          { kind: "rate-limited", endedMs: T0 - MINUTE, retryAfterMs: null },
+          status,
+        );
+        theIssueIsStillBuilding(rig);
+        assert.strictEqual(bytesOf(rig), before, status);
+        assert.deepStrictEqual(rig.t3, ["status thread-1"], status);
+      }
+    }),
+  );
+
+  it.effect("is resumed after the cooldown without using an interruption resume", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      endedAs(rig, "failed", 1, COOLING_DOWN);
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* resumeAfterCooldown(rig.ctx, rig.run), { kind: "resumed" });
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, cooledLine(0, 1), sentStep(0)]);
+      assert.deepStrictEqual(rig.t3, ["status thread-1", cooledCall(1)]);
+      theIssueIsStillBuilding(rig);
+      // The session is working until a run newer than the one that ended has ended.
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
+
+      // It ran into the limit again, and is resumed again under a command id of its own.
+      endedAs(rig, "failed", 2, COOLING_DOWN);
+      assert.strictEqual((yield* advanceIn(rig)).kind, "rate-limited");
+      assert.deepStrictEqual(yield* resumeAfterCooldown(rig.ctx, rig.run), { kind: "resumed" });
+      assert.deepStrictEqual(sends(rig), [cooledCall(1), cooledCall(2)]);
+
+      // A real interruption later still has both of its resumes.
+      endedAs(rig, "failed", 3, "it crashed");
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("failed"));
+      assert.deepStrictEqual(yield* decide(rig, afterOutage()), {
+        kind: "resumed",
+        resumes: 1,
+        limit: 2,
+        status: "failed",
+      });
+      theIssueIsStillBuilding(rig);
+    }),
+  );
+
+  it.effect("keeps the count of an earlier interruption on its line", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, resumeLine(1, 1, T3_ERROR, 1), sentStep(1)]);
+      endedAs(rig, "failed", 2, COOLING_DOWN);
+      assert.deepStrictEqual(yield* resumeAfterCooldown(rig.ctx, rig.run), { kind: "resumed" });
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        resumeLine(1, 1, T3_ERROR, 1),
+        sentStep(1),
+        cooledLine(1, 2),
+        sentStep(1),
+      ]);
+    }),
+  );
+
+  it.effect("cut short before its send is sent again under the same command id", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, cooledLine(0, 1)]);
+      endedAs(rig, "failed", 1, COOLING_DOWN);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
+      assert.deepStrictEqual(sends(rig), [cooledCall(1)]);
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, cooledLine(0, 1), sentStep(0)]);
+    }),
+  );
+
+  it.effect("is not resumed once the thread has moved on, and nothing is written", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      setActive(rig, 2);
+      const before = bytesOf(rig);
+      assert.deepStrictEqual(yield* resumeAfterCooldown(rig.ctx, rig.run), {
+        kind: "unchanged",
+        why: "its thread has moved on since",
+      });
+      assert.strictEqual(bytesOf(rig), before);
+      assert.deepStrictEqual(sends(rig), []);
     }),
   );
 });
