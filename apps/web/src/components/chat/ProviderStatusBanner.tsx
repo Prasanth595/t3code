@@ -43,10 +43,22 @@ export function getProviderStatusBannerKey(status: ServerProvider | null): strin
 
 export function shouldShowProviderStatusBanner(
   status: ServerProvider | null,
-  dismissedBannerKey: string | null,
+  isDismissed: boolean,
 ): boolean {
-  const bannerKey = getProviderStatusBannerKey(status);
-  return bannerKey !== null && bannerKey !== dismissedBannerKey;
+  return getProviderStatusBannerKey(status) !== null && !isDismissed;
+}
+
+// A dismissal lasts the session, not one view, so opening another thread cannot bring it back.
+const sessionDismissedProviderStatusBannerKeys = new Set<string>();
+
+export function dismissProviderStatusBannerForSession(bannerKey: string | null): void {
+  if (bannerKey !== null) {
+    sessionDismissedProviderStatusBannerKeys.add(bannerKey);
+  }
+}
+
+export function isProviderStatusBannerDismissedForSession(bannerKey: string | null): boolean {
+  return bannerKey !== null && sessionDismissedProviderStatusBannerKeys.has(bannerKey);
 }
 
 export function hasProviderSetup(status: ServerProvider): boolean {

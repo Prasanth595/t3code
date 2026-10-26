@@ -294,6 +294,7 @@ import {
 } from "./BranchToolbar.logic";
 import {
   getProviderStatusBannerKey,
+  isProviderStatusBannerDismissedForSession,
   shouldShowProviderStatusBanner,
 } from "./chat/ProviderStatusBanner";
 import {
@@ -1663,18 +1664,13 @@ export default function ChatView(props: ChatViewProps) {
     DismissedFallbackWindowSchema,
   );
   const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
-  const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<
-    string | null
-  >(null);
-  if (providerStatusBannerKey === null && dismissedProviderStatusBannerKey !== null) {
-    setDismissedProviderStatusBannerKey(null);
-  }
   const visibleProviderStatus = shouldShowProviderStatusBanner(
     activeProviderStatus,
-    dismissedProviderStatusBannerKey,
+    isProviderStatusBannerDismissedForSession(providerStatusBannerKey),
   )
     ? activeProviderStatus
     : null;
+  const [, setProviderStatusBannerDismissTick] = useState(0);
   const hasTimelineTopBanner = Boolean(timelineThreadError) || visibleProviderStatus !== null;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
@@ -3274,7 +3270,7 @@ export default function ChatView(props: ChatViewProps) {
             <ChatBannerLane
               providerStatus={visibleProviderStatus}
               providerStatusBannerKey={providerStatusBannerKey}
-              setDismissedProviderStatusBannerKey={setDismissedProviderStatusBannerKey}
+              setProviderStatusBannerDismissTick={setProviderStatusBannerDismissTick}
               onOpenProviderSetup={openProviderSetupStable}
               threadId={activeThread.id}
               threadError={timelineThreadError}
