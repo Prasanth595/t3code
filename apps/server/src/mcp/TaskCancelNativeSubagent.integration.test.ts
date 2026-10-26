@@ -56,14 +56,14 @@ const driver = ProviderDriverKind.make("claudeAgent");
 const instanceId = ProviderInstanceId.make("claudeAgent");
 const modelSelection = { instanceId, model: "claude-test" };
 
-// A delegated child ends its turn while a background native subagent (#17154) or shell (#16739)
-// it started keeps running. task_cancel arrives after the run settles, during its checkpoint, or
-// while the turn runs; "recorded" exits before anything settles. Each case then restarts.
+// Cancellation races with turn completion and checkpoint capture; "recorded" restarts before the Stop outbox runs.
 const cancelBackgroundOnlyTask = (
   background: "subagent" | "command",
   {
     cancelAt = "settled",
-  }: { readonly cancelAt?: "settled" | "checkpoint" | "turn" | "recorded" | "monitor" } = {},
+  }: {
+    readonly cancelAt?: "settled" | "checkpoint" | "turn" | "recorded" | "monitor" | "refused";
+  } = {},
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -171,7 +171,33 @@ const cancelBackgroundOnlyTask = (
       );
       const layerOrchestration = Layer.merge(
         layerOrchestrator,
-        ThreadManagementService.layer.pipe(
+        Layer.effect(
+          ThreadManagementService.ThreadManagementService,
+          Effect.map(ThreadManagementService.ThreadManagementService, (service) =>
+            cancelAt === "refused"
+              ? {
+                  ...service,
+                  stopDelegatedTasks: () =>
+                    Effect.fail(
+                      new Orchestrator.OrchestratorDispatchError({
+                        commandId: CommandId.make("refused-descendant-stop"),
+                        commandType: "thread.stop",
+                        cause: "descendant refused stop",
+                      }),
+                    ),
+                }
+              : service,
+          ),
+        ).pipe(
+          Layer.provide(
+            ThreadManagementService.layer.pipe(
+              Layer.provide(layerOrchestrator),
+              Layer.provide(ServerSettings.layerTest()),
+              Layer.provide(
+                CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+              ),
+            ),
+          ),
           Layer.provide(layerOrchestrator),
           Layer.provide(ServerSettings.layerTest()),
           Layer.provide(
@@ -412,7 +438,8 @@ const cancelBackgroundOnlyTask = (
           yield* Fiber.join(waiting);
         });
         if (cancelAt !== "turn") yield* endTurn;
-        const turnSettled = cancelAt !== "checkpoint" && cancelAt !== "turn";
+        const turnSettled =
+          cancelAt !== "checkpoint" && cancelAt !== "turn" && cancelAt !== "recorded";
         if (turnSettled) yield* worker.drain();
         if (cancelAt === "monitor") {
           // A monitor notification then ran and completed while the shell kept running.
@@ -452,28 +479,44 @@ const cancelBackgroundOnlyTask = (
           parent.subagents.find((entry) => entry.id === task.id),
         );
         if (cancelAt === "recorded") {
-          const unsettled = (yield* parentTask)!;
-          yield* (yield* EventSink.EventSinkV2).write({
-            commandId: CommandId.make("command:runtime-reconcile:cancel-recorded"),
-            events: [
-              {
-                id: EventId.make("event:cancel-recorded"),
-                type: "subagent.updated",
-                threadId: parentThreadId,
-                nodeId: task.id,
-                occurredAt: now,
-                payload: { ...unsettled, cancelRequestedAt: now },
-              },
-            ],
+          const commandId = CommandId.make("stop-recorded");
+          yield* orchestrator.cancelDelegatedTask({
+            parentThreadId,
+            taskId: task.id,
+            command: {
+              type: "thread.stop",
+              commandId,
+              threadId: task.childThreadId!,
+              stopDelegatedTasks: false,
+            },
+            stopDescendants: Effect.void,
           });
-          yield* orchestrator.dispatch({
-            type: "thread.stop",
-            commandId: CommandId.make("stop-recorded"),
-            threadId: task.childThreadId!,
-          });
-          yield* worker.drain();
+          const committed = yield* eventSink.readByCommandId({ commandId }).pipe(Stream.runCollect);
+          assert.isTrue(
+            committed.some(
+              ({ event }) =>
+                event.type === "subagent.updated" && event.payload.cancelledRunId !== undefined,
+            ),
+          );
+          assert.isTrue(
+            committed.some(
+              ({ event }) =>
+                event.type === "turn-item.updated" &&
+                event.payload.type === "run_interrupt_request",
+            ),
+          );
           assert.equal((yield* parentTask)?.status, "running");
           return { scope, taskId: task.id, settled: undefined };
+        }
+        if (cancelAt === "refused") {
+          yield* Effect.flip(
+            service.cancelTask(scope, { taskId: task.id, clientRequestId: "refused-cancel" }),
+          );
+          const after = yield* parentTask;
+          assert.equal(after?.status, "running");
+          assert.equal(after?.result, null);
+          assert.isUndefined(after?.cancelledRunId);
+          return undefined;
         }
         // Settling the task ends the async question it left, after its own row.
         const settled = yield* watch(
@@ -532,12 +575,15 @@ const cancelBackgroundOnlyTask = (
 
         return { scope, taskId: task.id, settled: settledTask };
       }).pipe(Effect.provide(layerTest));
+      if (stopped === undefined) return;
       restarted = true;
 
       // A server restarted on the same database runs startup recovery and keeps the outcome.
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
         const orchestrator = yield* Orchestrator.OrchestratorV2;
+        yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+        yield* orchestrator.recoverDelegatedTasks;
         const task = (yield* orchestrator.getThreadProjection(
           stopped.scope.thread!.threadId,
         )).subagents.find((entry) => entry.id === stopped.taskId);
@@ -571,6 +617,10 @@ it.effect("task_cancel ends the shell's question though a monitor ran after the 
   cancelBackgroundOnlyTask("command", { cancelAt: "monitor" }),
 );
 
-it.effect("a recorded cancel settles at startup when the server exited before settling it", () =>
+it.effect("cancellation and Stop commit together and recover before the outbox ran", () =>
   cancelBackgroundOnlyTask("subagent", { cancelAt: "recorded" }),
+);
+
+it.effect("a refused descendant stop does not settle or dispose its parent task", () =>
+  cancelBackgroundOnlyTask("command", { cancelAt: "refused" }),
 );

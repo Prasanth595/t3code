@@ -1561,7 +1561,7 @@ const make = Effect.gen(function* () {
           )
         : workState === "result_available"
           ? // A cancelled task's finished turn settles it as interrupted.
-            task.cancelRequestedAt !== undefined &&
+            task.cancelledRunId !== undefined &&
             taskStatusForRun(taskResultRun ?? childRun) === "completed"
             ? "interrupted"
             : taskStatusForRun(taskResultRun ?? childRun)
@@ -2375,40 +2375,35 @@ const make = Effect.gen(function* () {
       const stopChild = Effect.gen(function* () {
         const commandId = stableCommandId({ scope, requestKey: key, operation: "cancel-task" });
         const reason = agentStopReason(input.reason);
-        const stopThread = threadManagement
-          .dispatch({
-            type: "thread.stop",
-            commandId,
-            threadId: current.childThreadId,
-            stopDelegatedTasks: false,
-            reason,
-          })
-          .pipe(
-            Effect.mapError((error) =>
-              failure(
-                "task_not_cancellable",
-                `Unable to stop delegated task ${input.taskId}: ${errorMessage(error)}`,
-              ),
+        const command = {
+          type: "thread.stop" as const,
+          commandId,
+          threadId: current.childThreadId,
+          stopDelegatedTasks: false,
+          reason,
+        };
+        const stopDescendants = threadManagement.stopDelegatedTasks({
+          threadId: current.childThreadId,
+          commandId,
+          reason,
+        });
+        yield* (
+          isTerminalTaskStatus(current.status)
+            ? stopDescendants.pipe(Effect.andThen(threadManagement.dispatch(command)))
+            : threadManagement.cancelDelegatedTask({
+                parentThreadId: scope.thread.threadId,
+                taskId: input.taskId,
+                command,
+                stopDescendants,
+              })
+        ).pipe(
+          Effect.mapError((error) =>
+            failure(
+              "task_not_cancellable",
+              `Unable to stop delegated task ${input.taskId}: ${errorMessage(error)}`,
             ),
-          );
-        // An unsettled task records the cancel, so it settles as interrupted once its turn ends.
-        yield* isTerminalTaskStatus(current.status)
-          ? stopThread
-          : threadManagement.cancelDelegatedTask({
-              parentThreadId: scope.thread.threadId,
-              taskId: input.taskId,
-              stop: stopThread,
-            });
-        yield* threadManagement
-          .stopDelegatedTasks({ threadId: current.childThreadId, commandId, reason })
-          .pipe(
-            Effect.mapError((error) =>
-              failure(
-                "task_not_cancellable",
-                `Stopped delegated task ${input.taskId}, but not every task it delegated: ${errorMessage(error)}`,
-              ),
-            ),
-          );
+          ),
+        );
         const stopped = yield* threadManagement
           .getThreadRecords(current.childThreadId, ["runs"])
           .pipe(Effect.mapError(threadManagementFailure));

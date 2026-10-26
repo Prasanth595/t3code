@@ -318,8 +318,8 @@ the published task result.
 
 ### `task_cancel`
 
-Stops the child thread with the internal `thread.stop` command, then stops every
-task the child delegated, and disposes automatic parent delivery. Like a user Stop,
+Stops every task the child delegated, then the child thread with the internal
+`thread.stop` command, and disposes automatic parent delivery. Like a user Stop,
 `thread.stop` interrupts the running turn, holds queued turns, and ends pull request
 watches. A nonterminal task with no interruptible run is rejected unless its finished
 turn still waits on background work or delegated tasks. Once a cancelled task's turn ends,

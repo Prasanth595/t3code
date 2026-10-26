@@ -1605,7 +1605,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
                   threadId: parentThreadId,
                   nodeId: settled.id,
                   occurredAt: now,
-                  payload: { ...settled, cancelRequestedAt: now, cancelledRunId: child.childRunId },
+                  payload: { ...settled, cancelledRunId: child.childRunId },
                 },
               ],
             });
@@ -1737,7 +1737,13 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             yield* orchestrator.cancelDelegatedTask({
               parentThreadId,
               taskId: run.delegatedTaskId!,
-              stop: Effect.void,
+              command: {
+                type: "thread.stop",
+                commandId: CommandId.make(`cancel-followup-${outcome}`),
+                threadId: child.childThreadId,
+                stopDelegatedTasks: false,
+              },
+              stopDescendants: Effect.void,
             });
           }
           yield* eventSink.write({
@@ -2293,13 +2299,19 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       yield* orchestrator.cancelDelegatedTask({
         parentThreadId: threadId,
         taskId: child.taskId,
-        stop: Effect.void,
+        command: {
+          type: "thread.stop",
+          commandId: CommandId.make("cancel-finished-child"),
+          threadId: child.childThreadId,
+          stopDelegatedTasks: false,
+        },
+        stopDescendants: Effect.void,
       });
       const task = (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
         (row) => row.id === child.taskId,
       );
       assert.equal(task?.status, "completed");
-      assert.isUndefined(task?.cancelRequestedAt);
+      assert.isUndefined(task?.cancelledRunId);
     }),
   );
 

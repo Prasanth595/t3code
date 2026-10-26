@@ -630,7 +630,12 @@ describe("OrchestratorMcpService", () => {
             Ref.update(dispatched, (commands) => [...commands, command]).pipe(
               Effect.andThen(Effect.fail(new Error("simulated stop failure") as never)),
             ),
-          cancelDelegatedTask: ({ stop }) => stop,
+          stopDelegatedTasks: () => Effect.void,
+          cancelDelegatedTask: ({ command, stopDescendants }) =>
+            stopDescendants.pipe(
+              Effect.andThen(Ref.update(dispatched, (commands) => [...commands, command])),
+              Effect.andThen(Effect.fail(new Error("simulated stop failure") as never)),
+            ),
         }),
         ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
@@ -716,7 +721,10 @@ describe("OrchestratorMcpService", () => {
               ),
             ),
           stopDelegatedTasks: () => Effect.void,
-          cancelDelegatedTask: ({ stop }) => stop,
+          cancelDelegatedTask: ({ command, stopDescendants }) =>
+            stopDescendants.pipe(
+              Effect.andThen(Ref.update(dispatched, (commands) => [...commands, command])),
+            ),
         }),
         ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
@@ -803,7 +811,10 @@ describe("OrchestratorMcpService", () => {
               ),
             ),
           stopDelegatedTasks: () => Effect.void,
-          cancelDelegatedTask: ({ stop }) => stop,
+          cancelDelegatedTask: ({ command, stopDescendants }) =>
+            stopDescendants.pipe(
+              Effect.andThen(Ref.update(dispatched, (commands) => [...commands, command])),
+            ),
         }),
         ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
@@ -916,7 +927,10 @@ describe("OrchestratorMcpService", () => {
             Ref.update(dispatched, (commands) => [...commands, command]).pipe(
               Effect.as({} as never),
             ),
-          cancelDelegatedTask: ({ stop }) => stop,
+          cancelDelegatedTask: ({ command, stopDescendants }) =>
+            stopDescendants.pipe(
+              Effect.andThen(Ref.update(dispatched, (commands) => [...commands, command])),
+            ),
           stopDelegatedTasks: () =>
             Effect.gen(function* () {
               const limit = yield* DispatchModeLimit;
