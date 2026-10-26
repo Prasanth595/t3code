@@ -775,13 +775,14 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
 
   func prepareForSubmit() -> [String: Any] {
     // Ending editing accepts UIKit's pending autocorrection synchronously.
-    // Return the committed document rather than relying on JS receiving the
-    // change event before the send button reads its draft.
+    let wasEditing = textView.isFirstResponder
     textView.resignFirstResponder()
     value = textView.serializedText()
+    if wasEditing {
+      textView.becomeFirstResponder()
+    }
     let selection = sourceSelection()
-    // This snapshot is newer than every event emitted while ending editing.
-    // Delayed change/selection events must not restore the submitted draft.
+    // Delayed editing events must not restore the submitted draft.
     nativeEventCount += 1
     return [
       "value": value,

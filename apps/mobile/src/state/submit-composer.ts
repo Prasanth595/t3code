@@ -10,6 +10,7 @@ export async function submitComposer<Result>(
 ): Promise<Result | null> {
   const edit = getQueuedRunEdit(threadKey);
   const isCurrent = () => isActive() && getQueuedRunEdit(threadKey) === edit;
+  if (!isCurrent()) return null;
   if ((await editor?.prepareForSubmit?.(isCurrent)) === false || !isCurrent()) return null;
   return send();
 }

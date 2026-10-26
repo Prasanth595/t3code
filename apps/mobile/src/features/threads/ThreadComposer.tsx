@@ -532,11 +532,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   })();
   const activeDraftRef = useRef<symbol | null>(null);
   useLayoutEffect(() => {
-    activeDraftRef.current = isScreenFocused ? Symbol(composerDraftKey) : null;
+    activeDraftRef.current = isScreenFocused
+      ? Symbol(`${composerOwnerKey}:${props.selectedThread.projectId}:${composerDraftKey}`)
+      : null;
     return () => {
       activeDraftRef.current = null;
     };
-  }, [composerDraftKey, isScreenFocused]);
+  }, [composerDraftKey, composerOwnerKey, props.selectedThread.projectId, isScreenFocused]);
   const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
     Keyboard.dismiss();
     navigation.navigate("ThreadAttachment", {

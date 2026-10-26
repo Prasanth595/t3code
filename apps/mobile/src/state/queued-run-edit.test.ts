@@ -170,6 +170,26 @@ describe("submitting with a pending native correction", () => {
 
   afterEach(() => endQueuedRunEdit(threadKey));
 
+  it("does not prepare an inactive draft", async () => {
+    const prepareForSubmit = vi.fn(async () => true);
+    const send = vi.fn(async () => "sent");
+    expect(
+      await submitComposer(
+        threadKey,
+        {
+          focus() {},
+          blur() {},
+          setSelection() {},
+          prepareForSubmit,
+        },
+        send,
+        () => false,
+      ),
+    ).toBeNull();
+    expect(prepareForSubmit).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it.each(["draft", "queued edit"])(
     "reads the corrected %s only after preparation finishes",
     async (kind) => {

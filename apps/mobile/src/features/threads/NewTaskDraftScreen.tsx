@@ -20,11 +20,10 @@ import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime
 import {
   CommonActions,
   StackActions,
-  useIsFocused,
   useNavigation,
   usePreventRemove,
 } from "@react-navigation/native";
-import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { KeyboardController } from "react-native-keyboard-controller";
@@ -36,7 +35,6 @@ import {
 } from "@t3tools/contracts";
 
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
-import { submitComposer } from "../../state/submit-composer";
 import { composerContextImportsAtom } from "../../state/use-composer-drafts";
 import { abortComposerDraftOperations } from "../../state/composerDraftOperations";
 import { composerContextSendBlockReason } from "../../lib/composerContext";
@@ -160,7 +158,6 @@ export function NewTaskDraftScreen(props: {
   const projects = useProjects();
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
-  const isScreenFocused = useIsFocused();
   const goBack = useWorkspaceBackNavigation("threads");
   const {
     consumeShare,
@@ -808,48 +805,7 @@ export function NewTaskDraftScreen(props: {
     locked: isComposerInteractionLocked,
   });
 
-  const submissionOwnerRef = useRef<{ preparing: boolean } | null>(null);
-  // Replacing the draft/edit or leaving the screen invalidates pending preparation.
-  useLayoutEffect(() => {
-    submissionOwnerRef.current = isScreenFocused ? { preparing: false } : null;
-    return () => {
-      submissionOwnerRef.current = null;
-    };
-  }, [
-    flow.draftKey,
-    selectedProject?.environmentId,
-    selectedProject?.id,
-    flow.editingPendingTask,
-    isScreenFocused,
-  ]);
-
   async function handleStart(): Promise<import("@t3tools/contracts").MessageId | null> {
-    if (isComposerInteractionLocked) return null;
-    const owner = submissionOwnerRef.current;
-    const draftKey = flow.draftKey;
-    if (!owner || owner.preparing || !draftKey || !navigation.isFocused()) return null;
-    owner.preparing = true;
-    const started = await settlePromise(() =>
-      submitComposer(
-        draftKey,
-        promptInputRef.current,
-        // Preparation can publish corrected text before React replaces the flow callbacks.
-        () => startPreparedDraftRef.current(),
-        () => submissionOwnerRef.current === owner && navigation.isFocused(),
-      ),
-    );
-    owner.preparing = false;
-    if (AsyncResult.isFailure(started)) {
-      const error = squashAtomCommandFailure(started);
-      Dialog.alert(
-        "Could not queue task",
-        error instanceof Error ? error.message : "The task could not be saved to the outbox.",
-      );
-    }
-    return AsyncResult.isSuccess(started) ? started.value : null;
-  }
-
-  async function startPreparedDraft(): Promise<import("@t3tools/contracts").MessageId | null> {
     const selectedProject = flow.selectedProject;
     const draftKey = flow.draftKey;
     if (
