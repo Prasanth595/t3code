@@ -2813,13 +2813,13 @@ it("restores a PDF's page, scroll offset and zoom when the viewer remounts", asy
       region().scrollTop = scrolled;
       await event;
     });
-    expect(region().scrollTop).toBeCloseTo(scrolled, 0);
+    await vi.waitFor(() => expect(region().scrollTop).toBeCloseTo(scrolled, 0));
 
     await screen.rerender(viewer(2, "restore-test:a"));
     await vi.waitFor(() => expect(screen.container.textContent).toContain("3 / 3 pages"), {
       timeout: 15_000,
     });
-    expect(region().scrollTop).toBeCloseTo(scrolled, 0);
+    await vi.waitFor(() => expect(region().scrollTop).toBeCloseTo(scrolled, 0));
     expect(screen.container.textContent).toContain(zoom);
 
     await screen.rerender(viewer(3, "restore-test:b"));
