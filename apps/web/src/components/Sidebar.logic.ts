@@ -561,6 +561,25 @@ export function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "line
   return thread.lineage.relationshipToParent === "subagent";
 }
 
+// The thread sidebar remounts when the viewport crosses the mobile breakpoint.
+// AppSidebarLayout holds this, so a Scratch pick in the page session is not
+// read back as restored state and cleared.
+export interface SidebarProjectScopeSession {
+  userChose: boolean;
+}
+
+export function createSidebarProjectScopeSession(): SidebarProjectScopeSession {
+  return { userChose: false };
+}
+
+export function markSidebarProjectScopeChosen(session: SidebarProjectScopeSession): void {
+  session.userChose = true;
+}
+
+export function sidebarProjectScopeWasRestored(session: SidebarProjectScopeSession): boolean {
+  return !session.userChose;
+}
+
 // Scratch is a real catalog project, so a key that points only at it never
 // looks missing and keeps filtering the sidebar. A pick in this session stays;
 // a missing group is cleared once snapshots are ready.

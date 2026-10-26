@@ -20,8 +20,11 @@ import {
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreads,
+  createSidebarProjectScopeSession,
+  markSidebarProjectScopeChosen,
   shouldClearPersistedSidebarProjectScope,
   shouldRecedeSidebarThread,
+  sidebarProjectScopeWasRestored,
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
   planSidebarThreadDrop,
@@ -1430,6 +1433,36 @@ describe("shouldClearPersistedSidebarProjectScope", () => {
         scopeKey: `${remote}:${remoteScratchRoot}`,
         snapshotsReady: true,
         restored: false,
+        scopedGroup: scratchGroup,
+        scratchWorkspaceRootFor,
+      }),
+    ).toBe(false);
+  });
+
+  it("clears a scratch scope restored into a new session", () => {
+    const session = createSidebarProjectScopeSession();
+    expect(sidebarProjectScopeWasRestored(session)).toBe(true);
+    expect(
+      shouldClearPersistedSidebarProjectScope({
+        scopeKey: `${remote}:${remoteScratchRoot}`,
+        snapshotsReady: true,
+        restored: sidebarProjectScopeWasRestored(session),
+        scopedGroup: scratchGroup,
+        scratchWorkspaceRootFor,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a scratch scope the user chose when the sidebar remounts", () => {
+    const session = createSidebarProjectScopeSession();
+    markSidebarProjectScopeChosen(session);
+    // A remount reads the layout's session again; it does not start a new one.
+    expect(sidebarProjectScopeWasRestored(session)).toBe(false);
+    expect(
+      shouldClearPersistedSidebarProjectScope({
+        scopeKey: `${remote}:${remoteScratchRoot}`,
+        snapshotsReady: true,
+        restored: sidebarProjectScopeWasRestored(session),
         scopedGroup: scratchGroup,
         scratchWorkspaceRootFor,
       }),

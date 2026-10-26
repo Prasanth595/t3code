@@ -175,8 +175,11 @@ import {
   resolveSidebarDropVerb,
   resolveSidebarThreadSection,
   searchSidebarThreads,
+  markSidebarProjectScopeChosen,
   shouldClearPersistedSidebarProjectScope,
   shouldCreateNewThreadInCurrentProject,
+  sidebarProjectScopeWasRestored,
+  type SidebarProjectScopeSession,
   shouldNavigateAfterThreadPark,
   sidebarListItemId,
   sidebarThreadKeyAtY,
@@ -780,7 +783,13 @@ function readRouteThreadKey(router: AnyRouter): string | null {
   return ref === null ? null : scopedThreadKey(ref);
 }
 
-export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReveal }) {
+export default function Sidebar({
+  routeReveal,
+  projectScopeSession,
+}: {
+  routeReveal: SidebarRouteReveal;
+  projectScopeSession: SidebarProjectScopeSession;
+}) {
   const {
     projects,
     serverConfigs,
@@ -950,9 +959,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
 
   // A selection made under one scope can hold threads the next scope hides.
   // A scope loaded with the page can be cleared. A pick in this session is kept.
-  const userChoseProjectScopeRef = useRef(false);
   const setProjectScopeKey = (key: string | null) => {
-    userChoseProjectScopeRef.current = true;
+    markSidebarProjectScopeChosen(projectScopeSession);
     clearSelection();
     setPersistedProjectScopeKey(key);
   };
@@ -1022,7 +1030,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       !shouldClearPersistedSidebarProjectScope({
         scopeKey: chosenProjectScopeKey,
         snapshotsReady: projectCatalogReady,
-        restored: !userChoseProjectScopeRef.current,
+        restored: sidebarProjectScopeWasRestored(projectScopeSession),
         scopedGroup: chosenProjectGroup,
         scratchWorkspaceRootFor: (environmentId) =>
           serverConfigs.get(environmentId)?.scratchWorkspaceRoot,
@@ -1037,6 +1045,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     chosenProjectScopeKey,
     clearSelection,
     projectCatalogReady,
+    projectScopeSession,
     serverConfigs,
     setPersistedProjectScopeKey,
   ]);
