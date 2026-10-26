@@ -241,27 +241,55 @@ it("holds a completion through a continuation gap and notifies once it settles",
   expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Thread completed"]);
 });
 
-it("notifies for changes made while the environment was disconnected, once", async () => {
-  await using app = setup();
-  const asking = { id: "asking", hasPendingApprovals: true };
-  state.shells.set("one", shell({ id: "working" }, { id: "asking" }));
-  await app.render();
-  using _timers = fakeTimers();
-  state.shells.set("one", shell({ id: "working" }, asking));
-  await app.render();
-  state.shells.set("one", { ...shell({ id: "working" }, asking), status: "cached" });
-  await app.render();
-  const completed = {
-    id: "working",
-    latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:05:00.000Z" },
-  };
-  state.shells.set("one", { ...shell(completed, asking), status: "synchronizing" });
-  await app.render();
-  state.shells.set("one", shell(completed, asking));
-  await app.render();
-  await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
-  expect(TestNotification.sent.map(({ title }) => title)).toEqual([
-    "Approval needed",
-    "Thread completed",
-  ]);
-});
+it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
+  "notifies for offline completion and %s once across reconnects",
+  async (flag) => {
+    await using app = setup();
+    const asking = { id: "asking", hasPendingApprovals: true };
+    const offline = { id: "offline", [flag]: true };
+    const done = {
+      id: "done",
+      latestTurn: {
+        turnId: "done-turn",
+        state: "completed",
+        completedAt: "2026-09-13T07:00:00.000Z",
+      },
+    };
+    state.shells.set("one", shell({ id: "working" }, { id: "asking" }, { id: "offline" }, done));
+    await app.render();
+    using _timers = fakeTimers();
+    state.shells.set("one", shell({ id: "working" }, asking, { id: "offline" }, done));
+    await app.render();
+    state.shells.set("one", {
+      ...shell({ id: "working" }, asking, { id: "offline" }, done),
+      status: "cached",
+    });
+    await app.render();
+    const completed = {
+      id: "working",
+      latestTurn: { turnId: "turn", state: "completed", completedAt: "2026-09-13T07:05:00.000Z" },
+    };
+    state.shells.set("one", {
+      ...shell(completed, asking, offline, done),
+      status: "synchronizing",
+    });
+    await app.render();
+    state.shells.set("one", shell(completed, asking, offline, done));
+    await app.render();
+    expect(TestNotification.sent.map(({ title }) => title)).toEqual([
+      "Approval needed",
+      flag === "hasPendingApprovals" ? "Approval needed" : "Input needed",
+    ]);
+    await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
+    state.shells.set("one", { ...shell(completed, asking, offline, done), status: "cached" });
+    await app.render();
+    state.shells.set("one", shell(completed, asking, offline, done));
+    await app.render();
+    await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
+    expect(TestNotification.sent.map(({ title }) => title)).toEqual([
+      "Approval needed",
+      flag === "hasPendingApprovals" ? "Approval needed" : "Input needed",
+      "Thread completed",
+    ]);
+  },
+);

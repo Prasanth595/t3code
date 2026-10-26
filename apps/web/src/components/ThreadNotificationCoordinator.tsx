@@ -231,11 +231,8 @@ function EnvironmentNotifications({
   useEffect(() => {
     const pendingCompletions = gate.current;
     if (!pendingCompletions) return;
-    if (threads === null) {
-      pendingCompletions.clear();
-      previous.current.clear();
-      return;
-    }
+    // Keep the last live baseline and completion history through reconnects.
+    if (threads === null) return;
     const next = new Map<ThreadId, NotificationState>();
     const subagentRequests = pendingSubagentRequestsByThread(threads);
     const changed: Array<[NotificationState | undefined, NotificationState]> = [];
