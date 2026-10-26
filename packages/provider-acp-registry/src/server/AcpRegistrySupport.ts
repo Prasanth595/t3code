@@ -661,8 +661,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   const registryRef = yield* Ref.make<AcpRegistryIndex | undefined>(undefined);
   const registryRevision = yield* Ref.make(0);
   const registrySemaphore = yield* Semaphore.make(1);
-  // Downloads and package installs can take minutes, so each agent waits only
-  // for its own install work, not for another agent's.
+  // Long installs must only block operations on the same agent.
   const installPermits = new Map<string, Semaphore.Semaphore>();
   const withInstallPermit = (agentId: string) => {
     const permit = installPermits.get(agentId) ?? Semaphore.makeUnsafe(1);

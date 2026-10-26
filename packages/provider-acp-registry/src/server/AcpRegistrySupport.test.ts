@@ -1445,15 +1445,16 @@ describe("AcpRegistrySupport", () => {
     });
   });
 
-  it.effect("resolves an agent while another agent's download is still running", () => {
+  it.effect("resolves an installed agent while another agent's download is still running", () => {
     const slowArchiveUrl = "https://registry.test/slow-agent.bin";
     const agent = makeAgent({
       binary: { "linux-x86_64": { archive: archiveUrl, cmd: "./bin/example-agent" } },
     });
     const slowAgent = {
-      ...makeAgent({
+      ...agent,
+      distribution: {
         binary: { "linux-x86_64": { archive: slowArchiveUrl, cmd: "./bin/slow-agent" } },
-      }),
+      },
       id: "slow-agent",
       name: "Slow Agent",
     };
@@ -1471,6 +1472,8 @@ describe("AcpRegistrySupport", () => {
           toolsDir: `${cacheDir}/tools`,
           registryUrl,
         });
+
+        yield* resolver.resolve(settings(), "/workspace");
 
         const prepareFiber = yield* resolver
           .prepare({ agentId: slowAgent.id })
