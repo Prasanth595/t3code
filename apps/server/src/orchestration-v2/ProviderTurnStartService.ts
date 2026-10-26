@@ -984,7 +984,7 @@ export const layer: Layer.Layer<
       const tokenCap = yield* handoffTokenCapConfig.pipe(
         Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
       );
-      const settledHandoffsFor = (nativeThreadId: string | undefined) =>
+      const settledHandoffsFor = (nativeThreadId: string | null | undefined) =>
         projection.contextHandoffs.filter(
           (handoff) =>
             handoff.toProviderThreadId === providerThread.id &&

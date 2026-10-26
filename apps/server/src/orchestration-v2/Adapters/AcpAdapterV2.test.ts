@@ -3005,7 +3005,12 @@ describe("AcpAdapterV2", () => {
                   forceNewNativeThread: true,
                 })
                 .pipe(
-                  Effect.map((replacement) => ({ providerThread: replacement, providerTurns: [] })),
+                  Effect.map((replacement): ProviderAdapter.ProviderAdapterV2ThreadSnapshot => ({
+                    providerThread: replacement,
+                    providerTurns: [],
+                    messages: [],
+                    runtimeRequests: [],
+                  })),
                 )
             : runtime.rollbackThread({
                 providerThread: { ...providerThread, appThreadId: rollbackThreadId },
