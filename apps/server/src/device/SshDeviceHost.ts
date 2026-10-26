@@ -280,7 +280,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
             // close, instead of being orphaned.
             "sh",
             "-c",
-            quoteRemoteArg("exec cat >/dev/null"),
+            SshDeviceScript.quoteRemoteArg("exec cat >/dev/null"),
           ],
           { stdin: "pipe", stdout: "ignore", stderr: "pipe" },
         ),

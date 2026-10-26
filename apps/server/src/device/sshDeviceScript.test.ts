@@ -10,7 +10,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import * as SshDeviceScript from "./sshDeviceScript.ts";
-import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
+import { DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 const windowsHost = HostProcess.Platform.defaultValue() === "win32";
@@ -22,13 +22,14 @@ const writeNpmPackage = async (directory: string, version: string, nodeEngine: s
     NodePath.join(root, "package.json"),
     JSON.stringify({ version, engines: { node: nodeEngine } }),
   );
-  // Use npm's real bundled engine checker, without adding a repository dependency.
+  const located = await exec(windowsHost ? "where.exe" : "which", ["npm"]);
+  const launcher = await NodeFSP.realpath(located.stdout.trim().split(/\r?\n/)[0]!);
+  const npmRoot = NodePath.resolve(
+    NodePath.dirname(launcher),
+    windowsHost ? "node_modules/npm" : "..",
+  );
   await NodeFSP.cp(
-    NodePath.resolve(
-      NodePath.dirname(process.execPath),
-      windowsHost ? "." : "../lib",
-      "node_modules/npm/node_modules/semver",
-    ),
+    NodePath.join(npmRoot, "node_modules/semver"),
     NodePath.join(root, "node_modules/semver"),
     { recursive: true },
   );
@@ -271,108 +272,97 @@ childProcess.spawnSync = (command, args, options) => command === 'adb'
 it.effect.each([{ supported: true }, { supported: false }])(
   "preserves a working SSH Node/npm pair and replaces an old Node: supported=$supported",
   ({ supported }) =>
-    Effect.gen(function* () {
-      yield* Effect.promise(async () => {
-        const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-path-"));
-        try {
-          const bin = NodePath.join(home, "selected-node/bin");
-          const fallback = NodePath.join(home, ".local/bin");
-          const sdk = NodePath.join(home, "android-sdk");
-          const jvm = NodePath.join(home, "java-home");
-          await NodeFSP.mkdir(bin, { recursive: true });
-          await NodeFSP.mkdir(fallback, { recursive: true });
-          for (const [tool, directory] of [
-            ["adb", NodePath.join(sdk, "platform-tools")],
-            ["java", NodePath.join(jvm, "bin")],
-          ] as const) {
-            await NodeFSP.mkdir(directory, { recursive: true });
-            await NodeFSP.writeFile(
-              NodePath.join(directory, tool),
-              `#!/bin/sh\necho configured-${tool}\n`,
-              { mode: 0o755 },
-            );
-            await NodeFSP.writeFile(
-              NodePath.join(fallback, tool),
-              `#!/bin/sh\necho wrong-${tool}\n`,
-              { mode: 0o755 },
-            );
-          }
-          for (const tool of ["node", "npm"]) {
-            await NodeFSP.writeFile(
-              NodePath.join(bin, tool),
-              `#!/bin/sh\nif [ "$1" = "-e" ]; then exit ${supported ? 0 : 1}; fi\necho selected\n`,
-              {
-                mode: 0o755,
-              },
-            );
-            await NodeFSP.writeFile(
-              NodePath.join(fallback, tool),
-              '#!/bin/sh\nif [ "$1" = "-e" ]; then exit 0; fi\necho fallback\n',
-              {
-                mode: 0o755,
-              },
-            );
-          }
-          const result = await exec(
-            "/bin/sh",
-            [
-              "-c",
-              `${SshDeviceScript.remoteDeviceEnvironment({ nodeBootstrap: true })}\nnode; npm; adb; java`,
-            ],
+    Effect.promise(async () => {
+      const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-path-"));
+      try {
+        const bin = NodePath.join(home, "selected-node/bin");
+        const fallback = NodePath.join(home, ".local/bin");
+        const sdk = NodePath.join(home, "android-sdk");
+        const jvm = NodePath.join(home, "java-home");
+        await NodeFSP.mkdir(bin, { recursive: true });
+        await NodeFSP.mkdir(fallback, { recursive: true });
+        for (const [tool, directory] of [
+          ["adb", NodePath.join(sdk, "platform-tools")],
+          ["java", NodePath.join(jvm, "bin")],
+        ] as const) {
+          await NodeFSP.mkdir(directory, { recursive: true });
+          await NodeFSP.writeFile(
+            NodePath.join(directory, tool),
+            `#!/bin/sh\necho configured-${tool}\n`,
+            { mode: 0o755 },
+          );
+          await NodeFSP.writeFile(
+            NodePath.join(fallback, tool),
+            `#!/bin/sh\necho wrong-${tool}\n`,
+            { mode: 0o755 },
+          );
+        }
+        for (const tool of ["node", "npm"]) {
+          await NodeFSP.writeFile(
+            NodePath.join(bin, tool),
+            `#!/bin/sh\nif [ "$1" = "-e" ]; then exit ${supported ? 0 : 1}; fi\necho selected\n`,
             {
-              env: { HOME: home, PATH: bin, JAVA_HOME: jvm, ANDROID_HOME: sdk },
+              mode: 0o755,
             },
           );
-          expect(result.stdout).toBe(
-            (supported ? "selected\nselected\n" : "fallback\nfallback\n") +
-              "configured-adb\nconfigured-java\n",
+          await NodeFSP.writeFile(
+            NodePath.join(fallback, tool),
+            '#!/bin/sh\nif [ "$1" = "-e" ]; then exit 0; fi\necho fallback\n',
+            {
+              mode: 0o755,
+            },
           );
-        } finally {
-          await NodeFSP.rm(home, { recursive: true, force: true });
         }
-      });
+        const result = await exec(
+          "/bin/sh",
+          [
+            "-c",
+            `${SshDeviceScript.remoteDeviceEnvironment({ nodeBootstrap: true })}\nnode; npm; adb; java`,
+          ],
+          {
+            env: { HOME: home, PATH: bin, JAVA_HOME: jvm, ANDROID_HOME: sdk },
+          },
+        );
+        expect(result.stdout).toBe(
+          (supported ? "selected\nselected\n" : "fallback\nfallback\n") +
+            "configured-adb\nconfigured-java\n",
+        );
+      } finally {
+        await NodeFSP.rm(home, { recursive: true, force: true });
+      }
     }),
   { skip: windowsHost },
 );
 
 it.effect.skipIf(windowsHost)("finds Android Studio Java for a non-interactive SSH session", () =>
-  Effect.gen(function* () {
-    yield* Effect.promise(async () => {
-      const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-java-"));
-      try {
-        const javaHome = NodePath.join(home, ".local/opt/android-studio/jbr");
-        await NodeFSP.mkdir(NodePath.join(javaHome, "bin"), { recursive: true });
-        await NodeFSP.writeFile(
-          NodePath.join(javaHome, "bin/java"),
-          "#!/bin/sh\necho test-java\n",
-          { mode: 0o755 },
-        );
-        const result = await exec(
-          "/bin/sh",
-          ["-c", `${SshDeviceScript.remoteDeviceEnvironment()}\njava`],
-          {
-            env: { HOME: home, PATH: "/nonexistent", JAVA_HOME: "" },
-          },
-        );
-        expect(result.stdout.trim()).toBe("test-java");
-      } finally {
-        await NodeFSP.rm(home, { recursive: true, force: true });
-      }
-    });
+  Effect.promise(async () => {
+    const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-java-"));
+    try {
+      const javaHome = NodePath.join(home, ".local/opt/android-studio/jbr");
+      await NodeFSP.mkdir(NodePath.join(javaHome, "bin"), { recursive: true });
+      await NodeFSP.writeFile(NodePath.join(javaHome, "bin/java"), "#!/bin/sh\necho test-java\n", {
+        mode: 0o755,
+      });
+      const result = await exec(
+        "/bin/sh",
+        ["-c", `${SshDeviceScript.remoteDeviceEnvironment()}\njava`],
+        {
+          env: { HOME: home, PATH: "/nonexistent", JAVA_HOME: "" },
+        },
+      );
+      expect(result.stdout.trim()).toBe("test-java");
+    } finally {
+      await NodeFSP.rm(home, { recursive: true, force: true });
+    }
   }),
 );
 
 it.effect.skipIf(windowsHost)(
   "preserves shell metacharacters and newlines in remote arguments",
   () =>
-    Effect.gen(function* () {
-      yield* Effect.promise(async () => {
-        const value = "quotes ' \" ; $(echo expanded) $HOME\nnext line";
-        const result = await exec("sh", [
-          "-c",
-          `printf %s ${SshDeviceScript.quoteRemoteArg(value)}`,
-        ]);
-        expect(result.stdout).toBe(value);
-      });
+    Effect.promise(async () => {
+      const value = "quotes ' \" ; $(echo expanded) $HOME\nnext line";
+      const result = await exec("sh", ["-c", `printf %s ${SshDeviceScript.quoteRemoteArg(value)}`]);
+      expect(result.stdout).toBe(value);
     }),
 );
