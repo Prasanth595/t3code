@@ -7,6 +7,7 @@ import {
   type ServerProvider,
   type UnifiedSettings,
 } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import { AsyncResult, type Atom } from "effect/reactivity";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -301,5 +302,37 @@ describe("EnvironmentProviderSettings routing", () => {
       environmentId,
       input: { instanceId, elicitationId: action.elicitationId },
     });
+  });
+});
+
+describe("EnvironmentProviderSettings health check interval", () => {
+  it("saves a typed interval once, when editing ends", async () => {
+    await setup();
+    await using _screen = await render(panel());
+    const input = page.getByRole("textbox", { name: "Provider health check interval in seconds" });
+
+    // Replacing 300 with 120 passes through 30, 3, an empty field, 1 and 12.
+    await userEvent.type(input, "{Backspace}{Backspace}{Backspace}120");
+    await expect.element(input).toHaveValue("120");
+    expect(state.updateSettings).not.toHaveBeenCalled();
+
+    await userEvent.tab();
+    expect(
+      state.updateSettings.mock.calls.map(([patch]) =>
+        Duration.toSeconds(patch.backgroundActivity.overrides.providerHealthRefreshInterval),
+      ),
+    ).toEqual([120]);
+  });
+
+  it("restores the saved interval when a cleared field loses focus", async () => {
+    await setup();
+    await using _screen = await render(panel());
+    const input = page.getByRole("textbox", { name: "Provider health check interval in seconds" });
+
+    await userEvent.type(input, "{Backspace}{Backspace}{Backspace}");
+    await userEvent.tab();
+
+    await expect.element(input).toHaveValue("300");
+    expect(state.updateSettings).not.toHaveBeenCalled();
   });
 });

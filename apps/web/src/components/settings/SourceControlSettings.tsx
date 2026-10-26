@@ -20,6 +20,7 @@ import {
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
+import { IntervalSecondsField } from "./IntervalSecondsField";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { sourceControlEnvironment } from "../../state/sourceControl";
@@ -35,13 +36,6 @@ import {
   EmptyTitle,
 } from "../ui/empty";
 import { Skeleton } from "../ui/skeleton";
-import {
-  NumberField,
-  NumberFieldDecrement,
-  NumberFieldGroup,
-  NumberFieldIncrement,
-  NumberFieldInput,
-} from "../ui/number-field";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -84,13 +78,6 @@ type BackgroundActivityOverridePatch = Partial<{
 
 function durationToSeconds(duration: Duration.Duration): number {
   return Math.round(Duration.toMillis(duration) / 1_000);
-}
-
-function normalizeFetchIntervalSeconds(value: number | null): number {
-  if (value === null || !Number.isFinite(value)) {
-    return 0;
-  }
-  return Math.max(0, Math.round(value));
 }
 
 function backgroundActivityOverrideSettings(
@@ -399,26 +386,20 @@ function GitFetchIntervalSettings() {
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <NumberField
+          <IntervalSecondsField
+            label="fetch interval"
+            inputLabel="Automatic Git fetch interval in seconds"
             value={automaticGitFetchIntervalSeconds}
             min={0}
             step={GIT_FETCH_INTERVAL_STEP_SECONDS}
-            size="sm"
-            className="w-32"
-            onValueChange={(value) =>
+            onCommit={(seconds) =>
               updateSettings(
                 backgroundActivityOverrideSettings(settings.backgroundActivity, {
-                  automaticGitFetchInterval: Duration.seconds(normalizeFetchIntervalSeconds(value)),
+                  automaticGitFetchInterval: Duration.seconds(seconds),
                 }),
               )
             }
-          >
-            <NumberFieldGroup>
-              <NumberFieldDecrement aria-label="Decrease fetch interval" />
-              <NumberFieldInput aria-label="Automatic Git fetch interval in seconds" />
-              <NumberFieldIncrement aria-label="Increase fetch interval" />
-            </NumberFieldGroup>
-          </NumberField>
+          />
           <span className="text-xs text-muted-foreground">seconds</span>
         </div>
       </div>
