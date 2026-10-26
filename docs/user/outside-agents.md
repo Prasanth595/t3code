@@ -125,6 +125,12 @@ session, so the next turn starts in the destination project. A subagent stays
 with its parent, and a thread that still has a subagent in the current project
 cannot be moved.
 
+A **No project** chat works in its own scratch folder, which is not a checkout.
+Moving it out needs no `--keep-worktree`: the thread leaves the folder, its
+session ends, and the next turn starts in the destination project. Nothing is
+deleted. The thread shows a note with the old folder's path, and the CLI and
+`t3_thread_update` return it as `scratchFolder`.
+
 An agent can move its own thread with `t3_thread_update` and
 `action: "move_project"`. Because the agent is always mid-turn when it asks,
 the move is checked right away and applied when the turn completes. The

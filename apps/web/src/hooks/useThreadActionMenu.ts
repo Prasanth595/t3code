@@ -19,6 +19,7 @@ import { resolveSnoozePresets } from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
   buildThreadMoveTargets,
+  threadMoveRequest,
   threadActionRequiresOperate,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
@@ -174,12 +175,13 @@ export function useThreadActionMenu(input: {
           (candidate) => `move-project:${candidate.projectId}` === action,
         );
         if (!target) return;
+        const moveRequest = threadMoveRequest(projects, thread);
         const moved = await updateThreadMetadata({
           environmentId: threadRef.environmentId,
           input: {
             threadId: threadRef.threadId,
             projectId: target.projectId,
-            ...(thread.worktreePath ? { keepWorktree: true } : {}),
+            ...(moveRequest.keepWorktree ? { keepWorktree: true } : {}),
           },
         });
         if (moved._tag === "Failure" && !isAtomCommandInterrupted(moved)) {
@@ -190,9 +192,7 @@ export function useThreadActionMenu(input: {
           toastManager.add({
             type: "success",
             title: `Moved to ${target.label}`,
-            description: thread.worktreePath
-              ? "The checkout stays where it is."
-              : "The next message starts in that project.",
+            description: moveRequest.description,
           });
         }
         return;

@@ -1821,6 +1821,65 @@ it.effect("detaches the provider session only when a project move changes the wo
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("a move that clears the folder ends the session and notes where the files stay", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const events = yield* EventSink.EventSinkV2;
+    const sourceId = ProjectId.make("project:scratch-source");
+    const destinationId = ProjectId.make("project:scratch-destination");
+    const threadId = ThreadId.make("thread:scratch-move");
+    const folder = "/home/user/.t3/scratch/2026-10-26-plan-backups";
+    yield* createProject(sourceId, "/home/user/.t3/scratch");
+    yield* createProject(destinationId, "/work/scratch-destination");
+    yield* createThread({ threadId, projectId: sourceId, worktreePath: folder });
+    yield* attachReadySession(threadId, "session:scratch-move", folder);
+
+    const moveId = CommandId.make("move-out-of-scratch");
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: moveId,
+      threadId,
+      projectId: destinationId,
+      worktreePath: null,
+      expectedWorktreePath: folder,
+    });
+    const moved = yield* projections.getThread(threadId);
+    assert.equal(moved.projectId, destinationId);
+    assert.equal(moved.worktreePath, null);
+    assert.deepEqual(yield* detachReasons(moveId), ["Workspace changed."]);
+    const committed = yield* events.readByCommandId({ commandId: moveId }).pipe(Stream.runCollect);
+    const notes = [...committed].flatMap((stored) =>
+      stored.event.type === "turn-item.updated" && stored.event.payload.type === "system_notice"
+        ? [stored.event.payload]
+        : [],
+    );
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0]!.runId, null);
+    assert.equal(notes[0]!.message, Orchestrator.projectMoveFolderNotice(folder));
+    assert.ok(notes[0]!.message.includes(folder));
+
+    // The guard still holds: a stale folder refuses the move.
+    const otherId = ThreadId.make("thread:scratch-move-stale");
+    yield* createThread({ threadId: otherId, projectId: sourceId, worktreePath: `${folder}-2` });
+    const stale = yield* orchestrator
+      .dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("move-out-of-scratch-stale"),
+        threadId: otherId,
+        projectId: destinationId,
+        worktreePath: null,
+        expectedWorktreePath: folder,
+      })
+      .pipe(Effect.flip);
+    assert.ok(
+      typeof stale.cause === "string" && stale.cause.includes("worktree changed"),
+      String(stale.cause),
+    );
+    assert.equal((yield* projections.getThread(otherId)).projectId, sourceId);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("dispatch records the command outcome and its duration", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

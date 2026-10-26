@@ -15,6 +15,7 @@ import * as Layer from "effect/Layer";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as ThreadMetadataMcpService from "./ThreadMetadataMcpService.ts";
 
@@ -44,21 +45,31 @@ type MetadataUpdate = Extract<OrchestrationV2Command, { readonly type: "thread.m
 const harness = (options: {
   readonly activeRunId: RunId | null;
   readonly refuseQueue?: string;
+  readonly worktreePath?: string;
+  readonly scratch?: boolean;
 }) => {
   const calls = {
     dispatched: [] as Array<MetadataUpdate>,
     queued: [] as Array<{ readonly projectId: ProjectId; readonly runId: RunId }>,
+    queuedCommands: [] as Array<MetadataUpdate>,
   };
   const shell = {
     id: threadId,
     projectId: sourceId,
     title: "Scratch chat",
     activeRunId: options.activeRunId,
-    worktreePath: null,
+    worktreePath: options.worktreePath ?? null,
     deletedAt: null,
   } as unknown as OrchestrationV2ThreadShell;
   const layer = ThreadMetadataMcpService.layer.pipe(
     Layer.provide(NodeCrypto.layer),
+    Layer.provide(
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/unused",
+        isScratchProject: (projectId) =>
+          Effect.succeed(options.scratch === true && projectId === sourceId),
+      }),
+    ),
     Layer.provide(
       Layer.mock(ThreadManagementService.ThreadManagementService)({
         getThreadShell: () => Effect.succeed(shell),
@@ -68,6 +79,7 @@ const harness = (options: {
           options.refuseQueue === undefined
             ? Effect.sync(() => {
                 calls.queued.push({ projectId: input.projectId, runId: input.runId });
+                calls.queuedCommands.push(input.command);
               })
             : Effect.fail(
                 new Orchestrator.OrchestratorDispatchError({
@@ -106,9 +118,14 @@ const harness = (options: {
   return { calls, layer };
 };
 
-const move = (scope: McpInvocationScope) =>
+const move = (scope: McpInvocationScope, options: { readonly keepWorktree?: boolean } = {}) =>
   Effect.flatMap(ThreadMetadataMcpService.ThreadMetadataMcpService, (service) =>
-    service.update(scope, { threadId, action: "move_project", projectId: destinationId }),
+    service.update(scope, {
+      threadId,
+      action: "move_project",
+      projectId: destinationId,
+      ...options,
+    }),
   );
 
 it.effect("queues a move its own agent asks for mid-turn until the turn ends", () => {
@@ -156,5 +173,56 @@ it.effect.each([
     expect(result).toMatchObject({ projectId: destinationId, sequence: 7 });
     expect(calls.queued).toEqual([]);
     expect(calls.dispatched.map((command) => command.projectId)).toEqual([destinationId]);
+  }).pipe(Effect.provide(layer));
+});
+
+const scratchFolder = "/home/user/.t3/scratch/2026-10-26-plan-backups-thread";
+
+it.effect("moves a No project chat out of its scratch folder and reports where it stays", () => {
+  const { calls, layer } = harness({
+    activeRunId: null,
+    worktreePath: scratchFolder,
+    scratch: true,
+  });
+  return Effect.gen(function* () {
+    // A client may still send keepWorktree; the scratch folder is never kept.
+    const result = yield* move(scopeFor(undefined), { keepWorktree: true });
+    expect(result).toMatchObject({ projectId: destinationId, worktreePath: null, scratchFolder });
+    expect(calls.dispatched).toHaveLength(1);
+    const command = calls.dispatched[0]!;
+    expect(command).toMatchObject({
+      projectId: destinationId,
+      worktreePath: null,
+      expectedWorktreePath: scratchFolder,
+    });
+    expect(command).not.toHaveProperty("keepWorktree");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("queues a No project chat's own mid-turn move without its scratch folder", () => {
+  const { calls, layer } = harness({
+    activeRunId: runId,
+    worktreePath: scratchFolder,
+    scratch: true,
+  });
+  return Effect.gen(function* () {
+    const result = yield* move(scopeFor(threadId));
+    expect(result).toMatchObject({ worktreePath: null, scratchFolder, movesWhenTurnEnds: true });
+    expect(calls.queuedCommands).toEqual([
+      expect.objectContaining({ worktreePath: null, expectedWorktreePath: scratchFolder }),
+    ]);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("keeps a real project's worktree when keepWorktree is set", () => {
+  const worktree = "/repos/app-worktrees/feature";
+  const { calls, layer } = harness({ activeRunId: null, worktreePath: worktree });
+  return Effect.gen(function* () {
+    const result = yield* move(scopeFor(undefined), { keepWorktree: true });
+    expect(result).not.toHaveProperty("scratchFolder");
+    const command = calls.dispatched[0]!;
+    expect(command).toMatchObject({ projectId: destinationId, keepWorktree: true });
+    expect(command).not.toHaveProperty("worktreePath");
+    expect(command).not.toHaveProperty("expectedWorktreePath");
   }).pipe(Effect.provide(layer));
 });

@@ -2904,7 +2904,9 @@ export const OrchestrationV2Command = Schema.Union([
     linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
     /**
      * Move the thread to this project. Absent leaves membership unchanged.
-     * A worktree stays put only when keepWorktree is true; otherwise the move is rejected.
+     * A worktree stays put only when keepWorktree is true. Clearing worktreePath
+     * in the same update leaves the folder behind instead (a No project chat's
+     * scratch folder); otherwise the move is rejected.
      */
     projectId: Schema.optional(ProjectId),
     keepWorktree: Schema.optional(Schema.Boolean),

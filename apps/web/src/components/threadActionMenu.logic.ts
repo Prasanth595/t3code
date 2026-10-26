@@ -29,6 +29,38 @@ export function buildThreadMoveTargets<
     .sort((left, right) => left.label.localeCompare(right.label));
 }
 
+/**
+ * What moving a thread sends, and the toast line after it. A No project chat
+ * keeps its own scratch folder as worktreePath. That folder is not a checkout:
+ * the server leaves it on disk and the next message starts in the destination.
+ * A real worktree stays where it is.
+ */
+export function threadMoveRequest(
+  projects: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly id: ProjectId;
+    readonly isScratch?: true;
+  }>,
+  thread: {
+    readonly environmentId: EnvironmentId;
+    readonly projectId: ProjectId;
+    readonly worktreePath: string | null;
+  },
+): { readonly keepWorktree?: true; readonly description: string } {
+  if (!thread.worktreePath) return { description: "The next message starts in that project." };
+  const fromScratch = projects.some(
+    (project) =>
+      project.environmentId === thread.environmentId &&
+      project.id === thread.projectId &&
+      project.isScratch === true,
+  );
+  return fromScratch
+    ? {
+        description: `The next message starts in that project. Earlier files stay in ${thread.worktreePath}.`,
+      }
+    : { keepWorktree: true, description: "The checkout stays where it is." };
+}
+
 export type ThreadActionMenuId =
   | "new-thread-on-branch"
   | "filter-by-project"

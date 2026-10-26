@@ -94,7 +94,7 @@ export const ThreadMetadataMcpUpdateInput = Schema.Struct({
   }),
   keepWorktree: Schema.optional(Schema.Boolean).annotate({
     description:
-      "With move_project, move a thread that has a worktree and leave that checkout in place. The next turn still runs there.",
+      "With move_project, move a thread that has a worktree and leave that checkout in place. The next turn still runs there. Not needed for a No project chat: its scratch folder stays behind (returned as scratchFolder) and the next turn starts in the new project.",
   }),
   clientRequestId: Schema.optional(ThreadMetadataClientRequestId),
 }).check(
@@ -138,6 +138,8 @@ export const ThreadMetadataMcpUpdateResult = Schema.Struct({
   linkedPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
   projectId: Schema.optional(ProjectId),
   worktreePath: Schema.optional(Schema.NullOr(Schema.String)),
+  /** A move out of No project leaves the chat's scratch folder here, untouched. */
+  scratchFolder: Schema.optional(Schema.String),
   updatedAt: IsoDateTime,
 });
 export type ThreadMetadataMcpUpdateResult = typeof ThreadMetadataMcpUpdateResult.Type;
@@ -152,6 +154,8 @@ export const ThreadMetadataMcpQueuedMoveResult = Schema.Struct({
   commandId: CommandId,
   projectId: ProjectId,
   worktreePath: Schema.NullOr(Schema.String),
+  /** A move out of No project leaves the chat's scratch folder here, untouched. */
+  scratchFolder: Schema.optional(Schema.String),
   movesWhenTurnEnds: Schema.Literal(true),
 });
 export type ThreadMetadataMcpQueuedMoveResult = typeof ThreadMetadataMcpQueuedMoveResult.Type;

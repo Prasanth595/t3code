@@ -167,6 +167,8 @@ const ThreadMoveResult = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   worktreePath: Schema.NullOr(Schema.String),
+  /** Set when a No project chat moved out; its files stay in this folder. */
+  scratchFolder: Schema.optional(Schema.String),
   /** Set when the thread's own agent ran this mid-turn; the move applies at turn end. */
   movesWhenTurnEnds: Schema.optional(Schema.Literal(true)),
 });
@@ -709,7 +711,7 @@ const threadShowCommand = Command.make("show", {
 
 const keepWorktreeFlag = Flag.Boolean("keep-worktree").pipe(
   Flag.withDescription(
-    "Move a thread that has a worktree and leave that checkout in place. The next turn still runs there.",
+    "Move a thread that has a worktree and leave that checkout in place. The next turn still runs there. A No project chat does not need it: its scratch folder stays on disk and the next turn starts in the destination.",
   ),
   Flag.withDefault(false),
 );
@@ -724,7 +726,7 @@ const threadMoveCommand = Command.make("move", {
   json: jsonFlag,
 }).pipe(
   Command.withDescription(
-    "Move an idle thread into another project. Refuses a turn in progress, a subagent, a thread that still has a subagent, or a worktree unless --keep-worktree.",
+    "Move an idle thread into another project. Refuses a turn in progress, a subagent, a thread that still has a subagent, or a worktree unless --keep-worktree. A No project chat leaves its scratch folder behind, undeleted.",
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
@@ -746,7 +748,12 @@ const threadMoveCommand = Command.make("move", {
           yield* flags.json
             ? printJson(moved)
             : Console.log(
-                `${moved.threadId}  ${moved.projectId}${moved.movesWhenTurnEnds === true ? "  (moves when this turn ends)" : ""}`,
+                [
+                  `${moved.threadId}  ${moved.projectId}${moved.movesWhenTurnEnds === true ? "  (moves when this turn ends)" : ""}`,
+                  ...(moved.scratchFolder === undefined
+                    ? []
+                    : [`Earlier files stay in ${moved.scratchFolder}`]),
+                ].join("\n"),
               );
         }),
       );

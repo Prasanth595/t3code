@@ -244,7 +244,7 @@ const ThreadReadTool = Tool.make("t3_thread_read", {
 
 const ThreadUpdateTool = Tool.make("t3_thread_update", {
   description:
-    "Rename a thread (`action:'rename'` with `title`), regenerate its title, link or unlink a PR, or move it to another project (`action:'move_project'` with `projectId`). Omit `threadId` for this thread. A move refuses a subagent, a thread with subagents, and a worktree unless `keepWorktree` is true; without a kept worktree it ends the session so the next turn starts in the new project. Moving this thread applies at turn end (`movesWhenTurnEnds`); a failed or interrupted turn, or a queued message that starts first, drops it. Another thread's running turn is refused. Other workspace and branch changes are not supported here.",
+    "Rename a thread (`action:'rename'` with `title`), regenerate its title, link or unlink a PR, or move it to another project (`action:'move_project'` with `projectId`). Omit `threadId` for this thread. A move refuses a subagent, a thread with subagents, and a worktree unless `keepWorktree` is true; without a kept worktree it ends the session so the next turn starts in the new project. A No project chat needs no `keepWorktree`: its scratch folder stays on disk (`scratchFolder`) and the thread leaves it. Moving this thread applies at turn end (`movesWhenTurnEnds`); a failed or interrupted turn, or a queued message that starts first, drops it. Another thread's running turn is refused. Other workspace and branch changes are not supported here.",
   parameters: ThreadMetadataMcpUpdateInput,
   success: Schema.Union([ThreadMetadataMcpUpdateResult, ThreadMetadataMcpQueuedMoveResult]),
   failure: OrchestratorMcpFailure,

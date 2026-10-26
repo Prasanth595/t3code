@@ -16,6 +16,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import { leaveScratchFolderOnMove } from "../project/scratchThreadMove.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import { threadNotFound } from "./OrchestratorMcpService.ts";
 
@@ -168,6 +170,7 @@ function resultFromThread(input: {
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+  const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
 
   const update = Effect.fn("ThreadMetadataMcpService.update")(function* (
     scope: McpInvocationScope,
@@ -213,12 +216,19 @@ const make = Effect.gen(function* () {
       action: input.action,
       requestKey,
     });
-    const command = metadataCommand({
-      commandId: updateCommandId,
-      threadId,
-      projectId: target.thread.projectId,
-      update: input,
-    });
+    const command = yield* leaveScratchFolderOnMove(
+      metadataCommand({
+        commandId: updateCommandId,
+        threadId,
+        projectId: target.thread.projectId,
+        update: input,
+      }),
+      shell,
+    ).pipe(Effect.provideService(ManagedProjectFolders.ManagedProjectFolders, managedFolders));
+    const scratchFolder =
+      command.worktreePath === null && shell.worktreePath !== null
+        ? { scratchFolder: shell.worktreePath }
+        : {};
     // An agent moving its own thread is always mid-turn. Like settle, the move
     // is checked now and applied when that turn completes.
     if (
@@ -243,7 +253,8 @@ const make = Effect.gen(function* () {
         action: "move_project",
         commandId: updateCommandId,
         projectId: input.projectId,
-        worktreePath: shell.worktreePath,
+        worktreePath: command.worktreePath === null ? null : shell.worktreePath,
+        ...scratchFolder,
         movesWhenTurnEnds: true,
       } satisfies ThreadMetadataMcpQueuedMoveResult;
     }
@@ -273,12 +284,15 @@ const make = Effect.gen(function* () {
         `Thread ${threadId} metadata update completed without a resultant state.`,
       );
     }
-    return resultFromThread({
-      action: input.action,
-      commandId: updateCommandId,
-      sequence: dispatched.sequence,
-      thread,
-    });
+    return {
+      ...resultFromThread({
+        action: input.action,
+        commandId: updateCommandId,
+        sequence: dispatched.sequence,
+        thread,
+      }),
+      ...scratchFolder,
+    };
   });
 
   return ThreadMetadataMcpService.of({ update });
@@ -287,5 +301,7 @@ const make = Effect.gen(function* () {
 export const layer: Layer.Layer<
   ThreadMetadataMcpService,
   never,
-  Crypto.Crypto | ThreadManagementService.ThreadManagementService
+  | Crypto.Crypto
+  | ThreadManagementService.ThreadManagementService
+  | ManagedProjectFolders.ManagedProjectFolders
 > = Layer.effect(ThreadMetadataMcpService, make);

@@ -215,6 +215,7 @@ import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts
 import * as ProjectService from "./project/ProjectService.ts";
 import { threadWorkspaceRoot } from "./project/threadWorkspaceRoot.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
+import { leaveScratchFolderOnMove } from "./project/scratchThreadMove.ts";
 import { projectMutationOperation } from "./project/ProjectMutation.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
@@ -1901,55 +1902,72 @@ export const layerWsRpc = (
         return result;
       });
 
+      // A move out of No project leaves the chat's scratch folder behind, even
+      // from a client that sends keepWorktree for it.
+      const leaveScratchFolder = <Command extends OrchestrationV2Command>(command: Command) =>
+        command.type !== "thread.metadata.update" || command.projectId === undefined
+          ? Effect.succeed(command)
+          : threadManagement.getThreadShell(command.threadId).pipe(
+              Effect.flatMap((shell) =>
+                shell === null ? Effect.succeed(command) : leaveScratchFolderOnMove(command, shell),
+              ),
+              Effect.provideService(ManagedProjectFolders.ManagedProjectFolders, managedFolders),
+              Effect.orElseSucceed(() => command),
+            );
+
       const handlers = ServerWsRpcGroup.of({
-        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
-          Effect.annotateCurrentSpan({
-            "orchestration_v2.command_id": command.commandId,
-            "orchestration_v2.command_type": command.type,
-            "orchestration_v2.thread_id":
-              command.type === "thread.fork" || command.type === "thread.merge_back"
-                ? command.targetThreadId
-                : command.type === "delegated_task.request" ||
-                    command.type === "delegated_task.wake-policy" ||
-                    command.type === "delegated_task.completion-delivery.acknowledge" ||
-                    command.type === "delegated_task.completion-delivery.dispose" ||
-                    command.type === "thread.created.record"
-                  ? command.parentThreadId
-                  : command.threadId,
-            ...(command.type === "thread.fork" || command.type === "thread.merge_back"
-              ? { "orchestration_v2.source_thread_id": command.sourceThreadId }
-              : {}),
-          }).pipe(
-            Effect.andThen(
-              startup
-                .enqueueCommand(
-                  (command.type === "prepared-run.retry"
-                    ? threadLaunch.retryPreparation(command)
-                    : ThreadMessageIntake.dispatchCommand(
-                        ThreadManagementService.withCreationProvenance(command, {
-                          createdBy: "user",
-                          creationSource:
-                            "creationSource" in command ? command.creationSource : "web",
-                        }),
-                      )
-                  ).pipe(Effect.provide(intakeContext)),
-                )
-                .pipe(
-                  Effect.tap((result) =>
-                    result.replayed ? Effect.void : recordClientCommandAnalytics(command),
-                  ),
-                  Effect.map((result) => ({ sequence: result.sequence })),
-                  Effect.mapError((cause) => {
-                    const detail = userFacingDispatchErrorMessage(cause);
-                    return new OrchestrationV2DispatchCommandError({
-                      commandId: command.commandId,
-                      commandType: command.type,
-                      message: detail ?? "Failed to dispatch orchestration V2 command",
-                      ...(detail === undefined ? {} : { detail }),
-                      cause,
-                    });
-                  }),
+        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (incoming) =>
+          leaveScratchFolder(incoming).pipe(
+            Effect.flatMap((command) =>
+              Effect.annotateCurrentSpan({
+                "orchestration_v2.command_id": command.commandId,
+                "orchestration_v2.command_type": command.type,
+                "orchestration_v2.thread_id":
+                  command.type === "thread.fork" || command.type === "thread.merge_back"
+                    ? command.targetThreadId
+                    : command.type === "delegated_task.request" ||
+                        command.type === "delegated_task.wake-policy" ||
+                        command.type === "delegated_task.completion-delivery.acknowledge" ||
+                        command.type === "delegated_task.completion-delivery.dispose" ||
+                        command.type === "thread.created.record"
+                      ? command.parentThreadId
+                      : command.threadId,
+                ...(command.type === "thread.fork" || command.type === "thread.merge_back"
+                  ? { "orchestration_v2.source_thread_id": command.sourceThreadId }
+                  : {}),
+              }).pipe(
+                Effect.andThen(
+                  startup
+                    .enqueueCommand(
+                      (command.type === "prepared-run.retry"
+                        ? threadLaunch.retryPreparation(command)
+                        : ThreadMessageIntake.dispatchCommand(
+                            ThreadManagementService.withCreationProvenance(command, {
+                              createdBy: "user",
+                              creationSource:
+                                "creationSource" in command ? command.creationSource : "web",
+                            }),
+                          )
+                      ).pipe(Effect.provide(intakeContext)),
+                    )
+                    .pipe(
+                      Effect.tap((result) =>
+                        result.replayed ? Effect.void : recordClientCommandAnalytics(command),
+                      ),
+                      Effect.map((result) => ({ sequence: result.sequence })),
+                      Effect.mapError((cause) => {
+                        const detail = userFacingDispatchErrorMessage(cause);
+                        return new OrchestrationV2DispatchCommandError({
+                          commandId: command.commandId,
+                          commandType: command.type,
+                          message: detail ?? "Failed to dispatch orchestration V2 command",
+                          ...(detail === undefined ? {} : { detail }),
+                          cause,
+                        });
+                      }),
+                    ),
                 ),
+              ),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (input) => threadManagement.stopWorkflow(input),

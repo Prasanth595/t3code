@@ -669,6 +669,10 @@ function legacyPullRequestLink(
 
 const DELEGATED_RESULT_INLINE_BYTES = 16_000;
 
+/** The note a project move leaves when the thread's folder stays behind. */
+export const projectMoveFolderNotice = (folder: string) =>
+  `Moved to another project. Files from before the move are still in ${folder}.`;
+
 function delegatedCompletionWakeDetail(
   taskIds: ReadonlyArray<string>,
   tasks: ReadonlyArray<OrchestrationV2Subagent>,
@@ -2869,7 +2873,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} is ${shell.status}. Stop it before moving it to another project.`,
       });
     }
-    if (thread.worktreePath !== null && command.keepWorktree !== true) {
+    // Clearing worktreePath with the move leaves that folder behind; the
+    // caller does that for a "No project" chat's own scratch folder.
+    if (
+      thread.worktreePath !== null &&
+      command.keepWorktree !== true &&
+      command.worktreePath !== null
+    ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
@@ -3022,6 +3032,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // so the live provider session has to detach. keepWorktree leaves the
     // checkout, and the session, where they are.
     let moveChangesWorkspace = false;
+    let folderLeftByMove: string | null = null;
     if (
       command.type === "thread.metadata.update" &&
       command.projectId !== undefined &&
@@ -3029,6 +3040,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       yield* checkProjectMove(command, command.projectId, thread, { ignoreActiveRun: false });
       moveChangesWorkspace = thread.worktreePath === null;
+      if (thread.worktreePath !== null && command.worktreePath === null)
+        folderLeftByMove = thread.worktreePath;
     }
     if (command.type === "thread.archive" && thread.archivedAt !== null) {
       return yield* new OrchestratorDispatchError({
@@ -4014,6 +4027,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }),
         { concurrency: 1, discard: true },
       );
+    }
+
+    // The folder is not deleted. Say where it is, since the thread no longer
+    // points at it.
+    if (folderLeftByMove !== null) {
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`turn-item:project-move:${command.commandId}`),
+          threadId: command.threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: yield* nextTurnItemOrdinal({ thread }),
+          type: "system_notice",
+          status: "completed",
+          title: "Moved to another project",
+          message: projectMoveFolderNotice(folderLeftByMove),
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+        },
+      });
     }
 
     if (command.type === "thread.archive") {

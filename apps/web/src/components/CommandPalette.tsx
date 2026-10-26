@@ -212,7 +212,7 @@ import {
   sourceControlHostIcon,
 } from "./CommandPaletteAddProject";
 import { useCommandPaletteThreadItems } from "./CommandPaletteThreadItems";
-import { buildThreadMoveTargets } from "./threadActionMenu.logic";
+import { buildThreadMoveTargets, threadMoveRequest } from "./threadActionMenu.logic";
 import {
   APPEARANCE_OPTIONS,
   notifyThemeSaveFailure,
@@ -1453,12 +1453,13 @@ function OpenCommandPaletteDialog(props: {
               title: target.label,
               icon: <FolderIcon className={ITEM_ICON_CLASS} />,
               run: async () => {
+                const moveRequest = threadMoveRequest(projects, thread);
                 const moved = await updateThreadMetadata({
                   environmentId: thread.environmentId,
                   input: {
                     threadId: thread.id,
                     projectId: target.projectId,
-                    ...(thread.worktreePath ? { keepWorktree: true } : {}),
+                    ...(moveRequest.keepWorktree ? { keepWorktree: true } : {}),
                   },
                 });
                 if (moved._tag === "Failure") {
@@ -1468,9 +1469,7 @@ function OpenCommandPaletteDialog(props: {
                 toastManager.add({
                   type: "success",
                   title: `Moved to ${target.label}`,
-                  description: thread.worktreePath
-                    ? "The checkout stays where it is."
-                    : "The next message starts in that project.",
+                  description: moveRequest.description,
                 });
               },
             })),

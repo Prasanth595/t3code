@@ -155,6 +155,7 @@ import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
   buildThreadMoveTargets,
+  threadMoveRequest,
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
 import {
@@ -2429,12 +2430,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             (candidate) => `move-project:${candidate.projectId}` === clicked.value,
           );
           if (!target) return;
+          const moveRequest = threadMoveRequest(projects, thread);
           const result = await updateThreadMetadata({
             environmentId: threadRef.environmentId,
             input: {
               threadId: threadRef.threadId,
               projectId: target.projectId,
-              ...(thread.worktreePath ? { keepWorktree: true } : {}),
+              ...(moveRequest.keepWorktree ? { keepWorktree: true } : {}),
             },
           });
           if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -2452,9 +2454,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             toastManager.add({
               type: "success",
               title: `Moved to ${target.label}`,
-              description: thread.worktreePath
-                ? "The checkout stays where it is."
-                : "The next message starts in that project.",
+              description: moveRequest.description,
             });
           }
           return;

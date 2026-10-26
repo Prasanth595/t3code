@@ -140,7 +140,7 @@ import { threadEnvironment, useEnvironmentThread } from "../state/threads";
 import { readUnloadedThreadCount } from "../state/olderSettledShelf";
 import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { buildThreadRouteParams, resolveActiveThreadRouteRef } from "../threadRoutes";
-import { buildThreadMoveTargets } from "./threadActionMenu.logic";
+import { buildThreadMoveTargets, threadMoveRequest } from "./threadActionMenu.logic";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { RelativeTime } from "./RelativeTime";
 import { Kbd } from "./ui/kbd";
@@ -2263,12 +2263,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           (candidate) => `move-project:${candidate.projectId}` === clicked,
         );
         if (!target) return;
+        const moveRequest = threadMoveRequest(environmentProjects, thread);
         const moved = await updateThreadMetadata({
           environmentId: threadRef.environmentId,
           input: {
             threadId: threadRef.threadId,
             projectId: target.projectId,
-            ...(thread.worktreePath ? { keepWorktree: true } : {}),
+            ...(moveRequest.keepWorktree ? { keepWorktree: true } : {}),
           },
         });
         if (moved._tag === "Failure" && !isAtomCommandInterrupted(moved)) {
@@ -2286,9 +2287,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           toastManager.add({
             type: "success",
             title: `Moved to ${target.label}`,
-            description: thread.worktreePath
-              ? "The checkout stays where it is."
-              : "The next message starts in that project.",
+            description: moveRequest.description,
           });
         }
         return;
