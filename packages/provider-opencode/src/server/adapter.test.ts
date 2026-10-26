@@ -100,7 +100,7 @@ function asyncEventStream() {
   };
 }
 
-const OPENCODE_TEST_SETTINGS = Schema.decodeUnknownSync(OpenCodeSettings)({});
+const OPENCODE_TEST_SETTINGS = Schema.decodeSync(OpenCodeSettings)({});
 
 function runtimePolicy(
   runtimeMode: ProviderAdapter.ProviderAdapterV2RuntimePolicy["runtimeMode"],
@@ -144,6 +144,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   suffix: string,
   nativeSessionId: string,
   client: object,
+  host: Partial<ProviderHost.ProviderHost["Service"]> = {},
 ) {
   const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
   const threadId = ThreadId.make(`thread-opencode-${suffix}`);
@@ -165,6 +166,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     Effect.provideService(ProviderHost.ProviderHost, {
       paths: { cwd: "/workspace" },
       resolveAttachmentPath: () => null,
+      ...host,
     } as unknown as ProviderHost.ProviderHost["Service"]),
   );
   const runtime = yield* adapter.openSession({
@@ -612,9 +614,7 @@ describe("OpenCodeAdapterV2", () => {
       ),
   );
 
-  // Event order from a live OpenCode 1.18.32 run of a `task` call with
-  // background=true: the task part completes at launch, the root session
-  // settles, and the child session stays busy until its own work ends.
+  // OpenCode 1.18.32 background tasks complete at launch; children stay busy after root settlement.
   it.effect("reports a background task child as pending work after the root turn settles", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
@@ -1630,7 +1630,98 @@ describe("OpenCodeAdapterV2", () => {
     ),
   );
 
-  it.effect.each(["during", "after"] as const)(
+  it.effect("rejects steering when stop wins the extracted-text lookup", () =>
+    Effect.gen(function* () {
+      const events = asyncEventStream();
+      const lookup = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let prompts = 0;
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "extraction-stop",
+        "root",
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => events.close(), { once: true });
+              return { stream: events.stream };
+            },
+          },
+          session: {
+            create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            promptAsync: async () => {
+              prompts++;
+              return { data: true };
+            },
+            status: async () => ({ data: { root: { type: "busy" } } }),
+            messages: async () => ({ data: [] }),
+            children: async () => ({ data: [] }),
+            abort: async () => ({ data: true }),
+          },
+          mcp: { add: async () => ({ data: true }) },
+        },
+        {
+          resolveAttachmentPath: () => "/workspace/report.docx",
+          resolveExtractedTextPath: () =>
+            Deferred.succeed(lookup, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.as("/workspace/report.docx.txt"),
+            ),
+        },
+      );
+      yield* harness.startTurn();
+      const snapshot = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+      const turn = snapshot.providerTurns.at(-1)!;
+      const steer = yield* harness.runtime
+        .steerTurn({
+          threadId: harness.threadId,
+          runId: harness.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: turn.id,
+          message: {
+            messageId: MessageId.make("steer-extraction-stop"),
+            text: "read this",
+            createdBy: "user",
+            creationSource: "web",
+            attachments: [
+              {
+                type: "file",
+                id: "report-docx",
+                name: "report.docx",
+                mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                sizeBytes: 1,
+              },
+            ],
+          },
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* Deferred.await(lookup);
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId: turn.id,
+      });
+      yield* Deferred.succeed(release, undefined);
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(steer)));
+      assert.equal(prompts, 1);
+      yield* Effect.promise(() =>
+        events.push({
+          type: "session.status",
+          properties: { sessionID: "root", status: { type: "idle" } },
+        }),
+      );
+      const stopped = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+      assert.equal(stopped.providerTurns.at(-1)?.status, "interrupted");
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect.each(["during", "after", "stale-idle-then-busy", "no-idle"] as const)(
     "completes the turn when the session goes idle %s a rejected steer",
     (idleTiming) =>
       Effect.gen(function* () {
@@ -1641,6 +1732,9 @@ describe("OpenCodeAdapterV2", () => {
           properties: { sessionID: sessionId, status: { type: "idle" } },
         };
         const promptIds: Array<string> = [];
+        const terminal = yield* Deferred.make<void>();
+        const statusRead = promiseGate<void>();
+        let statusCalls = 0;
         const harness = yield* makeOpenCodeRuntimeHarness(
           `steer-rejected-${idleTiming}`,
           sessionId,
@@ -1650,10 +1744,29 @@ describe("OpenCodeAdapterV2", () => {
               create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
               get: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
               messages: async () => ({ data: [] }),
+              status: async () => {
+                statusCalls++;
+                statusRead.resolve();
+                return {
+                  data: {
+                    [sessionId]: {
+                      type: idleTiming === "during" || idleTiming === "no-idle" ? "idle" : "busy",
+                    },
+                  },
+                };
+              },
               promptAsync: async (input: { messageID: string }) => {
                 promptIds.push(input.messageID);
                 if (promptIds.length === 1) return { data: true };
-                if (idleTiming === "during") await nativeEvents.push(idle);
+                if (idleTiming === "during" || idleTiming === "stale-idle-then-busy") {
+                  await nativeEvents.push(idle);
+                }
+                if (idleTiming === "stale-idle-then-busy") {
+                  await nativeEvents.push({
+                    type: "session.status",
+                    properties: { sessionID: sessionId, status: { type: "busy" } },
+                  });
+                }
                 throw new Error("steer rejected");
               },
               abort: async () => ({ data: true }),
@@ -1679,6 +1792,13 @@ describe("OpenCodeAdapterV2", () => {
         const running = yield* harness.runtime.readThreadSnapshot({
           providerThread: harness.providerThread,
         });
+        yield* harness.runtime.events.pipe(
+          Stream.tap((event) =>
+            event.type === "turn.terminal" ? Deferred.succeed(terminal, undefined) : Effect.void,
+          ),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
         const steer = yield* Effect.exit(
           harness.runtime.steerTurn({
             threadId: harness.threadId,
@@ -1695,7 +1815,22 @@ describe("OpenCodeAdapterV2", () => {
           }),
         );
         assert.isTrue(Exit.isFailure(steer));
-        if (idleTiming === "after") yield* Effect.promise(() => nativeEvents.push(idle));
+        if (idleTiming === "stale-idle-then-busy") {
+          const active = yield* harness.runtime.readThreadSnapshot({
+            providerThread: harness.providerThread,
+          });
+          assert.equal(active.providerTurns.at(-1)?.status, "running");
+        }
+        yield* Effect.promise(() => statusRead.promise);
+        if (idleTiming === "after" || idleTiming === "stale-idle-then-busy") {
+          const active = yield* harness.runtime.readThreadSnapshot({
+            providerThread: harness.providerThread,
+          });
+          assert.equal(active.providerTurns.at(-1)?.status, "running");
+          yield* Effect.promise(() => nativeEvents.push(idle));
+        }
+        yield* Deferred.await(terminal);
+        assert.equal(statusCalls, 1);
 
         const settled = yield* harness.runtime.readThreadSnapshot({
           providerThread: harness.providerThread,
@@ -2251,8 +2386,6 @@ describe("OpenCodeAdapterV2", () => {
       });
       assert.notEqual(minted.id, placeholder.id);
       assert.equal(minted.nativeThreadRef?.nativeId, "ses_native_2");
-      // OpenCode names a session from its first prompt only when create
-      // leaves the title unset, so the adapter never sends one.
       for (const input of createInputs) {
         assert.notProperty(input, "title");
       }
