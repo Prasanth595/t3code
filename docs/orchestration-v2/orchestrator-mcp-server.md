@@ -207,6 +207,14 @@ Returns:
 Unavailable providers include model-visible constraints such as missing V2
 adapter support, disabled state, missing executable, or missing authentication.
 
+The model list is short on purpose: catalogs such as OpenCode can hold hundreds
+of models, and every call lands in the agent's context. Each provider lists
+custom, favorite, and the caller's own models, plus all current (non-legacy)
+models for Codex, Claude, Muse, and Grok, or the first 8 current models in the
+user's model order for other providers. `omittedModels` counts the rest, and the
+`search` input finds them, legacy models included. `delegate_task` still accepts
+any catalog model.
+
 ### `delegate_task`
 
 Creates a T3-owned child thread and immediately dispatches the supplied task
@@ -244,13 +252,14 @@ omits it for a provider that offers all of them. When the target lists
 `runtimeModes`, an explicit `runtimeMode` outside that list is refused, and an
 inherited mode steps down to the broadest mode the target offers.
 
-Each delegated review round uses a new `delegate_task` call with the original brief,
-prior findings, responses, and unresolved objections. Track each round by its own `taskId` and use
-a distinct `clientRequestId` per round, stable across retries of that round.
-`childThreadId` is backing storage, not a target for another review round through
-`t3_thread_send`. Ordinary thread messaging remains available for user-requested
-conversations; it does not reopen a completed task. There is no task-level follow-up
-API for preserving the same reviewer session.
+Each independent delegated review round uses a new `delegate_task` call with the
+original brief, prior findings, responses, and unresolved objections. Track each
+round by its own `taskId` and use a distinct `clientRequestId` per round, stable
+across retries of that round.
+A follow-up that needs the same child's conversation goes through `t3_thread_send`
+on its `childThreadId`. After the original task completes, that follow-up runs as a
+fresh task in the child thread; it does not reopen the completed task or change its
+published result.
 
 Delegation requires an active parent run owned by the MCP credential's
 provider session. The request becomes the V2 command
@@ -266,10 +275,8 @@ If `hasPendingQuestion`, pass `threadId=childThreadId` to `t3_pending_request_li
 the user; the task's completion still wakes this thread. A pending live approval for the
 task's own unfinished work also ends the wait. Its identity appears in `pendingApproval`;
 it grants no approval authority. Read the fresh full request in the child thread before
-responding, since the durable record can outlive its provider callback. Read it with
-`t3_pending_request_read` and respond through `t3_pending_request_respond` using
-`decision`. Accepting requires a full-access/default caller; declining or cancelling
-does not. Async questions do not end the wait.
+responding, since the durable record can outlive its provider callback. Async questions
+do not end the wait.
 
 ```ts
 type DelegateTaskResult = {
@@ -384,7 +391,8 @@ and `creationSource: "mcp"`; provider output uses `creationSource: "provider"`.
 Actor and ingress are separate so agent-authored user-role messages remain
 distinguishable from human-authored messages.
 
-Agents mention another thread as `[title](t3-thread://v1/<threadId>)`. The
+Agents mention another thread as `[title](t3-thread://v1/<threadId>)`. Thread
+results carry this ready-made as `link`, so agents never format the id. The
 link carries only the id. Clients first resolve it in the message's environment,
 then use a unique match in another enabled environment. Ambiguous matches stay
 unresolved. Web and desktop show the resolved thread’s current title. Mobile
@@ -393,8 +401,8 @@ relabels local matches; cross-environment links can retain the written label.
 List and read results report `snoozed` and `snoozedUntil`, and
 `t3_thread_list` filters on `snoozed`. The server's `isSnoozed` follows the
 client's `effectiveSnoozed`, so agents and the sidebar agree: a snoozed thread
-wakes early when it has a pending request, fails after snoozing, or completes a
-run requested after snoozing.
+wakes early only when it has a pending request or fails after snoozing. Completed
+runs, background wakes, and delegated completions keep it snoozed.
 
 ### `t3_thread_update`
 
@@ -476,7 +484,7 @@ a notification message telling it to answer with the pending request tools or
 ask the user. The message says whether the child is blocked or, for a Codex
 async question, still working. If the question is answered or dismissed before
 the notification starts a turn, that queued turn is cancelled. Approvals are not
-routed to the parent automatically.
+routed, because those tools cannot answer them.
 A parent still blocked in a `delegate_task` wait gets the blocking question
 through that wait instead.
 If the provider cuts that wait short, a still-pending live question wakes the

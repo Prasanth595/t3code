@@ -176,6 +176,9 @@ export function summarizeT3ToolCalls(
     case "task-status":
       label = phrase("Checked", "check", `task status ${times}`);
       break;
+    case "background-wait":
+      label = phrase("Updated", "update", `background waits ${times}`);
+      break;
     case "task-cancel":
       label = phrase(
         "Requested cancellation of",
@@ -273,20 +276,20 @@ export function summarizeT3ToolCalls(
       );
       break;
     case "question-list":
-      label = phrase("Listed", "list", `pending requests ${times}`);
+      label = phrase("Listed", "list", `pending questions ${times}`);
       break;
     case "question-read":
       label = phrase(
         "Read",
         "read",
-        quantity(countEntities(entityIds("requestId")), "pending request"),
+        quantity(countEntities(entityIds("requestId")), "pending question request"),
       );
       break;
     case "question-respond":
       label = phrase(
-        "Responded to",
-        "respond to",
-        quantity(countEntities(entityIds("requestId")), "pending request"),
+        "Answered",
+        "answer",
+        quantity(countEntities(entityIds("requestId")), "pending question request"),
       );
       break;
     case "secret-request":

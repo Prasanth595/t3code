@@ -2,10 +2,6 @@ import {
   CommandId,
   MessageId,
   type ProjectId,
-  OrchestratorMcpFailure,
-  type ReviewDiffFileStat,
-  type ReviewDiffPreviewSourceKind,
-  type ThreadId,
   WorktreeMcpFailure,
   type WorktreeMcpContinuationStatus,
   type WorktreeMcpHandoffInput,
@@ -24,46 +20,19 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
-import * as ReviewService from "../review/ReviewService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
-import * as McpInvocationContext from "./McpInvocationContext.ts";
-import { readThread, unavailable } from "./threadAccess.ts";
-
-const MAX_DIFF_FILES = 500;
+import type { McpInvocationScope, McpThreadInvocationScope } from "./McpInvocationContext.ts";
 
 export class WorktreeMcpService extends Context.Service<
   WorktreeMcpService,
   {
-    readonly getThreadDiff: (
-      scope: McpInvocationContext.McpInvocationScope,
-      input: {
-        readonly threadId?: ThreadId | undefined;
-        readonly baseRef?: string | undefined;
-        readonly source?: ReviewDiffPreviewSourceKind | undefined;
-        readonly maxCharacters?: number | undefined;
-      },
-    ) => Effect.Effect<
-      {
-        readonly threadId: ThreadId;
-        readonly cwd: string;
-        readonly sources: ReadonlyArray<{
-          readonly kind: ReviewDiffPreviewSourceKind;
-          readonly baseRef: string | null;
-          readonly headRef: string | null;
-          readonly files: ReadonlyArray<ReviewDiffFileStat> | null;
-          readonly diff: string;
-          readonly truncated: boolean;
-        }>;
-      },
-      OrchestratorMcpFailure
-    >;
     readonly handoff: (
-      scope: McpInvocationContext.McpInvocationScope,
+      scope: McpInvocationScope,
       input: WorktreeMcpHandoffInput,
     ) => Effect.Effect<WorktreeMcpHandoffResult, WorktreeMcpFailure>;
     readonly status: (
-      scope: McpInvocationContext.McpInvocationScope,
+      scope: McpInvocationScope,
     ) => Effect.Effect<WorktreeMcpStatusResult, WorktreeMcpFailure>;
   }
 >()("t3/mcp/WorktreeMcpService") {}
@@ -87,7 +56,6 @@ const asOperationFailed = (prefix: string) =>
 
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
-  const review = yield* ReviewService.ReviewService;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -95,68 +63,10 @@ const make = Effect.gen(function* () {
   const setupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
 
-  const getThreadDiff: WorktreeMcpService["Service"]["getThreadDiff"] = Effect.fn(
-    "WorktreeMcpService.getThreadDiff",
-  )(function* (scope, input) {
-    const {
-      projection: { thread },
-    } = yield* readThread(input.threadId).pipe(
-      Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
-      Effect.provideService(ThreadManagementService.ThreadManagementService, threadManagement),
-    );
-    const project = yield* projects.getById(thread.projectId).pipe(Effect.mapError(unavailable));
-    if (Option.isNone(project))
-      return yield* new OrchestratorMcpFailure({
-        code: "invalid_request",
-        message: "The project was not found.",
-      });
-    const preview = yield* review
-      .getDiffPreview({
-        cwd: thread.worktreePath ?? project.value.workspaceRoot,
-        ...(input.baseRef === undefined ? {} : { baseRef: input.baseRef }),
-        ...(input.source === undefined ? {} : { sourceKind: input.source }),
-      })
-      .pipe(
-        Effect.mapError((error) =>
-          error._tag === "VcsRepositoryDetectionError" ||
-          error._tag === "VcsUnsupportedOperationError" ||
-          (error._tag === "GitCommandError" &&
-            input.baseRef !== undefined &&
-            error.operation === "GitVcsDriver.resolveReviewMergeBase" &&
-            error.exitCode !== undefined)
-            ? new OrchestratorMcpFailure({ code: "invalid_request", message: error.detail })
-            : unavailable(),
-        ),
-      );
-    if (preview.sources.length === 0)
-      return yield* new OrchestratorMcpFailure({
-        code: "invalid_request",
-        message: "The thread's checkout is not a repository.",
-      });
-    const maxCharacters = input.maxCharacters ?? 20_000;
-    return {
-      threadId: thread.id,
-      cwd: preview.cwd,
-      sources: preview.sources.map((source) => ({
-        kind: source.kind,
-        baseRef: source.baseRef,
-        headRef: source.headRef,
-        files: source.files?.slice(0, MAX_DIFF_FILES) ?? null,
-        diff: source.diff.slice(0, maxCharacters),
-        truncated:
-          source.truncated ||
-          source.diff.length > maxCharacters ||
-          (source.files?.length ?? 0) > MAX_DIFF_FILES,
-      })),
-    };
-  });
-
-  // Serializes handoffs per thread: two concurrent calls could otherwise both
-  // pass the worktreePath === null check and each create a worktree, leaving
-  // one untracked on disk.
+  // Serialize handoffs per thread to avoid creating two worktrees and orphaning one.
   const handoffThreadsInFlight = new Set<string>();
 
-  const requireThreadScope = (scope: McpInvocationContext.McpInvocationScope) =>
+  const requireThreadScope = (scope: McpInvocationScope) =>
     scope.thread === undefined
       ? Effect.fail(
           failure(
@@ -164,16 +74,16 @@ const make = Effect.gen(function* () {
             "Worktree handoff and status act as the calling T3 thread, so they need an agent running inside T3 Code.",
           ),
         )
-      : Effect.succeed(scope as McpInvocationContext.McpThreadInvocationScope);
+      : Effect.succeed(scope as McpThreadInvocationScope);
 
-  const requireCapability = (scope: McpInvocationContext.McpInvocationScope) =>
+  const requireCapability = (scope: McpInvocationScope) =>
     scope.capabilities.has("worktree")
       ? Effect.void
       : Effect.fail(
           failure("capability_denied", "This MCP credential does not grant worktree capabilities."),
         );
 
-  const loadThread = (scope: McpInvocationContext.McpThreadInvocationScope) =>
+  const loadThread = (scope: McpThreadInvocationScope) =>
     threadManagement.getThreadRecords(scope.thread.threadId, []).pipe(
       Effect.mapError((error) =>
         error._tag === "OrchestratorProjectionError"
@@ -189,10 +99,7 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const loadProject = (
-    scope: McpInvocationContext.McpThreadInvocationScope,
-    projectId: ProjectId,
-  ) =>
+  const loadProject = (scope: McpThreadInvocationScope, projectId: ProjectId) =>
     projects.getById(projectId).pipe(
       asOperationFailed(`Unable to read project ${projectId}`),
       Effect.flatMap(
@@ -214,7 +121,7 @@ const make = Effect.gen(function* () {
     asOperationFailed("Unable to read server settings"),
   );
 
-  const handoffIds = (scope: McpInvocationContext.McpThreadInvocationScope) =>
+  const handoffIds = (scope: McpThreadInvocationScope) =>
     crypto.randomUUIDv4().pipe(
       Effect.map((uuid) => {
         const part = (kind: string, operation: string) =>
@@ -231,7 +138,7 @@ const make = Effect.gen(function* () {
     );
 
   const performHandoff = Effect.fn("WorktreeMcpService.performHandoff")(function* (
-    scope: McpInvocationContext.McpThreadInvocationScope,
+    scope: McpThreadInvocationScope,
     input: WorktreeMcpHandoffInput,
   ) {
     const alreadyInWorktree = (worktreePath: string) =>
@@ -316,14 +223,7 @@ const make = Effect.gen(function* () {
 
     const ids = yield* handoffIds(scope);
 
-    // uninterruptibleMask: only the potentially slow worktree creation itself
-    // stays interruptible (restore). From the moment it succeeds, through the
-    // binding, continuation queue, setup script launch, and result
-    // construction, there is no interruptible gap: a client cancel can
-    // therefore neither orphan the created worktree before the rollback is
-    // armed, nor skip setting up a worktree the thread was just bound to
-    // (once the binding commits, the scheduled session detach can sever this
-    // request's connection and interrupt the fiber).
+    // Mask interruption after worktree creation through setup; binding can detach and interrupt the caller.
     return yield* Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
         const worktree = yield* restore(
@@ -364,10 +264,7 @@ const make = Effect.gen(function* () {
         ).pipe(Effect.ignoreCause({ log: true }));
 
         const recheckAndBind = Effect.gen(function* () {
-          // The projection was read before the potentially slow git work
-          // above; a concurrent binding (for example from the UI) could have
-          // attached the thread in the meantime. Re-check before committing so
-          // the race cannot leave a second, untracked worktree.
+          // A concurrent UI binding may have landed during git work; do not orphan a second worktree.
           const recheck = yield* loadThread(scope);
           if (recheck.thread.worktreePath !== null) {
             return yield* alreadyInWorktree(recheck.thread.worktreePath);
@@ -400,18 +297,13 @@ const make = Effect.gen(function* () {
               ),
             );
         }).pipe(
-          // Interrupt-only causes skip the removal: the binding may have
-          // committed, and force-deleting a worktree the thread now points at
-          // would be worse than leaking one.
+          // Do not remove on interruption alone; the thread binding may already have committed.
           Effect.onError((cause) =>
             Cause.hasInterruptsOnly(cause) ? Effect.void : removeCreatedWorktree,
           ),
         );
 
-        // Queue the continuation right after the binding commits: the detach
-        // that the metadata update schedules will terminate the calling
-        // session, and a durably queued message is what guarantees the thread
-        // re-launches inside the worktree.
+        // Queue continuation immediately after binding; detachment terminates the caller, so relaunch needs a durable message.
         const queueContinuation: Effect.Effect<WorktreeMcpContinuationStatus, WorktreeMcpFailure> =
           Effect.suspend(() =>
             input.continuationPrompt === undefined
@@ -492,11 +384,7 @@ const make = Effect.gen(function* () {
     function* (callerScope, input) {
       yield* requireCapability(callerScope);
       const scope = yield* requireThreadScope(callerScope);
-      // uninterruptibleMask: the guard acquisition and the registration of the
-      // releasing finalizer happen with no interruptible gap in between. An
-      // interrupt landing between a bare add() and the start of an ensured
-      // effect would otherwise leak the guard entry and block every future
-      // handoff for this thread until restart.
+      // Acquire and register cleanup atomically so cancellation cannot strand the guard until restart.
       return yield* Effect.uninterruptibleMask((restore) =>
         Effect.suspend(() => {
           if (handoffThreadsInFlight.has(scope.thread.threadId)) {
@@ -538,14 +426,13 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return WorktreeMcpService.of({ getThreadDiff, handoff, status });
+  return WorktreeMcpService.of({ handoff, status });
 });
 
 export const layer: Layer.Layer<
   WorktreeMcpService,
   never,
   | Crypto.Crypto
-  | ReviewService.ReviewService
   | ThreadManagementService.ThreadManagementService
   | ProjectService.ProjectService
   | ServerSettings.ServerSettingsService

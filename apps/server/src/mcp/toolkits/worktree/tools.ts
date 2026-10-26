@@ -1,8 +1,4 @@
 import {
-  ReviewDiffFileStat,
-  ReviewDiffPreviewSource,
-  ReviewDiffPreviewSourceKind,
-  TrimmedNonEmptyString,
   WorktreeMcpFailure,
   OrchestratorMcpFailure,
   VcsListRefsInput,
@@ -31,7 +27,7 @@ const WorktreeToolFailure = Schema.Union([WorktreeMcpFailure, OrchestratorMcpFai
 
 const WorktreeHandoffTool = Tool.make("t3_worktree_handoff", {
   description:
-    "Needs an agent running inside a T3 thread. Move this agent thread into a new git worktree. To launch a separate agent already bound to a new or existing worktree, use t3_thread_launch with workspaceStrategy instead. Creates the worktree branch (optionally from the base branch's remote), re-points the thread at the worktree, and by default runs the project's setup script there. Changing the workspace detaches the live provider session, so the current turn ends shortly after the handoff is recorded; call this as the last action of the turn. To keep working after the handoff, pass continuationPrompt with the remaining work: it is queued as the thread's next message and starts a new turn inside the worktree with the conversation preserved. Without it the thread stays idle until the next message. The worktree is not removed automatically when the thread is deleted. Fails if the thread is already attached to a worktree.",
+    "Move THIS thread into a new git worktree on a new branch. Runs the setup script by default. A separate agent in a worktree: `t3_thread_launch` with `workspaceStrategy`. Call last in your turn. The move ends the live session. `continuationPrompt` resumes work there next turn. Without it, the thread waits. The worktree stays after the thread is deleted. Fails if this thread has a worktree.",
   parameters: WorktreeMcpHandoffInput,
   success: WorktreeMcpHandoffResult,
   failure: WorktreeToolFailure,
@@ -46,7 +42,7 @@ const WorktreeHandoffTool = Tool.make("t3_worktree_handoff", {
 
 const WorktreeStatusTool = Tool.make("t3_worktree_status", {
   description:
-    "Needs an agent running inside a T3 thread. Report this agent thread's worktree binding: whether it is attached to a git worktree, the worktree path and branch, the project's main workspace root, and the server default for t3_worktree_handoff's startFromOrigin. Call this before t3_worktree_handoff to check whether a handoff is possible or has already happened.",
+    "Report this thread's worktree: attached or not, path, branch, project root, and the `startFromOrigin` default. Check before `t3_worktree_handoff`.",
   // No `parameters`: Tool.make defaults to Tool.EmptyParams, which serializes
   // to a top-level `type: "object"` JSON Schema. An explicit empty
   // Schema.Struct({}) serializes to `anyOf: [object, array]`, which is not a
@@ -64,7 +60,7 @@ const WorktreeStatusTool = Tool.make("t3_worktree_status", {
 
 const WorktreeListTool = Tool.make("t3_worktree_list", {
   description:
-    "List branch refs and their associated checkout paths for a thread's workspace (omit threadId for this thread) using the app's ref inventory. Detached worktrees without a branch are not included. Use t3_worktree_status for the thread binding and t3_worktree_handoff to create a new worktree.",
+    "List branch refs and checkout paths for a thread's workspace. Omit `threadId` for this thread. Detached worktrees with no branch are left out.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     query: VcsListRefsInput.fields.query,
@@ -85,48 +81,8 @@ const WorktreeListTool = Tool.make("t3_worktree_list", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
-
-const MAX_DIFF_CHARACTERS = 100_000;
-
-const ThreadDiffTool = Tool.make("t3_thread_diff", {
-  description:
-    "Show what a thread changed in its checkout (omit threadId for this thread), as the diff panel does. Returns working-tree (uncommitted changes vs HEAD) and branch-range (changes since the merge base with baseRef, or the detected base branch), each with stats for up to 500 files and a unified diff cut to maxCharacters (default 20,000), with truncated set when cut. Pass source to return one.",
-  parameters: Schema.Struct({
-    threadId: Schema.optional(ThreadId),
-    baseRef: Schema.optional(TrimmedNonEmptyString),
-    source: Schema.optional(ReviewDiffPreviewSourceKind),
-    maxCharacters: Schema.optional(
-      Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_DIFF_CHARACTERS })),
-    ),
-  }),
-  success: Schema.Struct({
-    threadId: ThreadId,
-    cwd: Schema.String,
-    sources: Schema.Array(
-      Schema.Struct({
-        kind: ReviewDiffPreviewSource.fields.kind,
-        baseRef: ReviewDiffPreviewSource.fields.baseRef,
-        headRef: ReviewDiffPreviewSource.fields.headRef,
-        // Null when there were too many untracked files to count.
-        files: Schema.NullOr(Schema.Array(ReviewDiffFileStat)),
-        diff: Schema.String,
-        truncated: Schema.Boolean,
-      }),
-    ),
-  }),
-  failure: OrchestratorMcpFailure,
-  failureMode: "return",
-  dependencies,
-})
-  .annotate(Tool.Title, "Show thread diff")
-  .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
-
 export const WorktreeToolkit = Toolkit.make(
   WorktreeHandoffTool,
   WorktreeStatusTool,
   WorktreeListTool,
-  ThreadDiffTool,
 );
