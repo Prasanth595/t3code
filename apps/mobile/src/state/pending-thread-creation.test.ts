@@ -9,8 +9,8 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  isPendingThreadCreationVisible,
   resolvePendingThreadCreation,
+  selectThreadCreationDetail,
   type PendingThreadCreation,
 } from "./pending-thread-creation";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
@@ -140,15 +140,50 @@ describe("resolvePendingThreadCreation", () => {
   });
 });
 
-describe("isPendingThreadCreationVisible", () => {
-  const creationMessageId = String(creation.messageId);
+describe("selectThreadCreationDetail", () => {
+  const threadKey = `${creation.environmentId}:${creation.threadId}`;
+  const threadRef = { environmentId: creation.environmentId, threadId: creation.threadId };
 
-  it("stands down once the delivered prompt lands under the same id", () => {
+  it("withholds the detail ref until the creation is delivered", () => {
+    const queued = selectThreadCreationDetail({
+      threadRef,
+      threadKey,
+      queuedMessagesByThreadKey: { [threadKey]: [creation] },
+      outcomes: {},
+    });
+    expect(queued).toEqual({
+      pendingCreation: { message: creation, outcome: null },
+      detailRef: null,
+    });
+
+    const failed = selectThreadCreationDetail({
+      threadRef,
+      threadKey,
+      queuedMessagesByThreadKey: {},
+      outcomes: { [threadKey]: { kind: "failed", message: creation, reason: "Checkout failed" } },
+    });
+    expect(failed.pendingCreation?.outcome?.kind).toBe("failed");
+    expect(failed.detailRef).toBeNull();
+
+    const delivered = selectThreadCreationDetail({
+      threadRef,
+      threadKey,
+      queuedMessagesByThreadKey: {},
+      outcomes: { [threadKey]: { kind: "delivered", message: creation } },
+    });
+    expect(delivered.pendingCreation?.outcome?.kind).toBe("delivered");
+    expect(delivered.detailRef).toBe(threadRef);
+  });
+
+  it("does not hold back existing threads with only follow-ups queued", () => {
+    const { creation: _creation, ...followUp } = creation;
     expect(
-      isPendingThreadCreationVisible({
-        creationMessageId,
-        loadedMessageIds: ["someone-else", creationMessageId],
+      selectThreadCreationDetail({
+        threadRef,
+        threadKey,
+        queuedMessagesByThreadKey: { [threadKey]: [followUp] },
+        outcomes: {},
       }),
-    ).toBe(false);
+    ).toEqual({ pendingCreation: null, detailRef: threadRef });
   });
 });
