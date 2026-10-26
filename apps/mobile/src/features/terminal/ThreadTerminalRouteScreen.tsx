@@ -627,9 +627,11 @@ function ThreadTerminal(props: {
       (1 - keyboardProgress.value) * (androidBottomBarHeight + insets.bottom),
   }));
   const androidBottomBarStyle = useAnimatedStyle(() => ({
+    display: keyboardProgress.value === 1 ? "none" : "flex",
     opacity: 1 - keyboardProgress.value,
   }));
   const androidAccessoryStyle = useAnimatedStyle(() => ({
+    display: keyboardProgress.value === 0 ? "none" : "flex",
     opacity: keyboardProgress.value,
   }));
 
