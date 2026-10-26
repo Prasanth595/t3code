@@ -33,7 +33,7 @@ describe("reply font appearance", () => {
       composer: "Arial",
     });
     expect(root.style.getPropertyValue("--font-sans")).toBe(
-      'Arial, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+      'Arial, -apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif',
     );
     expect(root.style.getPropertyValue("--font-mono")).toContain("Menlo");
     expect(root.style.getPropertyValue("--font-composer")).toBe("Arial, var(--font-sans)");
