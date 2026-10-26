@@ -36,10 +36,10 @@ export function readableOnLightCode(color: string, minContrast = MIN_CONTRAST): 
 
 type ZedTheme = NonNullable<DiffsTheme["zed"]>;
 
-// Colors that differ from a neighbor only in lightness go further, keeping pierre-light's order:
-// cyan (operators, pseudo-selectors) stays apart from teal numbers, and gray punctuation and
-// parameters stay darker than gray comments.
-const FURTHER_COLORS = new Set(["#08c0ef", "#636363"]);
+// Pairs that differ only in lightness would merge at one floor. The darker color of each pair
+// goes further, keeping pierre-light's order: numbers stay darker than operators, punctuation
+// darker than comments, and decorators darker than property names.
+const FURTHER_COLORS = new Set(["#1ca1c7", "#636363", "#1a85d4"]);
 const FURTHER_MIN_CONTRAST = 6;
 
 /** The t3-light color for a pierre-light syntax color. */

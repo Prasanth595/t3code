@@ -29,13 +29,16 @@ describe("readableOnLightCode", () => {
   });
 
   it("keeps tokens that differed only in lightness apart, in pierre-light's order", () => {
-    // Comments stay lighter than punctuation; operators stay darker than numbers.
-    expect(luminance(readableSyntaxColor("#737373"))).toBeGreaterThan(
-      luminance(readableSyntaxColor("#636363")) + 0.02,
-    );
-    expect(luminance(readableSyntaxColor("#1ca1c7"))).toBeGreaterThan(
-      luminance(readableSyntaxColor("#08c0ef")) + 0.02,
-    );
+    // [lighter, darker] in pierre-light: comment/punctuation, operator/number, property/decorator.
+    for (const [lighter, darker] of [
+      ["#737373", "#636363"],
+      ["#08c0ef", "#1ca1c7"],
+      ["#009fff", "#1a85d4"],
+    ] as const) {
+      expect(luminance(readableSyntaxColor(lighter))).toBeGreaterThan(
+        luminance(readableSyntaxColor(darker)) + 0.02,
+      );
+    }
   });
 
   it("leaves colors that already read unchanged", () => {
