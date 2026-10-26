@@ -687,7 +687,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const modelRef = (selection: ModelSelection, cwd: string | null | undefined) => {
       const parsed = OpenCodeRuntime.parseOpenCodeModelSlug(selection.model);
       if (parsed === null) return undefined;
-      const variants = modelsByDirectory.get(directoryOf(cwd))?.get(selection.model)?.variants;
+      const variants = modelsByDirectory
+        .get(directoryOf(cwd))
+        ?.get(`${parsed.providerID}/${parsed.modelID}`)?.variants;
       const selected = getModelSelectionStringOptionValue(selection, "variant");
       const variant =
         variants === undefined || (selected !== undefined && variants.includes(selected))

@@ -708,7 +708,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* runtime.startTurn(
         turnInput(thread, {
           instanceId,
-          model: "opencode-go/glm-5.3-flash",
+          model: " opencode-go/glm-5.3-flash ",
           options: [{ id: "variant", value: "medium" }],
         }),
       );
