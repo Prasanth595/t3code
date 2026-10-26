@@ -7,6 +7,7 @@
 import { isState, type State } from "../domain/lifecycle.ts";
 import { dataField, type Entry } from "../ledger/read.ts";
 import { runIdToString, type RunId } from "../ledger/runId.ts";
+import type { Model } from "../t3/sessions.ts";
 import { isCommitId } from "../text.ts";
 import type { CheckStatus } from "../tracker/github.ts";
 
@@ -45,6 +46,10 @@ export interface Interruption {
   readonly branch: string | null;
   /** The `interruption-sent <resumes>` step for this resume is in the ledger. */
   readonly sent: boolean;
+  /** The run ended on a provider rate limit: its resume is sent after the cooldown and counts as none. */
+  readonly rateLimited: boolean;
+  /** The model the resume moves the session to, by id on the same instance; null to keep its own. */
+  readonly model: string | null;
 }
 
 /**
@@ -125,6 +130,11 @@ export interface Seen {
    * read from the ledger on every later pass and never from the issue again. Null for none.
    */
   readonly base: string | null;
+  /**
+   * The model the session runs on: the newest `session_launched` line's, moved by any rate-limited
+   * resume since. Null for a launch that recorded none.
+   */
+  readonly model: Model | null;
   /** The `launch-sending` step: a launch call was about to be sent, so a session may exist. */
   readonly launchSent: boolean;
   /**
@@ -459,6 +469,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let interruption: Interruption | null = null;
   let lastBranch: string | null = null;
   let base: string | null = null;
+  let model: Model | null = null;
   let workedMs = 0;
   let workingSince: number | null = entries[0]?.ms ?? null;
   const commandAttempts = new Set<number>();
@@ -673,6 +684,17 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         if (typeof launchedBranch === "string") lastBranch = launchedBranch;
         const launchedBase = dataField(entry.data, "base");
         if (typeof launchedBase === "string") base = launchedBase;
+        const instanceId = dataField(entry.data, "model_instance");
+        const modelId = dataField(entry.data, "model");
+        const options = dataField(entry.data, "model_options");
+        model =
+          typeof instanceId === "string" && typeof modelId === "string"
+            ? {
+                instanceId,
+                model: modelId,
+                ...(Array.isArray(options) && { options: options as Model["options"] }),
+              }
+            : null;
         // A resume owed to the old thread is not owed to this one.
         if (interruption !== null) interruption = sentInterruption(interruption);
         // A new session has run numbers of its own, one reminder, and no stop by hand yet.
@@ -733,13 +755,17 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         if (typeof branch === "string") lastBranch = branch;
         if (resumes === null) break;
         const relaunch = dataField(entry.data, "relaunch") === true;
+        const movedTo = dataField(entry.data, "model");
         interruption = {
           resumes,
           relaunch,
           runOrdinal: ordinal,
           branch: typeof branch === "string" ? branch : null,
           sent: false,
+          rateLimited: dataField(entry.data, "rate_limited") === true,
+          model: typeof movedTo === "string" ? movedTo : null,
         };
+        if (model !== null && typeof movedTo === "string") model = { ...model, model: movedTo };
         // The resume starts a new run: the session is working until one newer than the run that
         // ended has ended. Like a forward's, only a newer run drops the wait.
         if (!relaunch && ordinal !== null) awaitRun(ordinal, true);
@@ -918,6 +944,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     interruption,
     lastBranch,
     base,
+    model,
     workedMs,
     workingSince,
     commandAttempts,

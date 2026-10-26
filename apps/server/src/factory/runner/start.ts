@@ -44,6 +44,7 @@ import type {
   FactoryProject,
   FactorySessions,
   MessageRejectedError,
+  Model,
   SessionsError,
   ThreadNotFoundError,
 } from "../t3/sessions.ts";
@@ -161,6 +162,11 @@ export interface StartContext {
   readonly sessions: Sessions;
   /** Unix epoch milliseconds. */
   readonly clock: () => number;
+  /**
+   * The model a session launched now runs on, given the project's: its fallback while the
+   * project's model cools down from a provider rate limit (`cooldown.ts`). Absent is the project's.
+   */
+  readonly launchModel?: (model: Model) => Model;
 }
 
 /** What `start` did. */
@@ -662,6 +668,7 @@ const launchSession = Effect.fn("RunnerStart.launchSession")(function* (
     };
   }
   const project = target.success;
+  const model = ctx.launchModel?.(project.model) ?? project.model;
   // A launch sent again keeps the base the first send was decided on.
   const based = seen.launchSent
     ? ({ ok: true, base: seen.launchBase ?? ctx.project.base } as const)
@@ -721,7 +728,7 @@ const launchSession = Effect.fn("RunnerStart.launchSession")(function* (
         resumed ?? undefined,
         named ? base : undefined,
       ),
-      model: project.model,
+      model,
       ...(resumed?.after === "existing-pr" && { pullRequestUrl: resumed.prUrl }),
     }),
   );
@@ -740,9 +747,9 @@ const launchSession = Effect.fn("RunnerStart.launchSession")(function* (
           thread_id: threadId,
           worktree: worktreePath,
           branch,
-          model_instance: project.model.instanceId,
-          model: project.model.model,
-          model_options: project.model.options ?? null,
+          model_instance: model.instanceId,
+          model: model.model,
+          model_options: model.options ?? null,
           resumed_from:
             resumed === null ? null : { run: runIdToString(resumed.run), branch: resumed.branch },
           base,

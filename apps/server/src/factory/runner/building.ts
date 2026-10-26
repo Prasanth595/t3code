@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import type { ProjectConfig } from "../config.ts";
+import { rateLimitOf } from "../cooldown.ts";
 import { transition } from "../domain/lifecycle.ts";
 import {
   NO_MESSAGE,
@@ -41,6 +42,7 @@ import {
   isLaunchBranch,
   launchBranchOf,
   type FactorySessions,
+  type Model,
   type RunStatus,
   type ThreadStatus,
 } from "../t3/sessions.ts";
@@ -58,6 +60,7 @@ import {
   REFUSED_BODY_EDIT,
   bodyEditMessage,
   commentMessage,
+  rateLimitedMessage,
   type CommentDropReason,
   droppedCommentMessage,
   prepareSessionText,
@@ -216,6 +219,17 @@ export type AdvanceOutcome =
    * has its thread. Nothing was written: the pass decides about these together (`interrupted`).
    */
   | { readonly kind: "ended-badly"; readonly what: BadEnd }
+  /**
+   * The session's run ended `failed` or `cancelled` on the provider's rate limit, at `endedMs`.
+   * Nothing was written: the pass backs `model` (the session's) off and resumes the session once
+   * the cooldown is over, or at once on a fallback (`resumeAfterCooldown`).
+   */
+  | {
+      readonly kind: "rate-limited";
+      readonly endedMs: number;
+      readonly retryAfterMs: number | null;
+      readonly model: Model | null;
+    }
   /** A relaunch decided earlier was finished: the old run is over and `start` went on for the next attempt. */
   | { readonly kind: "relaunched"; readonly start: StartOutcome };
 
@@ -706,7 +720,15 @@ export const advance = (
           owedResume.runOrdinal !== null &&
           status.runOrdinal > owedResume.runOrdinal;
         if (!arrived) {
-          const resent = yield* sendInterruption(ctx, run, threadId, owedResume.resumes);
+          const resent = owedResume.rateLimited
+            ? yield* sendRateLimited(
+                ctx,
+                run,
+                threadId,
+                owedResume.runOrdinal,
+                owedResume.model === null ? null : seen.model,
+              )
+            : yield* sendInterruption(ctx, run, threadId, owedResume.resumes);
           if (resent === "gone") return { kind: "ended-badly", what: "thread-gone" } as const;
         }
         yield* append(
@@ -766,6 +788,16 @@ export const advance = (
       }
       const endedBadly = endedBadlyNow(seen, status, result);
       if (endedBadly !== null) {
+        // A rate limit is the provider's, not the issue's: the pass waits it out.
+        const limit = rateLimitOf(message);
+        if (limit !== null && endedBadly.what !== null) {
+          return {
+            kind: "rate-limited",
+            endedMs: status.runCompletedAt ?? ctx.clock(),
+            retryAfterMs: limit.retryAfterMs,
+            model: seen.model,
+          } as const;
+        }
         // A failed or cancelled run may be an interruption, which the pass decides. It needs an
         // ordinal to wait for a newer run by, so a run without one is stuck as it always was.
         if (endedBadly.what !== null)
@@ -1518,6 +1550,29 @@ const sendInterruption = (
     );
 
 /**
+ * Sends a rate-limited session its resume under `softfac:<run>:rate-limited:<ordinal>`, the
+ * ordinal of the run that ended, on `model` when it moves the session. Like `sendInterruption`.
+ */
+const sendRateLimited = (
+  ctx: BuildingContext,
+  run: RunId,
+  threadId: string,
+  runOrdinal: number | null,
+  model: Model | null,
+): Effect.Effect<"sent" | "gone", BuildingError> =>
+  ctx.sessions
+    .send(
+      threadId,
+      `softfac:${runIdToString(run)}:rate-limited:${runOrdinal}`,
+      rateLimitedMessage(model?.model ?? null),
+      model ?? undefined,
+    )
+    .pipe(
+      Effect.as("sent" as const),
+      Effect.catchIf(isThreadNotFound, () => Effect.succeed("gone" as const)),
+    );
+
+/**
  * The stuck path of a session that ended badly and is not an interruption, or of a stop by hand:
  * as `advance` once decided it. `place` is the thread's status when the caller read it; else the
  * thread is asked (`threadPlace`).
@@ -1627,9 +1682,10 @@ export const interrupted = Effect.fn("RunnerBuilding.interrupted")(function* (
     // by hand is never a relaunch.
     const latest = yield* readSeen(ctx, run);
     if (latest.stopRequested) return yield* byHand(latest);
-    // A resume cut short before its send was never made, so it is not charged to a relaunch.
+    // A resume cut short before its send was never made, so it is not charged to a relaunch. A
+    // rate-limited one charged nothing.
     const used =
-      seen.interruption !== null && !seen.interruption.sent
+      seen.interruption !== null && !seen.interruption.sent && !seen.interruption.rateLimited
         ? Math.max(0, seen.interruption.resumes - 1)
         : yield* resumesUsed(ctx, run, seen);
     if (may(used) && seen.approvedAt !== null) return yield* relaunch(seen, used + 1);
@@ -1693,6 +1749,72 @@ export const interrupted = Effect.fn("RunnerBuilding.interrupted")(function* (
     ),
   );
   return { kind: "resumed", resumes: n, limit, status: ended.what } as const;
+});
+
+/** What `resumeAfterCooldown` did. */
+export type CooldownOutcome =
+  /** The session was sent one resume, and the run stays `building`. */
+  | { readonly kind: "resumed" }
+  /** Its run no longer ended on a rate limit (a newer run, say), or the thread is gone. Nothing was written. */
+  | { readonly kind: "unchanged"; readonly why: string };
+
+/**
+ * Resumes a session `advance` found rate-limited, once, in its own thread: on `model` when given
+ * and not the session's own, which moves the thread to it, else on its own model once the pass has
+ * waited out the cooldown. Not an interruption: the count of resumes stays as it is. A resume cut
+ * short is sent again by `advance` under the same command id.
+ */
+export const resumeAfterCooldown = Effect.fn("RunnerBuilding.resumeAfterCooldown")(function* (
+  ctx: InterruptContext,
+  run: RunId,
+  model: Model | null = null,
+) {
+  yield* checkRepo(ctx, run);
+  const seen = yield* readSeen(ctx, run);
+  if (seen.finished) return yield* new NotBuildingError({ run });
+  const threadId = seen.threadId;
+  if (threadId === null) return yield* new NoSessionError({ run });
+  const gone = { kind: "unchanged", why: "its thread is gone" } as const;
+  const status = yield* threadStatus(ctx, threadId);
+  if (status === null) return gone;
+  const message = status.lastAssistantMessage;
+  const ended = endedBadlyNow(seen, status, parseSessionResult(ctx.repo, message ?? undefined));
+  if (ended === null || ended.what === null || rateLimitOf(message) === null) {
+    return { kind: "unchanged", why: "its thread has moved on since" } as const;
+  }
+  const moveTo = model !== null && model.model !== seen.model?.model ? model : null;
+  const resumes = yield* resumesUsed(ctx, run, seen);
+  yield* withLedger(ctx, run, (out) =>
+    append(
+      out,
+      {
+        event: "session_interrupted",
+        data: {
+          resumes,
+          relaunch: false,
+          run_ordinal: status.runOrdinal,
+          branch: status.branch,
+          t3_error: null,
+          ended_in_pass: 0,
+          rate_limited: true,
+          ...(moveTo !== null && { model: moveTo.model }),
+        },
+      },
+      "advance",
+      "session-rate-limited",
+    ),
+  );
+  if ((yield* sendRateLimited(ctx, run, threadId, status.runOrdinal, moveTo)) === "gone")
+    return gone;
+  yield* withLedger(ctx, run, (out) =>
+    append(
+      out,
+      { event: "step_changed", data: { step: `${INTERRUPTION_SENT} ${resumes}` } },
+      "advance",
+      "interruption-sent",
+    ),
+  );
+  return { kind: "resumed" } as const;
 });
 
 /**

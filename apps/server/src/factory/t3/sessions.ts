@@ -346,12 +346,14 @@ export class FactorySessions extends Context.Service<
      * Sends a follow-up message into the thread. T3 decides delivery: starts a run when idle,
      * steers into an active run if the provider supports it, else queues. `commandId` names the
      * message like a launch's: resent after a failure, T3 keeps one message. A refused message
-     * stays refused under its id, as `MessageRejectedError`.
+     * stays refused under its id, as `MessageRejectedError`. With `model`, the run the message
+     * starts runs on it, and so does the thread from then on.
      */
     readonly send: (
       threadId: string,
       commandId: string,
       text: string,
+      model?: Model,
     ) => Effect.Effect<void, ThreadNotFoundError | MessageRejectedError | SessionsError>;
     /**
      * Archives the thread, which stops its active run. Succeeds when the
@@ -555,11 +557,19 @@ export const make = Effect.gen(function* () {
   // Delivery is T3's to decide (`deliveryIntent: "auto"`); the dispatch mode is
   // required by the schema and ignored when the intent is set.
   const send: FactorySessions["Service"]["send"] = Effect.fn("Sessions.send")(
-    function* (threadId, commandId, text) {
+    function* (threadId, commandId, text, model) {
       const id = yield* requireThreadId(threadId);
       return yield* Effect.gen(function* () {
         const command = yield* decodeCommandId(commandId);
         const messageId = yield* decodeMessageId(`message:${commandId}`);
+        const modelSelection =
+          model === undefined
+            ? undefined
+            : {
+                instanceId: yield* decodeInstanceId(model.instanceId),
+                model: model.model,
+                ...(model.options !== undefined && { options: model.options }),
+              };
         yield* management.dispatch({
           type: "message.dispatch",
           createdBy: "user",
@@ -569,6 +579,7 @@ export const make = Effect.gen(function* () {
           messageId,
           text,
           attachments: [],
+          ...(modelSelection !== undefined && { modelSelection }),
           deliveryIntent: "auto",
           dispatchMode: { type: "start_immediately" },
         });

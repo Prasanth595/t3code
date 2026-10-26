@@ -93,6 +93,10 @@ export type RunEvent =
         branch: string | null;
         t3_error: string | null;
         ended_in_pass: number;
+        /** The run ended on a provider rate limit: resumed after its cooldown, and not counted. */
+        rate_limited?: boolean;
+        /** The model id the resume moved the session to, on the same provider instance. */
+        model?: string;
       };
     }
   | { readonly event: "session_paused"; readonly data: { run_ordinal: number | null } }
@@ -213,6 +217,8 @@ export const RUN_EVENT_FIELDS = {
     "branch",
     "t3_error",
     "ended_in_pass",
+    "rate_limited",
+    "model",
   ],
   session_paused: ["run_ordinal"],
   stop_requested: ["by"],

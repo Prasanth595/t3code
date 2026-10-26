@@ -170,6 +170,11 @@ export interface MachineConfig {
    * together.
    */
   readonly deployWaitMinutes: number;
+  /**
+   * The model a session moves to while its own model's provider rate limit cools down, by model
+   * id, on the same provider instance: `model_fallbacks`. Empty keeps the plain backoff.
+   */
+  readonly modelFallbacks: Readonly<Record<string, string>>;
 }
 
 type Mapping = Record<string, unknown>;
@@ -448,6 +453,7 @@ const MACHINE_KEYS = [
   "min_free_gib",
   "max_load_per_core",
   "deploy_wait_minutes",
+  "model_fallbacks",
 ] as const;
 
 /**
@@ -510,6 +516,7 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     DEFAULT_DEPLOY_WAIT_MINUTES,
     1,
   );
+  const modelFallbacks = fallbacksFrom(c, root);
   checkUnknownKeys(c, root);
 
   if (
@@ -522,7 +529,8 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     keepVersions === undefined ||
     minFreeGib === undefined ||
     maxLoadPerCore === undefined ||
-    deployWaitMinutes === undefined
+    deployWaitMinutes === undefined ||
+    modelFallbacks === undefined
   ) {
     return undefined;
   }
@@ -536,7 +544,27 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     minFreeGib,
     maxLoadPerCore,
     deployWaitMinutes,
+    modelFallbacks,
   };
+};
+
+/** `model_fallbacks`: model id to another model id; absent is none. */
+const fallbacksFrom = (c: Checker, root: Mapping): Readonly<Record<string, string>> | undefined => {
+  if (!Object.hasOwn(root, "model_fallbacks")) return {};
+  const value = c.mapping(root["model_fallbacks"], "model_fallbacks");
+  if (value === undefined) return undefined;
+  const out: Record<string, string> = {};
+  let ok = true;
+  for (const [from, raw] of Object.entries(value)) {
+    const path = join("model_fallbacks", from);
+    const to = c.nonEmptyString(raw, path);
+    if (to === undefined) ok = false;
+    else if (to === from) {
+      c.err(path, "must name another model");
+      ok = false;
+    } else out[from] = to;
+  }
+  return ok ? out : undefined;
 };
 
 export const parseProjectConfig = (
