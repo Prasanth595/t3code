@@ -67,8 +67,7 @@ export function buildDraftActionMenuItems(options: {
 
 export interface ThreadActionMenuState {
   readonly canOperate: boolean;
-  /** The open thread's header menu offers find, the one way to open it without a keyboard. */
-  readonly canFind: boolean;
+  readonly canFind?: boolean;
   readonly branch: string | null;
   readonly projectFilter: {
     readonly label: string;

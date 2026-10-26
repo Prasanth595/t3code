@@ -1479,8 +1479,6 @@ export default function ChatView(props: ChatViewProps) {
     displayedTimeline.displayThreadKey,
     activeThreadKey,
   );
-  const threadFindEnabled =
-    isServerThread && serverConfig?.threadFind === true && !paintOnlyDisplayedTimeline;
   const displayedThreadRef = parseScopedThreadKey(displayedTimelineKey);
   const {
     worktreeSetup,
@@ -2627,6 +2625,8 @@ export default function ChatView(props: ChatViewProps) {
   const timelineSkills = activeProviderStatus
     ? resolveProviderSkillsForCwd(activeProviderStatus, gitCwd)
     : EMPTY_PROVIDER_SKILLS;
+  const threadFindEnabled =
+    isServerThread && serverConfig?.threadFind === true && !paintOnlyDisplayedTimeline;
   const isThreadFindActive = useThreadFindOpen(activeThreadRef, threadFindEnabled);
   const openThreadFindStable = useStableCallback(() => {
     if (activeThreadKey !== null) openThreadFind(activeThreadKey);
