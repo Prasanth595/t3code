@@ -31,7 +31,7 @@ export function selectGitHubBaseRepository(input: {
   for (const remote of parseFetchRemotes(input.remotes)) {
     const [normalizedHost, owner, name, ...rest] = normalizeGitRemoteUrl(remote.url).split("/");
     const remoteHost =
-      normalizedHost && isSshRemoteUrl(remote.url)
+      host === "github.com" && normalizedHost && isSshRemoteUrl(remote.url)
         ? (apiHostForSshAlias(normalizedHost) ?? normalizedHost)
         : normalizedHost;
     if (remoteHost !== host || !owner || !name || rest.length > 0) return null;
@@ -86,7 +86,9 @@ export function resolveGitHubRepository(input: {
   const rank = (name: string) => ["upstream", "github", "origin"].indexOf(name.toLowerCase());
   const candidates = fetchRemotes
     .filter(
-      (remote) => remote.host === host || normalizeGitRemoteUrl(remote.url).split("/")[0] === host,
+      (remote) =>
+        remote.host === host ||
+        (remote.host === null && normalizeGitRemoteUrl(remote.url).split("/")[0] === host),
     )
     .toSorted((left, right) => {
       const l = rank(left.name);

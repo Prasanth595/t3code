@@ -229,15 +229,18 @@ describe("github.com-<name> SSH aliases", () => {
 
   it("preserves a dotted hint when matching remotes use both transports", () => {
     const entries = [
-      "origin\tgit@github.com-scale:me/web.git (fetch)",
-      "mirror\thttps://github.com-scale/me/web.git (fetch)",
+      "origin\thttps://github.com-scale/me/web.git (fetch)",
+      "upstream\tgit@github.com-scale:acme/web.git (fetch)",
     ];
-    for (const remotes of [entries.join("\n"), entries.toReversed().join("\n")]) {
+    for (const [remotes, hostHint] of [
+      [entries.join("\n"), "github.com-scale"],
+      [entries.toReversed().join("\n"), undefined],
+    ] as const) {
       assert.deepStrictEqual(
         resolveGitHubRepository({
           remotes,
-          resolved: "",
-          hostHint: "github.com-scale",
+          resolved: "remote.origin.gh-resolved base",
+          hostHint,
           defaultHost: "github.com",
         }),
         {
