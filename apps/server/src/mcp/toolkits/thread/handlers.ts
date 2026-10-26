@@ -1,4 +1,5 @@
 import {
+  ScheduledTaskError,
   type CommandId,
   type RuntimeRequestId,
   ThreadId,
@@ -8,6 +9,7 @@ import {
   type OrchestrationV2Command,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 
@@ -23,6 +25,8 @@ import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
+
+const isScheduledTaskError = Schema.is(ScheduledTaskError);
 
 function queueEntry(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
@@ -92,7 +96,13 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         });
       const { task, threadId } = yield* scheduler
         .runNow({ id: input.taskId })
-        .pipe(Effect.mapError(unavailable));
+        .pipe(
+          Effect.mapError((error) =>
+            isScheduledTaskError(error)
+              ? new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message })
+              : unavailable(),
+          ),
+        );
       return {
         taskId: task.id,
         threadId,
