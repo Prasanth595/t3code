@@ -397,6 +397,7 @@ export function markdownWithBlockImages(markdown: string): string {
     const end = node.position?.end.offset;
     if (start === undefined || end === undefined) return;
     if (
+      markdown.slice(start, end).includes("||") ||
       node.children.some(
         (child) =>
           child.type === "inlineCode" &&
@@ -412,6 +413,7 @@ export function markdownWithBlockImages(markdown: string): string {
       .replace(/\[[ xX]\]\s*$/, "")
       .replace(/[^>\s]/g, " ");
     const paragraphBreak = `\n${markers.trimEnd()}\n${markers}`;
+    const editCount = edits.length;
     let previousEnd = start;
     for (const [index, child] of node.children.entries()) {
       if (child.type !== "image" && child.type !== "imageReference") continue;
@@ -433,6 +435,19 @@ export function markdownWithBlockImages(markdown: string): string {
         const definition = /^\[(?:\\.|[^\]\\])*\](?=:)/.exec(suffix);
         if (definition) {
           const offset = previousEnd + definition[0].length;
+          if (
+            !node.children.some(
+              (sibling) =>
+                sibling.type === "text" &&
+                sibling.position?.start.offset !== undefined &&
+                sibling.position.end.offset !== undefined &&
+                sibling.position.start.offset <= offset &&
+                offset < sibling.position.end.offset,
+            )
+          ) {
+            edits.length = editCount;
+            return;
+          }
           edits.push({ start: offset, end: offset, content: "\\" });
         }
         const next = node.children[index + 1];

@@ -63,6 +63,8 @@ describe("images inside running text", () => {
       "See\n\n![a](a.png)\n\n[id]\\: target.png\n\n[id]: original.png",
     );
     expect(markdownWithBlockImages("See ![a](a.png) `code`")).toBe("See\n\n![a](a.png)\n\n`code`");
+    const bracketedCode = "See ![a](a.png) [`x]: y`]";
+    expect(markdownWithBlockImages(bracketedCode)).toBe(bracketedCode);
     const multiline = "See ![a](a.png) ```line\ncode```";
     expect(markdownWithBlockImages(multiline)).toBe(multiline);
   });
@@ -73,6 +75,7 @@ describe("images inside running text", () => {
       "- ![a](a.png)",
       "See [![badge](b.svg)](https://example.com) here",
       "`![a](a.png)` in code",
+      "||secret ![shot](shot.png) caption||",
     ]) {
       expect(markdownWithBlockImages(markdown)).toBe(markdown);
     }
