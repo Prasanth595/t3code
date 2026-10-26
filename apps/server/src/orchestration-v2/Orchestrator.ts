@@ -10591,7 +10591,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       )
         ? Effect.void
         : Ref.update(effects, (existing) => [...existing, delegatedTasksStopEffect(command)]);
-    const latestRun = projection.runs.findLast((run) => run.status !== "queued");
+    const executed = latestExecutedRun(projection.runs);
+    const latestRun = executed ?? undefined;
     const target =
       projection.runs.findLast(
         (run) =>
@@ -10606,7 +10607,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }).length > 0
         ? latestRun
         : undefined);
-    const executed = latestExecutedRun(projection.runs);
     const reachedRun = target ?? executed;
     if (command.throughSequence !== undefined && reachedRun !== null) {
       // A failed child Stop cannot reach work started after the original parent Stop.

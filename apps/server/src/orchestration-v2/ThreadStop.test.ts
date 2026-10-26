@@ -612,11 +612,12 @@ it.effect("a repeated Stop that changes nothing still stops the delegated tasks"
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
     const sql = yield* SqlClient.SqlClient;
     const parentThreadId = ThreadId.make("thread:stop-again");
     yield* createWatchingThread(parentThreadId, 1);
     yield* send(parentThreadId, "first", "start_immediately");
-    yield* delegate(parentThreadId, "stop-again child");
+    const child = yield* delegate(parentThreadId, "stop-again child");
     const now = yield* DateTime.now;
     const run = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
     yield* projections.apply({
@@ -633,6 +634,8 @@ it.effect("a repeated Stop that changes nothing still stops the delegated tasks"
       threadId: parentThreadId,
     });
 
+    const grandchild = yield* delegate(child, "task before fresh Stop");
+
     // The first Stop already disposed the delivery and ended the watch, so this one writes no
     // events, like Stop on a thread an older server stopped without stopping its children.
     const again = yield* orchestrator.dispatch({
@@ -641,6 +644,11 @@ it.effect("a repeated Stop that changes nothing still stops the delegated tasks"
       threadId: parentThreadId,
     });
     assert.lengthOf(again.storedEvents, 0);
+    yield* threads.stopDelegatedTasks({
+      threadId: parentThreadId,
+      commandId: CommandId.make("stop-again:second"),
+    });
+    assert.deepEqual((yield* threadState(grandchild)).runs, ["interrupted"]);
     const walks = yield* sql<{ readonly command_id: string }>`
       SELECT command_id FROM orchestration_v2_effect_outbox
       WHERE effect_type = 'delegated-tasks.stop'
@@ -1633,7 +1641,7 @@ it.effect("a partial delegated Stop retries only the original children that fail
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("a Stop retry with nothing to interrupt is bound by the last run that started", () =>
+it.effect("a bounded Stop ignores cancelled queues and preserves newer completed work", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -1672,6 +1680,18 @@ it.effect("a Stop retry with nothing to interrupt is bound by the last run that 
       runId: (yield* orchestrator.getThreadProjection(cancelledQueue)).runs.at(-1)!.id,
     });
     yield* completeStartedRun(cancelledQueue);
+    const providerThread = (yield* orchestrator.getThreadProjection(cancelledQueue))
+      .providerThreads[0]!;
+    yield* projections.apply({
+      id: EventId.make("event:stop-retry:original-background"),
+      type: "provider-thread.updated",
+      threadId: cancelledQueue,
+      occurredAt: yield* DateTime.now,
+      payload: {
+        ...providerThread,
+        pendingBackgroundTasks: [{ taskId: "original-background", kind: "command" }],
+      },
+    });
     yield* retryStop(cancelledQueue, cancelledQueueStop);
     assert.deepEqual(yield* threadState(cancelledQueue), {
       runs: ["completed", "cancelled"],
