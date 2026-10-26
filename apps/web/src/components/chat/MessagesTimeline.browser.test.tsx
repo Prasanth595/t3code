@@ -904,12 +904,12 @@ function setupComposerScrollGesture() {
       collapsed = false;
     },
   });
-  onTestFinished(() => {
-    dispose();
-    timeline.remove();
-    timers[Symbol.dispose]();
-  });
   return {
+    [Symbol.dispose]: () => {
+      dispose();
+      timeline.remove();
+      timers[Symbol.dispose]();
+    },
     dispose,
     timeline,
     content,
@@ -927,7 +927,7 @@ describe("composer timeline scroll input", () => {
   it.each(["scrollbar", "touch", "middle click"])(
     "collapses after enough %s movement and restores at the logical end",
     (input) => {
-      const gesture = setupComposerScrollGesture();
+      using gesture = setupComposerScrollGesture();
       gesture.scrollTo(600);
       expect(gesture.isCollapsed()).toBe(false);
 
@@ -956,7 +956,7 @@ describe("composer timeline scroll input", () => {
   );
 
   it("restores in the logical end band before the list records the new offset", () => {
-    const gesture = setupComposerScrollGesture();
+    using gesture = setupComposerScrollGesture();
     gesture.scrollTo(900);
     gesture.pointerDown(gesture.timeline);
     gesture.scrollTo(950);
@@ -969,7 +969,7 @@ describe("composer timeline scroll input", () => {
   });
 
   it("does not track middle-clicks on links as timeline scrolling", () => {
-    const gesture = setupComposerScrollGesture();
+    using gesture = setupComposerScrollGesture();
     const link = document.createElement("a");
     link.href = "https://example.com";
     const label = document.createElement("span");
@@ -983,7 +983,7 @@ describe("composer timeline scroll input", () => {
   });
 
   it("ends the release tail even when scrolls and duplicate releases keep arriving", () => {
-    const gesture = setupComposerScrollGesture();
+    using gesture = setupComposerScrollGesture();
     gesture.content.dispatchEvent(new Event("touchmove", { bubbles: true }));
     gesture.scrollTo(490);
     window.dispatchEvent(new Event("touchend"));
@@ -1008,7 +1008,7 @@ describe("composer timeline scroll input", () => {
   });
 
   it("does not turn a press and release without scrolling into a live-follow gesture", () => {
-    const gesture = setupComposerScrollGesture();
+    using gesture = setupComposerScrollGesture();
     gesture.pointerDown(gesture.timeline);
     window.dispatchEvent(new Event("pointerup"));
     vi.advanceTimersByTime(10);
@@ -1019,7 +1019,7 @@ describe("composer timeline scroll input", () => {
   it.each(["pointercancel", "touchcancel", "blur"])(
     "does not collapse on live-follow scrolling after %s interrupts the gesture",
     (event) => {
-      const gesture = setupComposerScrollGesture();
+      using gesture = setupComposerScrollGesture();
       if (event === "touchcancel") {
         gesture.content.dispatchEvent(new Event("touchmove", { bubbles: true }));
       } else {
@@ -1036,7 +1036,7 @@ describe("composer timeline scroll input", () => {
   it.each(["key", "primary release", "middle release", "wheel"])(
     "ends toggle-mode middle-click autoscroll on %s without leaving a hold",
     (stop) => {
-      const gesture = setupComposerScrollGesture();
+      using gesture = setupComposerScrollGesture();
       gesture.pointerDown(gesture.content, 1);
       gesture.pointerUp(1);
       gesture.scrollTo(450);
@@ -1062,7 +1062,7 @@ describe("composer timeline scroll input", () => {
   it.each([false, true])(
     "tracks delayed middle-click movement after an expired scroll: %s",
     (interveningScroll) => {
-      const gesture = setupComposerScrollGesture();
+      using gesture = setupComposerScrollGesture();
       gesture.pointerDown(gesture.content, 1);
       gesture.pointerUp(1);
       vi.advanceTimersByTime(500);
@@ -1077,7 +1077,7 @@ describe("composer timeline scroll input", () => {
   );
 
   it("does not rearm tracking when a middle press dismisses toggle autoscroll", () => {
-    const gesture = setupComposerScrollGesture();
+    using gesture = setupComposerScrollGesture();
     gesture.pointerDown(gesture.content, 1);
     gesture.pointerUp(1);
     gesture.scrollTo(450);
@@ -1094,7 +1094,7 @@ describe("composer timeline scroll input", () => {
   });
 
   it("ends hold-mode middle autoscroll when the middle button is released", () => {
-    const gesture = setupComposerScrollGesture();
+    using gesture = setupComposerScrollGesture();
     gesture.pointerDown(gesture.content, 1);
     gesture.scrollTo(450);
     expect(gesture.isCollapsed()).toBe(true);
@@ -1111,7 +1111,7 @@ describe("composer timeline scroll input", () => {
   it.each(["second release", "no autoscroll"])(
     "does not track programmatic scrolling after a stationary middle click with %s",
     (end) => {
-      const gesture = setupComposerScrollGesture();
+      using gesture = setupComposerScrollGesture();
       gesture.pointerDown(gesture.content, 1);
       gesture.pointerUp(1);
       if (end === "second release") gesture.pointerUp(1);
@@ -1122,7 +1122,7 @@ describe("composer timeline scroll input", () => {
   );
 
   it("keeps tracking when native touch panning cancels the pointer stream", () => {
-    const gesture = setupComposerScrollGesture();
+    using gesture = setupComposerScrollGesture();
     gesture.content.dispatchEvent(new Event("touchmove", { bubbles: true }));
     window.dispatchEvent(new Event("pointercancel"));
     gesture.scrollTo(450);
@@ -1130,7 +1130,7 @@ describe("composer timeline scroll input", () => {
   });
 
   it("leaves no gesture active after the composer stops tracking this timeline", () => {
-    const gesture = setupComposerScrollGesture();
+    using gesture = setupComposerScrollGesture();
     gesture.pointerDown(gesture.timeline);
     gesture.scrollTo(490);
     gesture.dispose();
