@@ -4,7 +4,7 @@ import * as Result from "effect/Result";
 import type { MobileThemeAppearance } from "./mobileTheme";
 
 const SVG_DATA_URL_PREFIX = "data:image/svg+xml;base64,";
-const STYLE_ELEMENT_RE = /(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi;
+const STYLE_ELEMENT_RE = /<!--[\s\S]*?-->|(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi;
 const CSS_COMMENT_RE = /\/\*[\s\S]*?\*\//g;
 const COLOR_SCHEME_MEDIA_RE = /@media\s*\(\s*prefers-color-scheme\s*:\s*(light|dark)\s*\)\s*\{/gi;
 const AT_RULE_BLOCK_RE = /@[^{};]*\{/g;
@@ -14,12 +14,7 @@ const PLAIN_COLOR_RE = /^(?:#[\da-f]{3,8}|[a-z]+|(?:rgba?|hsla?)\([\d\s.,%/]+\))
 const COMMENT_OR_SVG_TAG_RE = /<!--[\s\S]*?-->|<svg\b[^>]*>/gi;
 const COLOR_ATTRIBUTE_RE = /\s+color\s*=\s*(?:"[^"]*"|'[^']*')/i;
 
-/**
- * iOS decodes SVGs with CoreSVG, which doesn't evaluate `@media` (it drops a block's first rule and
- * applies the rest in both schemes) and ignores stylesheet rules on the root element, so an icon
- * that sets its root `color` per color scheme renders `currentColor` as black in both. Resolve
- * those two things for the app's appearance and leave the rest to the decoder.
- */
+// CoreSVG ignores root stylesheet colors and misreads @media; resolve both before decoding.
 export function resolveProjectFaviconColorScheme(url: string, scheme: MobileThemeAppearance) {
   if (!url.startsWith(SVG_DATA_URL_PREFIX)) return url;
   const decoded = Base64.decodeString(url.slice(SVG_DATA_URL_PREFIX.length));
@@ -29,7 +24,8 @@ export function resolveProjectFaviconColorScheme(url: string, scheme: MobileThem
   let stylesheet = "";
   const styled = svg.replace(
     STYLE_ELEMENT_RE,
-    (_match, open: string, css: string, close: string) => {
+    (match, open: string, css: string | undefined, close: string) => {
+      if (css === undefined) return match;
       // Comments can hold braces or a commented-out `@media`, which the block matcher would count.
       const resolvedCss = replaceBlocks(
         css.replace(CSS_COMMENT_RE, ""),
@@ -83,18 +79,24 @@ function matchingBrace(css: string, from: number) {
 
 function lastRootColor(css: string) {
   let color: string | undefined;
-  let colorIsImportant = false;
+  let priority = -1;
   const topLevel = replaceBlocks(css, AT_RULE_BLOCK_RE, () => "");
   for (const [, selectors = "", declarations = ""] of topLevel.matchAll(RULE_RE)) {
-    const targetsRoot = selectors
+    const rootSelectors = selectors
       .replace(/<!\[CDATA\[|\]\]>/g, "")
       .split(",")
-      .some((selector) => /^(?::root|svg)$/i.test(selector.trim()));
-    if (!targetsRoot) continue;
+      .map((selector) => selector.trim().toLowerCase());
+    const specificity = rootSelectors.includes(":root")
+      ? 1
+      : rootSelectors.includes("svg")
+        ? 0
+        : -1;
+    if (specificity === -1) continue;
     for (const [, value = "", important] of declarations.matchAll(COLOR_DECLARATION_RE)) {
-      if (!PLAIN_COLOR_RE.test(value) || (colorIsImportant && !important)) continue;
+      const nextPriority = specificity + (important ? 2 : 0);
+      if (!PLAIN_COLOR_RE.test(value) || nextPriority < priority) continue;
       color = value;
-      colorIsImportant = important !== undefined;
+      priority = nextPriority;
     }
   }
   return color;

@@ -105,6 +105,26 @@ describe("resolveProjectFaviconColorScheme", () => {
     expect(resolveProjectFaviconColorScheme(svgDataUrl(icon), "dark")).toBe(svgDataUrl(icon));
   });
 
+  it("ignores style elements inside XML comments", () => {
+    const icon = `<svg xmlns="http://www.w3.org/2000/svg"><style>:root{color:blue}</style><!-- <style>:root{color:red!important}</style> --></svg>`;
+
+    expect(decode(resolveProjectFaviconColorScheme(svgDataUrl(icon), "dark"))).toBe(
+      icon.replace("<svg ", '<svg color="blue" '),
+    );
+  });
+
+  it("keeps root selector specificity across style elements", () => {
+    const icon = `<svg xmlns="http://www.w3.org/2000/svg"><style>:root{color:blue}</style><style>svg{color:red}</style></svg>`;
+
+    expect(decode(resolveProjectFaviconColorScheme(svgDataUrl(icon), "dark"))).toBe(
+      icon.replace("<svg ", '<svg color="blue" '),
+    );
+    const important = icon.replace("color:red", "color:red!important");
+    expect(decode(resolveProjectFaviconColorScheme(svgDataUrl(important), "dark"))).toBe(
+      important.replace("<svg ", '<svg color="red" '),
+    );
+  });
+
   it("returns non-SVG and remote URLs unchanged", () => {
     const png = "data:image/png;base64,iVBORw0KGgo=";
     const remote = "https://host/api/assets/token/icon.svg";
