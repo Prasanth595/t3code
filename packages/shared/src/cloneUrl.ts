@@ -35,3 +35,19 @@ export function cloneUrlForProtocol(url: string, protocol: CloneProtocol): strin
     ? `git@${parsed.host}:${parsed.path}`
     : `https://${parsed.host}/${parsed.path}`;
 }
+
+const UNSAFE_SEGMENT = /^\.{1,2}$|[\\:*?"<>|\p{Cc}]/u;
+
+/**
+ * The `<host>/<owner>/<repo>` folders ghq clones a URL into, or null for local paths and
+ * anything with a folder that could leave the root.
+ */
+export function cloneUrlRepositoryPath(url: string): string | null {
+  const parsed = parseCloneUrl(url);
+  if (!parsed) return null;
+  const segments = [parsed.host, ...parsed.path.split(/[?#]/)[0]!.split("/").filter(Boolean)];
+  const last = segments.at(-1)!;
+  if (last.endsWith(".git")) segments[segments.length - 1] = last.slice(0, -".git".length);
+  if (segments.length < 2 || segments.some((s) => s === "" || UNSAFE_SEGMENT.test(s))) return null;
+  return segments.join("/");
+}

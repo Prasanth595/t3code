@@ -1,5 +1,8 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { getCloneDestinationPath } from "@t3tools/client-runtime/operations/projects";
+import {
+  getCloneDestinationPath,
+  getCloneDirectoryPath,
+} from "@t3tools/client-runtime/operations/projects";
 import {
   findPromptLinkProjects,
   findPromptLinkPullRequestThread,
@@ -213,14 +216,21 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
     }
     setState({ status: "opening" });
     const projectId = newProjectId();
+    const remoteUrl = `https://github.com/${repository.owner}/${repository.name}.git`;
     const result = await startProjectClone({
       environmentId,
       input: {
         projectId,
         title: repository.name,
         createdAt: new Date().toISOString(),
-        remoteUrl: `https://github.com/${repository.owner}/${repository.name}.git`,
-        destinationPath: getCloneDestinationPath(newProjectsRoot, repository.name),
+        remoteUrl,
+        destinationPath: getCloneDestinationPath(
+          newProjectsRoot,
+          getCloneDirectoryPath(
+            remoteUrl,
+            environment.serverConfig.settings.ghqCloneLayout === true,
+          ),
+        ),
       },
     });
     if (result._tag === "Failure") {
