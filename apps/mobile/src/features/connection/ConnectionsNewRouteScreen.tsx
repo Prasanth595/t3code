@@ -94,6 +94,11 @@ export function ConnectionsNewRouteScreen({
   }, [connectionPairingUrl]);
 
   useEffect(() => {
+    if (pairAgainHost !== null) {
+      setHostInput(pairAgainHost);
+      setCodeInput("");
+      return;
+    }
     if (routePairingUrl.length === 0) {
       return;
     }
@@ -101,15 +106,7 @@ export function ConnectionsNewRouteScreen({
     const { host, code } = parsePairingUrl(routePairingUrl);
     setHostInput(host);
     setCodeInput(code);
-  }, [routePairingUrl]);
-
-  // Declared after the effects above so the saved address, and no code left over
-  // from an earlier attempt, win on mount.
-  useEffect(() => {
-    if (pairAgainHost === null) return;
-    setHostInput(pairAgainHost);
-    setCodeInput("");
-  }, [pairAgainHost]);
+  }, [routePairingUrl, pairAgainHost]);
 
   useEffect(() => {
     if (pairingConnectionError) {

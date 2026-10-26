@@ -153,10 +153,7 @@ export function SettingsEnvironmentsRouteScreen() {
           opensDetails
           onReconnect={onReconnectEnvironment}
           onPairAgain={(routeFor) =>
-            navigation.navigate("SettingsSheet", {
-              screen: "SettingsContent",
-              params: { screen: "SettingsEnvironmentNew", params: { routeFor, pairAgain: true } },
-            })
+            navigation.navigate("SettingsEnvironmentNew", { routeFor, pairAgain: true })
           }
           onRemove={onRemoveEnvironmentPress}
           onSetEnabled={onSetEnvironmentEnabled}

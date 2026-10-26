@@ -71,13 +71,7 @@ export function presentConnectionState(
   }
 }
 
-/**
- * The address to pair again when the environment refused this device's saved
- * pairing. Pairing that address with a new code replaces the saved credential,
- * and routes learned over it borrow the new one. Null when pairing again would
- * not help: the failure is something else, or the machine has no paired
- * address because it is reached through T3 Connect or SSH.
- */
+// Learned routes borrow a saved route's credential; pair its owner again.
 export function pairAgainAddress(
   presentation: Pick<EnvironmentPresentation, "entry" | "connection">,
 ): string | null {
