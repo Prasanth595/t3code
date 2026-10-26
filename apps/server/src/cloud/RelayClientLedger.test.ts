@@ -8,6 +8,9 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { vi } from "vite-plus/test";
 
 import * as RelayClientLedger from "./RelayClientLedger.ts";
@@ -60,7 +63,7 @@ describe.each(observedPlatforms)("RelayClientLedger observing as %s", (platform)
       Effect.provide(NodeServices.layer),
     );
 
-  it.live("records a started relay client until it is forgotten", () =>
+  it.live("keeps a running relay client recorded until it exits", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -83,8 +86,11 @@ describe.each(observedPlatforms)("RelayClientLedger observing as %s", (platform)
       });
 
       yield* forget;
+      expect(yield* fs.exists(entryPath)).toBe(true);
+      process.kill(client.pid, "SIGTERM");
+      yield* client.exited;
+      yield* forget;
       expect(yield* fs.readDirectory(path.join(stateDir, "relay-clients"))).toEqual([]);
-      expect(processExists(client.pid)).toBe(true);
     }).pipe(provideHost),
   );
 
@@ -128,6 +134,59 @@ describe.each(observedPlatforms)("RelayClientLedger observing as %s", (platform)
         true,
       );
     }).pipe(provideHost),
+  );
+
+  it.live.each([0, 2])(
+    "keeps the record when identity reads fail after %s observations",
+    (beforeFailure) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-relay-ledger-" });
+        const orphan = yield* spawnProcess;
+        yield* recordFromDeadServer(stateDir, orphan);
+        const restarted = yield* RelayClientLedger.make({ stateDir });
+        const denied = Effect.fail(
+          PlatformError.systemError({
+            _tag: "PermissionDenied",
+            module: "process",
+            method: "observe",
+          }),
+        );
+        let observations = 0;
+        const read = fs.readFileString.bind(fs);
+        using _read = vi
+          .spyOn(fs, "readFileString")
+          .mockImplementation((file, ...args) =>
+            file === `/proc/${orphan.pid}/stat` && observations++ >= beforeFailure
+              ? denied
+              : read(file, ...args),
+          );
+        const ps = spawner.string.bind(spawner);
+        using _ps = vi
+          .spyOn(spawner, "string")
+          .mockImplementation((command, ...args) =>
+            ChildProcess.isStandardCommand(command) &&
+            command.args.at(-1) === String(orphan.pid) &&
+            observations++ >= beforeFailure
+              ? denied
+              : ps(command, ...args),
+          );
+        const kill = process.kill.bind(process);
+        using _kill = vi
+          .spyOn(process, "kill")
+          .mockImplementation((pid, signal) =>
+            pid === orphan.pid && signal !== 0 ? true : kill(pid, signal),
+          );
+
+        yield* restarted.reapOrphans;
+
+        expect(processExists(orphan.pid)).toBe(true);
+        expect(yield* fs.exists(path.join(stateDir, "relay-clients", `${orphan.pid}.json`))).toBe(
+          true,
+        );
+      }).pipe(provideHost),
   );
 
   it.live("leaves the relay client of a running server alone", () =>

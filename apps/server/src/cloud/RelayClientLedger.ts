@@ -140,6 +140,14 @@ export const make = Effect.fn("RelayClientLedger.make")(function* (input: {
     observed.startTime === identity.startTime &&
     (identity.command === undefined || observed.command === identity.command);
 
+  const matchesRecordedProcess = Effect.fn("RelayClientLedger.matchesRecordedProcess")(function* (
+    entry: RelayClientEntry,
+  ) {
+    const observed = yield* observe(entry.pid);
+    if (observed === undefined && processExists(entry.pid)) return undefined;
+    return sameProcess(observed, entry);
+  });
+
   const ownerPid = input.ownerPid ?? process.pid;
   const ownerProcess = yield* observe(ownerPid);
   const owner =
@@ -172,13 +180,14 @@ export const make = Effect.fn("RelayClientLedger.make")(function* (input: {
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
-      return fs
-        .remove(entryPath, { force: true })
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Could not forget a stopped relay client", { cause }),
-          ),
-        );
+      return matchesRecordedProcess(entry).pipe(
+        Effect.flatMap((matching) =>
+          matching === false ? fs.remove(entryPath, { force: true }) : Effect.void,
+        ),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not forget a stopped relay client", { cause }),
+        ),
+      );
     },
     Effect.catchCause((cause) =>
       Effect.logWarning("Could not record the relay client process", { cause }).pipe(
@@ -188,19 +197,22 @@ export const make = Effect.fn("RelayClientLedger.make")(function* (input: {
   );
 
   const stopOrphan = Effect.fn("RelayClientLedger.stopOrphan")(function* (entry: RelayClientEntry) {
-    if (!sameProcess(yield* observe(entry.pid), entry)) return true;
+    const matching = yield* matchesRecordedProcess(entry);
+    if (matching !== true) return matching === false;
     yield* Effect.logInfo("Stopping a relay client left by a previous T3 Code server", {
       pid: entry.pid,
     });
     for (const name of ["SIGTERM", "SIGKILL"] as const) {
-      if (!sameProcess(yield* observe(entry.pid), entry)) return true;
+      const matching = yield* matchesRecordedProcess(entry);
+      if (matching !== true) return matching === false;
       signal(entry.pid, name);
       for (let attempt = 0; attempt < STOP_POLL_ATTEMPTS; attempt++) {
-        if (!sameProcess(yield* observe(entry.pid), entry)) return true;
+        const matching = yield* matchesRecordedProcess(entry);
+        if (matching !== true) return matching === false;
         yield* Effect.sleep(STOP_POLL_INTERVAL);
       }
     }
-    return !sameProcess(yield* observe(entry.pid), entry);
+    return (yield* matchesRecordedProcess(entry)) === false;
   });
 
   const reapEntry = Effect.fn("RelayClientLedger.reapEntry")(
