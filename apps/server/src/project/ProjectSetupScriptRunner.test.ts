@@ -13,7 +13,6 @@ import { TestClock } from "effect/testing";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -74,7 +73,7 @@ it.effect("ReservedScript-overlappingStarts-reusesOwnerAndRetriesAfterCompletion
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(ProjectService.ProjectService)({
-            getById: () => Effect.succeed(Option.some(project)),
+            getById: () => Effect.succeedSome(project),
           }),
           Layer.mock(ProjectScriptPorts.ProjectScriptPorts)({
             reserve: () => Effect.succeed(43123),
@@ -404,7 +403,7 @@ const makeHarness = Effect.fn(function* (options: {
         terminals,
         Layer.mock(ProjectScriptPorts.ProjectScriptPorts)({ reserve: () => Effect.succeed(43123) }),
         Layer.mock(ProjectService.ProjectService)({
-          getById: () => Effect.succeed(Option.some(project)),
+          getById: () => Effect.succeedSome(project),
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadShell: () => Effect.succeed(null),
