@@ -1143,9 +1143,18 @@ const RENAMED_SETTINGS_PATHS: Readonly<Record<string, SettingsPath>> = {
 };
 const SPLIT_SETTINGS_PATHS: ReadonlySet<string> = new Set([
   "/settings/general",
+  "/settings/appearance",
+  "/settings/source-control",
   "/settings/connections",
   ...Object.keys(RENAMED_SETTINGS_PATHS),
 ]);
+// Section anchors that moved but are not search results themselves.
+const MOVED_SECTION_ANCHORS: Readonly<Record<string, SettingsPath>> = {
+  "authorized-clients": "/settings/access",
+  "legacy-features": "/settings/labs",
+  "text-generation": "/settings/threads",
+  about: "/settings/about",
+};
 
 /** Where an old settings link now lives. Its anchor finds the page its row moved to. */
 export function movedSettingsPath(pathname: string, hash: string): SettingsPath | null {
@@ -1154,7 +1163,8 @@ export function movedSettingsPath(pathname: string, hash: string): SettingsPath 
   const anchored = hash
     ? (items.find((item) => item.id === hash) ?? items.find((item) => item.targetId === hash))
     : undefined;
-  const to = anchored?.to ?? RENAMED_SETTINGS_PATHS[pathname] ?? null;
+  const to =
+    anchored?.to ?? MOVED_SECTION_ANCHORS[hash] ?? RENAMED_SETTINGS_PATHS[pathname] ?? null;
   return to === pathname ? null : to;
 }
 
