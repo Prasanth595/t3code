@@ -1159,9 +1159,6 @@ export const ServerSettings = Schema.Struct({
     ProjectId,
     keepUnknownOverrideKeys(ProjectSettingsOverrides),
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-  projectSettingsOverrides: Schema.Record(ProjectId, ProjectSettingsOverrides).pipe(
-    Schema.withDecodingDefault(Effect.succeed({})),
-  ),
   /** Fold once so restarts cannot undo later UI resets. */
   projectSettingsFolded: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 
