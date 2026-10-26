@@ -396,9 +396,27 @@ const ComposerDraftSchema = Schema.Struct({
   project: Schema.optional(ComposerDraftProjectSchema),
 });
 
+const decodeComposerDraft = Schema.decodeUnknownOption(ComposerDraftSchema);
+
+// Only the references a draft this build cannot read still owns. Each attachment
+// decodes on its own, so one malformed attachment cannot make another
+// attachment's file or pending upload look unused.
+const decodeUnreadableDraftAttachments = Schema.decodeUnknownOption(
+  Schema.Struct({ attachments: Schema.Array(Schema.Unknown) }),
+);
+const decodeUnreadableAttachmentFile = Schema.decodeUnknownOption(
+  Schema.Struct({ fileUri: Schema.String }),
+);
+const decodeUnreadableAttachmentUpload = Schema.decodeUnknownOption(
+  Schema.Struct({ uploadEnvironmentId: EnvironmentIdSchema, uploadedAttachmentId: Schema.String }),
+);
+const decodeUnreadableDraftProject = Schema.decodeUnknownOption(
+  Schema.Struct({ project: Schema.Struct({ environmentId: EnvironmentIdSchema }) }),
+);
+
 const PersistedComposerDraftsSchema = Schema.Struct({
   schemaVersion: Schema.Literal(COMPOSER_DRAFTS_SCHEMA_VERSION),
-  drafts: Schema.Record(Schema.String, ComposerDraftSchema),
+  drafts: Schema.Record(Schema.String, Schema.Unknown),
   stickyModelSelection: Schema.optional(ModelSelectionSchema),
   modelOptionMemory: Schema.optional(
     Schema.Record(
@@ -462,12 +480,14 @@ export const composerCloudDraftsAtom = Atom.make<ComposerCloudDraftState>({
 }).pipe(Atom.keepAlive);
 
 let loadPromise: Promise<void> | null = null;
+let unreadableDrafts: Record<string, unknown> = {};
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 let persistRetryNeeded = false;
 const persistenceQueue = new SerializedAsyncQueue();
 
 export function resetComposerDraftsLoadState(): void {
   loadPromise = null;
+  unreadableDrafts = {};
   persistRetryNeeded = false;
 }
 
@@ -611,12 +631,24 @@ export function decodePersistedComposerState(value: unknown): {
   readonly stickyModelSelection: ModelSelection | null;
   readonly modelOptionMemory: ModelOptionMemoryState;
   readonly cloudDrafts: ComposerCloudDraftState;
+  readonly unreadableDrafts: Record<string, unknown>;
 } {
   const parsed = decodePersistedComposerDraftsDocument(value);
   const now = new Date().toISOString();
+  const readable: Record<string, ComposerDraft> = {};
+  const unreadableDrafts: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(parsed.drafts)) {
+    // Queued-edit sessions are memory-only; persisted drafts would outlive their run association and become unreachable.
+    if (isQueuedEditDraftKey(key)) continue;
+    // One draft this build cannot read must not block every other draft. It
+    // stays on disk unchanged for a build that can read it.
+    const draft = decodeComposerDraft(raw);
+    if (Option.isSome(draft)) readable[key] = draft.value;
+    else unreadableDrafts[key] = raw;
+  }
   return {
     drafts: Object.fromEntries(
-      Object.entries(parsed.drafts)
+      Object.entries(readable)
         .map(([key, draft]) =>
           migrateLegacyNewTaskDraft(
             key,
@@ -633,9 +665,7 @@ export function decodePersistedComposerState(value: unknown): {
           ),
         )
         // Retain contentless drafts with import receipts to prevent re-importing native shares after restart.
-        .filter(([, draft]) => !isEmptyDraft(draft) || (draft.importedShareIds?.length ?? 0) > 0)
-        // Queued-edit sessions are memory-only; persisted drafts would outlive their run association and become unreachable.
-        .filter(([key]) => !isQueuedEditDraftKey(key)),
+        .filter(([, draft]) => !isEmptyDraft(draft) || (draft.importedShareIds?.length ?? 0) > 0),
     ),
     stickyModelSelection: parsed.stickyModelSelection ?? null,
     modelOptionMemory: parsed.modelOptionMemory ?? {},
@@ -655,6 +685,7 @@ export function decodePersistedComposerState(value: unknown): {
         ]),
       ),
     },
+    unreadableDrafts,
   };
 }
 
@@ -677,6 +708,7 @@ async function loadPersistedComposerState(): Promise<
         stickyModelSelection: null,
         modelOptionMemory: {},
         cloudDrafts: { accountId: null, signedOut: {} },
+        unreadableDrafts: {},
       };
     }
     operation = "read";
@@ -707,7 +739,7 @@ async function writePersistedComposerState(
     );
     const document = {
       schemaVersion: COMPOSER_DRAFTS_SCHEMA_VERSION,
-      drafts: nonEmptyDrafts,
+      drafts: { ...unreadableDrafts, ...nonEmptyDrafts },
       ...(stickyModelSelection ? { stickyModelSelection } : {}),
       ...(Object.keys(appAtomRegistry.get(modelOptionMemoryAtom)).length > 0
         ? { modelOptionMemory: appAtomRegistry.get(modelOptionMemoryAtom) }
@@ -777,6 +809,28 @@ function signedOutAttachmentOwners() {
   ]);
 }
 
+type ComposerAttachmentReference = Pick<
+  DraftComposerAttachment,
+  "fileUri" | "uploadEnvironmentId" | "uploadedAttachmentId"
+>;
+
+function unreadableDraftAttachments(raw: unknown): ReadonlyArray<ComposerAttachmentReference> {
+  return Option.match(decodeUnreadableDraftAttachments(raw), {
+    onNone: () => [],
+    onSome: ({ attachments }) =>
+      attachments.map((attachment) => ({
+        ...Option.getOrUndefined(decodeUnreadableAttachmentFile(attachment)),
+        ...Option.getOrUndefined(decodeUnreadableAttachmentUpload(attachment)),
+      })),
+  });
+}
+
+function unreadableDraftAttachmentOwners() {
+  return Object.values(unreadableDrafts).map((raw) => ({
+    attachments: unreadableDraftAttachments(raw),
+  }));
+}
+
 export function findLocalComposerClipboardAttachment(
   environmentId: EnvironmentId,
   id: string,
@@ -804,7 +858,12 @@ function isComposerAttachmentFileReferenced(fileUri: string): boolean {
   const queuedMessages = Object.values(
     appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
   ).flat();
-  return [...drafts, ...queuedMessages, ...signedOutAttachmentOwners()].some((owner) =>
+  return [
+    ...drafts,
+    ...queuedMessages,
+    ...signedOutAttachmentOwners(),
+    ...unreadableDraftAttachmentOwners(),
+  ].some((owner) =>
     owner.attachments.some(
       (attachment) =>
         attachment.fileUri !== undefined &&
@@ -821,7 +880,12 @@ function isComposerAttachmentUploadReferenced(
   const queuedMessages = Object.values(
     appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
   ).flat();
-  return [...drafts, ...queuedMessages, ...signedOutAttachmentOwners()].some((owner) =>
+  return [
+    ...drafts,
+    ...queuedMessages,
+    ...signedOutAttachmentOwners(),
+    ...unreadableDraftAttachmentOwners(),
+  ].some((owner) =>
     owner.attachments.some(
       (attachment) =>
         attachment.uploadEnvironmentId === environmentId &&
@@ -831,7 +895,7 @@ function isComposerAttachmentUploadReferenced(
 }
 
 export async function releaseUnusedComposerAttachmentFiles(
-  attachments: ReadonlyArray<DraftComposerAttachment>,
+  attachments: ReadonlyArray<ComposerAttachmentReference>,
 ): Promise<void> {
   const candidates = new Set(
     attachments.flatMap((attachment) =>
@@ -974,6 +1038,13 @@ export function ensureComposerDraftsLoaded(): void {
     return;
   }
   const loading = loadPersistedComposerState().then((persisted) => {
+    unreadableDrafts = persisted.unreadableDrafts;
+    if (Object.keys(unreadableDrafts).length > 0) {
+      console.warn(
+        "[composer-drafts] kept drafts this build cannot read",
+        Object.keys(unreadableDrafts),
+      );
+    }
     appAtomRegistry.set(composerCloudDraftsAtom, persisted.cloudDrafts);
     if (Object.keys(persisted.drafts).length > 0) {
       const current = appAtomRegistry.get(composerDraftsAtom);
@@ -1222,6 +1293,11 @@ function updateComposerDrafts(
     return;
   }
   appAtomRegistry.set(composerDraftsAtom, next);
+  // An edit replaces the draft this build could not read under the same key,
+  // even when the edit is cleared again before it is saved.
+  for (const key of Object.keys(unreadableDrafts)) {
+    if (current[key] !== next[key]) delete unreadableDrafts[key];
+  }
   schedulePersistComposerState();
 }
 
@@ -1910,9 +1986,22 @@ export async function clearComposerDraftsEnvironment(environmentId: EnvironmentI
 
   const current = appAtomRegistry.get(composerDraftsAtom);
   const next = removeComposerDraftsForEnvironment(current, environmentId);
-  const removedAttachments = Object.entries(current)
-    .filter(([draftKey]) => next[draftKey] === undefined)
-    .flatMap(([, draft]) => draft.attachments);
+  // Drafts this build cannot read leave with their environment too. Sign-out
+  // removes cloud environments through here, so they are dropped, not archived.
+  const removedUnreadable = Object.entries(unreadableDrafts).filter(
+    ([draftKey, raw]) =>
+      draftKey.startsWith(`${environmentId}:`) ||
+      parseLegacyNewTaskDraftKey(draftKey)?.environmentId === environmentId ||
+      Option.getOrUndefined(decodeUnreadableDraftProject(raw))?.project.environmentId ===
+        environmentId,
+  );
+  for (const [draftKey] of removedUnreadable) delete unreadableDrafts[draftKey];
+  const removedAttachments = [
+    ...Object.entries(current)
+      .filter(([draftKey]) => next[draftKey] === undefined)
+      .flatMap(([, draft]) => draft.attachments),
+    ...removedUnreadable.flatMap(([, raw]) => unreadableDraftAttachments(raw)),
+  ];
 
   if (persistTimer !== null) {
     clearTimeout(persistTimer);
