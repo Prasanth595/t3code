@@ -68,7 +68,8 @@ const git = (cwd: string, ...args: Array<string>) => {
 // A deploy.sh that records each call with its commit and flags, and on an install keeps the old
 // `current` as `previous` and points `current` at the commit, as install.sh would. Unlike
 // install.sh it leaves the install time of an existing version directory, so `current` can be
-// the oldest. DEPLOY_FAIL, INSTALL_FAIL, BUILD_HANG, HOLD_DURING_BUILD and CURRENT_AT vary it.
+// the oldest. DEPLOY_FAIL, INSTALL_FAIL, BUILD_HANG, BACKDATE_PENDING, HOLD_DURING_BUILD and
+// CURRENT_AT vary it.
 const FAKE_DEPLOY = [
   "#!/usr/bin/env bash",
   "set -euo pipefail",
@@ -77,6 +78,7 @@ const FAKE_DEPLOY = [
   'locked=no-lock; [[ -n $held && $held == "${T3FAC_DEPLOY_LOCK:-}" ]] && locked=lock',
   'echo "${1:-install} $sha ${T3FAC_SKIP_RELOAD:-} $locked" >> "$DEPLOY_LOG"',
   '[[ -z ${DEPLOY_FAIL:-} ]] || { echo "build: boom" >&2; exit 1; }',
+  '[[ -z ${BACKDATE_PENDING:-} ]] || touch -t 200001010000 "$BACKDATE_PENDING"',
   'if [[ -n ${BUILD_HANG:-} ]]; then sleep 30 & echo $! > "$BUILD_HANG"; wait; fi',
   '[[ -z ${HOLD_DURING_BUILD:-} ]] || : > "$HOME/.local/share/t3fac/autodeploy.hold"',
   "[[ ${1:-} == --build-only ]] && exit 0",
@@ -595,22 +597,23 @@ describe("autodeploy.sh waiting behind runs", () => {
     expect(NodeFS.existsSync(pendingFile())).toBe(false);
   });
 
-  // The limit ends the wait for factory runs, which resume; a person's thread does not.
+  // The status cannot tell a person's thread from a factory run's, so the limit ends the wait for
+  // whatever is in the way.
   it.each([
-    ["an agent is at work in a thread", status([], false, 2)],
-    ["the thread count is null", status([], false, null)],
-  ])("keeps waiting past the limit while %s", async (_name, body) => {
-    commitToOrigin("second");
-    const since = writePending(3 * 3600);
+    ["an agent is at work in a thread", "an agent is at work in a thread", status([], false, 2)],
+    ["the thread count cannot be read", "an agent is at work in a thread", status([], false, null)],
+  ])("deploys past the limit although %s", async (_name, busy, body) => {
+    const sha = commitToOrigin("second");
+    const short = git(clone, "rev-parse", "--short", sha);
+    writePending(3 * 3600);
     statusBodies = [body];
     const result = await runAutodeploy();
-    expect(result.deploys).toEqual([]);
-    expect(lines(result.output)).toHaveLength(1);
-    expect(result.output).toContain("an agent is at work in a thread");
-    expect(result.output).toContain(
-      "waited 3h00m of deploy_wait_minutes 120, which ends the wait for factory runs only",
-    );
-    expect(NodeFS.readFileSync(pendingFile(), "utf8")).toMatch(new RegExp(`^${since} `));
+    expect(result.deploys).toHaveLength(2);
+    expect(current()).toBe(`versions/0.0.1+fac.${short}`);
+    expect(result.output.match(/deploying /g)).toHaveLength(1);
+    expect(result.output).toContain(`although ${busy}`);
+    expect(result.output).toContain("a person's thread is interrupted");
+    expect(NodeFS.existsSync(pendingFile())).toBe(false);
   });
 
   it("reads the limit from deploy_wait_minutes", async () => {
@@ -672,11 +675,12 @@ describe("autodeploy.sh waiting behind runs", () => {
 
   // A tick that cannot ask leaves the marker as it is: the server ignores one that goes stale, and
   // a blip does not lose the first-wait time.
-  const hourAgo = () => {
-    const time = Date.now() / 1000 - 3600;
+  const minutesAgo = (minutes: number) => {
+    const time = Date.now() / 1000 - minutes * 60;
     NodeFS.utimesSync(pendingFile(), time, time);
     return NodeFS.statSync(pendingFile()).mtimeMs;
   };
+  const hourAgo = () => minutesAgo(60);
 
   it("leaves the marker as it was when the token is missing", async () => {
     commitToOrigin("second");
@@ -705,10 +709,62 @@ describe("autodeploy.sh waiting behind runs", () => {
     expect(NodeFS.statSync(pendingFile()).mtimeMs).toBe(mtime);
   });
 
+  it("leaves the marker as it was when the status cannot be parsed", async () => {
+    commitToOrigin("second");
+    writePending(60);
+    const before = NodeFS.readFileSync(pendingFile(), "utf8");
+    const mtime = hourAgo();
+    statusBodies = [{ runs: "nope" }];
+    const result = await runAutodeploy();
+    expect(result.output).toContain("cannot read the factory status");
+    expect(NodeFS.readFileSync(pendingFile(), "utf8")).toBe(before);
+    expect(NodeFS.statSync(pendingFile()).mtimeMs).toBe(mtime);
+  });
+
+  // A marker older than the server's staleness cutoff means the server was not draining, so that
+  // time was not spent waiting.
+  it("starts the wait again when the marker went stale", async () => {
+    commitToOrigin("second");
+    writePending(3 * 3600);
+    hourAgo();
+    statusBodies = [BUSY];
+    const result = await runAutodeploy();
+    expect(result.deploys).toEqual([]);
+    expect(lines(result.output)).toHaveLength(1);
+    expect(result.output).toMatch(/waited [01]s of deploy_wait_minutes 120/);
+    const [since] = NodeFS.readFileSync(pendingFile(), "utf8").split(" ");
+    expect(Math.abs(Number(since) - Date.now() / 1000)).toBeLessThan(10);
+  });
+
+  it("keeps the first-wait time across a short blip", async () => {
+    commitToOrigin("second");
+    writePending(3 * 3600);
+    minutesAgo(10);
+    statusBodies = [BUSY];
+    const result = await runAutodeploy();
+    expect(result.output).toContain("deploying");
+    expect(result.output).toContain("waited 3h00m");
+  });
+
+  it("keeps the marker fresh while a long build runs", async () => {
+    commitToOrigin("second");
+    const since = writePending(600);
+    const hung = NodePath.join(tmp, "hung.pid");
+    const result = await runAutodeploy({
+      BUILD_HANG: hung,
+      BACKDATE_PENDING: pendingFile(),
+      T3FAC_BUILD_LIMIT: "3",
+      T3FAC_PENDING_REFRESH: "1",
+    });
+    expect(result.output).toContain("took over 3s");
+    expect(Date.now() - NodeFS.statSync(pendingFile()).mtimeMs).toBeLessThan(60_000);
+    expect(NodeFS.readFileSync(pendingFile(), "utf8")).toMatch(new RegExp(`^${since} `));
+  });
+
   it("rewrites the marker on every tick it reads the status, so its mtime shows autodeploy is ticking", async () => {
     const sha = commitToOrigin("second");
     const since = writePending(600, sha);
-    hourAgo();
+    minutesAgo(20);
     statusBodies = [BUSY];
     await runAutodeploy();
     expect(NodeFS.readFileSync(pendingFile(), "utf8")).toMatch(new RegExp(`^${since} `));

@@ -31,6 +31,7 @@ import { newRunId, runIdToString, type RunId } from "./ledger/runId.ts";
 import { useTempDirs } from "./ledger/testSupport.ts";
 import { formatTs } from "./ledger/time.ts";
 import {
+  PENDING_STALE_MS,
   STUCK_READ_EVERY_MS,
   UNSETTLED_READ_EVERY_MS,
   runPass,
@@ -2522,7 +2523,7 @@ describe("draining for a deploy", () => {
     `draining for deploy: build 7a70dadf1 has waited ${waited} for the runs in progress to finish; no ready issue claimed until it is installed`;
   const waitingItems = (fake: Fake) => fake.items.filter((item) => item.id === "deploy-waiting");
   const WAITING_MESSAGE =
-    "deploy waiting: a build has waited longer than deploy_wait_minutes 120 for the runs in progress to finish; autodeploy installs it on its next tick unless a person's thread has an agent at work, and the runs resume on the new build";
+    "deploy waiting: a build has waited longer than deploy_wait_minutes 120 for the runs in progress to finish; autodeploy installs it on its next tick, factory runs resume on the new build and a person's thread is interrupted";
 
   it.effect("claims nothing while a build waits, and says so once", () =>
     Effect.gen(function* () {
@@ -2624,7 +2625,11 @@ describe("draining for a deploy", () => {
       waitingFor(fake, 3 * 60 * 60_000);
       yield* pass(fake, [REPO], 5);
       assert.equal(waitingItems(fake).length, 1);
-      fake.pending = { sinceMs: T0 - 3 * 60 * 60_000, commit: SHA, writtenMs: T0 - 31 * 60_000 };
+      fake.pending = {
+        sinceMs: T0 - 3 * 60 * 60_000,
+        commit: SHA,
+        writtenMs: T0 - PENDING_STALE_MS - 60_000,
+      };
       fake.pushStart(`${REPO}#1`, started(1));
       const { lines } = yield* pass(fake, [REPO], 5);
       assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
@@ -2637,6 +2642,21 @@ describe("draining for a deploy", () => {
       assert.deepEqual(drainLines(lines), []);
       assert.deepEqual(waitingItems(fake), []);
       assert.deepEqual(fake.events.filter((e) => e.event === "claim_skipped").length, 1);
+    }),
+  );
+
+  it.effect("a marker exactly as old as the staleness limit still drains", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [1];
+      fake.pending = { sinceMs: T0 - 10 * 60_000, commit: SHA, writtenMs: T0 - PENDING_STALE_MS };
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), []);
+      assert.deepEqual(drainLines(lines), [drainLine("10m")]);
+      assert.deepEqual(
+        fake.events.filter((e) => e.event === "claim_skipped"),
+        [{ event: "claim_skipped", data: { reason: "deploy-pending" } }],
+      );
     }),
   );
 
