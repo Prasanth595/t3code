@@ -18,7 +18,6 @@ export interface SideQuestionExchange {
 }
 
 export interface SideQuestionPanelState {
-  readonly threadKey: string;
   readonly focusKey: string;
   readonly exchanges: ReadonlyArray<SideQuestionExchange>;
   readonly requestId: string | null;
@@ -31,6 +30,7 @@ export interface SideQuestionPanelState {
  */
 export function ComposerSideQuestion({
   state,
+  autoFocus,
   environmentId,
   cwd,
   forkBlockedReason,
@@ -39,6 +39,8 @@ export function ComposerSideQuestion({
   onDismiss,
 }: {
   readonly state: SideQuestionPanelState;
+  /** Whether the input takes focus as it appears, which only an ask should cause. */
+  readonly autoFocus: boolean;
   readonly environmentId: EnvironmentId;
   readonly cwd: string | undefined;
   /** Why Fork is unavailable right now, or null when it can fork. */
@@ -208,7 +210,7 @@ export function ComposerSideQuestion({
             <div className="mt-2 flex items-center gap-2 ps-8 sm:ps-7">
               <Input
                 key={state.focusKey}
-                autoFocus
+                autoFocus={autoFocus}
                 size="compact"
                 aria-label="Ask a side question"
                 placeholder={

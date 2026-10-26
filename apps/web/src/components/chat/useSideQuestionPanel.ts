@@ -7,14 +7,46 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { SIDE_QUESTION_COMMAND, sideQuestionForkDraft } from "@t3tools/shared/sideQuestion";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { create } from "zustand";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { newMessageId } from "~/lib/utils";
-import type { SideQuestionPanelState } from "./ComposerSideQuestion";
+import type { SideQuestionExchange, SideQuestionPanelState } from "./ComposerSideQuestion";
+
+interface StoredSideQuestionPanel {
+  readonly state: SideQuestionPanelState;
+  readonly hidden: boolean;
+}
+
+// Each thread keeps its panel in memory, so leaving a thread and coming back
+// finds the answers, including one that arrived while you were away.
+const useSideQuestionPanels = create<Readonly<Record<string, StoredSideQuestionPanel>>>(() => ({}));
+
+function updatePanel(
+  threadKey: string,
+  update: (current: StoredSideQuestionPanel | undefined) => StoredSideQuestionPanel | undefined,
+): void {
+  useSideQuestionPanels.setState((panels) => {
+    const next = update(panels[threadKey]);
+    return next === undefined || next === panels[threadKey]
+      ? panels
+      : { ...panels, [threadKey]: next };
+  });
+}
+
+export function resetSideQuestionPanelsForTests(): void {
+  useSideQuestionPanels.setState({}, true);
+}
+
+function answeredExchanges(exchanges: ReadonlyArray<SideQuestionExchange>) {
+  return exchanges.filter(
+    (exchange): exchange is SideQuestionExchange & { answer: string } => exchange.answer !== null,
+  );
+}
 
 export function useSideQuestionPanel(input: {
   readonly environmentId: EnvironmentId;
@@ -28,49 +60,53 @@ export function useSideQuestionPanel(input: {
   readonly forkRunId: RunId | null;
 }) {
   const { environmentId, threadId, threadKey, providerSlashCommands, ask, forkRunId } = input;
-  const [panel, setPanel] = useState<SideQuestionPanelState | null>(null);
-  const [hidden, setHidden] = useState(false);
-  const requestRef = useRef<{ threadKey: string; id: string } | null>(null);
-  useLayoutEffect(() => {
-    if (requestRef.current?.threadKey !== threadKey) requestRef.current = null;
-  }, [threadKey]);
-  if (panel !== null && panel.threadKey !== threadKey) {
-    setPanel(null);
+  const stored = useSideQuestionPanels((panels) => panels[threadKey]);
+  // Only an ask focuses the panel. Returning to a thread leaves focus in the composer.
+  const [focusThreadKey, setFocusThreadKey] = useState<string | null>(null);
+  if (focusThreadKey !== null && focusThreadKey !== threadKey) {
+    setFocusThreadKey(null);
   }
   const offered =
     threadId !== null &&
     providerSlashCommands?.some((command) => command.name === SIDE_QUESTION_COMMAND.name) === true;
 
-  const dismiss = useStableCallback(() => setHidden(true));
+  const dismiss = useStableCallback(() =>
+    updatePanel(threadKey, (current) => current && { ...current, hidden: true }),
+  );
   const askFromPanel = useStableCallback((question: string) => {
     if (!offered || threadId === null) return false;
-    setHidden(false);
     const asked = question.trim();
+    const current = useSideQuestionPanels.getState()[threadKey];
+    setFocusThreadKey(threadKey);
     if (!asked) {
       const focusKey = newMessageId();
-      setPanel((current) => ({
-        threadKey,
-        exchanges: [],
-        requestId: null,
-        error: null,
-        ...(current?.threadKey === threadKey ? current : {}),
-        focusKey,
+      updatePanel(threadKey, () => ({
+        hidden: false,
+        state: {
+          exchanges: [],
+          requestId: null,
+          error: null,
+          ...current?.state,
+          focusKey,
+        },
       }));
       return true;
     }
-    if (requestRef.current !== null) return false;
-    const settled = (panel?.exchanges ?? []).filter(
-      (exchange): exchange is typeof exchange & { answer: string } => exchange.answer !== null,
-    );
+    if (current !== undefined && current.state.requestId !== null) {
+      updatePanel(threadKey, () => ({ ...current, hidden: false }));
+      return false;
+    }
+    const settled = answeredExchanges(current?.state.exchanges ?? []);
     const requestId = newMessageId();
-    requestRef.current = { threadKey, id: requestId };
-    setPanel({
-      threadKey,
-      focusKey: requestId,
-      exchanges: [...settled, { id: requestId, question: asked, answer: null }],
-      requestId,
-      error: null,
-    });
+    updatePanel(threadKey, () => ({
+      hidden: false,
+      state: {
+        focusKey: requestId,
+        exchanges: [...settled, { id: requestId, question: asked, answer: null }],
+        requestId,
+        error: null,
+      },
+    }));
     void ask({
       environmentId,
       input: {
@@ -82,33 +118,42 @@ export function useSideQuestionPanel(input: {
         })),
       },
     }).then((result) => {
-      if (requestRef.current?.id === requestId) requestRef.current = null;
-      setPanel((current) => {
-        if (current?.requestId !== requestId) return current;
+      updatePanel(threadKey, (panel) => {
+        if (panel?.state.requestId !== requestId) return panel;
         if (result._tag === "Failure") {
           const error = squashAtomCommandFailure(result);
           return {
-            ...current,
-            requestId: null,
-            error: error instanceof Error ? error.message : "The side question failed.",
+            ...panel,
+            state: {
+              ...panel.state,
+              requestId: null,
+              error: error instanceof Error ? error.message : "The side question failed.",
+            },
           };
         }
         return {
-          ...current,
-          requestId: null,
-          exchanges: [...settled, { id: requestId, question: asked, ...result.value }],
+          ...panel,
+          state: {
+            ...panel.state,
+            requestId: null,
+            exchanges: [...settled, { id: requestId, question: asked, ...result.value }],
+          },
         };
       });
     });
     return true;
   });
   const forkInput = useStableCallback(() => {
-    if (threadId === null || forkRunId === null || panel === null || panel.requestId !== null) {
+    const panel = useSideQuestionPanels.getState()[threadKey]?.state;
+    if (
+      threadId === null ||
+      forkRunId === null ||
+      panel === undefined ||
+      panel.requestId !== null
+    ) {
       return null;
     }
-    const answered = panel.exchanges.filter(
-      (exchange): exchange is typeof exchange & { answer: string } => exchange.answer !== null,
-    );
+    const answered = answeredExchanges(panel.exchanges);
     if (answered.length === 0) return null;
     return {
       sourceThreadId: threadId,
@@ -116,5 +161,12 @@ export function useSideQuestionPanel(input: {
       draftPrompt: sideQuestionForkDraft(answered),
     };
   });
-  return { panel: hidden ? null : panel, offered, ask: askFromPanel, dismiss, forkInput };
+  return {
+    panel: stored === undefined || stored.hidden ? null : stored.state,
+    autoFocus: focusThreadKey === threadKey,
+    offered,
+    ask: askFromPanel,
+    dismiss,
+    forkInput,
+  };
 }

@@ -3465,7 +3465,9 @@ export default function ChatView(props: ChatViewProps) {
                 {composerMounted && sideQuestionPanel.panel && !isDraftHeroState ? (
                   <div className="mx-auto w-full max-w-(--chat-content-max-width)">
                     <ComposerSideQuestion
+                      key={routeThreadKey}
                       state={sideQuestionPanel.panel}
+                      autoFocus={sideQuestionPanel.autoFocus}
                       environmentId={environmentId}
                       cwd={gitCwd ?? undefined}
                       forkBlockedReason={

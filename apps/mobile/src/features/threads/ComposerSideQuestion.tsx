@@ -19,12 +19,15 @@ import type { SideQuestionPanelState } from "./sideQuestionPanel";
  */
 export function ComposerSideQuestion({
   state,
+  autoFocus,
   canFork,
   onAsk,
   onFork,
   onClose,
 }: {
   readonly state: SideQuestionPanelState;
+  /** Whether the input takes focus as it appears, which only an ask should cause. */
+  readonly autoFocus: boolean;
   /** Whether the thread's latest turn has stopped, so a fork can branch from it. */
   readonly canFork: boolean;
   readonly onAsk: (question: string) => boolean;
@@ -42,11 +45,11 @@ export function ComposerSideQuestion({
     setFocusKey(state.focusKey);
     setCollapsed(false);
   }
-  // Focus follows opening or reopening the panel, never an answer arriving,
-  // so typing in the main composer is not pulled back here.
+  // Focus follows opening or reopening the panel, never an answer arriving or
+  // a return to the thread, so typing in the main composer is not pulled back here.
   useEffect(() => {
-    if (state.focusKey > 0) inputRef.current?.focus();
-  }, [state.focusKey]);
+    if (autoFocus && state.focusKey > 0) inputRef.current?.focus();
+  }, [autoFocus, state.focusKey]);
   const submit = () => {
     const question = draft.trim();
     if (question.length === 0 || state.pending) return;
@@ -159,7 +162,7 @@ export function ComposerSideQuestion({
           <View className="flex-row items-center gap-2 border-t border-separator px-4 py-2">
             <TextInput
               ref={inputRef}
-              autoFocus
+              autoFocus={autoFocus}
               accessibilityLabel="Ask a side question"
               className="min-w-0 flex-1 py-1 text-sm text-foreground"
               placeholder={

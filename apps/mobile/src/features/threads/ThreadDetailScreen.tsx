@@ -147,8 +147,9 @@ import { waitForThreadShellReady } from "./threadForkNavigation";
 import {
   beginSideQuestion,
   finishSideQuestion,
+  sideQuestionPanelsAtom,
+  updateSideQuestionPanel,
   type SideQuestionExchange,
-  type SideQuestionPanelState,
 } from "./sideQuestionPanel";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useDelayedStatus } from "../../lib/useDelayedStatus";
@@ -889,29 +890,24 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const dismissUsageLimits = () => setUsageLimitsPanel(null);
   // The /btw panel. Like the web one it lives only in memory, so a reload
   // starts clean and the thread's transcript never gains anything.
-  const [sideQuestionPanel, setSideQuestionPanel] = useState<SideQuestionPanelState | null>(null);
-  const [sideQuestionHidden, setSideQuestionHidden] = useState(false);
-  const sideQuestionPanelRef = useRef(sideQuestionPanel);
-  const updateSideQuestionPanel = (next: SideQuestionPanelState | null) => {
-    sideQuestionPanelRef.current = next;
-    setSideQuestionPanel(next);
-  };
-  if (sideQuestionPanel !== null && sideQuestionPanel.threadKey !== selectedThreadKey) {
-    setSideQuestionPanel(null);
+  const sideQuestionPanel = useAtomValue(
+    sideQuestionPanelsAtom,
+    (panels) => panels[selectedThreadKey] ?? null,
+  );
+  // Only an ask focuses the panel. Coming back to a thread leaves the keyboard down.
+  const [sideQuestionFocusThreadKey, setSideQuestionFocusThreadKey] = useState<string | null>(null);
+  if (sideQuestionFocusThreadKey !== null && sideQuestionFocusThreadKey !== selectedThreadKey) {
+    setSideQuestionFocusThreadKey(null);
   }
-  useLayoutEffect(() => {
-    if (sideQuestionPanelRef.current?.threadKey !== selectedThreadKey) {
-      sideQuestionPanelRef.current = null;
-    }
-  }, [selectedThreadKey]);
   const handleSideQuestion = (question: string): boolean => {
     const threadKey = selectedThreadKey;
     question = question.trim();
     const askedId = uuidv4();
-    const next = beginSideQuestion(sideQuestionPanelRef.current, threadKey, askedId, question);
+    const next = updateSideQuestionPanel(threadKey, (current) =>
+      beginSideQuestion(current, askedId, question),
+    );
     if (next === null) return false;
-    updateSideQuestionPanel(next);
-    setSideQuestionHidden(false);
+    setSideQuestionFocusThreadKey(threadKey);
     if (question.length === 0) return true;
     const settled = next.exchanges.filter(
       (exchange): exchange is SideQuestionExchange & { answer: string } => exchange.answer !== null,
@@ -932,9 +928,9 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       },
     }).then((result) => {
       const error = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
-      updateSideQuestionPanel(
+      updateSideQuestionPanel(threadKey, (current) =>
         finishSideQuestion(
-          sideQuestionPanelRef.current,
+          current,
           askedId,
           result._tag === "Failure"
             ? { error: error instanceof Error ? error.message : "The side question failed." }
@@ -946,14 +942,13 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   };
   const sideQuestionForkRunId = resolveSideQuestionForkRunId(props.selectedThread.latestRun);
   const forkSideQuestion = async () => {
-    const panel = sideQuestionPanelRef.current;
+    const panel = appAtomRegistry.get(sideQuestionPanelsAtom)[selectedThreadKey];
     const answered = (panel?.exchanges ?? []).filter(
       (exchange): exchange is SideQuestionExchange & { answer: string } => exchange.answer !== null,
     );
     if (
       !props.canOperateThread ||
       panel?.pending ||
-      panel?.threadKey !== selectedThreadKey ||
       sideQuestionForkRunId === null ||
       answered.length === 0
     )
@@ -1687,7 +1682,9 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                       />
                     </Animated.View>
                   ) : null}
-                  {sideQuestionPanel && !sideQuestionHidden && activeUserInputRequestId === null ? (
+                  {sideQuestionPanel &&
+                  !sideQuestionPanel.hidden &&
+                  activeUserInputRequestId === null ? (
                     <Animated.View
                       className="shrink-0 px-4 pb-3"
                       entering={FadeInDown.duration(220)}
@@ -1696,10 +1693,16 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                       <ComposerSideQuestion
                         key={sideQuestionPanel.id}
                         state={sideQuestionPanel}
+                        autoFocus={sideQuestionFocusThreadKey === selectedThreadKey}
                         canFork={props.canOperateThread && sideQuestionForkRunId !== null}
                         onAsk={handleSideQuestion}
                         onFork={forkSideQuestion}
-                        onClose={() => setSideQuestionHidden(true)}
+                        onClose={() =>
+                          updateSideQuestionPanel(
+                            selectedThreadKey,
+                            (current) => current && { ...current, hidden: true },
+                          )
+                        }
                       />
                     </Animated.View>
                   ) : null}
