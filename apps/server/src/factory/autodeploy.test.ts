@@ -595,13 +595,22 @@ describe("autodeploy.sh waiting behind runs", () => {
     expect(NodeFS.existsSync(pendingFile())).toBe(false);
   });
 
-  it("deploys past the limit although an agent is at work in a thread", async () => {
-    const sha = commitToOrigin("second");
-    writePending(3 * 3600);
-    statusBodies = [status([], false, 2)];
+  // The limit ends the wait for factory runs, which resume; a person's thread does not.
+  it.each([
+    ["an agent is at work in a thread", status([], false, 2)],
+    ["the thread count is null", status([], false, null)],
+  ])("keeps waiting past the limit while %s", async (_name, body) => {
+    commitToOrigin("second");
+    const since = writePending(3 * 3600);
+    statusBodies = [body];
     const result = await runAutodeploy();
-    expect(result.output).toContain("although an agent is at work in a thread");
-    expect(current()).toBe(`versions/0.0.1+fac.${git(clone, "rev-parse", "--short", sha)}`);
+    expect(result.deploys).toEqual([]);
+    expect(lines(result.output)).toHaveLength(1);
+    expect(result.output).toContain("an agent is at work in a thread");
+    expect(result.output).toContain(
+      "waited 3h00m of deploy_wait_minutes 120, which ends the wait for factory runs only",
+    );
+    expect(NodeFS.readFileSync(pendingFile(), "utf8")).toMatch(new RegExp(`^${since} `));
   });
 
   it("reads the limit from deploy_wait_minutes", async () => {
@@ -661,27 +670,49 @@ describe("autodeploy.sh waiting behind runs", () => {
     expect(NodeFS.readFileSync(pendingFile(), "utf8")).toMatch(new RegExp(`^${since} `));
   });
 
-  // The server drains only for a deploy that can happen: a tick that cannot ask whether a run is
-  // in the way never installs, so it leaves no marker behind.
-  it("removes the marker when the token is missing", async () => {
+  // A tick that cannot ask leaves the marker as it is: the server ignores one that goes stale, and
+  // a blip does not lose the first-wait time.
+  const hourAgo = () => {
+    const time = Date.now() / 1000 - 3600;
+    NodeFS.utimesSync(pendingFile(), time, time);
+    return NodeFS.statSync(pendingFile()).mtimeMs;
+  };
+
+  it("leaves the marker as it was when the token is missing", async () => {
     commitToOrigin("second");
     writePending(60);
+    const before = NodeFS.readFileSync(pendingFile(), "utf8");
+    const mtime = hourAgo();
     writeEnv([`T3FAC_AUTODEPLOY_CLONE="${clone}"`]);
     const result = await runAutodeploy();
     expect(result.output).toContain("T3FAC_AUTODEPLOY_TOKEN");
-    expect(NodeFS.existsSync(pendingFile())).toBe(false);
+    expect(NodeFS.readFileSync(pendingFile(), "utf8")).toBe(before);
+    expect(NodeFS.statSync(pendingFile()).mtimeMs).toBe(mtime);
   });
 
-  it("removes the marker when the status API cannot be reached", async () => {
+  it("leaves the marker as it was when the status API cannot be reached", async () => {
     commitToOrigin("second");
     writePending(60);
+    const before = NodeFS.readFileSync(pendingFile(), "utf8");
+    const mtime = hourAgo();
     const closed = NodeNet.createServer();
     await new Promise<void>((resolve) => closed.listen(0, "127.0.0.1", resolve));
     const deadPort = (closed.address() as NodeNet.AddressInfo).port;
     await new Promise<void>((resolve) => closed.close(() => resolve()));
     const result = await runAutodeploy({ T3FAC_PORT: String(deadPort) });
     expect(result.output).toContain("/api/factory/status");
-    expect(NodeFS.existsSync(pendingFile())).toBe(false);
+    expect(NodeFS.readFileSync(pendingFile(), "utf8")).toBe(before);
+    expect(NodeFS.statSync(pendingFile()).mtimeMs).toBe(mtime);
+  });
+
+  it("rewrites the marker on every tick it reads the status, so its mtime shows autodeploy is ticking", async () => {
+    const sha = commitToOrigin("second");
+    const since = writePending(600, sha);
+    hourAgo();
+    statusBodies = [BUSY];
+    await runAutodeploy();
+    expect(NodeFS.readFileSync(pendingFile(), "utf8")).toMatch(new RegExp(`^${since} `));
+    expect(Date.now() - NodeFS.statSync(pendingFile()).mtimeMs).toBeLessThan(60_000);
   });
 
   it("marks the build pending on an idle tick too, so a run that starts during the build waits", async () => {
