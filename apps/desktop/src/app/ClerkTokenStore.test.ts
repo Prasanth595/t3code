@@ -3,6 +3,9 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
+
+vi.mock("node:fs", { spy: true });
 
 import { openClerkTokenStorage, type ClerkTokenStorage } from "./ClerkTokenStore.ts";
 
@@ -119,6 +122,48 @@ describePosix("ClerkTokenStore", () => {
       assert.equal(NodePath.isAbsolute(relativeStateDir), false);
       assert.deepEqual(opened, [directory]);
       assert.equal(modeOf(directory), 0o700);
+    });
+  });
+
+  it("migrates relative state paths from Electron userData, not the working directory", async () => {
+    await withStateDir((stateDir) => {
+      const relativeStateDir = NodePath.relative(process.cwd(), stateDir);
+      const userData = NodePath.join(
+        stateDir,
+        "electron",
+        ...relativeStateDir.split(NodePath.sep).map(() => "profile"),
+      );
+      const legacyStateDir = NodePath.join(userData, relativeStateDir);
+      const legacyPath = NodePath.join(legacyStateDir, "clerk-tokens.json");
+      NodeFS.mkdirSync(legacyStateDir, { recursive: true });
+      writeLoose(legacyPath, "existing-session");
+      const unrelatedPath = NodePath.join(stateDir, "clerk-tokens.json");
+      writeLoose(unrelatedPath, "not-the-electron-session");
+
+      openClerkTokenStorage(relativeStateDir, idleStorage, userData);
+
+      const tokenPath = NodePath.join(stateDir, "clerk", "clerk-tokens.json");
+      assert.equal(NodeFS.readFileSync(tokenPath, "utf8"), "existing-session");
+      assert.equal(modeOf(tokenPath), 0o600);
+      assert.equal(NodeFS.existsSync(legacyPath), false);
+      assert.equal(NodeFS.readFileSync(unrelatedPath, "utf8"), "not-the-electron-session");
+    });
+  });
+
+  it("migrates tokens when the legacy directory is on another filesystem", async () => {
+    await withStateDir((stateDir) => {
+      const legacyPath = NodePath.join(stateDir, "clerk-tokens.json");
+      writeLoose(legacyPath, "existing-session");
+      using _rename = vi.spyOn(NodeFS, "renameSync").mockImplementation(() => {
+        throw Object.assign(new Error("cross-device link"), { code: "EXDEV" });
+      });
+
+      openClerkTokenStorage(stateDir, idleStorage);
+
+      const tokenPath = NodePath.join(stateDir, "clerk", "clerk-tokens.json");
+      assert.equal(NodeFS.readFileSync(tokenPath, "utf8"), "existing-session");
+      assert.equal(modeOf(tokenPath), 0o600);
+      assert.equal(NodeFS.existsSync(legacyPath), false);
     });
   });
 
