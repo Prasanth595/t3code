@@ -51,8 +51,9 @@ function VisibilityObserver(props: { readonly onVisible: (visible: boolean) => v
   const { onVisible } = props;
   const [visible, setVisible] = useState(false);
   useViewabilityAmount(useCallback((token) => setVisible(token.sizeVisible > 0), []));
+  // oxlint-disable-next-line t3code/react-effect-budget -- Publish LegendList visibility to the external store after commit.
   useLayoutEffect(() => onVisible(visible), [onVisible, visible]);
-  // A keyed video handoff can keep the observer mounted across the last unsubscribe.
+  // oxlint-disable-next-line t3code/react-effect-budget -- Clear external visibility on unmount, including keyed media handoffs.
   useLayoutEffect(() => () => onVisible(false), [onVisible]);
   return null;
 }
