@@ -3,6 +3,7 @@ import { type ModelSelection, ProviderInstanceId, TextGenerationError } from "@t
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -136,5 +137,30 @@ it.effect("does not retry a fallback that names the primary model", () =>
 
     assert.equal(error.detail, "codex is down");
     assert.deepEqual(calls, [primary]);
+  }),
+);
+
+it.effect("keeps provider error text out of fallback warnings", () =>
+  Effect.gen(function* () {
+    const logged: string[] = [];
+    const providerOutput = "raw provider output with a token";
+    const failure = new TextGenerationError({
+      operation: "generateThreadTitle",
+      detail: providerOutput,
+    });
+
+    yield* TextGeneration.withModelFallback("generateThreadTitle", primary, fallback, () =>
+      Effect.fail(failure),
+    ).pipe(
+      Effect.flip,
+      Effect.provide(
+        Logger.layer([Logger.make(({ message }) => void logged.push(JSON.stringify(message)))], {
+          mergeWithExisting: false,
+        }),
+      ),
+    );
+
+    assert.equal(logged.length, 2);
+    assert.isFalse(logged.some((entry) => entry.includes(providerOutput)));
   }),
 );

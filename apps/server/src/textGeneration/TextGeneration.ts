@@ -81,6 +81,8 @@ export const withModelFallback = Effect.fn("TextGeneration.withModelFallback")(f
     return yield* attempt(primary);
   }
   return yield* attempt(primary).pipe(
+    // Provider error text stays out of these warnings; it can carry raw
+    // provider output, and the primary's error still reaches the caller.
     Effect.catch((primaryError) =>
       Effect.logWarning("Text generation failed, trying the fallback model", {
         operation,
@@ -88,15 +90,13 @@ export const withModelFallback = Effect.fn("TextGeneration.withModelFallback")(f
         model: primary.model,
         fallbackInstanceId: fallback.instanceId,
         fallbackModel: fallback.model,
-        detail: primaryError.detail,
       }).pipe(
         Effect.andThen(attempt(fallback)),
-        Effect.tapError((fallbackError) =>
+        Effect.tapError(() =>
           Effect.logWarning("Text generation fallback model failed", {
             operation,
             fallbackInstanceId: fallback.instanceId,
             fallbackModel: fallback.model,
-            detail: fallbackError.detail,
           }),
         ),
         // The configured model's error is the one the user can act on.
