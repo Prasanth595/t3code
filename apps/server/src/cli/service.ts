@@ -98,7 +98,7 @@ function formatServiceStatus(
       "T3 Code service",
       "  Status: installed for another T3 home",
       `  Base dir: ${status.otherBaseDir}`,
-      `  Next: Pass \`--base-dir ${status.otherBaseDir}\` to manage it.`,
+      `  Next: Pass \`${BootService.formatBootServiceBaseDirOption(status.otherBaseDir)}\` to manage it.`,
     ].join("\n");
   }
   const installedVersion = status.installedVersion ?? cliVersion;

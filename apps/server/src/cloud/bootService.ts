@@ -469,6 +469,9 @@ export class BootServiceDowngradeRefusedError extends Schema.TaggedError<BootSer
   }
 }
 
+export const formatBootServiceBaseDirOption = (baseDir: string) =>
+  `--base-dir '${baseDir.replaceAll("'", `'"'"'`)}'`;
+
 export class BootServiceOtherBaseDirError extends Schema.TaggedError<BootServiceOtherBaseDirError>()(
   "BootServiceOtherBaseDirError",
   {
@@ -477,7 +480,7 @@ export class BootServiceOtherBaseDirError extends Schema.TaggedError<BootService
   },
 ) {
   override get message(): string {
-    return `The T3 Code service on this machine serves ${this.installedBaseDir}, not ${this.baseDir}. Pass --base-dir ${this.installedBaseDir} to manage it, or run \`t3 service uninstall\` first to move it; both data directories are kept.`;
+    return `The T3 Code service on this machine serves ${this.installedBaseDir}, not ${this.baseDir}. Pass ${formatBootServiceBaseDirOption(this.installedBaseDir)} to manage it, or run \`t3 service uninstall\` first to move it; both data directories are kept.`;
   }
 }
 
