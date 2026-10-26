@@ -65,4 +65,14 @@ describe("browserTabContextRecord", () => {
     const second = browserTabContextRecord({ environmentId, threadId: ThreadId.make("b") }, tab);
     expect(first.contextId).not.toBe(second.contextId);
   });
+
+  it("keeps thread and tab ids apart when either contains an underscore", () => {
+    const environmentId = EnvironmentId.make("env");
+    const record = (threadId: string, tabId: string) =>
+      browserTabContextRecord(
+        { environmentId, threadId: ThreadId.make(threadId) },
+        { tabId, title: "Docs", url: "https://example.com/" },
+      ).contextId;
+    expect(record("a_b", "c")).not.toBe(record("a", "b_c"));
+  });
 });
