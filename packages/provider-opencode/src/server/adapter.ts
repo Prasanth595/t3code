@@ -3349,14 +3349,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 },
                 admissionAbortController!,
               ).pipe(
-                // A rejected steer never runs, so idle no longer waits for it. The
-                // turn ends now if idle already arrived, or on the next idle.
-                Effect.tapError(() => {
-                  if (!promptAdmissionIsCurrent(state, turn, generation)) return Effect.void;
-                  const idleDuringAdmission = turn.idleDuringAdmission;
-                  cancelOpenCodePromptAdmission(turn, state.nextAdmissionGeneration++);
-                  return idleDuringAdmission ? finalizeTurn(state, turn, "completed") : Effect.void;
-                }),
+                Effect.tapError(() =>
+                  promptAdmissionIsCurrent(state, turn, generation)
+                    ? reconcilePromptAdmission(state, turn)
+                    : Effect.void,
+                ),
                 Effect.ensuring(
                   Effect.all([
                     Deferred.succeed(admissionSettled, undefined).pipe(Effect.ignore),
