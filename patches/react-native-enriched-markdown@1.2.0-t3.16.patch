@@ -1,15 +1,16 @@
 diff --git a/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt b/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt
-index eb25319..6ba0a6d 100644
+index 3a2c517..b7a6347 100644
 --- a/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt
 +++ b/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt
-@@ -1,5 +1,6 @@
- package com.swmansion.enriched.markdown
- 
+@@ -49,6 +49,7 @@ import com.swmansion.enriched.markdown.utils.text.view.ImagePressHost
+ import com.swmansion.enriched.markdown.utils.text.view.SelectionMenuConfig
+ import com.swmansion.enriched.markdown.utils.text.view.applySelectionColors
+ import com.swmansion.enriched.markdown.utils.text.view.emitImagePressEvent
 +import com.swmansion.enriched.markdown.utils.text.wordMajorityAST
- import android.content.Context
- import android.content.res.Configuration
- import android.os.Build
-@@ -82,6 +83,17 @@ class EnrichedMarkdown(
+ import java.util.EnumSet
+ import java.util.concurrent.ExecutorService
+ import java.util.concurrent.Executors
+@@ -72,6 +73,17 @@ class EnrichedMarkdown(
    private val mathContainerClass: Class<*>? by lazy { SegmentViewCreators.mathContainerClass() }
    private val videoContainerClass: Class<*>? by lazy { SegmentViewCreators.videoContainerClass() }
  
@@ -25,30 +26,38 @@ index eb25319..6ba0a6d 100644
 +  }
 +
    private var currentRenderId = 0L
-   private var enableImageSourceResolution = false
-   private var imageSourcesRevision = -1
-@@ -560,6 +572,7 @@ class EnrichedMarkdown(
-     val overrideRevision = mediaOverridesRevision
-     val overrides = mediaOverrides
-     val flags = md4cFlags
-+    val directionMode = writingDirectionMode
-     val gfm = isGFM
-     val renderId = ++currentRenderId
+   private val dirtyFlags = EnumSet.noneOf(DirtyFlag::class.java)
+   var streamingAnimation: Boolean = false
+@@ -531,6 +543,7 @@ class EnrichedMarkdown(
+     val codeLinkRegex: LinkRegexConfig?,
+     val slotIds: Set<String>,
+     val annotateImages: Boolean,
++    val directionMode: String,
+   )
  
-@@ -585,7 +598,7 @@ class EnrichedMarkdown(
-             return@execute
-           }
+   private fun renderJob(): RenderJob? {
+@@ -547,6 +560,7 @@ class EnrichedMarkdown(
+       inlineCodeLinkRegex,
+       activeBlockSlotIds,
+       imageSourceOverrides.isNotEmpty(),
++      writingDirectionMode,
+     )
+   }
  
--        val sourceAST = withImageSources(ast, sourcesEnabled, revision, sourcesRevision, sourcesContinuityStart, sources)
-+        val sourceAST = withImageSources(wordMajorityAST(ast, style, directionMode), sourcesEnabled, revision, sourcesRevision, sourcesContinuityStart, sources)
-         // Image source resolution copies the tree; occurrence lookup must use those copied nodes.
-         val assets = if (assetEventsEnabled || slotsEnabled || sourcesEnabled) DocumentAssets.collect(sourceAST) else null
-         val mediaSlots = assets?.let { mediaSlotsForDocument(it, slotsEnabled, revision, overrideRevision, overrides) } ?: emptyMap()
+@@ -573,7 +587,7 @@ class EnrichedMarkdown(
+         job.annotateImages,
+       ) ?: return emptyList<RenderedSegment>() to false
+ 
+-    val segments = splitASTIntoSegments(ast)
++    val segments = splitASTIntoSegments(wordMajorityAST(ast, job.style, job.directionMode))
+     val renderedSegments =
+       MarkdownSegmentRenderer.render(
+         segments,
 diff --git a/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownManager.kt b/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownManager.kt
-index d195323..67bec6b 100644
+index c95c971..6a17441 100644
 --- a/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownManager.kt
 +++ b/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownManager.kt
-@@ -352,7 +352,7 @@ class EnrichedMarkdownManager :
+@@ -304,7 +304,7 @@ class EnrichedMarkdownManager :
      view: EnrichedMarkdown?,
      value: String?,
    ) {
@@ -58,17 +67,18 @@ index d195323..67bec6b 100644
  
    @ReactProp(name = "streamingAnimation", defaultBoolean = false)
 diff --git a/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownText.kt b/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownText.kt
-index cd05d91..0728997 100644
+index 3e00d90..9469e7b 100644
 --- a/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownText.kt
 +++ b/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownText.kt
-@@ -1,5 +1,6 @@
- package com.swmansion.enriched.markdown
- 
+@@ -48,6 +48,7 @@ import com.swmansion.enriched.markdown.utils.text.view.emitImagePressEvent
+ import com.swmansion.enriched.markdown.utils.text.view.emitLinkLongPressEvent
+ import com.swmansion.enriched.markdown.utils.text.view.emitLinkPressEvent
+ import com.swmansion.enriched.markdown.utils.text.view.setupAsMarkdownTextView
 +import com.swmansion.enriched.markdown.utils.text.wordMajorityAST
- import android.content.Context
- import android.content.res.Configuration
- import android.graphics.Canvas
-@@ -86,6 +87,15 @@ class EnrichedMarkdownText
+ import java.util.concurrent.Executors
+ import kotlin.math.ceil
+ import kotlin.math.roundToInt
+@@ -85,6 +86,15 @@ class EnrichedMarkdownText
  
      private val mainHandler = Handler(Looper.getMainLooper())
      private val executor = Executors.newSingleThreadExecutor()
@@ -84,7 +94,7 @@ index cd05d91..0728997 100644
      private var currentRenderId = 0L
  
      val layoutManager = EnrichedMarkdownTextLayoutManager(this)
-@@ -313,6 +323,7 @@ class EnrichedMarkdownText
+@@ -312,6 +322,7 @@ class EnrichedMarkdownText
  
        val textLinkRegex = linkRegex
        val codeLinkRegex = inlineCodeLinkRegex
@@ -92,7 +102,7 @@ index cd05d91..0728997 100644
        val renderId = ++currentRenderId
  
        executor.execute {
-@@ -324,7 +335,7 @@ class EnrichedMarkdownText
+@@ -323,7 +334,7 @@ class EnrichedMarkdownText
              }
  
            renderer.configure(style, context, latexErrorReporter)
@@ -115,25 +125,26 @@ index 56e721e..aebc2bc 100644
  
    @ReactProp(name = "streamingAnimation", defaultBoolean = false)
 diff --git a/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt b/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
-index 6c4e1ee..07136db 100644
+index 31ef1eb..d07bceb 100644
 --- a/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
 +++ b/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
-@@ -1,5 +1,6 @@
- package com.swmansion.enriched.markdown
- 
+@@ -50,6 +50,7 @@ import com.swmansion.enriched.markdown.utils.common.parseLinkPillContent
+ import com.swmansion.enriched.markdown.utils.common.parseLinkRecognition
+ import com.swmansion.enriched.markdown.utils.text.extensions.replaceMathSpansWithPlaceholders
+ import com.swmansion.enriched.markdown.utils.text.span.prepareWidthAwareSpans
 +import com.swmansion.enriched.markdown.utils.text.wordMajorityAST
- import android.content.Context
- import android.graphics.Typeface
- import android.os.Build
-@@ -359,6 +360,7 @@ object MeasurementStore {
-     result = 31 * result + allowTrailingMargin.hashCode()
+ import java.util.concurrent.ConcurrentHashMap
+ import kotlin.math.ceil
+ 
+@@ -363,6 +364,7 @@ object MeasurementStore {
      result = 31 * result + imageRequestHeaders.hashCode()
+     result = 31 * result + imageSources.hashCode()
      result = 31 * result + linkPillContent.hashCode()
 +    result = 31 * result + props.getStringOrDefault("writingDirection", "first-strong").hashCode()
-     result = 31 * result + props.getBooleanOrDefault("enableImageSourceResolution", false).hashCode()
-     result = 31 * result + props.getIntOrDefault("imageSourcesRevision", -1)
-     result = 31 * result + props.getIntOrDefault("imageSourcesContinuityStart", 1)
-@@ -443,6 +445,7 @@ object MeasurementStore {
+     result = 31 * result + props.getIntOrDefault("numberOfLines", 0)
+     result = 31 * result + props.getStringOrDefault("ellipsizeMode", EllipsizeUtils.DEFAULT_MODE).hashCode()
+     return result
+@@ -439,6 +441,7 @@ object MeasurementStore {
          parseLinkPillContent(props.getArrayOrNull("linkPillContent")),
          linkRecognition.text,
          linkRecognition.inlineCode,
@@ -141,16 +152,16 @@ index 6c4e1ee..07136db 100644
        )
      spannable?.replaceMathSpansWithPlaceholders(context)
      val textToMeasure = spannable ?: markdown
-@@ -560,7 +563,7 @@ object MeasurementStore {
+@@ -576,7 +579,7 @@ object MeasurementStore {
+       style.imageRequestHeaders = parseImageRequestHeaders(props.getArrayOrNull("imageRequestHeaders"))
+       style.imageSourceOverrides = imageSources
        style.linkPillContent = parseLinkPillContent(props.getArrayOrNull("linkPillContent"))
-       val sourceAST =
-         withImageSources(
--          ast,
-+          wordMajorityAST(ast, style, props.getStringOrDefault("writingDirection", "first-strong")),
-           isGFM && props.getBooleanOrDefault("enableImageSourceResolution", false),
-           props.getIntOrDefault("documentRevision", 0),
-           props.getIntOrDefault("imageSourcesRevision", -1),
-@@ -738,6 +741,7 @@ object MeasurementStore {
+-      val segments = splitASTIntoSegments(ast)
++      val segments = splitASTIntoSegments(wordMajorityAST(ast, style, props.getStringOrDefault("writingDirection", "first-strong")))
+       val renderedSegments = MarkdownSegmentRenderer.render(segments, style, context, null, null)
+ 
+       val mathHeightByIndex = HashMap<Int, Float>()
+@@ -672,6 +675,7 @@ object MeasurementStore {
      linkPillContent: Map<String, LinkPillContent> = emptyMap(),
      linkRegex: LinkRegexConfig? = null,
      inlineCodeLinkRegex: LinkRegexConfig? = null,
@@ -158,7 +169,7 @@ index 6c4e1ee..07136db 100644
    ): Spannable? {
      if (styleMap == null) return null
  
-@@ -747,7 +751,7 @@ object MeasurementStore {
+@@ -681,7 +685,7 @@ object MeasurementStore {
        style.imageRequestHeaders = imageRequestHeaders
        style.linkPillContent = linkPillContent
        measureRenderer.configure(style, context)
@@ -168,19 +179,19 @@ index 6c4e1ee..07136db 100644
        Log.w(TAG, "Failed to render markdown for measurement, falling back to raw text", e)
        null
 diff --git a/android/src/main/java/com/swmansion/enriched/markdown/renderer/CodeRenderer.kt b/android/src/main/java/com/swmansion/enriched/markdown/renderer/CodeRenderer.kt
-index 334e505..6533646 100644
+index 0008d9b..dce90da 100644
 --- a/android/src/main/java/com/swmansion/enriched/markdown/renderer/CodeRenderer.kt
 +++ b/android/src/main/java/com/swmansion/enriched/markdown/renderer/CodeRenderer.kt
-@@ -1,6 +1,8 @@
- package com.swmansion.enriched.markdown.renderer
- 
- import android.text.SpannableStringBuilder
-+import com.swmansion.enriched.markdown.spans.DirectionControlSpan
-+import com.swmansion.enriched.markdown.utils.text.PROSE_DIRECTION
+@@ -4,6 +4,8 @@ import android.text.SpannableStringBuilder
  import com.swmansion.enriched.markdown.parser.MarkdownASTNode
  import com.swmansion.enriched.markdown.spans.CodeBackgroundSpan
- import com.swmansion.enriched.markdown.spans.CodePaddingSpan
-@@ -24,6 +26,12 @@ class CodeRenderer(
+ import com.swmansion.enriched.markdown.spans.CodeSpan
++import com.swmansion.enriched.markdown.spans.DirectionControlSpan
++import com.swmansion.enriched.markdown.utils.text.PROSE_DIRECTION
+ import com.swmansion.enriched.markdown.utils.text.span.SPAN_FLAGS_EXCLUSIVE_EXCLUSIVE
+ 
+ class CodeRenderer(
+@@ -18,6 +20,12 @@ class CodeRenderer(
    ) {
      if (node.children.isEmpty() || node.children.all { it.content.isEmpty() }) return
  
@@ -190,10 +201,10 @@ index 334e505..6533646 100644
 +      builder.append('\u2066')
 +      builder.setSpan(DirectionControlSpan(), index, index + 1, SPAN_FLAGS_EXCLUSIVE_EXCLUSIVE)
 +    }
-     factory.renderWithSpan(builder, {
-       builder.append(CODE_PADDING)
-       node.children.forEach { builder.append(it.content) }
-@@ -54,5 +62,10 @@ class CodeRenderer(
+     factory.renderWithSpan(builder, { node.children.forEach { builder.append(it.content) } }) { start, end, blockStyle ->
+       builder.setSpan(
+         CodeSpan(factory.styleCache, blockStyle),
+@@ -32,5 +40,10 @@ class CodeRenderer(
          SPAN_FLAGS_EXCLUSIVE_EXCLUSIVE,
        )
      }
@@ -205,16 +216,15 @@ index 334e505..6533646 100644
    }
  }
 diff --git a/android/src/main/java/com/swmansion/enriched/markdown/renderer/NodeRenderer.kt b/android/src/main/java/com/swmansion/enriched/markdown/renderer/NodeRenderer.kt
-index ed277d9..a6f5b19 100644
+index 7381fa2..cf03921 100644
 --- a/android/src/main/java/com/swmansion/enriched/markdown/renderer/NodeRenderer.kt
 +++ b/android/src/main/java/com/swmansion/enriched/markdown/renderer/NodeRenderer.kt
-@@ -4,12 +4,15 @@ import android.content.Context
+@@ -4,11 +4,14 @@ import android.content.Context
  import android.text.SpannableStringBuilder
  import android.text.Spanned
  import android.text.style.MetricAffectingSpan
 +import android.text.style.ParagraphStyle
  import com.swmansion.enriched.markdown.math.LatexErrorReporter
- import com.swmansion.enriched.markdown.media.ImageSourceTransport
  import com.swmansion.enriched.markdown.parser.MarkdownASTNode
 +import com.swmansion.enriched.markdown.spans.DirectionControlSpan
  import com.swmansion.enriched.markdown.spans.ImageSpan
@@ -224,7 +234,7 @@ index ed277d9..a6f5b19 100644
  import com.swmansion.enriched.markdown.utils.text.span.SPAN_FLAGS_EXCLUSIVE_EXCLUSIVE
  
  interface NodeRenderer {
-@@ -195,7 +198,27 @@ class RendererFactory(
+@@ -196,7 +199,27 @@ class RendererFactory(
      onLinkLongPress: ((String) -> Unit)?,
    ) {
      nodes.forEach { node ->
@@ -253,10 +263,10 @@ index ed277d9..a6f5b19 100644
    }
  
 diff --git a/android/src/main/java/com/swmansion/enriched/markdown/segments/BlockquoteContainerView.kt b/android/src/main/java/com/swmansion/enriched/markdown/segments/BlockquoteContainerView.kt
-index 8c88475..d0bf53b 100644
+index 4b0e852..ccd300f 100644
 --- a/android/src/main/java/com/swmansion/enriched/markdown/segments/BlockquoteContainerView.kt
 +++ b/android/src/main/java/com/swmansion/enriched/markdown/segments/BlockquoteContainerView.kt
-@@ -61,6 +61,7 @@ class BlockquoteContainerView(
+@@ -58,6 +58,7 @@ class BlockquoteContainerView(
  
    // Set from the applied node: null for a plain quote, the admonition type
    // ("note"/"tip"/…) otherwise. Drives the header + per-type theming.
@@ -264,15 +274,15 @@ index 8c88475..d0bf53b 100644
    private var admonitionType: String? = null
  
    // Cached markdown source for the "Copy as Markdown" action.
-@@ -124,6 +125,7 @@ class BlockquoteContainerView(
-     mediaSlots: Map<String, MediaSlot> = emptyMap(),
-     assets: DocumentAssets? = null,
-   ) {
+@@ -117,6 +118,7 @@ class BlockquoteContainerView(
+   }
+ 
+   fun applyBlockquoteNode(node: MarkdownASTNode) {
 +    proseRTL = node.attributes["_enrmProseDirection"] == "rtl"
      admonitionType =
        if (node.type == MarkdownASTNode.NodeType.Admonition) {
          node.getAttribute("admonitionType")?.takeIf { it.isNotEmpty() } ?: "note"
-@@ -131,7 +133,7 @@ class BlockquoteContainerView(
+@@ -124,7 +126,7 @@ class BlockquoteContainerView(
          null
        }
      // Reserve the header band above the body by enlarging the top padding.
@@ -281,7 +291,7 @@ index 8c88475..d0bf53b 100644
  
      cachedMarkdown = MarkdownASTSerializer.serializeBlockquote(node)
      cachedPlainText = MarkdownASTSerializer.plainText(node)
-@@ -231,10 +233,10 @@ class BlockquoteContainerView(
+@@ -224,10 +226,10 @@ class BlockquoteContainerView(
      if (hasRadius) {
        canvas.withSave {
          clipPath(path)
@@ -295,10 +305,10 @@ index 8c88475..d0bf53b 100644
  
      if (type != null) {
 diff --git a/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt b/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt
-index e04b33d..b7767db 100644
+index 9a98add..20c31ac 100644
 --- a/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt
 +++ b/android/src/main/java/com/swmansion/enriched/markdown/segments/TableContainerView.kt
-@@ -119,6 +119,7 @@ class TableContainerView(
+@@ -53,6 +53,7 @@ class TableContainerView(
    override val segmentMarginBottom: Int get() = tableStyle.marginBottom.toInt()
    private val density = resources.displayMetrics.density
    private val isRtl = resources.isLayoutRTL()
@@ -306,7 +316,7 @@ index e04b33d..b7767db 100644
  
    var allowFontScaling = true
    var maxFontSizeMultiplier = 0f
-@@ -188,6 +189,7 @@ class TableContainerView(
+@@ -121,6 +122,7 @@ class TableContainerView(
    }
  
    fun applyTableNode(tableNode: MarkdownASTNode) {
@@ -314,7 +324,7 @@ index e04b33d..b7767db 100644
      rows =
        tableNode.children.flatMap { section ->
          val isSectionHead = section.type == NodeType.TableHead
-@@ -223,7 +225,10 @@ class TableContainerView(
+@@ -156,7 +158,10 @@ class TableContainerView(
      isHeader: Boolean,
      alignment: Layout.Alignment,
    ): Spannable {
@@ -326,7 +336,7 @@ index e04b33d..b7767db 100644
      val cellParagraphStyle = styleConfig.tableCellParagraphStyle(tableStyle, isHeader)
      return styleConfig
        .withParagraphOverride(cellParagraphStyle) {
-@@ -231,7 +236,7 @@ class TableContainerView(
+@@ -164,18 +169,18 @@ class TableContainerView(
        }.apply {
          if (isNotEmpty()) {
            if (isHeader) setSpan(HeaderTypefaceSpan(styleConfig.tableHeaderTypeface ?: Typeface.DEFAULT_BOLD), 0, length, 33)
@@ -335,9 +345,8 @@ index e04b33d..b7767db 100644
          }
        }
    }
-@@ -245,11 +250,11 @@ class TableContainerView(
-       node.content + node.children.joinToString("") { extractPlainText(it) }
-     }
+ 
+   private fun extractPlainText(node: MarkdownASTNode): String = node.content + node.children.joinToString("") { extractPlainText(it) }
  
 -  private fun textAlignmentFromString(align: String?): Layout.Alignment =
 +  private fun textAlignmentFromString(align: String?, rtl: Boolean = isRtl): Layout.Alignment =
@@ -350,7 +359,7 @@ index e04b33d..b7767db 100644
        else -> Layout.Alignment.ALIGN_NORMAL
      }
  
-@@ -353,6 +358,7 @@ class TableContainerView(
+@@ -279,6 +284,7 @@ class TableContainerView(
    ) {
      val cellTextView =
        CellTextView(context).apply {
@@ -358,7 +367,7 @@ index e04b33d..b7767db 100644
          text = data.attributedText
          textSize = tableStyle.fontSize / resources.displayMetrics.scaledDensity
          typeface = if (data.isHeader) styleConfig.tableHeaderTypeface else styleConfig.tableTypeface
-@@ -594,7 +600,7 @@ class TableContainerView(
+@@ -515,7 +521,7 @@ class TableContainerView(
            section.children.filter { it.type == NodeType.TableRow }.map { row ->
              row.children.map { cell ->
                val isHeader = section.type == NodeType.TableHead || cell.type == NodeType.TableHeaderCell
@@ -483,32 +492,31 @@ index 0000000..51b0563
 +  return withWordMajority(node, { url -> variants.firstOrNull { it.first.containsMatchIn(url) }?.second?.pill != null })
 +}
 diff --git a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/conversion/HTMLGenerator.kt b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/conversion/HTMLGenerator.kt
-index 0b23ffc..5cdb996 100644
+index b55937f..157f048 100644
 --- a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/conversion/HTMLGenerator.kt
 +++ b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/conversion/HTMLGenerator.kt
 @@ -9,6 +9,7 @@ import com.swmansion.enriched.markdown.spans.BaseListSpan
  import com.swmansion.enriched.markdown.spans.BlockquoteSpan
  import com.swmansion.enriched.markdown.spans.CodeBlockSpan
- import com.swmansion.enriched.markdown.spans.CodePaddingSpan
-+import com.swmansion.enriched.markdown.spans.DirectionControlSpan
  import com.swmansion.enriched.markdown.spans.CodeSpan
++import com.swmansion.enriched.markdown.spans.DirectionControlSpan
  import com.swmansion.enriched.markdown.spans.EmphasisSpan
  import com.swmansion.enriched.markdown.spans.HeadingSpan
-@@ -754,6 +755,12 @@ object HTMLGenerator {
+ import com.swmansion.enriched.markdown.spans.HighlightSpan
+@@ -753,6 +754,11 @@ object HTMLGenerator {
      styles: CachedStyles,
      isCodeBlock: Boolean,
    ) {
 +    if (text.getSpans(start, end, DirectionControlSpan::class.java).any {
 +        text.getSpanStart(it) <= start && text.getSpanEnd(it) >= end
 +      }
-+    ) {
-+      return
-+    }
-     if (text.getSpans(start, end, CodePaddingSpan::class.java).any {
-         text.getSpanStart(it) <= start && text.getSpanEnd(it) >= end
-       }
++    ) return
++
+     val strongSpans = text.getSpans(start, end, StrongSpan::class.java)
+     val styleSpans = text.getSpans(start, end, StyleSpan::class.java)
+     val emphasisSpans = text.getSpans(start, end, EmphasisSpan::class.java)
 diff --git a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/conversion/MarkdownExtractor.kt b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/conversion/MarkdownExtractor.kt
-index 0347ca4..a6e7597 100644
+index ec5a034..3cee0bf 100644
 --- a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/conversion/MarkdownExtractor.kt
 +++ b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/conversion/MarkdownExtractor.kt
 @@ -1,6 +1,7 @@
@@ -522,12 +530,12 @@ index 0347ca4..a6e7597 100644
 @@ -9,6 +10,7 @@ import com.swmansion.enriched.markdown.spans.BaselineShiftSpan
  import com.swmansion.enriched.markdown.spans.BlockquoteSpan
  import com.swmansion.enriched.markdown.spans.CodeBlockSpan
- import com.swmansion.enriched.markdown.spans.CodePaddingSpan
-+import com.swmansion.enriched.markdown.spans.DirectionControlSpan
  import com.swmansion.enriched.markdown.spans.CodeSpan
++import com.swmansion.enriched.markdown.spans.DirectionControlSpan
  import com.swmansion.enriched.markdown.spans.EmphasisSpan
  import com.swmansion.enriched.markdown.spans.HeadingSpan
-@@ -50,6 +52,23 @@ object MarkdownExtractor {
+ import com.swmansion.enriched.markdown.spans.HighlightSpan
+@@ -49,6 +51,23 @@ object MarkdownExtractor {
      start: Int,
      end: Int,
    ): String {
@@ -586,32 +594,42 @@ index 746bd66..6f75a8a 100644
          mode?.finish()
          return true
 diff --git a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionClipboard.kt b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionClipboard.kt
-index 7b8b007..16cb2df 100644
+index 386aeea..908eb1e 100644
 --- a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionClipboard.kt
 +++ b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/view/SelectionClipboard.kt
-@@ -2,6 +2,7 @@ package com.swmansion.enriched.markdown.utils.text.view
+@@ -1,6 +1,7 @@
+ package com.swmansion.enriched.markdown.utils.text.view
  
  import android.text.Spanned
- import com.swmansion.enriched.markdown.spans.CodePaddingSpan
 +import com.swmansion.enriched.markdown.spans.DirectionControlSpan
  import com.swmansion.enriched.markdown.spans.LinkSpan
- import com.swmansion.enriched.markdown.spans.MathSourceSpan
  import org.json.JSONObject
-@@ -58,7 +59,11 @@ internal fun canonicalClipboardText(
-       .map { Triple(text.getSpanStart(it), text.getSpanEnd(it), "") }
-       .filter { it.second > it.first }
-       .filter { pad -> links.none { link -> pad.first < link.second && link.first < pad.second } }
--  val replacements = (links + math + padding).sortedByDescending { it.first }
+ 
+@@ -32,7 +33,7 @@ internal fun canonicalClipboardText(
+   text: Spanned,
+   config: SelectionClipboardConfig,
+ ): String? {
+-  val replacements =
++  val links =
+     text
+       .getSpans(0, text.length, LinkSpan::class.java)
+       .mapNotNull { link ->
+@@ -40,7 +41,12 @@ internal fun canonicalClipboardText(
+           Triple(text.getSpanStart(link).coerceAtLeast(0), text.getSpanEnd(link).coerceAtMost(text.length), replacement)
+         }
+       }.filter { it.second > it.first }
+-      .sortedByDescending { it.first }
++
 +  val controls = text.getSpans(0, text.length, DirectionControlSpan::class.java)
 +    .map { Triple(text.getSpanStart(it), text.getSpanEnd(it), "") }
 +    .filter { it.second > it.first }
 +    .filter { control -> links.none { control.first < it.second && it.first < control.second } }
-+  val replacements = (links + math + padding + controls).sortedByDescending { it.first }
++  val replacements = (links + controls).sortedByDescending { it.first }
    if (replacements.isEmpty()) return null
    return StringBuilder(text.toString())
      .apply {
 diff --git a/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/conversions.h b/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/conversions.h
-index fd78a94..7489b46 100644
+index 7b8ac88..158e319 100644
 --- a/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/conversions.h
 +++ b/android/src/main/jni/react/renderer/components/EnrichedMarkdownTextSpec/conversions.h
 @@ -10,6 +10,7 @@ namespace facebook::react {
@@ -622,7 +640,7 @@ index fd78a94..7489b46 100644
    serializedProps["markdownStyle"] = toDynamic(props.markdownStyle);
    serializedProps["md4cFlags"] = toDynamic(props.md4cFlags);
    serializedProps["allowFontScaling"] = props.allowFontScaling;
-@@ -41,6 +42,7 @@ inline folly::dynamic toDynamic(const EnrichedMarkdownTextProps &props) {
+@@ -43,6 +44,7 @@ inline folly::dynamic toDynamic(const EnrichedMarkdownTextProps &props) {
  inline folly::dynamic toDynamic(const EnrichedMarkdownProps &props) {
    folly::dynamic serializedProps = folly::dynamic::object();
    serializedProps["markdown"] = props.markdown;
@@ -632,14 +650,13 @@ index fd78a94..7489b46 100644
    serializedProps["allowFontScaling"] = props.allowFontScaling;
 diff --git a/android/src/test/java/com/swmansion/enriched/markdown/utils/text/view/DirectionClipboardTest.kt b/android/src/test/java/com/swmansion/enriched/markdown/utils/text/view/DirectionClipboardTest.kt
 new file mode 100644
-index 0000000..bb59ca6
+index 0000000..8293b7d
 --- /dev/null
 +++ b/android/src/test/java/com/swmansion/enriched/markdown/utils/text/view/DirectionClipboardTest.kt
-@@ -0,0 +1,221 @@
+@@ -0,0 +1,219 @@
 +package com.swmansion.enriched.markdown.utils.text.view
 +
 +import android.content.res.Configuration
-+import android.graphics.Paint
 +import android.text.Html
 +import android.text.Layout
 +import android.text.Selection
@@ -647,7 +664,6 @@ index 0000000..bb59ca6
 +import android.text.SpannableStringBuilder
 +import android.text.style.AlignmentSpan
 +import android.text.style.LeadingMarginSpan
-+import android.text.style.LineHeightSpan
 +import android.view.View
 +import android.view.ViewGroup
 +import android.widget.PopupMenu
@@ -700,6 +716,11 @@ index 0000000..bb59ca6
 +    val html = HTMLGenerator.generateHTML(text, style)
 +    assertEquals(HTMLGenerator.generateHTML(expected, style), html)
 +    assertEquals(expected.toString(), Html.fromHtml(html, Html.FROM_HTML_MODE_LEGACY).toString().trimEnd('\n'))
++    fun tableHTML(cell: CharSequence) = HTMLGenerator.generateTableHTML(
++      listOf(listOf(Triple(cell, false, Layout.Alignment.ALIGN_NORMAL))), style,
++    )
++    assertEquals(tableHTML(expected), tableHTML(text))
++    assertEquals(tableHTML("code()"), tableHTML(text.subSequence(6, 14)))
 +    assertEquals(
 +      HTMLGenerator.generateHTML(SpannableStringBuilder("code()"), style),
 +      HTMLGenerator.generateHTML(SpannableStringBuilder(text.subSequence(6, 14)), style),
@@ -720,7 +741,7 @@ index 0000000..bb59ca6
 +    assertEquals("\u200Freal code() \u200F", textWithoutDirectionControls(view.text))
 +  }
 +
-+  @Test fun directionControlsKeepCodeBlockPaddingAndListIndentRanges() {
++  @Test fun directionControlsKeepCodeBlockAndListIndentRanges() {
 +    val context = RuntimeEnvironment.getApplication()
 +    val style = style()
 +    val code = MarkdownASTNode(NodeType.CodeBlock, children = listOf(MarkdownASTNode(NodeType.Text, content = "שלום\ncode()")))
@@ -733,11 +754,6 @@ index 0000000..bb59ca6
 +      val start = text.getSpanStart(span)
 +      assertEquals('\u200E', text[start])
 +      assertEquals(0, start)
-+      val boundary = text.getSpans(start, start + 1, LineHeightSpan::class.java)
-+        .single { it.javaClass.simpleName == "CodeBlockBoundaryPaddingSpan" }
-+      val metrics = Paint.FontMetricsInt().apply { ascent = -10; top = -12; descent = 3; bottom = 4 }
-+      boundary.chooseHeight(text, start, text.indexOf('\n') + 1, 0, 0, metrics)
-+      assertEquals(-10 - style.codeBlockStyle.padding.toInt(), metrics.ascent)
 +      assertEquals(span.getLeadingMargin(true), text.getSpans(start, start + 1, LeadingMarginSpan::class.java).sumOf { it.getLeadingMargin(true) })
 +      assertEquals("שלום\ncode()", textWithoutDirectionControls(text).trimEnd('\n'))
 +    }
@@ -858,10 +874,10 @@ index 0000000..bb59ca6
 +  }
 +}
 diff --git a/ios/EnrichedMarkdown.mm b/ios/EnrichedMarkdown.mm
-index 1b0fbf2..9cd2d1e 100644
+index 3f35e62..6b9f1d0 100644
 --- a/ios/EnrichedMarkdown.mm
 +++ b/ios/EnrichedMarkdown.mm
-@@ -47,6 +47,7 @@
+@@ -49,6 +49,7 @@
  #import "MarkdownExtractor.h"
  #import "MeasurementCache.h"
  #import "ParagraphStyleUtils.h"
@@ -869,29 +885,39 @@ index 1b0fbf2..9cd2d1e 100644
  #import "RenderContext.h"
  #import "RenderedMarkdownSegment.h"
  #import "RuntimeKeys.h"
-@@ -874,6 +875,8 @@ - (void)renderMarkdownContent:(NSString *)markdownString
-                                  inlineCodeLinkRegex:inlineCodeLinkRegex];
-         if (!ast)
-           return NO;
-+        if (writingDirectionMode == ENRMWritingDirectionModeWordMajority)
-+          ENRMAnnotateWordMajority(ast, ^BOOL(NSString *url) { return [config effectiveLinkVariantForURL:url].pill != nil; });
+@@ -900,7 +901,6 @@ static char kENRMSegmentFadeAnimatorKey;
+   } else if (layoutMetrics.layoutDirection == LayoutDirection::LeftToRight) {
+     resolved = NSWritingDirectionLeftToRight;
+   }
+-
+   if (resolved != _resolvedLayoutDirection) {
+     _resolvedLayoutDirection = resolved;
+     [self pushWritingDirectionToTableSegments];
+@@ -1029,6 +1029,9 @@ static char kENRMSegmentFadeAnimatorKey;
+     if (!ast)
+       return NO;
  
-         if (enableDocumentAssets || enableMediaSlots || enableImageSourceResolution)
-           documentAssets = ENRMPrepareDocumentAssets(ast, enableMediaSlots, decisionsAccepted, mediaOverrides);
-@@ -913,6 +916,8 @@ - (NSArray *)parseAndRenderSegments:(NSString *)markdownString
-   if (!ast) {
++    if (writingDirectionMode == ENRMWritingDirectionModeWordMajority)
++      ENRMAnnotateWordMajority(ast, ^BOOL(NSString *url) { return [config effectiveLinkVariantForURL:url].pill != nil; });
++
+     renderedSegments = ENRMRenderSegmentsFromAST(ast, config, allowTrailingMargin, allowFontScaling,
+                                                  maxFontSizeMultiplier, lineBreakStrategy,
+                                                  /*blockquoteContent*/ NO);
+@@ -1069,6 +1072,9 @@ static char kENRMSegmentFadeAnimatorKey;
      return nil;
    }
+ 
 +  if (_writingDirectionMode == ENRMWritingDirectionModeWordMajority)
 +    ENRMAnnotateWordMajority(ast, ^BOOL(NSString *url) { return [_config effectiveLinkVariantForURL:url].pill != nil; });
- 
-   NSArray *assets = (_enableDocumentAssets || _enableMediaSlots || (_enableImageSourceResolution && _isGFM))
-                         ? ENRMPrepareDocumentAssets(ast, _enableMediaSlots,
++
+   NSArray<ENRMRenderedSegment *> *segments =
+       ENRMRenderSegmentsFromAST(ast, _config, _allowTrailingMargin, _fontScaleObserver.allowFontScaling,
+                                 _maxFontSizeMultiplier, _lineBreakStrategy, /*blockquoteContent*/ NO);
 diff --git a/ios/EnrichedMarkdownText.mm b/ios/EnrichedMarkdownText.mm
-index 4ac6503..5aa8b2b 100644
+index f41930f..4455621 100644
 --- a/ios/EnrichedMarkdownText.mm
 +++ b/ios/EnrichedMarkdownText.mm
-@@ -32,6 +32,7 @@
+@@ -31,6 +31,7 @@
  #import "MarkdownExtractor.h"
  #import "MeasurementCache.h"
  #import "ParagraphStyleUtils.h"
@@ -899,7 +925,7 @@ index 4ac6503..5aa8b2b 100644
  #import "PasteboardUtils.h"
  #import "RenderContext.h"
  #import "RuntimeKeys.h"
-@@ -468,6 +469,8 @@ - (void)renderMarkdownContent:(NSString *)markdownString
+@@ -467,6 +468,8 @@ typedef NS_OPTIONS(NSUInteger, ENRMDirtyFlags) {
                                   inlineCodeLinkRegex:inlineCodeLinkRegex];
          if (!ast)
            return NO;
@@ -908,7 +934,7 @@ index 4ac6503..5aa8b2b 100644
  
          result = ENRMRenderASTNodes(ast.children, config, allowTrailingMargin, allowFontScaling, maxFontSizeMultiplier,
                                      lineBreakStrategy);
-@@ -493,6 +496,8 @@ - (NSMutableAttributedString *)parseAndRenderMarkdown:(NSString *)markdownString
+@@ -492,6 +495,8 @@ typedef NS_OPTIONS(NSUInteger, ENRMDirtyFlags) {
    if (!ast) {
      return nil;
    }
@@ -927,7 +953,7 @@ index 172cba2..7ab43d9 100644
  #import "ENRMLinkPillAttachment.h"
  
  #if !TARGET_OS_OSX
-@@ -114,5 +115,5 @@ void ENRMLinkPillsAdoptPlaceholderFonts(NSAttributedString *text)
+@@ -114,5 +115,5 @@ NSAttributedString *ENRMAttributedStringByExpandingLinkPills(NSAttributedString
  
  NSString *ENRMStringByExpandingLinkPills(NSAttributedString *text)
  {
@@ -935,10 +961,10 @@ index 172cba2..7ab43d9 100644
 +  return ENRMWithoutDirectionControls(ENRMAttributedStringByExpandingLinkPills(text, NULL)).string;
  }
 diff --git a/ios/input/EnrichedMarkdownTextInput.mm b/ios/input/EnrichedMarkdownTextInput.mm
-index afcc221..19b9a4a 100644
+index 57100a2..ab8ddf8 100644
 --- a/ios/input/EnrichedMarkdownTextInput.mm
 +++ b/ios/input/EnrichedMarkdownTextInput.mm
-@@ -1313,6 +1313,7 @@ - (BOOL)emptyListLineIsRTL
+@@ -1341,6 +1341,7 @@ static const NSTimeInterval kENRMAtomicSnapPollInterval = 0.1;
        return NO;
      case ENRMWritingDirectionModeRTL:
        return YES;
@@ -947,18 +973,18 @@ index afcc221..19b9a4a 100644
        return _resolvedLayoutDirection == NSWritingDirectionRightToLeft;
      case ENRMWritingDirectionModeAuto:
 diff --git a/ios/internals/ENRMViewFreeMeasurement.h b/ios/internals/ENRMViewFreeMeasurement.h
-index 3ae63ac..f2c7a00 100644
+index 65281b1..69f0c1f 100644
 --- a/ios/internals/ENRMViewFreeMeasurement.h
 +++ b/ios/internals/ENRMViewFreeMeasurement.h
-@@ -14,6 +14,7 @@
- #import "LinkPillContentUtils.h"
+@@ -16,6 +16,7 @@
  #import "MarkdownASTNode.h"
+ #import "MeasurementCache.h"
  #import "ParagraphStyleUtils.h"
 +#import "ENRMWordMajority.h"
  #import "RenderedMarkdownSegment.h"
  #import "SegmentRenderer.h"
  #import "StreamingMarkdownFilter.h"
-@@ -193,6 +194,8 @@ static inline CGSize ENRMMeasureMarkdownViewFree(const PropsT &typedProps, CGFlo
+@@ -198,6 +199,8 @@ static inline CGSize ENRMMeasureMarkdownViewFree(const PropsT &typedProps, CGFlo
      if (!ast) {
        return fallback;
      }
@@ -967,7 +993,7 @@ index 3ae63ac..f2c7a00 100644
  
      NSLineBreakStrategy lineBreakStrategy =
          ENRMResolveLineBreakStrategy([[NSString alloc] initWithUTF8String:typedProps.lineBreakStrategyIOS.c_str()]);
-@@ -280,6 +283,8 @@ static inline CGSize ENRMMeasureSegmentedMarkdownViewFree(const PropsT &typedPro
+@@ -294,6 +297,8 @@ static inline CGSize ENRMMeasureSegmentedMarkdownViewFree(const PropsT &typedPro
      if (!ast) {
        return fallback;
      }
@@ -990,7 +1016,7 @@ index ab2531b..82f9a68 100644
  #import "RendererFactory.h"
  #import "StyleConfig.h"
  
-@@ -16,12 +20,26 @@ - (instancetype)initWithRendererFactory:(id)rendererFactory config:(id)config
+@@ -16,12 +20,26 @@
  
  - (void)renderNode:(MarkdownASTNode *)node into:(NSMutableAttributedString *)output context:(RenderContext *)context
  {
@@ -1018,7 +1044,7 @@ index ab2531b..82f9a68 100644
  
  - (void)renderNodeContent:(MarkdownASTNode *)node
 diff --git a/ios/renderer/CodeRenderer.m b/ios/renderer/CodeRenderer.m
-index d262505..c051ce3 100644
+index d0a9b3a..88230d7 100644
 --- a/ios/renderer/CodeRenderer.m
 +++ b/ios/renderer/CodeRenderer.m
 @@ -1,5 +1,6 @@
@@ -1028,16 +1054,15 @@ index d262505..c051ce3 100644
  #import "ENRMUIKit.h"
  #import "FontUtils.h"
  #import "MarkdownASTNode.h"
-@@ -68,6 +69,15 @@ - (void)renderNodeContent:(MarkdownASTNode *)node
-     NSAttributedString *padding = [[NSAttributedString alloc] initWithString:@"\u00A0" attributes:paddingAttributes];
-     [output insertAttributedString:padding atIndex:NSMaxRange(range)];
-     [output insertAttributedString:padding atIndex:range.location];
+@@ -63,6 +64,14 @@
+     codeAttributes[@"BlockLineHeight"] = @(UIFontLineHeight(blockFont));
+ 
+     [output setAttributes:codeAttributes range:range];
 +    if (node.attributes[ENRMProseDirectionKey]) {
 +      NSMutableDictionary *controls = [codeAttributes mutableCopy];
-+      controls[CodePaddingAttributeName] = @YES;
 +      controls[ENRMDirectionControlKey] = @YES;
 +      [output insertAttributedString:[[NSAttributedString alloc] initWithString:@"\u2069" attributes:controls]
-+                             atIndex:NSMaxRange(range) + 2];
++                             atIndex:NSMaxRange(range)];
 +      [output insertAttributedString:[[NSAttributedString alloc] initWithString:@"\u2066" attributes:controls]
 +                             atIndex:range.location];
 +    }
@@ -1045,7 +1070,7 @@ index d262505..c051ce3 100644
  }
  
 diff --git a/ios/renderer/LinkRenderer.m b/ios/renderer/LinkRenderer.m
-index c9fd57d..8c23d34 100644
+index c9fd57d..706bd88 100644
 --- a/ios/renderer/LinkRenderer.m
 +++ b/ios/renderer/LinkRenderer.m
 @@ -1,5 +1,6 @@
@@ -1060,15 +1085,15 @@ index c9fd57d..8c23d34 100644
    [placeholder removeObjectsForKeys:@[
      NSBackgroundColorAttributeName, NSUnderlineStyleAttributeName, NSUnderlineColorAttributeName,
 -    NSStrikethroughStyleAttributeName, CodeAttributeName
-+    NSStrikethroughStyleAttributeName, CodeAttributeName, CodePaddingAttributeName, ENRMDirectionControlKey
++    NSStrikethroughStyleAttributeName, CodeAttributeName, ENRMDirectionControlKey
    ]];
    placeholder[NSAttachmentAttributeName] = pill;
    [output replaceCharactersInRange:range
 diff --git a/ios/segments/ENRMBlockquoteContainerView.mm b/ios/segments/ENRMBlockquoteContainerView.mm
-index 6fc3159..59d364f 100644
+index 3296ff9..5d1354b 100644
 --- a/ios/segments/ENRMBlockquoteContainerView.mm
 +++ b/ios/segments/ENRMBlockquoteContainerView.mm
-@@ -111,6 +111,7 @@ @interface ENRMBlockquoteContainerView ()
+@@ -111,6 +111,7 @@ static UIEdgeInsets ENRMBlockquoteContentInsets(StyleConfig *config)
  #endif
  // nil for a plain blockquote; the admonition type string otherwise.
  @property (nonatomic, copy, nullable) NSString *admonitionType;
@@ -1076,7 +1101,7 @@ index 6fc3159..59d364f 100644
  @property (nonatomic, copy) NSString *cachedMarkdown;
  @property (nonatomic, copy) NSString *cachedPlainText;
  @end
-@@ -147,8 +148,13 @@ - (instancetype)initWithConfig:(StyleConfig *)config
+@@ -147,8 +148,13 @@ static UIEdgeInsets ENRMBlockquoteContentInsets(StyleConfig *config)
  
  - (void)applyBlockquoteNode:(MarkdownASTNode *)node
  {
@@ -1090,7 +1115,7 @@ index 6fc3159..59d364f 100644
    self.cachedMarkdown = markdownFromBlockquoteNode(node);
    self.cachedPlainText = plainTextFromASTNode(node);
    NSArray<ENRMRenderedSegment *> *rendered =
-@@ -462,7 +468,7 @@ - (void)drawRect:(CGRect)rect
+@@ -468,7 +474,7 @@ static UIEdgeInsets ENRMBlockquoteContentInsets(StyleConfig *config)
      RCTUIColor *borderColor =
          admonitionType ? [config admonitionColorForType:admonitionType] : config.blockquoteBorderColor;
      if (borderColor) {
@@ -1100,19 +1125,22 @@ index 6fc3159..59d364f 100644
  #if !TARGET_OS_OSX
        CGContextRef ctx = UIGraphicsGetCurrentContext();
 diff --git a/ios/segments/TableContainerView.m b/ios/segments/TableContainerView.m
-index def4b0f..830a3d0 100644
+index 987eb21..0073f71 100644
 --- a/ios/segments/TableContainerView.m
 +++ b/ios/segments/TableContainerView.m
-@@ -94,6 +94,7 @@ static NSTextAlignment ENRMTableTextAlignmentFromString(NSString *align)
+@@ -85,15 +85,21 @@ static NSMutableAttributedString *ENRMTableRenderCellNode(MarkdownASTNode *cellN
+   context.allowFontScaling = allowFontScaling;
    context.maxFontSizeMultiplier = maxFontSizeMultiplier;
  
-   MarkdownASTNode *paragraph = [[MarkdownASTNode alloc] initWithType:MarkdownNodeTypeParagraph];
+-  NSMutableAttributedString *attributedText = [renderer renderNodes:cellNode.children context:context block:nil];
++  MarkdownASTNode *paragraph = [[MarkdownASTNode alloc] initWithType:MarkdownNodeTypeParagraph];
 +  paragraph.attributes = [cellNode.attributes mutableCopy];
-   for (MarkdownASTNode *child in cellNode.children)
-     [paragraph addChild:child];
-   NSMutableAttributedString *attributedText = [renderer renderNodes:@[ paragraph ] context:context block:nil];
-@@ -111,9 +112,11 @@ static NSTextAlignment ENRMTableTextAlignmentFromString(NSString *align)
- #endif
++  for (MarkdownASTNode *child in cellNode.children)
++    [paragraph addChild:child];
++  NSMutableAttributedString *attributedText = [renderer renderNodes:@[ paragraph ] context:context block:nil];
+ 
+   [context applyLinkAttributesToString:attributedText];
+   [context applyImageAttributesToString:attributedText];
  
    ENRMPinLineMetricsToStyledFonts(attributedText, NSMakeRange(0, attributedText.length));
 -  ENRMApplyWritingDirectionMode(attributedText, writingDirectionMode, resolvedLayoutDirection);
@@ -1268,6 +1296,52 @@ index 0000000..3c40447
 +{
 +  ENRMAnnotateNode(root, nil, isChip);
 +}
+diff --git a/ios/utils/HTMLGenerator.m b/ios/utils/HTMLGenerator.m
+index f0018df..fe5ac4e 100644
+--- a/ios/utils/HTMLGenerator.m
++++ b/ios/utils/HTMLGenerator.m
+@@ -1,3 +1,4 @@
++#import "ENRMWordMajority.h"
+ #import "HTMLGenerator.h"
+ #import "BlockquoteBorder.h"
+ #import "CodeBackground.h"
+@@ -825,7 +826,8 @@ NSString *_Nullable generateHTML(NSAttributedString *attributedString, StyleConf
+   if (!attributedString || attributedString.length == 0)
+     return nil;
+ 
+-  attributedString = ENRMAttributedStringByExpandingLinkPills(attributedString, NULL);
++  attributedString = ENRMWithoutDirectionControls(ENRMAttributedStringByExpandingLinkPills(attributedString, NULL));
++  if (attributedString.length == 0) return nil;
+ 
+   CachedStyles *styles = cacheStyles(styleConfig);
+ 
+@@ -1009,7 +1011,7 @@ HTMLString _Nullable generateTableHTML(NSArray<NSArray<NSDictionary *> *> *rows,
+       NSTextAlignment alignment = (NSTextAlignment)[cellInfo[@"alignment"] integerValue];
+       NSAttributedString *attributedText = cellInfo[@"attributedText"];
+       if (attributedText)
+-        attributedText = ENRMAttributedStringByExpandingLinkPills(attributedText, NULL);
++        attributedText = ENRMWithoutDirectionControls(ENRMAttributedStringByExpandingLinkPills(attributedText, NULL));
+ 
+       NSString *htmlTag = isHeaderCell ? @"th" : @"td";
+       NSString *cellStyle = styleForCell(isHeaderCell, bodyRowIndex, styleConfig, alignment);
+diff --git a/ios/utils/MarkdownExtractor.m b/ios/utils/MarkdownExtractor.m
+index 90c8450..168a8c9 100644
+--- a/ios/utils/MarkdownExtractor.m
++++ b/ios/utils/MarkdownExtractor.m
+@@ -1,3 +1,4 @@
++#import "ENRMWordMajority.h"
+ #import "MarkdownExtractor.h"
+ #import "BaselineShiftTextAttributes.h"
+ #import "BlockquoteBorder.h"
+@@ -131,6 +132,8 @@ NSString *_Nullable extractMarkdownFromAttributedString(NSAttributedString *attr
+ 
+   range.length = MIN(range.length, attributedText.length - range.location);
+   attributedText = ENRMAttributedStringByExpandingLinkPills(attributedText, &range);
++  attributedText = ENRMWithoutDirectionControls([attributedText attributedSubstringFromRange:range]);
++  range = NSMakeRange(0, attributedText.length);
+ 
+   NSMutableString *result = [NSMutableString string];
+ 
 diff --git a/ios/utils/ParagraphStyleUtils.h b/ios/utils/ParagraphStyleUtils.h
 index 7d0f17e..2f4b54b 100644
 --- a/ios/utils/ParagraphStyleUtils.h
@@ -1302,6 +1376,24 @@ index 11320dd..c3572cd 100644
      case ENRMWritingDirectionModeFirstStrong:
        ENRMApplyFirstStrongParagraphDirections(output, layoutDirection);
        break;
+diff --git a/ios/utils/PasteboardUtils.m b/ios/utils/PasteboardUtils.m
+index 3e8c15d..76202e2 100644
+--- a/ios/utils/PasteboardUtils.m
++++ b/ios/utils/PasteboardUtils.m
+@@ -1,3 +1,4 @@
++#import "ENRMWordMajority.h"
+ #import "PasteboardUtils.h"
+ #import "ENRMImageAttachment.h"
+ #import "ENRMLinkPillText.h"
+@@ -167,7 +168,7 @@ void copyAttributedStringToPasteboard(NSAttributedString *attributedString, NSSt
+     return;
+ 
+   // Expanded once here for the plain-text flavor; the exporters below then have nothing left to expand.
+-  attributedString = ENRMAttributedStringByExpandingLinkPills(attributedString, NULL);
++  attributedString = ENRMWithoutDirectionControls(ENRMAttributedStringByExpandingLinkPills(attributedString, NULL));
+ 
+   NSMutableDictionary *items = [NSMutableDictionary dictionary];
+ 
 diff --git a/ios/utils/RTFExportUtils.m b/ios/utils/RTFExportUtils.m
 index c5f8b77..7618685 100644
 --- a/ios/utils/RTFExportUtils.m
@@ -1324,10 +1416,10 @@ index c5f8b77..7618685 100644
      return attributedString;
  
 diff --git a/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts b/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts
-index 76d8f23..2f51caa 100644
+index 360ae49..d8dcac9 100644
 --- a/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts
 +++ b/lib/typescript/src/EnrichedMarkdownNativeComponent.d.ts
-@@ -686,8 +686,8 @@ export interface NativeProps extends ViewProps {
+@@ -628,8 +628,8 @@ export interface NativeProps extends ViewProps {
       * - 'auto': React Native parity; iOS TextKit follows the app's userInterfaceLayoutDirection.
       * - 'ltr' / 'rtl': force base direction on every paragraph. Code blocks always stay LTR.
       * @default 'first-strong'
@@ -1338,10 +1430,10 @@ index 76d8f23..2f51caa 100644
      /**
       * No-op for the GFM backend. Declared for parity with the CommonMark
 diff --git a/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts b/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts
-index 3e938ec..0b36616 100644
+index d79d050..398f187 100644
 --- a/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts
 +++ b/lib/typescript/src/EnrichedMarkdownTextNativeComponent.d.ts
-@@ -610,8 +610,8 @@ export interface NativeProps extends ViewProps {
+@@ -611,8 +611,8 @@ export interface NativeProps extends ViewProps {
       * - 'auto': React Native parity; iOS TextKit follows the app's userInterfaceLayoutDirection.
       * - 'ltr' / 'rtl': force base direction on every paragraph. Code blocks always stay LTR.
       * @default 'first-strong'
@@ -1352,10 +1444,10 @@ index 3e938ec..0b36616 100644
      /**
       * Maximum number of lines to display before the text is truncated. 0 (the
 diff --git a/lib/typescript/src/types/MarkdownTextProps.d.ts b/lib/typescript/src/types/MarkdownTextProps.d.ts
-index e8d441a..ba20ea1 100644
+index b44bedb..0338b3d 100644
 --- a/lib/typescript/src/types/MarkdownTextProps.d.ts
 +++ b/lib/typescript/src/types/MarkdownTextProps.d.ts
-@@ -516,15 +516,17 @@ export interface EnrichedMarkdownTextProps extends Omit<ViewProps, 'style'> {
+@@ -497,15 +497,17 @@ export interface EnrichedMarkdownTextProps extends Omit<ViewProps, 'style'> {
       *   directional character. Neutral-only paragraphs fall back to the view's
       *   resolved layout direction (inherits ancestor `direction` style). Library
       *   extension beyond React Native — matches Android's `TEXT_DIRECTION_FIRST_STRONG`.
@@ -1378,10 +1470,10 @@ index e8d441a..ba20ea1 100644
       * Maximum number of lines to display before the text is truncated. `0` (the
       * default) means unlimited. Matches React Native `Text`'s `numberOfLines`.
 diff --git a/src/EnrichedMarkdownNativeComponent.ts b/src/EnrichedMarkdownNativeComponent.ts
-index 955cb94..1966921 100644
+index af6574c..c5b22dd 100644
 --- a/src/EnrichedMarkdownNativeComponent.ts
 +++ b/src/EnrichedMarkdownNativeComponent.ts
-@@ -752,8 +752,8 @@ export interface NativeProps extends ViewProps {
+@@ -692,8 +692,8 @@ export interface NativeProps extends ViewProps {
     * - 'auto': React Native parity; iOS TextKit follows the app's userInterfaceLayoutDirection.
     * - 'ltr' / 'rtl': force base direction on every paragraph. Code blocks always stay LTR.
     * @default 'first-strong'
@@ -1392,10 +1484,10 @@ index 955cb94..1966921 100644
    /**
     * No-op for the GFM backend. Declared for parity with the CommonMark
 diff --git a/src/EnrichedMarkdownTextNativeComponent.ts b/src/EnrichedMarkdownTextNativeComponent.ts
-index 1a75908..ac5c94c 100644
+index ba0dc96..1a4ed66 100644
 --- a/src/EnrichedMarkdownTextNativeComponent.ts
 +++ b/src/EnrichedMarkdownTextNativeComponent.ts
-@@ -672,8 +672,8 @@ export interface NativeProps extends ViewProps {
+@@ -673,8 +673,8 @@ export interface NativeProps extends ViewProps {
     * - 'auto': React Native parity; iOS TextKit follows the app's userInterfaceLayoutDirection.
     * - 'ltr' / 'rtl': force base direction on every paragraph. Code blocks always stay LTR.
     * @default 'first-strong'
@@ -1406,10 +1498,10 @@ index 1a75908..ac5c94c 100644
    /**
     * Maximum number of lines to display before the text is truncated. 0 (the
 diff --git a/src/types/MarkdownTextProps.ts b/src/types/MarkdownTextProps.ts
-index 425d8e4..6cc36a0 100644
+index b6b179b..40583d7 100644
 --- a/src/types/MarkdownTextProps.ts
 +++ b/src/types/MarkdownTextProps.ts
-@@ -530,15 +530,17 @@ export interface EnrichedMarkdownTextProps extends Omit<ViewProps, 'style'> {
+@@ -524,15 +524,17 @@ export interface EnrichedMarkdownTextProps extends Omit<ViewProps, 'style'> {
     *   directional character. Neutral-only paragraphs fall back to the view's
     *   resolved layout direction (inherits ancestor `direction` style). Library
     *   extension beyond React Native — matches Android's `TEXT_DIRECTION_FIRST_STRONG`.
@@ -1481,10 +1573,10 @@ index 0000000..8c86c5d
 +}
 diff --git a/tests/word-majority/ClipboardTests.m b/tests/word-majority/ClipboardTests.m
 new file mode 100644
-index 0000000..369e1a6
+index 0000000..8cf6e8b
 --- /dev/null
 +++ b/tests/word-majority/ClipboardTests.m
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,115 @@
 +#import <XCTest/XCTest.h>
 +#import "CodeBackground.h"
 +#import "ENRMWordMajority.h"
@@ -1505,7 +1597,7 @@ index 0000000..369e1a6
 +{
 +  NSMutableAttributedString *text = [[NSMutableAttributedString alloc] initWithString:@"\u200Freal \u2066code()\u2069 \u200F"];
 +  for (NSNumber *index in @[ @6, @13 ]) {
-+    [text addAttributes:@{ ENRMDirectionControlKey: @YES, CodePaddingAttributeName: @YES }
++    [text addAttributes:@{ ENRMDirectionControlKey: @YES }
 +                  range:NSMakeRange(index.unsignedIntegerValue, 1)];
 +  }
 +  NSAttributedString *expected = [[NSAttributedString alloc] initWithString:@"\u200Freal code() \u200F"];
@@ -1518,6 +1610,9 @@ index 0000000..369e1a6
 +  XCTAssertEqualObjects(generateHTML([text attributedSubstringFromRange:NSMakeRange(6, 8)], style),
 +                        generateHTML([[NSAttributedString alloc] initWithString:@"code()"], style));
 +  XCTAssertEqualObjects(text.string, @"\u200Freal \u2066code()\u2069 \u200F");
++  NSAttributedString *control = [[NSAttributedString alloc] initWithString:@"\u200E"
++      attributes:@{ ENRMDirectionControlKey: @YES }];
++  XCTAssertNil(generateHTML(control, style));
 +}
 +- (void)testCodeLedPillsPreserveSourceAndAuthoredDirectionMarks
 +{
@@ -1549,7 +1644,6 @@ index 0000000..369e1a6
 +      if (![value isKindOfClass:ENRMLinkPillAttachment.class]) return;
 +      pill = value;
 +      XCTAssertNil([rendered attribute:ENRMDirectionControlKey atIndex:range.location effectiveRange:NULL]);
-+      XCTAssertNil([rendered attribute:CodePaddingAttributeName atIndex:range.location effectiveRange:NULL]);
 +    }];
 +    XCTAssertNotNil(pill);
 +    NSString *expanded = ENRMStringByExpandingLinkPills(rendered);
