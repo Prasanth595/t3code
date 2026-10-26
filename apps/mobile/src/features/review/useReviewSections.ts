@@ -156,7 +156,12 @@ export function useReviewSections(input: {
       activeTurnDiff.refresh();
       return;
     }
-    selectedGitPreview?.refresh();
+    if (selectedGitPreview) {
+      selectedGitPreview.refresh();
+    } else {
+      workingTreePreview.refresh();
+      branchPreview.refresh();
+    }
   };
 
   const selectSection = (sectionId: string) => {
