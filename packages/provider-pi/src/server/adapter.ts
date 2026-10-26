@@ -2424,6 +2424,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           Effect.sync(
             () =>
               (pendingWake !== null && pendingWake.state.providerThread.id === providerThread.id) ||
+              // The subscriber must consume the clear before dropping its event stream.
+              (providerThread.pendingBackgroundTasks?.length ?? 0) > 0 ||
               (backgroundWork.size > 0 &&
                 backgroundWorkState?.providerThread.id === providerThread.id),
           ),

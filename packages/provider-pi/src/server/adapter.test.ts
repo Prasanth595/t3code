@@ -1703,6 +1703,48 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("keeps ingestion open until the cleared background roster is consumed", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* fake.emit({
+        type: "extension_ui_request",
+        method: "setStatus",
+        id: "running",
+        statusKey: "t3:background:build",
+        statusText: "Build running",
+      });
+      const running = yield* takeEvent(
+        (event) =>
+          event.type === "provider_thread.updated" &&
+          event.providerThread.pendingBackgroundTasks?.length === 1,
+      );
+      assert.isTrue(running.type === "provider_thread.updated");
+      if (running.type !== "provider_thread.updated") return;
+      yield* fake.emit({
+        type: "extension_ui_request",
+        method: "setStatus",
+        id: "cleared",
+        statusKey: "t3:background:build",
+      });
+      const cleared = yield* takeEvent(
+        (event) =>
+          event.type === "provider_thread.updated" &&
+          event.providerThread.pendingBackgroundTasks?.length === 0,
+      );
+      assert.isTrue(cleared.type === "provider_thread.updated");
+      if (cleared.type !== "provider_thread.updated") return;
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(running.providerThread));
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(cleared.providerThread));
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("keeps background work reported while a thread registers", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
