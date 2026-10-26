@@ -25,7 +25,8 @@
         "NODE_OPTIONS": "--max-old-space-size=4096",
         "T3CODE_RELAY_URL": "https://relay.andreimiron.ro",
         "T3CODE_CLERK_PUBLISHABLE_KEY": "pk_test_ZXRoaWNhbC1jcmFuZS00MjUwLmNsZXJrLmFjY291bnRzLmRldiQ",
-        "T3CODE_CLERK_JWT_TEMPLATE": "t3-relay"
+        "T3CODE_CLERK_JWT_TEMPLATE": "t3-relay",
+        "MOBILE_VERSION_POLICY": "appVersion"
       },
       "channel": "preview",
       "environment": "preview",
