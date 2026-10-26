@@ -153,9 +153,23 @@ async function renderSettings() {
   const key = el("input", { type: "password", id: "deepseek-key", placeholder: settings.deepseekKeyConfigured ? "Saved. Enter a new key to replace it." : "sk-…", style: "width:28rem", autocomplete: "off" });
   const model = el("input", { type: "text", id: "deepseek-model", value: settings.deepseekModel, style: "width:28rem" });
   const anonymous = el("input", { type: "number", id: "anonymous-limit", min: "0", value: String(settings.anonymousDailyChatLimit) });
+  const effort = (id, value) => {
+    const select = el("select", { id });
+    for (const [option, label] of [["disabled", "Disabled (no thinking)"], ["low", "Low"], ["high", "High"], ["max", "Max"]]) {
+      select.append(el("option", { value: option, textContent: label, selected: option === value }));
+    }
+    return select;
+  };
+  const chatEffort = effort("chat-effort", settings.chatReasoningEffort);
+  const agenticEffort = effort("agentic-effort", settings.agenticReasoningEffort);
   const save = el("button", { className: "primary", textContent: "Save" });
   save.onclick = async () => {
-    const body = { deepseekModel: model.value.trim(), anonymousDailyChatLimit: Number(anonymous.value) };
+    const body = {
+      deepseekModel: model.value.trim(),
+      anonymousDailyChatLimit: Number(anonymous.value),
+      chatReasoningEffort: chatEffort.value,
+      agenticReasoningEffort: agenticEffort.value,
+    };
     if (key.value.trim() !== "") body.deepseekApiKey = key.value.trim();
     try { await api("/v1/admin/settings", { method: "PUT", body: JSON.stringify(body) }); showError(); await render(); }
     catch (error) { showError(error); }
@@ -167,6 +181,9 @@ async function renderSettings() {
     el("label", { htmlFor: "deepseek-model", textContent: "DeepSeek model" }), model,
     el("label", { htmlFor: "anonymous-limit", textContent: "Chat messages per day without an account" }), anonymous,
     el("p", { className: "muted", textContent: "After these, the app asks people to create a free account. 0 asks right away." }),
+    el("label", { htmlFor: "chat-effort", textContent: "Thinking in chat mode" }), chatEffort,
+    el("label", { htmlFor: "agentic-effort", textContent: "Thinking in agentic mode" }), agenticEffort,
+    el("p", { className: "muted", textContent: "More thinking answers hard questions better, but replies start later and thinking tokens are billed like the rest. Disabled answers right away." }),
     el("p", {}, save));
 }
 

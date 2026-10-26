@@ -3,6 +3,7 @@ import {
   SAAS_LLM_MODEL_ID,
   SaasChatCompletionRequest,
   type SaasChatErrorCode,
+  type SaasReasoningEffort,
 } from "@t3tools/contracts/saas";
 import { RelayApi } from "@t3tools/contracts/relay";
 import * as Context from "effect/Context";
@@ -80,6 +81,10 @@ export class SseUsageTracker {
 
 const openAiError = (status: number, type: string, message: string) =>
   HttpServerResponse.jsonUnsafe({ error: { message, type, code: type } }, { status });
+
+/** DeepSeek's request fields for an effort: thinking off, or a reasoning effort level. */
+export const reasoningFields = (effort: SaasReasoningEffort): Record<string, unknown> =>
+  effort === "disabled" ? { thinking: { type: "disabled" } } : { reasoning_effort: effort };
 
 const chatError = (status: number, code: SaasChatErrorCode, message: string) =>
   HttpServerResponse.jsonUnsafe({ error: { code, message } }, { status });
@@ -221,7 +226,11 @@ export const make = Effect.gen(function* () {
       }
       return yield* forward({
         apiKey: access.apiKey,
-        body: { ...(parsed as Record<string, unknown>), model: access.model },
+        body: {
+          ...(parsed as Record<string, unknown>),
+          ...reasoningFields(access.agenticReasoningEffort),
+          model: access.model,
+        },
         onUsage: (usage) => record(userId, usage),
       });
     },
@@ -313,6 +322,7 @@ export const make = Effect.gen(function* () {
         body: {
           model: access.model,
           stream: true,
+          ...reasoningFields(access.chatReasoningEffort),
           messages: [
             { role: "system", content: CHAT_SYSTEM_PROMPT },
             ...parsed.value.messages.slice(-MAX_CHAT_MESSAGES),

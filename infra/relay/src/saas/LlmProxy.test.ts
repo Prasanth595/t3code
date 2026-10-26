@@ -61,10 +61,14 @@ function makeHarness(options: {
             deepseekKeyConfigured: true,
             deepseekModel: "deepseek-chat",
             anonymousDailyChatLimit: options.anonymousDailyChatLimit ?? 10,
+            chatReasoningEffort: "low" as const,
+            agenticReasoningEffort: "disabled" as const,
           }),
           getModelAccess: Effect.succeed({
             apiKey: Redacted.make("sk-deepseek"),
             model: "deepseek-chat",
+            chatReasoningEffort: "low" as const,
+            agenticReasoningEffort: "disabled" as const,
           }),
           recordUsage: (input) =>
             Effect.sync(() => {
@@ -179,6 +183,7 @@ describe("LlmProxy", () => {
       expect(JSON.parse(yield* readText(response)).model).toBe("mira");
       expect(sentJson(harness.sent[0])?.model).toBe("deepseek-chat");
       expect(harness.sent[0]?.headers.authorization).toBe("Bearer sk-deepseek");
+      expect(sentJson(harness.sent[0])?.thinking).toEqual({ type: "disabled" });
       expect(harness.recorded).toEqual([{ inputTokens: 12, outputTokens: 30 }]);
     }),
   );
@@ -239,6 +244,7 @@ describe("chat mode", () => {
       expect(JSON.parse(yield* readText(refused)).error.code).toBe("sign_up_required");
       expect(harness.sent).toHaveLength(2);
       expect(sentJson(harness.sent[0])?.stream).toBe(true);
+      expect(sentJson(harness.sent[0])?.reasoning_effort).toBe("low");
     }),
   );
 
